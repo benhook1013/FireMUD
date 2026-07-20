@@ -114,10 +114,10 @@ See [Game Design Service](../architecture/microservices/game-design-service/READ
 - **Central analytics dashboards and logging** for tracking player activity and game performance.
 - **Runtime feature flags** are defined in the **Game Design Service**, stored and managed by the **Game Session Service**, and can be toggled through the **Logging & Admin Service**. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md) for details.
 - **Monetization & Payment System**:
-  - The platform integrates **Stripe or similar services** for in-game purchases.
-  - Game creators can offer **subscriptions, one-time purchases, and donations**.
-  - A **platform fee** applies to all transactions.
-  - **External payment methods are not allowed** to ensure security and compliance.
+  - V1 uses **Stripe as the sole supported processor** for FireMUD's own hosting-plan and platform-subscription billing. A future provider requires a reviewed provider-specific integration rather than a speculative abstraction.
+  - Creator monetization, including player purchases, paid game subscriptions, creator donations, revenue sharing, platform fees on creator transactions, and payouts, is **deferred behind a separate marketplace and settlement decision**.
+  - Off-platform payment evidence never creates FireMUD-managed entitlements. Any future paid entitlement requires verified, idempotent provider webhook or reconciliation completion.
+  - Billing-safe account and subscription management remains available to an authorized billing owner when tenant gameplay is unavailable for billing reasons.
   - **High-resource features** (e.g., AI, scripting) may be **premium hosting options**.
 See [Logging & Admin Service](../architecture/microservices/logging-admin-service/README.md) for moderation features and [Account Service](../architecture/microservices/account-service/README.md) for payment processing.
 

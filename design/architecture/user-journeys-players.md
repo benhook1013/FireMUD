@@ -42,7 +42,7 @@ Accounts span multiple hosted games. The [Multi-Tenancy](./system-architecture-m
 - [Character Creation & Selection](#3-character-creation--selection) – Create and choose characters for the selected game and realm target.
 - [Player Login and Gameplay](#4-player-login-and-gameplay) – Connect to running realms and play.
 - [Social Interaction & Safety](#5-social-interaction--safety) – Chat, groups, reports, and moderation outcomes.
-- [Purchases and Subscriptions](#6-purchases-and-subscriptions) – Manage subscriptions and in-game purchases.
+- [Purchases and Subscriptions](#6-purchases-and-subscriptions) – Understand hosting billing and the deferred player-commerce boundary.
 - [Password Resets & Account Recovery](#7-password-resets--account-recovery) – Recover access when credentials are lost.
 - [Switch Games or Manage Multiple Games](#8-switch-games-or-manage-multiple-games) – Move between games under one account.
 - [Account Data Export & Deletion](#9-account-data-export--deletion) – Request exports or complete account deletion.
@@ -232,12 +232,12 @@ Current gameplay implementation note: the foundational shared communication path
 
 ## 6. Purchases and Subscriptions
 
-1. **Payment Processing** – The [Account Service](./microservices/account-service/README.md) handles subscriptions, one-time purchases, and optional donations via Stripe.
-2. **Platform Fee & Restrictions** – A small platform fee applies to each transaction and external payment methods are not allowed, per the [Core Requirements](../project-management/core-requirements.md#2.8-moderation-administration--monetization).
-3. **One-Time Purchase Entitlements** – One-time purchases that grant ongoing value create Account Service-owned purchase entitlements after Stripe success; refunds revoke those entitlements unless the product was explicitly consumed under a non-revocable product contract.
-4. **Audit and Compliance** – Transactions are logged through the [Logging & Admin Service](./microservices/logging-admin-service/README.md) for reporting and refunds.
-5. **Tenant Availability & Limits** – Whether a game can start new instances or accept new logins depends on the tenant’s subscription state and plan entitlements as described in the [Subscription Management Design](./microservices/account-service/subscription-management.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md#tenant-configuration--scaling). When a tenant is suspended for billing, login attempts fail with clear errors until billing is resolved.
-6. **Billing Recovery** – Billing-safe management actions stay reachable even when gameplay is suspended so creators can resolve payment issues without operator intervention. Players see tenant-scoped unavailability errors until the creator restores service.
+1. **V1 Hosting Billing** – The [Account Service](./microservices/account-service/README.md) uses Stripe as the sole supported v1 processor for FireMUD hosting plans and platform subscriptions. Payment checkout, instrument management, subscription changes, and refunds complete through HTTPS account/control-plane or provider-hosted flows, not inside the gameplay protocol.
+2. **Tenant Availability & Limits** – Whether a game can start new instances or accept new logins depends on the tenant's hosting-subscription state and plan entitlements as described in the [Subscription Management Design](./microservices/account-service/subscription-management.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md#tenant-configuration--scaling). When a tenant is suspended for billing, login attempts fail with a clear tenant-scoped error.
+3. **Billing Recovery** – Billing-safe management actions remain reachable to the authorized billing owner while gameplay is suspended so the owner can inspect status, resolve payment issues, cancel, or transfer billing ownership without operator intervention. Players continue to see tenant-scoped unavailability until service is restored.
+4. **Creator Monetization Deferred** – Player purchases, paid game subscriptions, creator donations, revenue sharing, platform fees on creator transactions, and payouts are not v1 product capabilities. They require a separate marketplace and settlement decision covering merchant of record, creator verification and tax, fees, reserves, payouts, refunds, chargebacks, negative balances, and support.
+5. **No External Entitlement Evidence** – Receipts or payment claims from off-platform systems cannot create FireMUD-managed access. If player commerce is accepted later, Account grants an entitlement only after verified, idempotent provider webhook or reconciliation completion. A future refund may revoke access or unconsumed conserved value, but consumed or transferred value requires an explicit recorded divergence and approved debt, restriction, or support policy rather than pretend deletion.
+6. **Audit and Reconciliation** – Supported transactions, provider events, billing-state changes, refunds, and recovery actions retain audit correlation and operational reconciliation evidence through Account and the [Logging & Admin Service](./microservices/logging-admin-service/README.md).
 
 ```plaintext
 Player → Account Service → Logging & Admin Service

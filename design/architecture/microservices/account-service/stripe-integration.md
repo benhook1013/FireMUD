@@ -1,115 +1,107 @@
 # Stripe Integration Design
 
-This document describes how the Account Service integrates with **Stripe** to handle payments, donations, and subscriptions for FireMUD in a multi-tenant, auditable way.
+This document defines the Account Service's Stripe integration for FireMUD's own hosting-plan and platform-subscription billing. [ADR 0143](../../decisions/adr-0143-stripe-v1-hosting-billing-and-deferred-creator-monetization.md) makes Stripe the sole supported v1 processor and defers creator monetization behind a separate marketplace and settlement decision.
 
-At a high level, the goals of the integration are:
+## Product Boundary
 
-- Provide a consistent payment abstraction for tenants while using Stripe as the underlying gateway.
-- Support one-time purchases, recurring subscriptions, and optional donations.
-- Keep sensitive Stripe data and API keys confined to the Account Service boundary.
-- Ensure idempotent, auditable payment flows that cooperate with existing saga and multi-tenancy patterns.
+V1 supports the billing relationship between FireMUD and the account that pays to host a tenant. The integration must:
+
+- keep Stripe credentials, customer references, payment instruments, provider events, and reconciliation inside the Account Service boundary;
+- use provider-hosted or first-party HTTPS billing flows;
+- maintain authoritative hosting-subscription state and propagate billing availability and quota changes;
+- process provider events idempotently and reconcile internal state with Stripe;
+- preserve billing-safe management when tenant gameplay is denied; and
+- retain auditable correlation between FireMUD requests, provider resources, provider events, state transitions, and operator recovery.
+
+FireMUD does not build a speculative provider-neutral payment framework. A future provider requires a reviewed integration that defines its provider-specific lifecycle, security, idempotency, reconciliation, migration, and operational behavior.
+
+Player purchases, paid game subscriptions, creator donations, revenue sharing, platform fees on creator transactions, and creator payouts are not v1 product capabilities. Existing generic payment or donation APIs do not widen this boundary.
 
 ## Implementation Notes
 
-The `purchase_entitlement` and account-deletion billing-owner precondition contracts below are canonical target-state behavior. Current payment code records payment transactions, donations, refunds, platform fees, and creator shares, but still needs durable purchased-entitlement fulfillment/revocation and active-subscription deletion guards.
+Current implementation is partial and conflicts with the accepted scope in both directions. Account can create live Stripe PaymentIntents, invoke Stripe refunds, store `payment_transaction` rows, flag a transaction as a donation, compute the configured 5% application fee and remaining creator share, and create local subscription rows. Focused unit tests cover parts of the fee arithmetic and service calls.
 
-## Domain Model
+The implementation does not demonstrate verified Stripe webhook processing, durable idempotent fulfillment, provider reconciliation, purchase entitlements, creator onboarding, payouts, settlement, reserves, tax handling, chargebacks, negative balances, or complete hosting-subscription enforcement. The local subscription creation path does not itself prove a Stripe subscription lifecycle. Generic PaymentIntent, donation, creator-share, and refund surfaces are partial implementation substrate, not supported marketplace behavior.
 
-The Account Service owns billing records and maps them to Stripe resources while keeping `accountId` and `tenantId` as the primary internal keys:
+## V1 Domain Model
 
-- `payment_transaction`  
-  - Represents a single payment attempt or completed charge, including one-time purchases, hosting fees, and donations.  
-  - Key fields: internal ID, `accountId`, optional `tenantId`, `amount_cents`, `platform_fee_cents`, `creator_share_cents`, `status` (`pending`, `succeeded`, `refunded`, `failed`), `provider` (`stripe`), and `provider_id` (Stripe `payment_intent` ID).  
-  - Records whether the transaction is a `donation` and which internal entity it relates to (for example, hosting subscription, in-game item purchase).
+The Account Service owns billing records and maps them to Stripe resources while retaining FireMUD's `accountId` and `tenantId` as internal authority keys:
 
-- `purchase_entitlement`  
-  - Represents the durable product grant created by a successful one-time purchase when the product has ongoing account, tenant, character, virtual-currency, or gameplay value.  
-  - Key fields: internal ID, `accountId`, `tenantId`, optional `characterId`, `product_code`, `grant_status` (`pending`, `active`, `revoked`, `consumed_nonrevocable`), `payment_transaction_id`, `provider_event_id`, `granted_at`, and optional `revoked_at` / `revocation_reason`.  
-  - This table is the entitlement authority for one-time purchases. `payment_transaction` remains the financial/provider audit record and must not be treated as proof that gameplay value is currently active.
+- `subscription` represents the recurring hosting agreement between FireMUD and the billing-owner account for one tenant. It records the plan, authoritative lifecycle state, provider subscription and customer references, billing periods, selected account-owned payment-instrument reference, and monotonic billing-state version or sequence.
+- `billing_customer` maps one global account to its Stripe customer reference. It does not make customer-wide defaults authoritative for an established tenant subscription.
+- `payment_instrument` stores only Stripe references and provider-approved display metadata. FireMUD never stores raw card numbers, security codes, or equivalent payment credentials. Each hosting subscription explicitly records its selected instrument.
+- `payment_transaction` records charge, refund, and provider evidence needed for hosting billing, audit, and reconciliation. A transaction row is not gameplay access or purchased-product entitlement authority.
 
-- `subscription`  
-  - Represents a recurring billing agreement between a creator (platform account) and the platform for a specific tenant’s hosting plan.  
-  - Key fields: internal ID, `accountId`, `tenantId`, `plan_code`, `status` (`trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`), current period start/end, `provider_subscription_id` (Stripe `subscription` ID), `provider_customer_id` (Stripe `customer` ID), and the explicit account-owned payment-instrument reference selected for that subscription.
-  - Plan metadata defines quota-related attributes (for example, maximum active sessions, world size tiers) that the platform uses to drive per-tenant resource limits as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md#tenant-configuration--scaling).
+Absence of a subscription row is not implicit free hosting. Free or trial hosting is an explicit plan and entitlement state.
 
-- `billing_customer`
-  - Maps one global `accountId` to its Stripe customer ID so the account has one consistent provider identity across tenants.
+## Hosting Subscription Flow
 
-- `payment_instrument`
-  - Represents an account-owned Stripe PaymentMethod reference plus provider-approved display metadata. FireMUD never stores raw card numbers, security codes, or equivalent payment credentials.
-  - A saved instrument may be selected by several subscriptions owned by the same account, but each subscription records that selection explicitly. Established subscriptions must not fall back to a mutable customer-wide default.
+1. An authenticated billing owner selects a hosting plan and payment instrument through an HTTPS account/control-plane flow. Caller-bound routes derive account identity from authentication and accept only the tenant and plan selection they need.
+2. Account verifies current billing ownership and tenant membership, creates or reuses the account's Stripe customer, and explicitly binds the selected account-owned instrument to the tenant subscription.
+3. Account creates or updates the corresponding Stripe subscription with an idempotency key and persists the pending internal workflow state and provider correlation.
+4. Verified Stripe webhook events drive committed subscription transitions. Relevant event families include successful or failed invoices and subscription updates or deletion.
+5. An idempotent handler records each provider event, rejects invalid signatures, applies only valid state transitions, advances the tenant's billing version or sequence, and emits the outbox events used by tenant availability and quota enforcement.
+6. Reconciliation compares FireMUD's records with Stripe and repairs or escalates missing, delayed, reordered, or conflicting event delivery without silently inventing success.
 
-## Payment Flows
+Duplicate provider delivery must have no additional effect. Out-of-order delivery cannot move the subscription backward to an invalid lifecycle state. A client redirect, PaymentIntent client secret, or provider object observed by another service never substitutes for the verified webhook and reconciliation boundary.
 
-All payment flows follow the same high-level pattern: create or reuse a Stripe customer, create a Payment Intent or Subscription in Stripe, persist internal records, and rely on Stripe webhooks to finalize state transitions.
+## HTTPS Billing and Gameplay Denial
 
-New real-money charges, saved-instrument changes, subscriptions, refunds, billing-owner transfers, and payouts complete through the HTTPS account/control plane and provider-hosted flows. A Telnet or other gameplay client may explicitly initiate an eligible purchase and receive a short-lived, single-use opaque HTTPS checkout URL bound server-side to the authenticated account, gameplay session, tenant, action, product, immutable amount and currency, and request ID. The URL carries no payment credential and cannot change its bound purchase. Gameplay receives completion only after Account verifies the provider result, applies the idempotent transaction/entitlement workflow, and publishes the outcome.
+New charges, saved-instrument changes, subscription changes, refunds, cancellation, and billing-owner transfers complete through HTTPS account/control-plane or provider-hosted flows. Telnet and other gameplay protocols never collect payment credentials.
 
-### One-Time Purchases and Donations
+If a future approved product permits an in-game action to initiate checkout, gameplay may receive only a short-lived, single-use opaque HTTPS URL bound server-side to the authenticated account, gameplay session, tenant, exact action, immutable amount and currency, and request ID. The URL carries no payment credential and cannot change its bound action. Gameplay learns completion only from Account after the supported provider workflow reaches its authoritative state.
 
-1. A service calls `CreatePaymentIntent` on the Account Service with `accountId`, optional `tenantId`, `amount_cents`, and purchase context (for example, donation vs one-time purchase).  
-2. The Account Service looks up or creates a Stripe customer for the account and calls Stripe to create a `PaymentIntent`.  
-3. A `payment_transaction` row is created in `pending` status with the returned `payment_intent` ID recorded as `provider_id`.  
-4. The client completes payment using Stripe’s client-side flow (for example, via Stripe.js); Stripe later calls a configured webhook when the intent succeeds or fails.  
-5. The webhook handler in the Account Service:
-   - Verifies the webhook signature.  
-   - Locates the `payment_transaction` row by `provider_id`.  
-   - Sets `status` to `succeeded` or `failed` and records Stripe failure codes where applicable.  
-   - For product purchases that grant ongoing value, idempotently creates or activates the corresponding `purchase_entitlement` row using the Stripe event ID and product grant key as fulfillment idempotency inputs.  
-   - Emits domain events or saga steps so other services (for example, Logging & Admin, in-game unlocks) can react.
+A tenant's billing state may deny new instance starts, gameplay admission, or active gameplay according to the subscription policy. That denial must not remove the authorized billing owner's separate billing-safe ability to inspect status, update payment details, resolve failed payment, cancel or transfer billing responsibility, or obtain the allowed tenant billing-safe export. These routes remain tenant scoped, authenticated, audited, and unavailable to ordinary players.
 
-Refunds call Stripe’s `Refund` API and update the `payment_transaction` `status` to `refunded`, enabling chargeback handling workflows. If the refunded payment created a `purchase_entitlement`, the refund workflow must revoke that entitlement unless it has already been consumed under a product contract that is explicitly non-revocable. Non-revocable consumption must be recorded as `consumed_nonrevocable` with a reason so support, audit, and revenue-sharing reports can explain why financial refund and product state diverged.
+## Billing Ownership and Tenant Isolation
 
-### Subscriptions and Hosting Plans
+- Each billed tenant has one primary hosting-subscription record and one explicit billing-owner account.
+- Account deletion is blocked while that account owns any nonterminal tenant subscription. The owner must cancel terminally or complete an audited ownership transfer first.
+- Saved instruments belong to an account, not to a tenant or tenant role. A `tenantAdmin` role alone cannot inspect or mutate another account's instruments.
+- Established subscriptions explicitly bind an instrument. Changing a mutable customer-wide default does not silently change another tenant's funding source.
+- Detaching an instrument is rejected while a subscription references it unless the same idempotent workflow successfully installs replacements for every affected subscription.
+- Billing-owner transfer rebinds the subscription to the new owner's Stripe customer and explicitly selected instrument. Payment instruments never transfer between accounts.
+- Tenant-scoped queries filter by the authoritative account and tenant relationship. Cross-tenant billing and support operations use separate restricted APIs with actor, target, reason, and outcome audit.
+- Stripe API keys and webhook secrets remain confined to Account. Other services consume Account-owned billing state and events rather than communicating with Stripe directly.
 
-Subscription creation, lifecycle, and entitlements are covered in more detail in the [Subscription Management Design](./subscription-management.md). At a high level:
+## Refunds, Audit, and Reconciliation
 
-1. A creator chooses a hosting plan for a tenant in the admin UI; the caller-bound tenant variant of `CreateSubscription` derives actor identity from auth context and accepts `tenantId` plus `plan_code` only. Cross-tenant billing/admin workflows use separate admin variants when acting on another account or tenant.  
-2. The Account Service ensures a Stripe customer exists for the billing-owner account, requires that subject to select one of its own saved payment instruments, and sets that instrument explicitly on the Stripe subscription.
-3. An internal `subscription` row is created or updated with `status` based on the Stripe subscription’s state and linked to the Stripe `subscription` ID.  
-4. Stripe webhooks (`invoice.payment_succeeded`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`) drive subsequent state transitions and keep the internal `subscription` table in sync.  
-5. Changes to `subscription.status` are propagated to tenant-management and quota-enforcement components so that tenant availability and resource limits reflect the current billing state. For transitions into hard cutoff states such as `suspended` or `canceled`, the webhook pipeline drives `SubscriptionStatusChanged` and `TenantBillingStateChanged` domain events that downstream services consume to revoke gameplay sessions and advance tenant-scoped auth generation as described in [Subscription Management](./subscription-management.md#tenant-availability-and-quota-enforcement) and [Authentication & Authorization](../../system-architecture-authentication.md#session-and-identity-management).
+Hosting refunds use the Stripe refund API and an idempotent internal workflow. A successful API response alone is not permission to rewrite every related state optimistically. Account records the provider correlation, follows the authoritative provider lifecycle, updates financial records, applies the hosting policy, and emits auditable state changes. Refunds, disputes, reconciliation repairs, and operator intervention retain request, actor, tenant, provider-resource, provider-event, reason, and outcome correlation.
 
-## Multi-Tenancy and Security
+Operational metrics and alerts cover at minimum:
 
-Stripe integration must preserve tenant isolation while allowing platform-level reporting:
+- Stripe API and webhook verification failures;
+- event-processing retries, dead letters, duplicates, age, and ordering conflicts;
+- reconciliation lag and unresolved provider/internal drift;
+- subscriptions in `past_due`, grace, suspended, or inconsistent states;
+- billing-state propagation lag to tenant admission and quota enforcement; and
+- failed refunds, cancellation, or billing-owner transfers.
 
-- Each hosted game (`tenantId`) that requires billing has exactly one primary subscription record linking `accountId` and `tenantId`.  
-- Account deletion is blocked while the account owns any nonterminal tenant subscription (`trialing`, `active`, `past_due`, `grace`, or `suspended`). The creator must first cancel terminally or transfer billing ownership for every affected tenant; the platform must not delete the account and leave Stripe subscriptions, shared payment instruments, or tenant billing ownership orphaned.  
-- Stripe customer IDs and saved instruments are per-account, not per-tenant, to reduce duplication. Every tenant subscription nevertheless binds one selected instrument explicitly, so changing tenant A’s subscription does not change what tenant B will be charged.
-- Instrument listing, attachment, and detachment are account-scoped operations available to the authenticated billing-owner subject. A `tenantAdmin` role alone does not reveal or mutate another account’s instruments. Global `billingAdmin` or `platformAdmin` intervention uses an explicit cross-tenant billing route with actor, target account, affected subscriptions, reason, and outcome audit.
-- Detaching an instrument is rejected while any subscription references it unless the same idempotent workflow supplies and successfully installs a replacement for every affected subscription. The owner sees the safely displayable affected tenant/subscription set; it is not exposed to unrelated tenant operators.
-- Billing-owner transfer rebinds the subscription to the new owner’s Stripe customer and explicitly selected instrument. Saved instruments never transfer between accounts.
-- Customer-wide provider defaults may be used during initial setup convenience but are not authority for an established FireMUD subscription. Provider webhook processing and reconciliation verify the recorded per-subscription binding.
-- If a future product requirement needs tenant-isolated payment instruments, the platform must move to tenant-scoped billing customers rather than treating the current account-owned wallet as implicitly tenant-safe.
-- Internal queries always filter billing records by both `accountId` and `tenantId` when operating on tenant-specific subscriptions or transactions. Cross-tenant reports are restricted to roles with appropriate `globalRoles` as defined in the shared role model:
-  - `platformAdmin` for full cross-tenant reporting, and
-  - `billingAdmin` for billing-focused reporting surfaces.
-  Cross-tenant support troubleshooting is exposed only through explicitly support-safe variants (`cross_tenant_support_safe`) with high-level redacted fields. These rules are enforced by the Tenant Authorization Contract.  
-- Stripe API keys, webhook secrets, and any PCI-relevant configuration remain confined to the Account Service. Other services never communicate with Stripe directly.
+During a Stripe outage, new charges and billing mutations fail closed. Existing tenants remain in their last authoritative state until the explicit grace and cutoff policy changes it; an outage is not treated as either confirmed payment or confirmed cancellation.
 
-## Service APIs
+## Deferred Marketplace and Entitlement Boundary
 
-The Account Service exposes gRPC and REST endpoints for initiating and inspecting billing flows:
+Creator monetization requires a later marketplace and settlement decision before implementation is enabled. That decision must define merchant of record, creator identity verification and KYC, sanctions, tax and reporting, supported regions and currencies, provider and platform fees, payout timing, reserves and holds, failed payouts, refunds, disputes, chargebacks, fraud, negative balances, account closure, support ownership, and ledger reconciliation.
 
-- `CreatePaymentIntent` – Initiate a one-time payment or donation and return the client-facing Stripe Payment Intent details.  
-- `RefundPayment` – Issue a refund for an existing `payment_transaction` and update its status.  
-- `CreateSubscription` – Start or update a recurring hosting subscription for a specific `tenantId` and `plan_code`.  
-- Subscription and transaction query APIs – Must be split into explicit tenant-scoped billing-safe, cross-tenant support-safe, and cross-tenant billing-safe variants (no mixed-mode endpoint behavior). Per-tenant caller-bound billing history is visible to `tenantAdmin`; global `platformAdmin`/`billingAdmin` access uses cross-tenant billing-safe variants only.
+Off-platform receipts, creator assertions, payment links, or callbacks from an unintegrated provider cannot create FireMUD-managed entitlements. If marketplace commerce is later accepted:
 
-All endpoints are protected by JWT-based auth, and tenant-scoped operations must validate that the caller is allowed to act on the specified `tenantId` using the Tenant Authorization Contract from [Authentication & Authorization](../../system-architecture-authentication.md#tenant-authorization-contract).
+- a verified supported-provider webhook or reconciliation result must pass through an idempotent fulfillment workflow before an entitlement becomes active;
+- raw financial records remain separate from the durable entitlement authority;
+- consumers check that entitlement authority rather than a transaction row or client-reported success;
+- duplicate fulfillment, missed events, reversal races, and reconciliation repair must be proved; and
+- refund handling distinguishes revocable access, unconsumed conserved value, and consumed or transferred value.
 
-## Operational Concerns
+Revocable access may be disabled after the refund or dispute reaches the defined authoritative state. Identifiable unconsumed value may be removed without violating conservation. Consumed or transferred value cannot be represented as deleted; the system records the financial/product-state divergence and applies the separately approved debt, restriction, reserve, negative-balance, or support policy.
 
-Operational behavior around Stripe integration focuses on observability, idempotency, and resilience:
+## Service Surface
 
-- Webhook handlers are idempotent and keyed by Stripe event IDs; repeated deliveries do not change internal state after the first successful application.  
-- Metrics track payment and subscription statuses (for example, counts of `payment_transaction` by `status`, and subscriptions in `past_due` or `grace` states).  
-- Alerts fire when webhook processing fails repeatedly, when Stripe API calls start failing at elevated rates, or when the number of tenants in `grace` or `suspended` billing states exceeds thresholds.  
-- During Stripe outages, new purchases and subscription changes fail closed, but existing tenants remain in their last-known-good state until internal policies (for example, maximum grace period) dictate otherwise. Where possible, the same webhook pipeline that updates subscription state also emits the revocation events described above, so failures in that pipeline are observable and can be correlated with potential entitlement enforcement drift.
+The accepted v1 target exposes authenticated hosting-subscription, billing-customer, payment-instrument, billing-history, refund, cancellation, owner-transfer, and billing-safe recovery operations. Tenant caller-bound, cross-tenant support-safe, and cross-tenant billing-safe variants remain separate rather than changing behavior according to optional request fields.
 
-For current requirements and additional context, see:
+Current generic `CreatePaymentIntent`, `CreateDonation`, and related refund methods are implementation reality, not the canonical public product contract for creator monetization. They must not be exposed or documented as supported player-commerce capabilities unless the later marketplace and settlement decision accepts their semantics and the required proof is complete.
+
+For related requirements and contracts, see:
 
 - [Core Requirements – Monetization](../../../project-management/core-requirements.md#2.8-moderation-administration--monetization)
 - [Subscription Management Design](./subscription-management.md)
+- [Account Service Runtime and Data](./runtime-and-data.md)
 - [Account Service README](./README.md)

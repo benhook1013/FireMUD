@@ -342,14 +342,14 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 - **ADR:** [ADR 0141](../../architecture/decisions/adr-0141-fixed-safety-restriction-categories-and-independent-lifecycles.md) records the category, scope, stacking, revision, notice, and owner-local enforcement contract.
 - **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. Generic action rows, legacy aliases, synchronous policy reads, missing owner-local records/fencing, Account-wide lifecycle separation, player notices, reports, block/ignore, and complete proof remain gaps.
 
-#### `COMMERCE-01` - Stripe-only payments with explicit fee and entitlement reversal semantics
+#### `COMMERCE-01` - Stripe-only v1 hosting billing with creator monetization deferred
 
 - **Capability:** Primary `AA-1.4` Commerce, subscriptions, purchases, donations, and platform fees. Secondary `AA-1.5`, `PO-1.3`, and `EA-3.3`.
-- **Decision / status / importance:** Use Stripe as the payment provider in the journey, disallow external payment methods for the product path, apply the stated platform fee, and model refunds as entitlement revocations while keeping billing-safe management reachable when gameplay is unavailable. Status `needs-human-review`; `H/hard`.
+- **Decision / status / importance:** Stripe is the sole supported v1 processor for FireMUD hosting plans and platform subscriptions, without a speculative provider-neutral abstraction. Creator monetization, player purchases/subscriptions, donations, revenue sharing, platform fees, and payouts are deferred behind a marketplace/settlement decision. Off-platform evidence cannot create entitlements, and future refunds must distinguish reversible access/value from consumed or transferred value. Billing-safe management remains reachable. Status `accepted-explicit`; `H/hard`.
 - **Sources / headings:** [user-journeys-players.md](../../architecture/user-journeys-players.md) `§ 6. Purchases and Subscriptions`; [user-journeys-creators.md](../../architecture/user-journeys-creators.md) `§ 1. Game Creation` and `§ 4. Publish and Start a Game Instance`; [user-journeys-operators.md](../../architecture/user-journeys-operators.md) `§ 1. Monitoring and Moderation`.
-- **Strongest alternative:** Support multiple providers or external payment links, use no platform fee, or make purchased entitlements irreversible after refund.
-- **ADR recommendation:** Yes. Record provider ownership, fee policy, entitlement state transitions, refund/revocation behavior, and billing-safe availability.
-- **Human consultation:** Yes; finance, legal, product, creator, and support owners must approve this commercial boundary.
+- **Strongest alternative:** Build a provider-neutral core now and launch creator monetization on the existing PaymentIntent surface. That increases provider flexibility but assumes unsettled merchant-of-record, KYC/tax, payout, dispute, fraud, and entitlement semantics.
+- **ADR:** [ADR 0143](../../architecture/decisions/adr-0143-stripe-v1-hosting-billing-and-deferred-creator-monetization.md) records the accepted hosting-billing scope and the marketplace/settlement adoption gate.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. PaymentIntent/refund/5%-share arithmetic exists, but verified webhooks, reconciliation, hosting-subscription convergence, entitlements, payouts, settlement, and end-to-end proof remain absent or partial.
 
 #### `DATA-01` - Export and deletion are account-governed and subscription-aware
 
