@@ -106,9 +106,9 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
 | 5 | Gameplay and player experience | 21 | 21 | `completed` |
-| 6 | Operations and delivery | 18 | 25 | `in-progress` |
+| 6 | Operations and delivery | 19 | 25 | `in-progress` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **155** | **183** | `in-progress` |
+| **Total** | | **156** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -323,7 +323,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `CAPACITY-02` — `revised` on 2026-07-20; [ADR 0158](../../architecture/decisions/adr-0158-service-owned-retention-classes-with-cross-service-safety.md)
 - [x] `TEST-01` — `revised` on 2026-07-20; [canonical Redis test proof boundary](../../architecture/system-architecture-testing.md#redis-in-tests)
 - [x] `TEST-02` — `revised` on 2026-07-20; [ADR 0159](../../architecture/decisions/adr-0159-three-boundary-profile-aware-verification-evidence.md)
-- [ ] `TEST-03`
+- [x] `TEST-03` — `accepted` on 2026-07-20; [scoped load-test promotion contract](../../architecture/system-architecture-testing.md#high-concurrency-load-testing)
 - [ ] `MS-OPS-AVAILABILITY-PARTITION`
 - [ ] `MS-PO-OWNER-REMEDIATION`
 - [ ] `SCRIPT-14`

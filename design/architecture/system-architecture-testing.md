@@ -178,11 +178,15 @@ These tests validate saga orchestration logic, and the `crossServiceTest` Gradle
 
 GitHub Actions executes formatting and lint checks, builds the code, and runs all unit and integration tests via `:service-name:check` for each module. Coverage reports are generated and a Trivy security scan is executed. See the [CI/CD Pipeline](./system-architecture-cicd.md) document for the workflow definition.
 
-Full high-concurrency load testing is executed on demand outside of CI and does not block deployments. CI may run a small smoke-load profile to catch regressions, but it should not be treated as a substitute for deliberate performance testing.
+Full high-concurrency load testing is executed on demand or in a dedicated environment and is not a default pull-request or deployment gate. CI may run a small smoke-load profile to catch obvious regressions, but it is functional/regression evidence rather than capacity, soak, or production-SLO proof.
 
 ### High-Concurrency Load Testing
 
-Gatling scenarios simulate thousands of concurrent connections to measure service limits and uncover bottlenecks. Results guide scaling decisions and database indexing.
+Representative Gatling or equivalent campaigns measure service limits and uncover bottlenecks across the selected deployment profile, workload mix, topology, persistence settings, duration/soak, and failure conditions. “Full high-concurrency” is defined by that explicit campaign, not by one platform-global client count.
+
+A campaign becomes a blocking gate only through an explicit capacity, autoscaling, admission, or SLO policy. The policy identifies the affected release/profile, workload, thresholds, artifact and environment identity, evidence freshness, and acceptable variance. Appropriate promotion triggers include publishing a capacity/SLO promise, enforcing a measured scaling or admission threshold, materially changing a throughput-critical path, increasing region density, tightening tick cadence, or allowing required evidence for a claimed profile to expire.
+
+Once promoted, failure or stale evidence blocks only the affected release or profile. Ordinary bounded concurrency correctness remains a normal deterministic gate, while unrelated changes do not pay for a full load environment by default. Production-capacity campaigns must use the applicable persistence and replication topology; an ephemeral campaign can provide comparative regression data but cannot prove the production Redis loss or recovery envelope.
 
 ### Security Testing
 

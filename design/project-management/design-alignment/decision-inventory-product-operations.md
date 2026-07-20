@@ -289,11 +289,11 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `TEST-03` - Full high-concurrency load tests are non-blocking unless promoted
 
 - **Capability:** Primary `PO-4.3`. Secondary `PO-3.1` and `PO-4.2`.
-- **Decision / status / importance:** Full high-concurrency load tests run on demand or in a dedicated environment and are not a default blocking CI step. A smoke load check cannot substitute for full load proof; release blocking begins only when an explicit capacity or SLO policy promotes the test. Status `accepted-implicit`; `H/med`.
+- **Decision / status / importance:** Full representative load campaigns run on demand or in a dedicated environment and are not default PR/deployment gates. Smoke load proves only bounded correctness/regression. A campaign becomes a scoped gate only when an explicit capacity, autoscaling, admission, or SLO policy defines its profile, workload, topology, persistence, thresholds, freshness, and affected release. Status `accepted-explicit`; `H/med`.
 - **Sources / headings:** [system-architecture-testing.md](../../architecture/system-architecture-testing.md) `§ High-Concurrency Load Testing`, `§ CI/CD Integration`, and `§ Where These Checks Run (Decision)`; [system-architecture-scaling-runbook.md](../../architecture/system-architecture-scaling-runbook.md) `§ Capacity Model (Required Inputs)`.
-- **Strongest alternative:** Block every promotion on a full load test or omit load testing and rely on unit/integration checks.
-- **ADR recommendation:** Yes before a load result becomes a release gate; otherwise cross-reference `CAPACITY-01`.
-- **Human consultation:** Yes; operations and product owners must choose the cost, cadence, and gate threshold.
+- **Strongest alternative:** Block every promotion on a full load campaign, or never gate and allow capacity evidence to become stale after performance-sensitive changes.
+- **ADR recommendation:** No ADR for the current non-gating posture; a policy that promotes a campaign to a capacity/SLO gate must record the concrete promise and evidence contract and cross-reference `CAPACITY-01`.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `accepted`. The owner accepted dedicated testing cost only when FireMUD makes a corresponding scoped capacity or SLO claim.
 
 ### Creator, Player, And Governance Journeys
 
