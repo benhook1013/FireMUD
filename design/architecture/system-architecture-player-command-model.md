@@ -45,6 +45,10 @@ The generic runtime owns only the effect engine:
 
 It does not execute arbitrary DML text, Java snippets, or unvalidated payloads. New behavior is made available by registering a safe effect kind and schema in the platform, then declaring version-scoped effect instances as Game Design data.
 
+This is also the command extensibility boundary. A future bounded declarative plan grammar may compose registered predicates and effect primitives, but each new fact source or mutation primitive still requires an explicit typed platform contract and owning-service enforcement. Sandboxed scripts and plugins may request the same registered commands through the Automation pathway; they are not invoked as arbitrary code inside the hot gameplay process and cannot bypass Game Logic target resolution or domain-owner mutation checks. Foundational hot-path invariants remain typed platform behavior rather than creator-defined scripts.
+
+Routine gameplay relies on authenticated service transport, scoped execution context, immutable declaration identity, and owner-side validation. It does not require a separately signed authorization artifact for every internal action. Separately classified account, operator, billing, or real-currency operations may impose stronger authorization or step-up requirements at their owning boundaries without charging that cost to every gameplay effect.
+
 Seeded platform commands and tenant/game-authored commands use the same declaration shape. Built-ins are canonical seed data, not permanently privileged Java-only command-to-handler mappings. A command may compose multiple declared effects only when its effect schema defines their ordering and transactional boundary explicitly.
 
 ### Versioned Declaration Lifecycle
