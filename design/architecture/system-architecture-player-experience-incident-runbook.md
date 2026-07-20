@@ -11,7 +11,7 @@ This runbook describes operator actions for **player-facing SLO breaches** on lo
 
 Use Grafana/Kibana/Jaeger when available. If any observability backend is degraded, follow the fallback procedures in `system-architecture-observability-incident-runbook.md` and the degraded-mode branches in each scenario below.
 
-Synthetic canary identities used in this runbook should be treated as operational probes, not normal players. Operator workflows should keep them out of routine moderation, behavior review, and player-facing analytics unless an incident specifically involves canary validation.
+Synthetic canary identities used in this runbook are operational probes, not ordinary players. They remain subject to authentication, abuse controls, moderation, security monitoring, and durable audit. Validated canary traffic is excluded only from product analytics, ordinary player-behavior interpretation, and live-player SLO denominators.
 
 ## Trace Preconditions (For Latency/Tick Root Cause)
 

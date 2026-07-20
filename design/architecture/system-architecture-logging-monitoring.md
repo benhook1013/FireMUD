@@ -227,9 +227,9 @@ The metrics below are the desired Prometheus-facing shapes for player experience
 - Chat:
   - `chat_delivery_latency_ms_bucket{scope,channel_type,le}` with bounded `scope` and `channel_type` drawn from a bounded enum (global/zone/party/system, etc.).
 
-### Synthetic Player-Flow Canaries (Target-State Prod-Like Contract)
+### Synthetic Player-Flow Canaries (Profile-Aware Target Contract)
 
-Live-traffic SLIs remain the authoritative compliance view for player experience, but they are not sufficient to detect outages in low-traffic periods or low-volume environments. Prod-like environments must also run **independent synthetic canaries** for the most critical player flows:
+Live-traffic SLIs remain the authoritative compliance view for player experience, but they are not sufficient to detect outages in low-traffic periods. Hosted profiles claiming player-experience monitoring run **independent synthetic canaries** for the most critical player flows. Hobby, single-node, and small profiles may run the same harness locally or omit continuous independent canaries with an explicit weaker detection posture.
 
 - Required flows:
   - `flow="login"` for an end-to-end login through each public entry path.
@@ -240,19 +240,22 @@ Live-traffic SLIs remain the authoritative compliance view for player experience
 - Metric mirror contract:
   - `playerflow_canary_success{flow,path,target}` – boolean-like result for the most recent synthetic run as mirrored into Prometheus.
   - `playerflow_canary_latency_ms{flow,path,target}` – latency of the synthetic run in milliseconds, mirrored into Prometheus as a gauge or histogram-derived recording.
+  - `playerflow_canary_last_run_timestamp_seconds{path,target}` – freshness of the last trustworthy completed run so a stopped or stale runner cannot disappear silently.
 - Cardinality constraints:
   - `flow` and `path` are bounded enums.
   - `target` identifies the monitored environment endpoint and must remain low-cardinality.
   - Do not label these metrics with canary account IDs, character IDs, tenant IDs, or trace IDs.
 - Operational contract:
-  - The canary must use a dedicated non-player identity and data set that is safe to exercise continuously.
-  - Canary identities must be clearly marked as synthetic in the authoritative account/session model and must be excluded from normal moderation, analytics, and player-behavior workflows except when explicitly debugging canary failures.
+  - Each monitored transport uses a separate restricted synthetic character and isolated, deterministic canary data so overlapping WebSocket and Telnet probes cannot trigger one-session takeover against each other.
+  - Synthetic identities are marked authoritatively and remain subject to authentication, abuse protection, authorization, moderation, security monitoring, and durable audit. Synthetic status is never a security bypass.
+  - Validated canary traffic is excluded only from product analytics, ordinary player-behavior interpretation, and live-player SLO denominators.
+  - Provisioning, least-privilege access, credential delivery/rotation/revocation, deterministic reset, and retirement are supported lifecycle operations; production credentials are never seeded defaults.
   - These canaries are an outage-detection path, not the primary SLO compliance metric. They complement, but do not replace, `login_requests_total` and `command_end_to_end_latency_ms_bucket`.
-  - The canary execution system should live outside the normal player request path failure domain where practical, and must alert independently from live-traffic volume.
+  - Hosted execution integrates with the independent monitoring profile and must alert independently from live-traffic volume. Omitted profiles do not claim continuous independent journey detection.
 
-#### Canary Alert Contract (Target-State Prod-Like Contract)
+#### Canary Alert Contract (Profile-Aware Target Contract)
 
-To keep synthetic canaries actionable instead of merely visible, prod-like environments must install a canonical alert set for canary failures:
+To keep synthetic canaries actionable instead of merely visible, profiles claiming continuous player-experience monitoring install a canonical alert set for canary failures and freshness:
 
 - Required alert families:
   - `PlayerFlowCanaryLoginFailed`
@@ -264,11 +267,12 @@ To keep synthetic canaries actionable instead of merely visible, prod-like envir
   - `service` should preserve the runtime entry-path emitter identity where the alert expression is service-specific; otherwise use `component="playerflow-canary"` to keep routing explicit without inventing ad hoc service names.
   - `runbook` must point to the player-experience or incident response runbook section that explains how to validate whether the canary reflects a real outage versus canary-only breakage.
 - Severity requirements:
-  - `PlayerFlowCanaryLoginFailed` should use `severity="P0"` because it indicates end-to-end login unavailability on a monitored public path even when live traffic is sparse.
+  - One failed sample or one broken synthetic identity is not immediately P0. A sustained, fresh, confirmed complete-login failure may use `severity="P0"` even without live traffic; isolated, stale, credential, fixture, or runner failures use the appropriate monitoring-degradation severity.
   - `PlayerFlowCanaryCommandFailed` should use `severity="P1"` because it indicates in-session gameplay degradation on a monitored public path, but does not by itself prove a total entry outage.
   - `PlayerFlowCanaryLatencyHigh` should use `severity="P1"` because it indicates sustained player-visible degradation on a monitored public path without requiring a total failure.
 - Detection requirements:
-  - Success/failure alerts must evaluate on short windows suitable for outage detection and must not rely on live-traffic volume.
+  - Success/failure alerts use the declared cadence and a sustained confirmation window suitable for outage detection rather than paging on one sample.
+  - Missing and stale execution must alert independently from journey failure; a missing series is not healthy and is not proof of player outage.
   - Latency alerts must evaluate `playerflow_canary_latency_ms{flow,path,target}` using millisecond thresholds and preserve the bounded `flow` and `path` labels.
   - Controlled non-production failure injection for each required canary path must be testable without paging production destinations.
 - Relationship to live-traffic SLIs:

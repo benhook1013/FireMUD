@@ -242,18 +242,20 @@ New services and features that add critical metrics or alerts should extend thes
 
 ### Synthetic Player-Flow Canary Checks
 
-Prod-like environments that advertise player-experience monitoring must also validate the synthetic canary path described in the Logging & Monitoring contract:
+Profiles that advertise continuous player-experience monitoring validate the synthetic canary path described in the Logging & Monitoring contract. Hobby and small profiles may instead retain evidence of local execution or an explicit omitted posture:
 
 - Verify `playerflow_canary_success{flow="login",path=...}` exists for each exposed public path.
 - Verify `playerflow_canary_success{flow="command",path=...}` exists for each exposed public path.
 - Verify `playerflow_canary_latency_ms{flow="command",path=...}` is exported with millisecond semantics.
+- Verify last-run freshness is emitted and a stopped, absent, or stale runner becomes monitoring degradation rather than silently disappearing.
 - Verify canary labels remain low-cardinality (`flow`, `path`, `target`) and do not include account IDs, tenant IDs, player IDs, or trace IDs.
+- Verify WebSocket and Telnet use separate restricted characters, both remain subject to security/moderation/audit, and validated synthetic traffic is excluded from product analytics and live-player SLO denominators.
 - Verify the canonical canary alert path can be exercised in non-production without using production paging destinations:
-  - login canary failure trips `PlayerFlowCanaryLoginFailed` with `severity="P0"` (or the documented environment-equivalent canonical alert),
+  - one failed login sample does not page P0, while sustained fresh confirmed login-journey failure can trip `PlayerFlowCanaryLoginFailed` with `severity="P0"` (or the documented environment-equivalent canonical alert),
   - representative command failure trips `PlayerFlowCanaryCommandFailed` with `severity="P1"`,
   - controlled latency degradation trips `PlayerFlowCanaryLatencyHigh` with `severity="P1"`,
   - alert labels preserve `owner`, `severity`, and `runbook` from the architecture contract.
-- These checks are required for prod-like observability smoke because live-traffic SLIs alone are not sufficient in low-traffic periods.
+- These checks are required for profiles making the continuous monitoring claim because live-traffic SLIs alone are not sufficient in low-traffic periods.
 
 #### Where These Checks Run (Decision)
 

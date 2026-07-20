@@ -169,6 +169,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0153](./adr-0153-simplified-observability-degradation-without-fallback-alert-authority.md) | Accepted | `PO-4` | `PO-1` | Simplified observability degradation without fallback alert authority |
 | [ADR 0154](./adr-0154-profile-dependent-independent-deadman-and-public-path-monitoring.md) | Accepted | `PO-4` | `PO-2` | Profile-dependent independent deadman and public-path monitoring |
 | [ADR 0155](./adr-0155-staged-profile-aware-player-experience-slo-contract.md) | Accepted | `PO-4` | `PO-2`, `GR-1`, `EA-2` | Staged profile-aware player-experience SLO contract |
+| [ADR 0156](./adr-0156-profile-aware-isolated-synthetic-player-flow-canaries.md) | Accepted | `PO-4` | `EA-3`, `PO-2`, `AA-1` | Profile-aware isolated synthetic player-flow canaries |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 
