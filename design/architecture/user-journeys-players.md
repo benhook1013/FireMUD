@@ -202,15 +202,21 @@ Players communicate and coordinate through the [Social & Groups Service](./micro
 5. **Profanity & Friends** – The Social & Groups Service performs profanity checks, logs communication, and delivers messages. Account-level friends automatically appear in-game when the feature is enabled.
 6. **Player Reporting** – Players can submit an in-game abuse report through the shared moderation/reporting surface. Reports are recorded by the [Logging & Admin Service](./microservices/logging-admin-service/README.md) with the relevant tenant, realm, reported subject, and transcript metadata for operator review.
 7. **Moderation Outcomes** – Moderation actions surface as specific player-visible outcomes rather than a generic "ban" message:
-   - `account_security_ban` blocks account authentication and recovery to the normal account-security path.
-   - `gameplay_ban` blocks `PLAY` for the affected tenant/realm scope with a canonical gameplay denial.
-   - `chat_mute` / `chat_ban` allow gameplay to continue but reject affected messaging commands with canonical chat errors.
+   - Protective `account_security_lock` blocks ordinary account use until the Account-owned security-recovery flow succeeds.
+   - Punitive `platform_access_ban` blocks ordinary platform access and is not cleared by a password reset or successful security recovery.
+   - `gameplay_ban` blocks `PLAY`, new gameplay commands, and active bindings in its exact tenant or realm scope.
+   - Scoped `chat_mute` blocks sending while ordinary receipt continues.
+   - Scoped `chat_ban` blocks ordinary participation, sending, and history access while essential moderation and system notices remain deliverable.
+
+These restrictions stack independently. Recovery, expiry, removal, or correction of one category does not remove any other category. A player-controlled block/ignore action affects that player's social view only, and submitting a report supplies evidence for review; neither action automatically creates a staff restriction.
 
 Canonical player-facing examples:
 
-- `account_security_ban` – `ERROR ACCOUNT_LOCKED Contact support to recover this account.`
+- `account_security_lock` – `ERROR ACCOUNT_LOCKED Complete account security recovery.`
+- `platform_access_ban` – `ERROR PLATFORM_ACCESS_BANNED See the moderation notice for next steps.`
 - `gameplay_ban` – `ERROR GAMEPLAY_BANNED You cannot enter this realm.`
-- `chat_mute` / `chat_ban` – `ERROR CHAT_RESTRICTED You cannot send messages in this realm.`
+- `chat_mute` – `ERROR CHAT_MUTED You cannot send messages in this scope.`
+- `chat_ban` – `ERROR CHAT_BANNED You cannot participate in this communication scope.`
 
 Implementation note:
 

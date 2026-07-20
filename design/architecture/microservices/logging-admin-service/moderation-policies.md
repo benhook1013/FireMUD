@@ -20,10 +20,12 @@ Tenant-configurable word lists, normalization, masking, and bypass detection bel
 
 1. Offending logs or reports are flagged in the Logging & Admin Service dashboards. These dashboards are described in [Analytics Dashboards](./analytics-dashboards.md).
 2. Moderators review the context and determine the severity.
-3. Actions enter through `ApplyModerationAction` gRPC calls (see [`logging_admin_service.proto`](../../../../protos/logging-admin/v1/logging_admin_service.proto)). Logging & Admin durably records the actor, reason, target and scope, exact typed action, payload digest, and one `controlPlaneRequestId` before forwarding. Recording a case or evaluating policy alone does not enforce a restriction.
-4. Under [ADR 0048](../../decisions/adr-0048-durable-idempotent-operator-write-execution.md), Logging & Admin sends the same digest-bound idempotent command to the owner: Game Session for `gameplay_ban` and Social & Groups for `chat_mute` or `chat_ban`. The owner validates current authority and scope and atomically persists a subject-scoped monotonic enforcement record with its idempotent result. Logging & Admin reports success only after owner acknowledgement.
+3. Actions enter through `ApplyModerationAction` gRPC calls (see [`logging_admin_service.proto`](../../../../protos/logging-admin/v1/logging_admin_service.proto)). Punitive ingress accepts only `platform_access_ban`, `gameplay_ban`, `chat_mute`, or `chat_ban`; unknown and legacy generic strings fail closed before successful intent recording or forwarding. Logging & Admin durably records the actor, safe notice/reason, exact subject and scope, case and source action, effective/expiry time, monotonic revision, payload digest, and one idempotency identity before forwarding. Recording a case or evaluating policy alone does not enforce a restriction.
+4. Under [ADR 0048](../../decisions/adr-0048-durable-idempotent-operator-write-execution.md), Logging & Admin sends the same scoped digest-bound idempotent command to the owner: Account for `platform_access_ban`, Game Session for `gameplay_ban`, and Social & Groups for `chat_mute` or `chat_ban`. The owner validates current authority and scope and atomically persists a subject/category/scope monotonic enforcement record with its idempotent result. Logging & Admin reports success only after owner acknowledgement.
 5. A later expiry, removal, or correction is another monotonic owner command. Delayed, duplicated, or reordered delivery cannot remove a newer restriction or restore an older one.
-6. Account separately owns `account_security_ban`, authentication generations, credential state, and account-wide token/session revocation. A broader cross-service suspension, recovery, appeal, and notification workflow remains separate Account-owned product work.
+6. Account separately owns protective `account_security_lock`, authentication generations, credential state, security recovery, and account-wide token/session revocation. Successful security recovery clears only that protective lock. Punitive `platform_access_ban` is also enforced by Account but is not cleared by credential reset or recovery; it changes only through another authorized moderation revision. Logging & Admin owns the deliberately bounded moderation appeal case; Account authenticates the affected player and provides notifications and browser handoff without becoming the moderation-case owner.
+
+The complete fixed taxonomy and stacking rules are defined in [ADR 0141](../../decisions/adr-0141-fixed-safety-restriction-categories-and-independent-lifecycles.md). `gameplay_ban` always names an exact tenant or tenant-and-realm scope. `chat_mute` and `chat_ban` name an exact tenant, realm, or channel scope. Every category stacks independently; expiry, removal, recovery, or correction of one never changes another.
 
 ## Runtime Enforcement Semantics
 
@@ -31,6 +33,8 @@ Tenant-configurable word lists, normalization, masking, and bypass detection bel
 - Social & Groups reads its own durable restriction state. `chat_mute` blocks sending while ordinary receipt remains available. `chat_ban` blocks ordinary participation, sending, and history access; essential system and moderation notices remain deliverable.
 - These routine decisions do not call Logging & Admin. Owners begin with indexed local database reads and add a local cache only if measurements justify it; any cache remains rebuildable and non-authoritative.
 - Failure to read required owner-local enforcement state fails closed. Logging & Admin, audit-reporting, analytics, or observability outages do not block runtime enforcement while owner-local state remains readable.
+
+Player block/ignore relationships and personal mute preferences remain Social-owned player safety features, not staff restriction categories. Player reports are evidence and case ingress only and never create an enforcement record automatically.
 
 ## Appeals
 

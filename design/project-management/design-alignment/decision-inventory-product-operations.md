@@ -336,11 +336,11 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `SAFETY-01` - Moderation outcomes are scoped by enforcement category and owner
 
 - **Capability:** Primary `EA-2.4` Player blocking, reporting, and safety controls. Secondary `PO-1.2`, `AA-1.3`, and `PO-1.3`.
-- **Decision / status / importance:** Distinguish `account_security_ban`, `gameplay_ban`, `chat_mute`, and `chat_ban`; route the decision through Logging/Admin while the owning service enforces the resulting scope. Do not collapse all moderation into a generic account ban. Status `accepted-implicit`; `H/hard`.
+- **Decision / status / importance:** Use five fixed independently stacked categories: protective `account_security_lock`, punitive `platform_access_ban`, scoped `gameplay_ban`, send-only `chat_mute`, and participation/history `chat_ban` with essential notices. Account, Game Session, and Social own their enforcement records under ADR 0133; exact monotonic revisions and scopes replace generic ban strings. Reports and player blocks remain separate. Status `accepted-explicit`; `H/hard`.
 - **Sources / headings:** [user-journeys-players.md](../../architecture/user-journeys-players.md) `§ 5. Social Interaction & Safety`; [user-journeys-operators.md](../../architecture/user-journeys-operators.md) `§ 1. Monitoring and Moderation`; [system-architecture-player-experience-incident-runbook.md](../../architecture/system-architecture-player-experience-incident-runbook.md) `§ Incident Types`.
-- **Strongest alternative:** Use one generic ban state or let each enforcement service invent incompatible moderation outcomes.
-- **ADR recommendation:** Yes. Define category scope, precedence, appeal/audit records, and enforcement ownership alongside existing `SEC-04` and the moderation policy boundary.
-- **Human consultation:** Yes; trust-and-safety, legal, support, and game operations owners must approve policy meaning and appeals.
+- **Strongest alternative:** Use one generic ban or a configurable denied-capability set compiled into owner commands. The latter is more extensible but permits unsafe combinations and expands policy/proof complexity without a concrete need.
+- **ADR:** [ADR 0141](../../architecture/decisions/adr-0141-fixed-safety-restriction-categories-and-independent-lifecycles.md) records the category, scope, stacking, revision, notice, and owner-local enforcement contract.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. Generic action rows, legacy aliases, synchronous policy reads, missing owner-local records/fencing, Account-wide lifecycle separation, player notices, reports, block/ignore, and complete proof remain gaps.
 
 #### `COMMERCE-01` - Stripe-only payments with explicit fee and entitlement reversal semantics
 

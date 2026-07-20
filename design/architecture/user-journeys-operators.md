@@ -54,11 +54,15 @@ Canonical moderation journey:
 1. **Player Report Arrives** – A player submits an in-game report, which the Logging & Admin Service records with tenant, realm, subject, and supporting evidence.
 2. **Operator Reviews Evidence** – Moderators inspect the report, associated chat logs, and related account/gameplay context.
 3. **Operator Chooses Enforcement Type** – Enforcement uses the canonical taxonomy from the system overview:
-   - `account_security_ban` for account-wide auth/security suspension,
-   - `gameplay_ban` for tenant gameplay denial,
-   - `chat_mute` / `chat_ban` for communication restrictions.
+   - `account_security_lock` is a protective Account-owned state cleared only by security recovery, not punitive moderation,
+   - `platform_access_ban` is punitive platform-wide enforcement and survives credential recovery,
+   - `gameplay_ban` uses an exact tenant or tenant-and-realm scope,
+   - `chat_mute` blocks sending in an exact tenant, realm, or channel scope,
+   - `chat_ban` blocks ordinary participation, sending, and history in that scope while preserving essential notices.
 4. **Owning Service Enforces** – Account Service, Game Session Service, or Social & Groups Service applies the effect while Logging & Admin remains the policy/audit entry point.
 5. **Player Sees Specific Outcome** – The affected user sees canonical account, gameplay, or chat errors rather than a generic moderation failure.
+
+Each creation, expiry, removal, recovery clearance, or correction is a new monotonic revision with exact subject/scope, effective/expiry time, actor, case or security event, source action, safe player notice/reason, idempotency identity, and digest. Restrictions stack independently; changing one never changes another. Operator ingress rejects generic legacy strings such as `ban` or `account_ban`. Player blocks/ignores and reports remain separate relationship and evidence flows and do not automatically enforce staff restrictions.
 
 ```plaintext
 Operator → Logging & Admin Service → Observability Stack / Admin UI

@@ -105,10 +105,10 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
-| 5 | Gameplay and player experience | 15 | 21 | `in-progress` |
+| 5 | Gameplay and player experience | 16 | 21 | `in-progress` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **131** | **183** | `in-progress` |
+| **Total** | | **132** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -288,7 +288,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `PLAYTEST-01` — `revised` on 2026-07-20; [ADR 0138](../../architecture/decisions/adr-0138-expiring-playtest-grants-with-bounded-active-revocation.md)
 - [x] `LIFE-01` — `revised` on 2026-07-20; [ADR 0139](../../architecture/decisions/adr-0139-tenant-owned-runtime-lifecycle-with-audited-break-glass.md)
 - [x] `PLAYER-01` — `revised` on 2026-07-20; [ADR 0140](../../architecture/decisions/adr-0140-realm-authored-controllable-actor-entry.md)
-- [ ] `SAFETY-01`
+- [x] `SAFETY-01` — `revised` on 2026-07-20; [ADR 0141](../../architecture/decisions/adr-0141-fixed-safety-restriction-categories-and-independent-lifecycles.md)
 - [ ] `COMMERCE-01`
 - [ ] `SOCIAL-01`
 - [ ] `MS-PO-MODERATION-APPEALS`

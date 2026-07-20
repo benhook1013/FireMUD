@@ -21,7 +21,7 @@ The documents linked from this overview describe the target-state design, but th
 - **Durable async contract:** Best-effort edge hints may use internal gRPC event sinks, but durable cross-service business events and saga updates must use the transactional outbox/background-worker pattern described in `design/architecture/system-architecture-transactions.md`. High-level docs must not imply an unspecified shared event bus.
 - **SQL persistence stack:** For SQL-backed services, FireMUD’s canonical persistence stack is `jOOQ + Flyway`. Flyway remains the schema authority, explicit SQL generation/execution is the runtime model, and repo-wide Hibernate/JPA platform support has been removed rather than preserved as a co-equal path.
 - **Durable control-plane workflow stack:** For long-running control-plane workflows that need restart-safe execution, durable timers/waits, and operator-visible lifecycle, FireMUD’s target workflow substrate is Temporal. The shared `common-saga` layer remains only for short synchronous orchestration that does not need durable workflow behavior, and gameplay runtime/tick execution remains explicitly out of scope for Temporal.
-- **Moderation enforcement contract:** Under [ADR 0133](./decisions/adr-0133-owner-local-moderation-enforcement.md), Logging & Admin owns operator ingress, cases, policy definitions and intent, and audit history, but it is not the runtime enforcement source of truth. It sends typed, payload-digest-bound, idempotent commands under [ADR 0048](./decisions/adr-0048-durable-idempotent-operator-write-execution.md) to the enforcement owner: Game Session for `gameplay_ban` and Social & Groups for `chat_mute` and `chat_ban`. The owner durably commits a subject-scoped monotonic enforcement record and reports the previously committed result for a duplicate command. Logging & Admin reports success only after owner acknowledgement. Ordinary `PLAY` and chat-send decisions read owner-local state and never call Logging & Admin synchronously.
+- **Moderation enforcement contract:** Under [ADR 0133](./decisions/adr-0133-owner-local-moderation-enforcement.md) and [ADR 0141](./decisions/adr-0141-fixed-safety-restriction-categories-and-independent-lifecycles.md), FireMUD uses five fixed categories: Account-owned protective `account_security_lock`, Account-enforced punitive `platform_access_ban`, Game Session-owned `gameplay_ban`, and Social-owned `chat_mute` and `chat_ban`. Logging & Admin owns punitive operator ingress, cases, policy intent, and audit, but it is not the runtime enforcement source of truth. Every revision has exact subject/scope, actor/case/source action, effective/expiry time, safe notice, monotonic ordering, idempotency identity, and payload digest. Restrictions stack independently. Owners commit and read their own enforcement state; ordinary auth, `PLAY`, command, chat, and history decisions never call Logging & Admin synchronously.
 - **Edge-route exposure default:** Besides `/ws/game/**`, only explicitly allowlisted external HTTP surfaces under the canonical `/api/{service}/**` namespace and the published asset surface `/assets/**` are edge-routable through Gateway. Account, Game Design, Game Session control-plane APIs, Social & Groups admin APIs, and Logging & Admin are edge-routable under their allowlisted `/api/{service}/**` families; World Management, Entity Management, Game Logic, and Automation & Scripting remain internal-only unless a dedicated design update expands the allowlist.
 - **Redis topology policy:** In all non-ephemeral environments, Coordination Redis and Cache/Rate-Limit Redis are separate deployments. Local development is treated as non-ephemeral and should run two Redis deployments to exercise role separation. Truly ephemeral CI/preview stacks may collapse roles into a single Redis instance only when explicitly documented and guarded as an ephemeral topology.
 - **Coordination Redis ownership boundary:** Coordination Redis prefixes are owner-governed (Game Session for gameplay coordination prefixes such as `session:game:*`, `tick:*`, `timer:*`, `retry:*`, and `tick-executor-lease:*`; Account Service for `session:auth:*`; Automation & Scripting for `automation:*`), and non-owner participation is allowed only through documented shared-helper contracts. See `design/architecture/decisions/adr-0009-coordination-redis-ownership-boundary.md`.
@@ -185,7 +185,7 @@ Under [ADR 0048](./decisions/adr-0048-durable-idempotent-operator-write-executio
 
 | Operator action | Operator-facing entry point | Runtime/policy owner | Required write path | Required durable store(s) for success | Observability dependency allowed for write success |
 | --- | --- | --- | --- | --- | --- |
-| Moderation action (`gameplay_ban`, `chat_mute`, `chat_ban`) | Logging & Admin HTTP(S) APIs via Gateway | Logging & Admin owns policy intent and audit; Game Session or Social & Groups own the corresponding enforcement records | Logging & Admin records durable intent and sends one typed, digest-bound idempotent owner command | Logging & Admin PostgreSQL audit state plus owning service PostgreSQL enforcement state | No |
+| Punitive moderation action (`platform_access_ban`, `gameplay_ban`, `chat_mute`, `chat_ban`) | Logging & Admin HTTP(S) APIs via Gateway | Logging & Admin owns policy intent and audit; Account, Game Session, or Social & Groups owns the corresponding enforcement record | Logging & Admin rejects unknown/legacy category strings, records durable intent, and sends one typed, scoped, digest-bound idempotent owner command | Logging & Admin PostgreSQL audit state plus owning service PostgreSQL enforcement state | No |
 | Runtime feature-flag override | Logging & Admin HTTP(S) APIs via Gateway | Game Session | Logging & Admin records audit and calls Game Session `ToggleFeatureFlag`/equivalent control API | Game Session PostgreSQL plus Logging & Admin PostgreSQL audit state | No |
 | Quota override | Logging & Admin HTTP(S) APIs via Gateway | Account Service canonical entitlement contract | Logging & Admin records audit and calls Account control-plane API so the merged entitlement view remains canonical at Account | Account PostgreSQL plus Logging & Admin PostgreSQL audit state | No |
 | Tick remediation (`PauseTicks`, `ResumeTicks`, scoped remediation requests) | Logging & Admin HTTP(S) APIs via Gateway | Game Session | Logging & Admin records audit and calls Game Session control APIs; direct Redis mutation is reserved for documented runbooks, not UI/API request handlers | Game Session PostgreSQL/control-plane state plus Logging & Admin PostgreSQL audit state | No |
@@ -581,6 +581,7 @@ The following examples illustrate where key concepts live; the full matrix remai
 | Live sessions, ticks, command queues | Game Session Service | Owns Redis-backed coordination for active gameplay. |
 | Chat, groups, social graph | Social & Groups Service | Manages chat channels, guilds, friends/blocks. |
 | Moderation cases, policy intent, audit, admin dashboards | Logging & Admin Service | Owns operator ingress and policy/audit state while using logs/metrics/traces for supplemental investigation and dashboards; it does not own gameplay/chat enforcement records. |
+| Account safety restriction records | Account Service | Owns protective `account_security_lock` and punitive `platform_access_ban` state. Security recovery clears only the protective lock; punitive removal requires a later moderation revision. |
 | Gameplay-ban enforcement records | Game Session Service | Owns durable subject-scoped monotonic `gameplay_ban` state used by `PLAY` and live-command admission. |
 | Chat-restriction enforcement records | Social & Groups Service | Owns durable subject-scoped monotonic `chat_mute` and `chat_ban` state used by communication admission and history authorization. |
 
@@ -612,12 +613,14 @@ If a feature needs a different movement write order, it must be documented as a 
 Moderation separates policy intent and audit from runtime enforcement:
 
 1. Logging & Admin owns operator ingress, moderation cases, policy definitions and intent, and audit history.
-2. Under ADR 0048, it sends a typed, payload-digest-bound command with one `controlPlaneRequestId` to Game Session for `gameplay_ban` or Social & Groups for `chat_mute` and `chat_ban`.
+2. Under ADR 0048, it sends a typed, payload-digest-bound command with one `controlPlaneRequestId` to Account for punitive `platform_access_ban`, Game Session for `gameplay_ban`, or Social & Groups for `chat_mute` and `chat_ban`. Protective `account_security_lock` enters through Account-owned security policy and recovery rather than punitive moderation.
 3. The owner validates current authority and scope, then atomically persists a subject-scoped monotonic enforcement record and idempotent result. Logging & Admin reports success only after that owner commit is acknowledged.
 4. A later expiry, removal, or correction is another monotonic owner command. Duplicate, delayed, or reordered commands cannot erase a newer restriction or resurrect an older one.
 5. Game Session evaluates gameplay restrictions from its own indexed state at `PLAY` and command admission. Social & Groups does the same at chat send, participation, and ordinary history access. Neither path makes a routine Logging & Admin RPC.
 6. A required owner-local read failure fails closed and emits operator-visible diagnostics. Remote audit, reporting, analytics, or observability failure does not block enforcement while the owner-local state is readable.
-7. Cross-service moderation remains auditable end to end through the actor, reason, target and scope, request identifier and digest, committed owner outcome, enforcement epoch, and timestamps.
+7. Every revision carries the exact category, subject/scope, effective and optional expiry time, actor, case or security event, source action, safe player notice/reason, request identity and digest, committed owner outcome, monotonic revision, and timestamps.
+8. Restrictions stack independently. Expiry, removal, recovery, or correction affects only that exact category and scope; clearing `account_security_lock` never clears `platform_access_ban`.
+9. Unknown or legacy generic strings such as `ban`, `account_ban`, or `account_security_ban` fail closed at operator ingress rather than being translated heuristically.
 
 An owner-local read cache is optional and measurement-driven. It must remain rebuildable from the durable owner record and cannot introduce a separate freshness contract or policy authority.
 
@@ -627,15 +630,18 @@ To remove ambiguity around “bans,” FireMUD uses the following canonical taxo
 
 | Ban/Moderation Type | Policy Owner | Primary Enforcement Point | Scope |
 | --- | --- | --- | --- |
-| `account_security_ban` (for example compromised account, severe ToS account suspension) | Account Service | Account auth and token/session revocation surfaces | Account-wide across tenants |
-| `gameplay_ban` (deny gameplay admission/actions for a tenant) | Logging & Admin Service | Game Session Service, including durable enforcement state | Tenant gameplay scope |
-| `chat_mute` / `chat_ban` | Logging & Admin Service | Social & Groups Service, including durable enforcement state | Tenant chat and messaging scope |
+| `account_security_lock` | Account security policy and recovery | Account auth and token/session revocation surfaces | Protective account-wide lock; only security recovery clears it |
+| `platform_access_ban` | Logging & Admin punitive policy/case authority | Account auth and platform-access surfaces | Punitive platform-wide denial; credential recovery never clears it |
+| `gameplay_ban` | Logging & Admin punitive policy/case authority | Game Session durable enforcement state | Explicit tenant or tenant-and-realm gameplay scope |
+| `chat_mute` | Logging & Admin punitive policy/case authority | Social & Groups durable enforcement state | Explicit tenant, realm, or channel scope; blocks sending while permitting ordinary receipt |
+| `chat_ban` | Logging & Admin punitive policy/case authority | Social & Groups durable enforcement state | Explicit tenant, realm, or channel scope; blocks ordinary participation, sending, and history while preserving essential notices |
 
 Implementation notes:
 
-- Account Service remains the sole writer for auth generations and account-security lockout/ban state.
+- Account Service remains the sole writer for auth generations and both account-wide enforcement states. Security recovery may clear only `account_security_lock`; `platform_access_ban` changes only through an authorized punitive revision.
 - Logging & Admin defines moderation policy intent and audit trails for gameplay/chat moderation; enforcement owners receive durable commands and own the records consulted by runtime admission.
-- “Bans” in docs and APIs must name the specific taxonomy type above instead of using an unqualified `ban` term.
+- Restrictions stack independently, and changing one category or exact scope never mutates another. Player block/ignore and reports remain separate Social relationship and evidence/case-ingress features, not staff restrictions.
+- “Bans” in docs and APIs must name one fixed category above. Unknown generic or legacy aliases fail closed at operator ingress.
 
 ### Design-Time vs Runtime World Data
 
