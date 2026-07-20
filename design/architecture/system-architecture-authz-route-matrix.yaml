@@ -22,22 +22,32 @@ routes:
     scope: public
     classification: public
   - service: game-session-service
-    route: WORLDS
+    route: WORLDS_PUBLIC
+    transport_command: WORLDS
+    scope: public
+    classification: public
+    response_profile: public_production_catalog_only
+    required_live_checks: [public_production_visibility, runtime_entitlements]
+  - service: game-session-service
+    route: WORLDS_AUTHENTICATED
+    transport_command: WORLDS
     scope: account
     classification: pre_tenant_discovery
-    required_live_checks: [membership, runtime_entitlements]
+    visibility_contract: membership_or_public_production_visibility
+    required_live_checks: [runtime_entitlements]
   - service: game-session-service
     route: REALMS
     scope: tenant
     classification: public_production_onboarding
-    required_live_checks: [public_production_admission, realm_access_grant, runtime_entitlements]
+    visibility_contract: membership_or_public_production_or_realm_access_grant
+    required_live_checks: [realm_visibility, runtime_entitlements]
   - service: game-session-service
     route: CHARS
     scope: tenant
     classification: public_production_onboarding
     tenant_billing_watermark_applies: false
     membership_watermark_applies: true
-    required_live_checks: [membership, realm_access_grant, runtime_entitlements]
+    required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements]
   - service: game-session-service
     route: JOIN
     scope: tenant
@@ -52,7 +62,7 @@ routes:
     classification: public_production_onboarding
     tenant_billing_watermark_applies: false
     membership_watermark_applies: true
-    required_live_checks: [membership, realm_access_grant, runtime_entitlements]
+    required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements]
     canonical_errors:
       any_of: [JOIN_REQUIRED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH]
   - service: entity-management-service
@@ -62,7 +72,7 @@ routes:
     auth_path: player_bootstrap
     tenant_billing_watermark_applies: false
     membership_watermark_applies: true
-    required_live_checks: [membership, realm_access_grant, runtime_entitlements]
+    required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements]
   - service: game-session-service
     route: StartSession
     scope: tenant
@@ -118,14 +128,14 @@ routes:
     route: AuthLogout
     scope: account
     classification: account_scoped
-    roles:
-      any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
+    subject_binding: caller_account_id
+    accepted_token_profiles: [browser, player-bootstrap]
   - service: account-service
     route: AuthLogoutAll
     scope: account
     classification: account_scoped
-    roles:
-      any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
+    subject_binding: caller_account_id
+    accepted_token_profiles: [browser, player-bootstrap]
   - service: account-service
     route: GetProfile
     scope: account
@@ -171,12 +181,55 @@ routes:
     classification: player_bootstrap_tenant
     auth_path: player_bootstrap
     tenant_billing_watermark_applies: false
-    membership_watermark_applies: false
+    membership_watermark_applies: true
     required_live_checks: [membership, runtime_entitlements, admission_pointer]
     canonical_errors:
       any_of: [ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, ENTITLEMENT_UNAVAILABLE]
-    roles:
-      any_of: [player, moderator, designer, tenantAdmin]
+    subject_binding: caller_account_id
+  - service: account-service
+    route: Authenticate
+    scope: account
+    classification: account_scoped
+    auth_path: mtls_workload
+    mtls_callers:
+      any_of: [spiffe://firemud/ns/{namespace}/sa/game-session-service]
+    credential_source_context: required_trusted_server_derived
+    delegated_subject: none_before_authentication
+  - service: account-service
+    route: RefreshGameplayServiceToken
+    scope: tenant
+    classification: tenant_regular
+    auth_path: mtls_workload_plus_current_token_generation
+    mtls_callers:
+      any_of: [spiffe://firemud/ns/{namespace}/sa/game-session-service]
+    delegated_subject: gameplay_binding_subject
+    required_live_checks: [current_token_generation, account_generation, membership_generation, membership, runtime_entitlements]
+  - service: account-service
+    route: GetTenantMembershipForRuntime
+    scope: tenant
+    classification: tenant_regular
+    auth_path: mtls_workload
+    mtls_callers:
+      any_of: [spiffe://firemud/ns/{namespace}/sa/game-session-service]
+    delegated_subject: typed_player_execution_context
+    required_live_checks: [membership]
+  - service: account-service
+    route: GetRealmAccessGrant
+    scope: tenant
+    classification: tenant_regular
+    auth_path: mtls_workload
+    mtls_callers:
+      any_of: [spiffe://firemud/ns/{namespace}/sa/game-session-service]
+    delegated_subject: typed_player_execution_context
+    required_live_checks: [conditional_realm_access_grant]
+  - service: account-service
+    route: ListRealmAccessGrantsForAccount
+    scope: tenant
+    classification: tenant_regular
+    auth_path: mtls_workload
+    mtls_callers:
+      any_of: [spiffe://firemud/ns/{namespace}/sa/game-session-service]
+    delegated_subject: typed_player_execution_context
   - service: account-service
     route: GetTenantEntitlementsForRuntime
     scope: tenant
@@ -187,6 +240,11 @@ routes:
     response_profile: runtime_admission
     allowed_callers:
       any_of: [game-session-service, logging-admin-service, platform-runtime]
+    mtls_callers:
+      any_of:
+        - spiffe://firemud/ns/{namespace}/sa/game-session-service
+        - spiffe://firemud/ns/{namespace}/sa/logging-admin-service
+    delegated_subject: typed_player_execution_context_or_operator_request
   - service: account-service
     route: GetTenantEntitlementsTenant
     scope: tenant

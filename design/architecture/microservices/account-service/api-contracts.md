@@ -13,7 +13,7 @@ The account lifecycle, full-account export, tenant-scoped export, and deletion p
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `account_service.proto`.
 - `CreateAccount` – registers a new user and returns its `accountId` so internal services can establish their own sessions using the authentication flows described below.
 - `SendNotification` – deliver account notifications asynchronously.
-- `Authenticate` – verifies credentials and issues a Service JWT (internal token profile) backed by one `session:auth:token:<tokenHash>` registry record for meta/control APIs.
+- `Authenticate` – verifies credentials using a required typed `CredentialSourceContext` and issues a Service JWT (internal token profile) backed by one `session:auth:token:<tokenHash>` registry record for meta/control APIs. The context contains a server-derived canonical client address and transport class; Account rejects absent or untrusted context in player-facing environments, and public callers cannot assert it.
 - `RefreshGameplayServiceToken` – rotate the private Service JWT used by an active Game Session binding after validating the presented current token generation, binding identity, account and membership authority, and all applicable revocation watermarks. Game Session mTLS identity alone is not refresh authority.
 - `GetProfile` – retrieves profile information for the current account.
 - `UpdateProfile` – modifies profile fields and triggers notification emails. Account holders may select `PUBLIC`, `FRIENDS_ONLY`, or `PRIVATE` presence visibility; `HIDDEN_STAFF` is reserved for the staff-visibility owner and cannot be set through profile writes.

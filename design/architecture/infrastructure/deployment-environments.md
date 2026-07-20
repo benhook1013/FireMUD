@@ -206,10 +206,11 @@ A sample Terraform module for a local Kind cluster is provided in [k8s/terraform
 
 Kubernetes load balancing commonly SNATs raw TCP traffic, so the TCP Proxy Service may not see the true client address on the TCP socket. To preserve client IPs and keep the DMZ boundary explicit:
 
-- Expose a small **Telnet edge proxy** (for example, HAProxy) as the public `LoadBalancer` for port `2323`.
-- Forward Telnet traffic from the edge proxy to the TCP Proxy Service using **PROXY protocol** on a dedicated, internal-only TCP Proxy listener/port (see `TCP_PROXY_PROXY_PROTOCOL_PORT` in the TCP Proxy design).
+- Expose a small **Telnet edge proxy** (for example, HAProxy) as the public TLS-terminating `LoadBalancer` for port `2323`. Player-facing environments accept Telnet-over-TLS only and reject a plaintext handshake; raw Telnet remains local/test/private.
+- Issue and rotate the public Telnet certificate through the environment's cert-manager-owned certificate lifecycle, and make expiry/rotation readiness part of edge proof.
+- Forward the decrypted Telnet stream from the authenticated edge proxy to the TCP Proxy Service using **PROXY protocol** on a dedicated, internal-only TCP Proxy listener/port (see `TCP_PROXY_PROXY_PROTOCOL_PORT` in the TCP Proxy design).
 - Restrict that PROXY-enabled listener so it is reachable only from the edge proxy (separate `Service` + `NetworkPolicy`).
-- Keep the public Telnet listener PROXY-disabled to prevent client-IP spoofing attempts.
+- Do not expose the TCP Proxy Service's raw or PROXY-protocol listeners publicly; only the TLS edge may reach the PROXY-enabled listener.
 - Have the TCP Proxy Service parse the PROXY header, forward the recovered client IP to Spring Cloud Gateway as `X-Proxy-Client-IP`, and let the gateway standardize it as `X-Client-IP` for downstream services.
 
 If PROXY protocol is not enabled (or source IP is not preserved), treat per-IP limits as best-effort and size them conservatively. See [Security Architecture](../system-architecture-security.md#tls-termination-for-gateway) and [Gateway Architecture](../system-architecture-gateway.md#tls-termination-for-gateway) for the full TLS termination chain.

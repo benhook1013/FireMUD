@@ -80,8 +80,8 @@ For a first-time join through a publicly discoverable production realm, the expl
 This onboarding flow is the only supported way to discover and enter a realm. First-party WebSocket connect tokens and any future hidden Telnet smart-client metadata may narrow the target realm, but they never replace the authenticated lobby contract.
 
 ```plaintext
-Player → WORLDS (optional public browse) → LOGIN → PLAY
-                      ↘ optional REALMS / CHARS / Create Character when needed
+Player → WORLDS (optional public browse) → LOGIN → [JOIN for first public entry] → PLAY
+                      ↘ optional REALMS / CHARS / Create Character after membership
 ```
 
 Example text-client transcript:
@@ -92,6 +92,8 @@ OK WORLDS
 1) emberfall  Emberfall
 LOGIN player@example.com swordfish
 OK LOGIN Logged in as player@example.com
+JOIN emberfall
+OK JOIN Joined Emberfall
 PLAY emberfall
 OK PLAY Entered world: emberfall
 ```
@@ -102,6 +104,7 @@ Example first-party web flow:
 POST /auth/player-bootstrap
 GET /auth/bootstrap/worlds
 GET /auth/bootstrap/worlds/{world}/realms
+POST /auth/bootstrap/join
 GET /auth/bootstrap/worlds/{world}/realms/{realm}/characters
 POST /auth/connect-token { connectScopeId=cs_demo_production_v17 }
 GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
@@ -115,6 +118,7 @@ Example first-time public production join:
 POST /auth/player-bootstrap
 GET /auth/bootstrap/worlds
 GET /auth/bootstrap/worlds/emberfall/realms
+POST /auth/bootstrap/join { connectScopeId=cs_emberfall_production_v1, requestId=req-join-1 }
 GET /auth/bootstrap/worlds/emberfall/realms/production/characters
 POST /characters { world=emberfall, realm=production, name=Mara, template=human-fighter }
 POST /auth/connect-token { connectScopeId=cs_emberfall_production_v1 }

@@ -127,7 +127,7 @@ POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_production_v17", requestId: "req-reconnect-1" }
 Set-Cookie: Firemud-Connect-Token=<connectToken>; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30
--> { expiresAt, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "production", jti, issuedAt }
+-> { expiresAt, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "2f1c7ad0-8d5a-4a61-9d4b-6c93f11a2e01", jti, issuedAt }
 
 GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 
@@ -142,7 +142,7 @@ POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_production_v17", requestId: "req-reconnect-2" }
 Set-Cookie: Firemud-Connect-Token=<connectToken>; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30
--> { expiresAt, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "production", jti, issuedAt }
+-> { expiresAt, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "2f1c7ad0-8d5a-4a61-9d4b-6c93f11a2e01", jti, issuedAt }
 
 GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 

@@ -93,7 +93,8 @@ Route authorization never becomes in-game elevation. If a global-role account pa
 | Service | Route | Classification | Required roles/capability |
 | --- | --- | --- | --- |
 | Game Session Service | `LOGIN` / `LOGON` | `public` | Credential entrypoint only; no JWT required |
-| Game Session Service | `WORLDS` | `pre_tenant_discovery` | Authenticated account discovery only; no pre-existing tenant role is required. Tenant visibility is derived server-side from membership, public-production visibility, and entitlement state; global roles do not widen gameplay discovery |
+| Game Session Service | `WORLDS` anonymous browse | `public` | Public-production catalog only; no account-specific membership, grant, or character information |
+| Game Session Service | `WORLDS` authenticated discovery | `pre_tenant_discovery` | No pre-existing tenant role is required. Tenant visibility is derived server-side from membership or public-production visibility plus entitlement state; global roles do not widen gameplay discovery |
 | Game Session Service | `REALMS` | `public_production_onboarding` | Visible realms for a selected world; no pre-existing tenant role is required. The default public production realm may be discoverable before membership exists, while additional realms still require explicit Account Service grant authority |
 | Game Session Service | `JOIN` | `public_production_onboarding` | Explicit caller-bound open-enrollment action for the current public production realm; Account commits durable membership plus audit/outbox idempotently |
 | Game Session Service | `CHARS` / `PLAY` | `public_production_onboarding` | Requires an existing caller-bound membership plus any non-public realm grant and current entitlements. Missing public-game membership returns `JOIN_REQUIRED`; `PLAY` never creates it. First-party `/ws/game/**` `PLAY` also enforces connect-context scope |
