@@ -20,7 +20,15 @@ Restore quarantine is a full restore-safe mode, not only an ingress block. Resto
 
 ## Post-Restore Secret Hardening
 
-Post-restore hardening is performed by a dedicated Kubernetes Job such as `post-restore-secret-hardening` that coordinates multiple flows:
+Post-restore hardening is performed by a dedicated idempotent Kubernetes Job or equivalent playbook such as `post-restore-secret-hardening`. It classifies the recovery event before acting and records one disposition for every applicable credential class: `rotated`, `reissued`, `rebound`, or `verified_not_restored`.
+
+Every PostgreSQL rewind still requires quarantine, old-authority fencing, empty Coordination Redis, session invalidation, epoch/fence advancement, durable and external reconciliation, binding validation, smoke, and controlled reopen. Credential treatment is event-specific:
+
+- A same-boundary PostgreSQL-only rewind may use `verified_not_restored` when automation proves the credential authority remained current outside the restored artifact and is still correctly bound.
+- A fresh cluster or namespace, restored Secret material, or an unprovable trust lineage requires fresh provisioning, rebinding, rotation, or reissuance as appropriate.
+- Known or suspected compromise uses the complete compromise-response hard cutover for every affected authority.
+
+No credential may be retained silently; its disposition and evidence are part of the canonical recovery record.
 
 The hardening automation should use least-privilege service accounts:
 
@@ -30,7 +38,8 @@ The hardening automation should use least-privilege service accounts:
 
 ### 1. JWT signing key and JWKS rotation
 
-- run restore-hardening JWT rotation with compromise-style key cutover semantics
+- run compromise-style JWT cutover when JWT/JWKS material was restored, the trust boundary changed, or current external authority cannot be proved
+- for a same-boundary PostgreSQL-only rewind, permit `verified_not_restored` only when automation proves the Account signing authority and validator JWKS remained outside the restored artifact and still match the expected binding
 - remove restored keys from active trust material rather than retaining overlap from snapshot-era keysets
 - keep JWT issuance and JWT-protected admission/control-plane traffic quarantined during cutover
 - publish a fresh Account signing generation and `jwks.json`, then advance the environment issuer auth generation and complete required session invalidation
@@ -39,7 +48,8 @@ The hardening automation should use least-privilege service accounts:
 
 ### 2. Database credential rotation
 
-- run `db-credential-rotation` using least-privilege service account
+- rotate or rebind database credentials when the credential, its owning Secret, or the database authority was restored or cannot be proved current; otherwise record `verified_not_restored`
+- when rotation is required, run `db-credential-rotation` using a least-privilege service account and a crash-recoverable staged cutover
 - read current app DB credentials from `postgres-credentials`
 - use admin credentials to execute `ALTER ROLE ... PASSWORD ...`
 - update the application Secret with the new password
@@ -48,9 +58,8 @@ The hardening automation should use least-privilege service accounts:
 
 ### 3. Certificate reissuance
 
-- reissue workload mTLS certificates used by `FIREMUD_GRPC_*`
-- reissue TCP Proxy to Gateway WebSocket mTLS credentials
-- reissue operator client certificates used for internal control-plane access
+- reissue workload, bridge, and operator leaf certificates when their Secrets or issuing boundary were restored, replaced, or cannot be proved current
+- allow `verified_not_restored` for a same-boundary PostgreSQL-only rewind only after proving the current certificate resources and issuer binding remained outside the restored artifact
 - default restore hardening rotates leaf certificates only; CA/root rotation is a separate compromise-response workflow
 - require peer/validator convergence evidence before traffic reopen
 
@@ -58,7 +67,7 @@ The hardening automation should use least-privilege service accounts:
 
 Restoring a namespace also restores third-party credentials stored as Secrets. Post-restore hardening must either rotate/re-issue these credentials or re-bind the restored cluster to the correct per-environment secrets before any external traffic is allowed.
 
-Canonical external validation matrix:
+Canonical external validation matrix, limited to integrations enabled for the target environment:
 
 - `backup-storage`
 - `asset-storage`
@@ -104,7 +113,7 @@ For staging restores sourced from production-origin snapshots, `SANITIZATION_EVI
 
 ### 5. Secret-compliance evidence refresh
 
-Post-restore hardening changes the Tier A trust lineage for the environment. Before quarantine can be lifted, operators must refresh `design/operations/secret-compliance/<environment>.yaml` and its immutable supporting evidence so promotion, DR-readiness, and traffic-open checks no longer point at pre-restore credential evidence.
+Post-restore hardening records the event-classified disposition for each Tier A credential. Before quarantine can be lifted, automation updates the recovery evidence and, where provisioning or rotation changed the trust lineage, refreshes `design/operations/secret-compliance/<environment>.yaml` and its content-addressed supporting evidence. A `verified_not_restored` disposition references the still-current compliance evidence and does not invent a new freshness timestamp.
 
 The refresh must include the credential classes affected by restore hardening:
 
@@ -142,14 +151,14 @@ Runbooks should treat `post-restore-secret-hardening` as a mandatory step in any
 2. Restore PostgreSQL and Kubernetes manifests with normal application workloads held at zero replicas or behind a restore-safe startup gate.
 3. Prove empty Coordination Redis, environment-wide gameplay and Account session invalidation, and every gameplay-region epoch/fence reset before any normal Game Session or automation startup can create fresh coordination state.
 4. Run the complete enabled offline durable-participant and external-effect reconciliation inventory; unknown, missing, or unsafe outcomes keep quarantine closed, while a participant with a proved durable fenced/disabled disposition may retain backlog for later operator action.
-5. Run `post-restore-secret-hardening` in the target namespace and wait for success.
-6. Confirm workload, bridge, and operator leaf certificates have been reissued and peers converged.
+5. Run `post-restore-secret-hardening` in the target namespace and require one proved event-classified disposition for every applicable credential.
+6. When certificates were reissued, confirm workload, bridge, and operator peers converged; otherwise prove the current certificate authority was not restored and remains correctly bound.
 7. Run `dev-tools/restores/validate-external-credentials.sh <hobby-self-hosted|staging|production>` with environment-specific expected values.
 8. Refresh the environment secret-compliance record and immutable evidence payload, and link that refresh from the recovery record.
 9. For staging restores from production-origin data, ensure sanitization evidence exists and is referenced.
 10. Start normal workloads in a controlled order and confirm application health checks, fresh login/session flows, gameplay smoke, JWT validation, and recovery-participant invariants while ingress remains quarantined.
 11. Complete every pre-release control group, record operator approval, and advance the canonical recovery record to `ready_to_reopen`.
-12. Use the gated transition to remove quarantine; that transition atomically records release/finalization and only then routes external or player traffic to the restored cluster.
+12. Use the idempotent crash-recoverable gated transition to remove quarantine through durable monotonic steps; uncertainty remains closed, and retries converge before external or player traffic is considered reopened.
 
 For hobby/self-hosted environments that do not use the Kubernetes Job template directly, operators must run equivalent one-shot restore-hardening automation that performs the same control groups and writes the canonical recovery record before reopening player traffic.
 
