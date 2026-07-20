@@ -18,7 +18,7 @@ This record summarizes the automated reconciliation from the complete product ca
 - Admission pointers and explicit routing bundles carry runtime target identity; consumers fail closed rather than reconstructing current scope from partial identifiers.
 - Game Session owns player transport/session orchestration, Game Logic owns cross-domain gameplay aggregation, and domain services remain authoritative for their persisted state.
 - Durable command, effect, scripting, and scheduler work preserve explicit identity and replay fencing; a replay hit must not bypass request-shape or scope validation.
-- The target settings contract uses platform defaults plus tenant/game overrides through canonical effective-settings readers. Current implementation still combines service/operator defaults with persisted overrides; preset expansion and operator caps remain unresolved under `SET-01`.
+- The target settings contract applies platform defaults, preset expansion, operator settings, caps, and tenant/game overrides through canonical effective-settings readers. Current implementation still combines service/operator defaults with persisted overrides; preset expansion and operator caps remain unresolved under `SET-01`.
 - gRPC application errors remain normal-response `ErrorDetail` values, while transport errors are reserved for infrastructure failures.
 - Operational evidence, deployment gates, recovery, and audit records are platform responsibilities fed by domain-owned health and lifecycle signals.
 
