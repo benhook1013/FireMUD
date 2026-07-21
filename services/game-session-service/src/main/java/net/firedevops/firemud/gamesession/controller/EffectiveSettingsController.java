@@ -101,9 +101,7 @@ public class EffectiveSettingsController {
             new DomainSettings<>(
                 reconnection.effective(), reconnection.sources(), reconnection.diagnostics()),
             new DomainSettings<>(
-                reconnection.effective().policy(),
-                reconnection.sources(),
-                reconnection.diagnostics()),
+                reconnection.effective().policy(), reconnection.sources(), List.of()),
             new DomainSettings<>(
                 reconnection.effective().buffer(),
                 reconnection.sources(),

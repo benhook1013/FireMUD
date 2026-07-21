@@ -536,7 +536,7 @@ This section is normative for service-level API design. Service docs must treat 
 
 Deployment health checks (readiness and liveness probes) for these layers are described in detail in [Deployment Environments](./infrastructure/deployment-environments.md).
 
-Target-state environment-specific routing and transport targets are configured through the released declarative `routes.yml` catalog imported by `application.yml`, plus explicit environment-variable overrides, rather than through separate local versus production runtime profiles. Until that target-state catalog converges, the current implemented Gateway authority is `CanonicalGatewayRoutesConfiguration`. See [Deployment Environments](./infrastructure/deployment-environments.md#spring-profile-configuration) for the remaining `test` profile behavior and deployment-specific overrides.
+Target-state environment-specific routing and transport targets are configured through the released declarative `routes.yml` catalog imported by `application.yml`, plus explicit environment-variable overrides. Spring profiles are deployment and test plumbing, not an alternative route authority. Until that target-state catalog converges, the current implemented Gateway authority is `CanonicalGatewayRoutesConfiguration`. See [Deployment Environments](./infrastructure/deployment-environments.md#spring-profile-configuration) for the remaining `test` profile behavior and deployment-specific overrides.
 
 ---
 

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 import static org.mockito.Mockito.when;
 
 import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
@@ -12,6 +13,23 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class EffectiveReconnectionSettingsResolverTest {
+  @Test
+  void rejectsInvalidOperatorDefaultsDuringConstruction() {
+    SharedSettingsAuthorityReader authorityReader =
+        Mockito.mock(SharedSettingsAuthorityReader.class);
+
+    assertThatIllegalStateException()
+        .isThrownBy(
+            () ->
+                new EffectiveReconnectionSettingsResolver(
+                    new FiremudReconnectionProperties(
+                        new FiremudReconnectionProperties.Policy(45_000L, true),
+                        new FiremudReconnectionProperties.Buffer(
+                            60_000L, 256, 8, 24, 70_000, 65_536)),
+                    authorityReader))
+        .withMessage("Operator reconnection buffer hardMaxBytes must be at least softMaxBytes");
+  }
+
   @Test
   void absentPersistedReconnectionOverrideFallsBackToOperatorDefaults() {
     SharedSettingsAuthorityReader authorityReader =

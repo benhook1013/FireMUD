@@ -7,7 +7,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 Unless otherwise noted, this document describes target-state gateway behavior. Current rollout and implementation boundaries are:
 
 - The target-state declarative `routes.yml` catalog has not yet converged as the implemented route authority. The current authority is the Java `CanonicalGatewayRoutesConfiguration`, with environment-backed service targets that operators can override using `FIREMUD_SERVICES_*`, matching the `ServiceEndpointsProperties` approach used by other microservices. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery).
-- URI SAN is the canonical production identity for the TCP Proxy → Gateway mTLS hop. DNS SAN allowlisting is migration-only while URI SANs are not consistently issued, and leaf certificate fingerprint pinning is break-glass only. Until mTLS is fully deployed, any non-mTLS acceptance of `X-Proxy-*` headers remains a temporary dev-only stopgap protected by strict internal-only network exposure and NetworkPolicies; it is not suitable for player-facing environments.
+- URI SAN is the canonical production identity for the TCP Proxy → Gateway mTLS hop. DNS SAN allowlisting remains an explicitly enabled migration-only fallback while URI SANs are not consistently issued, and leaf certificate fingerprint pinning is break-glass only. Until mTLS is fully deployed, any non-mTLS acceptance of `X-Proxy-*` headers remains a temporary dev-only stopgap protected by strict internal-only network exposure and NetworkPolicies; it is not suitable for player-facing environments.
 - Dynamic REST and gRPC route-management APIs remain local/dev/test-only ephemeral capabilities. The current implementation does not yet enforce the target profile, endpoint isolation, validation, or startup boundary, so these APIs must not be treated as production-safe merely because they exist.
 
 ## Gateway Pattern
@@ -91,6 +91,7 @@ If either check fails, the gateway rejects the WebSocket handshake and does not 
 Gateway config enforces this trust boundary by allowlisting the expected TCP Proxy identity from the mTLS peer certificate. The canonical production model is:
 
 - **Canonical (prod):** allowlist the TCP Proxy by **URI SAN** (SPIFFE-style identity), configured via `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-uri-sans` (for example `spiffe://firemud/ns/<namespace>/sa/tcp-proxy-service`).
+- **Migration only:** an explicitly enabled DNS SAN allowlist may be evaluated only while URI SAN issuance is not yet available. It is not an accepted steady-state production identity and must be tracked to removal.
 - **Break-glass (incident only):** pin by leaf certificate **SHA-256 fingerprint** when SAN-based identity is unavailable or compromised, configured via `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-fingerprints-sha256`. This is intentionally operationally expensive and should not be treated as the steady state because it makes rotation and multi-environment deployments harder.
 
 This policy is normative per `design/architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md`.
@@ -464,7 +465,7 @@ This approach minimizes latency and matches the protocol table in the
 | Dev | `http://service:8080` | Docker Compose DNS |
 | Prod | `http://service.namespace.svc.cluster.local:8080` | Kubernetes DNS |
 
-Spring profiles select environment-specific endpoint values. Target-state baseline routing targets are defined by the released declarative `routes.yml` catalog imported through `application.yml`; environment-variable endpoint substitution may specialize the declared target catalog. Dynamic route overrides never become player-facing route authority.
+Spring profiles are deployment and test plumbing only; they do not define player-facing route authority. Target-state baseline routing targets are defined by the released declarative `routes.yml` catalog imported through `application.yml`; environment-variable endpoint substitution may specialize that declared catalog. Dynamic route overrides never become player-facing route authority.
 
 ---
 

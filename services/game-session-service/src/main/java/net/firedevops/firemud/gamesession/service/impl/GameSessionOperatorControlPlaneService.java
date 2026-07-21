@@ -157,6 +157,7 @@ final class GameSessionOperatorControlPlaneService {
   }
 
   PauseTicksForScopeResponse pauseTicksForScope(long tenantId, PauseTicksForScopeRequest request) {
+    requireText(request.getReason(), "reason is required");
     if (!request.getRegionId().isBlank()) {
       throw new IllegalArgumentException("region_id is not supported; set it empty");
     }
@@ -170,6 +171,7 @@ final class GameSessionOperatorControlPlaneService {
 
   ResumeTicksForScopeResponse resumeTicksForScope(
       long tenantId, ResumeTicksForScopeRequest request) {
+    requireText(request.getReason(), "reason is required");
     if (!request.getRegionId().isBlank()) {
       throw new IllegalArgumentException("region_id is not supported; set it empty");
     }

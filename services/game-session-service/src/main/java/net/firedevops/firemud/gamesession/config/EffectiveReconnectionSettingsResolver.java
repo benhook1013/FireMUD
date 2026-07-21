@@ -39,6 +39,7 @@ public class EffectiveReconnectionSettingsResolver implements ReconnectionSettin
     this.sharedEffectiveSettingsResolver =
         Objects.requireNonNull(
             sharedEffectiveSettingsResolver, "sharedEffectiveSettingsResolver must not be null");
+    validateDefaultSettings();
   }
 
   public EffectiveReconnectionSettingsResolver(
@@ -61,7 +62,6 @@ public class EffectiveReconnectionSettingsResolver implements ReconnectionSettin
                 ScopedSettingsOverrides.empty(),
                 ScopedSettingsOverrides.empty())
             : sharedEffectiveSettingsResolver.resolve(tenantId, gameInstanceId);
-    validateDefaultSettings();
     List<String> sources = new ArrayList<>();
     sources.add("operatorDefaults");
     List<String> diagnostics = new ArrayList<>(MAX_DIAGNOSTICS);

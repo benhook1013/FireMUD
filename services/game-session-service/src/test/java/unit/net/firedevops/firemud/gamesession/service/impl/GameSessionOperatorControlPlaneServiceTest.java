@@ -8,8 +8,10 @@ import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.TickService;
+import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVersionRequest;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForScriptPatchRequest;
+import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeRequest;
 import org.junit.jupiter.api.Test;
 
 class GameSessionOperatorControlPlaneServiceTest {
@@ -53,6 +55,46 @@ class GameSessionOperatorControlPlaneServiceTest {
                         .setPluginVersionId("plugin-v1")
                         .setControlPlaneRequestId("request-1")
                         .setActorPrincipal("operator")
+                        .setReason("")
+                        .build()))
+        .withMessage("reason is required");
+
+    verifyNoInteractions(gameInstanceRepository, tickService);
+  }
+
+  @Test
+  void rejectsBlankPauseTicksReasonBeforePersistence() {
+    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameSessionOperatorControlPlaneService service = service(gameInstanceRepository, tickService);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                service.pauseTicksForScope(
+                    1L,
+                    PauseTicksForScopeRequest.newBuilder()
+                        .setGameInstanceId("7")
+                        .setReason("   ")
+                        .build()))
+        .withMessage("reason is required");
+
+    verifyNoInteractions(gameInstanceRepository, tickService);
+  }
+
+  @Test
+  void rejectsBlankResumeTicksReasonBeforePersistence() {
+    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameSessionOperatorControlPlaneService service = service(gameInstanceRepository, tickService);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                service.resumeTicksForScope(
+                    1L,
+                    ResumeTicksForScopeRequest.newBuilder()
+                        .setGameInstanceId("7")
                         .setReason("")
                         .build()))
         .withMessage("reason is required");

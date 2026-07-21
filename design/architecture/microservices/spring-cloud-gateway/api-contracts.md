@@ -58,7 +58,7 @@ curl --fail-with-body \
   --key "$FIREMUD_GRPC_PRIVATE_KEY_PATH" \
   -X POST https://spring-cloud-gateway-management:8080/routes \
   -H 'Content-Type: application/json' \
-  -d '{"routeId":"demo","uri":"http://example.com","predicates":[],"filters":[]}'
+  -d '{"routeId":"demo","uri":"http://game-session-service:8080","predicates":[],"filters":[]}'
 ```
 
 ```bash

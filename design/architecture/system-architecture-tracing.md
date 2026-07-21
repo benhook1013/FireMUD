@@ -158,7 +158,7 @@ During incidents, Jaeger is a first-class tool alongside logs and metrics only f
   - Correlate high `tcpproxy.telnet.discarded` and `tcpproxy.disconnect.notify.transport_failure` metrics with specific traces to understand whether failures are due to abusive clients, PROXY header issues, or downstream Game Session behavior.
 - **Backup and recovery issues**
   - Search for `backup_pg_dump_snapshot` and `backup_verify_artifact` around the expected schedule and confirm their artifact lineage matches.
-  - For drills or restores, inspect `recovery_converge_participant` outcomes and the controlled-reopen trace; do not infer routine backup failure from the absence of tick-pause spans.
+  - For drills or restores, inspect `recovery_converge_participant` outcomes, including the participant entries retained for controlled reopen; do not infer routine backup failure from the absence of tick-pause spans.
 
 Runbooks for Redis incidents, tick failures, scaling decisions, and backup/recovery reference these span names and query patterns so operators have concrete examples to follow rather than starting from scratch in Jaeger.
 
