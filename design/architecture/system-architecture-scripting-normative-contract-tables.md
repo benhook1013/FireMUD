@@ -52,6 +52,7 @@ Additional required fields for plugin triggers:
 | --- | --- | --- |
 | `pluginId` | Yes (plugin triggers) | Required to distinguish plugin-triggered runs from core scripts when the same `scriptId` model is reused. |
 | `pluginVersionId` | Yes (plugin triggers) | Required for rollback safety, audit correlation, and version-fence drops. |
+| `bindingId` | Yes (plugin triggers) | Stable bundle-authored identity for the concrete resolved plugin handler. One plugin version may contribute several handlers to the same event. |
 | `pluginActivationEpoch` | Yes (plugin triggers) | Monotonic per `<tenantId, gameInstanceId, pluginId>` activation fence. Required with the exact version so same-version reactivation cannot make displaced work eligible again. |
 
 Additional required fields for scheduler/timer triggers:
@@ -87,6 +88,8 @@ Event-scope ingress identity before handler resolution:
 | `isDryRun` | Yes | Separates live and dry-run/test ingress namespaces. |
 
 Event-scope ingress outcomes are recorded in an ingress audit/logging surface keyed by the event-scope identity above, not in handler-scoped `script_event_audit` unless handler resolution has produced a concrete `scriptId` or plugin handler. Once the event is accepted for handler resolution, each resolved handler produces its own Trigger Identity and `script_event_audit` row. Pre-resolution denials such as auth failure, stale pin state, reload backpressure, rollback pause, or version unavailability must not invent a synthetic `scriptId`.
+
+Per [ADR 0167](./decisions/adr-0167-parent-event-and-frozen-handler-execution-identity.md), the first accepted parent event binds its producer-namespaced identity to a canonical request digest and atomically freezes the resolved handler manifest. Retries reuse that manifest. Core children are unique by `{parentEventId, scriptId}`; plugin children add `{pluginId, pluginVersionId, bindingId, pluginActivationEpoch}`. Slugs and admission-pointer observations are validated provenance, not uniqueness dimensions.
 
 Notes:
 

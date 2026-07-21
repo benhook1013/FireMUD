@@ -75,14 +75,15 @@ Direct script upload and update APIs such as `UpdateScript` are limited to boots
 - Scheduler and timer ingress (`onInterval`, `onTimerExpire`): scheduler generates deterministic `scriptEventId` from due-point identity, including `gameInstanceId`.
 - Dry-run and test ingress: service generates by default; caller-supplied IDs are optional and must pass dry-run namespace collision validation.
 
-These identifiers are the canonical idempotency keys for event ingress:
+These identifiers participate in the two-level idempotency contract from [ADR 0167](../../decisions/adr-0167-parent-event-and-frozen-handler-execution-identity.md):
 
-- Any RPC that accepts `scriptEventId` is idempotent with respect to Trigger Identity.
-- For entity-scoped external events, the idempotency key is at least `<tenantId, gameInstanceId, regionId, regionEpoch, entityId, scriptId, eventType, scriptPatchVersion, scriptEventId, isDryRun>` for gameplay/runtime triggers.
+- Any RPC that accepts `scriptEventId` binds it within its producer and immutable runtime/dry-run scope to one canonical request digest. Changed-input reuse is an idempotency conflict.
+- The first accepted event freezes the complete resolved handler manifest. Retries reuse it and do not resolve the currently active binding set again.
 - For gameplay/runtime triggers, the resolved `playableStateScope` is part of the admitted trigger identity even when the surrounding runtime target is already keyed by `gameInstanceId`, so shared-state and isolated-state realms do not collide in durable ingress/work-item/audit rows.
 - For scheduler events, the idempotency key also includes a due point (`dueTickId` / `dueAt`) in deterministic `scriptEventId` derivation.
-- Re-sending the same request with the same idempotency key must not cause the DSL body to run twice.
-- The service records at most one `script_event_audit` row per handler-scoped idempotency key, meaning one row per resolved Trigger Identity after fan-out to a specific `scriptId` or plugin handler.
+- Re-sending the same request must not cause any handler DSL body to run twice or add handlers activated after the first admission.
+- The service records at most one `script_event_audit` row per handler child: `{parentEventId, scriptId}` for core scripts or `{parentEventId, pluginId, pluginVersionId, bindingId, pluginActivationEpoch}` for plugin handlers.
+- `worldSlug`, `realmSlug`, `pointerVersion`, and similar routing observations are stored and validated as provenance but do not make a new idempotency identity.
 
 Downstream calls made from DSL components must carry a stable idempotency token derived from Trigger Identity plus tick context when applicable so infrastructure-level retries do not duplicate side effects.
 

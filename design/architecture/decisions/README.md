@@ -14,7 +14,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 
 | ADR | Status | Primary capability | Secondary capabilities | Decision |
 | --- | --- | --- | --- | --- |
-| [ADR 0001](./adr-0001-scripting-event-ingress-idempotency-identity.md) | Accepted | `AS-1` | `SF-1`, `SF-2` | Canonical scripting trigger identity and retry deduplication boundary |
+| [ADR 0001](./adr-0001-scripting-event-ingress-idempotency-identity.md) | Superseded | `AS-1` | `SF-1`, `SF-2` | Historical flat scripting trigger identity |
 | [ADR 0002](./adr-0002-automation-handoff-reliability-and-success-semantics.md) | Accepted | `AS-1` | `GR-1`, `SF-2`, `PO-4` | Durable automation-to-tick handoff and success semantics |
 | [ADR 0003](./adr-0003-reload-backpressure-and-retry-contract.md) | Accepted | `AS-1` | `AR-3`, `GR-1`, `PO-4` | Reload backpressure, bounded retry, and timer behavior |
 | [ADR 0004](./adr-0004-gameplay-reroute-vs-backend-unavailable.md) | Superseded by ADR 0007 | `PO-2` | `AA-2`, `GR-1`, `PO-4` | Historical distinct reroute close taxonomy |
@@ -180,6 +180,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0164](./adr-0164-exclusive-environment-bound-tcp-proxy-trust.md) | Accepted | `SF-1` | `PO-2`, `PO-3` | Exclusive environment-bound TCP Proxy trust |
 | [ADR 0165](./adr-0165-fenced-command-forwarding-and-authoritative-region-transition.md) | Accepted | `GR-1` | `AA-2`, `SF-1`, `SF-2`, `PO-2` | Fenced command forwarding and authoritative region transition |
 | [ADR 0166](./adr-0166-separated-redis-role-processes-and-owned-keyspaces.md) | Accepted | `SF-2` | `GR-1`, `AA-2`, `AS-1`, `PO-3`, `PO-4` | Separated Redis role processes and owned keyspaces |
+| [ADR 0167](./adr-0167-parent-event-and-frozen-handler-execution-identity.md) | Accepted | `AS-1` | `SF-1`, `SF-2`, `GR-1` | Parent event and frozen handler execution identity |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

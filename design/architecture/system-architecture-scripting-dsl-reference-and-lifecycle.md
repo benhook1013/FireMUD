@@ -192,6 +192,8 @@ Ingress admission and handler execution are intentionally distinct:
 
 - A single inbound event-ingress request (for example `TriggerScriptEvent`) receives exactly one **event-scope** admission decision that covers only ingress-time fences such as auth, pin visibility, patch/plugin availability, and rollback/reload backpressure.
 - Once the request is accepted for handler resolution, the Automation & Scripting Service creates zero or more **handler-scoped** Trigger Identities, one per resolved `<scriptId>` or plugin binding. Plugin handler identities must include `pluginId`, `pluginVersionId`, and `bindingId` because one plugin version can contribute multiple handlers to the same event. These handler-scoped identities are the units used for dedupe, `script_event_audit`, quotas, and downstream execution.
+- First admission freezes the complete ordered handler manifest and applicable activation fences under the parent event identity. Retries never re-resolve current bindings. Reuse of that parent identity with a different canonical request digest is rejected as an idempotency conflict.
+- Core scripts coalesce by `scriptId` and execute once per parent event; plugin handlers remain distinct by stable `bindingId` and `pluginActivationEpoch`.
 - An event-scope `admitted=true` result therefore does **not** mean every resolved handler will succeed. Some handlers may still end with `quota_denied`, `sandbox_error`, `script_disabled`, or exclusivity-policy outcomes while sibling handlers succeed.
 - Caller retries are defined only by the event-scope admission result. Per-handler outcomes are observed asynchronously via `script_event_audit` rows and related status/event surfaces, not by reinterpreting the unary ingress response.
 
