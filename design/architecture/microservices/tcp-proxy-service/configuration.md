@@ -6,8 +6,9 @@ For any shared or player-facing environment, operators should ensure at least:
 
 - `GATEWAY_WS_URL` points at the Spring Cloud Gateway WebSocket mTLS listener (`wss://.../ws/game`), with `FIREMUD_GATEWAY_WS_*` variables configured so the proxy both authenticates the gateway and presents its own client certificate.
 - `TCP_PROXY_MAX_CONNECTIONS` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP` are set to non-zero values sized for expected load and NAT patterns; the `0` defaults are reserved for local/dev and CI.
-- In all shared and player-facing environments, Telnet is fronted by a Telnet edge proxy with PROXY protocol enabled into `TCP_PROXY_PROXY_PROTOCOL_PORT`; the PROXY-protocol listener remains internal-only and is never exposed directly as a public `LoadBalancer` port.
-- Public player-facing Telnet terminates TLS at the edge proxy or runs TCP Proxy with `TCP_PROXY_TLS_ENABLED=true`; raw listeners remain local, test-only, or explicitly private.
+- Public player-facing Telnet must select exactly one TLS mode per endpoint: edge termination with internal PROXY forwarding, or direct TLS termination at TCP Proxy. These modes must not be combined.
+- In edge termination plus internal PROXY mode, the edge forwards plaintext Telnet with PROXY protocol into `TCP_PROXY_PROXY_PROTOCOL_PORT`; that listener remains internal-only and TCP Proxy TLS is disabled for it.
+- In direct TCP Proxy TLS mode, the public listener uses `TCP_PROXY_TLS_ENABLED=true` and does not accept a PROXY header; raw and PROXY-protocol listeners remain local, test-only, or explicitly private.
 - Permitted plaintext Telnet connections should trigger the canonical landing-menu warning recommending Telnet-over-TLS or the web client instead.
 
 ## TLS and Trust Surfaces
@@ -16,7 +17,8 @@ The TCP Proxy Service participates in three distinct TLS and trust boundaries:
 
 | Surface | Direction | Purpose | Key configuration |
 | --- | --- | --- | --- |
-| Telnet plaintext or Telnet-over-TLS | Client <-> TCP Proxy Service | TLS-protected public player connections or local/private raw compatibility. | `TCP_PROXY_PORT`, `TCP_PROXY_TLS_ENABLED`, `TCP_PROXY_TLS_CERT`, `TCP_PROXY_TLS_KEY` |
+| Telnet edge termination plus internal PROXY | Public TLS edge -> internal TCP Proxy | Edge terminates client TLS and forwards plaintext Telnet with trusted client-IP metadata; TCP Proxy TLS is disabled on the PROXY listener. | `TCP_PROXY_PROXY_PROTOCOL_PORT` plus edge TLS configuration |
+| Direct Telnet-over-TLS | Client <-> TCP Proxy Service | TCP Proxy terminates public player TLS directly; no preceding TLS edge or PROXY header is used on this path. | `TCP_PROXY_PORT`, `TCP_PROXY_TLS_ENABLED`, `TCP_PROXY_TLS_CERT`, `TCP_PROXY_TLS_KEY` |
 | WebSocket mTLS bridge | TCP Proxy Service <-> Spring Cloud Gateway | Internal WebSocket hop that normalizes Telnet traffic into the same `/ws/game/**` route used by web clients. | `GATEWAY_WS_URL`, `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH`, `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`, `FIREMUD_GATEWAY_WS_CA_CERT_PATH` |
 | Internal gRPC mTLS | Internal clients <-> TCP Proxy Service | Internal-only gRPC endpoints such as `Ping`. | `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH` |
 
@@ -40,12 +42,12 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `TCP_PROXY_PORT` | TCP port the proxy listens on | `2323` |
-| `TCP_PROXY_PROXY_PROTOCOL_PORT` | TCP port for the PROXY-protocol Telnet listener; internal-only and reachable only from the Telnet edge proxy | `2325` |
+| `TCP_PROXY_PROXY_PROTOCOL_PORT` | TCP port for the edge-termination mode's PROXY-protocol Telnet listener; internal-only and reachable only from the Telnet edge proxy | `2325` |
 | `GATEWAY_WS_URL` | WebSocket URL for forwarding to the gateway; local Docker and test environments may use a plaintext `ws://` endpoint, but player-facing environments must set an explicit `wss://.../ws/game` target | *(none)* |
 | `TCP_PROXY_DEFAULT_WORLD_SLUG` | Explicit local/bootstrap world slug forwarded when the proxy is configured to seed hidden gameplay bridge metadata instead of waiting for first-party connect-token admission | *(empty)* |
 | `TCP_PROXY_DEFAULT_REALM_SLUG` | Explicit local/bootstrap realm slug paired with the seeded world slug when hidden gameplay bridge metadata is preconfigured | *(empty)* |
 | `TCP_PROXY_DEFAULT_POINTER_VERSION` | Explicit local/bootstrap admission-pointer freshness token paired with the seeded world/realm target when hidden gameplay bridge metadata is preconfigured | *(empty)* |
-| `TCP_PROXY_TLS_ENABLED` | Enable Telnet-over-TLS termination | `false` |
+| `TCP_PROXY_TLS_ENABLED` | Enable direct TCP Proxy Telnet-over-TLS termination; do not enable it for the edge-termination PROXY listener | `false` |
 | `TCP_PROXY_TLS_CERT` | Path to the Telnet listener TLS certificate | *(empty)* |
 | `TCP_PROXY_TLS_KEY` | Path to the Telnet listener TLS private key | *(empty)* |
 | `TCP_PROXY_MAX_CONNECTIONS` | Maximum concurrent Telnet connections | `0` |

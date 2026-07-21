@@ -314,7 +314,7 @@ Required top-level fields:
 Nested control-group requirements:
 
 - `restoreSafeMode` includes evidence that player ingress was disabled, normal background processors and outbound integrations were stopped or restore-safe-fenced, Game Session tick execution and command intake could not create fresh coordination state before the coordination recovery gate, and only approved maintenance Jobs ran before quarantine release
-- `jwtHardening` includes rotation job reference, resulting key IDs, revocation watermark evidence, and validator-convergence evidence
+- `jwtHardening` includes rotation job reference, resulting key IDs, issuer authority-generation evidence, and validator-convergence evidence
 - `validatorInventoryRef` points to an authoritative, complete, reachable inventory. Every validator must have a safe converged result and must receive public JWKS only; missing, unknown, unreachable, or private-key-access results fail recovery
 - Post-restore JWT rotation preserves Account Service custody of non-exportable private signing material and JWKS publication authority. Rotation Jobs may request an Account-owned generation transition and observe its published public JWKS, but they do not write `jwt-jwks`, read or export private keys, or mutate Account signing state; recovery evidence must never contain private signer material
 - `databaseCredentialRotation` includes rotation job reference, affected Secret refs, and rollout-restart completion evidence

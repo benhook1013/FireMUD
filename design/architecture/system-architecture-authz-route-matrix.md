@@ -8,8 +8,8 @@ Every protected route in a validated inventory must be listed here with:
 - classification (`public`, `account_scoped`, `caller_membership_scoped`, `player_bootstrap_tenant`, `pre_tenant_discovery`, `public_production_onboarding`, `tenant_regular`, `billing_safe_tenant`, `cross_tenant_support_safe`, `cross_tenant_billing_safe`, `cross_tenant_data_bearing`, `internal_workload`),
 - whether a matching Account issued-token registry record is required,
 - required role checks,
-- tenant-billing watermark applicability,
-- caller-bound membership watermark applicability where relevant,
+- tenant-billing authority-generation applicability,
+- caller-bound membership authority-generation applicability where relevant,
 - required live authority checks for the route class,
 - any response-profile or mutation-contract requirements needed for CI/security enforcement.
 
@@ -61,16 +61,16 @@ Critical-domain inventory artifacts (required):
 
 ## Classification Rules
 
-| Classification | Required issued-token state | Tenant watermark applied? | Notes |
+| Classification | Required issued-token state | Authority generations applied? | Notes |
 | --- | --- | --- | --- |
 | `public` | none | No | No JWT required |
 | `account_scoped` | One matching token record for the exact profile declared by the route | No | Account-level control-plane routes with subject binding (`accountId == caller`), plus explicit route-level admin overrides |
-| `caller_membership_scoped` | One matching token record for the exact profile declared by the route | No tenant-billing watermark; membership watermark: Yes | Caller-bound lifecycle operations on the caller's own account-to-tenant membership. Any current membership role may act on itself; the route must perform a live subject-bound membership check and must not accept an arbitrary account target or global-role override |
-| `player_bootstrap_tenant` | One matching `player-bootstrap` token record | No tenant-billing watermark; membership watermark is route-specific and must be declared explicitly | Player-bootstrap-authenticated routes targeting a tenant before gameplay socket auth is complete. `IssueConnectToken` requires the current membership generation/watermark plus live membership, entitlement, and admission-pointer checks |
+| `caller_membership_scoped` | One matching token record for the exact profile declared by the route | No tenant authority generation; membership authority generation: Yes | Caller-bound lifecycle operations on the caller's own account-to-tenant membership. Any current membership role may act on itself; the route must perform a live subject-bound membership check and must not accept an arbitrary account target or global-role override |
+| `player_bootstrap_tenant` | One matching `player-bootstrap` token record | No tenant authority generation; membership authority generation is route-specific and must be declared explicitly | Player-bootstrap-authenticated routes targeting a tenant before gameplay socket auth is complete. `IssueConnectToken` requires the current membership authority generation plus live membership, entitlement, and admission-pointer checks |
 | `pre_tenant_discovery` | One matching token record | No | Authenticated discovery surfaces that run before a single `tenantId` is selected (for example `WORLDS`) |
-| `public_production_onboarding` | No JWT for in-band gameplay commands; otherwise the exact route-declared profile (currently `player-bootstrap` for Account bootstrap writes) | No tenant-billing watermark before join; membership watermark applies after join | Discovery and explicit open-enrollment join for the default public production realm. Brand-new authenticated accounts may discover it before membership exists, but `JOIN`/`Join & Play` creates the durable Account-owned membership before character creation, connect-token issuance, or `PLAY`; non-public realms require Account-owned grants |
-| `tenant_regular` | One matching token record for the exact profile declared by the route | Tenant-billing watermark: Yes; membership watermark: Yes | Gameplay-affecting and regular tenant control-plane operations |
-| `billing_safe_tenant` | One matching token record for the exact profile declared by the route | Tenant-billing watermark: No; membership watermark: Yes | Must remain reachable during `suspended`/`canceled`, but must fail immediately after caller-bound membership/role revocation |
+| `public_production_onboarding` | No JWT for in-band gameplay commands; otherwise the exact route-declared profile (currently `player-bootstrap` for Account bootstrap writes) | No tenant authority generation before join; membership authority generation applies after join | Discovery and explicit open-enrollment join for the default public production realm. Brand-new authenticated accounts may discover it before membership exists, but `JOIN`/`Join & Play` creates the durable Account-owned membership before character creation, connect-token issuance, or `PLAY`; non-public realms require Account-owned grants |
+| `tenant_regular` | One matching token record for the exact profile declared by the route | Tenant authority generation: Yes; membership authority generation: Yes | Gameplay-affecting and regular tenant control-plane operations |
+| `billing_safe_tenant` | One matching token record for the exact profile declared by the route | Tenant authority generation: No; membership authority generation: Yes | Must remain reachable during `suspended`/`canceled`, but must fail immediately after caller-bound membership/role revocation |
 | `cross_tenant_support_safe` | One matching token record for the exact profile declared by the route | No | High-level troubleshooting only |
 | `cross_tenant_billing_safe` | One matching token record for the exact profile declared by the route | No | Billing operations for global billing roles |
 | `cross_tenant_data_bearing` | One matching token record for the exact profile declared by the route | Yes when operation targets tenant-scoped data | Platform-admin-only data-bearing operations |
@@ -83,14 +83,14 @@ Internal-service routes must additionally declare their **service caller policy*
 - which token profile/audience the caller must present.
 - When a route accepts more than one profile, the YAML must map each accepted profile to its exact audience rather than using an implicit shared audience.
 
-`allowed_callers` and `mtls_callers` are conjunctive constraints for internal workload routes. A caller name in `allowed_callers` is not sufficient without the exact certificate identity in `mtls_callers`, and an mTLS identity is not sufficient without the method caller allowlist.
+Each `caller_policies` entry is one complete alternative. Alternatives are disjunctive, while the caller identity, mTLS identity, token state/profile, delegated context, and live checks inside one entry are conjunctive. A caller name is not sufficient without its exact certificate identity, and an mTLS identity is not sufficient without the method caller policy.
 
 Without these fields, a route classification is incomplete for internal-only APIs.
 
 Critical routes may also require explicit machine-readable fields for:
 
-- `membership_watermark_applies`
-- `tenant_billing_watermark_applies`
+- `membership_authority_generation_applies`
+- `tenant_billing_authority_generation_applies`
 - `required_live_checks` such as `membership`, `membership_generation`, `runtime_entitlements`, `admission_pointer`
 - `mutation_contract` such as `shared_instrument_ack_required`
 - `canonical_errors` that CI and contract tests must expect for route-specific security rejections
@@ -113,16 +113,16 @@ Route authorization never becomes in-game elevation. If a global-role account pa
 | Game Session Service | `StartSession` / `RestartSession` / `StopSession` / `RefreshRoles` | `tenant_regular` | `tenantAdmin`/`platformAdmin` |
 | Account Service | `AuthLogin` | `public` | `control-ui` auth entrypoint |
 | Account Service | `PlayerBootstrapLogin` | `public` | First-party gameplay bootstrap entrypoint; issues `player-bootstrap` token profile only |
-| Account Service | `JoinPublicProductionMembership` | `public_production_onboarding` | Explicit caller-bound `Join & Play` action for a discovery-selected public production realm; transactional membership and durable audit/outbox |
+| Account Service | `EnsurePublicProductionPlayerMembership` | `public_production_onboarding` | Current Account proto RPC name for the caller-bound public-production membership seam; target behavior is an explicit `JOIN`/`Join & Play` action with transactional membership and durable audit/outbox |
 | Account Service | `DELETE /tenants/{tenantId}/memberships/me` | `caller_membership_scoped` | Caller-bound membership exit remains available while billing-blocked to any current member role, requires live subject-bound membership, and advances membership authority atomically |
 | Account Service | `AuthLogout` / `AuthLogoutAll` | `account_scoped` | Normal mutation requires registry-backed authenticated account scope. Bounded retries may return no-op success only for an absent exact token record (`AuthLogout`) or durable proof that a prior logout-all superseded the token (`AuthLogoutAll`); the retry exception grants no reusable authorization context |
 | Account Service | `GetProfile` / `UpdateProfile` (`/profiles/{accountId}`) | `account_scoped` | Subject-bound to caller `accountId`; `platformAdmin` override only |
 | Account Service | `ExportAccount` / `DeleteAccount` / `LinkExternalAccount` (`/accounts/{accountId}/...`) | `account_scoped` | Subject-bound to caller `accountId`; `platformAdmin` override only. `DeleteAccount` also requires no nonterminal owned subscriptions |
-| Account Service | `IssueConnectToken` | `player_bootstrap_tenant` | Caller-bound player-bootstrap auth only; current caller-bound membership generation/watermark, live membership, runtime entitlement, and admission-pointer checks are required. Global roles alone never grant gameplay admission or connect-token issuance |
+| Account Service | `IssueConnectToken` | `player_bootstrap_tenant` | Caller-bound player-bootstrap auth only; current caller-bound membership authority generation, live membership, runtime entitlement, and admission-pointer checks are required. Global roles alone never grant gameplay admission or connect-token issuance |
 | Account Service | `Authenticate` | `internal_workload` | Exact Game Session mTLS identity, no pre-existing issued token, and trusted server-derived credential source context |
 | Account Service | `RefreshGameplayServiceToken` | `internal_workload` | Exact Game Session mTLS identity plus current `game-session-account-delegation` authority with audience `account-service` |
 | Account Service | `GetTenantMembershipForRuntime` / `GetRealmAccessGrant` / `ListRealmAccessGrantsForAccount` | `internal_workload` | Exact Game Session mTLS identity plus validated typed player context; no circular end-user token prerequisite |
-| Account Service | `GetTenantEntitlementsForRuntime` | `internal_workload` | Exact Game Session mTLS plus current private delegation for player admission, or exact World Management mTLS plus tenant/operation-bound instance-lifecycle context; no `control-ui` or Logging and Admin caller; not edge exposed |
+| Account Service | `GetTenantEntitlementsForRuntime` | `internal_workload` | Exactly one complete caller-policy alternative: Game Session mTLS plus current private delegation and typed player context for player admission, or World Management mTLS plus tenant/operation-bound instance-lifecycle context without a player delegation. Constraints within the selected alternative are conjunctive; no `control-ui` or Logging and Admin caller; not edge exposed |
 | Account Service | `GetTenantEntitlementsTenant` | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |
 | Account Service | `GetTenantEntitlementsCrossTenantSupportSafe` | `cross_tenant_support_safe` | `support`/`platformAdmin` |
 | Account Service | `GetSubscriptionTenantHighLevel` | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |
@@ -131,7 +131,7 @@ Route authorization never becomes in-game elevation. If a global-role account pa
 | Account Service | `ListSubscriptionsTenantHighLevel` | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |
 | Account Service | `ListSubscriptionsCrossTenantSupportSafe` | `cross_tenant_support_safe` | `support`/`platformAdmin` |
 | Account Service | `ListSubscriptionsCrossTenantBillingSafeReports` | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |
-| Account Service | `GetCallerTenantMembershipTenant` | `billing_safe_tenant` | `tenantAdmin` (subject bound to caller); caller-bound membership watermark applies |
+| Account Service | `GetCallerTenantMembershipTenant` | `billing_safe_tenant` | `tenantAdmin` (subject bound to caller); caller-bound membership authority generation applies |
 | Account Service | `GetTenantMembershipForAccountCrossTenant` | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |
 | Account Service | invoice/payment method APIs tenant-scoped variant | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped); shared-instrument acknowledgement contract required when mutation affects account-wide payment instrument |
 | Account Service | invoice/payment method APIs cross-tenant variant | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |

@@ -116,14 +116,14 @@ When a JWT signing key is suspected to be compromised, operators follow a more a
 - Quarantine new JWT issuance and JWT-protected admission/control-plane traffic before changing trust material.
 - Immediately have Account Service initiate compromise-mode rotation and promotion; the non-exportable signer performs only delegated private-key operations, or Account uses the controlled Secret fallback. Rotation automation must not receive private material or read/update `jwt-signing-keys`.
 - Through the single Account JWT rotation control/status interface, request Account to publish **only uncompromised public keys**. Do not retain a compromised key in any overlap or rollback slot during compromise response; automation must observe the Account-published result rather than writing `jwt-jwks`.
-- Treat compromise of the environment-wide Account signing key as global for that issuer. Advance the issuer-wide revocation watermark and perform required session/allowlist invalidation so reauthentication is mandatory; tenant-selective cleanup is not sufficient containment.
+- Treat compromise of the environment-wide Account signing key as global for that issuer. Advance the issuer authority generation and perform required session/allowlist invalidation so reauthentication is mandatory; tenant-selective cleanup is not sufficient containment.
 - Restart or force reload JWT validators where needed, then verify validator cache convergence by checking that no service is accepting tokens signed by the compromised `kid`.
 - Optionally tighten `FIREMUD_AUTH_JWT_EXPIRATION_MS` for a short containment window after cutover to reduce exposure from any residual stale clients.
 - Monitor authentication and authorization metrics/logs (failed validations, unexpected 401/403 patterns) to confirm new-key adoption and incident stabilization.
 
 Normal rotations use the overlap-preserving `jwt-rotation` path without session invalidation. Compromise rotations must use hard cutover semantics and be tracked in incident records, including the environment-wide issuer scope, replaced key IDs, invalidation scope, and validation-convergence evidence.
 Compromise-mode rotation is a mandatory runbook-driven process and must include explicit evidence (rotated key IDs, invalidation scope, and validator-convergence checks) before reopening player-facing traffic.
-Compromise response must not rely on wildcard key scans/deletes in hot paths. Watermarks and bounded background cleanup are defense in depth, but they cannot replace removal of the compromised public key and proof that every validator rejects it.
+Compromise response must not rely on wildcard key scans/deletes in hot paths. Authority generations and bounded background cleanup are defense in depth, but they cannot replace removal of the compromised public key and proof that every validator rejects it.
 
 ### Player-Facing JWT Readiness
 

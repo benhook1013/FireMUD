@@ -28,7 +28,7 @@ When code, tests, and docs diverge, align implementation to this doc set and the
 | Proxy -> Gateway WebSocket mTLS | Telnet -> Gateway WebSocket client connects over `wss://` using mutual TLS and the dedicated `FIREMUD_GATEWAY_WS_*` client certificate paths (separate from the proxy’s gRPC server mTLS identity). | Implemented. Player-facing environments fail closed if client-certificate identity verification is unavailable. | [Platform Operations and Delivery](../../../project-management/implementation-tracking/platform-operations-and-delivery.md) |
 | MCP control-line handling and Telnet heuristics | MCP 2.1 control lines, Telnet heuristics, and connection throttling are enforced at the proxy edge while keeping MCP payloads intact. | Implemented. | [Platform Operations and Delivery](../../../project-management/implementation-tracking/platform-operations-and-delivery.md) |
 | Connection limits and abuse protection | Connection caps, idle timeouts, input size limits, and MCP/Telnet safety budgets protect the DMZ boundary. | Core limit handling is implemented; tuning and additional metrics may evolve as production behaviour is observed. | [Platform Operations and Delivery](../../../project-management/implementation-tracking/platform-operations-and-delivery.md) |
-| Telnet client IP preservation via PROXY protocol | Telnet client IPs are preserved by terminating public TCP on a Telnet edge proxy and forwarding to the TCP Proxy Service using PROXY protocol on an internal-only listener/port. | Implemented. In player-facing environments, PROXY protocol on the internal listener is required and the raw Telnet listener is never exposed directly to the Internet. | [Platform Operations and Delivery](../../../project-management/implementation-tracking/platform-operations-and-delivery.md) |
+| Telnet client IP preservation via PROXY protocol | In the edge-termination TLS mode, the Telnet edge terminates public TLS and forwards to the TCP Proxy Service using PROXY protocol on an internal-only listener/port. Direct TCP Proxy TLS mode does not use a PROXY header and observes the TCP peer address. | The two target modes are defined, but player-facing deployment evidence must prove which mode is selected; the raw and PROXY-protocol listeners are never public. | [Platform Operations and Delivery](../../../project-management/implementation-tracking/platform-operations-and-delivery.md) |
 
 ## Responsibilities
 
@@ -38,6 +38,8 @@ When code, tests, and docs diverge, align implementation to this doc set and the
 - Refuse new user-facing traffic while the downstream gameplay path is not yet ready for first-session admission.
 
 Plaintext/raw Telnet remains available for local development, automated proof, and explicitly private-network compatibility. Public player-facing hobby/self-hosted, staging, and production endpoints require TLS as established by [ADR 0033](../../decisions/adr-0033-public-player-facing-telnet-requires-tls.md); TLS-incapable clients require a trusted local wrapper or cannot connect directly.
+
+Public Telnet TLS is configured as one of two mutually exclusive modes: a dedicated edge terminates TLS and forwards plaintext Telnet plus trusted PROXY metadata to the internal-only `TCP_PROXY_PROXY_PROTOCOL_PORT`, or TCP Proxy terminates TLS directly with `TCP_PROXY_TLS_ENABLED=true` on the public listener. Do not combine edge TLS termination with TCP Proxy TLS on one path, and keep raw/PROXY-protocol listeners private.
 
 ## Readiness and Liveness
 

@@ -27,12 +27,12 @@ The previous flow created membership implicitly during first-party connect-token
 - The join action creates or returns the Account-owned tenant `player` membership. This is an intended durable product relationship, not temporary admission state.
 - Successful membership powers the player's “my games”/return discovery even if the first connection or later `PLAY` attempt fails. A failed join transaction creates nothing.
 - Connect-token issuance, character creation, and `PLAY` require the resulting membership and never create it implicitly. If it is missing, they return `JOIN_REQUIRED` with recovery guidance.
-- `IssueConnectToken` must re-read the current caller-bound membership and membership generation/watermark at issuance time. A stale bootstrap token, discovery result, or cached membership decision cannot issue a connect token after membership authority has advanced or been revoked.
+- `IssueConnectToken` must re-read the current caller-bound membership and membership authority generation at issuance time. A stale bootstrap token, discovery result, or cached membership decision cannot issue a connect token after membership authority has advanced or been revoked.
 - Non-public and non-production realms retain their explicit Account-owned grant requirements and cannot use open enrollment.
 
 ### Membership Transaction
 
-Account Service is the sole join writer. The canonical operation, named `JoinPublicProductionMembership` or equivalently explicit public-join terminology, accepts caller-bound account identity plus `{tenantId, worldSlug, realmSlug, requestId}` and:
+Account Service is the sole join writer. The current proto RPC is named `EnsurePublicProductionPlayerMembership`; its target semantics are the explicit public-join operation, accepting caller-bound account identity plus `{tenantId, worldSlug, realmSlug, requestId}` and:
 
 - revalidates that the realm is still the explicit public production realm, publicly visible, entitlement-eligible, and backed by an unambiguous current admission pointer;
 - treats `requestId` as the idempotency identity and makes concurrent joins converge on one membership;
@@ -73,7 +73,7 @@ This avoids durable rows for casual visits but creates a second class of gamepla
 ## Implementation and Proof Obligations
 
 - Add explicit browser/mobile join and text `JOIN` flows before first character creation/connect/`PLAY`.
-- Converge the implicit `EnsurePublicProductionPlayerMembership` call sites and naming onto the explicit join operation; `POST /auth/connect-token` and `PLAY` must not write membership.
+- Converge the implicit `EnsurePublicProductionPlayerMembership` call sites onto the explicit join operation; `POST /auth/connect-token` and `PLAY` must not write membership.
 - Commit membership plus durable audit/outbox atomically and make SQL membership/operation state authoritative for replay.
 - Implement monotonic membership versioning and prove races/retries return one membership and one logical join event.
 - Prove a successful join survives later token/socket/`PLAY` failure, while a failed join creates no membership, audit event, character, or admission state.

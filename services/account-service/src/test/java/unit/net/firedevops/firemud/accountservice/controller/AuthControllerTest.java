@@ -94,7 +94,7 @@ class AuthControllerTest {
   }
 
   @Test
-  void connectTokenReturnsMintedToken() throws Exception {
+  void connectTokenSetsCookieAndReturnsMetadataOnly() throws Exception {
     ConnectTokenRequest request = new ConnectTokenRequest("scope-1", "req-7");
     when(accountService.issueConnectToken("boot123", new ConnectTokenRequest("scope-1", "req-7")))
         .thenReturn(
@@ -119,7 +119,17 @@ class AuthControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.connectToken").value("conn123"))
+        .andExpect(jsonPath("$.data.connectToken").doesNotExist())
+        .andExpect(jsonPath("$.data.accountId").value(1))
+        .andExpect(jsonPath("$.data.tenantId").value(1))
+        .andExpect(jsonPath("$.data.gameInstanceId").value(42))
+        .andExpect(jsonPath("$.data.realmSlug").value("production"))
+        .andExpect(jsonPath("$.data.connectScopeId").value("scope-1"))
+        .andExpect(jsonPath("$.data.jti").value("jti-1"))
+        .andExpect(jsonPath("$.data.requestId").value("req-7"))
+        .andExpect(jsonPath("$.data.issuedAt").value("2026-03-30T00:00:00Z"))
+        .andExpect(jsonPath("$.data.expiresAt").value("2026-03-30T00:00:30Z"))
+        .andExpect(jsonPath("$.data.replayed").value(false))
         .andExpect(
             header()
                 .string(HttpHeaders.SET_COOKIE, containsString("Firemud-Connect-Token=conn123")))
@@ -127,9 +137,7 @@ class AuthControllerTest {
         .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Secure")))
         .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Strict")))
         .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/ws/game")))
-        .andExpect(jsonPath("$.data.connectScopeId").value("scope-1"))
-        .andExpect(jsonPath("$.data.requestId").value("req-7"))
-        .andExpect(jsonPath("$.data.replayed").value(false));
+        .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=30")));
   }
 
   @Test

@@ -90,6 +90,7 @@ Current rules:
 - future MCP-carried attach hints must remain advisory and must never bypass `LOGIN` + `PLAY`.
 - PROXY protocol trust follows the same principle: on the internal-only PROXY listener, malformed or truncated PROXY headers are a hard failure and the proxy must not silently fall back to the TCP peer IP. The canonical discard signal is `tcpproxy.telnet.discarded{reason="proxy_protocol"}`.
 - PROXY parsing must never be enabled on the public Telnet listener. Accepting PROXY headers directly from the Internet would allow client-IP spoofing.
+- Public Telnet must use either edge TLS termination with this internal PROXY listener or direct TCP Proxy TLS without a PROXY header; the two modes are mutually exclusive. Both modes continue through the same Proxy -> Gateway WebSocket mTLS bridge and `LOGIN`/`PLAY` protocol.
 
 Metrics give observability into each Telnet connection while keeping Prometheus label cardinality bounded:
 

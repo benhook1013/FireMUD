@@ -25,9 +25,9 @@ Run this flow when any of the following is true:
    - Through the single Account JWT rotation control/status interface, have rotation automation request Account to publish only uncompromised public keys. Do not overlap, retain, or roll back to a compromised key.
    - The rotation Job/CronJob must never read or update `jwt-signing-keys` or write `jwt-jwks`; it observes Account-owned publication and pruning, runs validator-convergence checks, and records evidence only.
 3. Invalidate environment-wide issuer authority.
-   - Advance `session:auth:revoked_after:issuer:<issuerId>` through Account authority; its inclusive `iat <= watermark` boundary revokes tokens issued in the watermark second. Perform the required session/allowlist cleanup within the configured bound so reauthentication is mandatory.
+   - Advance the issuer authority generation through Account authority and perform the required bounded session/allowlist cleanup so reauthentication is mandatory.
    - Treat compromise of the per-environment Account key as global for that issuer. Tenant-selective cleanup is not sufficient.
-   - Do not treat the watermark as a substitute for key rejection; an attacker holding the old private key can mint fresh claims.
+   - Do not treat the authority-generation advance as a substitute for key rejection; an attacker holding the old private key can mint fresh claims.
 4. Force validator convergence.
    - Refresh or restart every validator in the declared validator inventory.
 5. Verify convergence.
@@ -44,7 +44,7 @@ Before reopening player-facing traffic, incident records must include:
 - Compromised key identifiers (`kid`) and replacement key identifiers.
 - Quarantine start and end timestamps plus the protected surfaces covered.
 - Timestamped proof that Account Service authorized or completed private-key generation, validated and promoted the signing generation, published JWKS, and performed any required public/private pruning, including any delegated private-key operation performed by a non-exportable signer, plus proof that rotation automation observed the Account-owned `jwt-jwks` update through the control/status interface.
-- Issuer-wide watermark and session invalidation completion evidence.
+- Issuer authority-generation and session invalidation completion evidence.
 - Exact validator inventory, last observed JWKS generation, and convergence proof that each validator rejects the compromised `kid` and accepts the replacement.
 - Reopen decision timestamp and approver.
 

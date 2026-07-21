@@ -25,11 +25,11 @@ The architecture already describes this split and the admission path substantial
 Account Service owns:
 
 - global account identity, lifecycle, credentials, recovery, and configured authentication modes;
-- token issuance profiles, signing keys, JWKS publication, the issued-token registry, and account/tenant/membership revocation authority;
+- token issuance profiles, signing keys, JWKS publication, the issued-token registry, and issuer/account/tenant/membership authority-generation state;
 - account-to-tenant membership, tenant roles, gameplay-admission eligibility, realm-access grants, and runtime entitlement truth; and
 - monotonic membership and entitlement versions used by consumers to reject stale authority.
 
-Account Service is the sole writer of `session:auth:revoked_after:*`. Other services request revocation through owned APIs or events and reconcile against Account Service rather than creating local competing authority.
+Account Service is the sole writer of issuer, account, tenant, and `{accountId, tenantId}` membership authority generations. Other services request authority changes through owned APIs or events and reconcile against Account Service rather than creating local competing authority.
 
 ### Game Session Authority
 
@@ -54,10 +54,10 @@ These checks do not allow Gateway to issue account authority, infer membership, 
 
 ### Failure and Freshness Rules
 
-- Admission and sensitive mutations fail closed when authoritative membership, entitlement, token-profile, allowlist, or applicable watermark state cannot be established.
+- Admission and sensitive mutations fail closed when authoritative membership, entitlement, token-profile, allowlist, or applicable authority-generation state cannot be established.
 - `membershipVersion` advances on every membership or role change that can alter gameplay or tenant authority; a database row identifier that does not advance is not a valid version.
-- Ongoing sessions must consume revocation and membership changes through bounded indexes/events plus authoritative reconciliation; JWT expiry alone is insufficient for immediate revocation.
-- Design acceptance and implementation status remain separate. Missing watermark enforcement, raw-JWT persistence, or non-monotonic versions are recorded implementation gaps, not alternate authority.
+- Ongoing sessions must consume authority and membership changes through bounded indexes/events plus authoritative reconciliation; JWT expiry alone is insufficient for immediate revocation.
+- Design acceptance and implementation status remain separate. Missing authority-generation enforcement, raw-JWT persistence, or non-monotonic versions are recorded implementation gaps, not alternate authority.
 
 ## Consequences
 
@@ -71,7 +71,7 @@ These checks do not allow Gateway to issue account authority, infer membership, 
 
 ### Dedicated IAM and Token Service
 
-A dedicated IAM service could own signing, allowlists, watermarks, and validation policy while Account retained profile and billing state. This narrows Account's security surface but adds a critical service and consistency boundaries between credentials, membership, billing, and revocation. FireMUD will not introduce it before a demonstrated scaling, isolation, or security-ownership need.
+A dedicated IAM service could own signing, allowlists, authority generations, and validation policy while Account retained profile and billing state. This narrows Account's security surface but adds a critical service and consistency boundaries between credentials, membership, billing, and revocation. FireMUD will not introduce it before a demonstrated scaling, isolation, or security-ownership need.
 
 ### Gateway-Owned Identity and Authorization
 
@@ -79,12 +79,12 @@ Centralizing identity at Gateway simplifies edge routing but cannot safely autho
 
 ### TTL-Only Tokens
 
-Relying only on short token expiry removes allowlists and watermark propagation but cannot provide the required immediate account, tenant, or membership revocation behavior.
+Relying only on short token expiry removes allowlists and authority-generation propagation but cannot provide the required immediate account, tenant, or membership revocation behavior.
 
 ## Implementation and Proof Obligations
 
-- Enforce strict token profile, audience, allowlist, and applicable revocation-watermark checks in shared middleware rather than signature-only parsing.
-- Implement all Account-owned watermark writers and prove logout-all, account, tenant, membership, and signing-key compromise revocation paths.
+- Enforce strict token profile, audience, allowlist, and applicable authority-generation checks in shared middleware rather than signature-only parsing.
+- Implement all Account-owned authority-generation writers and prove logout-all, account, tenant, membership, and signing-key compromise revocation paths.
 - Replace persisted raw gameplay JWTs with token hash/issued-at identity and freshly rebound backend credentials.
 - Make `membershipVersion` and entitlement version/sequence monotonic state-change values rather than row identifiers.
 - Prove `PLAY`, reconnect/resume, role changes, membership removal, and billing cutoff consume current Account authority and fail closed when it is unavailable.

@@ -25,7 +25,10 @@ TCP Proxy can apply TLS to its listener, and a dedicated public Telnet edge may 
 ### Public Transport Boundary
 
 - Every public player-facing Telnet endpoint in hobby/self-hosted, staging, and production environments requires TLS from the client to the public Telnet termination point.
-- TLS may terminate at a dedicated Telnet edge proxy or at TCP Proxy Service. If an edge proxy terminates TLS, its downstream plaintext hop is internal-only, network-restricted, and uses the canonical PROXY protocol trust contract where client-IP preservation is required.
+- Each public endpoint selects exactly one of these mutually exclusive modes:
+  - **Edge termination plus internal PROXY mode** – A dedicated Telnet edge proxy terminates client TLS and forwards plaintext Telnet with a trusted PROXY header to the internal-only `TCP_PROXY_PROXY_PROTOCOL_PORT`. TCP Proxy TLS is disabled on that listener.
+  - **Direct TCP Proxy TLS mode** – The client connects to a TCP Proxy TLS listener with `TCP_PROXY_TLS_ENABLED=true`, and TCP Proxy presents the Telnet certificate and terminates TLS. No preceding TLS-terminating edge or PROXY header is used on that path; the listener observes the TCP peer address.
+- Never combine edge TLS termination with TCP Proxy TLS on the same endpoint, and never expose the raw or PROXY-protocol listeners publicly.
 - The TCP Proxy raw listener is never exposed directly to the public Internet in a player-facing environment.
 - Plaintext Telnet remains supported for local development, automated protocol proof, and explicitly private-network use. Those paths do not qualify as player-facing production evidence and retain the pre-login plaintext warning when real credentials could be entered.
 - TLS-incapable clients cannot connect directly to a supported public FireMUD deployment. A user may employ a trusted local TLS wrapper, but FireMUD does not weaken the server boundary to accommodate that client.
@@ -66,6 +69,9 @@ This avoids sending a durable password and can preserve more TLS-incapable clien
 ## Implementation and Proof Obligations
 
 - Ensure player-facing manifests expose only a TLS-protected public Telnet port and keep raw/PROXY-protocol listeners internal-only.
+- Select and record one public TLS mode per endpoint; reject configurations that enable both edge termination and TCP Proxy TLS for the same path.
+- For edge termination plus internal PROXY, prove the edge forwards the expected PROXY version/header to the restricted listener and that malformed, missing, or untrusted headers fail closed. For direct TCP Proxy TLS, prove the TCP Proxy certificate/handshake and peer-address behavior without a PROXY header.
+- In either mode, prove TCP Proxy establishes the internal Proxy -> Gateway WebSocket mTLS bridge and preserves the same `LOGIN -> PLAY -> LOOK` protocol flow as browser gameplay.
 - Prove the public endpoint completes a valid TLS handshake, presents the expected certificate chain, rejects plaintext, and reaches `LOGIN -> PLAY -> LOOK` through the canonical bridge.
 - Keep local and private raw-Telnet tests distinct from player-facing transport evidence.
 - Align configuration documentation with the actual listener model; do not advertise a separate `TCP_PROXY_TLS_PORT` unless a distinct listener using that setting exists.

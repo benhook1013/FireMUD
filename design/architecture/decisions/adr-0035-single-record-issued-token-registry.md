@@ -16,9 +16,9 @@ Accepted
 
 FireMUD combines locally verifiable JWTs with server-side issued-token state so a single token can be logged out immediately, refresh remains generation-bound, and possession of an exfiltrated signing key alone does not create an accepted token. The previous design created one account record, one record for every tenant in the token, and another record for global roles. Tenant requests could require multiple lookups, while issuance, rotation, and logout had to keep a variable set of duplicate records consistent.
 
-Tenant and global authorization already comes from strictly validated signed claims plus Account-owned account, tenant, and membership revocation/version authority. Duplicating those scopes into per-token Redis key names adds cardinality and partial-update cases without adding a distinct authorization boundary.
+Tenant and global authorization already comes from strictly validated signed claims plus Account-owned account, tenant, and membership authority-generation/version state. Duplicating those scopes into per-token Redis key names adds cardinality and partial-update cases without adding a distinct authorization boundary.
 
-The current implementation writes account and tenant keys but does not consistently enforce the complete registry contract in downstream validators. Global entries, full watermark enforcement, and end-to-end revocation proof remain incomplete.
+The current implementation writes account and tenant keys but does not consistently enforce the complete registry contract in downstream validators. Global entries, full authority-generation enforcement, and end-to-end revocation proof remain incomplete.
 
 ## Decision
 
@@ -46,7 +46,7 @@ The current implementation writes account and tenant keys but does not consisten
 ### Revocation And Rotation
 
 - Per-token logout deletes the single token record idempotently. Other devices, tokens, and gameplay bindings remain unaffected.
-- Bulk account, tenant, and membership revocation uses monotonic watermarks/versions rather than scanning token records or encoding every scope in the token key.
+- Bulk account, tenant, and membership revocation uses monotonic authority generations rather than scanning token records or encoding every scope in the token key. These generations are not epoch timestamps.
 - Generation-bound private player-delegation rotation creates the replacement record before returning it, atomically swaps the gameplay binding as defined by ADR 0031, and deletes the old record after the bounded in-flight overlap.
 - Registry absence is default denial. Coordination reset therefore forces reauthentication/reissuance rather than making unregistered but cryptographically valid tokens acceptable.
 
@@ -63,7 +63,7 @@ The current implementation writes account and tenant keys but does not consisten
 
 ### Keep Account, Tenant, And Global Keys Per Token
 
-This makes each scope visible in the keyspace but duplicates claims, creates one-to-many key growth, requires multiple validation reads, and introduces partial issuance/logout/rotation states. Watermarks already provide scoped bulk revocation.
+This makes each scope visible in the keyspace but duplicates claims, creates one-to-many key growth, requires multiple validation reads, and introduces partial issuance/logout/rotation states. Authority generations already provide scoped bulk revocation.
 
 ### Stateless JWT Validation Only
 

@@ -16,7 +16,7 @@ Accepted
 
 Role, membership, private-realm access, account security, and tenant billing can all change while a player is connected, but they do not represent the same risk. Treating every change as an immediate kick disrupts harmless role refresh and temporary payment recovery. Waiting for reconnect or token expiry after authority or security loss permits a player to keep access they no longer possess.
 
-The previous target distinguished soft and hard billing states and required event-driven revocation, but it left new-admission behavior during `grace`, private-realm grant revocation, and the meaning of “immediate” propagation unclear. It also had no implemented producer/consumer, monotonic membership version, revocation-watermark workflow, bounded active-session indexes, or hard-cutoff proof. Current code principally rechecks membership and a limited entitlement response at `PLAY`; already-connected sessions are not revoked by these changes.
+The previous target distinguished soft and hard billing states and required event-driven revocation, but it left new-admission behavior during `grace`, private-realm grant revocation, and the meaning of “immediate” propagation unclear. It also had no implemented producer/consumer, monotonic membership version, authority-generation workflow, bounded active-session indexes, or hard-cutoff proof. Current code principally rechecks membership and a limited entitlement response at `PLAY`; already-connected sessions are not revoked by these changes.
 
 ## Decision
 
@@ -39,12 +39,12 @@ The previous target distinguished soft and hard billing states and required even
 
 ### Delivery And Bounded Enforcement
 
-- Account is the sole authority and watermark writer. It commits the durable state/version change and monotonic outbox event atomically in its database, then idempotently projects the applicable account, tenant, or membership revocation watermark. A cutoff workflow does not report enforcement complete until the watermark projection succeeds.
+- Account is the sole authority-generation writer. It commits the durable state/version change and monotonic outbox event atomically in its database, then idempotently advances the applicable account, tenant, or membership authority generation. A cutoff workflow does not report enforcement complete until the authority-generation projection succeeds.
 - Game Session consumes revocation events durably and idempotently. Events carry a stable ID and monotonic authority version; duplicates and older versions are no-ops, while gaps trigger authoritative reconciliation.
 - Game Session maintains bounded active-binding indexes by account, tenant, and private-realm grant scope. Revocation must not rely on Redis wildcard scans.
-- The event is the fast path. Batched watermark/version reconciliation must ensure a missed event cannot preserve revoked gameplay authority for more than 60 seconds.
+- The event is the fast path. Batched authority-generation/version reconciliation must ensure a missed event cannot preserve revoked gameplay authority for more than 60 seconds.
 - The reconciliation freshness lease is fail-closed: new admission stops when authority freshness is unavailable, and an active binding whose authority cannot be re-established is terminated at the 60-second bound.
-- Routine gameplay commands do not call Account or read revocation watermarks. The bounded reconciliation is periodic and batched by active authority scope.
+- Routine gameplay commands do not call Account or read authority generations. The bounded reconciliation is periodic and batched by active authority scope.
 
 ## Consequences
 
@@ -53,7 +53,7 @@ The previous target distinguished soft and hard billing states and required even
 - A missed revocation event has a defined maximum exposure rather than an indefinite active-session loophole.
 - The 60-second fail-closed reconciliation lease can disconnect players during a prolonged authority/Coordination Redis incident. This is the accepted cost of a real revocation bound; it is less expensive than a per-command authority read.
 - Hard billing cutoff may consume up to the existing five-minute internal drain budget, but that window admits no players and grants no continued gameplay.
-- The contract adds durable event, watermark-projection, versioning, active-index, reconciliation, and end-to-end cutoff proof obligations.
+- The contract adds durable event, authority-generation projection, versioning, active-index, reconciliation, and end-to-end cutoff proof obligations.
 
 ## Alternatives Considered
 
@@ -69,19 +69,19 @@ This gives one mechanical rule but disrupts harmless role updates and live games
 
 Warning-only enforcement protects players from owner billing failures but permits unbounded unpaid hosting and makes cancellation ineffective until every player disconnects naturally.
 
-### Per-Command Watermark Checks
+### Per-Command Authority-Generation Checks
 
 Checking Account or Redis before every command gives a tighter revocation observation point, but adds latency and an authority-store availability dependency to the routine gameplay hot path. Durable events plus batched reconciliation provide a bounded compromise.
 
 ## Implementation and Proof Obligations
 
 - Implement monotonic membership, grant, account-security, and tenant-billing versions with durable outbox producers and idempotent consumers.
-- Implement Account-owned account, tenant, and membership watermark projection with retry and cutoff-completion semantics.
+- Implement Account-owned account, tenant, and membership authority-generation projection with retry and cutoff-completion semantics.
 - Persist the authority versions required by active gameplay bindings and implement bounded account, tenant, and private-realm indexes for targeted termination.
 - Add batched reconciliation, the 60-second freshness lease, event-gap repair, and bounded telemetry for event lag, projection failures, reconciliation age, and termination outcome.
 - Extend the runtime entitlement response with explicit public-join, new-gameplay-binding, and instance/scale flags; correct `past_due` and `grace` handling.
 - Prove harmless role refresh, membership/player/grant removal, password reset/security lock/logout-all, each billing state, scheduled and immediate cancellation, duplicate/gapped events, missed-event reconciliation, authority outage, notice/close behavior, reconnect denial, and five-minute instance cleanup.
-- Prove routine gameplay commands perform no Account or revocation-watermark lookup.
+- Prove routine gameplay commands perform no Account or authority-generation lookup.
 
 ## Required Documentation Alignment
 

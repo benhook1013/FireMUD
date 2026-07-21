@@ -10,6 +10,7 @@ import net.firedevops.firemud.accountservice.dto.BootstrapRealmDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
+import net.firedevops.firemud.accountservice.dto.ConnectTokenResponse;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.LoginRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
@@ -87,7 +88,7 @@ public class AuthController {
   }
 
   @PostMapping("/connect-token")
-  public ResponseEntity<ApiResponse<ConnectTokenResult>> connectToken(
+  public ResponseEntity<ApiResponse<ConnectTokenResponse>> connectToken(
       @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
       @Valid @RequestBody ConnectTokenRequest request) {
     String bootstrapToken = extractBearerToken(authorization);
@@ -102,7 +103,7 @@ public class AuthController {
             .build();
     return ResponseEntity.ok()
         .header(HttpHeaders.SET_COOKIE, cookie.toString())
-        .body(ApiResponse.success(result));
+        .body(ApiResponse.success(ConnectTokenResponse.from(result)));
   }
 
   private long connectTokenMaxAgeSeconds(ConnectTokenResult result) {

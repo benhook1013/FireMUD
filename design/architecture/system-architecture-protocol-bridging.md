@@ -49,6 +49,21 @@ Despite their differences, both protocols are normalized into the same internal 
 - The TCP Proxy Service listens on port `2323` by default so Telnet clients can simply connect without additional configuration. This and the Spring Cloud Gateway WebSocket URL can be adjusted with the `TCP_PROXY_PORT` and `GATEWAY_WS_URL` environment variables described in the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md#environment-variables). `GATEWAY_WS_URL` should always be set explicitly by deployment config; local Compose smoke also sets it explicitly to the canonical in-stack target. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for general configuration guidance.
 - Normal Telnet clients connect, optionally browse `WORLDS`, then issue `LOGIN` and `PLAY` before gameplay commands. Typed `SESSION` lines are no longer part of the Telnet contract. If smart-client attach hints return later, they should travel as hidden MCP metadata and remain advisory transport context only.
 
+### Public Telnet TLS Modes
+
+Public player-facing Telnet has exactly one TLS termination mode per endpoint. These modes are mutually exclusive:
+
+- **Edge termination plus internal PROXY mode** – The public Telnet edge terminates client TLS and forwards plaintext Telnet plus the trusted PROXY header to the internal-only `TCP_PROXY_PROXY_PROTOCOL_PORT`. TCP Proxy TLS is disabled for that listener; raw and PROXY-protocol ports are not public.
+- **Direct TCP Proxy TLS mode** – The client connects directly to a TCP Proxy TLS listener with `TCP_PROXY_TLS_ENABLED=true`. TCP Proxy terminates client TLS, no preceding edge terminates TLS, and the listener does not accept a PROXY header; client IP is the TCP peer address.
+
+Do not configure both modes on one public path, and do not treat an edge-terminated plaintext hop as a public plaintext exception. The protocol-bridging checklist is:
+
+- Select one mode and record the public listener, certificate owner, and internal target in deployment evidence.
+- Prove a valid TLS handshake, expected certificate chain, and plaintext rejection at the public endpoint.
+- In edge termination plus internal PROXY mode, prove the restricted listener accepts only the expected PROXY contract, preserves the forwarded client address, and fails closed for missing, malformed, or untrusted headers.
+- In direct TCP Proxy TLS mode, prove the TCP Proxy TLS handshake and direct peer-address behavior, without sending a PROXY header.
+- In both modes, prove Proxy -> Gateway uses the internal `wss://` mTLS listener and that the bridged client reaches the same `LOGIN -> PLAY -> LOOK` flow as a WebSocket client.
+
 The proxy establishes the Proxy → Gateway gameplay WebSocket lazily for each Telnet connection:
 
 - The bridge is opened before the first forwarded gameplay or MCP line.
