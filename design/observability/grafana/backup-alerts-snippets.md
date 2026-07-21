@@ -43,67 +43,50 @@ Example alerts for missed backups and verification runs:
     summary: Restore drill proof is stale
     description: No successful restore drill has been recorded within the required restore-proof freshness window. Investigate drill cadence and recovery evidence before traffic reopen decisions.
 
-- alert: BackupTickPauseTooLongScoped
-  expr: backup_tick_pause_duration_budget_breached > 0
+- alert: BackupArtifactLineageInvalid
+  expr: backup_artifact_lineage_invalid > 0
   for: 5m
   labels:
     service: postgres-backup
-    severity: P0
+    severity: P1
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#maintenance-tick-pause-scope-contract
+    runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary
   annotations:
-    summary: Tick pause window too long during scoped backup
-    description: One or more backup scopes have exceeded the pause-duration budget. Investigate pause/resume controls and scope-specific backlog growth.
+    summary: Backup artifact lineage is invalid
+    description: The latest backup artifact cannot prove the expected environment, database, schema, service, tool, or object-storage lineage. Keep recovery quarantined and inspect the authoritative artifact record.
 
-- alert: BackupTickPauseWaitTooLongScoped
-  expr: backup_tick_pause_wait_budget_breached > 0
+- alert: BackupArtifactRestoreUnreadable
+  expr: backup_artifact_restore_unreadable > 0
   for: 5m
   labels:
     service: postgres-backup
-    severity: P0
+    severity: P1
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#maintenance-tick-pause-scope-contract
+    runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary
   annotations:
-    summary: Tick pause wait exceeded budget during scoped backup
-    description: One or more backup scopes are taking too long to reach PAUSED. Investigate in-flight tick drain time and pause control health.
+    summary: Backup artifact failed restore-readability validation
+    description: The latest backup artifact exists but could not be read through the restore validation path. Keep recovery quarantined until a readable artifact is proven.
 
-- alert: BackupTicksPausedTooLong
-  expr: backup_ticks_paused_budget_breached > 0
+- alert: RecoveryParticipantConvergenceBlocked
+  expr: recovery_participant_convergence_state{state="blocked"} == 1
   for: 5m
   labels:
     service: postgres-backup
-    severity: P0
+    severity: P1
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#maintenance-tick-pause-scope-contract
+    runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary
   annotations:
-    summary: Backup scope remains paused unexpectedly
-    description: A backup scope has remained in paused state beyond the expected window. Check pause/resume API calls and backup job completion state.
-
-- alert: BackupPauseAliasScopeStillUsed
-  expr: increase(backup_pause_scope_alias_requests_total[24h]) > 0
-  for: 0m
-  labels:
-    service: postgres-backup
-    severity: P2
-    owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#maintenance-pause-scope-migration-plan
-  annotations:
-    summary: Backup controls still use alias scope
-    description: One or more backup pause/resume requests still relied on game_instance_id alias scope during the last 24 hours. Migrate automation to canonical region scope.
+    summary: Recovery participant convergence remains blocked
+    description: A current recovery participant state has no safe disposition. The alert clears when the participant state converges; the cumulative convergence event counter is historical evidence only.
 ```
 
-This assumes backup tooling emits scoped budget gauges directly:
-
-- `backup_tick_pause_wait_budget_seconds{scope_type,scope}`
-- `backup_tick_pause_duration_budget_seconds{scope_type,scope}`
-
-and that Prometheus exposes derived fallback recordings:
+Routine backup alerts use these current artifact and recovery recordings:
 
 - `backup_pipeline_recent_backup_slo_breached`
 - `backup_pipeline_recent_verification_slo_breached`
 - `backup_pipeline_recent_restore_drill_slo_breached`
-- `backup_tick_pause_wait_budget_breached{scope_type,scope}`
-- `backup_tick_pause_duration_budget_breached{scope_type,scope}`
-- `backup_ticks_paused_budget_breached{scope_type,scope}`
+- `backup_artifact_lineage_invalid`
+- `backup_artifact_restore_unreadable`
+- `recovery_participant_convergence_state{environment,participant,state}`
 
-Environment-specific rulesets may tune thresholds, severities, and label values, but should preserve the `owner` and `runbook` annotations so alerts always point back to the relevant documentation.
+Environment-specific rulesets may tune thresholds, severities, and label values, but should preserve the `owner` and `runbook` annotations so alerts always point back to the relevant documentation. Tick-pause metrics belong to maintenance/reset dashboards and must not be used as routine backup health or traffic-reopen proof.

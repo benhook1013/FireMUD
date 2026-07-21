@@ -77,7 +77,7 @@ class EffectiveSettingsControllerTest {
     when(reconnectionSettingsResolver.resolvedReconnection(cleared))
         .thenReturn(
             new EffectiveReconnectionSettingsResolver.ResolvedValue<>(
-                reconnection, List.of("default")));
+                reconnection, List.of("default"), List.of("ignored override")));
     when(commandHistorySettingsResolver.resolvedCommandHistory(cleared))
         .thenReturn(
             new EffectiveCommandHistorySettingsResolver.ResolvedValue<>(
@@ -104,5 +104,6 @@ class EffectiveSettingsControllerTest {
     assertThat(response.scope().localeTag()).isEqualTo("en-NZ");
     assertThat(response.commandHistory().effective()).isEqualTo(commandHistory);
     assertThat(response.commandCapabilities().effective()).isEqualTo(commandCapabilities);
+    assertThat(response.reconnection().diagnostics()).containsExactly("ignored override");
   }
 }

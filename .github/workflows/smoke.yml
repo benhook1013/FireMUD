@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: smoke-${{ github.workflow }}-${{ format('pr-{0}-controller', github.event.pull_request.number) }}
-  cancel-in-progress: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
+  group: smoke-${{ github.workflow }}-${{ format('pr-{0}-controller', github.event.pull_request.number) }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
+  cancel-in-progress: true
 
 jobs:
   changes:

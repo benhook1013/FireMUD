@@ -232,7 +232,7 @@
       "hotReloadable": false,
       "advanced": true,
       "exampleValue": 16384,
-      "constraints": "integer >= 1 bytes"
+      "constraints": "integer >= 1 bytes; effective softMaxBytes <= hardMaxBytes"
     },
     "firemud.reconnection.buffer.hard-max-bytes": {
       "group": "reconnection.buffer",
@@ -241,7 +241,7 @@
       "hotReloadable": false,
       "advanced": true,
       "exampleValue": 65536,
-      "constraints": "integer >= 1 bytes"
+      "constraints": "integer >= 1 bytes; effective hardMaxBytes >= softMaxBytes"
     },
     "firemud.command-history.max-entries": {
       "group": "commandHistory.retention",

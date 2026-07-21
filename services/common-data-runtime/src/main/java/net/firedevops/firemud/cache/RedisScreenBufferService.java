@@ -191,6 +191,7 @@ public class RedisScreenBufferService implements ScreenBufferService {
       currentBytes -= entryByteSizes.get(removed);
       currentLines -= removed.lineCount;
     }
+    // The canonical reconnect window permits one complete entry to exceed the hard bound.
     while (payload.entries.size() > 1 && currentBytes > buffer.hardMaxBytes()) {
       EntryPayload removed = payload.entries.removeFirst();
       currentBytes -= entryByteSizes.get(removed);

@@ -30,16 +30,51 @@
     },
     {
       "type": "graph",
-      "title": "Backup Tick Pause Duration (seconds)",
+      "title": "Time Since Last Successful Restore Drill (seconds)",
       "targets": [
         {
-          "expr": "backup_tick_pause_duration_seconds",
-          "legendFormat": "{{scope}}",
+          "expr": "time() - backup_restore_drill_last_success_timestamp_seconds",
+          "legendFormat": "{{environment}}",
           "refId": "A"
         }
       ],
       "id": 3
+    },
+    {
+      "type": "graph",
+      "title": "Backup Artifact Lineage Invalid",
+      "targets": [
+        {
+          "expr": "backup_artifact_lineage_invalid",
+          "legendFormat": "{{environment}}",
+          "refId": "A"
+        }
+      ],
+      "id": 4
+    },
+    {
+      "type": "graph",
+      "title": "Backup Artifact Restore Unreadable",
+      "targets": [
+        {
+          "expr": "backup_artifact_restore_unreadable",
+          "legendFormat": "{{environment}}",
+          "refId": "A"
+        }
+      ],
+      "id": 5
+    },
+    {
+      "type": "graph",
+      "title": "Recovery Participant Blocked State",
+      "targets": [
+        {
+          "expr": "recovery_participant_convergence_state{state=\"blocked\"}",
+          "legendFormat": "{{environment}}/{{participant}}",
+          "refId": "A"
+        }
+      ],
+      "id": 6
     }
   ]
 }
-

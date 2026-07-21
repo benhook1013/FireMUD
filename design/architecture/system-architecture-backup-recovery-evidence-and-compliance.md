@@ -17,6 +17,7 @@ Backup and verification jobs must emit simple metrics with an `environment` labe
 - `backup_artifact_lineage_valid{environment}`
 - `backup_artifact_restore_readable{environment}`
 - `recovery_participant_convergence_total{environment,participant,result}`
+- `recovery_participant_convergence_state{environment,participant,state}` – current participant state gauge; this is the readiness signal, not the historical event counter
 - `recovery_oldest_unresolved_age_seconds{environment,participant}`
 - `recovery_environment_convergence_total{environment,result}`
 - optional `backup_run_total{environment,result}` and `backup_verify_run_total{environment,result}`
@@ -28,10 +29,10 @@ Prometheus should also publish derived breach indicators:
 - `backup_pipeline_recent_restore_drill_slo_breached{environment,mode}`
 - `backup_artifact_lineage_invalid{environment}`
 - `backup_artifact_restore_unreadable{environment}`
-- `recovery_participant_convergence_blocked{environment,participant,result}`
+- `recovery_participant_convergence_blocked{environment,participant,state}`
 - `recovery_environment_convergence_blocked{environment}`
 
-Derived indicators and alerts must preserve these labels and group by `environment`; participant convergence alerts must not reduce an environment-wide failure to an unlabeled boolean or discard the failing `participant` or `result`.
+Derived indicators and alerts must preserve these labels and group by `environment`; participant convergence alerts must not reduce an environment-wide failure to an unlabeled boolean or discard the failing `participant` or current `state`. The cumulative `recovery_participant_convergence_total` event counter is audit history only and must not drive an active blocked alert; the alert must clear when the current state converges.
 
 Alerting policy:
 
@@ -145,6 +146,7 @@ Required fields:
 - `backupReadinessRef`
 - `baselineRecoveryRecordRef`
 - `actualRecoveryRecordRef` when `eventType=reopen` (durable actual-recovery controller reference; the checked-in projection is exported after finalization)
+- `playerFacingTargetBoundary` when `eventType=reopen`
 - `backupCoverage`
 - `backupArtifactRef`
 - `backupToolDigest`
@@ -160,7 +162,8 @@ Validation rules:
 
 - backup and verification evidence must bind to the production source lineage; preflight must dereference `backupReadinessRef`, validate the backup-readiness artifact's own `restoreRecoveryRecordRef`, and independently dereference `baselineRecoveryRecordRef`. Both referenced records must be finalized isolated drills compatible with the boundary being opened
 - an isolated production-equivalent drill may run in a production-equivalent boundary using current production database lineage and compatible recovery contracts/tooling; its controlled reopen authorizes only that isolated boundary
-- a `reopen` event submitted to preflight must also dereference the durable controller named by `actualRecoveryRecordRef`, require its state to be `ready_to_reopen` with `recoveryPurpose=actual-recovery` and `trafficExposure=player-facing-reopen`, and use that record as the exact boundary proof for reopen
+- a transient `reopen` authorization submitted to preflight must dereference the durable controller named by `actualRecoveryRecordRef`, require its state to be `ready_to_reopen` with `recoveryPurpose=actual-recovery` and `trafficExposure=player-facing-reopen`, and require its `targetBoundary` to equal `playerFacingTargetBoundary`
+- the retained projection exported after release uses `trafficOpenStatus=finalized` and must dereference the same actual-recovery record in `finalized`; `trafficOpenedAt` is required only for this form
 - `restoreDrillLastSuccessAt` must be within 30 days
 - `backupCoverage` must be `environment-wide-postgresql`
 - the referenced recovery record must prove the exact environment-wide cold-start contract and controlled reopen path

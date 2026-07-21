@@ -72,6 +72,8 @@ Inputs:
 - `actor`
 - `reason`
 
+`reason` is required and must be non-blank; Game Session validates it before reading the owned instance or purging queue/durable command state.
+
 Semantics:
 
 - Idempotent.
@@ -235,6 +237,8 @@ Inputs:
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
+
+`reason` is required and must be non-blank; Game Session validates it before reading the owned instance or purging queue/durable command state.
 
 Semantics and outputs: same as `PurgeQueuedTickCommandsForScriptPatch`, scoped to plugin-produced commands by the `pluginId` and `pluginVersionId` provenance carried from Automation into Game Session during handoff.
 

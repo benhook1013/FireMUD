@@ -30,6 +30,13 @@ REQUIRED_BACKUP_RECORDINGS = {
     "backup_artifact_restore_unreadable",
     "recovery_participant_convergence_blocked",
 }
+CURRENT_BLOCKED_CONVERGENCE_EXPR = re.compile(
+    r'recovery_participant_convergence_state\s*\{\s*state\s*=\s*["\']blocked["\']\s*\}'
+)
+STALE_BLOCKED_CONVERGENCE_EXPR = re.compile(
+    r'recovery_participant_convergence_total\s*\{[^}]*result\s*=\s*["\']blocked["\']'
+)
+RESTORE_DRILL_30_DAY_EXPR = "backup_restore_drill_last_success_timestamp_seconds > 30 * 24 * 60 * 60"
 
 
 @dataclass(frozen=True)
@@ -560,14 +567,36 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
     text = _read_text(path)
     recordings_seen = set(re.findall(r"^\s*-\s*record:\s*(\S+)", text, re.MULTILINE))
     missing_required = sorted(REQUIRED_BACKUP_RECORDINGS - recordings_seen)
-    if not missing_required:
-        return []
-    return [
-        Finding(
-            path=path,
-            message=f"reference rules are missing required backup recordings: {', '.join(missing_required)}",
+    findings: list[Finding] = []
+    if missing_required:
+        findings.append(
+            Finding(
+                path=path,
+                message=f"reference rules are missing required backup recordings: {', '.join(missing_required)}",
+            )
         )
-    ]
+    if not CURRENT_BLOCKED_CONVERGENCE_EXPR.search(text):
+        findings.append(
+            Finding(
+                path=path,
+                message="blocked convergence recording must use the current participant state gauge",
+            )
+        )
+    if STALE_BLOCKED_CONVERGENCE_EXPR.search(text):
+        findings.append(
+            Finding(
+                path=path,
+                message="blocked convergence recording must not use the cumulative convergence counter",
+            )
+        )
+    if RESTORE_DRILL_30_DAY_EXPR not in text:
+        findings.append(
+            Finding(
+                path=path,
+                message="restore-drill freshness must use the accepted 30-day baseline",
+            )
+        )
+    return findings
 
 
 def main() -> int:

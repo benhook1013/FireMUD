@@ -306,23 +306,36 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   python3 "$SCRIPT" production >/tmp/firemud-preflight-contract-production-traffic.out
 
 python3 - <<'PY' "$PRODUCTION_REPORT" "$PRODUCTION_TRAFFIC_EVIDENCE" "$PRODUCTION_BASELINE_RECOVERY" "$PRODUCTION_BACKUP_READINESS"
+import copy
+import datetime as dt
 import json
 import pathlib
 import sys
 
 preflight_path, traffic_path, baseline_path, readiness_path = map(pathlib.Path, sys.argv[1:])
-recovery = {
+now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+stamp = lambda minutes: (now - dt.timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")
+common_recovery = {
     "schemaVersion": "recovery-record/v1",
     "environment": "production",
-    "recoveryRef": "contract-baseline-recovery",
-    "recoveryStatus": "finalized",
-    "recoveryPurpose": "production-equivalent-drill",
     "sourceEnvironmentBinding": "production-source",
     "targetBoundary": "production-equivalent-boundary",
-    "trafficExposure": "isolated-drill",
+    "restoreSource": {"type": "environment-wide-postgresql", "status": "pass"},
+    "restoreSafeMode": {"status": "pass"},
     "coordinationRecoveryMode": "cold_start_restore",
     "backupArtifactRef": "s3://firemud-production/backups/contract",
     "backupArtifactLineage": {"coverage": "environment-wide-postgresql"},
+    "backupToolDigest": "sha256:backup-tool",
+    "recoveryToolDigest": "sha256:recovery-tool",
+    "recoveryContractFingerprint": "sha256:recovery-contract",
+    "recoveryParticipantInventoryRef": "contract-participants",
+    "validatorInventoryRef": "contract-validators",
+    "externalEffectInventoryRef": "contract-external-effects",
+    "quarantineStartedAt": stamp(60),
+    "restoredAt": stamp(50),
+    "restoredBy": "preflight-contract",
+    "preflightReportPath": str(preflight_path),
+    "expectedBindingsRef": "design/operations/environments/production/expected-bindings.yaml",
     "coordinationRecoveryEvidence": {"status": "pass"},
     "durableParticipantConvergence": {"status": "pass"},
     "externalEffectReconciliation": {"status": "pass"},
@@ -330,14 +343,67 @@ recovery = {
         "gameSessionHandling": "invalidated",
         "authSessionHandling": "invalidated",
     },
+    "jwtHardening": {"status": "pass"},
+    "databaseCredentialRotation": {"status": "pass"},
+    "certificateReissuance": {"status": "pass"},
+    "externalCredentialValidation": {
+        "status": "pass",
+        "records": {
+            credential_class: {
+                "status": "pass",
+                "evidenceRef": f"contract-{credential_class}",
+                "isolationAssertion": "pass",
+                "validationMethod": "contract-test",
+                "validatedAt": stamp(40),
+                "validatedBy": "preflight-contract",
+                "observedValue": "present",
+            }
+            for credential_class in (
+                "backup-storage",
+                "asset-storage",
+                "outbound-comms",
+                "operator-credentials",
+            )
+        },
+    },
+    "secretComplianceRefresh": {"status": "pass"},
+    "smokeStatus": "pass",
+    "smokeEvidence": {"evidenceRef": "contract-smoke"},
 }
-baseline_path.write_text(json.dumps(recovery), encoding="utf-8")
+baseline = {
+    **copy.deepcopy(common_recovery),
+    "recoveryRef": "contract-baseline-recovery",
+    "recoveryStatus": "finalized",
+    "recoveryPurpose": "production-equivalent-drill",
+    "trafficExposure": "isolated-drill",
+    "readyToReopenAt": stamp(30),
+    "quarantineReleasedAt": stamp(20),
+    "finalizedAt": stamp(10),
+    "reopenApprovedBy": "preflight-contract",
+}
+actual = {
+    **copy.deepcopy(common_recovery),
+    "recoveryRef": "contract-actual-recovery",
+    "targetBoundary": "production-player-boundary",
+    "recoveryStatus": "ready_to_reopen",
+    "recoveryPurpose": "actual-recovery",
+    "trafficExposure": "player-facing-reopen",
+    "readyToReopenAt": stamp(5),
+    "reopenApprovedBy": "preflight-contract",
+}
+actual_path = baseline_path.with_name("production-actual-recovery.json")
+baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+actual_path.write_text(json.dumps(actual), encoding="utf-8")
 readiness_path.write_text(
     json.dumps(
         {
             "environment": "production",
+            "deploymentRef": "contract-production",
             "backupCoverage": "environment-wide-postgresql",
-            "backupArtifactRef": recovery["backupArtifactRef"],
+            "backupArtifactRef": common_recovery["backupArtifactRef"],
+            "backupLastSuccessAt": stamp(1),
+            "backupVerifyLastSuccessAt": stamp(2),
+            "restoreDrillLastSuccessAt": stamp(10),
             "restoreRecoveryRecordRef": str(baseline_path),
         }
     ),
@@ -350,16 +416,26 @@ traffic_path.write_text(
             "environment": "production",
             "eventType": "reopen",
             "deploymentRef": "contract-production",
-            "assessedAt": "2026-01-01T00:00:00Z",
+            "trafficOpenStatus": "ready_to_reopen",
+            "assessedAt": stamp(1),
             "assessedBy": "preflight-contract",
             "preflightReportPath": str(preflight_path),
             "backupStorageBinding": "secret://firemud/production-backup-object-store",
             "backupCoverage": "environment-wide-postgresql",
-            "backupArtifactRef": recovery["backupArtifactRef"],
+            "backupArtifactRef": common_recovery["backupArtifactRef"],
+            "backupLastSuccessAt": stamp(1),
+            "backupVerifyLastSuccessAt": stamp(2),
+            "restoreDrillLastSuccessAt": stamp(10),
+            "backupToolDigest": common_recovery["backupToolDigest"],
+            "recoveryToolDigest": common_recovery["recoveryToolDigest"],
+            "recoveryContractFingerprint": common_recovery["recoveryContractFingerprint"],
             "backupReadinessRef": str(readiness_path),
             "baselineRecoveryRecordRef": str(baseline_path),
-            "sourceEnvironmentBinding": recovery["sourceEnvironmentBinding"],
-            "drillTargetBoundary": recovery["targetBoundary"],
+            "actualRecoveryRecordRef": str(actual_path),
+            "sourceEnvironmentBinding": common_recovery["sourceEnvironmentBinding"],
+            "drillTargetBoundary": common_recovery["targetBoundary"],
+            "playerFacingTargetBoundary": actual["targetBoundary"],
+            "trafficExposure": "isolated-drill",
             "evidenceRefs": ["contract-test"],
         }
     ),
@@ -390,9 +466,12 @@ if len(backup_002) != 1 or backup_002[0]["status"] != "pass":
 PY
 
 python3 - <<'PY' "$ROOT_DIR" "$PRODUCTION_TRAFFIC_EVIDENCE"
+import copy
+import datetime as dt
 import importlib.util
 import json
 import pathlib
+import subprocess
 import sys
 
 root = pathlib.Path(sys.argv[1])
@@ -403,19 +482,136 @@ assert spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 traffic = json.loads(traffic_path.read_text(encoding="utf-8"))
-traffic.pop("baselineRecoveryRecordRef")
-traffic["coordinatedBackupScope"] = {"type": "tenant_region", "tenantId": "tenant-1", "regionId": "region-1"}
-traffic["restoreDrillLastSuccessAt"] = "2026-01-01T00:00:00Z"
-legacy_path = traffic_path.with_name("legacy-production-traffic-open.json")
-legacy_path.write_text(json.dumps(traffic), encoding="utf-8")
 status, message = module.production_traffic_check(
-    legacy_path,
+    traffic_path,
     "reopen",
     "contract-production",
     root,
 )
-if status == "pass":
-    raise SystemExit("obsolete tenant/region traffic-open evidence unexpectedly passed")
+if status != "pass":
+    raise SystemExit(f"complete production reopen evidence did not pass: {message}")
+
+actual_path = pathlib.Path(traffic["actualRecoveryRecordRef"])
+actual = json.loads(actual_path.read_text(encoding="utf-8"))
+now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+actual.update(
+    {
+        "recoveryStatus": "finalized",
+        "quarantineReleasedAt": (now - dt.timedelta(minutes=2)).isoformat().replace("+00:00", "Z"),
+        "finalizedAt": (now - dt.timedelta(minutes=1)).isoformat().replace("+00:00", "Z"),
+    }
+)
+actual_path.write_text(json.dumps(actual), encoding="utf-8")
+finalized_traffic_path = traffic_path.with_name("finalized-production-traffic-open.json")
+subprocess.run(
+    [
+        sys.executable,
+        str(root / "dev-tools/deploy/write-traffic-open-evidence.py"),
+        "production",
+        "contract-production",
+        "reopen",
+        "--assessed-by",
+        "preflight-contract",
+        "--preflight-report",
+        traffic["preflightReportPath"],
+        "--evidence-ref",
+        "contract-writer",
+        "--backup-storage-binding",
+        traffic["backupStorageBinding"],
+        "--backup-artifact-ref",
+        traffic["backupArtifactRef"],
+        "--backup-last-success-at",
+        traffic["backupLastSuccessAt"],
+        "--backup-verify-last-success-at",
+        traffic["backupVerifyLastSuccessAt"],
+        "--restore-drill-last-success-at",
+        traffic["restoreDrillLastSuccessAt"],
+        "--backup-tool-digest",
+        traffic["backupToolDigest"],
+        "--recovery-tool-digest",
+        traffic["recoveryToolDigest"],
+        "--recovery-contract-fingerprint",
+        traffic["recoveryContractFingerprint"],
+        "--backup-readiness-ref",
+        traffic["backupReadinessRef"],
+        "--baseline-recovery-record-ref",
+        traffic["baselineRecoveryRecordRef"],
+        "--actual-recovery-record-ref",
+        traffic["actualRecoveryRecordRef"],
+        "--source-environment-binding",
+        traffic["sourceEnvironmentBinding"],
+        "--drill-target-boundary",
+        traffic["drillTargetBoundary"],
+        "--player-facing-target-boundary",
+        traffic["playerFacingTargetBoundary"],
+        "--traffic-opened-at",
+        now.isoformat().replace("+00:00", "Z"),
+        "--output",
+        str(finalized_traffic_path),
+    ],
+    cwd=root,
+    check=True,
+)
+finalized_status, finalized_message = module.production_traffic_check(
+    finalized_traffic_path,
+    "reopen",
+    "contract-production",
+    root,
+)
+if finalized_status != "pass":
+    raise SystemExit(f"writer-generated finalized production evidence did not pass: {finalized_message}")
+
+# Continue negative checks against the pre-release controller projection.
+actual["recoveryStatus"] = "ready_to_reopen"
+actual.pop("quarantineReleasedAt")
+actual.pop("finalizedAt")
+actual_path.write_text(json.dumps(actual), encoding="utf-8")
+recovery_path = pathlib.Path(traffic["baselineRecoveryRecordRef"])
+for missing_field in ("durableParticipantConvergence", "jwtHardening", "smokeStatus"):
+    incomplete = json.loads(recovery_path.read_text(encoding="utf-8"))
+    incomplete.pop(missing_field)
+    incomplete_path = recovery_path.with_name(f"incomplete-production-recovery-{missing_field}.json")
+    incomplete_path.write_text(json.dumps(incomplete), encoding="utf-8")
+    incomplete_traffic = copy.deepcopy(traffic)
+    incomplete_traffic["baselineRecoveryRecordRef"] = str(incomplete_path)
+    incomplete_traffic_path = traffic_path.with_name(f"incomplete-production-traffic-open-{missing_field}.json")
+    incomplete_traffic_path.write_text(json.dumps(incomplete_traffic), encoding="utf-8")
+    status, message = module.production_traffic_check(
+        incomplete_traffic_path,
+        "reopen",
+        "contract-production",
+        root,
+    )
+    if status == "pass" or f"missing {missing_field}" not in message:
+        raise SystemExit(f"incomplete {missing_field} recovery record was not rejected: {status}: {message}")
+
+stale_traffic = copy.deepcopy(traffic)
+stale_traffic["restoreDrillLastSuccessAt"] = (
+    dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=31)
+).isoformat().replace("+00:00", "Z")
+stale_path = traffic_path.with_name("stale-production-traffic-open.json")
+stale_path.write_text(json.dumps(stale_traffic), encoding="utf-8")
+status, message = module.production_traffic_check(
+    stale_path,
+    "reopen",
+    "contract-production",
+    root,
+)
+if status == "pass" or "restore drill" not in message:
+    raise SystemExit(f"stale restore-drill evidence was not rejected: {status}: {message}")
+
+missing_controller = copy.deepcopy(traffic)
+missing_controller.pop("actualRecoveryRecordRef")
+missing_controller_path = traffic_path.with_name("missing-controller-production-traffic-open.json")
+missing_controller_path.write_text(json.dumps(missing_controller), encoding="utf-8")
+status, message = module.production_traffic_check(
+    missing_controller_path,
+    "reopen",
+    "contract-production",
+    root,
+)
+if status == "pass" or "actualRecoveryRecordRef" not in message:
+    raise SystemExit(f"reopen without authoritative controller was not rejected: {status}: {message}")
 PY
 
 for env in staging production; do

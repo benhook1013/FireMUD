@@ -12,7 +12,7 @@ The current implemented baseline is narrower than the full target-state observab
 - Raw runtime or gameplay identifiers such as `serviceInstanceId`, `tenantId`, `sessionId`, `characterId`, and `script_patch_version` are not approved as ordinary Prometheus metric labels. These identifiers belong in structured logs and traces unless a future architecture update records a narrow low-cardinality exception.
 - The player-experience SLI catalog below is a target-state metric contract. It describes the operator-visible SLO surface FireMUD wants, but it is not fully implemented by the current services. Before implementing any metric that needs tenant or region scoping, reconcile the label shape with the cardinality policy, for example through a bounded environment-specific scope label or an explicitly documented exception.
 - Synthetic player-flow canaries, the independent deadman/heartbeat mirror, and the related canonical canary alert families now have a canonical operator-run runtime harness in `dev-tools/observability/run-player-experience-smoke.py`. The authoritative external pager deployment remains environment-specific, but the repo now provides the shared runner, retained-evidence validator, and mirrored metric vocabulary required for prod-like observability smoke.
-- Checked-in backup dashboards and alert snippets still expose the superseded tick-pause workflow. They are implementation debt: routine backup health must move to artifact freshness, lineage, integrity/readability, and recovery-convergence signals, while pause panels are retained only for maintenance/reset workflows.
+- Routine backup dashboards and alert snippets use artifact freshness, lineage, integrity/readability, and current recovery-convergence signals. Tick-pause panels remain maintenance/reset views only and are not routine backup health signals.
 
 ---
 
@@ -371,6 +371,7 @@ When Alertmanager is unavailable but Prometheus is still accessible, Logging & A
     - `backup_artifact_lineage_invalid`
     - `backup_artifact_restore_unreadable`
     - `recovery_participant_convergence_blocked`
+  - `recovery_participant_convergence_state{environment,participant,state}` is the current-state source for the blocked recording; the cumulative `recovery_participant_convergence_total` counter is not an active alert source.
   - Maintenance tick-pause metrics are not backup fallback signals and must not be used as substitutes for these recordings.
 - **Tick state and recovery progress**
   - Recording rules or gauges projecting `current_tick_state{scope,state}` and `current_tick_terminal_at_ms{scope}` from the Redis meta record so operators can see whether a region is `STAGED`, `RESOLVING`, `APPLIED`, or `ABANDONED` without inferring state from queue depth alone.

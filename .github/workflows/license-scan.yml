@@ -16,8 +16,8 @@ env:
   ORT_DOCKER_IMAGE: ghcr.io/oss-review-toolkit/ort:89.2.0
 
 concurrency:
-  group: license-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
+  group: license-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
+  cancel-in-progress: true
 
 jobs:
   changes:

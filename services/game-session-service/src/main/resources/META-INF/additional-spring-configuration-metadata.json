@@ -134,7 +134,7 @@
       "name": "firemud.reconnection.buffer.hard-max-bytes",
       "type": "java.lang.Integer",
       "defaultValue": 65536,
-      "description": "Hard byte ceiling for reconnect transcript retention; the oldest entries are trimmed to stay within this bound even if floors would otherwise retain more text.",
+      "description": "Hard byte ceiling for reconnect transcript retention; oldest entries are trimmed to stay within this bound for multi-entry windows, while a complete single entry may exceed it.",
       "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
     },
     {

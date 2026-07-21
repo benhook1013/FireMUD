@@ -47,7 +47,7 @@ spec:
             time() - backup_verify_last_success_timestamp_seconds > 24 * 60 * 60
         - record: backup_pipeline_recent_restore_drill_slo_breached
           expr: |
-            time() - backup_restore_drill_last_success_timestamp_seconds > 14 * 24 * 60 * 60
+            time() - backup_restore_drill_last_success_timestamp_seconds > 30 * 24 * 60 * 60
         - record: backup_artifact_lineage_invalid
           expr: |
             1 - backup_artifact_lineage_valid
@@ -56,7 +56,7 @@ spec:
             1 - backup_artifact_restore_readable
         - record: recovery_participant_convergence_blocked
           expr: |
-            recovery_participant_convergence_total{result="blocked"} > 0
+            recovery_participant_convergence_state{state="blocked"} == 1
 
     - name: firemud.recording.player_experience
       rules:

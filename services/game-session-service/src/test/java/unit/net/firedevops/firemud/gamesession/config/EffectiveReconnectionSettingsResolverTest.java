@@ -1,7 +1,6 @@
 package net.firedevops.firemud.gamesession.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
@@ -72,7 +71,7 @@ class EffectiveReconnectionSettingsResolverTest {
   }
 
   @Test
-  void rejectsSparseOverrideThatMakesEffectiveByteBoundsInconsistent() {
+  void disregardsInvalidSparseOverrideAndFallsBackToOperatorDefaultsWithDiagnostic() {
     SharedSettingsAuthorityReader authorityReader =
         Mockito.mock(SharedSettingsAuthorityReader.class);
     when(authorityReader.readOverrides(22L, 7L))
@@ -95,8 +94,62 @@ class EffectiveReconnectionSettingsResolverTest {
                 new FiremudReconnectionProperties.Buffer(60_000L, 256, 8, 24, 16_384, 65_536)),
             authorityReader);
 
-    assertThatThrownBy(() -> resolver.resolve(22L, 7L))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("Effective reconnection buffer hardMaxBytes must be at least softMaxBytes");
+    EffectiveReconnectionSettingsResolver.ResolvedValue<FiremudReconnectionProperties> resolved =
+        resolver.resolvedReconnection(
+            new SessionContext(1L, 22L, 123L, "demo@example.com", 911L, "Ember", 7L, "R-1", null));
+
+    assertThat(resolved.effective().buffer().softMaxBytes()).isEqualTo(16_384);
+    assertThat(resolved.effective().buffer().hardMaxBytes()).isEqualTo(65_536);
+    assertThat(resolved.sources()).containsExactly("operatorDefaults");
+    assertThat(resolved.diagnostics())
+        .containsExactly(
+            "Ignored gameInstancePersistedOverride:7 override: "
+                + "effective buffer hardMaxBytes must be at least softMaxBytes");
+  }
+
+  @Test
+  void invalidGameInstanceOverrideFallsBackToValidTenantLayer() {
+    SharedSettingsAuthorityReader authorityReader =
+        Mockito.mock(SharedSettingsAuthorityReader.class);
+    when(authorityReader.readOverrides(22L, 7L))
+        .thenReturn(
+            new ScopedSettingsSnapshot(
+                new ScopedSettingsOverrides(
+                    new ScopedSettingsOverrides.ReconnectionOverride(
+                        null,
+                        new ScopedSettingsOverrides.ReconnectionOverride.BufferOverride(
+                            null, null, null, null, null, 80_000)),
+                    null,
+                    null,
+                    null,
+                    null),
+                new ScopedSettingsOverrides(
+                    new ScopedSettingsOverrides.ReconnectionOverride(
+                        null,
+                        new ScopedSettingsOverrides.ReconnectionOverride.BufferOverride(
+                            null, null, null, null, 90_000, null)),
+                    null,
+                    null,
+                    null,
+                    null)));
+    EffectiveReconnectionSettingsResolver resolver =
+        new EffectiveReconnectionSettingsResolver(
+            new FiremudReconnectionProperties(
+                new FiremudReconnectionProperties.Policy(45_000L, true),
+                new FiremudReconnectionProperties.Buffer(60_000L, 256, 8, 24, 16_384, 65_536)),
+            authorityReader);
+
+    EffectiveReconnectionSettingsResolver.ResolvedValue<FiremudReconnectionProperties> resolved =
+        resolver.resolvedReconnection(
+            new SessionContext(1L, 22L, 123L, "demo@example.com", 911L, "Ember", 7L, "R-1", null));
+
+    assertThat(resolved.effective().buffer().softMaxBytes()).isEqualTo(16_384);
+    assertThat(resolved.effective().buffer().hardMaxBytes()).isEqualTo(80_000);
+    assertThat(resolved.sources())
+        .containsExactly("operatorDefaults", "tenantPersistedOverride:22");
+    assertThat(resolved.diagnostics())
+        .containsExactly(
+            "Ignored gameInstancePersistedOverride:7 override: "
+                + "effective buffer hardMaxBytes must be at least softMaxBytes");
   }
 }

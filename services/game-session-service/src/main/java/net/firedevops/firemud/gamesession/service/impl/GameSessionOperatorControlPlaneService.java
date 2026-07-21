@@ -121,6 +121,7 @@ final class GameSessionOperatorControlPlaneService {
     requireText(request.getScriptPatchVersion(), "script_patch_version is required");
     requireText(request.getControlPlaneRequestId(), "control_plane_request_id is required");
     requireText(request.getActorPrincipal(), "actor_principal is required");
+    requireText(request.getReason(), "reason is required");
     getOwnedInstance(tenantId, gameInstanceId);
     long purged =
         tickService.purgeQueuedAutomationCommandsForScriptPatch(
@@ -140,6 +141,7 @@ final class GameSessionOperatorControlPlaneService {
     requireText(request.getPluginVersionId(), "plugin_version_id is required");
     requireText(request.getControlPlaneRequestId(), "control_plane_request_id is required");
     requireText(request.getActorPrincipal(), "actor_principal is required");
+    requireText(request.getReason(), "reason is required");
     getOwnedInstance(tenantId, gameInstanceId);
     long purged =
         tickService.purgeQueuedAutomationCommandsForPluginVersion(
