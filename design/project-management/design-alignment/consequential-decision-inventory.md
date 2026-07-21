@@ -102,13 +102,13 @@ The review facilitator must preserve the current choice's strongest argument, co
 | Packet | Scope | Reviewed | Total | State |
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
-| 2 | Identity, authority, and security | 28 | 32 | `in-progress` |
+| 2 | Identity, authority, and security | 32 | 32 | `completed` |
 | 3 | Execution correctness and durability | 43 | 43 | `completed` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
 | 5 | Gameplay and player experience | 21 | 21 | `completed` |
 | 6 | Operations and delivery | 25 | 25 | `completed` |
 | 7 | Existing ADR-backed and lower-risk remainder | 17 | 17 | `completed` |
-| **Total** | | **179** | **183** | `in-progress` |
+| **Total** | | **183** | **183** | `completed` |
 
 ### Priority Overrides
 
