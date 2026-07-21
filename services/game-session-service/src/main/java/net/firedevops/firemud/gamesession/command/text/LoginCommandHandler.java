@@ -462,10 +462,12 @@ public final class LoginCommandHandler {
       return CANONICAL_ERROR_MAP.get(rawCode);
     }
     String message = Optional.ofNullable(error.getMessage()).orElse("").toLowerCase();
-    if (message.contains("invalid credentials")) {
+    boolean unclassifiedAuthenticationError =
+        rawCode.isBlank() || "UNAUTHENTICATED".equals(rawCode);
+    if (unclassifiedAuthenticationError && message.contains("invalid credentials")) {
       return "INVALID_CREDENTIALS";
     }
-    if (message.contains("locked")) {
+    if (unclassifiedAuthenticationError && message.contains("locked")) {
       return "ACCOUNT_LOCKED";
     }
     if (rawCode.startsWith("AUTH_")) {
