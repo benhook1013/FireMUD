@@ -107,8 +107,8 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
 | 5 | Gameplay and player experience | 21 | 21 | `completed` |
 | 6 | Operations and delivery | 25 | 25 | `completed` |
-| 7 | Existing ADR-backed and lower-risk remainder | 10 | 17 | `in-progress` |
-| **Total** | | **172** | **183** | `in-progress` |
+| 7 | Existing ADR-backed and lower-risk remainder | 11 | 17 | `in-progress` |
+| **Total** | | **173** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -348,7 +348,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `AUTO-01` — `revised` on 2026-07-21; [ADR 0167](../../architecture/decisions/adr-0167-parent-event-and-frozen-handler-execution-identity.md)
 - [x] `AUTO-02` — `accepted` on 2026-07-21; clarified in [ADR 0002](../../architecture/decisions/adr-0002-automation-handoff-reliability-and-success-semantics.md)
 - [x] `AUTO-03` — `revised` on 2026-07-21; [ADR 0168](../../architecture/decisions/adr-0168-registry-classified-reload-admission-policy.md)
-- [ ] `GRPC-02`
+- [x] `GRPC-02` — `revised` on 2026-07-21; [ADR 0169](../../architecture/decisions/adr-0169-maturity-scoped-protobuf-compatibility.md)
 - [ ] `CMD-01`
 - [ ] `CMD-06`
 - [ ] `LIB-01`

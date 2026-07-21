@@ -25,6 +25,10 @@ These guidelines define how FireMUD microservices design and document their gRPC
   protos/player/v1/player_service.proto
   ```
 
+The current `v1` namespace does not freeze every unreleased internal contract. Before FireMUD supports external gRPC consumers, an incompatible internal change may converge directly in `v1` when no retained wire representation requires the old shape and all callers and servers deploy as one coordinated change. Such a deployment is recreate/coordinated or roll-forward-only unless mixed-version compatibility is separately proven.
+
+If old and new internal binaries must overlap for rolling deployment or rollback, use a temporary additive bridge in `v1`, deploy in a compatible order, and remove the obsolete shape only after no supported binary or rollback target needs it. A parallel `v2` is reserved for an incompatible replacement that must coexist with a formally supported external or otherwise deliberately long-lived `v1` contract; ordinary pre-v1 redesign does not create `v2` APIs. See [ADR 0169](decisions/adr-0169-maturity-scoped-protobuf-compatibility.md).
+
 ## Proto File Layout
 
 All protobuf definitions live in a top‑level `protos/` directory outside service source trees. Files are organized by service folder and versioned subdirectory:
@@ -59,7 +63,7 @@ All proto files use `syntax = "proto3"` and set `java_package` and `java_multipl
 
 ## Tooling
 
-- **Buf** ([buf.yaml](../../protos/buf.yaml)) — Lints proto files, detects breaking changes, and drives code generation. The repository stores this configuration under `protos/`. The workspace file [buf.work.yaml](../../config/protobuf/buf.work.yaml) and [buf.gen.yaml](../../config/protobuf/buf.gen.yaml) specify modules and plugins for generation.
+- **Buf** ([buf.yaml](../../protos/buf.yaml)) — Lints proto files, detects breaking changes against a deliberately selected baseline, and drives code generation. Linting applies to all contracts. Breaking checks compare compatibility-protected operational releases with the exact deployed or rollback-target proto set and supported external contracts with an immutable release/tag/digest; an arbitrary moving development snapshot is not a permanent compatibility baseline. The repository stores this configuration under `protos/`. The workspace file [buf.work.yaml](../../config/protobuf/buf.work.yaml) and [buf.gen.yaml](../../config/protobuf/buf.gen.yaml) specify modules and plugins for generation.
 - **`protoc-gen-grpc-java`** — Generates Java service stubs for gRPC communication. The generated code is included in service builds via Gradle.
 - **`protoc-gen-doc`** — Produces Markdown API documentation. Run
   `./dev-tools/docs/generate-grpc-docs.sh` after updating proto files to regenerate
@@ -71,10 +75,14 @@ Every gRPC service registers the `LoggingInterceptor`, `MetricsInterceptor`, and
 
 ## Schema Evolution Rules
 
-- Never reuse or remove field numbers — use `reserved` to prevent reuse.
-- Only **add optional fields** or new enum values to avoid breaking compatibility.
-- Use the `reserved` keyword to block deprecated field numbers or names.
-- Avoid changing the type of an existing field.
+These rules apply throughout a declared compatibility window. A window exists when external consumers upgrade independently, old and new binaries overlap, binary rollback is supported, or retained messages/data require an older reader:
+
+- Add fields with new field numbers; use explicit presence when absence and the default value have different meanings.
+- Reserve both the field number and name when removing a field after its compatibility window.
+- Add enum values only when every protected consumer safely handles unknown values.
+- Do not change an existing field's type or meaning inside the protected window.
+
+An intentionally incompatible pre-v1 internal change follows the coordinated-convergence or temporary-bridge rules in [Versioning Strategy](#versioning-strategy), rather than creating a permanent compatibility generation by default.
 
 ## Error Handling
 
