@@ -28,7 +28,7 @@ Required fields:
 - `attestationVersion` – schema version string (for example `v1`).
 - `environment` – must be `staging`.
 - `stagingOverlayCommitSha` – Git SHA of the staging overlay commit applied.
-- `serviceDigests` – map of service name to immutable digest (`image@sha256:...`).
+- `serviceDigests` – map of service name to immutable OCI manifest or index digest (`image@sha256:...`). For a multi-architecture image, the record also carries the exact supported platform-to-child-manifest digest map; staging proof must cover every platform admitted to production.
 - `smokeEvidence` – list of URLs or artifact IDs for smoke-test results.
 - `generatedAt` – UTC timestamp in ISO-8601 format.
 - `approvedBy` – human approver identity (or approved automation identity plus change ticket).
@@ -42,6 +42,8 @@ Artifact-lineage rule:
 
 - `serviceDigests` must identify the exact staged artifact lineage being promoted.
 - Production attestation must never bless a digest that was rebuilt after staging from the same source commit or release tag; rebuilt artifacts require a new staging deployment record and a new attestation lineage.
+- Same-registry aliases are acceptable only when they resolve to the recorded digest. A registry copy that changes manifest/index bytes or digest requires a verified source-to-destination mapping and a new destination staging record before promotion.
+- Service-image promotion evidence remains separate from tenant/game published-release-bundle evidence; either may reference an explicit compatibility contract, but neither replaces the other.
 
 Optional fields:
 
@@ -60,7 +62,7 @@ Optional fields:
 - The referenced staging deployment record must include `deployStatus=pass` and `smokeStatus=pass`.
 - The referenced staging deployment record must include `secretComplianceStatus` set to `pass` and a `secretComplianceEvidenceRef`.
 - The referenced secret-compliance evidence must include immutable artifact identifiers for all required credential classes; warning-only or note-only evidence is not promotable.
-- The referenced production overlay digests must be byte-identical to the staged digests recorded in the deployment record; retags are acceptable, rebuilds are not.
+- The referenced production overlay digests must be byte-identical to the staged digests recorded in the deployment record; same-digest aliases are acceptable, rebuilds are not. Multi-architecture validation compares both the index digest and declared child-manifest map.
 - `secretComplianceEvidenceRef` may satisfy compliance through either immutable bootstrap provisioning evidence or immutable rotation evidence, as defined in `infrastructure/environment-and-secrets-overview.md`, but warning-only compliance records are never promotable.
 - Attestation schema must validate against the current `attestationVersion`.
 - `recoveryCompatibility.compatibilityStatus=compatible` may reuse the current drill only for a `rollback-compatible` release. `drill_required` and every `roll-forward-only` release must reference the matching full backup-readiness record; `incompatible` blocks promotion.

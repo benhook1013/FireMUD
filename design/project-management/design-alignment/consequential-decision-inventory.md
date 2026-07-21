@@ -107,8 +107,8 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
 | 5 | Gameplay and player experience | 21 | 21 | `completed` |
 | 6 | Operations and delivery | 25 | 25 | `completed` |
-| 7 | Existing ADR-backed and lower-risk remainder | 14 | 17 | `in-progress` |
-| **Total** | | **176** | **183** | `in-progress` |
+| 7 | Existing ADR-backed and lower-risk remainder | 15 | 17 | `in-progress` |
+| **Total** | | **177** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -352,7 +352,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `CMD-01` — `accepted` on 2026-07-21; clarified in [Player Command Model](../../architecture/system-architecture-player-command-model.md)
 - [x] `CMD-06` — `revised` on 2026-07-21; [ADR 0170](../../architecture/decisions/adr-0170-release-pinned-command-capabilities-and-private-history.md)
 - [x] `LIB-01` — `revised` on 2026-07-21; [ADR 0171](../../architecture/decisions/adr-0171-owner-local-redis-execution-with-aggregated-contracts.md)
-- [ ] `OPS-01`
+- [x] `OPS-01` — `accepted` on 2026-07-21; clarified in [CI/CD](../../architecture/system-architecture-cicd.md) and [promotion attestation](../../architecture/system-architecture-promotion-attestation.md)
 - [ ] `OPS-05`
 - [ ] `OPS-06`
 

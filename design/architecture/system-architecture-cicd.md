@@ -143,9 +143,14 @@ Images are tagged with the commit SHA and pushed to **GitHub Container Registry 
 
 Deployable artifact lineage rule:
 
-- The digest first produced for a reviewed source commit is the canonical deployable artifact for that commit.
+- One canonical promotable build path records the exact source commit/tree, protected workflow identity and run, base-image digest, declared platform set, and output OCI digest for each service. PR merge-ref images are preview artifacts and are not promotable merely because they carry a head-SHA tag.
+- The digest first produced by that path for a reviewed source commit is the canonical deployable artifact for that commit. A SHA tag is a lookup alias, not lineage authority, and must not be overwritten by another build.
 - Promotion between staging and production must reuse that exact digest; release tags, branch tags, or `latest` tags may be added later as aliases, but they must not point at a rebuilt image if the image is intended to remain promotable.
 - Any workflow that rebuilds from a release tag or branch tip produces a new artifact lineage. Those rebuilt digests are non-promotable until they independently pass staging and produce new deployment evidence plus a new production attestation chain.
+- For a multi-architecture artifact, the promoted identity is the OCI index digest plus its exact platform-to-child-manifest digest map. Every platform allowed in production must have applicable staged proof; testing one child does not attest unexecuted children.
+- Same-registry retagging is permitted only when the alias resolves to the canonical manifest or index digest. A cross-registry copy whose manifest bytes or top-level digest change is a separately mapped artifact and must be verified and staged at the destination before production.
+
+Runtime/service image lineage is separate from tenant/game published-release-bundle attestation. A platform release may declare compatibility with content schemas, but neither evidence chain reconstructs or substitutes for the other.
 
 Production release digest manifest:
 
