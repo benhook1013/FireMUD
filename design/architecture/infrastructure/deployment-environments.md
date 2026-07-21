@@ -294,14 +294,14 @@ FireMUD's preview environment is a hosted single-node k3s cluster intended for r
 - The preview deployment uses the full application stack, including the gateway, TCP proxy, backend microservices, and stateful supporting services required for normal gameplay flows.
 - GitHub Actions builds PR-tagged images, pushes them to private GHCR, and deploys or upgrades the preview release via Helm. The cluster authenticates to GHCR using image pull credentials.
 - Each preview namespace must use PR-unique JWT signing material and JWKS data, even when that material is stored as low-sensitivity test-only ConfigMap or Secret content. Preview auth tokens must not validate across PR namespaces.
-- The intentionally first reviewer-usable manual `LOGIN -> PLAY -> LOOK` proof over TCP/Telnet has been achieved. It remains protocol evidence, not browser proof.
-- Preview must add the ADR 0144 static frontend baseline and bounded deployed browser journey. This is a current implementation/deployment gap; temporary Gateway-hosted UI files or browser helpers do not satisfy it.
+- The intentionally first reviewer-usable manual `LOGIN -> PLAY -> LOOK` proof over TCP/Telnet has been achieved. Continuing acceptance retains that public Telnet adapter and adds the ADR 0144 deployed static frontend plus bounded browser journey under [ADR 0173](../decisions/adr-0173-disposable-transport-complete-pr-preview-proof.md). Temporary Gateway-hosted UI files, backend-only WebSocket clients, or browser helpers do not satisfy the browser path.
 - Preview TCP exposure uses a small reserved preview-only external port range, with one TCP port per live preview namespace on the shared preview host/IP. This is a preview multiplexing concern, not the long-term player-facing Telnet architecture.
 - Preview deploys currently reset the namespace before each Helm apply, then reseed the minimum bootstrap state needed for reviewer proof. Within one deployed preview instance, PostgreSQL, MinIO/object storage, and other stateful components persist across normal pod restarts and VM reboot, but preview state does not currently persist across preview redeploys.
 - Preview state is not backed up and is not durable beyond the single preview node. If the node or its attached storage is lost, preview state is lost.
 - The initial Hetzner/k3s sizing target is one reliably usable full-stack preview on an 8 GB shared-CPU x86 VM. A second concurrent preview is best-effort only and may fail to deploy if capacity is exhausted.
-- When capacity is exhausted, existing previews remain in place and the new preview deployment fails rather than evicting older namespaces.
-- Preview namespaces are removed when the PR closes or merges.
+- Eligibility may be explicit/on-demand while capacity is scarce. A preview holds a bounded renewable visible lease; active leases are not silently evicted, while expired leases may be reclaimed even if the PR remains open.
+- Capacity exhaustion reports preview evidence as unavailable, not passed. A review claiming hosted proof requires successful evidence for its current head SHA.
+- Preview namespaces are removed when the PR closes or merges, is explicitly released, or its lease expires.
 
 ---
 

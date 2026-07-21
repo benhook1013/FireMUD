@@ -251,6 +251,8 @@ New services and features that add critical metrics or alerts should extend thes
 
 Profiles that advertise continuous player-experience monitoring validate the synthetic canary path described in the Logging & Monitoring contract. Hobby and small profiles may instead retain evidence of local execution or an explicit omitted posture:
 
+PR preview acceptance uses the same semantic authenticated/admitted/authoritative-`LOOK` outcomes through separate public Telnet and deployed first-party browser adapters. Shared assertions do not imply identical wire commands. Backend-only Game Session WebSocket smoke remains diagnostic and cannot replace either public path. See [ADR 0173](decisions/adr-0173-disposable-transport-complete-pr-preview-proof.md).
+
 - Verify `playerflow_canary_success{flow="login",path=...}` exists for each exposed public path.
 - Verify `playerflow_canary_success{flow="command",path=...}` exists for each exposed public path.
 - Verify `playerflow_canary_latency_ms{flow="command",path=...}` is exported with millisecond semantics.

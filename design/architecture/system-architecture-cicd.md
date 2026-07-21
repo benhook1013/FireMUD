@@ -227,15 +227,11 @@ FireMUD's preview workflow is reserved for real reviewer-accessible PR environme
 - Expose the environment at `https://pr-<PR_NUMBER>.preview.<DOMAIN>` using cluster ingress/TLS.
 - Expose a reviewer-usable TCP/Telnet entry path for the preview stack so manual gameplay proof can happen through the normal MUD client surface.
 - Reset the preview namespace on each deploy, then seed the minimum bootstrap state needed for reviewer proof so the hosted environment remains reproducible across preview updates.
-- Tear the preview down when the PR closes or merges.
+- Tear the preview down when the PR closes or merges, is explicitly released, or its visible bounded renewable lease expires. Capacity-constrained deployments may require explicit eligibility; an active lease is not silently evicted.
 
-Main CI remains responsible for stack startup, smoke, and cross-service verification. Preview deployment is intentionally a separate concern focused on reviewer-accessible environments.
+Main CI remains responsible for stack startup, smoke, and cross-service verification. Preview deployment is intentionally a separate concern focused on reviewer-accessible environments. Capacity exhaustion or infrastructure failure reports preview proof as unavailable; it never records a pass, and any claimed hosted proof is bound to the current PR head SHA.
 
-Initial hosted preview proof target:
-
-- The first reviewer-usable proof milestone is not a rich browser UI.
-- The first milestone is manual `LOGIN -> PLAY -> LOOK` over the hosted TCP/Telnet path using a terminal client or Mudlet-style client.
-- Browser-first preview UX is a later step and should not block making the hosted preview environment real.
+The initial Telnet-first hosted milestone is complete. Continuing preview acceptance follows [ADR 0173](decisions/adr-0173-disposable-transport-complete-pr-preview-proof.md): one shared semantic authenticated/admitted/`LOOK` assertion set is exercised through both the public Telnet path and the deployed first-party browser path. Telnet proves TCP Proxy and bridge/framing behavior. The bounded Playwright journey proves frontend delivery, HTTPS bootstrap/discovery, connect-token cookie and `/ws/game/**` admission, one reconnect, logout, and non-reuse. Direct backend WebSocket smoke remains CI/diagnostic evidence rather than a substitute or third required hosted path.
 
 ---
 

@@ -107,8 +107,8 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
 | 5 | Gameplay and player experience | 21 | 21 | `completed` |
 | 6 | Operations and delivery | 25 | 25 | `completed` |
-| 7 | Existing ADR-backed and lower-risk remainder | 16 | 17 | `in-progress` |
-| **Total** | | **178** | **183** | `in-progress` |
+| 7 | Existing ADR-backed and lower-risk remainder | 17 | 17 | `completed` |
+| **Total** | | **179** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -354,7 +354,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `LIB-01` — `revised` on 2026-07-21; [ADR 0171](../../architecture/decisions/adr-0171-owner-local-redis-execution-with-aggregated-contracts.md)
 - [x] `OPS-01` — `accepted` on 2026-07-21; clarified in [CI/CD](../../architecture/system-architecture-cicd.md) and [promotion attestation](../../architecture/system-architecture-promotion-attestation.md)
 - [x] `OPS-05` — `revised` on 2026-07-21; [ADR 0172](../../architecture/decisions/adr-0172-exact-plan-authorized-automated-production-deployment.md)
-- [ ] `OPS-06`
+- [x] `OPS-06` — `revised` on 2026-07-21; [ADR 0173](../../architecture/decisions/adr-0173-disposable-transport-complete-pr-preview-proof.md)
 
 ### Allocation Notes
 
