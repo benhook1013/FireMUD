@@ -62,7 +62,7 @@ Creator-focused design flows are described in the [Creator Journeys](./user-jour
 
 ## 1. Sign Up
 
-Players register for an account through the [Account Service](./microservices/account-service/README.md). Email verification and the current password/verified-email-code login modes are outlined in [Authentication & Authorization](./system-architecture-authentication.md). Players may also link external accounts such as **Google**, **Discord**, or **Steam** for simplified logins, as detailed in the Account Service documentation.
+Players register for an account through the [Account Service](./microservices/account-service/README.md). Email verification and the baseline password/verified-email-code login modes are outlined in [Authentication & Authorization](./system-architecture-authentication.md). Under [ADR 0049](./decisions/adr-0049-optional-provider-specific-external-identity-linking.md), **Google**, **Discord**, and **Steam** are planned optional HTTPS linking and sign-in integrations rather than baseline launch promises. Each provider is available only after its complete provider-specific security, recovery, collision, outage, and lifecycle contract is implemented and proven; provider-first account creation remains deferred.
 
 ```plaintext
 Player → Account Service
@@ -290,9 +290,9 @@ Account Service → Game Design Service (select tenant) → Game Session Service
 
 ## 9. Account Data Export & Deletion
 
-Players may request a full account data export or permanently delete an account through the [Account Service](./microservices/account-service/README.md). Exported account data is provided in JSON format for portability and covers the account-owned data the caller is entitled to receive across tenants. Tenant admins also have a separate tenant-scoped billing-safe export for one suspended or canceled tenant; that export is bounded to the tenant and does not expose unrelated account data from other games.
+Players may request a full account data export or permanently delete an account through the [Account Service](./microservices/account-service/README.md). Under [ADR 0050](./decisions/adr-0050-versioned-export-retention-and-erasure-policy.md), full export is an asynchronous versioned JSON manifest of portable data contributed by every required owning service; partial or omitted categories are reported rather than presented as complete. Tenant admins have a separate tenant-scoped billing-safe export for one suspended or canceled tenant. It contains tenant-owned recovery data and minimum subject references, never global credentials, email, external identities, security state, or unrelated account data from other games.
 
-Account deletion requires confirmation, revokes active sessions, and is recorded by the [Logging & Admin Service](./microservices/logging-admin-service/README.md) for audit purposes. Deletion is blocked while the account owns any nonterminal tenant subscription; the creator must first transfer billing ownership or cancel the subscription terminally so payment instruments, invoices, refunds, and tenant hosting responsibility are not orphaned.
+Account deletion requires confirmation, revokes active sessions, and is recorded by the [Logging & Admin Service](./microservices/logging-admin-service/README.md) for audit purposes. Deletion is blocked while the account owns any nonterminal tenant subscription; the creator must first transfer billing ownership or cancel the subscription terminally so payment instruments, invoices, refunds, and tenant hosting responsibility are not orphaned. Direct identity is erased after the cancellation cutoff, while shared or legally/policy-required evidence may remain only in the minimized form and finite duration declared by the canonical retention registry.
 
 ```plaintext
 Player → Account Service → Logging & Admin Service (audit)

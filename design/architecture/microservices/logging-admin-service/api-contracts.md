@@ -25,11 +25,13 @@ This document defines the Logging & Admin Service REST and gRPC surfaces, authen
 - `POST /admission-pointers/cutover` – operator-facing canonical prepared-cutover operation that forwards one prepared-upgrade id, replacement instance id, and pointer CAS guard to Game Session so proof revalidation and pointer swap happen in one control-plane call.
 - `POST /admission-pointers/version-upgrades` – operator-facing preparation call that persists the Game Session `PrepareVersionUpgrade` compatibility proof for a source instance and target version under a caller-supplied idempotency key.
 - `GET /admission-pointers/version-upgrades/{tenantId}/{preparationId}` – read one durable prepared-version-upgrade proof, including participant attestations and execution state after a cutover has consumed the preparation.
-- `POST /quota-overrides` – reserved future operator-facing quota override write ingress. This remains deferred until Account exposes the canonical owner-side override mutation contract.
-- `DELETE /quota-overrides/{scopeType}/{scopeId}/{quotaKey}` – reserved future operator-facing quota override removal using the same owner-side contract as creation/update.
 - `POST /tick-remediation/pause` – operator-facing scoped tick pause request that forwards to Game Session control-plane, records actor identity and reason, and never mutates Redis directly.
 - `POST /tick-remediation/resume` – operator-facing scoped tick resume request that forwards to Game Session control-plane with the same audit requirements.
-- `POST /tick-remediation/remediate` – reserved future operator-facing scoped remediation request for coordination/tick recovery. This remains deferred until Game Session exposes a canonical owner-side remediation RPC; Logging & Admin must not invent direct Redis mutation or a fake remediation contract in the meantime.
+
+### Coverage Drift
+
+- Quota override has no current OpenAPI route and no current Account owner mutation contract. Do not add `/quota-overrides*` until the owner contract exists.
+- Scoped remediation beyond pause/resume has no current OpenAPI route and no current Game Session owner RPC. Do not add `/tick-remediation/remediate` or a direct Redis mutation path.
 
 ### Canonical Admission State Operations
 
@@ -66,12 +68,14 @@ grpcurl -plaintext -d '{"tenant_id":1,"reporter_account_id":1,"target_account_id
 | Surface | Examples | Required auth path | Notes |
 | --- | --- | --- | --- |
 | Public/infra health | `GET /ping`, `Ping` | Internal network + platform health policy | Not a user-authenticated business operation. |
-| Admin/operator APIs (HTTP) | `/logs/query`, `/moderation/actions`, `/feature-flags/toggle`, `/reports`, `/sagas*`, `/admission-pointers*`, `/quota-overrides*`, `/tick-remediation*` | JWT middleware (`AuthTokenInterceptor` + route classification) | External tools must enter via Gateway allowlisted routes. |
-| Service-to-service control/ingest (gRPC internal) | Internal lifecycle/event ingestion and trusted backend calls | mTLS caller identity + explicit service authorization checks | Never exposed at public ingress; role claims are required only for user-scoped actions. |
+| Player report (HTTP) | `/reports` | Exact `player-bootstrap` profile plus caller-bound tenant membership | Reporter identity comes from the validated session; this is not an operator authority path. |
+| Operator APIs (HTTP) | `/logs/query`, `/moderation/actions`, `/feature-flags/toggle`, `/sagas*`, `/admission-pointers*`, `/tick-remediation/pause`, `/tick-remediation/resume` | Exact `control-ui` profile, current role, role-appropriate assurance, and route classification | External tools enter through Gateway allowlisted routes; Account issues the bounded operator authorization reference before owner forwarding. Tenant roles use current membership; global privileged roles use their required elevation. |
+| Owner mutation calls (gRPC internal) | Feature flag, admission, and tick owner RPCs | Exact Logging & Admin mTLS identity plus Account redemption of the opaque bounded operator authorization reference; no end-user JWT | The owner validates domain facts, fencing, and idempotency. Logging & Admin assertions alone are not authority. |
+| Service-to-service control/ingest (gRPC internal) | Internal lifecycle/event ingestion and trusted backend calls | mTLS caller identity + explicit service authorization checks | Never exposed at public ingress; use an exact receiver-specific private delegation profile only where the route declares one. |
 
 ## Availability Classes by Endpoint Family
 
 | Endpoint family | Availability class | Required behavior during observability outage |
 | --- | --- | --- |
-| `/moderation/actions`, `/feature-flags/toggle`, `/reports`, `/sagas*`, `/admission-pointers*`, `/quota-overrides*`, `/tick-remediation*` | Core operator control plane | Remain available; may use local/PostgreSQL-backed audit state and downstream domain-service APIs only |
+| `/moderation/actions`, `/feature-flags/toggle`, `/reports`, `/sagas*`, `/admission-pointers*`, `/tick-remediation/pause`, `/tick-remediation/resume` | Core operator/control plane | Remain available; may use local/PostgreSQL-backed audit state and downstream domain-service APIs only |
 | `/logs/query`, embedded Kibana/Grafana/Jaeger/Alertmanager views | Observability-backed | May degrade, return explicit unavailable/read-only states, or be hidden behind degraded-state messaging |

@@ -41,8 +41,7 @@ Canonical current-state note:
 
 - `firemud-pg-dump` runs every 15 minutes and stores compressed SQL dumps.
 - The CronJob takes an online transactionally consistent PostgreSQL snapshot while normal writes continue; routine backup does not pause gameplay.
-- Each artifact records environment/database identity, snapshot time, schema and migration lineage, deployed service digests, backup-tool digest, and object-storage binding.
-- Each artifact also records immutable `artifactErasureHighWater`, the highest authoritative erasure sequence included in that snapshot.
+- Before opening the PostgreSQL snapshot transaction, the backup workflow reads and durably binds the current committed erasure-journal sequence as `artifactErasureHighWater`. Only after that acknowledgement may it open the database snapshot. Each artifact records that conservative high-water alongside environment/database identity, snapshot time, schema and migration lineage, deployed service digests, backup-tool digest, and object-storage binding.
 - Production Terraform deploys this CronJob automatically.
 - Retention policy:
   - 24 hours of 15-minute dumps
@@ -52,12 +51,14 @@ Canonical current-state note:
 - Dumps are written to `firemud-pg-dumps` and may also upload to object storage when `PG_DUMP_BUCKET` is configured.
 - In production, skipped object-storage uploads are a misconfiguration even if short-term dumps remain on PVC.
 - Velero schedules back up Kubernetes manifests only, with `snapshotVolumes: false`.
+- Backups are immutable until normal expiry and may contain subject data erased after their snapshot time. Under [ADR 0050](./decisions/adr-0050-versioned-export-retention-and-erasure-policy.md), Account commits terminal erasure to an immutable, monotonic overlay journal retained outside the PostgreSQL backup lineage. Restore quarantine replays every journal sequence strictly greater than `artifactErasureHighWater` through the current high-water, inclusive. Capturing the artifact high-water before opening the database snapshot makes replay conservative: a deletion committed during or after snapshot creation is replayed even if its database effects happened to be visible, and idempotent owner reconciliation makes that safe.
 
 ### Online Snapshot Contract
 
 The backup artifact is one consistent PostgreSQL database view, not a tenant- or region-scoped gameplay artifact. Online backup correctness requires:
 
 - one transactionally consistent snapshot covering every service schema in the declared database;
+- one independently acknowledged erasure-journal high-water captured before the snapshot transaction opens, with proof of that ordering and gap-free replay semantics;
 - immutable environment, database, schema/migration, service-digest, tool-digest, snapshot-time, and object-store lineage;
 - immutable `artifactErasureHighWater` captured as the greatest authoritative erasure-ledger sequence visible inside the same PostgreSQL snapshot, then bound with the immutable artifact digest and snapshot identity in one immutable manifest;
 - one atomic or compare-and-set ready-publication record created only after the artifact bytes and manifest are durably stored; a crash, duplicate publication, missing object, mutable object, or digest/high-water mismatch leaves the candidate unpublished or quarantined and makes recovery reject it;

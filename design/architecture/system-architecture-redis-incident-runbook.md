@@ -31,7 +31,9 @@ Region-scoped coordination key examples use `{tenantRegionTag}`, the canonical o
    - Alerts fire on tick duration, Redis latency, or error rates.
    - Logs show failures acquiring locks or writing tick entries.
 2. **Stabilize**
-   - Reduce incoming player load if necessary (rate-limit new sessions).
+   - Close new login, join, `PLAY`, reconnect/rebind, token issuance/refresh, and protected control-plane admission while required authority cannot be established.
+   - If gameplay coordination remains healthy but token authority alone is unavailable, existing admitted bindings may continue only through their last renewed authority-freshness lease and terminate at the 60-second maximum. Do not add per-command registry reads.
+   - If the complete Coordination Redis role is unavailable, halt correctness-sensitive gameplay mutations; bounded socket recovery does not authorize local-only processing.
    - Pause non-critical background scripts that depend heavily on Coordination Redis.
 3. **Recover**
    - Follow cluster or node failover procedures documented in `design/architecture/system-architecture-redis-operations.md`.
@@ -80,10 +82,9 @@ When session-related metrics indicate schema or TTL problems, use this scoped cl
    - Verify and correct deployments so all Game Session Service instances run a version whose CAS script understands the highest `schemaVersion` currently present in Redis (follow the “scripts first, writers second” rule from the Redis architecture docs).
 1. **Run the canonical session cleanup workflow**
    - Use the session schema/TTL cleanup flow described in [Session Schema Cleanup and Large Keyspaces](./system-architecture-redis-operations.md#session-schema-cleanup-and-large-keyspaces):
-     - Acquire the maintenance lock and pause the affected tenant scope with `coordination-maintenance pause --operation cleanup --scope tenant --tenant <tenantId>`.
-     - Run `coordination-maintenance session-cleanup --scope tenant --tenant <tenantId> --maintenance-lock-token <token>`, using `--dry-run` first if the blast radius is uncertain.
-     - Configure cleanup to delete keys with unsupported `schemaVersion` values or aggressively reduce their TTL so they expire quickly when performing a TTL cut-over.
-     - Finish through `coordination-maintenance resume ...` on success or `coordination-maintenance release-lock ...` on failure or operator abort.
+     - Run the single supported `coordination-maintenance recover --mode session-schema-cleanup --scope tenant --tenant <tenantId>`, using `--dry-run` first if the blast radius is uncertain. The operation owns the maintenance lock and invokes session cleanup as an internal recovery phase, not a separately supported public verb.
+     - Configure the recovery request to delete keys with unsupported `schemaVersion` values or aggressively reduce their TTL so they expire quickly when performing a TTL cut-over.
+     - Let the recover operation release its lock on success; use the separately audited `coordination-maintenance release-lock ...` control only after an operator abort or failed workflow.
 1. **Verify recovery**
    - Monitor `session.cas_unsupported_schema_total`, reconnect error rates, and Redis key counts for the affected tenant(s) to confirm the issue has cleared.
    - Affected players may need to log in again; no authoritative PostgreSQL data is lost.
@@ -119,19 +120,15 @@ The following Redis-focused incident flows build on the general recovery steps a
        - Goal: fence the old timeline with an epoch bump and use the canonical reset handshake to abandon or reconcile old-epoch work explicitly.
 3. **Act**
    1. If the chosen mode is `replay_first`:
-      - `replay_first` is a recovery decision, not a maintenance CLI operation. Run `coordination-maintenance pause --operation cleanup ...`, capture the returned `maintenanceLockToken` and recovery audit lineage, and keep the affected scope in `PAUSED` while replay converges; do not run `reset` unless escalation selects `reset_first`. The maintenance lock starts with the canonical `cleanup` compatibility class.
-      - Run `coordination-maintenance reconcile-ledger ... --maintenance-lock-token <token>` for the affected scope without bumping `regionEpoch`; this is the canonical operator entrypoint for the replay controller / maintenance API path.
-      - Run `coordination-maintenance converge-commands ... --maintenance-lock-token <token>` for the same scope unless the status surface proves that no accepted command records in the affected scope are unbound or non-terminal. This is a required replay-first step, not an optional reset-only cleanup.
+      - Run `coordination-maintenance recover --mode replay-first ...` for the affected scope without bumping `region_epoch`. The high-level workflow owns ledger and command convergence; those phases are not separate public operator verbs.
       - Watch `tick_effects_pending_oldest_age_seconds`, `tick_effects_replay_slo_breached`, and command convergence for one emitted replay-convergence budget window. Verify that command outcomes settle into the canonical terminal vocabulary described in `system-architecture-tick-execution-flows.md` rather than inventing a replay-only local interpretation.
       - If the replay budget/status gate passes, run `coordination-maintenance resume ... --maintenance-lock-token <token>` to release the same maintenance lock without bumping `regionEpoch`.
       - Escalate to `reset_first` immediately if replay cannot make bounded progress, if inconsistent-state signals appear, or if the region transitions to `STALLED`. Escalation atomically upgrades the existing maintenance lock's compatibility class from `cleanup` to `reset` by compare-and-match on the same `maintenanceLockToken`, retains the original recovery audit lineage, and writes the upgrade audit record before bumping `regionEpoch` or mutating reset keys. The audit record must include the scope, old/new compatibility class, token/workflow lineage, actor, reason, and resulting epoch transition. Do not release and reacquire the lock between recovery modes; if the tooling cannot perform that atomic same-token upgrade and audit ordering, it must leave the scope paused for an explicit operator failure path rather than starting a second recovery lock.
       - Worked example:
-        1. Region `(7b3b074e-d597-4e9b-b96f-4f5946d26120, 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, R7)` remains on `regionEpoch = 13`, `tick_effects_pending_oldest_age_seconds` exceeds budget, and there is no evidence of mixed-epoch state or duplicate durable batches.
-        2. Operator runs `coordination-maintenance pause --operation cleanup --scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7` and captures the returned `maintenanceLockToken` as `<token>`.
-        3. Operator runs `coordination-maintenance reconcile-ledger --scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7 --maintenance-lock-token <token>`.
-        4. Operator runs `coordination-maintenance converge-commands --scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7 --maintenance-lock-token <token>` unless command-status inspection proves there is no affected non-terminal command work.
-        5. The replay controller converges lingering epoch-13 `SCHEDULED` rows to `APPLIED` or `ABANDONED` without bumping `regionEpoch`, and command records converge to the canonical terminal vocabulary.
-        6. If pending age and stalled signals recover within one emitted budget window, the operator runs `coordination-maintenance resume --scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7 --maintenance-lock-token <token>` and the region stays on epoch `13`; otherwise the operator escalates to `reset_first` with the same `<token>`. `release-lock` is used only when recovery is being abandoned or the workflow cannot safely continue.
+        1. Region `(T1, R7)` remains on `region_epoch = 13`, `tick_effects_pending_oldest_age_seconds` exceeds budget, and there is no evidence of mixed-epoch state or duplicate durable batches.
+        2. Operator runs `coordination-maintenance recover --mode replay-first --scope region --tenant T1 --region R7`.
+        3. The recovery workflow runs its internal ledger and command-convergence phases, converging lingering epoch-13 `SCHEDULED` rows to `APPLIED` or `ABANDONED` without bumping `region_epoch` and driving command records to the canonical terminal vocabulary.
+        4. If pending age and stalled signals recover within one emitted budget window, the region stays on epoch `13`; otherwise the operator escalates to `reset_first`.
    2. If the chosen mode is `reset_first`:
       - Execute the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) for the same scope.
       - Keep only the incident-specific choices local to this runbook: scope selection, whether replay-first was exhausted first, whether gameplay sessions are preserved, and what evidence justified escalation.

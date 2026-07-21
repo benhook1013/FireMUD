@@ -5,13 +5,14 @@ The machine-readable [authorization route matrix](./system-architecture-authz-ro
 Every protected route in a validated inventory must be listed here with:
 
 - route identifier (service + method/path),
-- classification (`public`, `account_scoped`, `caller_membership_scoped`, `player_bootstrap_tenant`, `pre_tenant_discovery`, `public_production_onboarding`, `tenant_regular`, `billing_safe_tenant`, `cross_tenant_support_safe`, `cross_tenant_billing_safe`, `cross_tenant_data_bearing`, `internal_workload`),
+- classification (`public`, `account_scoped`, `caller_membership_scoped`, `player_bootstrap_tenant`, `pre_tenant_discovery`, `public_production_onboarding`, `tenant_regular`, `billing_safe_tenant`, `cross_tenant_support_safe`, `cross_tenant_billing_safe`, `cross_tenant_data_bearing`, `internal_workload`, `pending_deletion_scoped`),
 - whether a matching Account issued-token registry record is required,
 - required role checks,
 - tenant-billing authority-generation applicability,
 - caller-bound membership authority-generation applicability where relevant,
 - required live authority checks for the route class,
 - any response-profile or mutation-contract requirements needed for CI/security enforcement.
+- any role-assurance or bounded privileged-elevation contract required before a global role may authorize the route.
 
 **Canonical incomplete-inventory rule:** Until source-stable OpenAPI/protobuf inventory coverage is complete and validated, the YAML is declaration-only and must not generate runtime or default-deny policy for routes absent from the validated inventory. Runtime must reject unclassified protected routes and leave unclassified external routes unreachable or denied; CI and deployment inventory checks must fail validated candidate routes missing from the YAML.
 
@@ -77,6 +78,7 @@ Critical-domain inventory artifacts (required):
 | `cross_tenant_billing_safe` | One matching token record for the exact profile declared by the route | No | Billing operations for global billing roles |
 | `cross_tenant_data_bearing` | One matching token record for the exact profile declared by the route | Yes when operation targets tenant-scoped data | Platform-admin-only data-bearing operations |
 | `internal_workload` | Route-specific: explicitly `none` or one exact delegated profile | Route-specific | Internal-only RPCs require exact mTLS workload identity and a method caller allowlist, and both constraints must pass. Each entry declares whether it carries delegated subject authority; this class never inherits an end-user token requirement implicitly. |
+| `pending_deletion_scoped` | No JWT; one Account-issued pending-deletion access credential | No | Account-owned opaque credential bound to the pending-deletion workflow and server-side registry. It authorizes only status, cancellation, export, and necessary billing settlement; it is not normal account or gameplay authority. |
 
 Any route that accepts more than one token profile must declare an `accepted_token_profile_audiences` YAML map that binds each accepted profile to its exact audience rather than using an implicit shared audience. The mapping must cover exactly the accepted profiles and must match the audience declared by the token-profile vocabulary.
 
@@ -106,7 +108,19 @@ For first-party gameplay, the `/ws/game/**` route declares `operation: websocket
 
 Without these fields where applicable, a route entry is incomplete for governance and CI enforcement.
 
+### Privileged Role Assurance
+
+Global-role possession is not sufficient to enter a privileged control window. `platformAdmin` authority always requires the machine-readable `privileged_control` elevation contract; `billingAdmin` requires it when exercising cross-tenant authority. Account Service creates that bounded server-side, role-scoped state only through `EnterPrivilegedControlWindow` after recent ordinary reauthentication and independent TOTP. The state is bound to the account, current `control-ui` token `jti`, account generation, requested global role, issue time, and expiry, and is invalidated by token revocation, generation change, role loss, or expiry. It is not a JWT profile or gameplay authority.
+
 Route authorization never becomes in-game elevation. If a global-role account passes the ordinary caller-bound join and admission flow, gameplay presence, command, and actor-capability resolution ignore its global roles. Any moderator, administrator, game-master, or equivalent gameplay authority requires an explicit tenant-scoped gameplay grant; no route classification creates a support impersonation or hidden-observer session.
+
+### Operator Delegation
+
+Account Service is the operator-delegation authority. Human issuance validates the current `control-ui` `jti`, account generation, current tenant or global role, tenant/scope, action family, canonical mutation digest, and any role-required `privileged_control` window. Tenant-scoped `tenantAdmin` and `moderator` actions require live membership and role but not a fabricated global elevation. A global `platformAdmin` tenant operation instead binds the current target-tenant generation without inventing membership. Unattended issuance validates exact allowlisted mTLS workload identity plus a current versioned automation policy and the same mutation digest. The resulting opaque reference is bound either to the human token/account/role evidence or to the workload/policy evidence; automation never impersonates a user.
+
+Logging and Admin records the operator intent and actor kind, then forwards the same reference, `controlPlaneRequestId`, and mutation digest to the owner. The owner call is `internal_workload`: exact mTLS caller identity plus Account redemption/validation of the reference, followed by owner recomputation of the digest and owner-side domain facts, fencing, and idempotency checks. Logging and Admin role, actor, or automation-policy assertions alone are never authority, and owner-side admission RPCs do not accept an end-user JWT.
+
+The current route inventory includes feature-flag toggle, moderation action, admission pointer and version-upgrade writes, tick pause/resume, and the adjacent Game Session session lifecycle mutation surfaces. Quota override has no current OpenAPI or owner route and is recorded as coverage drift; no route is invented for it. The current moderation endpoint records policy input, but no owner-side moderation-enforcement RPC exists, so that owner call is also coverage drift.
 
 ## Seed Matrix (Current Required Entries)
 
@@ -145,7 +159,7 @@ For every first public-production text entry, the target command sequence is `LO
 | Account Service | `GetTenantEntitlementsTenant` | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |
 | Account Service | `GetTenantEntitlementsCrossTenantSupportSafe` | `cross_tenant_support_safe` | `support`/`platformAdmin` |
 | Account Service | `GetSubscriptionTenantHighLevel` | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |
-| Account Service | `ExportTenantData` | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped); tenant-bounded export only |
+| Account Service | `GET /tenant-admin/tenants/{tenantId}/export` (`ExportTenantData`) | `billing_safe_tenant` | Live `tenantAdmin` membership for the path tenant; tenant-wide tenant-owned export only, with no account subject selector. The target route is not currently routable and current account-targeted implementation/proto behavior is `drift_found` |
 | Account Service | `GetSubscriptionCrossTenantSupportSafe` | `cross_tenant_support_safe` | `support`/`platformAdmin` |
 | Account Service | `ListSubscriptionsTenantHighLevel` | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |
 | Account Service | `ListSubscriptionsCrossTenantSupportSafe` | `cross_tenant_support_safe` | `support`/`platformAdmin` |
@@ -154,6 +168,7 @@ For every first public-production text entry, the target command sequence is `LO
 | Account Service | `GetTenantMembershipForAccountCrossTenant` | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |
 | Account Service | `BillingArtifactsTenant` | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped); shared-instrument acknowledgement contract required when mutation affects account-wide payment instrument |
 | Account Service | `BillingArtifactsCrossTenant` | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |
+| Account Service | account payment-instrument wallet | drift-found | No current routable wallet/payment-instrument contract. See ADR 0044; the missing contracts are wallet-to-account/provider customer mapping, explicit per-subscription binding, safe instrument detachment, and billing ownership transfer |
 
 ### Target Public Production Onboarding Example
 

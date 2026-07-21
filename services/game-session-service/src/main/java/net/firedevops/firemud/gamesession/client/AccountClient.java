@@ -54,12 +54,7 @@ public final class AccountClient
   /** Authenticates a player via the Account Service. */
   public AuthenticateResponse authenticate(String tenantId, String username, String password) {
     if (stub() == null) {
-      return AuthenticateResponse.newBuilder()
-          .setError(
-              ErrorDetail.newBuilder()
-                  .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
-                  .setMessage("Authentication service unavailable"))
-          .build();
+      return authenticationUnavailable();
     }
     AuthenticateRequest request =
         AuthenticateRequest.newBuilder()
@@ -70,26 +65,48 @@ public final class AccountClient
     try {
       return callStub().authenticate(request);
     } catch (StatusRuntimeException ex) {
-      if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
+      if (!isRetryableAuthenticateTransport(ex.getStatus().getCode())) {
+        logger.warn("Account Service authenticate failed before a response completed", ex);
+        return authenticationUnavailable();
+      }
+      logger.warn(
+          "Account Service authenticate transport failure; rebuilding channel for one bounded "
+              + "retry",
+          ex);
+      try {
+        initClient();
+      } catch (Exception retryEx) {
+        logger.warn("Failed to rebuild Account Service channel before authenticate retry", retryEx);
+        return authenticationUnavailable();
+      }
+      try {
+        return callStub().authenticate(request);
+      } catch (Exception retryEx) {
         logger.warn(
-            "Account Service unavailable; rebuilding channel and retrying authenticate", ex);
-        try {
-          initClient();
-          return callStub().authenticate(request);
-        } catch (Exception retryEx) {
-          logger.warn("Failed to retry Account Service authenticate after channel reload", retryEx);
-        }
-      } else {
-        logger.warn("Failed to call Account Service authenticate endpoint", ex);
+            "Account Service authenticate retry failed before a response completed", retryEx);
+        return authenticationUnavailable();
       }
     } catch (Exception ex) {
-      logger.warn("Failed to call Account Service authenticate endpoint", ex);
+      logger.warn("Account Service authenticate failed before a response completed", ex);
+      return authenticationUnavailable();
     }
+  }
+
+  private boolean isRetryableAuthenticateTransport(Status.Code statusCode) {
+    return switch (statusCode) {
+      case ABORTED, DEADLINE_EXCEEDED, INTERNAL, RESOURCE_EXHAUSTED, UNAVAILABLE, UNKNOWN -> true;
+      default -> false;
+    };
+  }
+
+  private AuthenticateResponse authenticationUnavailable() {
+    return authenticationError(
+        AuthenticationErrorCodes.UNAVAILABLE, "Authentication service unavailable");
+  }
+
+  private AuthenticateResponse authenticationError(String code, String message) {
     return AuthenticateResponse.newBuilder()
-        .setError(
-            ErrorDetail.newBuilder()
-                .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
-                .setMessage("Authentication service unavailable"))
+        .setError(ErrorDetail.newBuilder().setCode(code).setMessage(message))
         .build();
   }
 
@@ -130,7 +147,7 @@ public final class AccountClient
       return AuthenticateResponse.newBuilder()
           .setError(
               ErrorDetail.newBuilder()
-                  .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
+                  .setCode(AuthenticationErrorCodes.UNAVAILABLE)
                   .setMessage("Authentication service unavailable"))
           .build();
     }
@@ -149,7 +166,7 @@ public final class AccountClient
     return RequestEmailLoginOtpResponse.newBuilder()
         .setError(
             ErrorDetail.newBuilder()
-                .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
+                .setCode(AuthenticationErrorCodes.UNAVAILABLE)
                 .setMessage("Authentication service unavailable"))
         .build();
   }

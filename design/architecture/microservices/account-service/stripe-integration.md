@@ -29,15 +29,21 @@ The Account Service owns billing records and maps them to Stripe resources while
 
 - `subscription`  
   - Represents a recurring billing agreement between a creator (platform account) and the platform for a specific tenant’s hosting plan.  
-  - Key fields: internal ID, `accountId`, `tenantId`, `plan_code`, `status` (`trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`), current period start/end, `provider_subscription_id` (Stripe `subscription` ID), and `provider_customer_id` (Stripe `customer` ID).  
+  - Key fields: internal ID, `accountId`, `tenantId`, `plan_code`, `status` (`trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`), current period start/end, `provider_subscription_id` (Stripe `subscription` ID), `provider_customer_id` (Stripe `customer` ID), and the explicit account-owned payment-instrument reference selected for that subscription.
   - Plan metadata defines quota-related attributes (for example, maximum active sessions, world size tiers) that the platform uses to drive per-tenant resource limits as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md#tenant-configuration--scaling).
 
-- `billing_customer` (optional)  
-  - Internal cache of Stripe customer IDs keyed by `accountId` (and optionally billing email), ensuring that each platform account uses a consistent Stripe customer representation across tenants.
+- `billing_customer`
+  - Maps one global `accountId` to its Stripe customer ID so the account has one consistent provider identity across tenants.
+
+- `payment_instrument`
+  - Represents an account-owned Stripe PaymentMethod reference plus provider-approved display metadata. FireMUD never stores raw card numbers, security codes, or equivalent payment credentials.
+  - A saved instrument may be selected by several subscriptions owned by the same account, but each subscription records that selection explicitly. Established subscriptions must not fall back to a mutable customer-wide default.
 
 ## Payment Flows
 
 All payment flows follow the same high-level pattern: create or reuse a Stripe customer, create a Payment Intent or Subscription in Stripe, persist internal records, and rely on Stripe webhooks to finalize state transitions.
+
+New real-money charges, saved-instrument changes, subscriptions, refunds, billing-owner transfers, and payouts complete through the HTTPS account/control plane and provider-hosted flows. A Telnet or other gameplay client may explicitly initiate an eligible purchase and receive a short-lived, single-use opaque HTTPS checkout URL bound server-side to the authenticated account, gameplay session, tenant, action, product, immutable amount and currency, and request ID. The URL carries no payment credential and cannot change its bound purchase. Gameplay receives completion only after Account verifies the provider result, applies the idempotent transaction/entitlement workflow, and publishes the outcome.
 
 ### One-Time Purchases and Donations
 
@@ -59,9 +65,10 @@ Refunds call Stripe’s `Refund` API and update the `payment_transaction` `statu
 Subscription creation, lifecycle, and entitlements are covered in more detail in the [Subscription Management Design](./subscription-management.md). At a high level:
 
 1. A creator chooses a hosting plan for a tenant in the admin UI; the caller-bound tenant variant of `CreateSubscription` derives actor identity from auth context and accepts `tenantId` plus `plan_code` only. Cross-tenant billing/admin workflows use separate admin variants when acting on another account or tenant.  
-2. The Account Service ensures a Stripe customer exists for the account, then creates or updates a Stripe `subscription` using the configured Stripe product/price for `plan_code`.  
+2. The Account Service ensures a Stripe customer exists for the billing-owner account, requires that subject to select one of its own saved payment instruments, and sets that instrument explicitly on the Stripe subscription.
 3. An internal `subscription` row is created or updated with `status` based on the Stripe subscription’s state and linked to the Stripe `subscription` ID.  
 4. Stripe webhooks (`invoice.payment_succeeded`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`) drive subsequent state transitions and keep the internal `subscription` table in sync.  
+5. Changes to `subscription.status` are propagated to tenant-management and quota-enforcement components so that tenant availability and resource limits reflect the current billing state. For hard cutoff transitions such as `suspended` or `canceled`, Account transactionally advances the durable tenant authority generation with the committed billing state and emits `SubscriptionStatusChanged` plus `TenantBillingStateChanged`. Downstream services consume those events to invalidate projections and terminate affected gameplay sessions; they never advance Account authority themselves. See [Subscription Management](./subscription-management.md#tenant-availability-and-quota-enforcement) and [Authentication & Authorization](../../system-architecture-authentication.md#session-and-identity-management).
 5. Changes to `subscription.status` are propagated to tenant-management and quota-enforcement components so that tenant availability and resource limits reflect the current billing state. For hard cutoff transitions such as `suspended` or `canceled`, Account transactionally advances the durable tenant authority generation with the committed billing state and emits `SubscriptionStatusChanged` plus `TenantBillingStateChanged`. Downstream services consume those events to invalidate projections and terminate affected gameplay sessions; they never advance Account authority themselves. See [Subscription Management](./subscription-management.md#tenant-availability-and-quota-enforcement) and [Authentication & Authorization](../../system-architecture-authentication.md#session-and-identity-management).
 
 ## Multi-Tenancy and Security
@@ -70,14 +77,12 @@ Stripe integration must preserve tenant isolation while allowing platform-level 
 
 - Each hosted game (`tenantId`) that requires billing has exactly one primary subscription record linking `accountId` and `tenantId`.  
 - Account deletion is blocked while the account owns any nonterminal tenant subscription (`trialing`, `active`, `past_due`, `grace`, or `suspended`). The creator must first cancel terminally or transfer billing ownership for every affected tenant; the platform must not delete the account and leave Stripe subscriptions, shared payment instruments, or tenant billing ownership orphaned.  
-- Stripe customer IDs are per-account, not per-tenant, to reduce duplication; per-tenant subscriptions are differentiated by products/prices and metadata. This makes payment instruments an **account-owned shared resource** even when a caller is operating through a tenant-scoped billing-safe surface.  
-- Tenant-scoped billing-safe APIs that mutate payment methods must therefore follow an explicit shared-instrument contract:
-  - The mutation request must carry an acknowledgement field (for example `acknowledgeSharedInstrumentImpact=true`) so callers cannot accidentally apply an account-wide billing instrument change through a tenant-scoped route.
-  - If the acknowledgement field is missing or false, the mutation must be rejected with canonical error `BILLING_SHARED_INSTRUMENT_ACK_REQUIRED`.
-  - The response must include `sharedInstrumentImpact=true` and `affectedTenantIds[]` listing the other tenant subscriptions for the same `accountId` that are expected to observe the changed payment instrument.
-  - Audit records must capture `actorAccountId`, `initiatingTenantId`, mutation type, the stable billing-customer reference, and the full `affectedTenantIds[]` set derivable at mutation time.
-  - If the service cannot determine the affected tenant set at mutation time, the mutation must fail closed rather than silently applying an account-wide change with incomplete audit scope.
-- If a future product requirement needs tenant-isolated payment instruments, the platform must move to tenant-scoped billing customers rather than treating the current shared-customer model as implicitly tenant-safe.  
+- Stripe customer IDs and saved instruments are per-account, not per-tenant, to reduce duplication. Every tenant subscription nevertheless binds one selected instrument explicitly, so changing tenant A’s subscription does not change what tenant B will be charged.
+- Instrument listing, attachment, and detachment are account-scoped operations available to the authenticated billing-owner subject. A `tenantAdmin` role alone does not reveal or mutate another account’s instruments. Global `billingAdmin` or `platformAdmin` intervention uses an explicit cross-tenant billing route with actor, target account, affected subscriptions, reason, and outcome audit.
+- Detaching an instrument is rejected while any subscription references it unless the same idempotent workflow supplies and successfully installs a replacement for every affected subscription. The owner sees the safely displayable affected tenant/subscription set; it is not exposed to unrelated tenant operators.
+- Billing-owner transfer rebinds the subscription to the new owner’s Stripe customer and explicitly selected instrument. Saved instruments never transfer between accounts.
+- Customer-wide provider defaults may be used during initial setup convenience but are not authority for an established FireMUD subscription. Provider webhook processing and reconciliation verify the recorded per-subscription binding.
+- If a future product requirement needs tenant-isolated payment instruments, the platform must move to tenant-scoped billing customers rather than treating the current account-owned wallet as implicitly tenant-safe.
 - Internal queries always filter billing records by both `accountId` and `tenantId` when operating on tenant-specific subscriptions or transactions. Cross-tenant reports are restricted to roles with appropriate `globalRoles` as defined in the shared role model:
   - `platformAdmin` for full cross-tenant reporting, and
   - `billingAdmin` for billing-focused reporting surfaces.

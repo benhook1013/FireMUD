@@ -4,6 +4,8 @@ This document describes how FireMUD authenticates clients, issues the exact JWT 
 
 Authentication is performed via credential-bearing `LOGIN` commands for raw Telnet gameplay clients, `/auth/player-bootstrap` plus connect-token flows for first-party gameplay clients, and `/auth/login` only for control-plane UIs or other explicitly classified control-plane clients. Clients are stateless; server-side “sessions” are split between gameplay bindings in Redis and short-lived issued-token registry records in Coordination Redis. The Game Session Service restores gameplay session state from Redis, while the Account Service validates the supplied login secret and issues the exact `control-ui`, `player-bootstrap`, or receiver-specific private player-delegation JWT profile required by the destination. Raw Telnet gameplay command streams never carry JWT authorization. Browser and mobile-browser gameplay clients temporarily use a `player-bootstrap` JWT for HTTPS bootstrap calls and a cookie-carried one-use connect token for the `/ws/game/**` handshake; first-party native-mobile clients that use a cookie jar remain cookie-only, while explicitly classified non-first-party/public native-mobile and other non-browser clients use protected secure storage plus the dedicated handshake header. First-party admin/creator UIs and backend services use their own permitted token profiles. Accounts may also authenticate using linked external providers such as Google, Discord, or Steam.
 
+Optional provider-specific HTTPS sign-in is permitted only after complete provider proof; password and verified-email code remain the Account-owned baseline and fallback, and Telnet never carries provider credentials. See ADR 0049.
+
 ## Implemented Status
 
 - **Target only:** Prompt-based `LOGIN` flows (username then password prompts) are part of the target protocol design.
@@ -19,9 +21,9 @@ Authentication is performed via credential-bearing `LOGIN` commands for raw Teln
 
 The following contract decisions are mandatory and resolve cross-document ambiguity:
 
-- **Authority-generation writer** – The Account Service is the sole writer of issuer, account, tenant, and `{accountId, tenantId}` membership authority generations. Other services must publish billing/security events and must not write authority-generation state directly.
-- **Tenant authority-generation scope** – The tenant authority generation applies to tenant-scoped regular and gameplay-affecting operations. It does not block explicitly classified billing-safe or support-safe routes.
-- **Membership authority-generation scope** – The `{accountId, tenantId}` membership authority generation applies to caller-bound tenant authorization for one account in one tenant when membership or tenant roles change without triggering a tenant-wide billing cutoff.
+- **Authority-generation writer** – The Account Service owns durable issuer, account, tenant, and `{accountId, tenantId}` membership authority generations and is the sole writer of their `session:auth:generation:*` projections. Other services must publish billing/security events and must not write authority-generation state or projection keys directly.
+- **Tenant authority-generation scope** – `session:auth:generation:tenant:<tenantId>` applies to tenant-scoped regular and gameplay-affecting operations. It does not block explicitly classified billing-safe or support-safe routes.
+- **Membership authority-generation scope** – `session:auth:generation:membership:<accountId>:<tenantId>` applies to caller-bound tenant authorization for one account in one tenant and advances when membership or tenant roles change without triggering a tenant-wide billing cutoff.
 - **Gameplay session identity key** – Session uniqueness and takeover scope are keyed by `{tenantId, gameInstanceId, characterId}`.
 - **JWT claim contract** – Services must validate a strict JWT claim profile (required claims and audience per token profile), not only signature plus ad-hoc fields.
 - **Internal gameplay delegation boundary** – Gameplay services authenticate the concrete mTLS workload identity, enforce an exact method-level caller allowlist, and validate a typed `PlayerExecutionContext` against request and domain scope.
@@ -47,6 +49,18 @@ The following contract decisions are mandatory and resolve cross-document ambigu
 - After Gateway validates and consumes the gameplay-connect credential, public non-proxy WebSocket clients use bare `LOGIN` followed by `PLAY`; no transport sends an end-user JWT as gameplay command authorization.
 
 The implemented account login modes are `PASSWORD` and verified-email `EMAIL_OTP`. Authenticator-app TOTP enrollment remains future account-security work; the REST and gRPC authentication contracts do not carry a separate `otp` field. Public player-facing text clients use Telnet-over-TLS, while plaintext Telnet is limited to local, test, and explicitly private-network compatibility. TOTP is not a transport gate or a substitute for channel protection; [ADR 0033](./decisions/adr-0033-public-player-facing-telnet-requires-tls.md) owns that boundary.
+
+
+### Ordinary Login and Sensitive-Action Step-Up
+
+- Ordinary Telnet, gameplay bootstrap, and account/control login use the account-selected `PASSWORD`, verified `EMAIL_OTP`, or both. Gameplay never solicits TOTP or repeats account authentication per command, and a gameplay session cannot become elevated control-plane authority.
+- Routine gameplay and ordinary tenant-scoped creator or moderation work rely on their existing authenticated session, tenant capabilities, route policy, and audit. They do not trigger an unexpected factor prompt.
+- Account email/password/factor changes, external-identity changes, account deletion, new real-money charges, payment-instrument management, billing-owner transfer, and global administration complete only through the HTTPS account/control plane. The client may be web, native, or CLI; raw Telnet cannot complete them.
+- Sensitive personal and billing mutations require recent ordinary reauthentication. Entering a bounded `platformAdmin` or cross-tenant `billingAdmin` elevated window additionally requires an independently enrolled TOTP. Account records the resulting role-scoped elevation as bounded server-side state tied to the current `control-ui` token and account authority generation; it is not a reusable JWT profile or gameplay authority. That factor is supplied once per elevated window rather than once per action and never appears in gameplay.
+- Gameplay may explicitly initiate a sensitive commercial or account action and receive a short-lived, single-use opaque HTTPS handoff URL. The handle grants no authority by itself and resolves to server-side intent bound to account, gameplay session, tenant where applicable, exact action, product and immutable amount/currency where applicable, and `requestId`. The HTTPS client independently authenticates, performs required step-up/provider work, and reports a verified idempotent outcome that gameplay may observe asynchronously.
+- Spending an existing non-withdrawable premium balance remains gameplay. It requires exact purchase confirmation, idempotent identity, audit, and applicable caps, but no general account reauthentication. Withdrawal, cash redemption, or cash-equivalent transfer requires a new decision.
+
+[ADR 0045](./decisions/adr-0045-ordinary-login-factors-and-https-sensitive-action-step-up.md) records this factor and protocol boundary.
 
 Issued JWTs, registry records, authority generations, and token-profile validation rules are defined in [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md). This document still defines how those token contracts are applied to route classification, gameplay admission, and tenant authorization, but it no longer carries the full token catalog inline.
 
@@ -100,7 +114,7 @@ The current target has no support impersonation, live-session attachment, or hid
 
 All meta/control services (Account, Game Design, Logging & Admin, and similar HTTP/gRPC APIs) must enforce a consistent tenant-authorization contract:
 
-- Each incoming request is authenticated to a single `accountId` using a JWT validated against the Account Service JWKS.
+- Each incoming request uses the exact auth path for its route: normal account-bearing requests authenticate a single `accountId` with a JWT validated against the Account Service JWKS, while `pending_deletion_scoped` routes use only an opaque Account-owned pending-deletion credential validated against its server-side workflow registry.
 - The effective tenant set for the request is derived from the token:
   - For tenant-scoped operations, the service computes the set of `tenantId` values from `scopedRoles` plus explicit global-role allowances from the route-class matrix above. Gameplay lobby/admission routes are stricter: they must derive authority from caller-bound tenant membership and `gameplayAdmissionAllowed`, not from global-role shortcuts. Billing-related global access must use explicitly cross-tenant billing-safe route variants.
   - For cross-tenant operations, the service must explicitly check that the caller has a `globalRole` that authorizes cross-tenant access for the specific API category (for example, only `platformAdmin` for gameplay- or data-bearing operations, `billingAdmin` or `platformAdmin` for billing-safe control-plane operations, and `support` or `platformAdmin` only for explicitly designated support-safe troubleshooting surfaces). Tenant-scoped roles must never implicitly grant cross-tenant privileges.
@@ -141,6 +155,8 @@ Any HTTP/gRPC route that depends on identity, roles, or tenant scoping must be p
 | `internal_workload` | Route-specific: no JWT or one exact private player-delegation profile | Exact mTLS workload identity and method caller allowlist; both constraints must pass | If a private JWT is accepted: issuer + account | Route-specific | Internal routes do not inherit an end-user JWT requirement. `game-session-account-delegation` is accepted only for its named receiver with audience `account-service`. |
 | Cross-tenant (data-bearing) | One matching token record | Require `platformAdmin` | Issuer + account | Tenant when operation targets tenant-scoped data | Tenant parameters are allowed only because the caller holds `platformAdmin`; log/audit the target tenant |
 
+- **Unavailable versus revoked** - Unreachable registry or authority-generation state returns retryable AUTH_UNAVAILABLE / HTTP 503 and does not tell clients to discard authentication. Reachable missing, deleted, expired, malformed, or mismatched authority returns AUTH_SESSION_REVOKED or the specific invalid-token outcome and requires reauthentication.
+
 Protected routes that are absent from the route matrix are currently recorded as inventory drift/gap because source-stable OpenAPI/protobuf coverage and comparison validation are incomplete. Runtime middleware must nevertheless reject every protected route whose classification is not deterministically known, immediately and independently of the inventory gate; it must not approximate the route as `tenant_regular` or another route class. Separately, CI and deployment policy checks must fail a validated candidate route that lacks matrix registration. The incomplete matrix must not be converted into generated policy, and its inventory failure must not weaken the runtime rejection.
 
 Billing-safe mutation membership contract (normative):
@@ -148,7 +164,7 @@ Billing-safe mutation membership contract (normative):
 - Billing-safe tenant mutations must perform an authoritative, live membership/role check via Account Service API (`GetCallerTenantMembership(tenantId)` or protocol-equivalent) before mutation.
 - JWT role claims are sufficient for routing and preliminary checks but are not sufficient alone for billing-safe mutations.
 - If membership authority is unavailable, billing-safe mutations fail closed with canonical error `MEMBERSHIP_AUTH_UNAVAILABLE`; read-only billing-safe surfaces may return a retriable unavailable response using the same code.
-- Immediate caller-bound revocation for tenant membership/role changes is enforced by advancing the `{accountId, tenantId}` membership authority generation in addition to the live membership check; implementers must not rely on JWT expiry alone.
+- Immediate caller-bound revocation for tenant membership/role changes is enforced by advancing the `{accountId, tenantId}` membership authority generation and projecting `session:auth:generation:membership:<accountId>:<tenantId>` in addition to the live membership check; implementers must not rely on JWT expiry alone.
 - Tenant-scoped membership checks use `GetCallerTenantMembership(tenantId)` and must bind the subject to the authenticated caller (`accountId` from token); clients must not provide an arbitrary target `accountId` on this path.
 - Global billing roles (`billingAdmin`/`platformAdmin`) must use explicitly cross-tenant billing-safe route variants and must not rely on caller-bound tenant membership endpoints intended for `billing_safe_tenant`.
 - Cross-tenant membership checks for billing/reporting use a separate admin API (`GetTenantMembershipForAccount(tenantId, accountId)` or equivalent) restricted to `billingAdmin`/`platformAdmin`.
@@ -694,7 +710,7 @@ All meta services use a shared `AuthTokenInterceptor` that extracts claims from 
 
 ### Mandatory Auth Middleware
 
-All meta/control services that depend on JWT claims must install the shared security configuration that wires `AuthTokenInterceptor` into both HTTP and gRPC stacks. No controller or gRPC service that relies on authorization may be reachable without passing through this middleware. New routes that require authentication must opt into this configuration from the outset; adding endpoints that bypass it is considered an architectural violation and must be corrected before promotion to shared environments.
+All meta/control services that depend on JWT claims must install the shared security configuration that wires `AuthTokenInterceptor` into both HTTP and gRPC stacks. Account-owned `pending_deletion_scoped` routes use the dedicated pending-deletion credential validator and workflow registry instead of `AuthTokenInterceptor`; they must not fall back to normal JWT or session authority. No controller or gRPC service that relies on authorization may be reachable without passing through its exact route auth path. New routes that require authentication must opt into this configuration from the outset; adding endpoints that bypass it is considered an architectural violation and must be corrected before promotion to shared environments.
 
 ---
 
@@ -704,7 +720,7 @@ The Gateway sits at the edge of the platform and is deliberately **not** an auth
 
 - Spring Cloud Gateway enforces the presence of an `Authorization` header for protected routes but does not validate or interpret JWT contents.
 - All meta/control services that receive requests from the Gateway must validate JWTs using the Account Service JWKS and the shared `AuthTokenInterceptor`. No route that depends on JWT claims may bypass this middleware.
-- Gameplay services never accept or validate browser- or client-supplied JWTs directly. They rely on the Game Session Service to enforce access based on Redis session context and the exact receiver-specific private player-delegation contract where an Account call requires it.
+- Gameplay services never accept or validate browser- or client-supplied JWTs directly. They authenticate the immediate workload through concrete mTLS identity and exact method allowlists, and consume only validated typed `PlayerExecutionContext` from approved gameplay callers. Receiver-specific private delegation JWTs remain limited to explicit Account/control-plane calls and are not the gameplay-service trust boundary.
 
 When adding a new public HTTP/gRPC route:
 

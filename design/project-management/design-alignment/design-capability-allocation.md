@@ -19,15 +19,15 @@ This ledger maps canonical design sources to the stable capabilities in the [Fir
 | Infrastructure | 6 | 6 | 0 | 100% classified |
 | Generated references | 1 | 1 | 0 | 100% classified |
 | Microservice architecture | 76 | 74 | 0; 2 explicit governance/template exemptions | 100% classified |
-| Architecture decisions | 36 | 35 | 0; 1 registry exemption | 100% classified |
-| **Total** | **208** | **205** | **0; 3 explicit exemptions** | **100% classified** |
+| Architecture decisions | 51 | 50 | 0; 1 registry exemption | 100% classified |
+| **Total** | **223** | **220** | **0; 3 explicit exemptions** | **100% classified** |
 
 ## Allocation Ledger
 
 | Design source | Heading or scope | Primary capability | Secondary handoffs | Source class | Notes or gap |
 | --- | --- | --- | --- | --- | --- |
 | [Microservice architecture allocation](./design-capability-allocation-microservices.md) | All 76 files under `design/architecture/microservices/**` | Per-source allocation | Per-source handoffs | Service design, contract, runtime/data, configuration, operations, and reference sources | Complete path-set coverage |
-| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 35 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; accepted, superseded, and withdrawn records remain distinguishable |
+| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 50 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; accepted, superseded, and withdrawn records remain distinguishable |
 | [System architecture allocation](./design-capability-allocation-system.md) | All 89 direct architecture, 6 infrastructure, and 1 generated source | Per-source allocation | Per-source handoffs | Normative design, runbook, reference, index, and generated sources | Complete path-set coverage |
 
 ## Architecture Decision Allocation
@@ -70,6 +70,21 @@ This ledger maps canonical design sources to the stable capabilities in the [Fir
 | `design/architecture/decisions/adr-0033-public-player-facing-telnet-requires-tls.md` | `PO-2` | `AA-1`, `AA-2`, `EA-3`, `SF-1` | Accepted |
 | `design/architecture/decisions/adr-0034-layered-abuse-controls-without-attacker-triggered-account-locks.md` | `SF-1` | `AA-1`, `AA-2`, `PO-1`, `PO-2` | Accepted |
 | `design/architecture/decisions/adr-0035-single-record-issued-token-registry.md` | `SF-1` | `AA-1`, `AA-2`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0036-monotonic-authority-generations-for-bulk-token-revocation.md` | `SF-1` | `AA-1`, `AA-2`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0037-fail-closed-token-authority-outages-with-bounded-active-gameplay.md` | `SF-1` | `AA-2`, `AA-3`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0038-explicit-jwt-profiles-and-mtls-workload-identity.md` | `SF-1` | `AA-1`, `AA-2`, `PO-2` | Accepted |
+| `design/architecture/decisions/adr-0039-bounded-redis-operator-maintenance-surface.md` | `PO-1` | `PO-4`, `SF-1`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0040-account-global-control-login-and-explicit-tenant-selection.md` | `AA-1` | `EA-3`, `PO-1`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md` | `AA-1` | `GR-1`, `PO-3`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0042-global-account-and-tenant-scoped-game-relationships.md` | `AA-1` | `PO-1`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md` | `AA-1` | `PO-1`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0044-account-owned-payment-instruments-with-explicit-subscription-binding.md` | `AA-1` | `PO-1`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0045-ordinary-login-factors-and-https-sensitive-action-step-up.md` | `AA-1` | `AA-2`, `EA-3`, `PO-1`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0046-bounded-friend-presence-with-private-by-failure-redaction.md` | `EA-2` | `AA-1`, `AA-2`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md` | `PO-1` | `AR-2`, `AR-3`, `GR-1`, `PO-2` | Accepted |
+| `design/architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md` | `PO-1` | `GR-1`, `PO-4`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0049-optional-provider-specific-external-identity-linking.md` | `AA-1` | `EA-3`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0050-versioned-export-retention-and-erasure-policy.md` | `AA-1` | `AA-2`, `PO-1`, `PO-3`, `SF-2` | Accepted |
 
 ## Unallocated Or Ambiguous Sources
 

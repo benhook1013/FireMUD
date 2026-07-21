@@ -26,8 +26,9 @@ Run this flow when any of the following is true:
    - The rotation Job/CronJob must never read or update `jwt-signing-keys` or write `jwt-jwks`; it only observes Account/controller status, runs validator-convergence checks, and records evidence.
 3. Invalidate environment-wide issuer authority.
    - Advance the issuer authority generation through Account authority. This is the logical invalidation boundary: every validator rejects a registry snapshot whose issuer generation is older than the new generation, regardless of account, tenant, or token profile. Physical deletion of old token records and cleanup of gameplay/control sessions are bounded best-effort follow-up work; neither is a correctness authority, and wildcard scans or deletion cannot substitute for validator rejection of stale-generation snapshots.
+   The corresponding issuer-generation projection is applied set-if-greater; missing, stale, or uncertain projection evidence fails closed. Reauthentication remains mandatory after the authority transition.
    - Treat compromise of the per-environment Account key as global for that issuer. Tenant-selective cleanup is not sufficient.
-   - Do not treat the authority-generation advance as a substitute for key rejection; an attacker holding the old private key can mint fresh claims.
+   - Do not treat the issuer authority-generation advance as a substitute for key rejection; an attacker holding the old private key can mint fresh claims.
 4. Force validator convergence.
    - Refresh or restart every validator in the declared validator inventory. Install a fail-closed block for the compromised `kid` that overrides any still-fresh cached JWK, and atomically evict or replace that cached key before validation resumes. A validator that cannot prove this state remains quarantined.
 5. Verify convergence.

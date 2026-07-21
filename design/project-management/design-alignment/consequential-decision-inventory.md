@@ -55,12 +55,12 @@ The source-scoped ledgers contain 183 unique authoritative decision keys with no
 
 | Capability | Sources reviewed | Decisions inventoried | Human-review candidates | Coverage state |
 | --- | ---: | ---: | ---: | --- |
-| Existing ADR set | 35 records plus linked canonical sources | 9 original aliases within the 68 cross-cutting decisions; later accepted records are allocated directly | Prioritized in the source ledger | Reviewed through ADR 0035 |
+| Existing ADR set | 50 records plus linked canonical sources | 9 original aliases within the 68 cross-cutting decisions; later accepted records are allocated directly | Reviewed through ADR 0050 | Complete and allocated |
 | Cross-cutting system architecture | 22 canonical sources plus ADRs | 68 | Prioritized in the source ledger | Complete and independently audited |
 | Microservice architecture | 76 sources | 23 new; stronger evidence for 40 existing keys | Prioritized in the source ledger | Complete and independently audited |
 | Specialized runtime architecture | 39 sources | 54 new; stronger evidence for 20 existing keys | Prioritized in the source ledger | Complete and independently audited |
 | Product and operations architecture | 35 sources | 38 new; stronger evidence for 11 existing keys | Prioritized in the source ledger | Complete and independently audited |
-| **Total unique decision keys** | **All 208 architecture artifacts classified; 172 decision-scan sources plus 36 decision-registry artifacts** | **183** | **Prioritized by source ledger** | **Initial inventory complete; accepted records allocated through ADR 0035** |
+| **Total unique decision keys** | **All 223 architecture artifacts classified; 172 decision-scan sources plus 51 decision-registry artifacts** | **183** | **Prioritized by source ledger** | **Initial inventory complete; accepted records allocated through ADR 0050** |
 
 ## Decision Ledger
 
@@ -106,13 +106,13 @@ The review facilitator must preserve the current choice's strongest argument, co
 | Packet | Scope | Reviewed | Total | State |
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
-| 2 | Identity, authority, and security | 16 | 32 | `in-progress` |
+| 2 | Identity, authority, and security | 32 | 32 | `completed` |
 | 3 | Execution correctness and durability | 0 | 43 | `not-started` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **25** | **183** | `in-progress` |
+| **Total** | | **41** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -157,25 +157,25 @@ Packet 2 checklist dispositions record the human review outcome, not an inventor
 - [x] `SEC-03` — `revised` on 2026-07-19; [ADR 0033](../../architecture/decisions/adr-0033-public-player-facing-telnet-requires-tls.md)
 - [x] `SEC-05` — `revised` on 2026-07-19; [ADR 0034](../../architecture/decisions/adr-0034-layered-abuse-controls-without-attacker-triggered-account-locks.md)
 - [x] `JWT-01` — `revised` on 2026-07-19; [ADR 0035](../../architecture/decisions/adr-0035-single-record-issued-token-registry.md)
-- [ ] `JWT-02`
-- [ ] `JWT-03`
-- [ ] `JWT-04`
-- [ ] `REDIS-06`
-- [ ] `MS-AA-CONTROL-LOGIN-SCOPE`
-- [ ] `MS-AA-TOKEN-REVOCATION`
+- [x] `JWT-02` — `revised` on 2026-07-19; [ADR 0036](../../architecture/decisions/adr-0036-monotonic-authority-generations-for-bulk-token-revocation.md)
+- [x] `JWT-03` — `revised` on 2026-07-19; [ADR 0037](../../architecture/decisions/adr-0037-fail-closed-token-authority-outages-with-bounded-active-gameplay.md)
+- [x] `JWT-04` — `revised` on 2026-07-19; [ADR 0038](../../architecture/decisions/adr-0038-explicit-jwt-profiles-and-mtls-workload-identity.md)
+- [x] `REDIS-06` — `revised` on 2026-07-19; [ADR 0039](../../architecture/decisions/adr-0039-bounded-redis-operator-maintenance-surface.md)
+- [x] `MS-AA-CONTROL-LOGIN-SCOPE` — `revised` on 2026-07-19; [ADR 0040](../../architecture/decisions/adr-0040-account-global-control-login-and-explicit-tenant-selection.md)
+- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-19 by [ADR 0022](../../architecture/decisions/adr-0022-account-authority-and-gameplay-session-ownership.md) and [ADRs 0035–0038](../../architecture/decisions/README.md)
 
 #### Packet 2 P1
 
-- [ ] `TENANT-02`
-- [ ] `MS-AA-GLOBAL-TENANT-BOUNDARY`
-- [ ] `MS-AA-LIFECYCLE-ERASURE`
-- [ ] `MS-AA-PAYMENT-INSTRUMENT`
-- [ ] `MS-AA-LOGIN-FACTORS`
-- [ ] `MS-SOCIAL-PRESENCE-PRIVACY`
-- [ ] `SEC-04`
-- [ ] `ADMIN-01`
-- [ ] `ACCOUNT-01`
-- [ ] `DATA-01`
+- [x] `TENANT-02` — `revised` on 2026-07-19; [ADR 0041](../../architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md)
+- [x] `MS-AA-GLOBAL-TENANT-BOUNDARY` — `revised` on 2026-07-19; [ADR 0042](../../architecture/decisions/adr-0042-global-account-and-tenant-scoped-game-relationships.md)
+- [x] `MS-AA-LIFECYCLE-ERASURE` — `revised` on 2026-07-19; [ADR 0043](../../architecture/decisions/adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md)
+- [x] `MS-AA-PAYMENT-INSTRUMENT` — `revised` on 2026-07-19; [ADR 0044](../../architecture/decisions/adr-0044-account-owned-payment-instruments-with-explicit-subscription-binding.md)
+- [x] `MS-AA-LOGIN-FACTORS` — `revised` on 2026-07-19; [ADR 0045](../../architecture/decisions/adr-0045-ordinary-login-factors-and-https-sensitive-action-step-up.md)
+- [x] `MS-SOCIAL-PRESENCE-PRIVACY` — `revised` on 2026-07-19; [ADR 0046](../../architecture/decisions/adr-0046-bounded-friend-presence-with-private-by-failure-redaction.md)
+- [x] `SEC-04` — `revised` on 2026-07-19; [ADR 0047](../../architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md)
+- [x] `ADMIN-01` — `revised` on 2026-07-19; [ADR 0048](../../architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md)
+- [x] `ACCOUNT-01` — `revised` on 2026-07-19; [ADR 0049](../../architecture/decisions/adr-0049-optional-provider-specific-external-identity-linking.md)
+- [x] `DATA-01` — `revised` on 2026-07-19; [ADR 0050](../../architecture/decisions/adr-0050-versioned-export-retention-and-erasure-policy.md)
 
 ### Packet 3: Execution Correctness And Durability
 

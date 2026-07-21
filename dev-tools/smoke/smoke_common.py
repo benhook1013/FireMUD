@@ -256,7 +256,9 @@ def wait_for_incremental_response(
             if not expects_explicit_failure and any(
                 stripped.startswith(prefix) for prefix in explicit_failure_prefixes
             ):
-                if retry_upstream_failure and stripped.startswith("ERROR UPSTREAM_FAILURE"):
+                if retry_upstream_failure and stripped.startswith(
+                    ("ERROR UPSTREAM_FAILURE", "ERROR UNAVAILABLE")
+                ):
                     raise TransientUpstreamSmokeFailure(
                         f"Command failed explicitly: {stripped}"
                     )

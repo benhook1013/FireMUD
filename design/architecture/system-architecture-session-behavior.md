@@ -39,6 +39,7 @@ Membership changes that affect tenant access follow a stricter contract than ord
 3. Losing tenant membership or losing gameplay-admission authority (for example removal of `player` or a required private-realm grant) immediately revokes the affected gameplay sessions. Planned realm or playtest closure uses the owning close-and-drain workflow before grants are revoked; grant revocation itself is not a graceful-drain mechanism.
 4. For caller-bound tenant control-plane access, the Account Service must also advance the `{accountId, tenantId}` membership authority generation when membership or tenant-role changes invalidate previously issued tenant authority for that caller.
 5. Non-gameplay role changes may be handled by in-session token refresh for gameplay state, but reconnect/resume must compare like-for-like authoritative fields before restoring gameplay: stored `membershipVersion` must equal the current Account-owned `membershipVersion`, and stored `membershipAuthorityGeneration` must equal the current Account-owned `membershipAuthorityGeneration`. Missing, unavailable, or unequal current values fail closed; neither field substitutes for the other.
+The corresponding Account-owned projection is session:auth:generation:membership:<accountId>:<tenantId> and is applied set-if-greater; missing, unavailable, or stale evidence fails closed.
 6. `PLAY` and reconnect/resume must obtain `membershipVersion` from authoritative membership reads rather than inferring it from JWT claims or local caches.
 
 Membership-change event delivery semantics are required, not best-effort folklore:
@@ -50,6 +51,7 @@ Membership-change event delivery semantics are required, not best-effort folklor
 - Account Service owns the version increment rules; other services must not synthesize membership versions locally.
 
 Account commits each security, membership, grant, or billing authority change, the corresponding durable Account-owned authority-generation or grant-version advance, and its monotonic outbox event in one database transaction. Redis and other downstream projections then idempotently reflect the committed authority state. The cutoff workflow does not report enforcement complete until the required projection and consumer convergence succeeds. Game Session consumes the durable events through an idempotent consumer and maintains the canonical bounded active-binding indexes listed below; correctness must not depend on wildcard Redis scans.
+The downstream generation projection uses set-if-greater semantics and may not move authority backward.
 
 An accepted, delivered authority event is the immediate revocation path: Game Session targets the affected bindings, closes their active sockets, and removes their admission state without waiting for the reconciliation interval. The `<=60-second` bound applies only when an event is missed, delayed, or cannot be consumed; batched authority-generation/version reconciliation must then discover the stale authority and terminate the affected bindings within that bound. If the reconciliation lease cannot be renewed, new admission fails closed and active bindings whose authority cannot be re-established are terminated at the bound. This is periodic per-authority reconciliation, not an Account or Redis lookup on each gameplay command.
 
@@ -74,7 +76,7 @@ FireMUD uses distinct lifetimes and invariants for each session type:
 
 - **Issued-token registry records**
   - Key: `session:auth:token:<tokenHash>` on Coordination Redis, where `<tokenHash>` is a fixed-length SHA-256 digest of the complete compact JWT.
-  - Purpose: one versioned Account-owned issuance and immediate per-token revocation record for each revocable `control-ui`, player-bootstrap, or receiver-specific private player-delegation JWT. Signed claims plus Account-owned revocation/version state govern tenant/global authority without additional per-scope token keys.
+  - Purpose: one versioned Account-owned issuance and immediate per-token revocation record for each revocable `control-ui`, `player-bootstrap`, or receiver-specific private player-delegation JWT. Signed claims plus Account-owned revocation/version state govern tenant/global authority without additional per-scope token keys.
   - Lifetime: `registry_ttl_ms = max(0, token_exp_ms - now_ms) + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`, so each record is retained through that token's actual JWT `exp` plus the cleanup margin. Records are not extended by client activity; when they expire, new tokens must be issued. Coordination Redis resets that drop `session:auth:*` force re-authentication.
 
 - **Gameplay session bindings**
@@ -148,7 +150,7 @@ Long-lived gameplay sessions require periodic rotation of the private `game-sess
 Security- and billing-related events (for example, account bans, password resets, tenant suspension, or subscription state changes) do not all behave identically; they follow subscription-aware rules:
 
 - For **account-level security events** such as account bans or password resets, services must:
-  - Advance the Account authority generation so previously issued tokens become invalid without requiring key scans or timestamp comparisons.
+  - Advance the Account authority generation and project `session:auth:generation:account:<accountId>` set-if-greater so previously issued tokens become invalid without requiring key scans or timestamp comparisons.
   - Revoke any gameplay session keys bound to the affected account across tenants so active sockets are kicked and must re-login under the new security conditions.
 - For **tenant-level billing events**, see the subscription-state mapping below and [Subscription Management](./microservices/account-service/subscription-management.md#tenant-availability-and-quota-enforcement) for when revocation is mandatory versus when quotas and warnings apply.
 - For **tenant membership changes**, the Account Service is the authoritative source of membership versioning and change events. Gameplay sessions must be revoked immediately when the caller loses tenant membership or gameplay-admission authority for that tenant.
@@ -172,7 +174,9 @@ Subscription and billing state drives how aggressively sessions are revoked:
     - New player logins and tenant-selection attempts for that tenant are rejected with a dedicated billing error code.
   - Existing gameplay authority is revoked. Game Session sends one bounded, non-sensitive game-unavailable notice, stops further gameplay admission, closes connected sockets, and prevents reconnect into that tenant. The notice flush is not a continuation grace period.
   - Instance processes may then use the separate five-minute maximum drain window for internal cleanup; they are not player-admissible during that drain.
-  - Tenant-scoped authorization must be bulk-revoked by advancing the Account-owned tenant authority generation. Downstream services must not write Account authority state directly. Services must not rely on wildcard token-record scans or deletes in hot paths. Billing-safe and support-safe control-plane routes, including tenant-scoped export, remain available as described in [Subscription Management](./microservices/account-service/subscription-management.md#tenant-availability-and-quota-enforcement).
+  - Tenant-scoped authorization must be bulk-revoked by advancing the Account-owned tenant authority generation and projecting `session:auth:generation:tenant:<tenantId>` set-if-greater. Downstream services must not write Account authority state or the generation key directly. Services must not rely on wildcard token-record scans or deletes in hot paths. Billing-safe and support-safe control-plane routes, including tenant-scoped export, remain available as described in [Subscription Management](./microservices/account-service/subscription-management.md#tenant-availability-and-quota-enforcement).
+
+Entitlement evaluation is not routine gameplay action authorization. Existing uninterrupted sessions continue without per-action Account/cache reads until a hard billing event or another owning revocation rule ends them.
 
 Entitlement evaluation is not routine gameplay action authorization. Existing uninterrupted sessions continue without per-action Account/cache reads until a hard billing event or another owning revocation rule ends them.
 
@@ -213,6 +217,7 @@ Control-plane UIs must treat certain auth failures as hard logout conditions and
 - Meta/control APIs that rely on JWTs return canonical error codes such as:
   - `AUTH_TOKEN_EXPIRED` – The presented JWT is no longer valid because its cryptographic lifetime has ended. Frontends must clear any in-memory token, redirect to login, and display a "Session expired" message.
   - `AUTH_SESSION_REVOKED` – The JWT’s auth token sessions have been revoked due to a security event (for example, password reset, account ban, or "logout all devices"). Frontends must clear in-memory token state, redirect to login, and indicate that the session was ended for security reasons.
+  - `AUTH_UNAVAILABLE` – Issued-token or auth-generation authority could not be reached. Frontends keep in-memory auth state, show retriable availability feedback, and use bounded backoff rather than converting the outage into logout.
   - `TENANT_BILLING_BLOCKED` – The operation is blocked because the tenant’s billing state (for example, `suspended` or `canceled`) does not allow the requested action. Frontends must keep the user logged in but surface a billing-specific banner or UI state for that tenant and disable gameplay and instance-management actions while still allowing the billing-safe control-plane surface (for example, updating payment details or exporting tenant-scoped data).
   - `MEMBERSHIP_AUTH_UNAVAILABLE` – Billing-safe mutation authorization could not be established from live membership authority. Frontends keep auth state, show retriable availability feedback, and block billing-safe mutations until authority recovers.
   - `ADMISSION_POINTER_UNAVAILABLE` – Gameplay admission pointer state is unavailable or ambiguous. Frontends keep auth state and retry admission with bounded backoff instead of logging out.

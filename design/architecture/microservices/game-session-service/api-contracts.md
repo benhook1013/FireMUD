@@ -88,12 +88,16 @@ Game Session owns the `/api/session/**` Gateway family, but that family is not a
 | Service-local route | External classification | Notes |
 | --- | --- | --- |
 | `GET /ping` | Infra/local health only | Not part of the external admin/product contract. |
-| `POST /sessions` | Internal-only or Logging & Admin-mediated operator write until a dedicated bypass-safe design says otherwise | This is a control-plane instance lifecycle mutation, not a player admission route. |
-| `POST /sessions/{id}/stop` | Internal-only or Logging & Admin-mediated operator write | Stops runtime state and therefore follows the operator-write ingress policy by default. |
-| `POST /sessions/{id}/restart` | Internal-only or Logging & Admin-mediated operator write | Same classification as stop/start lifecycle mutations. |
-| `POST /sessions/{id}/refresh-roles` | Internal-only maintenance path | Used to refresh session/runtime auth context after account-role changes; not a documented external bypass-safe write. |
+| `POST /sessions` | `tenant_regular`; exact `control-ui` profile plus `privileged_control` role assurance at the current service-local boundary; target external ingress is Logging & Admin | Current OpenAPI operator hook. Direct edge exposure is denied and must migrate behind Logging & Admin; this is not a player admission route. |
+| `POST /sessions/{id}/stop` | `tenant_regular`; exact `control-ui` profile plus `privileged_control` role assurance at the current service-local boundary; target external ingress is Logging & Admin | Current OpenAPI operator hook. Direct edge exposure is denied and must migrate behind Logging & Admin. |
+| `POST /sessions/{id}/restart` | `tenant_regular`; exact `control-ui` profile plus `privileged_control` role assurance at the current service-local boundary; target external ingress is Logging & Admin | Current OpenAPI operator hook. Direct edge exposure is denied and must migrate behind Logging & Admin. |
+| `POST /sessions/{id}/refresh-roles` | `tenant_regular`; exact `control-ui` profile plus `privileged_control` role assurance at the current service-local boundary; target external ingress is Logging & Admin | Current OpenAPI maintenance hook. Direct edge exposure is denied and must migrate behind Logging & Admin. |
 
 If a future change wants any of the mutating `/sessions*` routes to be callable directly from external operator tools, the owning contract must explicitly mark that exact route as bypass-safe and explain its auth class, audit behavior, and lease-owner forwarding rules in the same change.
+
+#### Owner-side operator RPC classification
+
+The gRPC owner methods `ToggleFeatureFlag`, `PauseTicksForScope`, `ResumeTicksForScope`, `SetAdmissionPointer`, `ExecutePreparedVersionCutover`, and `PrepareVersionUpgrade` are `internal_workload` routes. They accept the exact Logging & Admin mTLS workload identity and an opaque Account-issued bounded operator authorization reference redeemed with Account; they accept no end-user JWT. Game Session still validates current domain ownership, admission/CAS or runtime-fence facts, and `controlPlaneRequestId` idempotency before committing the owner result. `RefreshRoles` is also `internal_workload`, but uses only its exact allowlisted workload identity plus current session and Account role state because it is a role-refresh operation rather than delegated operator authority.
 
 ```bash
 curl http://localhost:8086/ping

@@ -320,6 +320,7 @@ Required top-level fields:
 - `backupConfidentialityEvidence`
 - `durableParticipantConvergence`
 - `externalEffectReconciliation`
+- `erasureOverlayReconciliation`
 - `sessionRecovery`
 - `jwtHardening`
 - `databaseCredentialRotation`
@@ -349,7 +350,8 @@ Nested control-group requirements:
 - `erasureReplay` identifies the authoritative ledger, exclusive start (`artifactErasureHighWater`), initial catch-up boundary (`initialCatchupHighWater`), inclusive final end (`restoreHighWater`), replayed-through sequence, gap-free completion evidence, bounded final-cutover evidence, and the installed online-consumer cursor. The interval must contain every erasure event in order, without gaps or unknown entries, and the final cutover must prove atomic handoff to normal processing before the controller reaches `ready_to_reopen`
 - `coordinationRecoveryEvidence` uses `mode=cold_start_restore`, `coordinationRedis=empty-before-rebuild`, `credentialBinding=rotated-or-rebound`, `targetEnvironmentBound=true`, `snapshotCredentialsRejected=true`, and `regionEpochFences=advanced-or-recreated` to prove an empty Coordination Redis keyspace and fresh target-environment credentials before rebuild plus environment-wide gameplay-region epoch/fence advancement or recreation
 - `recoveryParticipantInventoryRef` and `externalEffectInventoryRef` each point to authoritative, complete, reachable inventories. `durableParticipantConvergence` and `externalEffectReconciliation` must contain one safe disposition for every declared and enabled entry: `converged`, `terminalized`, `invalidated`, or `fenced_disabled_backlog_retained`; missing, unknown, unreachable, or unsafe entries fail the gate
-- `sessionRecovery` proves both authority owners: Account invalidates Account authority and private delegation lineages, while Game Session invalidates gameplay bindings and gameplay session state. Evidence must separately reconcile both sides and use `gameSessionHandling=invalidated` and `authSessionHandling=invalidated`; fresh sessions may be issued only after the reopen gate
+- `erasureOverlayReconciliation` records the backup artifact's journal high-water, the independently retained current high-water, sequence and integrity verification, the exact replay range, and one converged owner disposition for every intervening erasure record. Any gap, unverifiable record, unavailable owner, or incomplete replay fails the gate
+- `sessionRecovery` proves environment-wide recovery for both authority owners: Account invalidates Account authority and private delegation lineages, while Game Session invalidates gameplay bindings and gameplay session state. Evidence must separately reconcile both sides and use `gameSessionHandling=invalidated` and `authSessionHandling=invalidated`; fresh sessions may be issued only after the reopen gate
 
 Validation rules:
 

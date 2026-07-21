@@ -152,7 +152,7 @@ upstream_attempts = []
 
 def open_after_transient_upstream_failure():
     responses = (
-        ["ERROR UPSTREAM_FAILURE Login is temporarily unavailable."]
+        ["ERROR UNAVAILABLE Login is temporarily unavailable."]
         if not upstream_attempts
         else ["OK LOGIN"]
     )

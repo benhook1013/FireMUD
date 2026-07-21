@@ -105,18 +105,35 @@ require_contains(
 )
 
 operations_text = (root / "design/architecture/system-architecture-redis-operations.md").read_text(encoding="utf-8")
-required_reset_steps = [
-    "1. `coordination-maintenance pause --operation reset ...`",
-    "2. `coordination-maintenance reset ...`",
-    "3. `coordination-maintenance reconcile-ledger ...`",
-    "4. `coordination-maintenance converge-commands ...`",
-    "5. `coordination-maintenance init-meta ...`",
-    "7. `coordination-maintenance smoke-check ...`",
-    "8. `coordination-maintenance resume ...`",
+required_reset_contract = [
+    "Canonical public operation:",
+    "`coordination-maintenance recover --mode reset --scope ... [--preserve-sessions]`",
+    "1. internal pause-and-lock phase",
+    "2. internal epoch-bump and coordination-reset phase",
+    "3. internal ledger-reconciliation phase",
+    "4. internal command-convergence phase",
+    "5. internal metadata-initialization phase",
+    "7. internal post-reset smoke-check phase",
+    "8. internal resume-and-success-release phase",
+    "durable control store outside the target Redis deployment",
+    "never runs automatically",
+    "not a public command",
 ]
-missing_steps = [step for step in required_reset_steps if step not in operations_text]
-if missing_steps:
-    raise SystemExit(f"design/architecture/system-architecture-redis-operations.md: canonical reset sequence missing steps: {missing_steps}")
+missing_contract = [item for item in required_reset_contract if item not in operations_text]
+if missing_contract:
+    raise SystemExit(
+        "design/architecture/system-architecture-redis-operations.md: canonical reset contract missing: "
+        f"{missing_contract}"
+    )
+
+require_contains(
+    "design/architecture/system-architecture-redis-ops-access.md",
+    [
+        "`continueRecovery(operationId, expectedPhase, evidenceRef)`",
+        "A phase failure retains the lock and paused fence.",
+        "abandonment does not authorize resume",
+    ],
+)
 
 print("architecture doc contracts passed")
 PY

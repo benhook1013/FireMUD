@@ -131,7 +131,8 @@ public final class LoginCommandHandler {
             || !Optional.ofNullable(error.getMessage()).orElse("").isBlank())) {
       clearFailedLoginSessionState(
           numericSessionId, instance.getTenantId(), bootstrapGameInstanceId, null, null, 0L);
-      return failure(mapErrorCode(error), error.getMessage());
+      String errorCode = mapErrorCode(error);
+      return failure(errorCode, publicErrorMessage(error, errorCode));
     }
 
     Long authenticatedAccountId = parseAccountId(authResponse.getAccountId());
@@ -189,7 +190,7 @@ public final class LoginCommandHandler {
         accountClient.requestEmailLoginOtp(
             String.valueOf(instance.getTenantId()), challengeRequest.email());
     if (hasError(response.getError()) || !response.getAccepted()) {
-      return failure("UPSTREAM_FAILURE", "Authentication service unavailable");
+      return failure("UNAVAILABLE", "Authentication service unavailable");
     }
     return new LoginCommandHandlingResult(
         CommandEnqueueResult.success(),
@@ -449,16 +450,22 @@ public final class LoginCommandHandler {
           "INVALID_CREDENTIALS",
           AuthenticationErrorCodes.ACCOUNT_LOCKED,
           "ACCOUNT_LOCKED",
-          AuthenticationErrorCodes.UPSTREAM_FAILURE,
-          "UPSTREAM_FAILURE");
+          AuthenticationErrorCodes.UNAVAILABLE,
+          "UNAVAILABLE");
 
   private String mapErrorCode(ErrorDetail error) {
     if (error == null) {
-      return "UPSTREAM_FAILURE";
+      return "UNAVAILABLE";
     }
     String rawCode = Optional.ofNullable(error.getCode()).orElse("").toUpperCase();
     if (CANONICAL_ERROR_MAP.containsKey(rawCode)) {
       return CANONICAL_ERROR_MAP.get(rawCode);
+    }
+    if (rawCode.startsWith("AUTH_")) {
+      return "UNAVAILABLE";
+    }
+    if (!rawCode.isBlank()) {
+      return rawCode;
     }
     String message = Optional.ofNullable(error.getMessage()).orElse("").toLowerCase();
     if (message.contains("invalid credentials")) {
@@ -467,7 +474,14 @@ public final class LoginCommandHandler {
     if (message.contains("locked")) {
       return "ACCOUNT_LOCKED";
     }
-    return "UPSTREAM_FAILURE";
+    return "UNAVAILABLE";
+  }
+
+  private String publicErrorMessage(ErrorDetail error, String mappedCode) {
+    if ("UNAVAILABLE".equals(mappedCode)) {
+      return "Authentication service unavailable";
+    }
+    return Optional.ofNullable(error.getMessage()).orElse("");
   }
 
   private boolean hasError(ErrorDetail error) {
@@ -536,7 +550,7 @@ public final class LoginCommandHandler {
       case LoginCommandConstants.INVALID_ACCOUNT_CODE -> "error.login.invalid-account";
       case "INVALID_CREDENTIALS" -> "error.login.invalid-credentials";
       case "ACCOUNT_LOCKED" -> "error.login.account-locked";
-      case "UPSTREAM_FAILURE" -> "error.login.upstream-failure";
+      case "UNAVAILABLE" -> "error.login.unavailable";
       default -> null;
     };
   }

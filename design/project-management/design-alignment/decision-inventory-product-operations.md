@@ -356,11 +356,11 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `DATA-01` - Export and deletion are account-governed and subscription-aware
 
 - **Capability:** Primary `AA-1.3` Authentication, recovery, security policy, and account data rights. Secondary `PO-1.3` and `AA-2.3`.
-- **Decision / status / importance:** Export covers account-owned data across its tenant/game relationships as JSON, with tenant-admin-scoped export where applicable. Deletion is blocked while a subscription is non-terminal until it is transferred or canceled, then revokes sessions and records the required audit evidence. Status `needs-human-review`; `H/hard`.
+- **Decision / status / importance:** Account orchestrates a versioned cross-service JSON subject-export manifest, while tenant-admin recovery export is a distinct tenant-owned and globally redacted contract. Deletion remains subscription-aware under ADR 0043, and every record category follows a canonical finite retention registry with explicit owner, export behavior, terminal action, trigger, maximum duration, purpose, readers, and backup treatment. Status `accepted-explicit`; `H/hard`.
 - **Sources / headings:** [user-journeys-players.md](../../architecture/user-journeys-players.md) `§ 9. Account Data Export & Deletion` and `§ 7. Password Resets & Account Recovery`; [user-journeys-operators.md](../../architecture/user-journeys-operators.md) `§ 2. Operator Recovery Journeys`.
-- **Strongest alternative:** Export only a central account record and delete immediately regardless of subscription or tenant ownership.
-- **ADR recommendation:** Yes. Define data ownership, tenant-admin authority, export completeness, subscription transfer/cancel preconditions, and audit retention.
-- **Human consultation:** Yes; legal/privacy, finance, product, and tenant-administration owners must approve the boundary.
+- **Strongest alternative:** Export only central Account rows and hard-delete immediately, or retain a soft-deleted account indefinitely.
+- **ADR recommendation:** [ADR 0050](../../architecture/decisions/adr-0050-versioned-export-retention-and-erasure-policy.md) records the revised export, minimization, finite-retention, and restore-erasure contract. Exact numeric legal/provider schedules remain mandatory player-facing environment inputs rather than invented universal constants.
+- **Human consultation:** Human-led product and architecture review completed 2026-07-19; `revised`. Environment-specific privacy and finance approval remains a production-readiness obligation.
 
 #### `SOCIAL-01` - Communication is room-local until broader scopes are designed
 
@@ -374,11 +374,11 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `ACCOUNT-01` - External identity providers are a product promise, not an implementation detail
 
 - **Capability:** Primary `AA-1.3`. Secondary `EA-3.1`.
-- **Decision / status / importance:** The player journey names Google, Discord, and Steam as external sign-up providers. Treat that list as an explicit product commitment requiring provider-linking, account-recovery, identity-collision, and availability policy; do not silently implement it as a generic OAuth placeholder. Status `needs-human-review`; `M/med`.
+- **Decision / status / importance:** Google, Discord, and Steam are planned optional provider-specific HTTPS linking and sign-in integrations, not baseline launch or simultaneous-availability promises. Initial delivery links a verified provider subject to an existing global account; provider-first account creation and email-based merging are deferred. Account-owned verified-email recovery and an ordinary login mode remain mandatory. Status `accepted-explicit`; `M/med`.
 - **Sources / headings:** [user-journeys-players.md](../../architecture/user-journeys-players.md) `§ 1. Sign Up` and `§ 7. Password Resets & Account Recovery`; [system-architecture-frontend.md](../../architecture/system-architecture-frontend.md) `§ Authentication and Session Handling`.
-- **Strongest alternative:** Support only password/email authentication, or promise provider-neutral federation without naming supported providers.
-- **ADR recommendation:** Yes before implementation or public documentation; define provider scope, account linking, recovery fallback, and provider outage behavior.
-- **Human consultation:** Yes; product, security, legal, and support owners must approve the provider promise.
+- **Strongest alternative:** Support only password/email authentication permanently, or promise all three providers together with provider-first account creation.
+- **ADR recommendation:** [ADR 0049](../../architecture/decisions/adr-0049-optional-provider-specific-external-identity-linking.md) records the revised decision; each provider remains unavailable until its complete verification and lifecycle proof passes.
+- **Human consultation:** Human-led product and architecture review completed 2026-07-19; `revised`. Provider-specific legal/configuration review remains an implementation readiness obligation.
 
 #### `COMPLIANCE-01` - Tier A credential evidence is a measurable release and recovery gate
 

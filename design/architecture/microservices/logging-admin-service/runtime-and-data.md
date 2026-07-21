@@ -35,7 +35,7 @@ In addition to log and moderation tooling, the service acts as a control-plane c
   - request scoped coordination remediation through Game Session control APIs and operator runbooks in [Redis Operations & Migrations](../../system-architecture-redis-operations.md).
 - Implements guarded automation that:
   - automatically pauses ticks and marks regions as unhealthy when dual-leader or split-brain signals are detected; and
-  - may request safe, narrow remediation through Game Session-owned control APIs without requiring an operator to be present, while still emitting audit events for every action.
+  - may request safe, narrow remediation through Game Session-owned control APIs without requiring an operator to be present, while still emitting audit events for every action. Unattended requests use exact Logging and Admin mTLS identity plus an Account-validated, versioned automation-policy authorization reference; they never synthesize a human `control-ui` token or operator identity.
 
 Game Session remains the only service allowed to mutate gameplay coordination state or execute tick pause/resume behavior. Logging & Admin owns operator UX, automation policy, and audit only; it does not become the runtime state owner for remediation.
 
@@ -51,14 +51,14 @@ Operator and support diagnostics do not impersonate a player, attach to a live p
 
 This service has two intentionally different availability classes:
 
-- Core operator control plane: moderation actions, feature-flag requests, quota overrides, reports, saga inspection, and tick-remediation controls.
+- Core operator control plane: moderation actions, feature-flag requests, reports, saga inspection, and live tick-remediation pause/resume controls. Quota override and broader remediation are coverage drift until current owner-backed routes exist.
 - Observability-backed experiences: embedded dashboards, log search, metric exploration, traces, and alert-centric investigations.
 
 The core operator control plane must remain available when Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager are degraded. Implementations should preserve this with independent readiness/degradation behavior, resource isolation, and defensive timeouts/circuit breakers around observability backends.
 
 The architecture treats these as two runtime partitions even when they are delivered from one deployable:
 
-- Core control-plane endpoints include moderation actions, feature-flag and quota controls, reports, saga inspection, and tick-remediation APIs. These paths must not block on Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager for request success.
+- Core control-plane endpoints include moderation actions, feature-flag controls, reports, saga inspection, and live tick-remediation pause/resume APIs. These paths must not block on Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager for request success. Quota override and broader remediation are not current endpoints and remain coverage drift.
 - Observability-backed endpoints include log search, embedded dashboards, traces, metric exploration, and alert investigation views. These paths may degrade independently or return explicit backend-unavailable states.
 - Readiness and degradation reporting must distinguish these partitions so an observability outage does not mark the entire operator service unavailable.
 - Thread pools, connection pools, and timeout budgets for observability integrations must be isolated from the core control plane so expensive search/dashboard failures cannot starve moderation or remediation requests.

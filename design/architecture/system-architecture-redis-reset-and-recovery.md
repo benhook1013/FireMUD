@@ -8,7 +8,7 @@ This document describes the intended reset/recovery end state. The currently shi
 
 - Game Session already has a durable current-boundary ownership row, epoch/fence bumping on pause/resume, durable command status lookup, and startup convergence of accepted-but-unstaged commands to `LOST_BEFORE_STAGING`.
 - Those live surfaces operate on the current `{tenantId, gameInstanceId}` queue boundary rather than the full region/tenant/cluster reset grammar described below.
-- The full `coordination-maintenance pause/reset/reconcile-ledger/converge-commands/init-meta/smoke-check/resume` workflow remains the target-state operator model; it should not be read as fully implemented tooling in this repository today.
+- The full `coordination-maintenance recover --mode reset` operation and its internal pause, epoch/reset, ledger-reconciliation, command-convergence, metadata, smoke-check, and release phases remain the target-state operator model; it should not be read as fully implemented tooling in this repository today.
 
 ---
 
@@ -67,12 +67,12 @@ Concrete commands live in [Canonical Coordination Reset Sequence](./system-archi
 
 Because ticks treat `(region_epoch, tickId)` as the canonical coordination timeline (see `system-architecture-ticks.md` and `system-architecture-tick-concepts-and-invariants.md`), every coordination reset must follow a simple handshake with the tick control plane:
 
-1. **Pause ticks for the chosen scope**
-   - The Game Session control plane (or equivalent admin service) pauses tick scheduling and new command intake for the affected `<tenantId, gameInstanceId, regionId>` pairs (region/tenant) or all regions (cluster).
+1. **Internal pause-and-lock phase for the chosen scope**
+   - The `coordination-maintenance recover --mode reset` operation asks the Game Session control plane (or equivalent admin service) to pause tick scheduling and new command intake for the affected `<tenantId, gameInstanceId, regionId>` pairs (region/tenant) or all regions (cluster).
    - This pause step is complete only once the scope reaches the control-plane `PAUSED` state defined in `system-architecture-redis-ops-access.md`: no executor in the target scope is allowed to create new durable tick batches or new Redis coordination state under the old epoch.
 
 2. **Bump `region_epoch` in PostgreSQL**
-   - For each affected `<tenantId, gameInstanceId, regionId>`, the canonical reset control-plane operation (`RunScopedCoordinationReset(scope)` / `coordination-maintenance reset`) updates `region_epoch` in the coordination metadata table so that any surviving executors and locks become stale by definition.
+   - For each affected `<tenantId, gameInstanceId, regionId>`, the internal epoch-bump phase of the canonical recover operation (`RunScopedCoordinationReset(scope)`) updates `region_epoch` in the coordination metadata table so that any surviving executors and locks become stale by definition.
    - This step is authoritative: new executors always treat the highest `region_epoch` as the only valid timeline, and tick heartbeat streams (`StreamTickHeartbeats`) will begin emitting the new `regionEpoch` for those regions so consumers can distinguish pre- and post-reset ticks.
 3. **Run the scoped reset tooling**
    - Use the versioned coordination maintenance CLI to clear keys in Coordination Redis for the chosen scope, using shared key builders and descriptors.

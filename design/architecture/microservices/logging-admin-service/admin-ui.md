@@ -27,16 +27,13 @@ POST /logs/query
 POST /reports
 POST /moderation/actions
 POST /feature-flags/toggle
-POST /quota-overrides
-DELETE /quota-overrides/{scopeType}/{scopeId}/{quotaKey}
 POST /tick-remediation/pause
 POST /tick-remediation/resume
-POST /tick-remediation/remediate
 GET  /sagas
 GET  /sagas/{id}/steps
 ```
 
-Current-state note: `POST /tick-remediation/pause` and `POST /tick-remediation/resume` are now backed by live Logging & Admin forwarding endpoints. `quota-overrides*` and `POST /tick-remediation/remediate` remain reserved target-state controls until their owner-side service contracts exist.
+Current-state note: `POST /tick-remediation/pause` and `POST /tick-remediation/resume` are backed by live Logging & Admin forwarding endpoints. Quota override and broader remediation are coverage drift: no current routes or owner-side contracts exist, so the UI must not present placeholder controls.
 
 The UI is packaged as a separate web module served by the Logging & Admin Service. Styling relies on Material‑UI components, and all API calls are protected by the existing security interceptors described in the [API contracts](./api-contracts.md) and [runtime model](./runtime-and-data.md).
 
