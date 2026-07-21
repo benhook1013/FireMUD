@@ -122,7 +122,7 @@ Route authorization never becomes in-game elevation. If a global-role account pa
 | Account Service | `Authenticate` | `internal_workload` | Exact Game Session mTLS identity, no pre-existing issued token, and trusted server-derived credential source context |
 | Account Service | `RefreshGameplayServiceToken` | `internal_workload` | Exact Game Session mTLS identity plus current `game-session-account-delegation` authority with audience `account-service` |
 | Account Service | `GetTenantMembershipForRuntime` / `GetRealmAccessGrant` / `ListRealmAccessGrantsForAccount` | `internal_workload` | Exact Game Session mTLS identity plus validated typed player context; no circular end-user token prerequisite |
-| Account Service | `GetTenantEntitlementsForRuntime` | `internal_workload` | Exact allowlisted workload identity and route-variant delegated context; not edge exposed |
+| Account Service | `GetTenantEntitlementsForRuntime` | `internal_workload` | Exact Game Session mTLS plus current private delegation for player admission, or exact World Management mTLS plus tenant/operation-bound instance-lifecycle context; no `control-ui` or Logging and Admin caller; not edge exposed |
 | Account Service | `GetTenantEntitlementsTenant` | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |
 | Account Service | `GetTenantEntitlementsCrossTenantSupportSafe` | `cross_tenant_support_safe` | `support`/`platformAdmin` |
 | Account Service | `GetSubscriptionTenantHighLevel` | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |

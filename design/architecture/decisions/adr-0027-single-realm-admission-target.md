@@ -44,7 +44,8 @@ The prior design correctly routed each realm to one Game Session-owned instance,
 ### Existing Sessions And Scaling
 
 - The admission pointer governs new or renewed gameplay bindings. It is not routine per-action authorization for a session already bound to a concrete instance.
-- After cutover, new `PLAY` and reconnect flows use the new target. Existing connected sessions may continue on the source only until the explicit bounded drain ends; the pointer change alone does not perform a database lookup or eject the player on their next action.
+- After cutover, new `PLAY` and reconnect flows use the new target. The cutover transaction persists a unique `sourceDrainId`, the source instance, and an absolute `sourceDrainDeadlineAt` resolved from `firemud.game-session.cutover-drain.duration-ms`. The platform default and hard maximum are five minutes; tenant/game settings may shorten the duration or set it to zero but cannot extend it.
+- Existing connected sessions may continue on the source only before the persisted deadline. The source may terminate early when no sessions remain. At the deadline Game Session sends one bounded update notice, closes remaining source sockets, rejects further source commands through the instance lifecycle fence, and idempotently transitions the source to `STOPPING` through `InstanceTermination`; the pointer change alone does not perform a database lookup or eject a player on their next action.
 - Source-session commands remain fenced by that source instance's lifecycle and region ownership. Hard account, membership, moderation, or security revocation remains independently enforceable and is not extended by the drain rule.
 - Horizontal capacity for one shared world comes from Game Session pod scaling, region partitioning, and fenced lease rebalancing within the same `gameInstanceId`. It does not come from randomly placing players into independent game instances behind one realm.
 
@@ -78,6 +79,7 @@ Exposing raw instance IDs makes routing explicit to the client but leaks replace
 - Atomically persist pointer state, audit, request replay, and prepared-cutover execution, including crash/retry proof at every boundary.
 - Separate catalog revisioning from admission routing and prove display-only edits do not invalidate connect or active gameplay state unnecessarily.
 - Remove pointer-currentness checks from routine action authority for an already admitted binding; prove cutover admits new/reconnecting players only to the target while source sessions end through the bounded drain.
+- Persist and prove the resolved drain policy, unique drain identity, absolute deadline, early-empty completion, deadline enforcement, socket closure, command rejection, and idempotent source termination.
 - Prove closing a realm blocks new admission before source draining and distinguishes explicit closure from corrupt/unavailable pointer authority.
 
 ## Required Documentation Alignment

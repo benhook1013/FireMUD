@@ -76,9 +76,11 @@ If you change Redis usage for this service, you must read and apply:
 
 Authentication generates a `control-ui`, player-bootstrap, or receiver-specific private player-delegation JWT and establishes exactly one server-side `session:auth:token:<tokenHash>` registry record before returning it, following [ADR 0035](../../decisions/adr-0035-single-record-issued-token-registry.md). The record proves exact issuance and active state; signed claims plus Account-owned revocation/version state determine tenant and global authority without scope-duplicated token keys.
 
-`tokenHash` is a fixed-length digest (a hex-encoded SHA-256 of the complete compact JWT), and the one registry record's TTL is derived from the JWT lifetime:
+`tokenHash` is a fixed-length digest (a hex-encoded SHA-256 of the complete compact JWT), and the one registry record's TTL is derived from that token's own `exp` claim, not from a global session lifetime:
 
-- `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
+- `registry_ttl_ms = max(0, token_exp_ms - now_ms) + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
+
+The record therefore expires at the actual token expiry plus the cleanup margin; client activity does not extend it, and a newly issued or refreshed token gets its own calculation.
 
 See [Environment & Secrets](../../infrastructure/environment-and-secrets.md#authentication) for configuration details.
 
@@ -100,7 +102,7 @@ Gameplay clients never hold control-plane `control-ui` JWTs or private player-de
 
 The Account Service is the sole writer for auth revocation watermark keys (`session:auth:revoked_after:account:*`, `session:auth:revoked_after:tenant:*`, `session:auth:revoked_after:membership:<accountId>:<tenantId>`). Other services request revocation via events or APIs and must not write watermark keys directly.
 
-Active `game-session-account-delegation` refresh is an Account-owned authorization operation, not generic minting for a trusted workload. `RefreshGameplayServiceToken` requires the current token identity and `iat`, the bound gameplay session/account/tenant identity, and an idempotent request ID. Account validates the current token's registry generation, account lifecycle state, current membership/version, and applicable account, tenant, and membership watermarks before issuing a replacement. A watermark that invalidates the presented generation cannot be bypassed by issuing a replacement with a newer `iat`. Successful rotation creates the replacement token record before returning it; Game Session installs the replacement atomically and removes the previous record after the bounded in-flight RPC overlap.
+Active `game-session-account-delegation` refresh is an Account-owned authorization operation, not generic minting for a trusted workload. `RefreshGameplayServiceToken` requires the current token identity and `iat`, the bound gameplay session/account/tenant identity, the token's durable account-auth generation, and an idempotent request ID. Account validates the current token's registry generation, account lifecycle state, current membership/version, and applicable account, tenant, and membership watermarks before issuing a replacement. Replacement creation locks or compare-and-sets the same positive monotonic account-auth generation stored with the Account row. Logout-all and equivalent security cutoffs advance that generation atomically with their audit/outbox state, so a refresh authorized against the previous value cannot commit across the cutoff. Successful rotation creates the replacement token record before returning it; Game Session installs the replacement atomically and removes the previous record after the bounded in-flight RPC overlap.
 
 Per-token logout deletes only the presented token's one registry record and is idempotent. Logout-all commits a distinct durable account-wide logout/audit event and then idempotently projects the account watermark; it does not depend on scanning token keys. Raw token values are excluded from both audit forms. The account-wide event terminates active gameplay under ADR 0030, whereas per-token logout leaves other devices and unrelated gameplay bindings intact.
 
@@ -127,7 +129,9 @@ Runtime caller contract:
   - Minimum response fields: `tenantId`, `subscriptionStatus`, `gameplayAvailable`, `allowPublicJoin`, `allowNewGameplayBindings`, `allowNewInstanceStarts`, `quotas { ... }`, `evaluatedAt`, `entitlementVersion`, `tenantBillingSequence`.
 - `GetAdmissionPointer(tenantId, worldSlug, realmSlug)` is the authoritative gameplay-admissible-instance lookup owned by Game Session.
   - Minimum request fields: `tenantId`, `worldSlug`, `realmSlug`.
-  - Minimum response fields: `tenantId`, `worldSlug`, `realmSlug`, `admissibleGameInstanceId`, `pointerVersion`, `updatedAt`.
+  - Minimum response fields: `tenantId`, `worldSlug`, `realmSlug`, `admissionState`, `pointerVersion`, `updatedAt`; `admissibleGameInstanceId` is present if and only if `admissionState` is `OPEN`.
+  - `OPEN` names exactly one admissible target. A complete `CLOSED` record names no target and returns the stable `REALM_UNAVAILABLE` outcome; it is not an incomplete or malformed pointer.
+  - Missing, malformed, unavailable, ambiguous, stale, or otherwise contract-invalid authority returns `ADMISSION_POINTER_UNAVAILABLE`; callers must not infer or substitute a runtime target.
   - `pointerVersion` is monotonic per `{tenantId, worldSlug, realmSlug}` and is the freshness token callers must use when proving they are still binding against the same realm target they previously resolved.
   - Account bootstrap discovery, in-band `PLAY`, connect-token issuance, and reconnect validation must all consume this same pointer contract rather than maintaining separate realm-to-instance routing rules.
 - `IssueConnectToken` / `POST /auth/connect-token` is the authoritative gameplay bootstrap token-issuance surface.

@@ -540,7 +540,7 @@ Version cutover contract for a player-addressable realm:
 2. Run compatibility preflight for source instance -> target version and fail closed on mismatch.
 3. Persist a durable `PrepareVersionUpgrade` artifact for that cutover attempt and use it as the proof input to the realm-route swap.
 4. Perform one atomic `OPEN(source)` -> `OPEN(target)` realm-route swap so the selected realm has exactly one target for new or renewed bindings at any instant.
-5. Keep the old instance closed to new/reconnected bindings while already connected source sessions finish only within the explicit bounded drain, then terminate it through the standard `InstanceTermination` workflow.
+5. In the same cutover commit, persist the source instance, a unique `sourceDrainId`, and absolute `sourceDrainDeadlineAt` resolved from `firemud.game-session.cutover-drain.duration-ms`. Keep the old instance closed to new/reconnected bindings while already connected source sessions finish before that deadline, then terminate it through the standard `InstanceTermination` workflow.
 6. If swap fails, keep the previously routed instance as the sole admissible target for that realm and retry; do not open dual admission for the same realm.
 
 Realm-routing contract (required):
@@ -562,7 +562,9 @@ Realm-routing contract (required):
 - A pointer swap to a different `gameInstanceId` is a cutover operation, not a generic edit. It must reference one durable `prepared_version_upgrade` record, and Game Session must reject the swap unless that preparation is still `COMPATIBLE` and matches both the current source pointer target and the replacement instance's frozen launch proof (`versionId`, `launchDescriptorId`, `remapSetId`).
 - Pointer-audit history must preserve that same preparation identity. A successful cutover write records the `preparedVersionUpgradeId` on the resulting admission-pointer audit event so operators can prove which durable preparation authorized a given swap.
 - Stopping a realm without a replacement atomically moves it to `CLOSED` before the old instance drains. `CLOSED` returns a stable realm-unavailable outcome; unavailable, malformed, or ambiguous routing state fails with `ADMISSION_POINTER_UNAVAILABLE` until reconciled.
-- Pointer state controls new or renewed gameplay bindings. Existing connected source sessions do not re-read it per action and remain on the source only until the bounded drain ends; fresh `PLAY` and reconnect use the current target.
+- Pointer state controls new or renewed gameplay bindings. Existing connected source sessions do not re-read it per action and remain on the source only before the persisted drain deadline; fresh `PLAY` and reconnect use the current target.
+- `firemud.game-session.cutover-drain.duration-ms` has a five-minute platform default and hard maximum. Tenant/game overrides may shorten it or set it to zero but cannot extend it. The cutover audit and prepared-upgrade execution record preserve the effective value, policy version, `sourceDrainId`, and `sourceDrainDeadlineAt` so retries and operators observe one deadline.
+- Game Session may complete a drain early after the source session index is empty. When the deadline is reached, it sends one bounded update notice, closes remaining source sockets, rejects further source commands through the instance lifecycle fence, marks the source `STOPPING`, and retries the idempotent `InstanceTermination` workflow until the source is terminal.
 - One visible realm may be marked as the public-production realm. Additional realms, including playtest forks, are valid first-class player-addressable realms when they are intentionally exposed through the authenticated discovery contract, but public-production onboarding must follow the explicit routing flag rather than inferring behavior from the `realmSlug`.
 
 ### Fork-Snapshot Boundary For Playtest Realms

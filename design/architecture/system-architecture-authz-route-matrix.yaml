@@ -259,8 +259,8 @@ routes:
     route: RefreshGameplayServiceToken
     scope: tenant
     classification: internal_workload
-    auth_path: mtls_workload_plus_current_token_generation
-    issued_token_state: current_exact_private_delegation
+    auth_path: exact_mtls_workload_plus_caller_specific_context
+    issued_token_state: current_exact_private_delegation_when_player_scoped
     accepted_token_profiles: [game-session-account-delegation]
     token_audience: account-service
     issued_token_profile: game-session-account-delegation
@@ -316,22 +316,23 @@ routes:
     route: GetTenantEntitlementsForRuntime
     scope: tenant
     classification: internal_workload
-    auth_path: internal_service
-    issued_token_state: route_variant
-    accepted_token_profiles: [game-session-account-delegation, control-ui]
-    token_audiences:
-      game-session-account-delegation: account-service
-      control-ui: control-ui
+    auth_path: mtls_workload_plus_current_token_generation
+    issued_token_state: current_exact_private_delegation
+    accepted_token_profiles: [game-session-account-delegation]
+    token_audience: account-service
     tenant_billing_watermark_applies: true
     membership_watermark_applies: true
     response_profile: runtime_admission
     allowed_callers:
-      any_of: [game-session-service, logging-admin-service]
+      any_of: [game-session-service, world-management-service]
     mtls_callers:
       any_of:
         - "spiffe://firemud/ns/{namespace}/sa/game-session-service"
-        - "spiffe://firemud/ns/{namespace}/sa/logging-admin-service"
-    delegated_subject: typed_player_execution_context_or_operator_request
+        - "spiffe://firemud/ns/{namespace}/sa/world-management-service"
+    caller_requirements:
+      game-session-service: current_exact_private_delegation
+      world-management-service: tenant_and_operation_bound_instance_lifecycle_context
+    delegated_subject: typed_player_execution_context_or_instance_lifecycle_context
   - service: account-service
     route: GetTenantEntitlementsTenant
     scope: tenant

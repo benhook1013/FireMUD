@@ -75,7 +75,7 @@ FireMUD uses distinct lifetimes and invariants for each session type:
 - **Issued-token registry records**
   - Key: `session:auth:token:<tokenHash>` on Coordination Redis, where `<tokenHash>` is a fixed-length SHA-256 digest of the complete compact JWT.
   - Purpose: one versioned Account-owned issuance and immediate per-token revocation record for each revocable `control-ui`, player-bootstrap, or receiver-specific private player-delegation JWT. Signed claims plus Account-owned revocation/version state govern tenant/global authority without additional per-scope token keys.
-  - Lifetime: absolute TTL through JWT `exp` plus `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`. Records are not extended by client activity; when they expire, new tokens must be issued. Coordination Redis resets that drop `session:auth:*` force re-authentication.
+  - Lifetime: `registry_ttl_ms = max(0, token_exp_ms - now_ms) + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`, so each record is retained through that token's actual JWT `exp` plus the cleanup margin. Records are not extended by client activity; when they expire, new tokens must be issued. Coordination Redis resets that drop `session:auth:*` force re-authentication.
 
 - **Gameplay session bindings**
   - Keys: tenant-scoped session keys described in [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding), storing `accountId`, `tenantId`, `characterId`, and tick-region context.

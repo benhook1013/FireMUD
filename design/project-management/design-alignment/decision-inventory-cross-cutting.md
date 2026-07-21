@@ -178,7 +178,6 @@ The main inventory remains the compact control crosswalk. These aliases preserve
 
 | Decision keys | Assertion requiring rationale | Missing question |
 | --- | --- | --- |
-| `AUTH-02`, `AUTH-06`, `AUTH-07`, `ADMIT-01` | Connect-token sequence, explicit open-enrollment membership, global-role exclusion, and 15-second fail-closed entitlement freshness. | What player, abuse, availability, and support outcomes justify these boundaries? |
 | `SESSION-02`, `SESSION-03`, `SESSION-04`, `SESSION-06` | Single-session takeover, no transport replay, bounded transcript, fire-and-forget commands, and bounded invisible non-edge recovery. | What loss, multi-device, and availability guarantees are actually promised? |
 | `TICK-01`, `TICK-03`, `TICK-07` | One action/entity/tick, no global ACID, bounded timer catch-up, and timer skipping. | Which gameplay fairness and recovery requirements make these semantics correct? |
 | `TENANT-02`, `TENANT-03` | Shared infrastructure and no playtest merge-back. | What isolation, cost, creator workflow, and player-data tradeoffs were accepted? |
@@ -191,7 +190,6 @@ No source proves who made these choices; the flag means that product/security/op
 
 | Priority | Decision keys | Consultation topic |
 | --- | --- | --- |
-| `P0` | `AUTH-02`, `AUTH-06`, `AUTH-07`, `ADMIT-01`, `SESSION-07` | Login UX, public joining, operator roles, entitlements, billing grace, and revocation. |
 | `P1` | `SESSION-02`, `SESSION-03`, `SESSION-04`, `TENANT-03` | Takeover, reconnect loss, restart visibility, playtest isolation, and merge-back expectations. |
 | `P1` | `SEC-03`, `OPS-02`, `OPS-03` | Plaintext transport, deployment blast radius, RPO, and production readiness. |
 | `P2` | `CMD-05`, `CONTENT-04`, `TICK-01`, `TICK-07` | Localization, starter profiles, action fairness, and missed-timer gameplay semantics. |

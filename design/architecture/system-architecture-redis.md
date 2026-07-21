@@ -303,7 +303,7 @@ Session revocation actions (for example “kick all sessions for tenant X” on 
 - Publishing a tenant-scoped billing/security event that Game Session consumes promptly, and
 - Closing affected sockets and removing the corresponding per-session keys using in-memory registries and/or purpose-built, bounded indexes.
 
-Issued-token registry records (`session:auth:token:<tokenHash>`) share the same TTL derivation and reset expectations as gameplay sessions, but are documented in detail in `system-architecture-jwt-and-token-contracts.md` and the Account Service design; they live on Coordination Redis so resets can force re-authentication in a controlled way.
+Issued-token registry records (`session:auth:token:<tokenHash>`) use each record's actual JWT `exp` plus the cleanup margin rather than gameplay's global `session_expiration_ms` derivation. They share the reset expectations of gameplay sessions, but are documented in detail in `system-architecture-jwt-and-token-contracts.md` and the Account Service design; they live on Coordination Redis so resets can force re-authentication in a controlled way.
 
 ---
 

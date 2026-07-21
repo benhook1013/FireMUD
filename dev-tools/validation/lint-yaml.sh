@@ -17,6 +17,8 @@ mapfile -t yaml_files < <(
     'services/*/src/main/resources/*.yaml' \
     'services/*/src/test/resources/*.yml' \
     'services/*/src/test/resources/*.yaml' \
+    'design/architecture/*.yml' \
+    'design/architecture/*.yaml' \
     'design/architecture/**/*.yml' \
     'design/architecture/**/*.yaml' \
     'design/operations/**/*.yml' \

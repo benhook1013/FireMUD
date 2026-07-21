@@ -6,9 +6,9 @@ Each revocable `control-ui`, `player-bootstrap`, or receiver-specific private pl
 
 `tokenHash` is a fixed-length SHA-256 digest of the complete compact JWT. The bounded versioned record contains `accountId`, exact token profile/audience, `jti`, `iat`, `exp`, the JWT's `tokenGeneration`, and active state. It proves that Account issued this exact still-active token but does not duplicate tenant/global roles from its signed claims. Account creates the record before returning the token; registration failure means issuance failure.
 
-The record uses an absolute TTL derived from the JWT expiry so operators do not tune separate JWT and auth-session expiry knobs:
+The record's absolute cleanup deadline is derived from that token's own JWT `exp` claim plus the cleanup margin; it is not derived from a global session lifetime:
 
-- `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
+- `registry_ttl_ms = max(0, token_exp_ms - now_ms) + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
 
 JWT lifetime and the session safety margin are documented in [Environment & Secrets](./infrastructure/environment-and-secrets.md#authentication).
 
