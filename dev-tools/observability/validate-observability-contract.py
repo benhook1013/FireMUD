@@ -33,6 +33,7 @@ REQUIRED_BACKUP_RECORDINGS = {
 CURRENT_BLOCKED_CONVERGENCE_EXPR = re.compile(
     r'recovery_participant_convergence_state\s*\{\s*state\s*=\s*["\']blocked["\']\s*\}'
 )
+ABSENT_CONVERGENCE_EXPR = re.compile(r"absent\s*\(\s*recovery_participant_convergence_state\s*\)")
 STALE_BLOCKED_CONVERGENCE_EXPR = re.compile(
     r'recovery_participant_convergence_total\s*\{[^}]*result\s*=\s*["\']blocked["\']'
 )
@@ -498,6 +499,8 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
             findings.append(Finding(path=path, message=f"{alert_name} must use owner=infra for Redis/coordination incidents"))
         if alert_name.startswith("Backup") and labels.get("owner") != "infra":
             findings.append(Finding(path=path, message=f"{alert_name} must use owner=infra for backup incidents"))
+        if alert_name == "RecoveryParticipantConvergenceMetricsAbsent" and not ABSENT_CONVERGENCE_EXPR.search(expr or ""):
+            findings.append(Finding(path=path, message="RecoveryParticipantConvergenceMetricsAbsent must use absent(recovery_participant_convergence_state)"))
         if alert_name.startswith("Tick") and alert_name not in {
             "TickExecutionUnsafeRatio",
             "TickEffectLedgerBacklog",
@@ -516,6 +519,7 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
         "BackupArtifactLineageInvalid",
         "BackupArtifactRestoreUnreadable",
         "RecoveryParticipantConvergenceBlocked",
+        "RecoveryParticipantConvergenceMetricsAbsent",
         "LoginSuccessRatioLowGateway",
         "LoginSuccessRatioLowTcpProxy",
         "CommandLatencyP99HighGateway",

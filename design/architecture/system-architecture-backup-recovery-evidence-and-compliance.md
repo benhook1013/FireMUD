@@ -6,7 +6,9 @@ This document defines the machine-checkable evidence, metrics, and compliance re
 
 Backup-pause metrics are maintenance/reset observability, not player-facing PostgreSQL-recovery proof. They may retain bounded `region`/`tenant` scope labels and alias-usage migration signals for those maintenance workflows, but accepted recovery readiness is proved by one environment-wide recovery-controller lineage. Exact tenant and region identities belong in retained maintenance evidence and control-plane reads, not in the accepted backup-recovery gate.
 
-Backup readiness is an evidence chain, not an artifact-shaped timestamp record. The scheduled dump, restore controller, and preflight must retain complete environment/schema/service/tool lineage and dereference the backup-readiness, baseline, and actual-recovery records independently. Player-facing readiness remains blocked until backup-under-write, inventory convergence, hardening, smoke, and controlled-reopen proof is available.
+Backup readiness is an evidence chain, not an artifact-shaped timestamp record. The scheduled dump, restore controller, and preflight must retain complete environment/schema/service/tool lineage and dereference the backup-readiness, baseline, and actual-recovery records independently. `verify-backups.sh` contributes only existence/reachability evidence; immutable lineage, artifact readability, restore-tool compatibility, erasure replay, and player-facing readiness require separate evidence. Player-facing readiness remains blocked until backup-under-write, inventory convergence, hardening, smoke, and controlled-reopen proof is available.
+
+The recovery-participant metrics in this document are target-state contracts, not evidence that the current runtime emits them. No reliable emitter for `recovery_participant_convergence_state` is currently implemented or proven. The reference Prometheus ruleset includes `RecoveryParticipantConvergenceMetricsAbsent` as a fail-safe monitoring-gap alert, but that alert cannot identify an environment or participant and must not be interpreted as converged or blocked recovery state. Recovery convergence observability remains unproved; the durable recovery controller and retained evidence records remain the readiness authority.
 
 ## Backup Observability and Alerts
 
@@ -76,6 +78,7 @@ Required fields:
 - `backupConfidentialityEvidence`
 - `backupCoverage` (`environment-wide-postgresql`)
 - `backupArtifactRef`
+- `artifactErasureHighWater`
 - `backupToolDigest`
 - `recoveryToolDigest`
 - `recoveryContractFingerprint`
@@ -175,7 +178,7 @@ Validation rules:
 - `backupCoverage` must be `environment-wide-postgresql`
 - the referenced recovery record must prove the exact environment-wide cold-start contract and controlled reopen path
 - `backupConfidentialityEvidence` must prove the backup confidentiality invariant and any required production-origin non-production sanitization/deletion evidence
-- `PREFLIGHT-BACKUP-002` validates the event against the durable controller while the actual recovery is `ready_to_reopen`; the controller idempotently reconciles `ready_to_reopen -> releasing -> finalized`, applying and observing quarantine release before permitting player traffic
+- `PREFLIGHT-BACKUP-002` validates the event against the durable controller while the actual recovery is `ready_to_reopen`; `continueRecovery(operationId, expectedPhase, evidenceRef)` idempotently reconciles the internal `ready_to_reopen -> releasing -> finalized` phases, applying and observing quarantine release before permitting player traffic
 - the exporter writes the checked-in traffic-open projection, including `trafficOpenedAt`, only after the controller reaches `finalized`; the projection is not a prerequisite for that same release, and a runtime authorization or partially written file is not proof that the transition completed
 - the canonical gate for this artifact is the deployment preflight contract in `system-architecture-deploy-preflight-policy.md` (`PREFLIGHT-BACKUP-002`), and the deployment sequencing that consumes it is defined in `system-architecture-deployment-runbook.md`
 
@@ -247,6 +250,7 @@ Required top-level fields:
 - `schemaVersion`
 - `environment`
 - `recoveryRef`
+- `operationId`
 - `recoveryStatus` (`finalized` in the checked-in projection; the runtime controller also uses `collecting`, `ready_to_reopen`, and `releasing`)
 - `recoveryPurpose` (`production-equivalent-drill` or `actual-recovery`)
 - `sourceEnvironmentBinding`
@@ -256,6 +260,9 @@ Required top-level fields:
 - `restoreSafeMode`
 - `coordinationRecoveryMode` (`cold_start_restore`)
 - `backupArtifactRef`
+- `artifactErasureHighWater`
+- `restoreHighWater`
+- `erasureReplay`
 - `backupArtifactLineage`
 - `backupToolDigest`
 - `recoveryToolDigest`
@@ -300,6 +307,8 @@ Nested control-group requirements:
 - `recoveryControllerLineage` identifies the durable controller state, environment-wide scope, linked artifact and participant lineage, pre-release `ready_to_reopen` approval, and post-release `finalized` state when this projection is exported
 - `backupConfidentialityEvidence` proves encrypted transport/storage, environment-scoped least-privilege access and audit, retention/secure deletion, and production-origin non-production quarantine, sanitization, validation, and deletion when applicable
 - `backupArtifactLineage` binds the environment-wide PostgreSQL artifact to its database identity, snapshot time, schema/migration lineage, service digests, and object-storage identity
+- `artifactErasureHighWater` is the immutable high-water captured in the source artifact lineage; `restoreHighWater` is captured immutably from the authoritative erasure ledger for this recovery operation and must not be inferred from restored PostgreSQL
+- `erasureReplay` identifies the authoritative ledger, exclusive start (`artifactErasureHighWater`), inclusive end (`restoreHighWater`), replayed-through sequence, and gap-free completion evidence. The interval must contain every erasure event in order, without gaps or unknown entries, before the controller reaches `ready_to_reopen`
 - `coordinationRecoveryEvidence` proves `cold_start_restore`, an empty Coordination Redis keyspace before rebuild, and environment-wide gameplay-region epoch/fence advancement or recreation
 - `recoveryParticipantInventoryRef` and `externalEffectInventoryRef` each point to authoritative, complete, reachable inventories. `durableParticipantConvergence` and `externalEffectReconciliation` must contain one safe disposition for every declared and enabled entry: `converged`, `terminalized`, `invalidated`, or `fenced_disabled_backlog_retained`; missing, unknown, unreachable, or unsafe entries fail the gate
 - `sessionRecovery` proves environment-wide gameplay and Account session invalidation and must use `gameSessionHandling=invalidated` and `authSessionHandling=invalidated`; fresh sessions may be issued only after the reopen gate
@@ -307,13 +316,13 @@ Nested control-group requirements:
 Validation rules:
 
 - quarantine remains in place while the controller is `collecting`; once every required pre-release control group passes and `reopenApprovedBy` is recorded, the controller records `readyToReopenAt` and advances its durable state to `ready_to_reopen`
-- a release request is idempotently reconciled from `ready_to_reopen` to `releasing`; the controller repeatedly applies and observes the quarantine-routing release while keeping traffic closed. Any failed or ambiguous apply remains fail-closed in `releasing` and cannot produce `finalized`
+- a `continueRecovery(operationId, expectedPhase, evidenceRef)` call is idempotently reconciled from the supplied expected phase; for reopen it advances `ready_to_reopen` to the internal `releasing` phase while the controller repeatedly applies and observes the quarantine-routing release with traffic closed. Any failed or ambiguous apply remains fail-closed in `releasing` and cannot produce `finalized`
 - after the controller applies and observes the release, it advances its durable state to `finalized`; only then may actual player traffic flow, and only then may the checked-in recovery and traffic-open projections be exported
 - a `production-equivalent-drill` uses `trafficExposure=isolated-drill`; its controlled reopen authorizes only the isolated test boundary and cannot authorize production traffic
 - an `actual-recovery` that will reopen player traffic uses `trafficExposure=player-facing-reopen` and is bound to that exact target boundary
 - `coordinationRecoveryMode` must be `cold_start_restore` for player-facing recovery; `scoped_reset_restore` experiments remain quarantined and cannot satisfy this record
 - every declared and enabled participant named by `recoveryParticipantInventoryRef` must have a safe disposition; a durable fenced backlog may survive reopen only when the participant remains disabled and its owning recovery contract defines the later operator action
-- `readyToReopenAt` must be later than restore-safe-mode entry, coordination recovery, hardening, external-credential validation, secret-compliance refresh, and smoke-check completion times; `quarantineReleasedAt` and `finalizedAt` must be later than `readyToReopenAt`, and exported projections must carry the controller's finalized release identity
+- `readyToReopenAt` must be later than restore-safe-mode entry, coordination recovery, erasure replay completion, hardening, external-credential validation, secret-compliance refresh, and smoke-check completion times; `quarantineReleasedAt` and `finalizedAt` must be later than `readyToReopenAt`, and exported projections must carry the controller's finalized release identity
 - traffic reopen is non-compliant if the durable controller state is missing, incomplete, or inconsistent with the restore event; a missing or mutable post-finalization projection is a later evidence-integrity failure, not a reason to create a circular pre-release dependency
 
 Operator credential evidence representation:

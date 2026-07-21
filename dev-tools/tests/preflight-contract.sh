@@ -210,6 +210,48 @@ if failures:
     raise SystemExit(f"unexpected required preflight failures: {failures}")
 PY
 
+python3 - <<'PY' "$ROOT_DIR"
+import importlib.util
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("preflight_non_waivable_contract", root / "dev-tools/deploy/preflight.py")
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+for policy_id in ("PREFLIGHT-BACKUP-001", "PREFLIGHT-BACKUP-002"):
+    results = []
+    failed = module.append_result(
+        results,
+        {policy_id},
+        "contract-approver",
+        "contract-ticket",
+        policy_id,
+        True,
+        "fail",
+        "readiness evidence missing",
+    )
+    if not failed or results[0].status != "fail" or "waiver not permitted" not in results[0].message:
+        raise SystemExit(f"{policy_id} accepted a forbidden waiver: {results}")
+
+results = []
+failed = module.append_result(
+    results,
+    {"PREFLIGHT-DIGEST-002"},
+    "contract-approver",
+    "contract-ticket",
+    "PREFLIGHT-DIGEST-002",
+    True,
+    "fail",
+    "digest evidence missing",
+)
+if failed or results[0].status != "pass":
+    raise SystemExit(f"ordinary waiver behavior regressed: {results}")
+PY
+
 python3 "$WRITER" hobby-self-hosted contract-hobby first-live \
   --assessed-by preflight-contract \
   --preflight-report "$REPORT_PATH" \

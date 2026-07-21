@@ -78,6 +78,18 @@ Example alerts for missed backups and verification runs:
   annotations:
     summary: Recovery participant convergence remains blocked
     description: A current recovery participant state has no safe disposition. The alert clears when the participant state converges; the cumulative convergence event counter is historical evidence only.
+
+- alert: RecoveryParticipantConvergenceMetricsAbsent
+  expr: absent(recovery_participant_convergence_state)
+  for: 5m
+  labels:
+    service: postgres-backup
+    severity: P1
+    owner: infra
+    runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
+  annotations:
+    summary: Recovery participant convergence metrics are absent
+    description: No recovery_participant_convergence_state series are present. This is an observability failure, not evidence that recovery participants are converged or blocked; keep recovery-readiness decisions blocked until a reliable emitter and current state are proven.
 ```
 
 Routine backup alerts use these current artifact and recovery recordings:
@@ -88,5 +100,7 @@ Routine backup alerts use these current artifact and recovery recordings:
 - `backup_artifact_lineage_invalid`
 - `backup_artifact_restore_unreadable`
 - `recovery_participant_convergence_state{environment,participant,state}`
+
+`RecoveryParticipantConvergenceMetricsAbsent` is a fail-safe monitoring-gap alert. It cannot provide `environment` or `participant` labels when the source family is absent and must not be treated as recovery state or readiness evidence. The current repository has no reliable recovery-participant metric emitter, so the recovery convergence recording and blocked-state alert remain unproved until that producer and its end-to-end proof exist.
 
 Environment-specific rulesets may tune thresholds, severities, and label values, but should preserve the `owner` and `runbook` annotations so alerts always point back to the relevant documentation. Tick-pause metrics belong to maintenance/reset dashboards and must not be used as routine backup health or traffic-reopen proof.

@@ -40,6 +40,12 @@ class CheckResult:
     message: str
 
 
+NON_WAIVABLE_READINESS_GATES = {
+    "PREFLIGHT-BACKUP-001",
+    "PREFLIGHT-BACKUP-002",
+}
+
+
 def fail(message: str) -> "NoReturn":
     print(message, file=sys.stderr)
     raise SystemExit(1)
@@ -448,8 +454,11 @@ def append_result(
     effective_status = status
     effective_message = message
     if status == "fail" and policy_id in waived_ids:
-        effective_status = "pass"
-        effective_message = f"waived by {waiver_approver or 'unknown'} ({waiver_ticket or 'no-ticket'}): {message}"
+        if policy_id in NON_WAIVABLE_READINESS_GATES:
+            effective_message = f"waiver not permitted for {policy_id}: {message}"
+        else:
+            effective_status = "pass"
+            effective_message = f"waived by {waiver_approver or 'unknown'} ({waiver_ticket or 'no-ticket'}): {message}"
     check_results.append(CheckResult(policy_id, required, effective_status, effective_message))
     return required and effective_status == "fail"
 

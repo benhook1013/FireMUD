@@ -4,7 +4,7 @@ Store one record per production restore as:
 
 - `<recovery-ref>.json`
 
-Every record must follow `design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#canonical-recovery-record`, including environment-wide artifact lineage, lifecycle status, cold-start proof, empty Coordination Redis, session and epoch/fence invalidation, recovery-participant dispositions, hardening, smoke, and controlled-reopen fields.
+Every record must follow `design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#canonical-recovery-record`, including environment-wide artifact lineage, immutable `artifactErasureHighWater`, immutable `restoreHighWater` capture, gap-free erasure replay, lifecycle status, cold-start proof, empty Coordination Redis, session and epoch/fence invalidation, recovery-participant dispositions, hardening, smoke, and controlled-reopen fields.
 
 Production-specific requirements:
 
@@ -30,4 +30,4 @@ Production-specific requirements:
 
 `backupConfidentialityEvidence` must prove encrypted transport/storage, environment-scoped least-privilege access and audit, retention/secure deletion, and any production-origin non-production drill quarantine, sanitization, validation, and deletion controls.
 
-Current implementation note: existing restore helpers do not produce the durable recovery-controller state machine or its `collecting` -> `ready_to_reopen` -> `releasing` -> `finalized` reconciliation, so they cannot authorize player-facing reopen. The checked-in record is a post-finalization immutable projection, not runtime authority.
+Current implementation note: existing restore helpers do not produce the durable recovery-controller state machine, immutable erasure high-water replay, or its `collecting` -> `ready_to_reopen` -> `releasing` -> `finalized` reconciliation, so they cannot authorize player-facing reopen. The checked-in record is a post-finalization immutable projection, not runtime authority. Recovery continuation is `continueRecovery(operationId, expectedPhase, evidenceRef)`; pause/lock is internal controller state.
