@@ -6,9 +6,9 @@ Kubernetes Secrets has been selected as the platform's unified secret storage so
 
 ## Implementation Notes
 
-- Account Service currently publishes `/.well-known/jwks.json` by reading the configured mounted JWKS file on each request, with a classpath resource fallback for non-mounted environments. That fallback is local/test only; player-facing startup must fail closed when the configured JWKS path or file is missing or unreadable, the JWKS is malformed, or its public JWK does not match the Account signing key and `kid`.
+- Account Service currently publishes `/.well-known/jwks.json` by reading the configured mounted JWKS file on each request, but the runtime still permits a classpath resource fallback when that file is absent. Target state restricts that fallback to explicit local/test profiles; player-facing startup must fail closed when the configured JWKS path or file is missing or unreadable, the JWKS is malformed, or its public JWK does not match the Account signing key and `kid`.
 - Common Security has a live reusable `ReloadableJwtUtil` and `JwtSecretWatcher` path for `FIREMUD_AUTH_JWT_SECRET_PATH`, but the current implementation replaces one shared HMAC secret immediately. It does not implement asymmetric `kid`/JWKS validation, overlap, or Account-only signing authority, and the current Kubernetes baseline distributes signing material beyond Account Service.
-- The phased rotation workflow, dedicated rotation-job automation, key-overlap/pruning operations, projected-volume reload proof, deployment-wide validator convergence, and player-facing readiness gate below remain target/operational design rather than completed live capability.
+- The target Account-only asymmetric/JWKS boundary, phased rotation workflow, dedicated rotation-job automation, key-overlap/pruning operations, projected-volume reload proof, deployment-wide validator convergence, and player-facing readiness gate below remain target/operational design rather than completed live capability. Current deployment preflight also validates signing paths and mounts across primary workloads, so the preflight/shared-signing topology is implementation drift rather than enforcement of this target. This document does not change runtime, preflight, or manifest behavior.
 
 ---
 

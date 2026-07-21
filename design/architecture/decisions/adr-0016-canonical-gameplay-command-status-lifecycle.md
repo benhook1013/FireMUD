@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The decision is accepted; implementation and proof remain partial. The existing gameplay-command status API, durable records, and selected recovery paths are live, but the canonical lifecycle schema migration, stable acknowledgement and ingress dimensions, durable tick binding, terminal convergence, and failover/replay proof remain incomplete. Acceptance records the target decision, not completion; the obligations below define the remaining proof.
+
 ## Decision Record
 
 - Decision date: 2026-07-18

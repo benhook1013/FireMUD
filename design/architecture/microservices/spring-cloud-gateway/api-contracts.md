@@ -62,7 +62,13 @@ curl --fail-with-body \
 ```
 
 ```bash
-curl -X DELETE http://localhost:8080/routes/demo
+# Trusted dev/test admin tooling only; use the same internal mTLS and
+# NetworkPolicy reachability requirements as the upsert example above.
+curl --fail-with-body \
+  --cacert "$FIREMUD_GRPC_CA_CERT_PATH" \
+  --cert "$FIREMUD_GRPC_CERT_CHAIN_PATH" \
+  --key "$FIREMUD_GRPC_PRIVATE_KEY_PATH" \
+  -X DELETE https://spring-cloud-gateway-management:8080/routes/demo
 ```
 
 ### gRPC

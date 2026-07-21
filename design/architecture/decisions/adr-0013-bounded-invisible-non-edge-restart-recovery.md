@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The decision is accepted; implementation and proof remain partial. Gateway upstream rebind, shared session context, and focused stub/downstream restart tests exist, but authenticated continuity across a real Game Session replacement, lifecycle and presence convergence, connect-context handling, stalled-input behavior, and the combined real-service sequence remain unproved. Acceptance records the target decision, not completion; the obligations below define the remaining proof.
+
 ## Decision Record
 
 - Decision date: 2026-07-18

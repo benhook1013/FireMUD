@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The decision is accepted; implementation and proof remain partial. Durable bounded transcript storage and Redis caching exist, but immutable continuity/resume anchors, deadline enforcement in `PLAY`, token-refresh independence, repeated-episode behavior, and explicit-logout replay suppression remain incomplete or unproved. Acceptance records the target decision, not completion; the obligations below define the remaining proof.
+
 ## Decision Record
 
 - Decision date: 2026-07-18

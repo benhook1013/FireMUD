@@ -51,7 +51,7 @@ Before reopening player-facing traffic, incident records must include:
 
 ## Related Documentation
 
-- `design/architecture/system-architecture-security.md#jwt-key-compromise-response`
-- `design/architecture/system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative`
-- `design/architecture/decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md`
-- `design/architecture/system-architecture-backup-recovery.md#post-restore-secret-hardening`
+- `./system-architecture-security.md#jwt-key-compromise-response`
+- `./system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative`
+- `./decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md`
+- `./system-architecture-backup-recovery.md#post-restore-secret-hardening`

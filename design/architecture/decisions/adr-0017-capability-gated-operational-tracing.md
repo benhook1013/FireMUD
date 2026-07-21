@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The decision is accepted; implementation and proof remain partial. Metrics, structured logs, and generic gRPC spans exist, but named workflow spans and attributes, cross-transport propagation, sampler controls, collector tail sampling, and the end-to-end proof for any higher capability level remain incomplete. Environments must therefore claim only independently proved capability, not the full catalog. Acceptance records the target decision, not completion; the obligations below define the remaining proof.
+
 ## Decision Record
 
 - Decision date: 2026-07-18

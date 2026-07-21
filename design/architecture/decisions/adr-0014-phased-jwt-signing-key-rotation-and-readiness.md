@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The decision is accepted; implementation and proof remain partial. The current watcher and JWKS-serving tests cover direct file behavior, but issuance and validation still use the shared-HMAC topology and validators do not consume Account JWKS. Account-only asymmetric issuance, bounded validator convergence, rotation/compromise drills, and the player-facing readiness gate remain incomplete and unproved. Acceptance records the target decision, not completion; the obligations below define the remaining proof.
+
 ## Decision Record
 
 - Decision date: 2026-07-18

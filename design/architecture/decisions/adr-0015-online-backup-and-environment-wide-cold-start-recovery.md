@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The decision is accepted; implementation and proof remain partial. The scheduled job performs an online PostgreSQL dump without pausing gameplay, but restore quarantine, empty-Redis and epoch/fence reset, participant convergence, external-effect reconciliation, controlled reopen, and the complete backup-under-write recovery proof are not implemented or proved. Acceptance records the target decision, not completion; the obligations below define the remaining proof.
+
 ## Decision Record
 
 - Decision date: 2026-07-18

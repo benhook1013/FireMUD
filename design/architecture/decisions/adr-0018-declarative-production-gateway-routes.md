@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The decision is accepted; implementation and proof remain partial. The current Gateway uses process-local route mutation and a Java route configuration rather than the target declarative catalog, and the required environment isolation, route validation, audit, convergence, and readiness safeguards are not fully enforced or proved. Acceptance records the target decision, not completion; the obligations below define the remaining proof.
+
 ## Decision Record
 
 - Decision date: 2026-07-18

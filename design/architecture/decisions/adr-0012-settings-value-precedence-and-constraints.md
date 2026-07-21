@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The decision is accepted; implementation and proof remain partial. The live path currently merges service-owned operator defaults, tenant overrides, and game-instance overrides, while preset expansion, supported runtime defaults, caps, complete provenance/diagnostics, and cross-service precedence proof remain outstanding. Acceptance records the target decision, not completion; the obligations below define the remaining proof.
+
 ## Decision Record
 
 - Decision date: 2026-07-18
