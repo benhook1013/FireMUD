@@ -69,7 +69,7 @@ Operational notes:
 | Variable | Purpose | Rotation / Safety Notes |
 | -------- | ------- | ----------------------- |
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Account-only path to the versioned private signing bundle | In player-facing environments, mount `jwt-signing-keys` read-only only into Account Service; the canonical mount is `/var/run/secrets/firemud/jwt` and the active bundle is `/var/run/secrets/firemud/jwt/current.key`. |
-| `FIREMUD_AUTH_JWKS_PATH` | Account-only path to the published `jwks.json` file | In player-facing environments, mount the `jwt-jwks` Secret read-only at `/var/run/secrets/firemud/jwks` and set this to `/var/run/secrets/firemud/jwks/jwks.json`. |
+| `FIREMUD_AUTH_JWKS_PATH` | Account-only path to the published `jwks.json` file | In player-facing environments, mount the immutable `jwt-jwks` ConfigMap or equivalent integrity-controlled public artifact read-only at `/var/run/secrets/firemud/jwks` and set this to `/var/run/secrets/firemud/jwks/jwks.json`. |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | Changing it changes the `exp` claim only for newly issued JWTs; already issued JWTs retain their existing `exp`. |
 | `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Extra time used when deriving gameplay continuity retention | A change affects newly admitted gameplay bindings and does not rewrite existing JWT `exp` claims or continuity anchors. |
 
@@ -145,7 +145,7 @@ JWT signing key and JWKS behavior differs slightly by environment to balance saf
   - Canonical default: store the preview signing key in a preview-unique Kubernetes `Secret`; Account Service owns publication of the corresponding preview-unique JWKS document from a namespace-local `ConfigMap`.
   - Reusing one shared preview signing key across namespaces is non-compliant because it allows tokens minted in one PR environment to validate in another.
 - **Production**
-  - Required to use a persistent `jwt-signing-keys` Secret and `jwt-jwks` Secret. Account Service mounts `jwt-jwks` read-only at `/var/run/secrets/firemud/jwks` and sets `FIREMUD_AUTH_JWKS_PATH` to `/var/run/secrets/firemud/jwks/jwks.json`; JWKS is the canonical trust source for all validating services.
+  - Required to use a persistent `jwt-signing-keys` Secret and immutable, integrity-controlled public `jwt-jwks` ConfigMap or equivalent artifact. Account Service mounts `jwt-jwks` read-only at `/var/run/secrets/firemud/jwks` and sets `FIREMUD_AUTH_JWKS_PATH` to `/var/run/secrets/firemud/jwks/jwks.json`; JWKS is the canonical trust source for all validating services.
   - Account startup must fail when the configured JWKS path or file is missing or unreadable, the JWKS is malformed, or its public JWK does not match the Account signing key and `kid`; classpath fallback is not permitted.
   - The target `jwt-rotation` artifact is an operator-triggered Job template, or an equivalent CronJob kept at `spec.suspend: true`; no such manifest is checked in yet.
   - The Job/CronJob may only request Account-owned public-key transitions, observe public JWKS metadata and validator convergence, and record evidence. It must never read or update `jwt-signing-keys` or write `jwt-jwks`; private operations delegated to a non-exportable signer and all public pruning remain under Account Service authority.
