@@ -179,7 +179,7 @@ Hosted Kubernetes rollouts use environment-specific GitHub Actions workflows rat
 - [`dev-demo.yml`](../../.github/workflows/dev-demo.yml) renders and deploys the same chart for the fixed `develop` dev-demo environment.
 - Local Kubernetes iteration uses direct `helm template`, `helm lint`, `helm install`, and `kubectl apply -k` commands rather than a GitHub-hosted workflow wrapper.
 
-Staging and production deployments rely on environment-specific overlays (for example `k8s/overlays/stage` and `k8s/overlays/prod`) applied according to the Deployment Runbook by operators using `kubectl` from a secured workstation or bastion host.
+Staging and production deployments rely on environment-specific overlays (for example `k8s/overlays/stage` and `k8s/overlays/prod`). The steady-state production path follows [ADR 0172](decisions/adr-0172-exact-plan-authorized-automated-production-deployment.md): an operator approves one immutable plan, then a protected executor revalidates and runs preflight, apply, observation, evidence capture, and only pre-authorized compatible restoration. Manual `kubectl` from a secured workstation or bastion remains the bootstrap and audited break-glass path.
 
 ### Rollback Strategy
 
@@ -401,7 +401,8 @@ CI workflows and operators use distinct credentials for each Kubernetes environm
   - Uses credentials limited to operator `kubectl` access and, if introduced later, dedicated staging deployment workflows.
   - Credentials are not exposed to pull request workflows; only merges to `develop` and explicit operator actions (or approved staging workflows) can update the staging cluster.
 - **Production cluster**
-  - Uses credentials restricted to production deployment paths and operator `kubectl` access from approved workstations or bastion hosts.
-  - No GitHub Actions workflow currently applies production manifests directly; any future workflow that does so must use GitHub Environments and require manual approvals.
+  - Uses credentials restricted to production deployment paths and operator break-glass `kubectl` access from approved workstations or bastion hosts.
+  - The accepted target is a protected executor activated only after human approval of an exact immutable plan. It uses short-lived environment-specific credentials where supported, strict concurrency and live-state preconditions, reviewed immutable workflow code, and least-privilege deployment/observation RBAC unavailable to pull-request jobs.
+  - No workflow currently proves this target; production apply remains manual implementation debt. A generic GitHub Environment approval of a mutable branch or free-form inputs is insufficient.
 
 Registry credentials (for GHCR) are shared across environments but access to pull images into each cluster is controlled by Kubernetes secrets and RBAC within that environment.

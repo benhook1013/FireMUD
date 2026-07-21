@@ -109,7 +109,8 @@ The drill evidence may be reused within the configured freshness window only whi
    - Update the image digests in the environment-specific Kustomize overlay for the target environment (for example `k8s/overlays/stage` or `k8s/overlays/prod`) via a Git change.
    - Use a pull request for the overlay change so promotion and rollback remain auditable (the merged commit is the source of truth for what is intended to be running in that environment).
 5. **Apply Kubernetes Manifests**
-   - From a secure operator environment, apply the overlay (for example `kubectl apply -k k8s/overlays/prod`).
+   - For steady-state production, approve the generated immutable deployment plan and let the protected executor re-resolve its inputs, verify the current environment generation/live-state preconditions, and apply the exact overlay. The approval binds the overlay commit, rendered-manifest digest, service digests, migration/config/secret/binding contracts, evidence references, rollback mode and target, and executor identity.
+   - For bootstrap or audited break-glass recovery, an operator may apply the same validated plan from a secure environment (for example `kubectl apply -k k8s/overlays/prod`) and must reconcile the resulting live-state evidence into the canonical record.
    - Each environment boundary (staging vs production) uses its own cluster credentials and secret sources; `firemud` is the default namespace name within each boundary. When using a non-default namespace for drills or temporary restores, treat that namespace as an explicit override tied to the selected overlay or restore script inputs.
    - Treat the apply as an operational action that enacts the already-reviewed overlay change.
    - Record which overlay commit was applied so “what is deployed?” is answerable even when cluster state drifts:
@@ -129,9 +130,9 @@ The drill evidence may be reused within the configured freshness window only whi
    - Store this verification in the deployment record so promotion evidence reflects what is actually running, not only what was intended.
    - Mark `deployStatus=pass` only after the live-state verification and smoke checks both succeed.
 7. **Monitor Rollout**
-   - Watch deployment rollout status for each updated service.
-   - Verify pod readiness and liveness probes are passing.
-   - Check logs for startup errors, especially around database connectivity, Redis connectivity, and secrets loading.
+   - The protected executor watches bounded deployment progression, readiness, public smoke, and applicable SLO signals and records its observations without requiring continued operator presence.
+   - It pauses and alerts on ambiguity. It may restore only the exact approved known-good set while `rollback-compatible` evidence and live preconditions remain valid; `roll-forward-only`, migration uncertainty, binding drift, or stale evidence stops for explicit remediation.
+   - In the manual break-glass path, the operator performs and records the equivalent checks.
 8. **Post-Deployment Checks**
    - Run smoke tests and login/session checks as described in `design/developer-workflows/login-session-smoke-tests.md`.
    - Confirm that the game session tick loop is running and that players can connect via both Web client and Telnet.
