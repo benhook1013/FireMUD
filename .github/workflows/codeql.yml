@@ -174,7 +174,7 @@ jobs:
         uses: github/codeql-action/analyze@7188fc363630916deb702c7fdcf4e481b751f97a # v4
 
   codeql-gate:
-    name: CodeQL Gate
+    name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (CodeQL Gate)' || 'CodeQL Gate' }}
     runs-on: ubuntu-latest
     needs: [analyze]
     if: ${{ always() && github.event_name == 'pull_request' && github.base_ref == 'main' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}

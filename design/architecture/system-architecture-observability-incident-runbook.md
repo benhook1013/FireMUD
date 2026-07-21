@@ -94,7 +94,7 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 - Use the fallback recording-rule approach documented in `design/architecture/system-architecture-logging-monitoring.md` only for a small, explicitly supported set of critical conditions.
 - During fallback, explicitly check all supported player SLO conditions (login success ratio, command p99 latency, entry-path availability, and chat delivery latency) so edge and chat incidents are not hidden when Alertmanager is unavailable.
-- Also check the supported backup fallback conditions (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_pipeline_recent_restore_drill_slo_breached`, `backup_artifact_lineage_invalid`, `backup_artifact_restore_unreadable`, and `recovery_participant_convergence_blocked`) so backup and recovery incidents do not disappear when Alertmanager routing is impaired.
+- Also check the currently installed backup fallback conditions (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, and `backup_pipeline_recent_restore_drill_slo_breached`). The target `backup_artifact_lineage_invalid`, `backup_artifact_restore_unreadable`, and `recovery_participant_convergence_blocked` recording rules are not installed yet; until they are implemented and proven, inspect the authoritative backup/recovery evidence directly rather than treating absent time series as a safe result.
 - If Logging & Admin consumes Alertmanager notifications, ensure the UI clearly shows “Alertmanager unavailable” and does not present fallback conditions as canonical alerts.
 
 ### Alertmanager recovery and verification

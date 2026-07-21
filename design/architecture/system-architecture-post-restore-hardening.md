@@ -24,7 +24,7 @@ Post-restore hardening is performed by a dedicated Kubernetes Job such as `post-
 
 The hardening automation should use least-privilege service accounts:
 
-- JWT rotation automation may read/update only the JWT signing-key Secret, the JWKS Secret or ConfigMap appropriate for the environment, and optionally the Account Service Deployment when restart is required for convergence.
+- JWT rotation automation may invoke only the Account-owned or non-exportable signer operation required to create/promote a generation, read/update the public JWKS ConfigMap or equivalent artifact, and optionally patch the Account Service Deployment when restart is required for convergence. Its service account must not read or update `jwt-signing-keys`.
 - DB rotation automation may read/update only the PostgreSQL credential Secrets and optionally restart the Deployments or StatefulSets that consume them.
 - Certificate reissuance automation may read/update only the specific certificate resources or Secrets required for workload, bridge, and operator leaf identities.
 

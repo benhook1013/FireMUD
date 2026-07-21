@@ -269,7 +269,7 @@ Key properties:
 
   `resumeDeadline = min(continuityBindingExpiresAt, disconnectAt + effective firemud.reconnection.policy.resume-window-ms)`
 
-  Resume also requires current account identity, membership authority, entitlement, and revocation checks. A resume, takeover, reconnect, or server-token rotation cannot change the logical anchor or this resume deadline. A genuinely fresh `PLAY` admission creates a new binding and anchor only after ordinary admission succeeds.
+  Resume also requires current account identity, membership authority, entitlement, and revocation checks. The pair is immutable for that disconnection episode: failed reconnects, takeover attempts, and server-token rotation cannot change it. Successful resume consumes the episode; a later connected-to-disconnected transition creates a new pair bounded by the original continuity anchor. A genuinely fresh `PLAY` admission creates a new binding and anchor only after ordinary admission succeeds.
 - JWT validity remains bounded by each token's own `exp` claim. Game Session may rotate `authTokenHash` and `authTokenIssuedAt` to obtain a currently valid backend token, but token rotation cannot extend continuity-binding expiry or resume eligibility.
 
 Session design assumes **reasonably synchronized clocks** on Game Session nodes (for example, via NTP); large clock skew is treated as an infrastructure misconfiguration, not a normal edge case of the session protocol. The effective disconnected-resume window is the stricter of the remaining continuity-binding lifetime and `firemud.reconnection.policy.resume-window-ms`.

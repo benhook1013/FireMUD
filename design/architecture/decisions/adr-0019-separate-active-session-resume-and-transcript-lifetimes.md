@@ -37,12 +37,13 @@ On successful gameplay admission, Game Session records an immutable continuity a
 
 where `session_expiration_ms` remains derived from the configured JWT lifetime plus safety margin for the initial continuity-retention horizon. Passing this anchor does not itself kick a continuously connected, currently authorized player. It means that after the next transport loss the old binding cannot be resumed.
 
-On disconnect or suspension:
+Each connected-to-disconnected transition starts one immutable disconnection episode. At that transition:
 
 `resumeDeadline = min(continuityBindingExpiresAt, disconnectAt + effective resume-window-ms)`
 
 - Resume requires the current time to be before both limits and requires fresh identity, membership, entitlement, revocation, and uniqueness checks.
-- Token rotation, takeover, reconnect attempts, Redis TTL refresh, and transcript retention cannot move either timestamp.
+- `disconnectAt` and `resumeDeadline` are immutable within that episode. Failed reconnect attempts, token rotation, takeover attempts, Redis TTL refresh, and transcript retention cannot move them.
+- A successful resume consumes the current disconnection episode and returns the binding to connected state. A later genuine transport loss starts a new episode with a new `disconnectAt` and `resumeDeadline`, still capped by the binding's original immutable `continuityBindingExpiresAt`.
 - After either limit, the old binding is non-resumable even if data remains. A successful current `LOGIN` and `PLAY` may perform fresh admission and create a new binding; that is not continuation of the expired binding.
 
 ### Storage, Transcript, and Logout
@@ -80,9 +81,10 @@ Fresh admission after every disconnect is simpler and more conservative but mate
 
 ## Implementation and Proof Obligations
 
-- Persist immutable `continuityBindingExpiresAt`, `disconnectAt`, and `resumeDeadline` values and enforce them in `PLAY` admission.
+- Persist immutable `continuityBindingExpiresAt` plus one immutable `disconnectAt`/`resumeDeadline` pair per disconnection episode, consume that episode on successful resume, and enforce the current pair in `PLAY` admission.
 - Prove token refresh and healthy uninterrupted play independently of the continuity anchor.
 - Prove boundary behavior immediately before, at, and after both continuity and resume deadlines.
+- Prove repeated failed reconnects cannot extend one episode, successful resume closes it, and a later disconnect creates a new bounded episode without moving `continuityBindingExpiresAt`.
 - Prove Redis saves, TTL refresh, restart, failover, and stale-key recovery cannot move or bypass logical deadlines.
 - Prove current subject, membership, entitlement, revocation, and uniqueness checks on every resume.
 - Prove stale bindings fall through to fresh admission only after full current authorization and receive a new identity and anchor.

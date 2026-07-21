@@ -206,7 +206,7 @@ jobs:
           fi
 
   license-gate:
-    name: License Gate
+    name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (License Gate)' || 'License Gate' }}
     needs: [changes, ort-gradle, ort-npm]
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     runs-on: ubuntu-latest
