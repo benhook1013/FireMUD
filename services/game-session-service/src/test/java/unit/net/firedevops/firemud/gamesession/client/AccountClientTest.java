@@ -13,7 +13,6 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import javax.net.ssl.SSLException;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
@@ -51,7 +50,7 @@ class AccountClientTest {
         .thenThrow(
             new StatusRuntimeException(
                 Status.fromCode(Status.Code.valueOf(statusName)).withDescription(description)));
-    AccountClient client = newClient(stub, failingChannelFactory());
+    AccountClient client = newClient(stub);
 
     AuthenticateResponse response = client.authenticate("22", "demo@example.com", "swordfish");
 
@@ -116,17 +115,11 @@ class AccountClientTest {
 
   private static AccountClient newClient(AccountServiceGrpc.AccountServiceBlockingStub stub)
       throws Exception {
-    return newClient(stub, mock(GrpcChannelFactory.class));
-  }
-
-  private static AccountClient newClient(
-      AccountServiceGrpc.AccountServiceBlockingStub stub, GrpcChannelFactory channelFactory)
-      throws Exception {
     AccountClient client =
         new AccountClient(
             new ServiceEndpointsProperties(),
             new CommonGrpcClientProperties(),
-            channelFactory,
+            mock(GrpcChannelFactory.class),
             BlockingGrpcStubCustomizer.noop());
     Field field =
         net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient.class.getDeclaredField(
@@ -134,16 +127,5 @@ class AccountClientTest {
     field.setAccessible(true);
     field.set(client, stub);
     return client;
-  }
-
-  private static GrpcChannelFactory failingChannelFactory() {
-    return new GrpcChannelFactory() {
-      @Override
-      public ManagedChannel buildChannel(
-          String target, int defaultPort, CommonGrpcClientProperties properties, boolean keepAlive)
-          throws SSLException {
-        throw new SSLException("channel reload failed");
-      }
-    };
   }
 }

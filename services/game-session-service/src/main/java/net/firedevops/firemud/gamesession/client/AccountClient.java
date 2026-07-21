@@ -65,38 +65,15 @@ public final class AccountClient
     try {
       return callStub().authenticate(request);
     } catch (StatusRuntimeException ex) {
-      if (!isRetryableAuthenticateTransport(ex.getStatus().getCode())) {
-        logger.warn("Account Service authenticate failed before a response completed", ex);
-        return authenticationUnavailable();
-      }
       logger.warn(
-          "Account Service authenticate transport failure; rebuilding channel for one bounded "
-              + "retry",
+          "Account Service authenticate failed with an ambiguous transport outcome; not retrying "
+              + "credential-consuming authentication without an idempotency identity",
           ex);
-      try {
-        initClient();
-      } catch (Exception retryEx) {
-        logger.warn("Failed to rebuild Account Service channel before authenticate retry", retryEx);
-        return authenticationUnavailable();
-      }
-      try {
-        return callStub().authenticate(request);
-      } catch (Exception retryEx) {
-        logger.warn(
-            "Account Service authenticate retry failed before a response completed", retryEx);
-        return authenticationUnavailable();
-      }
+      return authenticationUnavailable();
     } catch (Exception ex) {
       logger.warn("Account Service authenticate failed before a response completed", ex);
       return authenticationUnavailable();
     }
-  }
-
-  private boolean isRetryableAuthenticateTransport(Status.Code statusCode) {
-    return switch (statusCode) {
-      case ABORTED, DEADLINE_EXCEEDED, INTERNAL, RESOURCE_EXHAUSTED, UNAVAILABLE, UNKNOWN -> true;
-      default -> false;
-    };
   }
 
   private AuthenticateResponse authenticationUnavailable() {

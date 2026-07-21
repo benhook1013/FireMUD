@@ -829,6 +829,9 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
+    assertEquals("INVALID_CREDENTIALS", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR INVALID_CREDENTIALS Invalid credentials", joinedOutputText(result.outputs()));
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService, times(2)).save(captor.capture());
     verify(gameplayPresenceLifecycleService)

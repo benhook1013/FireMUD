@@ -20,7 +20,7 @@ Coordination Redis contains correctness-sensitive, short-lived runtime state. Th
 
 - Coordination and Cache Redis remain separate deployments and ACL domains. Human operator accounts are read-only by default.
 - Application writes use owned, typed key and mutation helpers. Registered Lua scripts are required where atomic multi-key behavior needs them, not for every ordinary single-key mutation.
-- Normal operator mutations use version-matched, owner-supported tooling. The initial public maintenance surface is bounded to `pause`, `status`, one `recover --mode <replay-first|reset|session-schema-cleanup>` operation, `resume`, and a maintenance-lock release operation.
+- Normal operator mutations use version-matched, owner-supported tooling. The initial public maintenance surface is bounded to `status`, one `recover --mode <replay-first|reset|session-schema-cleanup>` operation, `continueRecovery(operationId, expectedPhase, evidenceRef)`, `resume`, and a maintenance-lock release operation. Pause-and-lock is an internal fenced phase of the durable recovery operation, not a standalone public verb.
 - The single public recover/reset operation owns the required ordered phases, including durable epoch handling, ledger and command convergence, metadata initialization, session policy, and the post-reset smoke gate. Those phases may have internal APIs and focused tests, but `reset`, `reconcile-ledger`, `converge-commands`, `init-meta`, `rebind-sessions`, `smoke-check`, and `session-cleanup` are not separately public operator verbs.
 - The tool advertises and accepts only scope levels implemented and proved by the runtime. Region, tenant, or cluster scope is added only with an authoritative durable inventory and end-to-end recovery proof for that scope.
 - Raw coordination writes are break-glass only. They require actor, reason, deployment and scope audit, the covering reset or cleanup, and a passing post-check before gameplay resumes.
@@ -46,7 +46,7 @@ This is operationally flexible, but bypasses typed key ownership, reset ordering
 
 - Provision and statically verify separate application and read-only operator ACLs for Coordination and Cache Redis.
 - Implement the bounded maintenance entrypoints through owned key and mutation helpers, with one audited resumable recovery workflow and explicit failure state.
-- Prove pause fencing, durable affected-scope inventory, reset ordering, covering cleanup, smoke gating, and refusal to resume an unsafe scope.
+- Prove internal pause fencing, durable affected-scope inventory, same-operation continuation, reset ordering, covering cleanup, smoke gating, and refusal to resume an unsafe scope.
 - Reject unsupported scopes and direct service mutation paths rather than silently degrading them.
 - Add a specialist public verb or wider scope only with a concrete incident workflow and focused release proof.
 

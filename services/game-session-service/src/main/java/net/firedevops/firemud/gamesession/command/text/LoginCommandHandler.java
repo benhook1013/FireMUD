@@ -461,18 +461,18 @@ public final class LoginCommandHandler {
     if (CANONICAL_ERROR_MAP.containsKey(rawCode)) {
       return CANONICAL_ERROR_MAP.get(rawCode);
     }
-    if (rawCode.startsWith("AUTH_")) {
-      return "UNAVAILABLE";
-    }
-    if (!rawCode.isBlank()) {
-      return rawCode;
-    }
     String message = Optional.ofNullable(error.getMessage()).orElse("").toLowerCase();
     if (message.contains("invalid credentials")) {
       return "INVALID_CREDENTIALS";
     }
     if (message.contains("locked")) {
       return "ACCOUNT_LOCKED";
+    }
+    if (rawCode.startsWith("AUTH_")) {
+      return "UNAVAILABLE";
+    }
+    if (!rawCode.isBlank()) {
+      return rawCode;
     }
     return "UNAVAILABLE";
   }

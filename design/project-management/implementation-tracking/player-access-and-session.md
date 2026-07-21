@@ -127,6 +127,7 @@ Recorded validation includes `spotlessApply`, touched-service full checks, `link
 
 ## Active Gaps
 
+- Account authentication has no stable attempt identity or replayable result contract. Game Session now avoids automatically retrying an ambiguous credential-consuming transport failure, but Account still needs durable request identity and idempotent result lookup before authentication itself is safely retryable.
 - Signup-time login-mode selection and authenticator-app TOTP enrollment/management are not implemented; the live credential contract remains password plus email OTP. Richer MFA policy for elevated users is also future work.
 - Tenant membership currently persists admission permission rather than the designed tenant-role set; Account JWT issuance does not emit tenant `scopedRoles`, and realm grants have no expiry or tenant-admin management surface.
 - The canonical runtime entitlement response still lacks subscription status, explicit free/trial state, `allowNewInstanceStarts`, quota fields, authoritative evaluation freshness, and real monotonic version/sequence fields. Game Session does not implement per-tenant caching, event invalidation, strict new-commitment checks, bounded last-known-good reconnect/recovery, or hard-cutoff propagation; `past_due` is currently treated as unavailable. Durable `purchase_entitlement` fulfillment/revocation is also absent.

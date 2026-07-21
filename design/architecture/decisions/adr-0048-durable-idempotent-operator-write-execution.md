@@ -31,8 +31,9 @@ Account first issues the applicable opaque bounded operator authorization refere
 - authorizes the current actor and scope rather than trusting ingress-derived domain conclusions or Logging and Admin assertions;
 - validates current domain preconditions and, where applicable, the current authority generation or gameplay fence;
 - recomputes the canonical mutation digest and requires it to match the Account reference;
-- treats `controlPlaneRequestId` as its idempotency identity while storing the matching digest on the durable result row;
-- durably commits the mutation and durable result together, or commits neither; and
+- treats `controlPlaneRequestId` as its idempotency identity while storing the matching digest on a durable request record;
+- atomically claims a previously unseen request as `PENDING` before execution, with a fenced execution token that prevents a superseded claimant from committing;
+- durably commits the mutation and terminal result together, or records a terminal `NOT_EXECUTED` result when it can prove that no mutation committed; and
 - returns the previously committed result only when a duplicate request identifier carries the same digest; same-identifier/different-digest requests fail with canonical `IDEMPOTENCY_CONFLICT` and never apply either payload again.
 
 Logging and Admin then records the correlated outcome. It reports success only after the owner confirms its durable commit.
@@ -41,11 +42,12 @@ Logging and Admin then records the correlated outcome. It reports success only a
 
 A failed final audit-outcome update does not roll back an already committed domain mutation. Each owner exposes an internal, read-only request-result lookup for the exact `controlPlaneRequestId`, callable only by the allowlisted Logging and Admin workload. The lookup reads the durable idempotency/result record and cannot execute or reauthorize the mutation, so it remains safe after the original human or automation authorization reference expires or is revoked.
 
-Logging and Admin retains the original durable intent and reconciles through that result lookup until the owner result can be recorded. It may redeliver the mutation with the same identifier only while the original authorization reference remains valid. Once that reference is invalid, reconciliation is read-only: an existing owner result proves the committed or rejected outcome, while durable absence proves the mutation did not commit because owner mutation and result persistence are atomic. Authority revocation never creates a fresh reference merely to replay an old write.
+Logging and Admin retains the original durable intent and reconciles through that result lookup until the owner result can be recorded. It may redeliver the mutation with the same identifier only while the original authorization reference remains valid. Once that reference is invalid, reconciliation is read-only: a terminal owner result proves the committed, rejected, or `NOT_EXECUTED` outcome, while a `PENDING` claim or missing owner record remains ambiguous and must never be reported as non-execution. Durable absence cannot prove that an already dispatched mutation will not commit later. Authority revocation never creates a fresh reference merely to replay an old write.
 
 Operator-visible states must distinguish at least:
 
-- **not executed** — forwarding never occurred or the owner durably rejected the request;
+- **not executed** — forwarding never occurred, or a terminal owner result durably proves rejection or `NOT_EXECUTED`;
+- **pending or indeterminate** — dispatch may have reached the owner but no terminal result proves its outcome; reconciliation remains read-only after authorization expiry;
 - **committed, response lost or outcome pending** — execution may have committed and the same identifier must be queried through the owner result-read contract rather than replaced; and
 - **failed** — a terminal, durable owner result proves no successful mutation for that request.
 
