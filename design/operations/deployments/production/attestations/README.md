@@ -15,6 +15,5 @@ Required fields:
 - `generatedAt`
 - `approvedBy`
 - `rollbackMode`
-- `recoveryCompatibility` (compact baseline/candidate fingerprint comparison and new-drill result)
 
 Production overlay PR validation rejects promotions when this directory does not contain exactly one attestation artifact for the promotion being merged.

@@ -6,7 +6,7 @@ These JSON files can be imported into a Grafana instance connected to the projec
 
 ## Dashboards
 
-- [backups.json](./backups.json) – Backup pipeline dashboard with backup/verification/restore-drill freshness, artifact lineage/readability, and current recovery-participant state. Tick-pause views belong to maintenance/reset dashboards.
+- [backups.json](./backups.json) – Backup pipeline dashboard with “time since last backup/verification”, tick pause wait/duration, alias-scope usage, and queue growth signals for coordinated backups.
 - [service-overview.json](./service-overview.json) – High-level service overview with status panels and charts for request rates, error rates, and latency broken down by microservice.
 - [tcp-proxy-alerts-snippets.md](./tcp-proxy-alerts-snippets.md) – Reference PromQL and Alertmanager rule snippets for TCP Proxy ingress metrics (Telnet connection limits, discarded input, TLS/mTLS and WebSocket reconnect behaviour). Import these into your environment-specific dashboards and rulesets as needed.
 - [tcp-proxy.json](./tcp-proxy.json) – TCP Proxy service dashboard (Telnet connection limits, discarded Telnet input, WebSocket reconnects, and NotifyDisconnect transport/app errors).

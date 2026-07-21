@@ -255,7 +255,7 @@ FireMUD uses a simple promotion flow from pull requests through staging to produ
 - Overlay PRs are validated by [`.github/workflows/validate-kustomize-overlays.yml`](../../.github/workflows/validate-kustomize-overlays.yml), which checks that referenced images exist in GHCR, enforces digest pinning for staging/production overlays, and blocks staging backup schedules unless the explicit marker `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
 - Overlay PRs run the canonical preflight entrypoint (`dev-tools/deploy/preflight.py`) in `ci-static` context so policy IDs and report shape match operator pre-apply validation. CI-static mode may mark production attestation policy as `not_applicable` when no production promotion is being executed.
 - Production overlay PRs must include exactly one in-repo staging promotion attestation under `design/operations/deployments/production/attestations/<deployment-ref>.json` that follows `system-architecture-promotion-attestation.md`. Production PRs are rejected if they reference digests that cannot be tied to that attestation, a successful staging deployment record with live-state verification, and a staging deployment record whose `secretComplianceStatus` is `pass`.
-- Production overlay PR CI must evaluate the attestation and compact recovery-compatibility result for every promotion and, when the result requires a drill or the release is `roll-forward-only`, the matching full backup-readiness evidence before merge. Deferring those checks to operator-only preflight is non-compliant.
+- Production overlay PR CI must evaluate the attestation and, when the attestation classifies the release as `roll-forward-only`, the matching backup-readiness evidence before merge. Deferring those checks to operator-only preflight is non-compliant.
 - Staging apply evidence must include the in-repo deployment record `design/operations/deployments/staging/deployments/<stagingOverlayCommitSha>.json`; production promotion validation fails when this record is missing, digest-mismatched, lacks live-state verification, or lacks passing secret-compliance evidence.
 - Player-facing preflight and operator validation must also verify environment bootstrap completeness and external integration isolation before apply; these checks are not limited to restore events.
 - `manual-backup-restore.yml` is limited to throwaway recovery drills. It may target only explicit non-player-facing restore namespaces or isolated drill clusters using dedicated low-privilege credentials and GitHub Environment approvals. It must not restore into live staging or production namespaces and must not hold credentials capable of modifying the currently player-facing cluster boundary.
@@ -268,17 +268,16 @@ Before approving a production promotion, deployment evidence must classify rollb
 
 Production promotions lacking this explicit rollback-mode classification are non-compliant.
 
-Every production promotion records a compact recovery-compatibility result against the current production-equivalent cold-start drill. For releases classified as `roll-forward-only`, or when that result says a new drill is required, promotion evidence must also include fresh full backup-readiness evidence proving:
+For production releases classified as `roll-forward-only`, promotion evidence must also include fresh backup-readiness evidence proving:
 
 - a recent successful logical backup,
 - recent backup-verification success, and
-- a current environment-wide `cold_start_restore` record suitable for the release, including empty Redis, safe recovery-participant dispositions, hardening, and controlled reopen.
+- a current restore-plan or restore-drill reference suitable for the release.
 
-The canonical full-evidence path is `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`. Production CI/preflight must reject every `newDrillRequired=true` promotion, including all `roll-forward-only` releases, when that evidence is missing, stale, or not bound to the source production database lineage, candidate recovery tooling, exact candidate digests, migration path, config, bindings, and promotion attestation. Compatible rollback releases keep only the compact result or immutable reference in promotion/deployment evidence rather than copying the full recovery record.
-
-Traffic-open readiness for production first-live or reopen events uses `design/operations/deployments/production/traffic-open/<first-live|reopen>-<deployment-ref>.json` and references the canonical backup-readiness and recovery evidence. Routine online backups cover the environment-wide PostgreSQL database and do not use Game Session pause/resume as readiness proof.
-
-Current implementation note: player-facing production `roll-forward-only` promotion remains non-compliant because the backup path does not emit complete lineage, the restore path does not enforce quarantine and environment-wide cold-start convergence, and CI/preflight does not validate the canonical recovery record or compact compatibility result. CI/preflight must reject such promotions until those implementation and proof gaps are closed.
+The canonical evidence path is `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`, and production CI/preflight must reject `roll-forward-only` promotions when that evidence is missing, stale, or not bound to the attestation/digest set being promoted.
+Traffic-open readiness for production first-live or reopen events uses the same `design/operations/deployments/production/backup-readiness/` artifact family with the specialized naming pattern `first-live-<deployment-ref>.json` defined in `system-architecture-backup-recovery.md`; this is distinct by purpose, not by schema lineage.
+For player-facing production promotions, the referenced coordinated-backup evidence must use canonical `tenant_id + region_id` scope. A release that depends on alias-scoped coordinated backup evidence is not eligible for `roll-forward-only` production promotion.
+Current implementation note: because `system-architecture-backup-recovery.md` still marks player-facing coordinated-backup readiness as incomplete until canonical `tenant_id + region_id` pause scope is enforced end-to-end, player-facing production `roll-forward-only` promotion is currently non-compliant in practice. CI/preflight must reject such promotions until that implementation note is removed.
 
 Pre-apply policy checks for staging and production must run through the canonical preflight contract in `system-architecture-deploy-preflight-policy.md`. Static checks run in overlay PR CI, and resolved-manifest/runtime checks run in operator preflight execution. Both use the same policy IDs and evidence shape.
 
@@ -294,7 +293,7 @@ FireMUD uses one deployment-evidence chain per deployment event so promotion, ro
    - hobby-self-hosted: `design/operations/deployments/hobby-self-hosted/deployments/<deployment-ref>.json`
 4. Production promotion references exactly one staging attestation at `design/operations/deployments/production/attestations/<deployment-ref>.json`.
 5. Production release publication references one release digest manifest at `design/operations/deployments/production/release-manifests/<release-tag-or-deployment-ref>.json`.
-6. Every production release records its compact recovery-compatibility result; if that result requires a drill or the release is `roll-forward-only`, production also references `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`.
+6. If the release is `roll-forward-only`, production also references `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`.
 
 Lifecycle rules:
 
@@ -378,8 +377,6 @@ Enforcement workflow contract:
   - `postgres-application-credentials`
   - `backup-object-store-credentials`
   - `operator-credentials`
-
-The `jwt-signing-keys-jwks` age record is necessary but not sufficient for JWT readiness. Any staging deployment used for production attestation, production promotion, or player-facing first-live/reopen evidence must also carry `PREFLIGHT-JWT-002=pass` and current `PREFLIGHT-JWT-ROTATION-001=pass` evidence proving Account-only asymmetric signing, validator convergence, planned rotation through pruning, and compromise hard cutover. The current executable preflight does not yet implement those checks, so mounted JWT/JWKS resources and a fresh credential-age record cannot be used to claim the player-facing JWT gate is satisfied.
 
 ---
 

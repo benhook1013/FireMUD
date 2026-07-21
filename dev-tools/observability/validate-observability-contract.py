@@ -22,21 +22,6 @@ CORE_ALERT_SNIPPET_PATHS = [
     GRAFANA_DIR / "player-experience-alerts-snippets.md",
     GRAFANA_DIR / "observability-stack-alerts-snippets.md",
 ]
-REQUIRED_BACKUP_RECORDINGS = {
-    "backup_pipeline_recent_backup_slo_breached",
-    "backup_pipeline_recent_verification_slo_breached",
-    "backup_pipeline_recent_restore_drill_slo_breached",
-    "backup_artifact_lineage_invalid",
-    "backup_artifact_restore_unreadable",
-    "recovery_participant_convergence_blocked",
-}
-CURRENT_BLOCKED_CONVERGENCE_EXPR = re.compile(
-    r'recovery_participant_convergence_state\s*\{\s*state\s*=\s*["\']blocked["\']\s*\}'
-)
-STALE_BLOCKED_CONVERGENCE_EXPR = re.compile(
-    r'recovery_participant_convergence_total\s*\{[^}]*result\s*=\s*["\']blocked["\']'
-)
-RESTORE_DRILL_30_DAY_EXPR = "backup_restore_drill_last_success_timestamp_seconds > 30 * 24 * 60 * 60"
 
 
 @dataclass(frozen=True)
@@ -238,6 +223,13 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
             if dotted_metric_issue:
                 findings.append(Finding(path=path, message=dotted_metric_issue))
 
+            if 'backup_tick_pause_duration_seconds{scope="all"}' in expr.replace(" ", ""):
+                findings.append(
+                    Finding(
+                        path=path,
+                        message="backup pause alerts must support scoped pauses; avoid hardcoding backup_tick_pause_duration_seconds{scope=\"all\"}",
+                    )
+                )
     return findings
 
 
@@ -513,9 +505,10 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
         "BackupPipelineNoRecentBackup",
         "BackupPipelineNoRecentVerification",
         "BackupPipelineNoRecentRestoreDrill",
-        "BackupArtifactLineageInvalid",
-        "BackupArtifactRestoreUnreadable",
-        "RecoveryParticipantConvergenceBlocked",
+        "BackupTickPauseTooLongScoped",
+        "BackupTickPauseWaitTooLongScoped",
+        "BackupTicksPausedTooLong",
+        "BackupPauseAliasScopeStillUsed",
         "LoginSuccessRatioLowGateway",
         "LoginSuccessRatioLowTcpProxy",
         "CommandLatencyP99HighGateway",
@@ -563,42 +556,6 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
     return findings
 
 
-def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
-    text = _read_text(path)
-    recordings_seen = set(re.findall(r"^\s*-\s*record:\s*(\S+)", text, re.MULTILINE))
-    missing_required = sorted(REQUIRED_BACKUP_RECORDINGS - recordings_seen)
-    findings: list[Finding] = []
-    if missing_required:
-        findings.append(
-            Finding(
-                path=path,
-                message=f"reference rules are missing required backup recordings: {', '.join(missing_required)}",
-            )
-        )
-    if not CURRENT_BLOCKED_CONVERGENCE_EXPR.search(text):
-        findings.append(
-            Finding(
-                path=path,
-                message="blocked convergence recording must use the current participant state gauge",
-            )
-        )
-    if STALE_BLOCKED_CONVERGENCE_EXPR.search(text):
-        findings.append(
-            Finding(
-                path=path,
-                message="blocked convergence recording must not use the cumulative convergence counter",
-            )
-        )
-    if RESTORE_DRILL_30_DAY_EXPR not in text:
-        findings.append(
-            Finding(
-                path=path,
-                message="restore-drill freshness must use the accepted 30-day baseline",
-            )
-        )
-    return findings
-
-
 def main() -> int:
     findings: list[Finding] = []
 
@@ -612,9 +569,7 @@ def main() -> int:
     findings.extend(_validate_grafana_dashboards(grafana_dir))
     findings.extend(_validate_kibana_saved_objects(REPO_ROOT / "design" / "observability" / "kibana"))
     findings.extend(_validate_doc_semantics())
-    prometheus_rules = REPO_ROOT / "k8s" / "monitoring" / "prometheus-rules-firemud.yaml"
-    findings.extend(_validate_reference_prometheus_recordings(prometheus_rules))
-    findings.extend(_validate_reference_prometheus_rules(prometheus_rules))
+    findings.extend(_validate_reference_prometheus_rules(REPO_ROOT / "k8s" / "monitoring" / "prometheus-rules-firemud.yaml"))
 
     if not findings:
         print("Observability contract validation: OK")
