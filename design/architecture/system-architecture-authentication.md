@@ -388,9 +388,9 @@ GET /auth/bootstrap/worlds/emberfall/realms/production/characters
 Authorization: Bearer <bootstrapToken>
 -> []
 
-POST /characters
+POST /auth/bootstrap/worlds/emberfall/realms/production/characters
 Authorization: Bearer <bootstrapToken>
-{ worldSlug: "emberfall", realmSlug: "production", name: "Mara", template: "human-fighter" }
+{ name: "Mara", template: "human-fighter" }
 -> { characterName: "Mara", characterId: "c7f4b18b-6eb5-4fd8-a906-c9606d17d4dc" }
 
 POST /auth/connect-token
@@ -413,9 +413,9 @@ Required postconditions for the explicit public-production join:
 
 Canonical character-creation contract for this flow:
 
-- The player-facing control-plane surface is `POST /characters` using the current bootstrap-authenticated account identity plus the selected `{worldSlug, realmSlug}` target.
-- Entity Management owns the underlying `CreateCharacter` semantics and persistence contract; Account Service/authentication docs define the admission prerequisites for when this route may be called.
-- `POST /characters` is allowed only after the caller has explicitly joined the public production game or already has the required membership/grant, and before `POST /auth/connect-token` / gameplay `PLAY` succeed for that new character.
+- The player-facing control-plane surface is Account-owned `POST /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters`, using the current bootstrap-authenticated account identity and path-resolved target.
+- Account validates the admission prerequisites and delegates the authorized internal write to Entity Management, which owns `CreateCharacter` semantics and persistence. Entity Management remains internal-only and exposes no direct player REST route.
+- The Account facade is allowed only after the caller has explicitly joined the public production game or already has the required membership/grant, and before `POST /auth/connect-token` / gameplay `PLAY` succeed for that new character.
 - The route must reject requests for realms that are not currently visible/admissible to the bootstrap-authenticated account.
 - The current realm-scoped backend creation substrate carries `{tenantId, accountId, name, gameInstanceId, playableStateScope}` into Entity Management. The richer player-facing descriptor for template/race/class/options is still a required product contract before first-party clients can render nontrivial character creation without game-specific assumptions.
 

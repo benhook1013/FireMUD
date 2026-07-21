@@ -25,6 +25,7 @@ internal_workload_rules:
 classifications:
   - public
   - account_scoped
+  - caller_membership_scoped
   - player_bootstrap_tenant
   - pre_tenant_discovery
   - public_production_onboarding
@@ -87,8 +88,8 @@ routes:
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
     canonical_errors:
       any_of: [JOIN_REQUIRED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE]
-  - service: entity-management-service
-    route: POST /characters
+  - service: account-service
+    route: POST /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters
     scope: tenant
     classification: public_production_onboarding
     auth_path: player_bootstrap
@@ -96,6 +97,7 @@ routes:
     tenant_billing_watermark_applies: false
     membership_watermark_applies: true
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements]
+    delegates_to: entity-management-service/CreateCharacter
   - service: game-session-service
     route: StartSession
     scope: tenant

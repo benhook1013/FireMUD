@@ -15,7 +15,7 @@ curl http://localhost:8080/ping
 ## gRPC
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `entity_management_service.proto`.
-- `CreateCharacter(CreateCharacterRequest) returns (CreateCharacterResponse)` – builds a new player character from a template.
+- `CreateCharacter(CreateCharacterRequest) returns (CreateCharacterResponse)` – internal character-persistence authority invoked by the Account-owned bootstrap character-creation facade after Account has authorized the caller and realm target. Entity Management does not expose a direct player REST route.
 - `UpdateEntity(UpdateEntityRequest) returns (UpdateEntityResponse)` – updates mutable character state for the requested `{tenantId, gameInstanceId, playableStateScope, characterId}` target. The service must reject missing or mismatched playable-state scope instead of updating by global character id alone.
 - `QueryInventory(QueryInventoryRequest) returns (QueryInventoryResponse)` – lists items for an entity with pagination. Current responses include `item_instance_id` and `visible_ref` for concrete item instances; quantity is present in the proto for forward compatibility, but stack merge behavior is still a later `06.3.2` follow-up.
 - `ListCharactersByAccount` – returns all characters owned by an account for the requested `{tenantId, gameInstanceId, playableStateScope}` gameplay target. Each returned `Character` now echoes the resolved `playableStateScope` so later consumers do not have to infer realm policy from the request or from hidden storage-key conventions.

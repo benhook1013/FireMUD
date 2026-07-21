@@ -34,9 +34,9 @@ The bounded path is partially implemented. Gateway accepts a header or cookie, r
 
 - Connect-token lifetime has a platform hard maximum of 30 seconds from issuance to `exp`. An issuer may shorten but not widen it, and Gateway independently rejects a declared lifetime above the maximum.
 - Gateway validates signature and key identity, issuer and audience, lifetime and expiry, required claims, and request routing scope before consuming the token.
-- Gateway atomically consumes `jti` in shared Cache/Rate-Limit Redis before attempting the upstream WebSocket connection. A replay marker remains until `exp` plus the bounded clock-skew allowance, covering the entire acceptance window.
+- Gateway atomically consumes `jti` in shared Coordination Redis before attempting the upstream WebSocket connection. The security-critical marker uses a non-evicting prefix, remains until `exp` plus the bounded clock-skew allowance, and must receive the configured replication/persistence acknowledgement before Gateway treats consumption as successful.
 - Consumption is final. If the backend connection or protocol upgrade subsequently fails, the client obtains a new connect token rather than retrying the spent token.
-- Unavailable or uncertain shared replay protection fails closed for new player-facing handshakes with `CONNECT_REPLAY_PROTECTION_UNAVAILABLE`. An explicitly configured local test profile may use isolated replay state with visible drift telemetry; no player-facing profile silently falls back to pod memory.
+- Unavailable or uncertain shared replay protection fails closed for new player-facing handshakes with `CONNECT_REPLAY_PROTECTION_UNAVAILABLE`. A Redis cold start, reset, failover, replication-acknowledgement failure, or other event that cannot prove marker continuity starts a shared admission quarantine lasting at least the 30-second token maximum plus clock skew; pre-event tokens expire before admission reopens. An explicitly configured local test profile may use isolated replay state with visible drift telemetry; no player-facing profile silently falls back to pod memory.
 
 ### Scope Handoff And Proxy Exception
 
@@ -49,7 +49,7 @@ The bounded path is partially implemented. Gateway accepts a header or cookie, r
 - URLs, browser history, access logs, and common proxy telemetry do not receive a query-carried bearer token.
 - Ambiguous credentials cannot exploit carrier precedence, and a stolen token can open at most one accepted handshake during its very short lifetime.
 - Horizontally scaled Gateway pods make one consistent replay decision. This costs one shared atomic Redis operation per non-proxy WebSocket handshake, not per WebSocket frame or gameplay action.
-- Replay Redis availability becomes a dependency for new player-facing connections. Existing admitted WebSockets continue, while new handshakes fail closed until protection recovers.
+- Coordination Redis replay-state availability and continuity become dependencies for new player-facing connections. Existing admitted WebSockets continue, while new handshakes fail closed until protection recovers and any required quarantine completes.
 - A transient upstream failure spends the token and requires one new issuance request. This is a deliberate bounded retry cost that avoids conditional un-consume semantics and replay races.
 - Browser and non-browser clients use different carriers but converge on the same verified context, `LOGIN`, and `PLAY` state machine.
 
@@ -76,7 +76,7 @@ Failing open improves connection availability during Redis incidents but turns a
 - Enforce the 30-second issuance and acceptance hard maximum, full required-claim profile, clock-skew bound, and `exp`-based replay-marker retention.
 - Reject multiple values within either carrier as well as dual carriers and query-only presentation.
 - Prove validation and scope comparison occur before atomic consumption, consumption occurs before upstream connection, and retries after post-consumption failure require a new token.
-- Prove Redis replay decisions are atomic across Gateway instances and that outage/capacity uncertainty fails closed outside explicitly classified local tests.
+- Prove Redis replay decisions are atomic across Gateway instances, receive the required durability acknowledgement, and remain unavailable through the full reset/failover quarantine whenever marker continuity is uncertain.
 - Strip the raw header and named cookie before upstream forwarding; prove Game Session accepts only the signed connect context on first-party handshakes.
 - Prove the proxy exception depends on the internal listener, exact authenticated TCP Proxy workload identity, trusted header promotion, and positive `trusted_tcp_proxy` mode.
 - Complete dedicated asymmetric connect-context signing, verification-key overlap, unknown-key refresh, and fail-closed rotation proof.

@@ -326,9 +326,10 @@ This section is the canonical source of truth for connect-token enforcement and 
   - After signature, issuer/audience, lifetime, required-claim, and request-scope validation succeeds, Gateway atomically consumes `jti` before opening the upstream WebSocket. The token is spent even if the subsequent upgrade or backend connection fails; a retry obtains a newly issued token.
   - Replay cache entries must expire automatically at `exp + small_skew`. The replay marker covers the complete token acceptance window and must not be shortened to a fixed 30 seconds from consumption.
   - Replay cache ownership is Gateway-only; downstream services do not participate in connect-token replay checks.
-  - Replay checks must be backed by shared Cache/Rate-Limit Redis (not per-pod memory) so `jti` replay decisions are consistent across horizontally scaled gateway pods.
+  - Replay checks must be backed by shared Coordination Redis (not Cache/Rate-Limit Redis or per-pod memory) so `jti` replay decisions are consistent across horizontally scaled gateway pods and cannot be selectively evicted.
   - Replay cache keys use `gateway:connect-token:jti:<jti>` and bounded cardinality with deterministic expiry at `exp + small_skew`.
-  - On replay-cache capacity pressure, gateway must emit overload metrics and continue fail-closed behavior for uncertain replay outcomes.
+  - The replay prefix is security-critical, non-evicting coordination state. Gateway treats consumption as successful only after the configured replication/persistence acknowledgement; capacity or acknowledgement failure rejects the handshake rather than accepting an uncertain marker.
+  - Coordination Redis cold start, reset, failover, or any other event that cannot prove replay-marker continuity starts a shared replay-protection quarantine for at least the 30-second token lifetime maximum plus clock skew. Gateway rejects new connect tokens until that barrier expires, so every token issued before the uncertain event is dead before admission reopens.
   - Replay-cache outage behavior:
     - Player-facing environments (`/ws/game/**` in `enforce` mode): fail closed with HTTP `403` and `CONNECT_REPLAY_PROTECTION_UNAVAILABLE` when replay protection is unavailable.
     - Non-player-facing dev/preview environments: fail-open is allowed only when explicitly configured for local iteration and must emit drift metrics.

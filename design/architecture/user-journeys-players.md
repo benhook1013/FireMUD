@@ -120,7 +120,7 @@ GET /auth/bootstrap/worlds
 GET /auth/bootstrap/worlds/emberfall/realms
 POST /auth/bootstrap/join { connectScopeId=cs_emberfall_production_v1, requestId=req-join-1 }
 GET /auth/bootstrap/worlds/emberfall/realms/production/characters
-POST /characters { world=emberfall, realm=production, name=Mara, template=human-fighter }
+POST /auth/bootstrap/worlds/emberfall/realms/production/characters { name=Mara, template=human-fighter }
 POST /auth/connect-token { connectScopeId=cs_emberfall_production_v1 }
 GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 LOGIN
@@ -129,7 +129,7 @@ OK PLAY Entered Emberfall / Live Realm as Mara
 ```
 
 After this first successful join, the player's account now has normal `player` membership for Emberfall, so later discovery no longer depends on public-production visibility alone.
-The player-facing character-creation call in this sequence is the canonical `POST /characters` surface backed by Entity Management's `CreateCharacter` contract. It is permitted only for the currently bootstrap-visible realm target and must complete before the new character is admissible through `PLAY`. The currently resolved backend substrate covers realm scope and creation policy; the remaining product contract is a richer character-creation descriptor that tells first-party clients which template/race/class/options to render for a given published game version.
+The player-facing character-creation call in this sequence is the Account-owned `POST /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters` facade backed by Entity Management's internal `CreateCharacter` contract. It is permitted only for the currently bootstrap-visible realm target and must complete before the new character is admissible through `PLAY`. The currently resolved backend substrate covers realm scope and creation policy; the remaining product contract is a richer character-creation descriptor that tells first-party clients which template/race/class/options to render for a given published game version.
 Any non-production realm shown in fork/playtest examples is assumed to already be grant-visible to that caller; non-public realms are not publicly discoverable by default.
 
 ---
