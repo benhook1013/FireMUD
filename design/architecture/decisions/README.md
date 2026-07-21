@@ -16,7 +16,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | --- | --- | --- | --- | --- |
 | [ADR 0001](./adr-0001-scripting-event-ingress-idempotency-identity.md) | Superseded | `AS-1` | `SF-1`, `SF-2` | Historical flat scripting trigger identity |
 | [ADR 0002](./adr-0002-automation-handoff-reliability-and-success-semantics.md) | Accepted | `AS-1` | `GR-1`, `SF-2`, `PO-4` | Durable automation-to-tick handoff and success semantics |
-| [ADR 0003](./adr-0003-reload-backpressure-and-retry-contract.md) | Accepted | `AS-1` | `AR-3`, `GR-1`, `PO-4` | Reload backpressure, bounded retry, and timer behavior |
+| [ADR 0003](./adr-0003-reload-backpressure-and-retry-contract.md) | Superseded | `AS-1` | `AR-3`, `GR-1`, `PO-4` | Historical generic reload retry contract |
 | [ADR 0004](./adr-0004-gameplay-reroute-vs-backend-unavailable.md) | Superseded by ADR 0007 | `PO-2` | `AA-2`, `GR-1`, `PO-4` | Historical distinct reroute close taxonomy |
 | [ADR 0005](./adr-0005-tenant-identifiers-in-gameplay-protocol.md) | Superseded | `AA-3` | `EA-1`, `SF-1` | Superseded tenant/world selector boundary |
 | [ADR 0006](./adr-0006-gameplay-shard-routing-key-transport.md) | Withdrawn; superseded by ADR 0007 | `PO-2` | `AA-3`, `GR-1`, `SF-1` | Historical client-carried gameplay shard routing proposal |
@@ -181,6 +181,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0165](./adr-0165-fenced-command-forwarding-and-authoritative-region-transition.md) | Accepted | `GR-1` | `AA-2`, `SF-1`, `SF-2`, `PO-2` | Fenced command forwarding and authoritative region transition |
 | [ADR 0166](./adr-0166-separated-redis-role-processes-and-owned-keyspaces.md) | Accepted | `SF-2` | `GR-1`, `AA-2`, `AS-1`, `PO-3`, `PO-4` | Separated Redis role processes and owned keyspaces |
 | [ADR 0167](./adr-0167-parent-event-and-frozen-handler-execution-identity.md) | Accepted | `AS-1` | `SF-1`, `SF-2`, `GR-1` | Parent event and frozen handler execution identity |
+| [ADR 0168](./adr-0168-registry-classified-reload-admission-policy.md) | Accepted | `AS-1` | `AR-3`, `GR-1`, `PO-4` | Registry-classified reload admission policy |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

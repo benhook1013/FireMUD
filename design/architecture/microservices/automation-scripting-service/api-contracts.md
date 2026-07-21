@@ -130,10 +130,12 @@ These ingress response fields are event-scope only. A successful ingress admissi
 
 Event-scope admission outcomes are intentionally limited to ingress-time fences such as reload/rollback backpressure, version visibility, pin visibility, signer-policy visibility, and event-registry validation. These pre-resolution outcomes are recorded in `script_event_ingress_audit`; handler-scoped outcomes such as `quota_denied`, `script_disabled`, `plugin_disabled`, and `plugin_component_blocked` are recorded only after binding resolution in `script_event_audit`.
 
-For retry behavior:
+Reload behavior is selected by the event registry rather than an implicit event-name list:
 
-- Low-rate external events may retry with the same `scriptEventId` using bounded exponential backoff and jitter with explicit `maxAttempts` and `maxElapsedMs`.
-- Timer-derived scheduler events use best-effort timer semantics; triggers not admitted during reload are not backfilled unless explicitly covered by a bounded catch-up rule.
+- `REJECT_VISIBLE` returns explicit temporary rejection for current intent such as `onCommand`; the platform does not queue it for delayed automatic execution.
+- `DURABLE_RETRY` requires the named owning producer to retain and retry the same parent identity with bounded expiry/elapsed time, exponential backoff, and jitter.
+- `SKIP_RECONCILE` records the skip and applies the event's declared reconciliation/catch-up behavior. Best-effort timer events are not generally backfilled.
+- Backpressure is a transient attempt, not a permanent terminal consumption of the logical event identity. Attempt audit or a monotonic `BACKPRESSURED -> ADMITTED` transition must preserve the same request digest and version/fence.
 - Event-ingress response fields (`admitted`, `admissionOutcome`, `admissionReason`, `retryAfterMs`) and enum values are normative API contract and must align with [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md).
 
 ## Script Patch and Plugin Visibility APIs

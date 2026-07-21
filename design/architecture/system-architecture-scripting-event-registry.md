@@ -42,6 +42,7 @@ Each entry must define at least:
 - `consistencyClass`
 - `quotaClass`
 - `replaySemantics`
+- `reloadAdmissionPolicy`
 - `allowedBindingScopes`
 - `dryRunSupport`
 - `deprecationStatus`
@@ -72,6 +73,9 @@ Required semantics for those fields:
   - Current built-in classes are `STANDARD_RUNTIME` for ordinary live gameplay/scheduler work and `PUBLISH_READINESS` for tenant-readiness `onLoad`.
 - `replaySemantics`
   - Whether duplicate ingress is expected to be idempotent, rejected, or coalesced.
+- `reloadAdmissionPolicy`
+  - Exactly one of `REJECT_VISIBLE`, `DURABLE_RETRY`, or `SKIP_RECONCILE` as defined by [ADR 0168](./decisions/adr-0168-registry-classified-reload-admission-policy.md).
+  - `DURABLE_RETRY` also declares the producer, maximum elapsed time/expiry, and stable parent-event identity behavior. Timer families retain their separate catch-up and continuity contract.
 - `allowedBindingScopes`
   - Which target scopes are legal for handlers of this event, such as `ENTITY`, `REGION`, `GLOBAL`, or `COMMAND_ALIAS`.
 - `dryRunSupport`
@@ -114,6 +118,7 @@ Minimum read payload:
 - snapshot authority and consistency class
 - quota class
 - replay semantics
+- reload admission policy
 - allowed binding scopes
 - deprecation status
 - last changed timestamp

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR 0168](./adr-0168-registry-classified-reload-admission-policy.md).
 
 ## Context
 

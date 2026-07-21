@@ -21,6 +21,8 @@ The bounded implementation slices recorded here are complete at their stated bou
 
 ## Canonical Design Sources
 
+Adversarial review of `AUTO-03` found that the current implementation does not yet expose the canonical post-pin `RELOADING` admission state or `retryAfterMs`, permanently memoizes current ingress denials, and does not implement registry-classified producer behavior. The existing `AS-1.6` proof covers bounded readiness/plugin/admission seams, not ADR 0168's reload barrier or transient-denial retry lifecycle.
+
 - [Scripting overview](../../architecture/system-architecture-scripting.md), [runtime execution](../../architecture/system-architecture-scripting-runtime-execution.md), and [scheduler and timers](../../architecture/system-architecture-scripting-scheduler-and-timers.md) define the canonical runtime model.
 - [Scripting event registry](../../architecture/system-architecture-scripting-event-registry.md) defines built-in event ownership, binding scopes, identity, and payload schemas.
 - [Scripting quotas and operations](../../architecture/system-architecture-scripting-quotas-and-operations.md) and the [observability contract](../../architecture/system-architecture-scripting-observability-contract.md) define execution limits and operator signals.
