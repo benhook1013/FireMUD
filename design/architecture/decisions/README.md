@@ -179,6 +179,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 | [ADR 0163](./adr-0163-snapshot-bound-lobby-selectors-and-stable-realm-identity.md) | Accepted | `AA-3` | `AA-2`, `SF-1` | Snapshot-bound lobby selectors and stable realm identity |
 | [ADR 0164](./adr-0164-exclusive-environment-bound-tcp-proxy-trust.md) | Accepted | `SF-1` | `PO-2`, `PO-3` | Exclusive environment-bound TCP Proxy trust |
 | [ADR 0165](./adr-0165-fenced-command-forwarding-and-authoritative-region-transition.md) | Accepted | `GR-1` | `AA-2`, `SF-1`, `SF-2`, `PO-2` | Fenced command forwarding and authoritative region transition |
+| [ADR 0166](./adr-0166-separated-redis-role-processes-and-owned-keyspaces.md) | Accepted | `SF-2` | `GR-1`, `AA-2`, `AS-1`, `PO-3`, `PO-4` | Separated Redis role processes and owned keyspaces |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 

@@ -54,7 +54,7 @@ FireMUD runs two logical Redis roles in all non‑trivial environments:
     - `ratelimit:<tenantId>:<bucket>:<timeWindow>[:<shard>]`
     - `automation:queue:{tenantInstanceTag}:<entityId>` and automation quota counters.
 
-Coordination Redis and Cache/Rate‑Limit Redis are treated as **separate deployments** in all persistent, player-facing environments so cache eviction/pressure cannot silently impact coordination SLOs. The only supported exception is explicitly ephemeral test/CI stacks that opt out of tail-loss and role-separation guarantees; those stacks may collapse roles temporarily, but must be clearly labelled as ephemeral and must not be used to validate coordination behavior or SLOs. See [Environment Profiles and Mappings](#environment-profiles-and-mappings) for details.
+Coordination Redis and Cache/Rate‑Limit Redis are treated as **separate processes and endpoints** in all persistent, player-facing environments so cache eviction/pressure cannot silently impact coordination SLOs. They may be two containers or processes on the same hobby host or cluster node; separate hardware is not required. The only supported exception is explicitly ephemeral test/CI stacks that opt out of tail-loss and role-separation guarantees; those stacks may collapse roles temporarily, but must be clearly labelled as ephemeral and must not be used to validate coordination behavior or SLOs. See [ADR 0166](./decisions/adr-0166-separated-redis-role-processes-and-owned-keyspaces.md) and [Environment Profiles and Mappings](#environment-profiles-and-mappings).
 
 New prefixes must declare:
 
