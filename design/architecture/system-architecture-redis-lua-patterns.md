@@ -53,7 +53,7 @@ Before authoring or reviewing a new script, use this quick checklist:
   - Lock and lease operations treat repeated acquire/refresh calls as no-ops with stable outcomes.
   - Queue/timer/effect insertion uses set-style semantics to avoid duplicate entries on replay.
 - Error outcomes are explicit and non-mutating (for example `"STALE_LEASE"`, `"STALE_LOCK"`, `"SESSION_VERSION_MISMATCH"`); callers can safely retry or escalate based on return codes.
-- The script has an entry in the **Lua Script Registry** (in `firemud-common`) that describes:
+- The owning service contributes an entry to the aggregated **Lua Script Registry** through the shared Redis-contract schema that describes:
   - Key roles and order (`KEYS[1]`, `KEYS[2]`, etc.).
   - Allowed prefixes and hash-tag assumptions.
   - The script category and whether it is single-key or shard-local multi-key.
@@ -137,7 +137,7 @@ Many coordination structures stored in Redis (for example `tick:{tenantRegionTag
 
 Not every mutating script participates in the same coordination context. For clarity and review, scripts are grouped into a small set of categories, each with its own validation rules.
 
-The **Lua Script Registry** in `firemud-common` records, for each script:
+The aggregated **Lua Script Registry** records each owner-contributed script descriptor through the shared Redis-contract schema:
 
 - The script name and category (for example `region_lease_tick`, `session_only`, `automation_queue`, `maintenance`).
 - The expected key roles and order (`KEYS[1] = lockKey`, `KEYS[2] = pendingKey`, etc.).
@@ -378,7 +378,7 @@ Script changes must be rolled out in a way that respects both AOF replay semanti
 
 ## Lua Script Registry and CI Expectations
 
-All coordination-related Lua scripts live in a **Lua Script Registry** in the shared library. For each script, the registry records:
+All coordination-related Lua scripts have owner-contributed descriptors aggregated into one **Lua Script Registry**. Executable source remains with its exclusive owning service; only a mutation used by multiple independently deployed callers moves into the shared Redis-contract module. For each script, the registry records:
 
 - Script identifier and file path.
 - Expected `KEYS` and `ARGV` ordering and allowed prefixes (including hash-tag rules).
@@ -389,7 +389,7 @@ All coordination-related Lua scripts live in a **Lua Script Registry** in the sh
   - `tail_loss_behavior` describing what is expected to happen if the script’s writes are lost or replayed within the tail-loss envelope (for example “pure lease; safe to lose”, “can enqueue duplicates; relies on domain idempotency”, “must not silently drop without a corresponding ledger row”).
 - Shard-locality metadata for multi-key scripts, including whether all `KEYS` must share the same `{tenantRegionTag}` hash tag and slot.
 
-The registry descriptors are sufficient to **drive a generic test harness**: any coordination script must be invokable in isolation using only the registry metadata (script identifier, expected `KEYS`/`ARGV`, and allowed prefixes). Callers must not hard-code key names or slots that diverge from the registry.
+The registry descriptors are sufficient to **drive a generic test harness** over owner-local or genuinely shared sources: any coordination script must be invokable in isolation using the registry metadata (script identifier, expected `KEYS`/`ARGV`, and allowed prefixes). Callers must not hard-code key names or slots that diverge from their owner descriptor.
 
 CI enforces the following invariants for registered scripts:
 
