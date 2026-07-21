@@ -120,6 +120,7 @@ Any HTTP/gRPC route that depends on identity, roles, or tenant scoping must be p
 | --- | --- | --- | --- | --- |
 | Public | *(none)* | *(none)* | No | *(none)* |
 | Account-scoped | One matching token record for the exact profile declared by the route | Require authenticated caller; enforce subject binding (`accountId` path/body must match caller) unless route explicitly allows `platformAdmin` override | No | No tenant scope for auth |
+| Caller-membership-scoped | One matching token record for the exact profile declared by the route | Bind the subject to the authenticated caller and require a live current membership for the selected tenant; any current membership role may perform the explicitly allowlisted self-lifecycle action | No tenant-billing watermark; yes membership watermark | Used only for caller-owned membership lifecycle such as leaving a game. It accepts no arbitrary account target and no global-role override |
 | `player_bootstrap_tenant` | One matching `player-bootstrap` token record | Require the `player-bootstrap` token profile for the authenticated account | No tenant-billing watermark; membership generation/watermark applies where declared | Used only for gameplay bootstrap routes such as `POST /auth/connect-token`; `IssueConnectToken` must use current caller-bound membership generation/watermark plus live membership, entitlement, and admission-pointer checks |
 | `public_production_onboarding` | No JWT for in-band commands; otherwise the exact route-declared profile | Require explicit caller-bound join before character creation, connect-token issuance, or `PLAY` | No tenant-billing watermark before join; membership generation/watermark applies after join | Public-production discovery may precede membership, but join creates the durable Account-owned membership and does not grant gameplay authority from global roles |
 | Pre-tenant discovery | No JWT for in-band commands; otherwise one matching record for the exact route-declared profile | Require authenticated caller; no caller-supplied `tenantId` is trusted yet | No | Used only for authenticated lobby/discovery surfaces such as `WORLDS`; services must derive visible tenants by filtering authoritative membership/entitlement data server-side. Global roles do not widen gameplay discovery. |
@@ -267,7 +268,7 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
   - Replay cache owner: Gateway.
   - Replay key format: `gateway:connect-token:jti:<jti>`.
   - Replay TTL: through `exp + bounded_skew`, covering the token's complete acceptance window.
-  - Capacity policy: bounded cardinality with deterministic eviction (`oldest-expiry-first`) and overload metrics when capacity limits are reached.
+  - Capacity policy: bounded cardinality with expired-marker cleanup and overload metrics. Gateway must never evict an unexpired marker; when capacity cannot be reclaimed without doing so, new connect admission fails closed with `CONNECT_REPLAY_PROTECTION_UNAVAILABLE` until capacity recovers.
 - Enforcement:
   - `/ws/game/**` is the only gameplay WebSocket route.
   - Non-proxy gameplay clients must present a valid connect token; missing, invalid, expired, replayed, scope-mismatched, or replay-protection-unavailable token state is rejected with HTTP `403` and the bounded handshake classes defined in [Reconnection Strategy](./system-architecture-reconnection.md#http-handshake-failures-on-ws-game).
@@ -653,7 +654,7 @@ The Gateway sits at the edge of the platform and is deliberately **not** an auth
 
 When adding a new public HTTP/gRPC route:
 
-- Classify it using the shared classes from [Authorization Route Matrix](./system-architecture-authz-route-matrix.md): `public`, `account_scoped`, `player_bootstrap_tenant`, `pre_tenant_discovery`, `public_production_onboarding`, `tenant_regular`, `billing_safe_tenant`, `cross_tenant_support_safe`, `cross_tenant_billing_safe`, `cross_tenant_data_bearing`, or `internal_workload`.
+- Classify it using the shared classes from [Authorization Route Matrix](./system-architecture-authz-route-matrix.md): `public`, `account_scoped`, `caller_membership_scoped`, `player_bootstrap_tenant`, `pre_tenant_discovery`, `public_production_onboarding`, `tenant_regular`, `billing_safe_tenant`, `cross_tenant_support_safe`, `cross_tenant_billing_safe`, `cross_tenant_data_bearing`, or `internal_workload`.
 - For all non-public routes, require `AuthTokenInterceptor` and the Tenant Authorization Contract described above.
 - For tenant-scoped routes that must remain reachable when a tenant is `suspended` or `canceled` for billing (for example, updating payment methods, viewing invoices, or tenant-scoped data export), explicitly mark them as **billing-safe control-plane routes** using a shared mechanism such as an annotation or route metadata flag (for example, `@BillingSafe`). Full account export remains `account_scoped` and must not be used as the suspended-tenant recovery export.
 - Log and audit cross-tenant operations, especially when initiated by roles such as `platformAdmin`, so misuse or misconfiguration is observable.

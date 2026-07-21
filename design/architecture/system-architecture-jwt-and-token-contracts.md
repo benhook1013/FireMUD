@@ -4,7 +4,7 @@ This document defines the JWT profiles, claim requirements, issued-token registr
 
 Each revocable `control-ui`, `player-bootstrap`, or receiver-specific private player-delegation JWT has exactly one Account-owned Coordination Redis record: `session:auth:token:<tokenHash>`.
 
-`tokenHash` is a fixed-length SHA-256 digest of the complete compact JWT. The bounded versioned record contains `accountId`, exact token profile/audience, `jti`, `iat`, `exp`, issuance/refresh generation, and active state. It proves that Account issued this exact still-active token but does not duplicate tenant/global roles from its signed claims. Account creates the record before returning the token; registration failure means issuance failure.
+`tokenHash` is a fixed-length SHA-256 digest of the complete compact JWT. The bounded versioned record contains `accountId`, exact token profile/audience, `jti`, `iat`, `exp`, the JWT's `tokenGeneration`, and active state. It proves that Account issued this exact still-active token but does not duplicate tenant/global roles from its signed claims. Account creates the record before returning the token; registration failure means issuance failure.
 
 The record uses an absolute TTL derived from the JWT expiry so operators do not tune separate JWT and auth-session expiry knobs:
 
@@ -20,7 +20,7 @@ This document defines target-state token and revocation behavior. The current ru
 
 Token validity semantics:
 
-- A JWT must be cryptographically valid (signature, required claims `iss`, `sub`, `jti`, `accountId`, `aud`, `iat`, `nbf`, `exp`, and expected token profile audience) and must have one matching `session:auth:token:<tokenHash>` record in Coordination Redis whose account, profile, `jti`, generation, and time fields agree with the verified claims.
+- A JWT must be cryptographically valid (signature, required claims `iss`, `sub`, `jti`, `accountId`, `aud`, `iat`, `nbf`, `exp`, `tokenGeneration`, and expected token profile audience) and must have one matching `session:auth:token:<tokenHash>` record in Coordination Redis whose account, profile, `jti`, `tokenGeneration`, and time fields agree with the verified claims.
 - For tenant or cross-tenant operations, the requested operation must then be authorized from the validated `scopedRoles` or `globalRoles` claims plus the applicable Account-owned revocation/version state. The issued-token record does not grant scope independently.
 - Coordination Redis therefore acts as a server-side issued-token registry and immediate per-token revocation surface: deleting the one record revokes a still-unexpired JWT; coordination resets that drop `session:auth:*` force re-authentication.
 - The single-use connect token and Gateway signed connect context use their separate bounded replay/verification contracts and do not create Account issued-token records.
@@ -124,10 +124,15 @@ Services must enforce this claim contract before role/tenant authorization:
 | `iat` | Required | Required | Required | UTC epoch seconds |
 | `nbf` | Required | Required | Required | Token not usable before this time |
 | `exp` | Required | Required | Required | Token unusable after this time |
+| `tokenGeneration` | Required | Required | Required | Positive integer for this token's issuance/refresh lineage; the registry value must match exactly. Initial issuance starts a lineage at `1`, and replacement within that lineage increments it |
 | `globalRoles` | Optional | Optional | Optional | Empty list when none |
 | `scopedRoles` | Optional | Optional | Optional | Empty map when none |
 
 Tokens that omit required claims, have malformed claim types, or present an unexpected `aud` for the endpoint profile must be rejected before route classification.
+
+`tokenGeneration` is distinct from Account-owned issuer/account/tenant/membership revocation authority. It binds refresh/replacement ordering for one token lineage; it does not grant scope or replace current revocation checks.
+
+The only registry-absence exceptions are no-op retry classifications on the two logout endpoints. `AuthLogout` may return idempotent success after full local signature/profile/time/subject validation when the exact presented token record is already absent; it must create no authorization context or additional mutation. `AuthLogoutAll` may return idempotent success without normal registry authorization only when durable Account authority proves a prior logout-all already superseded the presented token. A current or ambiguous token without matching registry state remains denied. These exceptions cannot be reused by any other route.
 
 JWT verification model (normative):
 

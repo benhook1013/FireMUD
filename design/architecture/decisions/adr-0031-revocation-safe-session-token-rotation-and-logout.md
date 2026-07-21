@@ -36,6 +36,7 @@ The current target already requires periodic refresh, atomic binding replacement
 ### Per-Token Logout
 
 - `POST /auth/logout` revokes only the presented `control-ui` JWT or `player-bootstrap` token and is idempotent when its issued-token registry record is already absent.
+- The first logout attempt uses normal registry-backed authorization. A retry may return no-op success after full local signature, profile, time, and subject validation when the exact presented token record is absent; that exception creates no authorization context and performs no mutation beyond the already-complete revocation. Invalid, expired, wrong-profile, or ambiguous tokens remain denied.
 - Other devices and unrelated gameplay bindings for the account remain active.
 - A first-party player UI performs its local/device logout sequence separately: stop reconnect, gameplay `LOGOUT`, close the socket, revoke the current bootstrap token, and clear local state. Account does not locate gameplay sockets from the per-token endpoint.
 - The audit action is explicitly `token_logout` and records bounded actor, account, token-profile/hash identifier, request, and outcome metadata without the raw token.
@@ -45,6 +46,7 @@ The current target already requires periodic refresh, atomic binding replacement
 - `POST /auth/logout-all` commits a durable account-wide logout event and distinct `account_logout_all` audit record, then idempotently projects `session:auth:revoked_after:account:<accountId>` to the new logout generation.
 - The account watermark, not deletion of every token record, is immediate correctness authority. Bounded background cleanup may remove older token records.
 - Logout-all is idempotently successful when no live tokens remain.
+- The first logout-all attempt uses normal registry-backed authorization. A retry whose registry record or account-generation check no longer passes may return no-op success only when durable Account authority proves that a prior logout-all generation/event already superseded the presented token. It must not advance authority or mutate state from this retry path; current or ambiguous tokens remain denied.
 - The event terminates all control-plane tokens, player-bootstrap tokens, and active gameplay bindings for the account across tenants through ADR 0030. A later deliberate login with fresh credentials starts a new generation normally.
 - Password reset, security lock, and other account-wide revocations use distinct audit/event action types even when they share the same watermark mechanism.
 

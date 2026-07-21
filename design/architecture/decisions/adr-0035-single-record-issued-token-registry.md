@@ -26,14 +26,14 @@ The current implementation writes account and tenant keys but does not consisten
 
 - Account Service creates exactly one Coordination Redis record for each issued `control-ui`, `player-bootstrap`, or receiver-specific private player-delegation JWT: `session:auth:token:<tokenHash>`.
 - `tokenHash` is a fixed-length SHA-256 digest of the complete compact JWT. Raw token contents never appear in Redis keys, values, logs, metrics, traces, or audit evidence.
-- The bounded record contains `schemaVersion`, `accountId`, exact token profile/audience, `jti`, `iat`, `exp`, issuance/refresh generation, and active state. It does not duplicate tenant-role maps or global-role grants from the signed token.
+- The bounded record contains `schemaVersion`, `accountId`, exact token profile/audience, `jti`, `iat`, `exp`, the JWT's positive `tokenGeneration`, and active state. It does not duplicate tenant-role maps or global-role grants from the signed token.
 - Its absolute expiry is the JWT `exp` plus the bounded validation-skew/safety margin. Activity does not extend it.
 - Account atomically establishes the record before returning the JWT. If registration fails, issuance fails and the token is never exposed to the caller.
 
 ### Validation And Authorization
 
 - A consumer first validates signature and `kid`, issuer, exact audience/profile, required claims, time bounds, and claim types locally.
-- A protected control-plane or admission operation then performs one issued-token registry lookup and verifies that the record matches the token hash, account, profile, `jti`, generation, and time claims. Missing or mismatched state denies the token.
+- A protected control-plane or admission operation then performs one issued-token registry lookup and verifies that the record matches the token hash, account, profile, `jti`, `tokenGeneration`, and time claims. Missing or mismatched state denies the token, except for the bounded no-op logout retry classifications defined by ADR 0031.
 - The registry proves that Account issued this exact still-active token; it does not independently grant tenant or global authority. Consumers authorize the requested scope from the validated token profile/claims and the separate Account-owned revocation/version contract reviewed under JWT-02.
 - Registry lookup is not part of ordinary gameplay-command processing. Gameplay-domain delegation retains the mTLS workload and typed execution-context boundary from ADR 0024.
 
