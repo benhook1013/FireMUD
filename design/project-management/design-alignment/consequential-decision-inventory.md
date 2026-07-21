@@ -107,8 +107,8 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
 | 5 | Gameplay and player experience | 21 | 21 | `completed` |
 | 6 | Operations and delivery | 25 | 25 | `completed` |
-| 7 | Existing ADR-backed and lower-risk remainder | 12 | 17 | `in-progress` |
-| **Total** | | **174** | **183** | `in-progress` |
+| 7 | Existing ADR-backed and lower-risk remainder | 13 | 17 | `in-progress` |
+| **Total** | | **175** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -350,7 +350,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `AUTO-03` — `revised` on 2026-07-21; [ADR 0168](../../architecture/decisions/adr-0168-registry-classified-reload-admission-policy.md)
 - [x] `GRPC-02` — `revised` on 2026-07-21; [ADR 0169](../../architecture/decisions/adr-0169-maturity-scoped-protobuf-compatibility.md)
 - [x] `CMD-01` — `accepted` on 2026-07-21; clarified in [Player Command Model](../../architecture/system-architecture-player-command-model.md)
-- [ ] `CMD-06`
+- [x] `CMD-06` — `revised` on 2026-07-21; [ADR 0170](../../architecture/decisions/adr-0170-release-pinned-command-capabilities-and-private-history.md)
 - [ ] `LIB-01`
 - [ ] `OPS-01`
 - [ ] `OPS-05`
