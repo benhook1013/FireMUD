@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.util.Optional;
-import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.gamedesign.entity.GameSettingsOverride;
 import net.firedevops.firemud.gamedesign.repository.GameSettingsOverrideRepository;
@@ -18,12 +17,7 @@ class SettingsAuthorityServiceImplTest {
   private final GameSettingsOverrideRepository repository =
       Mockito.mock(GameSettingsOverrideRepository.class);
   private final SettingsAuthorityServiceImpl service =
-      new SettingsAuthorityServiceImpl(
-          repository,
-          Mockito.mock(ObjectMapper.class),
-          new FiremudReconnectionProperties(
-              new FiremudReconnectionProperties.Policy(45_000L, true),
-              new FiremudReconnectionProperties.Buffer(60_000L, 256, 8, 24, 16_384, 65_536)));
+      new SettingsAuthorityServiceImpl(repository, Mockito.mock(ObjectMapper.class));
 
   @ParameterizedTest
   @ValueSource(ints = {-1, 0, 21})
@@ -97,13 +91,13 @@ class SettingsAuthorityServiceImplTest {
   }
 
   @Test
-  void rejectsSparseReconnectByteBoundsAgainstEffectiveDefaultsBeforePersistence() {
+  void rejectsExplicitReconnectByteBoundsBeforePersistence() {
     ScopedSettingsOverrides overrides =
         new ScopedSettingsOverrides(
             new ScopedSettingsOverrides.ReconnectionOverride(
                 null,
                 new ScopedSettingsOverrides.ReconnectionOverride.BufferOverride(
-                    null, null, null, null, 70_000, null)),
+                    null, null, null, null, 70_000, 65_536)),
             null,
             null,
             null,
@@ -136,12 +130,7 @@ class SettingsAuthorityServiceImplTest {
                 "tenant-reconnection", ScopedSettingsOverrides.ReconnectionOverride.class))
         .thenReturn(tenantOverride);
     SettingsAuthorityServiceImpl gameInstanceService =
-        new SettingsAuthorityServiceImpl(
-            repository,
-            objectMapper,
-            new FiremudReconnectionProperties(
-                new FiremudReconnectionProperties.Policy(45_000L, true),
-                new FiremudReconnectionProperties.Buffer(60_000L, 256, 8, 24, 16_384, 65_536)));
+        new SettingsAuthorityServiceImpl(repository, objectMapper);
     ScopedSettingsOverrides overrides =
         new ScopedSettingsOverrides(
             new ScopedSettingsOverrides.ReconnectionOverride(

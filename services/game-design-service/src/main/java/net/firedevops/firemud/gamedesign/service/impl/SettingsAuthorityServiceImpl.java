@@ -4,7 +4,6 @@ import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
-import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamedesign.entity.GameSettingsOverride;
@@ -21,7 +20,6 @@ import tools.jackson.databind.ObjectMapper;
 public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
   private final GameSettingsOverrideRepository repository;
   private final ObjectMapper objectMapper;
-  private final FiremudReconnectionProperties reconnectionDefaults;
 
   @Override
   @Transactional(readOnly = true)
@@ -211,77 +209,57 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
     if (buffer.hardMaxBytes() != null && buffer.hardMaxBytes() < 1) {
       throw new IllegalArgumentException("Reconnection buffer hardMaxBytes must be positive");
     }
-    FiremudReconnectionProperties inherited =
-        inheritedReconnectionDefaults(tenantId, gameInstanceId);
-    FiremudReconnectionProperties effective = merge(inherited, reconnection);
-    if (effective.buffer().hardMaxBytes() < effective.buffer().softMaxBytes()) {
+    validatePersistedReconnectionByteBounds(reconnection, tenantId, gameInstanceId);
+  }
+
+  private void validatePersistedReconnectionByteBounds(
+      ScopedSettingsOverrides.ReconnectionOverride candidate,
+      String tenantId,
+      Long gameInstanceId) {
+    if (gameInstanceId != null) {
+      ScopedSettingsOverrides.ReconnectionOverride tenantOverride =
+          repository
+              .findByTenantIdAndGameInstanceIdIsNullAndDomain(
+                  tenantId, ScopedSettingsOverrides.SettingsDomain.RECONNECTION.name())
+              .map(
+                  row ->
+                      deserialize(
+                          row.getPayload(), ScopedSettingsOverrides.ReconnectionOverride.class))
+              .orElse(null);
+      validatePersistedReconnectionByteBounds(tenantOverride, candidate);
+      return;
+    }
+
+    validatePersistedReconnectionByteBounds(null, candidate);
+  }
+
+  private void validatePersistedReconnectionByteBounds(
+      ScopedSettingsOverrides.ReconnectionOverride parent,
+      ScopedSettingsOverrides.ReconnectionOverride child) {
+    Integer softMaxBytes = inheritedSoftMaxBytes(parent, child);
+    Integer hardMaxBytes = inheritedHardMaxBytes(parent, child);
+    if (softMaxBytes != null && hardMaxBytes != null && hardMaxBytes < softMaxBytes) {
       throw new IllegalArgumentException(
           "Reconnection buffer hardMaxBytes must be at least softMaxBytes");
     }
   }
 
-  private FiremudReconnectionProperties inheritedReconnectionDefaults(
-      String tenantId, Long gameInstanceId) {
-    if (gameInstanceId == null) {
-      return reconnectionDefaults;
+  private Integer inheritedSoftMaxBytes(
+      ScopedSettingsOverrides.ReconnectionOverride parent,
+      ScopedSettingsOverrides.ReconnectionOverride child) {
+    if (child != null && child.buffer() != null && child.buffer().softMaxBytes() != null) {
+      return child.buffer().softMaxBytes();
     }
-    return repository
-        .findByTenantIdAndGameInstanceIdIsNullAndDomain(
-            tenantId, ScopedSettingsOverrides.SettingsDomain.RECONNECTION.name())
-        .map(
-            row ->
-                deserialize(row.getPayload(), ScopedSettingsOverrides.ReconnectionOverride.class))
-        .filter(override -> !override.isEmpty())
-        .map(override -> mergeIfValid(reconnectionDefaults, override))
-        .orElse(reconnectionDefaults);
+    return parent == null || parent.buffer() == null ? null : parent.buffer().softMaxBytes();
   }
 
-  private FiremudReconnectionProperties mergeIfValid(
-      FiremudReconnectionProperties base, ScopedSettingsOverrides.ReconnectionOverride override) {
-    FiremudReconnectionProperties effective = merge(base, override);
-    return effective.buffer().hardMaxBytes() >= effective.buffer().softMaxBytes()
-        ? effective
-        : base;
-  }
-
-  private FiremudReconnectionProperties merge(
-      FiremudReconnectionProperties base, ScopedSettingsOverrides.ReconnectionOverride override) {
-    if (override == null) {
-      return base;
+  private Integer inheritedHardMaxBytes(
+      ScopedSettingsOverrides.ReconnectionOverride parent,
+      ScopedSettingsOverrides.ReconnectionOverride child) {
+    if (child != null && child.buffer() != null && child.buffer().hardMaxBytes() != null) {
+      return child.buffer().hardMaxBytes();
     }
-    FiremudReconnectionProperties.Policy policy =
-        override.policy() == null
-            ? base.policy()
-            : new FiremudReconnectionProperties.Policy(
-                override.policy().resumeWindowMs() != null
-                    ? override.policy().resumeWindowMs()
-                    : base.policy().resumeWindowMs(),
-                override.policy().staleResumeFallsThroughToFreshEntry() != null
-                    ? override.policy().staleResumeFallsThroughToFreshEntry()
-                    : base.policy().staleResumeFallsThroughToFreshEntry());
-    FiremudReconnectionProperties.Buffer buffer =
-        override.buffer() == null
-            ? base.buffer()
-            : new FiremudReconnectionProperties.Buffer(
-                override.buffer().ttlMs() != null
-                    ? override.buffer().ttlMs()
-                    : base.buffer().ttlMs(),
-                override.buffer().maxEntries() != null
-                    ? override.buffer().maxEntries()
-                    : base.buffer().maxEntries(),
-                override.buffer().minMessages() != null
-                    ? override.buffer().minMessages()
-                    : base.buffer().minMessages(),
-                override.buffer().minLines() != null
-                    ? override.buffer().minLines()
-                    : base.buffer().minLines(),
-                override.buffer().softMaxBytes() != null
-                    ? override.buffer().softMaxBytes()
-                    : base.buffer().softMaxBytes(),
-                override.buffer().hardMaxBytes() != null
-                    ? override.buffer().hardMaxBytes()
-                    : base.buffer().hardMaxBytes());
-    return new FiremudReconnectionProperties(policy, buffer);
+    return parent == null || parent.buffer() == null ? null : parent.buffer().hardMaxBytes();
   }
 
   private void validateCommandHistory(
