@@ -53,7 +53,7 @@ public class EffectiveReconnectionSettingsResolver implements ReconnectionSettin
             : sharedEffectiveSettingsResolver.resolve(
                 context.tenantId(), resolveGameInstanceId(context));
     FiremudReconnectionProperties effective =
-        merge(defaults, persistedOverrides.effectiveOverrides().reconnection());
+        validateEffective(merge(defaults, persistedOverrides.effectiveOverrides().reconnection()));
     List<String> sources = new ArrayList<>();
     sources.add("operatorDefaults");
     sources.addAll(
@@ -116,6 +116,14 @@ public class EffectiveReconnectionSettingsResolver implements ReconnectionSettin
                     ? override.buffer().hardMaxBytes()
                     : base.buffer().hardMaxBytes());
     return new FiremudReconnectionProperties(policy, buffer);
+  }
+
+  private FiremudReconnectionProperties validateEffective(FiremudReconnectionProperties effective) {
+    if (effective.buffer().hardMaxBytes() < effective.buffer().softMaxBytes()) {
+      throw new IllegalStateException(
+          "Effective reconnection buffer hardMaxBytes must be at least softMaxBytes");
+    }
+    return effective;
   }
 
   private Long resolveGameInstanceId(SessionContext context) {

@@ -171,7 +171,6 @@ public class RedisScreenBufferService implements ScreenBufferService {
   }
 
   private void trimPayload(BufferedPayload payload, FiremudReconnectionProperties.Buffer buffer) {
-    payload.entries.removeIf(entry -> entry.byteSize > buffer.hardMaxBytes());
     while (payload.entries.size() > buffer.maxEntries()) {
       payload.entries.removeFirst();
     }
