@@ -11,8 +11,8 @@ These paths define the canonical target-state evidence locations, but current en
 - `production/attestations/<deployment-ref>.json`: production promotion attestation artifacts referenced by overlay PRs.
 - `production/release-manifests/<release-tag-or-deployment-ref>.json`: release digest manifests binding official release tags or deployment refs to the promoted digest set.
 - `production/recovery/<recovery-ref>.json`: production post-restore recovery evidence including external credential validation results.
-- `production/backup-readiness/<deployment-ref>.json`: production backup-readiness evidence for `roll-forward-only` promotions.
-- `production/traffic-open/<event>-<deployment-ref>.json`: post-finalization production traffic-open projection bound to the canonical production preflight report and environment-wide recovery-controller lineage.
+- `production/backup-readiness/<deployment-ref>.json`: full production recovery evidence for `roll-forward-only` promotions and releases whose compatibility result requires a new drill.
+- `production/traffic-open/<event>-<deployment-ref>.json`: post-finalization production first-live/reopen projection bound to the canonical preflight report, the production backup binding, an `environment-wide-postgresql` artifact, and finalized `cold_start_restore` recovery-controller lineage. Tenant/region scope and standalone restore-drill timestamps are not traffic-open authority.
 - `<environment>/preflight/<deployment-ref>.json`: preflight policy reports.
 - `<environment>/preflight/<deployment-ref>.waiver.json`: break-glass waiver records for a single deployment event.
 - `hobby-self-hosted/deployments/<deployment-ref>.json`: hobby deploy evidence records.

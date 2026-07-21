@@ -4,7 +4,7 @@ This file is now the index for the core FireMUD alert snippet split. The domain-
 
 - [redis-alerts-snippets.md](./redis-alerts-snippets.md) – Redis tail-loss and coordination health alerts.
 - [tick-alerts-snippets.md](./tick-alerts-snippets.md) – Tick execution, ledger backlog, cleanup lag, and replay fairness alerts.
-- [backup-alerts-snippets.md](./backup-alerts-snippets.md) – Backup pipeline, pause window, and restore-drill health alerts.
+- [backup-alerts-snippets.md](./backup-alerts-snippets.md) – Backup pipeline, artifact/recovery-convergence, and restore-drill health alerts. Tick-pause alerts remain in maintenance/reset-specific views.
 - [player-experience-alerts-snippets.md](./player-experience-alerts-snippets.md) – Player-centric SLO alerts for login, command latency, chat delivery, and entry-path availability.
 - [observability-stack-alerts-snippets.md](./observability-stack-alerts-snippets.md) – Alertmanager, Prometheus, OTel, Elasticsearch, Jaeger, Fluent Bit, and Grafana health plus smoke-test alerts.
 - [scripting-execution-policy-alerts-snippets.md](./scripting-execution-policy-alerts-snippets.md) – Script execution policy metrics (quota, tenant budget, dry-run isolation, and work-item outcomes) with practical operator-facing threshold rules.

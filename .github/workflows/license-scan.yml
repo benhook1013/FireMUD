@@ -5,6 +5,7 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
+    types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 
 permissions:
@@ -15,13 +16,14 @@ env:
   ORT_DOCKER_IMAGE: ghcr.io/oss-review-toolkit/ort:89.2.0
 
 concurrency:
-  group: license-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  group: license-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
   cancel-in-progress: true
 
 jobs:
   changes:
     name: Detect License-Relevant Changes
     runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
     outputs:
       run_gradle_ort: ${{ steps.filter.outputs.gradle }}
       run_npm_ort: ${{ steps.filter.outputs.npm }}
@@ -70,7 +72,7 @@ jobs:
   ort-gradle:
     name: License Gate (Gradle)
     needs: [changes]
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.run_gradle_ort == 'true' }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && (github.event_name != 'pull_request' || needs.changes.outputs.run_gradle_ort == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
@@ -138,7 +140,7 @@ jobs:
   ort-npm:
     name: License Gate (NPM)
     needs: [changes]
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.run_npm_ort == 'true' }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && (github.event_name != 'pull_request' || needs.changes.outputs.run_npm_ort == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
@@ -204,9 +206,9 @@ jobs:
           fi
 
   license-gate:
-    name: License Gate
+    name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (License Gate)' || 'License Gate' }}
     needs: [changes, ort-gradle, ort-npm]
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner

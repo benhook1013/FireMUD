@@ -33,6 +33,7 @@ Required fields:
 - `approvedBy` – human approver identity (or approved automation identity plus change ticket).
 - `rollbackMode` – `rollback-compatible` or `roll-forward-only` classification for the promoted digest set. `rollback-compatible` is allowed only when the previous known-good release remains safe to re-apply against the currently bound database schema, secret/config contract, file-path contract, and external-binding contract. Any release that requires new secret formats, new mounted resource shapes, changed credential semantics, or new external target bindings must be classified as `roll-forward-only` unless the prior release is explicitly proven compatible with those bindings.
   Example: switching a player-facing service from inline JWT secret consumption to file-mounted `FIREMUD_AUTH_JWT_SECRET_PATH`, or changing the expected external asset bucket binding, is `roll-forward-only` unless the previous release is proven compatible with the new mount/binding contract.
+- `recoveryCompatibility` – the compact result defined in `system-architecture-backup-recovery-evidence-and-compliance.md`. It references the current baseline recovery record, compares baseline and candidate recovery-contract fingerprints, records changed dimensions and evaluator identity, and states whether a new drill is required. It does not duplicate the full recovery record.
 - `productionOverlayRef` – target production overlay change identifier (for example the overlay PR deployment-ref or intended overlay commit token).
 - `releaseDigestManifestRef` – required for official production releases; path to the release digest manifest that binds the release tag or deployment reference to this attestation and digest set.
 
@@ -48,6 +49,10 @@ Optional fields:
 
 ## Validation Rules
 
+### Baseline Recovery Freshness
+
+For `recoveryCompatibility.compatibilityStatus=compatible`, `baselineRecoveryRecordRef` must independently resolve to the canonical finalized projection of a `production-equivalent-drill` with `trafficExposure=isolated-drill` and `coordinationRecoveryMode=cold_start_restore`. Its recovery proof is fresh only when the referenced drill's `restoreDrillLastSuccessAt` is within the canonical 30-day window at `evaluatedAt` and the recovery controller reached `recoveryStatus=finalized`; a `ready_to_reopen` or partially observed controller is not a fresh drill. Freshness does not override the existing invalidation rules: any invalidating or unknown recovery-contract dimension requires `drill_required` or `incompatible`, and `roll-forward-only` still requires the matching full backup-readiness record.
+
 - Production overlay PRs must include exactly one in-repo attestation artifact.
 - Every production overlay digest must match the digest in `serviceDigests`.
 - Official production release PRs must include exactly one release digest manifest whose `promotionAttestationRef` points to the attestation and whose `serviceDigests` match byte-for-byte.
@@ -61,6 +66,7 @@ Optional fields:
 - The referenced production overlay digests must be byte-identical to the staged digests recorded in the deployment record; retags are acceptable, rebuilds are not.
 - `secretComplianceEvidenceRef` may satisfy compliance through either immutable bootstrap provisioning evidence or immutable rotation evidence, as defined in `infrastructure/environment-and-secrets-overview.md`, but warning-only compliance records are never promotable.
 - Attestation schema must validate against the current `attestationVersion`.
+- `recoveryCompatibility.compatibilityStatus=compatible` may reuse a baseline only for a `rollback-compatible` release when the fresh finalized-drill requirements above pass, the candidate fingerprint is unchanged, and `changedDimensions[]` contains no invalidating or unknown recovery-contract change. `drill_required` and every `roll-forward-only` release must reference the matching full backup-readiness record; `incompatible` blocks promotion.
 - If any check fails, production promotion is blocked.
 
 External-only attestation storage is not allowed for production promotions because it prevents deterministic PR validation.

@@ -94,7 +94,7 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 - Use the fallback recording-rule approach documented in `design/architecture/system-architecture-logging-monitoring.md` only for a small, explicitly supported set of critical conditions.
 - During fallback, explicitly check all supported player SLO conditions (login success ratio, command p99 latency, entry-path availability, and chat delivery latency) so edge and chat incidents are not hidden when Alertmanager is unavailable.
-- Also check the supported backup fallback conditions (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_pipeline_recent_restore_drill_slo_breached`, `backup_tick_pause_wait_budget_breached`, `backup_tick_pause_duration_budget_breached`, and `backup_ticks_paused_budget_breached`) so backup pipeline incidents do not disappear when Alertmanager routing is impaired.
+- Also check the installed backup fallback conditions (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_pipeline_recent_restore_drill_slo_breached`, `backup_artifact_lineage_invalid`, `backup_artifact_restore_unreadable`, and `recovery_participant_convergence_blocked`). Treat the cumulative `recovery_participant_convergence_total` counter as historical evidence only; use the current participant-state recording to determine whether a blocker remains active.
 - If Logging & Admin consumes Alertmanager notifications, ensure the UI clearly shows “Alertmanager unavailable” and does not present fallback conditions as canonical alerts.
 
 ### Alertmanager recovery and verification
@@ -146,7 +146,7 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
   - entry-path availability (`entrypath_availability_gateway_5m`, `entrypath_availability_tcpproxy_5m`, plus `entrypath_availability_gateway_1d` / `entrypath_availability_tcpproxy_1d` for compliance context),
   - entry-path blackbox reachability (`entrypath_blackbox_probe_success{path=...}` or the environment-equivalent external probe metric) so total edge failures that never reached Gateway/TCP Proxy are still visible,
   - chat latency (`chat_delivery_latency_ms_p99_5m`),
-  - backup fallback conditions (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_pipeline_recent_restore_drill_slo_breached`, `backup_tick_pause_wait_budget_breached`, `backup_tick_pause_duration_budget_breached`, `backup_ticks_paused_budget_breached`),
+  - backup fallback conditions (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_pipeline_recent_restore_drill_slo_breached`, `backup_artifact_lineage_invalid`, `backup_artifact_restore_unreadable`, `recovery_participant_convergence_blocked`),
   - tick safety ratio (`tick_execution_safety_ratio_p99`),
   - coordination tail-loss (`redis_coordination_tail_loss_ms`, `redis_coordination_tail_loss_budget_ms`, and `redis_coordination_tail_loss_slo_breached`).
 - Prefer recorded rules where available so operators do not hand-craft complex PromQL during an incident.
@@ -203,9 +203,9 @@ Recording rules:
 - `backup_pipeline_recent_backup_slo_breached`
 - `backup_pipeline_recent_verification_slo_breached`
 - `backup_pipeline_recent_restore_drill_slo_breached`
-- `backup_tick_pause_wait_budget_breached`
-- `backup_tick_pause_duration_budget_breached`
-- `backup_ticks_paused_budget_breached`
+- `backup_artifact_lineage_invalid`
+- `backup_artifact_restore_unreadable`
+- `recovery_participant_convergence_blocked`
 - `tick_effects_pending_oldest_age_seconds`
 - `tick_effects_replay_convergence_budget_seconds`
 - `tick_effects_replay_slo_breached`

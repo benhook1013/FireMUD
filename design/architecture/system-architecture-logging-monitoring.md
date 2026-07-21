@@ -12,6 +12,7 @@ The current implemented baseline is narrower than the full target-state observab
 - Raw runtime or gameplay identifiers such as `serviceInstanceId`, `tenantId`, `sessionId`, `characterId`, and `script_patch_version` are not approved as ordinary Prometheus metric labels. These identifiers belong in structured logs and traces unless a future architecture update records a narrow low-cardinality exception.
 - The player-experience SLI catalog below is a target-state metric contract. It describes the operator-visible SLO surface FireMUD wants, but it is not fully implemented by the current services. Before implementing any metric that needs tenant or region scoping, reconcile the label shape with the cardinality policy, for example through a bounded environment-specific scope label or an explicitly documented exception.
 - Synthetic player-flow canaries, the independent deadman/heartbeat mirror, and the related canonical canary alert families now have a canonical operator-run runtime harness in `dev-tools/observability/run-player-experience-smoke.py`. The authoritative external pager deployment remains environment-specific, but the repo now provides the shared runner, retained-evidence validator, and mirrored metric vocabulary required for prod-like observability smoke.
+- Routine backup dashboards and alert snippets use artifact freshness, lineage, integrity/readability, and current recovery-convergence signals. Tick-pause panels remain maintenance/reset views only and are not routine backup health signals.
 
 ---
 
@@ -334,7 +335,7 @@ Service label requirements:
 Alert owner mapping guidelines:
 
 - Redis coordination health, tail-loss, AOF growth, and failover alerts: `owner="infra"`.
-- PostgreSQL backup/restore and backup-pause safety alerts: `owner="infra"`.
+- PostgreSQL backup/restore freshness, artifact lineage/readability, and recovery-convergence alerts: `owner="infra"`. Tick-pause alerts remain maintenance/reset signals owned according to the affected control plane, not routine backup health.
 - Tick behavior and gameplay-flow correctness alerts (for example replay storms, ledger backlogs, unsafe tick runtime ratios): `owner="gameplay"`.
 - Observability stack availability/routing alerts (Prometheus, Alertmanager, Elasticsearch, Jaeger, Grafana): `owner="platform"`.
 
@@ -362,14 +363,16 @@ When Alertmanager is unavailable but Prometheus is still accessible, Logging & A
 - **Chat delivery latency**
   - Recording rule mirroring `ChatDeliveryLatencyP99High`, based on `chat_delivery_latency_ms_bucket` with approved scope and channel dimensions preserved.
 - **Backup health**
-  - Recording rules mirroring missed backup, missed verification, and scoped pause-budget breaches, based on `backup_last_success_timestamp_seconds`, `backup_verify_last_success_timestamp_seconds`, `backup_tick_pause_wait_seconds`, `backup_tick_pause_duration_seconds`, and their matching emitted budget gauges.
-  - Canonical fallback recordings should expose at least:
+  - Recording rules mirroring missed backup, missed verification, stale restore proof, invalid artifact lineage, unreadable artifacts, and blocked recovery-participant convergence.
+  - The complete canonical backup fallback contract is:
     - `backup_pipeline_recent_backup_slo_breached`
     - `backup_pipeline_recent_verification_slo_breached`
     - `backup_pipeline_recent_restore_drill_slo_breached`
-    - `backup_tick_pause_wait_budget_breached{scope_type,scope}`
-    - `backup_tick_pause_duration_budget_breached{scope_type,scope}`
-    - `backup_ticks_paused_budget_breached{scope_type,scope}`
+    - `backup_artifact_lineage_invalid`
+    - `backup_artifact_restore_unreadable`
+    - `recovery_participant_convergence_blocked`
+  - `recovery_participant_convergence_state{environment,participant,state}` is the current-state source for the blocked recording; the cumulative `recovery_participant_convergence_total` counter is not an active alert source.
+  - Maintenance tick-pause metrics are not backup fallback signals and must not be used as substitutes for these recordings.
 - **Tick state and recovery progress**
   - Recording rules or gauges projecting `current_tick_state{scope,state}` and `current_tick_terminal_at_ms{scope}` from the Redis meta record so operators can see whether a region is `STAGED`, `RESOLVING`, `APPLIED`, or `ABANDONED` without inferring state from queue depth alone.
 - **Maintenance mode visibility**
@@ -382,7 +385,7 @@ Logging & Admin should:
 - Use these recording rules as the sole source of “active issues” when Alertmanager is unreachable, and clearly label the UI as “Alertmanager unavailable – showing fallback Prometheus conditions”.
 - Prefer Alertmanager as the source of truth whenever it is healthy; fallback conditions are a last resort to keep operators informed of the most critical SLO violations.
 - Treat broader observability-stack outages as only partially representable in fallback mode: Alertmanager-specific/routing conditions can still be surfaced when Prometheus is healthy, but Prometheus-down conditions cannot be reconstructed from fallback rules because the source of truth is itself unavailable.
-- When command convergence is involved, alerts should link operators to the durable `GetCommandStatus` surface defined in `system-architecture-tick-failures-and-operations.md` rather than relying on Redis queue inspection.
+- When command convergence is involved, alerts should link operators to the durable `GetGameplayCommandStatus` surface defined in `system-architecture-tick-failures-and-operations.md` rather than relying on Redis queue inspection.
 
 #### Logging & Admin Alert-State Contract (Normative)
 

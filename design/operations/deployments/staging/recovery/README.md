@@ -4,7 +4,9 @@ Store one record per staging restore that originates from production data:
 
 - `<recovery-ref>.json`
 
-Required fields:
+Every player-facing staging recovery record must follow `design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#canonical-recovery-record`. A restore sourced from production also adds the sanitization requirements below.
+
+Staging production-origin requirements:
 
 - `environment` (`staging`)
 - `recoveryRef`
@@ -13,9 +15,9 @@ Required fields:
 - `sanitizedBy`
 - `controlsApplied` (list of redaction/anonymization controls)
 - `validationEvidence` (checks proving sanitized state before reopening traffic)
-- `certificateReissuanceEvidence`
-- `jwtRestoreHardeningEvidence`
-- `databaseCredentialRotationEvidence`
+- `certificateReissuance`
+- `jwtHardening`
+- `databaseCredentialRotation`
 - `backupConfidentialityEvidence`
 - `externalCredentialValidation` with records for:
   - `backup-storage`
@@ -27,4 +29,8 @@ Required fields:
 
 Restore validation must fail closed unless `SANITIZATION_EVIDENCE_REF` is present, points under this staging recovery namespace, and contains non-empty `validationEvidence`. Passing external credential validation alone is not sufficient to release quarantine or reopen traffic.
 
+The current `dev-tools/restores/validate-external-credentials.sh staging` still expects legacy hardening key names and does not validate this separate sanitization record contract. It must be updated to the canonical control-group names and sanitization evidence path; a legacy-script pass is not complete recovery proof.
+
 `backupConfidentialityEvidence` must prove environment-scoped encryption, least-privilege access and audit, retention/secure deletion, and quarantine, sanitization, validation, and deletion of production-origin data before a non-production drill can expose workloads or retain evidence.
+
+Sanitization evidence supplements the environment-wide cold-start, quarantine, convergence, hardening, smoke, and controlled-reopen controller state; it does not replace those controls. The checked-in staging record is an immutable projection exported after the controller reaches `finalized`, not runtime authority.
