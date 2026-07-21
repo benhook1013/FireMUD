@@ -45,7 +45,7 @@ Existing values such as `STAGED`, `DRAINED`, and `RETRY_QUEUED` map to lifecycle
 
 ### Authority and Convergence
 
-- `GetGameplayCommandStatus(tenantId, gameInstanceId, commandId)` reads the authoritative durable record. Redis coordination state is not part of the lookup authority.
+- `GetGameplayCommandStatus` reads the authoritative durable record by `commandId` scoped to `tenantId` and `gameInstanceId`, or by the automation handoff identity `(tenantId, gameInstanceId, regionId, regionEpoch, automationDispatchId)`. The `regionId` and `regionEpoch` routing fields apply to the automation-identity lookup. Redis coordination state is not part of the lookup authority.
 - Optional outcome events or streams may reduce observation latency, but they are advisory projections of the same lifecycle.
 - Every accepted command converges to an explicit terminal result. An `ACCEPTED_VOLATILE` command lost before durable batch binding becomes `LOST_BEFORE_STAGING` with `NOT_APPLIED` rather than remaining indefinitely pending.
 - `executionOutcome` and `gameplayResult` remain distinct. For example, a multi-leg command may be `APPLIED` with a `PARTIAL` gameplay result.

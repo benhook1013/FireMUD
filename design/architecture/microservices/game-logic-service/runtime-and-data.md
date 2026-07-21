@@ -2,6 +2,13 @@
 
 This document defines the Game Logic Service runtime model, dependency ownership assumptions, publish-gating role, and Redis/data boundaries.
 
+## Implementation Status
+
+The sections below define the target-state runtime contract. Current implementation and proof status is:
+
+- The current implementation attests an empty owned-rule manifest and returns synthetic `appliedCommitId = "version:<versionId>"` because Game Logic does not yet own version-scoped draft rule tables. The empty-manifest digest is intentional and does not represent hidden service state.
+- Same-type Game Logic takeover behind an existing edge connection is target behavior, but suppression of a client-visible reconnect after an ordinary qualifying Game Logic restart remains implementation or proof debt under ADR 0013.
+
 ## Runtime Notes
 
 - Stateless service accessed over gRPC by other microservices.
@@ -30,11 +37,6 @@ Role classification: Game Logic is a digest-gate participant for full publishes,
 ## Draft Digest Contract
 
 For full-version publish gating, this service is still a required digest participant even though it does not orchestrate publish-workflow steps. It must expose `GetDraftDesignDigest(tenantId, versionId)` and publish a service-local digest input manifest with:
-
-Implementation Notes:
-
-- The current implementation explicitly attests an empty owned-rule manifest and returns synthetic `appliedCommitId = "version:<versionId>"`, because Game Logic does not yet own version-scoped draft rule tables.
-- That empty-manifest digest is intentional: it keeps the participant matrix canonical without inventing fake hidden state for this service.
 
 - included objects such as version-scoped rule and configuration tables this service owns that affect runtime command behavior;
 - excluded objects such as runtime queues, caches, telemetry tables, and other non-launchability data;
@@ -72,6 +74,6 @@ Command flow:
 2. The lease-owning Game Session executor invokes this service over gRPC with the queued command plus tick and session context, and this service loads the required world and entity context to resolve the action.
 3. The gRPC response returns the structured result to Game Session for commit and delivery to players.
 
-This execution shape is deliberate for failover: Game Logic computes from supplied tick/session context plus authoritative service reads, then returns a structured result. Because meaningful state is not anchored to one process, same-type Game Logic instances can take over behind an existing edge connection. A visible reconnect caused solely by an ordinary Game Logic restart inside ADR 0013's qualifying conditions and bounded window remains implementation or proof debt rather than target behavior.
+This execution shape is deliberate for failover: Game Logic computes from supplied tick/session context plus authoritative service reads, then returns a structured result. Because meaningful state is not anchored to one process, same-type Game Logic instances can take over behind an existing edge connection.
 
 This means an ordinary Game Logic restart is a short stall or explicit command failure behind the caller connection, not a client-visible transport reconnect event. ADR 0013's 10-second ordinary target and 30-second hard hidden-recovery cutoff apply to the player-facing recovery envelope; an individual ambiguously delivered command still follows the at-most-once edge and durable internal effect rules rather than being replayed blindly.

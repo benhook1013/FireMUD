@@ -78,11 +78,11 @@ Pause-budget alerts remain valid for maintenance/reset workflows but are not rou
 Tick pause/resume APIs support multiple ways to identify scope for maintenance, reset, migration, and future scoped recovery, but the long-term canonical scope is `tenant_id + region_id`.
 
 - The canonical scope is `tenant_id + region_id`.
-- `game_instance_id` is an alias scope allowed only when a game instance maps cleanly to a single tick region.
-- Requests must set `tenant_id` and exactly one of `region_id` or `game_instance_id`.
-- If both or neither are set, the request is rejected as `INVALID_ARGUMENT`.
+- `game_instance_id` is a pre-Phase-C alias only, and it is usable only when the game instance maps cleanly to a single tick region.
+- Before Phase C, legacy requests may set `tenant_id` and exactly one of `region_id` or `game_instance_id`; an alias request must resolve and record its region before execution.
+- From Phase C onward, the canonical pause/resume API accepts only `tenant_id + region_id` and rejects any `game_instance_id`-only request with `INVALID_ARGUMENT`. Tools and runbooks must resolve the alias before calling that API.
 - Routine online backups do not invoke this contract and do not use pause scope as recovery evidence.
-- Alias-scoped `game_instance_id` pause/resume is allowed only for non-player-facing maintenance drills, quarantined staging rehearsals, and manual operator workflows that record explicit scope-resolution evidence.
+- Until Phase C is complete, alias-scoped pause/resume is allowed only for non-player-facing maintenance drills, quarantined staging rehearsals, and manual operator workflows that record explicit scope-resolution evidence; it is never player-facing restore evidence.
 - Manual alias-scoped maintenance operations must write an audit record showing the requested alias scope, the resolved `tenant_id`, the resolved `region_id` set, actor identity, and start/end timestamps.
 
 Evidence schema versions referenced by this workflow:
@@ -178,6 +178,8 @@ Manual bootstrap example sequence:
 - The compose stack includes `pg-dump-cron` running every 15 minutes to mirror the production schedule.
 - For local clusters without cloud storage, operators may deploy `k8s/velero/minio.yaml` and run `dev-tools/backups/setup-local-backup.sh` to bootstrap MinIO plus Velero. `defaultVolumesToFsBackup` must remain `false`.
 
+Docker Compose restore is not a reduced recovery mode. It must enter restore-safe quarantine, restore the environment-wide PostgreSQL artifact, clear Coordination Redis, invalidate gameplay and Account sessions, reset every gameplay-region epoch and fence, converge every declared and enabled durable participant and external-effect family, run equivalent post-restore hardening, external-credential validation, secret-compliance refresh, and smoke checks, and reopen only through the same durable `ready_to_reopen -> releasing -> finalized` gate. When Kubernetes is unavailable, an equivalent Compose controller or one-shot orchestration must enforce those same gates and remain fail-closed on an incomplete or ambiguous result.
+
 ## Backup Verification & Restoration Testing
 
 - `verify-backups.sh` proves backup artifacts exist, are readable, and remain compatible with supported recovery tooling.
@@ -200,7 +202,7 @@ Backup observability, restore-proof artifacts, and traffic-open evidence are def
 | Environment | Steps |
 | --- | --- |
 | **Kubernetes** | Enter restore-safe quarantine -> restore PostgreSQL from the online snapshot artifact -> prove empty Coordination Redis -> run environment-wide offline convergence, epoch/fence reset, and session invalidation -> restore manifests with normal workloads still closed -> run post-restore hardening and smoke checks -> reopen traffic only after recovery evidence is complete |
-| **Docker Compose** | Restore DB snapshot -> clear Coordination Redis -> run the environment-wide cold-start convergence path -> restart containers only after local validation and session invalidation are understood |
+| **Docker Compose** | Enter restore-safe quarantine -> restore the environment-wide PostgreSQL snapshot -> clear Coordination Redis -> invalidate sessions and reset every gameplay-region epoch/fence -> converge durable participants and external effects -> run post-restore hardening, credential/secret-compliance validation, and smoke checks -> reopen only through the same `ready_to_reopen -> releasing -> finalized` gate |
 
 Redis always uses AOF for crash recovery during runtime but is never restored from backup images. If Coordination Redis starts empty, treat it as a reset/cold-start scenario as described in the Redis architecture docs.
 

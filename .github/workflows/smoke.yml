@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: smoke-${{ github.workflow }}-${{ format('pr-{0}-controller', github.event.pull_request.number) }}
@@ -172,6 +171,10 @@ jobs:
   smoke-summary:
     name: Smoke Summary
     runs-on: ubuntu-latest
+    permissions:
+      # Only this job publishes or updates the pull request smoke summary comment.
+      contents: read
+      pull-requests: write
     needs: [changes, smoke-lite]
     if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:

@@ -4,7 +4,7 @@ Store one record per `first-live` or `reopen` hobby traffic-open event as:
 
 - `<deployment-ref>.json`
 
-Current implementation note:
+## Implementation Status
 
 `dev-tools/deploy/write-traffic-open-evidence.py` does not yet write or validate the accepted cold-start recovery references and two-phase traffic-open lifecycle. Its output cannot authorize player-facing first-live or reopen until it implements this contract.
 

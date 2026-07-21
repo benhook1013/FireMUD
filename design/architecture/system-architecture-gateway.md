@@ -2,6 +2,14 @@
 
 This document describes the role and configuration of **Spring Cloud Gateway** in the FireMUD platform, including routing, filtering, WebSocket support, and how it integrates with both modern and legacy clients.
 
+## Implementation Status
+
+Unless otherwise noted, this document describes target-state gateway behavior. Current rollout and implementation boundaries are:
+
+- The target-state declarative `routes.yml` catalog has not yet converged as the implemented route authority. The current authority is the Java `CanonicalGatewayRoutesConfiguration`, with environment-backed service targets that operators can override using `FIREMUD_SERVICES_*`, matching the `ServiceEndpointsProperties` approach used by other microservices. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery).
+- URI SAN is the canonical production identity for the TCP Proxy → Gateway mTLS hop. DNS SAN allowlisting is migration-only while URI SANs are not consistently issued, and leaf certificate fingerprint pinning is break-glass only. Until mTLS is fully deployed, any non-mTLS acceptance of `X-Proxy-*` headers remains a temporary dev-only stopgap protected by strict internal-only network exposure and NetworkPolicies; it is not suitable for player-facing environments.
+- Dynamic REST and gRPC route-management APIs remain local/dev/test-only ephemeral capabilities. The current implementation does not yet enforce the target profile, endpoint isolation, validation, or startup boundary, so these APIs must not be treated as production-safe merely because they exist.
+
 ## Gateway Pattern
 
 **Spring Cloud Gateway** serves as the **single HTTP(S) and WebSocket entry point** into the FireMUD system for all **external client traffic** that speaks HTTP or WebSocket. Traditional Telnet/TCP clients enter via the dedicated TCP Proxy Service as described in [Protocol Bridging](./system-architecture-protocol-bridging.md); together, Spring Cloud Gateway (for HTTP and WebSocket) and the TCP Proxy Service (for Telnet/TCP) form the public edge of the platform. The behaviour of this edge – including ordering guarantees, backpressure, and reconnection semantics for gameplay command streams – is defined canonically in [Protocol Bridging](./system-architecture-protocol-bridging.md); this document focuses on gateway responsibilities and defers to that design for detailed client-path invariants.
@@ -26,8 +34,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 
 - Target-state baseline routes are loaded on startup from the version-controlled declarative `routes.yml` catalog imported through `application.yml` via `spring.config.import`.
 - Baseline route targets use in-environment DNS names by default and may be overridden explicitly with environment variables when a deployment needs different upstream targets.
-- Until that target-state configuration converges, the current implemented route authority remains the Java `CanonicalGatewayRoutesConfiguration`, with environment-backed service targets. Operators can override those targets using `FIREMUD_SERVICES_*`, matching the `ServiceEndpointsProperties` approach used by other microservices. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery).
-- Dynamic route management APIs (REST and gRPC) are explicitly enabled **dev/test-only** ephemeral overrides layered on top of the target baseline; they are absent or disabled in player-facing environments. The released declarative catalog remains the target source of truth for route definitions, and production route changes use the separately accepted reviewed declarative deployment workflow or a predeclared bounded failover switch.
+- Dynamic route management is not part of the player-facing target-state route authority. The released declarative catalog remains the target source of truth for route definitions, and production route changes use the separately accepted reviewed declarative deployment workflow or a predeclared bounded failover switch.
 
 For the Telnet-to-WebSocket bridge – including the `GATEWAY_WS_URL` contract, Proxy → Gateway mutual TLS, and how gameplay traffic is normalized through `/ws/game/**` – treat [Protocol Bridging](./system-architecture-protocol-bridging.md) as the **canonical specification**. This document summarizes the gateway’s routing and configuration responsibilities and defers to the protocol-bridging design for detailed edge semantics.
 
@@ -84,12 +91,9 @@ If either check fails, the gateway rejects the WebSocket handshake and does not 
 Gateway config enforces this trust boundary by allowlisting the expected TCP Proxy identity from the mTLS peer certificate. The canonical production model is:
 
 - **Canonical (prod):** allowlist the TCP Proxy by **URI SAN** (SPIFFE-style identity), configured via `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-uri-sans` (for example `spiffe://firemud/ns/<namespace>/sa/tcp-proxy-service`).
-- **Transitional (migration only):** allowlist by **DNS SAN** when URI SANs are not yet consistently issued, configured via `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-dns-sans` (for example `tcp-proxy-service.<namespace>.svc.cluster.local`).
 - **Break-glass (incident only):** pin by leaf certificate **SHA-256 fingerprint** when SAN-based identity is unavailable or compromised, configured via `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-fingerprints-sha256`. This is intentionally operationally expensive and should not be treated as the steady state because it makes rotation and multi-environment deployments harder.
 
 This policy is normative per `design/architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md`.
-
-Until mTLS is fully deployed for the TCP Proxy → Gateway hop, treat any non-mTLS acceptance of `X-Proxy-*` headers as a **temporary dev-only stopgap**, protected by strict internal-only network exposure and NetworkPolicies. Do not rely on “internal network” alone for player-facing environments.
 
 ### Gateway Output Rules (Downstream-Trusted)
 
@@ -128,7 +132,7 @@ Typed Telnet `SESSION` lines are not part of the player-facing or advanced-clien
   - Route-based filtering
   - Consistent handling across all clients
 
-At the target-state configuration level, Spring Cloud Gateway defines WebSocket routes in the declarative `routes.yml` catalog imported by `application.yml` and applies filters (such as rate limiting and retries) before forwarding to backend services. Until that convergence lands, the current Java `CanonicalGatewayRoutesConfiguration` remains the implemented route authority. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for the authoritative description of route configuration, service discovery overrides, and gateway-related environment variables. For gameplay login and session semantics, this document defers to the canonical flow in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow); this doc focuses on transport-level responsibilities only.
+At the target-state configuration level, Spring Cloud Gateway defines WebSocket routes in the declarative `routes.yml` catalog imported by `application.yml` and applies filters (such as rate limiting and retries) before forwarding to backend services. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for the authoritative description of route configuration, service discovery overrides, and gateway-related environment variables. For gameplay login and session semantics, this document defers to the canonical flow in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow); this doc focuses on transport-level responsibilities only.
 
 ### Gameplay WebSocket Route
 
@@ -431,8 +435,6 @@ Dynamic mutation is an explicitly enabled local/dev/test capability only:
 
 Persistence, multi-pod convergence, audit, and readiness predicates are not sufficient on their own to promote this developer API. A production runtime-routing control plane requires a separate decision covering versioned desired state, validation, staged activation, expiry, rollback, conflict handling, recovery, and fail-closed behavior.
 
-The current implementation does not yet enforce this profile, endpoint-isolation, validation, or startup boundary. It must not be treated as production-safe merely because the endpoints exist.
-
 ## Observability
 
 All gateway gRPC endpoints are instrumented with the shared `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor`.
@@ -462,7 +464,7 @@ This approach minimizes latency and matches the protocol table in the
 | Dev | `http://service:8080` | Docker Compose DNS |
 | Prod | `http://service.namespace.svc.cluster.local:8080` | Kubernetes DNS |
 
-Spring profiles select environment-specific endpoint values. Target-state baseline routing targets are defined by the released declarative `routes.yml` catalog imported through `application.yml`. Until convergence, `CanonicalGatewayRoutesConfiguration` remains the current implemented authority; environment-variable endpoint substitution may specialize that implementation and the target catalog. Dynamic route overrides are limited to explicitly enabled local, development, or test profiles and never become player-facing route authority.
+Spring profiles select environment-specific endpoint values. Target-state baseline routing targets are defined by the released declarative `routes.yml` catalog imported through `application.yml`; environment-variable endpoint substitution may specialize the declared target catalog. Dynamic route overrides never become player-facing route authority.
 
 ---
 

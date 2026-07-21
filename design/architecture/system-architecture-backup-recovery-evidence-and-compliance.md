@@ -8,26 +8,30 @@ Backup readiness is an evidence chain, not an artifact-shaped timestamp record. 
 
 ## Backup Observability and Alerts
 
-Backup and verification jobs must emit simple, environment-agnostic metrics:
+Backup and verification jobs must emit simple metrics with an `environment` label on every signal that feeds readiness or alerting. The environment label identifies the deployment boundary, not a tenant or region; convergence signals retain participant dimensions where they are available:
 
-- `backup_last_success_timestamp_seconds`
-- `backup_verify_last_success_timestamp_seconds`
-- `backup_restore_drill_last_success_timestamp_seconds`
-- `backup_restore_drill_total{result,mode}`
+- `backup_last_success_timestamp_seconds{environment}`
+- `backup_verify_last_success_timestamp_seconds{environment}`
+- `backup_restore_drill_last_success_timestamp_seconds{environment,mode}`
+- `backup_restore_drill_total{environment,result,mode}`
 - `backup_artifact_lineage_valid{environment}`
 - `backup_artifact_restore_readable{environment}`
-- `recovery_participant_convergence_total{participant,result}`
-- `recovery_oldest_unresolved_age_seconds{participant}`
-- optional `backup_run_total{result}` and `backup_verify_run_total{result}`
+- `recovery_participant_convergence_total{environment,participant,result}`
+- `recovery_oldest_unresolved_age_seconds{environment,participant}`
+- `recovery_environment_convergence_total{environment,result}`
+- optional `backup_run_total{environment,result}` and `backup_verify_run_total{environment,result}`
 
 Prometheus should also publish derived breach indicators:
 
-- `backup_pipeline_recent_backup_slo_breached`
-- `backup_pipeline_recent_verification_slo_breached`
-- `backup_pipeline_recent_restore_drill_slo_breached`
-- `backup_artifact_lineage_invalid`
-- `backup_artifact_restore_unreadable`
-- `recovery_participant_convergence_blocked`
+- `backup_pipeline_recent_backup_slo_breached{environment}`
+- `backup_pipeline_recent_verification_slo_breached{environment}`
+- `backup_pipeline_recent_restore_drill_slo_breached{environment,mode}`
+- `backup_artifact_lineage_invalid{environment}`
+- `backup_artifact_restore_unreadable{environment}`
+- `recovery_participant_convergence_blocked{environment,participant,result}`
+- `recovery_environment_convergence_blocked{environment}`
+
+Derived indicators and alerts must preserve these labels and group by `environment`; participant convergence alerts must not reduce an environment-wide failure to an unlabeled boolean or discard the failing `participant` or `result`.
 
 Alerting policy:
 

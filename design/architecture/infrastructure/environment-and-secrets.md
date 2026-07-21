@@ -78,7 +78,7 @@ JWT and session-related environment variables, including `FIREMUD_AUTH_JWT_SECRE
 - `../system-architecture-security.md`
 
 The catalog’s Authentication section also documents how the JWT expiration and session safety margin combine into a single derived session TTL, including operational guidance for tightening or relaxing this window.
-For player-facing environments (`hobby-self-hosted`, staging, production), use file-mounted JWT key material via `FIREMUD_AUTH_JWT_SECRET_PATH` and the read-only `jwt-jwks` Secret via `FIREMUD_AUTH_JWKS_PATH=/var/run/secrets/firemud/jwks/jwks.json`; inline-only JWT secrets and classpath JWKS fallback are for local/dev and explicitly ephemeral stacks only. Account startup must fail when either path or file is missing or unreadable, the JWKS is malformed, or its public JWK does not match the Account signing key and `kid`.
+The packaged classpath JWKS fallback is permitted only in local/test environments. Hosted `pr-preview` environments require a preview-unique JWT signing-key `Secret` and matching JWKS `ConfigMap` in each preview namespace; shared preview trust material is not allowed. For player-facing environments (`hobby-self-hosted`, staging, production), use file-mounted JWT key material via `FIREMUD_AUTH_JWT_SECRET_PATH` and the read-only `jwt-jwks` Secret via `FIREMUD_AUTH_JWKS_PATH=/var/run/secrets/firemud/jwks/jwks.json`; inline-only JWT secrets and classpath JWKS fallback are not allowed. Account startup must fail when either path or file is missing or unreadable, the JWKS is malformed, or its public JWK does not match the Account signing key and `kid`.
 
 ### Service Discovery
 

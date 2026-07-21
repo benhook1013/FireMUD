@@ -14,7 +14,7 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P1
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+    runbook: design/architecture/system-architecture-backup-recovery.md#postgresql-logical-backups
   annotations:
     summary: PostgreSQL backups have not succeeded recently
     description: No successful pg_dump backup has been recorded in the last 90 minutes. Investigate backup Jobs and storage endpoints.
@@ -26,7 +26,7 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P1
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+    runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary
   annotations:
     summary: Backup verification has not succeeded recently
     description: No successful backup verification run has been recorded in the last 24 hours. Investigate the verify-backups CronJob and storage configuration.
@@ -38,7 +38,7 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P1
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+    runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary
   annotations:
     summary: Restore drill proof is stale
     description: No successful restore drill has been recorded within the required restore-proof freshness window. Investigate drill cadence and recovery evidence before traffic reopen decisions.
@@ -50,7 +50,7 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P0
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+    runbook: design/architecture/system-architecture-backup-recovery.md#maintenance-tick-pause-scope-contract
   annotations:
     summary: Tick pause window too long during scoped backup
     description: One or more backup scopes have exceeded the pause-duration budget. Investigate pause/resume controls and scope-specific backlog growth.
@@ -62,7 +62,7 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P0
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+    runbook: design/architecture/system-architecture-backup-recovery.md#maintenance-tick-pause-scope-contract
   annotations:
     summary: Tick pause wait exceeded budget during scoped backup
     description: One or more backup scopes are taking too long to reach PAUSED. Investigate in-flight tick drain time and pause control health.
@@ -74,7 +74,7 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P0
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+    runbook: design/architecture/system-architecture-backup-recovery.md#maintenance-tick-pause-scope-contract
   annotations:
     summary: Backup scope remains paused unexpectedly
     description: A backup scope has remained in paused state beyond the expected window. Check pause/resume API calls and backup job completion state.

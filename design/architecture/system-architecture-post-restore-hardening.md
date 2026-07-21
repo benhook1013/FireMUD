@@ -24,18 +24,18 @@ Post-restore hardening is performed by a dedicated Kubernetes Job such as `post-
 
 The hardening automation should use least-privilege service accounts:
 
-- JWT rotation automation may invoke only the Account-owned or non-exportable signer operation required to create/promote a generation, read/update the public JWKS ConfigMap or equivalent artifact, and optionally patch the Account Service Deployment when restart is required for convergence. Its service account must not read or update `jwt-signing-keys`.
+- JWT rotation automation may invoke only the Account-owned or non-exportable signer operation required to create/promote a generation, orchestrate validator probes, and observe the Account-published JWKS and rotation status/evidence. It must not publish or update `jwt-jwks`, read or update `jwt-signing-keys`, or patch the Account Service Deployment.
 - DB rotation automation may read/update only the PostgreSQL credential Secrets and optionally restart the Deployments or StatefulSets that consume them.
 - Certificate reissuance automation may read/update only the specific certificate resources or Secrets required for workload, bridge, and operator leaf identities.
 
-JWT post-restore rotation preserves Account Service custody of the non-exportable private signer. The hardening Job may request Account to create or promote a signing generation and may publish the public JWKS, but Jobs and validators do not read, export, or persist private keys. Recovery evidence contains only key identifiers, public validation material, and convergence proof.
+JWT post-restore rotation preserves Account Service custody of the non-exportable private signer and makes Account the sole JWKS publication authority. The hardening Job may request Account to create or promote a signing generation, orchestrate validator convergence, and observe the Account-published JWKS and status/evidence, but it may not publish JWKS itself. Jobs and validators do not read, export, or persist private keys. Recovery evidence contains only key identifiers, public validation material, and convergence proof.
 
 ### 1. JWT signing key and JWKS rotation
 
 - run restore-hardening JWT rotation with compromise-style key cutover semantics
 - remove restored keys from active trust material rather than retaining overlap from snapshot-era keysets
 - keep JWT issuance and JWT-protected admission/control-plane traffic quarantined during cutover
-- publish a fresh Account signing generation and `jwks.json`, then advance the environment issuer-wide revocation watermark and complete required session invalidation
+- request Account to publish a fresh signing generation and `jwks.json`, then advance the environment issuer-wide revocation watermark and complete required session invalidation
 - refresh or restart every validator in the authoritative, complete validator inventory and prove that each rejects every restored `kid` and accepts the replacement `kid`; missing, unknown, unreachable, or non-converged validators fail closed
 - verify Account Service health, immutable cutover evidence, and validator convergence before traffic reopen
 

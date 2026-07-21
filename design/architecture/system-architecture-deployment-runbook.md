@@ -35,6 +35,8 @@ Before the first player-facing deployment into `hobby-self-hosted`, `staging`, o
 6. Run `./dev-tools/deploy/preflight.py <environment>` and require `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-SECRETS-001`, `PREFLIGHT-SECRETS-002`, `PREFLIGHT-JWT-001`, `PREFLIGHT-JWT-002`, `PREFLIGHT-JWKS-001`, `PREFLIGHT-BRIDGE-001`, `PREFLIGHT-REDIS-001`, `PREFLIGHT-EXTERNAL-001`, and `PREFLIGHT-SERVICES-001` to pass before the first apply.
 7. Record bootstrap secret-compliance evidence for each Tier A credential class. First deployment may use immutable initial-provisioning evidence (`lastProvisionedAt`) instead of rotation evidence, but the record must still satisfy the canonical secret-compliance schema before the environment is considered promotable or traffic-open.
 
+Initial pre-apply does not require a JWT rotation drill or rotation evidence. `PREFLIGHT-JWT-ROTATION-001` and immutable rotation evidence are event-scoped gates for first-live, reopen-after-restore, and production promotion evidence, not for this bootstrap apply.
+
 Bootstrap is part of the deployment contract, not an informal prerequisite. A player-facing environment is not considered deployable until this bootstrap pass succeeds with environment-specific credentials and bindings.
 
 ## Fresh-Boundary Restore Bootstrap
@@ -78,7 +80,7 @@ This is a traffic-open gate, not a routine steady-state rollout gate.
 
 ## Player-Facing JWT Readiness Gate
 
-Before first-live, reopen-after-restore, or production promotion evidence is accepted, operators must require `PREFLIGHT-JWT-ROTATION-001=pass` and prove the [phased JWT rotation contract](./system-architecture-security.md#jwt-key--jwks-rotation-workflow):
+At first-live, reopen-after-restore, or production promotion evidence acceptance, operators must require `PREFLIGHT-JWT-ROTATION-001=pass` and prove the [phased JWT rotation contract](./system-architecture-security.md#jwt-key--jwks-rotation-workflow). This gate is intentionally separate from initial bootstrap pre-apply:
 
 1. Confirm only Account Service receives the asymmetric private signing bundle and every validator uses Account `kid`/JWKS verification with HMAC fallback disabled.
 2. Run the production rotation artifact through prepublication, validator visibility, signer promotion, old/new continuity, overlap through retiring-token expiry, pruning, and rejection proof.
@@ -101,7 +103,7 @@ The drill evidence may be reused within the configured freshness window only whi
    - Treat rollback compatibility as broader than binary compatibility alone: previous digests must remain safe to re-apply against the current database schema, secret/config contract, mounted file-path contract, and expected external bindings.
 3. **Run Preflight Policy Checks**
    - Validate the target overlay before apply and fail fast on policy violations.
-   - Evaluate policy IDs from `design/architecture/system-architecture-deploy-preflight-policy.md` (for example `PREFLIGHT-DIGEST-001`, `PREFLIGHT-SECRETS-001`, `PREFLIGHT-SECRETS-002`, `PREFLIGHT-JWT-001`, `PREFLIGHT-JWT-002`, `PREFLIGHT-JWKS-001`, `PREFLIGHT-JWT-ROTATION-001` when applicable, `PREFLIGHT-BRIDGE-001`, `PREFLIGHT-REDIS-001`, `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-EXTERNAL-001`, `PREFLIGHT-SERVICES-001`, `PREFLIGHT-PROMOTION-001`, and `PREFLIGHT-BACKUP-001` for production).
+   - Evaluate policy IDs from `design/architecture/system-architecture-deploy-preflight-policy.md` (for example `PREFLIGHT-DIGEST-001`, `PREFLIGHT-SECRETS-001`, `PREFLIGHT-SECRETS-002`, `PREFLIGHT-JWT-001`, `PREFLIGHT-JWT-002`, `PREFLIGHT-JWKS-001`, `PREFLIGHT-JWT-ROTATION-001` for first-live, reopen, or production promotion evidence, but not initial bootstrap pre-apply, `PREFLIGHT-BRIDGE-001`, `PREFLIGHT-REDIS-001`, `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-EXTERNAL-001`, `PREFLIGHT-SERVICES-001`, `PREFLIGHT-PROMOTION-001`, and `PREFLIGHT-BACKUP-001` for production).
    - Treat preflight as blocking. Do not run `kubectl apply` until all checks pass.
    - Use the canonical entrypoint: `./dev-tools/deploy/preflight.py <staging|production|hobby-self-hosted>`.
    - Store the preflight report artifact under `design/operations/deployments/<environment>/preflight/<deployment-ref>.json` with optional waiver record `.../<deployment-ref>.waiver.json` as defined in `design/architecture/system-architecture-deploy-preflight-policy.md`.

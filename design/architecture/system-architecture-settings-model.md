@@ -192,9 +192,9 @@ Later admin/operator or creator tooling should consume the generated machine-rea
 
 ## Effective Config Resolution
 
-The eventual target state is one bounded shared resolver or read model that resolves effective configuration for gameplay-facing domains consistently across consuming services.
+The target state **must** provide one bounded shared resolver or read model that resolves effective configuration for gameplay-facing domains consistently across consuming services.
 
-That later resolver or read model should:
+That resolver or read model must:
 
 - own tenant/game behavior settings
 - apply the canonical value precedence and source eligibility for every surfaced key
