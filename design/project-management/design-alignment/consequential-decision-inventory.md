@@ -107,8 +107,8 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `completed` |
 | 5 | Gameplay and player experience | 21 | 21 | `completed` |
 | 6 | Operations and delivery | 25 | 25 | `completed` |
-| 7 | Existing ADR-backed and lower-risk remainder | 8 | 17 | `in-progress` |
-| **Total** | | **170** | **183** | `in-progress` |
+| 7 | Existing ADR-backed and lower-risk remainder | 9 | 17 | `in-progress` |
+| **Total** | | **171** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -346,7 +346,7 @@ No implementation-blocking override is active. Record an override here with the 
 - [x] `SESSION-05` — `revised` on 2026-07-21; aligned with [ADR 0127](../../architecture/decisions/adr-0127-lifecycle-distinct-gameplay-close-taxonomy.md)
 - [x] `REDIS-02` — `accepted` on 2026-07-21; [ADR 0166](../../architecture/decisions/adr-0166-separated-redis-role-processes-and-owned-keyspaces.md)
 - [x] `AUTO-01` — `revised` on 2026-07-21; [ADR 0167](../../architecture/decisions/adr-0167-parent-event-and-frozen-handler-execution-identity.md)
-- [ ] `AUTO-02`
+- [x] `AUTO-02` — `accepted` on 2026-07-21; clarified in [ADR 0002](../../architecture/decisions/adr-0002-automation-handoff-reliability-and-success-semantics.md)
 - [ ] `AUTO-03`
 - [ ] `GRPC-02`
 - [ ] `CMD-01`
