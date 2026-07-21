@@ -6,7 +6,8 @@ Architecture decision records explain why consequential FireMUD product and arch
 
 - `Accepted` records explain current consequential choices and must remain aligned with canonical design.
 - `Superseded` and `Withdrawn` records are historical context only and must identify the replacing decision.
-- `Proposed` records are not current target state until explicitly accepted and reflected in canonical design.
+- `Proposed` records are not current target state until explicitly accepted and reflected in canonical design. An AI-authored ADR must use `Proposed - Pending Human Review`; an agent must not mark it `Accepted`.
+- Reversible work may continue while an AI-authored ADR awaits review only when existing canonical design already supports that work and the implementation does not depend on treating the proposal as accepted. Work that changes an accepted decision, selects between competing target states, or creates a consequential commitment waits for human review.
 - A new ADR is warranted for a cross-cutting, authority-setting, security-sensitive, expensive-to-reverse, or genuinely contested decision. Routine local implementation choices belong in code and the owning design document.
 - Changing an accepted decision requires explicit human design review, a new or superseding ADR, and updates to every affected canonical design source.
 
