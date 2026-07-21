@@ -13,6 +13,8 @@ REPORT_PATH="$TMP_DIR/preflight-report.json"
 TRAFFIC_EVIDENCE="$TMP_DIR/traffic-open.json"
 PRODUCTION_REPORT="$TMP_DIR/preflight-production.json"
 PRODUCTION_TRAFFIC_EVIDENCE="$TMP_DIR/production-traffic-open.json"
+PRODUCTION_BASELINE_RECOVERY="$TMP_DIR/production-baseline-recovery.json"
+PRODUCTION_BACKUP_READINESS="$TMP_DIR/production-backup-readiness.json"
 
 python3 - <<'PY' "$ROOT_DIR"
 import pathlib
@@ -303,16 +305,67 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
   python3 "$SCRIPT" production >/tmp/firemud-preflight-contract-production-traffic.out
 
-python3 "$WRITER" production contract-production reopen \
-  --assessed-by preflight-contract \
-  --preflight-report "$PRODUCTION_REPORT" \
-  --backup-last-success-at "$(date -u -Is)" \
-  --backup-verify-last-success-at "$(date -u -Is)" \
-  --restore-drill-last-success-at "$(date -u -Is)" \
-  --tenant-id tenant-1 \
-  --region-id region-1 \
-  --evidence-ref contract-test \
-  --output "$PRODUCTION_TRAFFIC_EVIDENCE" >/tmp/firemud-preflight-write-traffic-production.out
+python3 - <<'PY' "$PRODUCTION_REPORT" "$PRODUCTION_TRAFFIC_EVIDENCE" "$PRODUCTION_BASELINE_RECOVERY" "$PRODUCTION_BACKUP_READINESS"
+import json
+import pathlib
+import sys
+
+preflight_path, traffic_path, baseline_path, readiness_path = map(pathlib.Path, sys.argv[1:])
+recovery = {
+    "schemaVersion": "recovery-record/v1",
+    "environment": "production",
+    "recoveryRef": "contract-baseline-recovery",
+    "recoveryStatus": "finalized",
+    "recoveryPurpose": "production-equivalent-drill",
+    "sourceEnvironmentBinding": "production-source",
+    "targetBoundary": "production-equivalent-boundary",
+    "trafficExposure": "isolated-drill",
+    "coordinationRecoveryMode": "cold_start_restore",
+    "backupArtifactRef": "s3://firemud-production/backups/contract",
+    "backupArtifactLineage": {"coverage": "environment-wide-postgresql"},
+    "coordinationRecoveryEvidence": {"status": "pass"},
+    "durableParticipantConvergence": {"status": "pass"},
+    "externalEffectReconciliation": {"status": "pass"},
+    "sessionRecovery": {
+        "gameSessionHandling": "invalidated",
+        "authSessionHandling": "invalidated",
+    },
+}
+baseline_path.write_text(json.dumps(recovery), encoding="utf-8")
+readiness_path.write_text(
+    json.dumps(
+        {
+            "environment": "production",
+            "backupCoverage": "environment-wide-postgresql",
+            "backupArtifactRef": recovery["backupArtifactRef"],
+            "restoreRecoveryRecordRef": str(baseline_path),
+        }
+    ),
+    encoding="utf-8",
+)
+traffic_path.write_text(
+    json.dumps(
+        {
+            "schemaVersion": "traffic-open-record/v1",
+            "environment": "production",
+            "eventType": "reopen",
+            "deploymentRef": "contract-production",
+            "assessedAt": "2026-01-01T00:00:00Z",
+            "assessedBy": "preflight-contract",
+            "preflightReportPath": str(preflight_path),
+            "backupStorageBinding": "secret://firemud/production-backup-object-store",
+            "backupCoverage": "environment-wide-postgresql",
+            "backupArtifactRef": recovery["backupArtifactRef"],
+            "backupReadinessRef": str(readiness_path),
+            "baselineRecoveryRecordRef": str(baseline_path),
+            "sourceEnvironmentBinding": recovery["sourceEnvironmentBinding"],
+            "drillTargetBoundary": recovery["targetBoundary"],
+            "evidenceRefs": ["contract-test"],
+        }
+    ),
+    encoding="utf-8",
+)
+PY
 
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF="contract-production" \
@@ -334,6 +387,35 @@ backup_002 = [
 ]
 if len(backup_002) != 1 or backup_002[0]["status"] != "pass":
     raise SystemExit(f"PREFLIGHT-BACKUP-002 did not pass: {backup_002}")
+PY
+
+python3 - <<'PY' "$ROOT_DIR" "$PRODUCTION_TRAFFIC_EVIDENCE"
+import importlib.util
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+traffic_path = pathlib.Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location("preflight_production_contract", root / "dev-tools/deploy/preflight.py")
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+traffic = json.loads(traffic_path.read_text(encoding="utf-8"))
+traffic.pop("baselineRecoveryRecordRef")
+traffic["coordinatedBackupScope"] = {"type": "tenant_region", "tenantId": "tenant-1", "regionId": "region-1"}
+traffic["restoreDrillLastSuccessAt"] = "2026-01-01T00:00:00Z"
+legacy_path = traffic_path.with_name("legacy-production-traffic-open.json")
+legacy_path.write_text(json.dumps(traffic), encoding="utf-8")
+status, message = module.production_traffic_check(
+    legacy_path,
+    "reopen",
+    "contract-production",
+    root,
+)
+if status == "pass":
+    raise SystemExit("obsolete tenant/region traffic-open evidence unexpectedly passed")
 PY
 
 for env in staging production; do

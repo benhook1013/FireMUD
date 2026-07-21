@@ -449,7 +449,11 @@ message GameplayCommandStatus {
   int64 completed_at_ms = 14;
   int64 last_attempt_at_ms = 15;
   int32 attempt_count = 16;
+  // Canonical structured terminal-reason code. For rollback purge this is
+  // ROLLBACK_PURGED and must be returned with failure_message.
   string failure_code = 17;
+  // Canonical structured terminal-reason message. Required with failure_code
+  // when a terminal reason applies, including rollback purge.
   string failure_message = 18;
   string source_type = 19;
   string automation_dispatch_id = 20;
@@ -1285,6 +1289,8 @@ message PurgeQueuedTickCommandsForScriptPatchRequest {
   string script_patch_version = 4;
   string control_plane_request_id = 5;
   string actor_principal = 6;
+  // Required non-blank operator reason. It is persisted and returned as the
+  // terminal failure_message with failure_code ROLLBACK_PURGED.
   string reason = 7;
 }
 
@@ -1301,6 +1307,8 @@ message PurgeQueuedTickCommandsForPluginVersionRequest {
   string plugin_version_id = 5;
   string control_plane_request_id = 6;
   string actor_principal = 7;
+  // Required non-blank operator reason. It is persisted and returned as the
+  // terminal failure_message with failure_code ROLLBACK_PURGED.
   string reason = 8;
 }
 

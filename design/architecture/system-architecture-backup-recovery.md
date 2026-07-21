@@ -70,6 +70,9 @@ Canonical backup/recovery severity matrix:
 | `backup_pipeline_recent_backup_slo_breached` | `P1` | Fresh backup signal missing for required environment class |
 | `backup_pipeline_recent_verification_slo_breached` | `P1` by default (`P2` only where environment policy explicitly downgrades) | Verification freshness degraded |
 | `backup_pipeline_recent_restore_drill_slo_breached` | `P1` | Restore-proof freshness degraded for reopen/promotion decisions |
+| `backup_artifact_lineage_invalid` | `P1` | Backup artifact lineage cannot prove the expected environment, database, schema, service, tool, or object-storage binding |
+| `backup_artifact_restore_unreadable` | `P1` | Backup artifact failed restore-readability validation |
+| `recovery_participant_convergence_blocked` | `P1` | A recovery participant lacks a safe disposition and recovery must remain quarantined |
 
 Pause-budget alerts remain valid for maintenance/reset workflows but are not routine backup signals.
 
@@ -183,7 +186,7 @@ Docker Compose restore is not a reduced recovery mode. It must enter restore-saf
 ## Backup Verification & Restoration Testing
 
 - `verify-backups.sh` proves backup artifacts exist, are readable, and remain compatible with supported recovery tooling.
-- Restore drills prove the artifacts, restore tooling, restore-mode selection, and post-restore hardening flow actually produce a recoverable environment.
+- Restore drills prove the artifact, restore tooling, canonical environment-wide `cold_start_restore` mode, and post-restore hardening flow actually produce a recoverable environment.
 - Every successful restore drill must record:
   - environment-wide `cold_start_restore` and empty-Redis proof
   - restore-tool success

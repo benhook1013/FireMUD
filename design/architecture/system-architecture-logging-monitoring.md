@@ -364,13 +364,14 @@ When Alertmanager is unavailable but Prometheus is still accessible, Logging & A
   - Recording rule mirroring `ChatDeliveryLatencyP99High`, based on `chat_delivery_latency_ms_bucket` with approved scope and channel dimensions preserved.
 - **Backup health**
   - Recording rules mirroring missed backup, missed verification, stale restore proof, invalid artifact lineage, unreadable artifacts, and blocked recovery-participant convergence.
-  - Canonical fallback recordings should expose at least:
+  - The complete canonical backup fallback contract is:
     - `backup_pipeline_recent_backup_slo_breached`
     - `backup_pipeline_recent_verification_slo_breached`
     - `backup_pipeline_recent_restore_drill_slo_breached`
     - `backup_artifact_lineage_invalid`
     - `backup_artifact_restore_unreadable`
     - `recovery_participant_convergence_blocked`
+  - Maintenance tick-pause metrics are not backup fallback signals and must not be used as substitutes for these recordings.
 - **Tick state and recovery progress**
   - Recording rules or gauges projecting `current_tick_state{scope,state}` and `current_tick_terminal_at_ms{scope}` from the Redis meta record so operators can see whether a region is `STAGED`, `RESOLVING`, `APPLIED`, or `ABANDONED` without inferring state from queue depth alone.
 - **Maintenance mode visibility**

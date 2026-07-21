@@ -4,7 +4,7 @@ This document explains how distributed traces are collected and visualized acros
 
 ## Implementation Notes
 
-The current implementation exports generic gRPC server spans through the shared `TracingInterceptor` and tags application-level gRPC errors on the active span. The repository does not yet prove cross-service context propagation, named workflow spans, configurable service sampling, or collector tail sampling. The named gameplay, tick, TCP Proxy, and backup spans below are target vocabulary, not universally shipped behavior.
+The current implementation exports generic gRPC server spans through the shared `TracingInterceptor` and tags application-level gRPC errors on the active span. The repository does not yet prove cross-service context propagation, named workflow spans, configurable service sampling, or collector tail sampling. The named gameplay, tick, TCP Proxy, and backup spans below are target vocabulary, not universally shipped behavior. The manual shared SDK configuration does not yet consume `OTEL_TRACES_SAMPLER` or `OTEL_TRACES_SAMPLER_ARG`, so their presence alone does not establish service-scoped incident-sampling capability.
 
 Operational tracing claims are capability-gated:
 
@@ -118,7 +118,6 @@ FireMUD defines two target escalation levels for incident-mode sampling. An oper
      - Verify: in Jaeger, `service.name="<service>"` should show a visibly higher trace volume within a few minutes.
      - Revert: restore the baseline ratio after the incident.
    - Limits: this cannot scope sampling to a specific `tenantId` or `regionId`; it increases volume for the service overall.
-   - Current implementation note: the manual shared SDK configuration does not yet consume these variables, so their presence alone does not establish this capability.
 
 2. **Tenant/region-scoped sampling (precise, requires collector support)**
    - Mechanism: configure the OpenTelemetry Collector to apply tail-sampling policies based on span attributes such as `tenantId` and `regionId` (as defined in this document’s span catalog).

@@ -1092,6 +1092,8 @@ def production_traffic_check(
         data = load_json(path)
     except Exception as exc:
         return ("fail", f"Production traffic-open evidence unreadable: {exc}")
+    if not isinstance(data, dict):
+        return ("fail", "Production traffic-open evidence must be a JSON object")
     if data.get("schemaVersion") != "traffic-open-record/v1":
         return ("fail", "Production traffic-open evidence schemaVersion mismatch")
     if data.get("environment") != "production":
@@ -1107,9 +1109,29 @@ def production_traffic_check(
     evidence_refs = data.get("evidenceRefs")
     if not isinstance(evidence_refs, list) or not evidence_refs:
         return ("fail", "Production traffic-open evidence missing evidenceRefs")
-    for key in ("backupLastSuccessAt", "backupVerifyLastSuccessAt", "restoreDrillLastSuccessAt"):
+    required_fields = (
+        "backupStorageBinding",
+        "backupCoverage",
+        "backupArtifactRef",
+        "backupReadinessRef",
+        "baselineRecoveryRecordRef",
+        "sourceEnvironmentBinding",
+        "drillTargetBoundary",
+    )
+    for key in required_fields:
         if not data.get(key):
             return ("fail", f"Production traffic-open evidence missing {key}")
+    if data.get("backupCoverage") != "environment-wide-postgresql":
+        return ("fail", "Production traffic-open evidence backupCoverage must be environment-wide-postgresql")
+    try:
+        expected_bindings = load_yaml(
+            root_dir / "design" / "operations" / "environments" / "production" / "expected-bindings.yaml"
+        ) or {}
+    except Exception as exc:
+        return ("fail", f"Production expected-bindings unreadable: {exc}")
+    expected_backup_binding = get(expected_bindings, "backupStorage.bindingRef")
+    if data.get("backupStorageBinding") != expected_backup_binding:
+        return ("fail", "Production traffic-open evidence backupStorageBinding mismatch")
     preflight_status, preflight_message = load_preflight_report(
         str(data.get("preflightReportPath", "")),
         "production",
@@ -1119,19 +1141,74 @@ def production_traffic_check(
     )
     if preflight_status != "pass":
         return ("fail", preflight_message)
-    scope = data.get("coordinatedBackupScope", {})
-    if scope.get("type") != "tenant_region":
-        return ("fail", "Production traffic-open evidence must use canonical tenant_id + region_id coordinated-backup scope")
-    if not scope.get("tenantId") or not scope.get("regionId"):
-        return ("fail", "Production traffic-open evidence coordinatedBackupScope missing tenantId or regionId")
+
+    def load_recovery_record(path_ref: Any, label: str) -> tuple[str, str, dict[str, Any] | None]:
+        if not isinstance(path_ref, str) or not path_ref:
+            return ("fail", f"Production traffic-open evidence missing {label}", None)
+        recovery_path = resolve_repo_path(root_dir, path_ref)
+        if not recovery_path.exists():
+            return ("fail", f"Production {label} not found: {path_ref}", None)
+        try:
+            recovery = load_json(recovery_path)
+        except Exception as exc:
+            return ("fail", f"Production {label} unreadable: {exc}", None)
+        if not isinstance(recovery, dict):
+            return ("fail", f"Production {label} must be a JSON object", None)
+        required_recovery_fields = (
+            "coordinationRecoveryEvidence",
+            "durableParticipantConvergence",
+            "externalEffectReconciliation",
+            "sessionRecovery",
+        )
+        for key in required_recovery_fields:
+            if not recovery.get(key):
+                return ("fail", f"Production {label} missing {key}", None)
+        if recovery.get("schemaVersion") != "recovery-record/v1":
+            return ("fail", f"Production {label} schemaVersion mismatch", None)
+        if recovery.get("environment") != "production":
+            return ("fail", f"Production {label} must target production", None)
+        if recovery.get("recoveryStatus") != "finalized":
+            return ("fail", f"Production {label} recoveryStatus must be finalized", None)
+        if recovery.get("recoveryPurpose") != "production-equivalent-drill":
+            return ("fail", f"Production {label} recoveryPurpose must be production-equivalent-drill", None)
+        if recovery.get("trafficExposure") != "isolated-drill":
+            return ("fail", f"Production {label} trafficExposure must be isolated-drill", None)
+        if recovery.get("coordinationRecoveryMode") != "cold_start_restore":
+            return ("fail", f"Production {label} must prove coordinationRecoveryMode=cold_start_restore", None)
+        if recovery.get("backupArtifactRef") != data.get("backupArtifactRef"):
+            return ("fail", f"Production {label} backupArtifactRef mismatch", None)
+        if recovery.get("sourceEnvironmentBinding") != data.get("sourceEnvironmentBinding"):
+            return ("fail", f"Production {label} sourceEnvironmentBinding mismatch", None)
+        if recovery.get("targetBoundary") != data.get("drillTargetBoundary"):
+            return ("fail", f"Production {label} targetBoundary mismatch", None)
+        return ("pass", "", recovery)
+
+    backup_readiness_path = resolve_repo_path(root_dir, str(data["backupReadinessRef"]))
+    if not backup_readiness_path.exists():
+        return ("fail", f"Production backup-readiness evidence not found: {data['backupReadinessRef']}")
     try:
-        drill = dt.datetime.fromisoformat(str(data["restoreDrillLastSuccessAt"]).replace("Z", "+00:00"))
+        backup_readiness = load_json(backup_readiness_path)
     except Exception as exc:
-        return ("fail", f"Production restore drill timestamp unreadable: {exc}")
-    now = dt.datetime.now(dt.timezone.utc)
-    if (now - drill).total_seconds() > 30 * 24 * 60 * 60:
-        return ("fail", "Production restore drill evidence is older than 30 days")
-    return ("pass", "Production traffic-open backup evidence is valid")
+        return ("fail", f"Production backup-readiness evidence unreadable: {exc}")
+    if not isinstance(backup_readiness, dict):
+        return ("fail", "Production backup-readiness evidence must be a JSON object")
+    if backup_readiness.get("environment") != "production":
+        return ("fail", "Production backup-readiness evidence must target production")
+    if backup_readiness.get("backupCoverage") != data.get("backupCoverage"):
+        return ("fail", "Production backup-readiness evidence backupCoverage mismatch")
+    if backup_readiness.get("backupArtifactRef") != data.get("backupArtifactRef"):
+        return ("fail", "Production backup-readiness evidence backupArtifactRef mismatch")
+    readiness_status, readiness_message, _ = load_recovery_record(
+        backup_readiness.get("restoreRecoveryRecordRef"), "backup-readiness restore recovery record"
+    )
+    if readiness_status != "pass":
+        return ("fail", readiness_message)
+    baseline_status, baseline_message, _ = load_recovery_record(
+        data.get("baselineRecoveryRecordRef"), "baseline recovery record"
+    )
+    if baseline_status != "pass":
+        return ("fail", baseline_message)
+    return ("pass", "Production traffic-open environment-wide cold-start recovery evidence is valid")
 
 
 def hobby_traffic_check(compliance_path: Path, traffic_path: Path, event: str, deployment_ref: str, root_dir: Path) -> tuple[str, str]:

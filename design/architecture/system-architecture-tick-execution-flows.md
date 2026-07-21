@@ -118,10 +118,11 @@ Command outcome convergence must be externally observable through one canonical 
   - `ingressStatus`
   - `executionOutcome` (nullable until terminal)
   - `gameplayResult` (nullable until terminal command result is known)
+  - `failureCode` and `failureMessage` when a terminal reason is required; for purge terminalization these two existing fields are the canonical structured `{code, message}` reason
   - `tickBatchId` (nullable until `BOUND_TO_BATCH`)
   - `regionId`, `regionEpoch`, `tickId` (nullable until bound)
   - `updatedAt`
-- Existing values such as `STAGED`, `DRAINED`, and `RETRY_QUEUED` are lifecycle progress and must map into the canonical ingress model. Values such as `PURGED` become a terminal outcome plus a structured reason rather than a competing terminal vocabulary.
+- Existing values such as `STAGED`, `DRAINED`, and `RETRY_QUEUED` are lifecycle progress and must map into the canonical ingress model. Values such as `PURGED` become a terminal outcome plus a structured reason rather than a competing terminal vocabulary. The canonical existing reason representation is the required pair `{failureCode, failureMessage}` returned by `GetGameplayCommandStatus` and persisted in the authoritative durable projection.
 - Rich routing, automation, script, plugin, remote-leg, and diagnostic metadata may extend this response without replacing or conflating the canonical lifecycle fields.
 - Terminal outcome semantics:
   - `executionOutcome = APPLIED` – command effects reached a terminal execution state and at least one batch-bound effect converged successfully enough that the command is no longer replay-pending.
@@ -164,13 +165,16 @@ This table is the canonical shared reference for command terminal mappings used 
 status APIs, replay/reset handling, and operator runbooks. Other architecture and
 operations docs should link here instead of restating partial mappings in prose.
 
-| Scenario | executionOutcome | gameplayResult |
-| --- | --- | --- |
-| Pure local success | `APPLIED` | `SUCCESS` |
-| Batch-bound local or same-region failure | `ABANDONED` | `FAILED` |
-| Cross-region partial success | `APPLIED` | `PARTIAL` |
-| Cross-region timeout before any successful remote leg | `ABANDONED` | `TIMEOUT` |
-| Lost before staging during reset/tail-loss reconcile | `LOST_BEFORE_STAGING` | `NOT_APPLIED` |
+| Scenario | executionOutcome | gameplayResult | terminalReason |
+| --- | --- | --- | --- |
+| Pure local success | `APPLIED` | `SUCCESS` | none |
+| Batch-bound local or same-region failure | `ABANDONED` | `FAILED` | failure code/message when applicable |
+| Cross-region partial success | `APPLIED` | `PARTIAL` | failure code/message for the failed leg when applicable |
+| Cross-region timeout before any successful remote leg | `ABANDONED` | `TIMEOUT` | failure code/message for the timeout |
+| Lost before staging during reset/tail-loss reconcile | `LOST_BEFORE_STAGING` | `NOT_APPLIED` | failure code/message for the reconcile cause |
+| Operator rollback purge of queued work | `ABANDONED` | `NOT_APPLIED` | `failureCode=ROLLBACK_PURGED`, required `failureMessage` from ingress `reason` |
+
+For operator rollback purge, the ingress request `reason` is required and non-blank. The durable command projection and `GetGameplayCommandStatus` response must retain and return the same structured terminal reason as `failureCode=ROLLBACK_PURGED` and `failureMessage=<the required ingress reason>`. `PURGED` is the operator action/legacy label, not a competing `executionOutcome` value; already-drained or applied work is outside this terminalization path.
 
 #### Ingress Deduplication Store (Required)
 
@@ -185,6 +189,7 @@ To make the re-submission contract enforceable across failover and scoped coordi
   - canonical durable status fields for the command outcome surface:
     - `execution_outcome` (nullable until terminal execution outcome)
     - `gameplay_result` (nullable until terminal gameplay result)
+    - `failure_code` and `failure_message` (required together for a terminal reason, including `ROLLBACK_PURGED`)
 - Required behavior:
   - Re-send with same `(tenantId, gameInstanceId, commandId)` returns the prior acknowledgement and must not enqueue a second logical command.
   - Region/tenant/cluster coordination resets do not delete this dedupe record; they only affect volatile queue state.
@@ -198,15 +203,15 @@ Storage rule:
   - a command-ingress table plus a derived command-outcome projection/table.
 - Canonical persisted shape:
   - Exactly one durable status record keyed by `(tenantId, gameInstanceId, commandId)` must be readable as the authoritative command outcome surface, whether it is physically stored as one row or as a joined ingress/outcome projection.
-  - That durable surface must expose at least: `ackLevel`, `ingressStatus`, `tickBatchId`, bound tick coordinates when present (`regionId`, `regionEpoch`, `tickId`), `executionOutcome`, `gameplayResult`, and `updatedAt`.
-  - Physical storage may use snake_case column names such as `execution_outcome` / `gameplay_result`, but the logical contract above is canonical and must be documented that way in service APIs and schema docs.
+  - That durable surface must expose at least: `ackLevel`, `ingressStatus`, `tickBatchId`, bound tick coordinates when present (`regionId`, `regionEpoch`, `tickId`), `executionOutcome`, `gameplayResult`, `updatedAt`, and the structured terminal-reason pair `failureCode`/`failureMessage` when terminal reason applies.
+  - Physical storage may use snake_case column names such as `execution_outcome`, `gameplay_result`, `failure_code`, and `failure_message`, but the logical contract above is canonical and must be documented that way in service APIs and schema docs.
   - If ingress metadata and outcome fields are split physically, the projection still behaves as one canonical record for `GetGameplayCommandStatus`; callers must not reconstruct status from Redis or by replaying effect history ad hoc.
 - Worked schema examples:
   - Single-row ingress table shape:
-    - `command_ingress(tenant_id, game_instance_id, command_id, ack_level, ingress_status, tick_batch_id, region_id, region_epoch, tick_id, execution_outcome, gameplay_result, updated_at, ...)`
+    - `command_ingress(tenant_id, game_instance_id, command_id, ack_level, ingress_status, tick_batch_id, region_id, region_epoch, tick_id, execution_outcome, gameplay_result, failure_code, failure_message, updated_at, ...)`
   - Split ingress plus outcome projection:
     - `command_ingress(tenant_id, game_instance_id, command_id, ack_level, ingress_status, tick_batch_id, region_id, region_epoch, tick_id, ...)`
-    - `command_outcome_projection(tenant_id, game_instance_id, command_id, execution_outcome, gameplay_result, updated_at, ...)`
+    - `command_outcome_projection(tenant_id, game_instance_id, command_id, execution_outcome, gameplay_result, failure_code, failure_message, updated_at, ... )`
   - In both shapes, `GetGameplayCommandStatus` reads one authoritative durable record keyed by `(tenantId, gameInstanceId, commandId)`; Redis is not part of the lookup path.
 - Regardless of physical schema, `GetGameplayCommandStatus` must be able to return `executionOutcome` and `gameplayResult` from durable storage without re-walking Redis coordination state.
 

@@ -37,6 +37,7 @@ Alerting policy:
 
 - missed backups are `P1`
 - missed verification is `P1` or `P2` depending on environment class
+- invalid artifact lineage, unreadable artifacts, and blocked recovery-participant convergence are `P1` while recovery remains quarantined
 - an attempted reopen with incomplete cold-start convergence is `P0`
 - stale restore-drill proof is `P1`
 
@@ -276,10 +277,10 @@ Nested control-group requirements:
 - `restoreSafeMode` includes evidence that player ingress was disabled, normal background processors and outbound integrations were stopped or restore-safe-fenced, Game Session tick execution and command intake could not create fresh coordination state before the coordination recovery gate, and only approved maintenance Jobs ran before quarantine release
 - `jwtHardening` includes rotation job reference, resulting key IDs, revocation watermark evidence, and validator-convergence evidence
 - `validatorInventoryRef` points to an authoritative, complete, reachable inventory. Every validator must have a safe converged result and must receive public JWKS only; missing, unknown, unreachable, or private-key-access results fail recovery
-- Post-restore JWT rotation preserves Account Service custody of non-exportable private signing material. Rotation Jobs may request or publish a new Account generation and public JWKS, but they do not read or export private keys; recovery evidence must never contain private signer material
+- Post-restore JWT rotation preserves Account Service custody of non-exportable private signing material and JWKS publication authority. Rotation Jobs may request an Account-owned generation transition and observe its published public JWKS, but they do not write `jwt-jwks`, read or export private keys, or mutate Account signing state; recovery evidence must never contain private signer material
 - `databaseCredentialRotation` includes rotation job reference, affected Secret refs, and rollout-restart completion evidence
 - `certificateReissuance` includes workload, bridge, and operator leaf identity evidence plus peer-convergence evidence
-- `externalCredentialValidation` includes one result per credential class with `validationMethod`, `validatedAt`, `validatedBy`, `observedValue`, isolation assertion, and immutable evidence ref
+- `externalCredentialValidation` includes one result per credential class with `validationMethod`, `validatedAt`, `validatedBy`, `observedValue`, isolation assertion, and immutable evidence ref. `observedValue` is explicitly non-secret and is limited to a resource ID, certificate/key fingerprint, or redacted presence indicator; it must never contain a password, token, private key, raw secret material, or an unredacted credential-bearing connection string
 - `secretComplianceRefresh` references the refreshed `design/operations/secret-compliance/<environment>.yaml` record, the immutable evidence payload updated by restore hardening, the credential classes refreshed, and whether each class used `lastProvisionedAt` or `lastRotationAt`
 - `backupArtifactLineage` binds the environment-wide PostgreSQL artifact to its database identity, snapshot time, schema/migration lineage, service digests, and object-storage identity
 - `coordinationRecoveryEvidence` proves `cold_start_restore`, an empty Coordination Redis keyspace before rebuild, and environment-wide gameplay-region epoch/fence advancement or recreation
@@ -300,6 +301,8 @@ Validation rules:
 
 Operator credential evidence representation:
 
+- `observedValue` may contain only a platform/resource identifier, certificate/key fingerprint, or redacted presence indicator such as `present` or `redacted`
+- never store passwords, tokens, private keys, raw secret material, or unredacted credential-bearing connection strings in `observedValue` or its supporting evidence
 - when the expected binding is a platform resource identifier, store that identifier in `observedValue`
 - when the expected binding is a certificate or key fingerprint, store that fingerprint in `observedValue`
 - do not store competing canonical representations in one result unless one is clearly marked as supporting detail

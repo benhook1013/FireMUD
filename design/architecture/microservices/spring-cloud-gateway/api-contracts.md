@@ -49,7 +49,14 @@ curl http://localhost:8080/ping
 ```
 
 ```bash
-curl -X POST http://localhost:8080/routes \
+# Trusted dev/test admin tooling only. The operator client certificate is authorized
+# at the gateway boundary, and NetworkPolicy must allow this pod/namespace to reach
+# the internal management Service; this endpoint is never public ingress.
+curl --fail-with-body \
+  --cacert "$FIREMUD_GRPC_CA_CERT_PATH" \
+  --cert "$FIREMUD_GRPC_CERT_CHAIN_PATH" \
+  --key "$FIREMUD_GRPC_PRIVATE_KEY_PATH" \
+  -X POST https://spring-cloud-gateway-management:8080/routes \
   -H 'Content-Type: application/json' \
   -d '{"routeId":"demo","uri":"http://example.com","predicates":[],"filters":[]}'
 ```
