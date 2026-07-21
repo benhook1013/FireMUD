@@ -14,6 +14,18 @@ Typed, data-defined command execution effects are now live for the first release
 
 Player commands are transport-independent. Telnet, generic WebSocket, first-party web, and future smart clients normalize player intent onto the same command model before execution.
 
+Game Session is the one semantic admission boundary. A text adapter tokenizes the line protocol and a future structured adapter may submit an already typed command intention, but neither bypasses the pinned registry, stage, capability, history, idempotency, and durable-admission rules. Structured clients do not need to stringify typed input merely to make Game Session parse it again.
+
+Normalization identifies the declared command and validates its transport-independent input shape; it does not move domain facts into Game Session. Game Logic and the owning domain services still resolve authoritative targets, inventory, location, permissions, effects, and mutation preconditions from the normalized intention.
+
+Registry resolution distinguishes three states:
+
+- no gameplay artifact applies yet, so the stage's verified platform/menu declarations are authoritative;
+- the admitted release supplies a verified artifact, including an intentionally empty authored set;
+- an admitted artifact is required but missing, corrupt, mismatched, colliding, or unsupported, which fails closed with a bounded player-visible error.
+
+The third state must never silently fall back to process-local built-ins. Verified registries may be cached under their immutable release identity; correctness must not depend on a database read for every command. A downstream service does not retain a second production raw-text parser or reinterpret the command against another registry.
+
 Every command definition carries:
 
 - a canonical command id and accepted aliases;
