@@ -28,13 +28,15 @@ The hardening automation should use least-privilege service accounts:
 - DB rotation automation may read/update only the PostgreSQL credential Secrets and optionally restart the Deployments or StatefulSets that consume them.
 - Certificate reissuance automation may read/update only the specific certificate resources or Secrets required for workload, bridge, and operator leaf identities.
 
+JWT post-restore rotation preserves Account Service custody of the non-exportable private signer. The hardening Job may request Account to create or promote a signing generation and may publish the public JWKS, but Jobs and validators do not read, export, or persist private keys. Recovery evidence contains only key identifiers, public validation material, and convergence proof.
+
 ### 1. JWT signing key and JWKS rotation
 
 - run restore-hardening JWT rotation with compromise-style key cutover semantics
 - remove restored keys from active trust material rather than retaining overlap from snapshot-era keysets
 - keep JWT issuance and JWT-protected admission/control-plane traffic quarantined during cutover
 - publish a fresh Account signing generation and `jwks.json`, then advance the environment issuer-wide revocation watermark and complete required session invalidation
-- refresh or restart every declared validator and prove that each rejects every restored `kid` and accepts the replacement `kid`
+- refresh or restart every validator in the authoritative, complete validator inventory and prove that each rejects every restored `kid` and accepts the replacement `kid`; missing, unknown, unreachable, or non-converged validators fail closed
 - verify Account Service health, immutable cutover evidence, and validator convergence before traffic reopen
 
 ### 2. Database credential rotation
@@ -125,7 +127,7 @@ After PostgreSQL is restored, but before normal application startup and before q
 - verify the entire Coordination Redis keyspace for the restored environment boundary is empty before rebuild; Cache Redis is a separate non-authoritative role and is not evidence for this check
 - invalidate all gameplay and Account sessions from the restored timeline
 - advance or recreate every gameplay-region epoch and fence before normal work can resume
-- rebuild coordination state only from restored durable authority after every declared and enabled recovery participant and external-effect workflow has recorded a safe disposition such as converged, terminalized, invalidated, or durably fenced/disabled with its backlog retained
+- rebuild coordination state only from restored durable authority after authoritative, complete, reachable participant and external-effect inventories have recorded a safe disposition for every declared and enabled entry, such as converged, terminalized, invalidated, or durably fenced/disabled with its backlog retained. Missing, unknown, unreachable, or unsafe entries keep quarantine closed.
 - record the backup artifact, restore/recovery tool digests, recovery-contract fingerprint, participant inventory, convergence results, and controlled-reopen evidence
 
 ### `scoped_reset_restore`
@@ -141,7 +143,7 @@ Runbooks should treat `post-restore-secret-hardening` as a mandatory step in any
 1. Enter restore-safe quarantine by disabling external traffic paths to Gateway and TCP Proxy and by stopping or restore-safe-fencing background processors, outbound integrations, automation workers, and Game Session tick executors.
 2. Restore PostgreSQL and Kubernetes manifests with normal application workloads held at zero replicas or behind a restore-safe startup gate.
 3. Prove empty Coordination Redis, environment-wide gameplay and Account session invalidation, and every gameplay-region epoch/fence reset before any normal Game Session or automation startup can create fresh coordination state.
-4. Run the complete enabled offline durable-participant and external-effect reconciliation inventory; unknown, missing, or unsafe outcomes keep quarantine closed, while a participant with a proved durable fenced/disabled disposition may retain backlog for later operator action.
+4. Resolve authoritative, complete, reachable validator, durable-participant, and external-effect inventories and run the complete enabled reconciliation set; unknown, missing, unreachable, or unsafe outcomes keep quarantine closed, while a participant with a proved durable fenced/disabled disposition may retain backlog for later operator action.
 5. Run `post-restore-secret-hardening` in the target namespace and wait for success.
 6. Confirm workload, bridge, and operator leaf certificates have been reissued and peers converged.
 7. Run `dev-tools/restores/validate-external-credentials.sh <hobby-self-hosted|staging|production>` with environment-specific expected values.

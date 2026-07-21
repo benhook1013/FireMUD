@@ -4,7 +4,7 @@ This document defines the machine-checkable evidence, metrics, and compliance re
 
 ## Implementation Notes
 
-Current backup checks prove artifact existence and selected evidence shape, not the accepted environment-wide cold-start recovery boundary. The scheduled dump does not yet emit complete environment/schema/service/tool lineage, preflight does not dereference and validate the required recovery-controller state and participant results, and no durable controller plus post-finalization evidence export proves backup-under-write through controlled reopen. Player-facing restore readiness remains blocked.
+Backup readiness is an evidence chain, not an artifact-shaped timestamp record. The scheduled dump, restore controller, and preflight must retain complete environment/schema/service/tool lineage and dereference the backup-readiness, baseline, and actual-recovery records independently. Player-facing readiness remains blocked until backup-under-write, inventory convergence, hardening, smoke, and controlled-reopen proof is available.
 
 ## Backup Observability and Alerts
 
@@ -88,6 +88,7 @@ Validation rules:
 
 - evidence must match the promoted attestation
 - `restoreRecoveryRecordRef` must point to a finalized exported projection of a `production-equivalent-drill` controller state with `trafficExposure=isolated-drill` that completed quarantine, post-restore hardening, external credential validation, smoke verification, and the isolated controlled-reopen transition
+- `backupReadinessRef` is a backup-readiness artifact, not a recovery record. Preflight must dereference it and separately dereference and validate its `restoreRecoveryRecordRef`; that restore record does not replace validation of `baselineRecoveryRecordRef`
 - the recovery record must prove `cold_start_restore`, empty Coordination Redis, environment-wide session and epoch/fence invalidation, safe durable-participant and external-effect dispositions, and controlled reopen
 - `backupCoverage` must be `environment-wide-postgresql`; a tenant/region pair cannot stand in for the whole database
 - `backupToolDigest` must match the tool that produced the source artifact and its source lineage; `recoveryToolDigest` and the recovery-contract fingerprint must match the candidate proved by the drill
@@ -152,8 +153,9 @@ Required fields:
 
 Validation rules:
 
-- backup and verification evidence must bind to the production source lineage; `backupReadinessRef` and `baselineRecoveryRecordRef` must identify a finalized isolated drill and prove compatibility with the production boundary being opened
-- a `reopen` event submitted to preflight must also dereference the durable controller named by `actualRecoveryRecordRef`, require its state to be `ready_to_reopen` with `recoveryPurpose=actual-recovery` and `trafficExposure=player-facing-reopen`, and match the exact target boundary being reopened
+- backup and verification evidence must bind to the production source lineage; preflight must dereference `backupReadinessRef`, validate the backup-readiness artifact's own `restoreRecoveryRecordRef`, and independently dereference `baselineRecoveryRecordRef`. Both referenced records must be finalized isolated drills compatible with the boundary being opened
+- an isolated production-equivalent drill may run in a production-equivalent boundary using current production database lineage and compatible recovery contracts/tooling; its controlled reopen authorizes only that isolated boundary
+- a `reopen` event submitted to preflight must also dereference the durable controller named by `actualRecoveryRecordRef`, require its state to be `ready_to_reopen` with `recoveryPurpose=actual-recovery` and `trafficExposure=player-facing-reopen`, and use that record as the exact boundary proof for reopen
 - `restoreDrillLastSuccessAt` must be within 30 days
 - `backupCoverage` must be `environment-wide-postgresql`
 - the referenced recovery record must prove the exact environment-wide cold-start contract and controlled reopen path
@@ -241,6 +243,8 @@ Required top-level fields:
 - `recoveryToolDigest`
 - `recoveryContractFingerprint`
 - `recoveryParticipantInventoryRef`
+- `validatorInventoryRef`
+- `externalEffectInventoryRef`
 - `quarantineStartedAt`
 - `readyToReopenAt` when the controller reached `ready_to_reopen`
 - `quarantineReleasedAt` when the controller observed the release
@@ -267,14 +271,15 @@ Nested control-group requirements:
 
 - `restoreSafeMode` includes evidence that player ingress was disabled, normal background processors and outbound integrations were stopped or restore-safe-fenced, Game Session tick execution and command intake could not create fresh coordination state before the coordination recovery gate, and only approved maintenance Jobs ran before quarantine release
 - `jwtHardening` includes rotation job reference, resulting key IDs, revocation watermark evidence, and validator-convergence evidence
+- `validatorInventoryRef` points to an authoritative, complete, reachable inventory. Every validator must have a safe converged result and must receive public JWKS only; missing, unknown, unreachable, or private-key-access results fail recovery
+- Post-restore JWT rotation preserves Account Service custody of non-exportable private signing material. Rotation Jobs may request or publish a new Account generation and public JWKS, but they do not read or export private keys; recovery evidence must never contain private signer material
 - `databaseCredentialRotation` includes rotation job reference, affected Secret refs, and rollout-restart completion evidence
 - `certificateReissuance` includes workload, bridge, and operator leaf identity evidence plus peer-convergence evidence
 - `externalCredentialValidation` includes one result per credential class with `validationMethod`, `validatedAt`, `validatedBy`, `observedValue`, isolation assertion, and immutable evidence ref
 - `secretComplianceRefresh` references the refreshed `design/operations/secret-compliance/<environment>.yaml` record, the immutable evidence payload updated by restore hardening, the credential classes refreshed, and whether each class used `lastProvisionedAt` or `lastRotationAt`
 - `backupArtifactLineage` binds the environment-wide PostgreSQL artifact to its database identity, snapshot time, schema/migration lineage, service digests, and object-storage identity
 - `coordinationRecoveryEvidence` proves `cold_start_restore`, an empty Coordination Redis keyspace before rebuild, and environment-wide gameplay-region epoch/fence advancement or recreation
-- `durableParticipantConvergence` contains one safe disposition for every declared and enabled participant in the immutable recovery participant inventory: `converged`, `terminalized`, `invalidated`, or `fenced_disabled_backlog_retained`; missing, `unknown`, or `unsafe` participants fail the gate
-- `externalEffectReconciliation` records the authoritative safe disposition for each enabled provider-facing workflow family that can straddle the snapshot boundary, including communications, payments, webhooks, and published object-store effects
+- `recoveryParticipantInventoryRef` and `externalEffectInventoryRef` each point to authoritative, complete, reachable inventories. `durableParticipantConvergence` and `externalEffectReconciliation` must contain one safe disposition for every declared and enabled entry: `converged`, `terminalized`, `invalidated`, or `fenced_disabled_backlog_retained`; missing, unknown, unreachable, or unsafe entries fail the gate
 - `sessionRecovery` proves environment-wide gameplay and Account session invalidation and must use `gameSessionHandling=invalidated` and `authSessionHandling=invalidated`; fresh sessions may be issued only after the reopen gate
 
 Validation rules:

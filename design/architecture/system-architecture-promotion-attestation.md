@@ -62,7 +62,7 @@ Optional fields:
 - The referenced production overlay digests must be byte-identical to the staged digests recorded in the deployment record; retags are acceptable, rebuilds are not.
 - `secretComplianceEvidenceRef` may satisfy compliance through either immutable bootstrap provisioning evidence or immutable rotation evidence, as defined in `infrastructure/environment-and-secrets-overview.md`, but warning-only compliance records are never promotable.
 - Attestation schema must validate against the current `attestationVersion`.
-- `recoveryCompatibility.compatibilityStatus=compatible` may reuse the current drill only for a `rollback-compatible` release. `drill_required` and every `roll-forward-only` release must reference the matching full backup-readiness record; `incompatible` blocks promotion.
+- `recoveryCompatibility.compatibilityStatus=compatible` may reuse a baseline only for a `rollback-compatible` release when `baselineRecoveryRecordRef` resolves to a fresh finalized isolated drill, the candidate fingerprint is unchanged, and `changedDimensions[]` contains no invalidating or unknown recovery-contract change. `drill_required` and every `roll-forward-only` release must reference the matching full backup-readiness record; `incompatible` blocks promotion.
 - If any check fails, production promotion is blocked.
 
 External-only attestation storage is not allowed for production promotions because it prevents deterministic PR validation.

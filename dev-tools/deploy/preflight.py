@@ -487,9 +487,11 @@ def expected_binding_checks(
             "internalBindings.certificates.workloadMtlsRef",
             "internalBindings.certificates.gatewayInternalWsListenerRef",
             "internalBindings.certificates.tcpProxyBridgeClientRef",
-            "internalBindings.certificates.backupControlPlaneClientRef",
             "internalBindings.registry.imagePullSecretRef",
         ]
+        exceptional_pause_enabled = get(data, "backupMaintenancePause.enabled") is True
+        if exceptional_pause_enabled:
+            required_internal.append("internalBindings.certificates.backupControlPlaneClientRef")
         missing = [key for key in required_internal if not get(data, key)]
         secret_refs = [
             get(data, "internalBindings.postgres.credentialsRef"),
@@ -542,11 +544,15 @@ def expected_binding_checks(
                     allowed_schemes={"cert-manager"},
                     exact_segment_count=1,
                 ),
-                binding_ref_format_error(
-                    "internalBindings.certificates.backupControlPlaneClientRef",
-                    get(data, "internalBindings.certificates.backupControlPlaneClientRef"),
-                    allowed_schemes={"cert-manager"},
-                    exact_segment_count=1,
+                (
+                    binding_ref_format_error(
+                        "internalBindings.certificates.backupControlPlaneClientRef",
+                        get(data, "internalBindings.certificates.backupControlPlaneClientRef"),
+                        allowed_schemes={"cert-manager"},
+                        exact_segment_count=1,
+                    )
+                    if exceptional_pause_enabled
+                    else None
                 ),
                 binding_ref_format_error(
                     "internalBindings.registry.imagePullSecretRef",

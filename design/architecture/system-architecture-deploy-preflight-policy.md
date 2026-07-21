@@ -10,9 +10,9 @@ This document defines the authoritative preflight policy gate for staging and pr
 
 ## Implementation Notes
 
-`./dev-tools/deploy/preflight.py` is the canonical executable preflight entrypoint for this contract. It currently consumes `design/operations/environments/<environment>/expected-bindings.yaml`, writes `expectedBindingsRef` into reports, validates the mounted JWT/JWKS path and resource-type contract, validates first-pass expected binding shape, enforces cross-environment uniqueness for external player-facing bindings unless the manifests explicitly mark them shared with a rationale, and enforces production and hobby/self-hosted traffic-open backup gates when the run declares `FIREMUD_TRAFFIC_OPEN_EVENT=first-live|reopen`. Production promotion validation now also checks that the referenced staging deployment record points to a readable staging preflight report with the expected bindings manifest reference and no failing required checks; hobby traffic-open evidence now proves the same link for its referenced preflight report.
+`./dev-tools/deploy/preflight.py` is the canonical executable preflight entrypoint for this contract. It consumes `design/operations/environments/<environment>/expected-bindings.yaml`, writes `expectedBindingsRef` into reports, validates the mounted JWT/JWKS path and resource-type contract, validates expected binding shape, enforces cross-environment uniqueness for external player-facing bindings unless the manifests explicitly mark them shared with a rationale, and enforces production and hobby/self-hosted traffic-open backup gates when the run declares `FIREMUD_TRAFFIC_OPEN_EVENT=first-live|reopen`. Production promotion validation dereferences the compact recovery-compatibility baseline and requires a fresh finalized baseline for compatible reuse; traffic-open validation separately dereferences backup-readiness, that artifact's `restoreRecoveryRecordRef`, the baseline recovery record, and the actual-recovery controller for reopen.
 
-The current executable does not yet establish the accepted backup/recovery contract. `PREFLIGHT-BACKUP-001`, `PREFLIGHT-BACKUP-002`, and `PREFLIGHT-BACKUP-003` can validate caller-supplied timestamps, references, and selected field values without dereferencing a canonical recovery record, proving environment-wide artifact lineage, checking empty-Redis cold-start evidence, validating the complete recovery-participant inventory, or enforcing recovery-contract fingerprint compatibility. It also still requires the legacy `backupControlPlaneClientRef` in player-facing expected bindings even though routine online backup does not use tick pause. These checks must fail player-facing readiness until those validators and a production-equivalent drill exist; an evidence-shaped file is not proof.
+The backup gates fail closed on missing or unreadable records, incomplete or non-authoritative validator/participant/external-effect inventories, unknown or unsafe dispositions, unreachable participants, mismatched environment-wide artifact lineage, stale finalized baselines, or invalidating recovery-contract changes. Routine online backup does not require `backupControlPlaneClientRef`; that identity is validated only when an expected-bindings manifest explicitly enables an exceptional maintenance pause workflow. A production-equivalent drill may use current production lineage in an isolated production-equivalent boundary with compatible contracts/tooling, but it cannot authorize production traffic; reopen still requires the exact `actualRecoveryRecordRef`.
 
 The current executable does not yet enforce `PREFLIGHT-JWT-002` or `PREFLIGHT-JWT-ROTATION-001`: it does not prove Account-only asymmetric signing, absence of private-key mounts from validators, validator `kid`/JWKS behavior, or planned and compromise rotation drills. That is a missing security gate, not only evidence depth. Until it is implemented and passes with current environment evidence, player-facing JWT readiness remains blocked even if the older mounted-path checks pass. Other expected-binding checks still validate repository manifests and declared binding refs rather than complete live state; a successful static report without traffic-open evidence is not enough to open player-facing traffic.
 
@@ -81,7 +81,7 @@ Every run must emit one result per policy ID below, with status `pass`, `fail`, 
 Policy applicability:
 
 - `PREFLIGHT-PROMOTION-001` is required for `production` and `not_applicable` for `staging` and `hobby-self-hosted`.
-- `PREFLIGHT-BACKUP-001` is required for every `production` promotion. A `rollback-compatible` release passes with the small recovery-compatibility result when tool digests, database/migration restore compatibility, recovery-contract fingerprint, enabled participant inventory, secret/binding contract, and environment binding remain compatible; it does not create another full recovery record. A `drill_required` result fails until a new production-equivalent drill passes. A `roll-forward-only` release always fails without a drill that restores a current-production-lineage artifact under candidate recovery tooling and proves the exact candidate service digests, migration path, config, and bindings through controlled reopen.
+- `PREFLIGHT-BACKUP-001` is required for every `production` promotion. A `rollback-compatible` release may reuse only a fresh finalized baseline whose recovery-contract fingerprint is unchanged and whose changed dimensions contain no invalidating or unknown contract change; the compact result does not create another full recovery record. A `drill_required` result fails until a new production-equivalent drill passes. A `roll-forward-only` release always fails without a drill that restores a current-production-lineage artifact under candidate recovery tooling and proves the exact candidate service digests, migration path, config, and bindings through controlled reopen.
 - `PREFLIGHT-BACKUP-002` is required for `production` on first-live opens and reopen-after-restore events, and `not_applicable` for routine steady-state rollouts that do not change traffic-open status. It fails unless environment-specific evidence references a drill completed within 30 days that proves the complete `cold_start_restore` controller state, empty Coordination Redis, environment-wide session and epoch/fence invalidation, safe durable-participant and external-effect dispositions, hardening, smoke validation, and controlled reopen. A `reopen` event additionally requires the durable actual-recovery controller in `ready_to_reopen` for the exact boundary; preflight authorizes the release request but does not mutate or require a checked-in evidence projection. The controller must idempotently reconcile `ready_to_reopen -> releasing -> finalized`, apply and observe quarantine release, and keep traffic closed on failure; the exporter writes evidence only after `finalized`.
 - `PREFLIGHT-BACKUP-003` is required for `hobby-self-hosted` on first-live opens and reopen-after-restore events, and `not_applicable` otherwise. This check validates the current `design/operations/deployments/hobby-self-hosted/backup-compliance.yaml` projection and reads the durable recovery controller for the player-facing boundary. A checked-in traffic-open projection is exported only after the controller reaches `finalized`; it is not a pre-release transaction input.
 - `PREFLIGHT-JWT-002` is required for every player-facing apply.
@@ -160,7 +160,7 @@ Compact schema appendix for `expected-bindings.yaml`:
   - `internalBindings.certificates.workloadMtlsRef`
   - `internalBindings.certificates.gatewayInternalWsListenerRef` when the environment exposes the Gateway internal mTLS WebSocket listener
   - `internalBindings.certificates.tcpProxyBridgeClientRef` when the TCP Proxy bridge uses mTLS
-  - `internalBindings.certificates.backupControlPlaneClientRef` only when an exceptional backup-related maintenance workflow invokes `PauseTicks` / `ResumeTicks`; routine online backup does not require this identity
+  - `internalBindings.certificates.backupControlPlaneClientRef` only when `backupMaintenancePause.enabled: true` explicitly enables an exceptional backup-related maintenance workflow that invokes `PauseTicks` / `ResumeTicks`; routine online backup does not require this identity
   - `internalBindings.registry.imagePullSecretRef`
 - Required external binding keys:
   - `backupStorage.bucket`
@@ -199,7 +199,6 @@ internalBindings:
     workloadMtlsRef: cert-manager://firemud/staging-workload-mtls
     gatewayInternalWsListenerRef: cert-manager://firemud/staging-gateway-internal-ws
     tcpProxyBridgeClientRef: cert-manager://firemud/staging-tcp-proxy-bridge
-    backupControlPlaneClientRef: cert-manager://firemud/staging-backup-control-plane
   registry:
     imagePullSecretRef: secret://firemud/ghcr-pull-staging
 backupStorage:
@@ -229,6 +228,18 @@ observability:
     shared: true
     sharedRationale: shared collector endpoint; credentials and tenant separation remain environment-specific
 ```
+
+An exceptional backup maintenance pause workflow must opt in explicitly before its client identity is required or validated:
+
+```yaml
+backupMaintenancePause:
+  enabled: true
+internalBindings:
+  certificates:
+    backupControlPlaneClientRef: cert-manager://firemud/staging-backup-control-plane
+```
+
+This opt-in is not part of the routine online-backup contract.
 
 Validation contract:
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import shutil
 import sys
 import tempfile
@@ -60,12 +61,24 @@ def replace_in_line(path: Path, marker: str, old: str, new: str) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def summary_row_counts(path: Path, marker: str) -> tuple[int, int]:
+def summary_row_counts(path: Path, marker: str) -> tuple[int, int, str]:
     lines = [line for line in path.read_text(encoding="utf-8").splitlines() if marker in line]
     if len(lines) != 1:
         raise AssertionError(f"expected exactly one summary row containing {marker!r} in {path}")
     cells = [cell.strip().strip("*") for cell in lines[0].strip().strip("|").split("|")]
-    return int(cells[1]), int(cells[2])
+    return int(cells[1]), int(cells[2]), cells[3]
+
+
+def decrement_exemption_count(summary: str) -> str:
+    pattern = r"(\d+)(?=\s+(?:explicit|registry)\s+exemptions?\b)"
+    matches = list(re.finditer(pattern, summary))
+    if len(matches) != 1:
+        raise AssertionError(f"expected exactly one exemption count in {summary!r}")
+    match = matches[0]
+    count = int(match.group(1))
+    if count < 1:
+        raise AssertionError(f"cannot decrement exemption count in {summary!r}")
+    return summary[: match.start()] + str(count - 1) + summary[match.end() :]
 
 
 class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
@@ -127,7 +140,7 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
         with fixture_root() as directory:
             root = Path(directory)
             path = root / self.validator.TOP_ALLOCATION
-            discovered, _ = summary_row_counts(path, "| **Total** |")
+            discovered, _, _ = summary_row_counts(path, "| **Total** |")
             replace_once(
                 path,
                 f"| **Total** | **{discovered}** |",
@@ -203,8 +216,8 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
         with fixture_root() as directory:
             root = Path(directory)
             path = root / self.validator.TOP_ALLOCATION
-            adr_discovered, adr_allocated = summary_row_counts(path, "| Architecture decisions |")
-            total_discovered, total_allocated = summary_row_counts(path, "| **Total** |")
+            adr_discovered, adr_allocated, adr_exemptions = summary_row_counts(path, "| Architecture decisions |")
+            total_discovered, total_allocated, total_exemptions = summary_row_counts(path, "| **Total** |")
             replace_in_line(path, "`design/architecture/decisions/README.md`", "| Exempt |", "| `AS-1` |")
             replace_once(
                 path,
@@ -213,8 +226,8 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
             )
             replace_once(
                 path,
-                f"| Architecture decisions | {adr_discovered} | {adr_allocated + 1} | 0; 1 registry exemption",
-                f"| Architecture decisions | {adr_discovered} | {adr_allocated + 1} | 0",
+                f"| Architecture decisions | {adr_discovered} | {adr_allocated + 1} | {adr_exemptions}",
+                f"| Architecture decisions | {adr_discovered} | {adr_allocated + 1} | {decrement_exemption_count(adr_exemptions)}",
             )
             replace_once(
                 path,
@@ -223,8 +236,8 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
             )
             replace_once(
                 path,
-                f"| **Total** | **{total_discovered}** | **{total_allocated + 1}** | **0; 3 explicit exemptions**",
-                f"| **Total** | **{total_discovered}** | **{total_allocated + 1}** | **0; 2 explicit exemptions**",
+                f"| **Total** | **{total_discovered}** | **{total_allocated + 1}** | **{total_exemptions}**",
+                f"| **Total** | **{total_discovered}** | **{total_allocated + 1}** | **{decrement_exemption_count(total_exemptions)}**",
             )
             expect_call_failure(
                 "ADR primary allocation drift with adjusted counts",

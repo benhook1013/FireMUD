@@ -17,8 +17,9 @@ Run this flow when any of the following is true:
    - Stop new Account JWT issuance and block JWT-protected admission/control-plane traffic.
    - Keep protected traffic closed until the replacement, invalidation, and convergence gates pass.
 2. Run compromise-mode rotation.
-   - Generate a new asymmetric signing keypair and Account signing generation.
-   - Regenerate `jwt-jwks` with only uncompromised keys. Do not overlap, retain, or roll back to a compromised key.
+   - Have Account Service or a non-exportable signer generate and promote a new asymmetric signing keypair and Account signing generation, then prune any compromised private rollback material. The private key must never enter rotation automation.
+   - Have rotation automation publish `jwt-jwks` with only uncompromised public keys. Do not overlap, retain, or roll back to a compromised key.
+   - The rotation Job/CronJob must never read or update `jwt-signing-keys`; it handles public JWKS metadata, validator convergence, public pruning, and evidence only.
 3. Invalidate environment-wide issuer authority.
    - Advance `session:auth:revoked_after:issuer:<issuerId>` through Account authority and perform the required bounded session/allowlist cleanup so reauthentication is mandatory.
    - Treat compromise of the per-environment Account key as global for that issuer. Tenant-selective cleanup is not sufficient.
@@ -38,7 +39,7 @@ Before reopening player-facing traffic, incident records must include:
 - Incident/ticket identifier and responder/approver identity.
 - Compromised key identifiers (`kid`) and replacement key identifiers.
 - Quarantine start and end timestamps plus the protected surfaces covered.
-- Timestamped proof of `jwt-signing-keys` and `jwt-jwks` update completion.
+- Timestamped proof that Account Service or the non-exportable signer completed private-key generation, validation, promotion, and any required private rollback pruning, plus proof that rotation automation completed the `jwt-jwks` public update.
 - Issuer-wide watermark and session invalidation completion evidence.
 - Exact validator inventory, last observed JWKS generation, and convergence proof that each validator rejects the compromised `kid` and accepts the replacement.
 - Reopen decision timestamp and approver.

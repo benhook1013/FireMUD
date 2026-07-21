@@ -31,7 +31,6 @@ required_paths = [
     "internalBindings.certificates.workloadMtlsRef",
     "internalBindings.certificates.gatewayInternalWsListenerRef",
     "internalBindings.certificates.tcpProxyBridgeClientRef",
-    "internalBindings.certificates.backupControlPlaneClientRef",
     "internalBindings.registry.imagePullSecretRef",
     "backupStorage.bucket",
     "backupStorage.bindingRef",
@@ -532,6 +531,39 @@ verify_binding_ref_contract(
     "PREFLIGHT-EXTERNAL-001",
     "backupStorage.bindingRef must use <scheme>://<namespace>/<binding> format",
 )
+
+routine_expected = yaml.safe_load(
+    (root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml").read_text(encoding="utf-8")
+)
+routine_expected["internalBindings"]["certificates"].pop("backupControlPlaneClientRef", None)
+routine_path = tmp / "routine-online-backup-bindings.yaml"
+routine_path.write_text(yaml.safe_dump(routine_expected, sort_keys=False), encoding="utf-8")
+routine_results = module.expected_binding_checks(
+    routine_path,
+    "synthetic-routine-online-backup-bindings",
+    "hobby-self-hosted",
+    rendered_documents,
+)
+routine_secrets = next(result for result in routine_results if result.policy_id == "PREFLIGHT-SECRETS-002")
+if routine_secrets.status != "pass":
+    raise SystemExit(f"routine online backup must not require backup control-plane identity: {routine_secrets.message}")
+
+exceptional_expected = yaml.safe_load(
+    (root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml").read_text(encoding="utf-8")
+)
+exceptional_expected["backupMaintenancePause"] = {"enabled": True}
+exceptional_expected["internalBindings"]["certificates"]["backupControlPlaneClientRef"] = "not-a-binding-ref"
+exceptional_path = tmp / "exceptional-backup-pause-bindings.yaml"
+exceptional_path.write_text(yaml.safe_dump(exceptional_expected, sort_keys=False), encoding="utf-8")
+exceptional_results = module.expected_binding_checks(
+    exceptional_path,
+    "synthetic-exceptional-backup-pause-bindings",
+    "hobby-self-hosted",
+    rendered_documents,
+)
+exceptional_secrets = next(result for result in exceptional_results if result.policy_id == "PREFLIGHT-SECRETS-002")
+if exceptional_secrets.status != "fail" or "backupControlPlaneClientRef" not in exceptional_secrets.message:
+    raise SystemExit(f"explicit backup maintenance pause opt-in did not validate its client binding: {exceptional_secrets.message}")
 PY
 
 echo "preflight contract checks passed"

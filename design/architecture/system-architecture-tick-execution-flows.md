@@ -105,11 +105,6 @@ Ingress deduplication is not sufficient on its own: every accepted command must 
 
 #### Command Outcome Status Surface (Required)
 
-Current live note:
-
-- the shipped surface today is `GetGameplayCommandStatus` with the narrower lifecycle vocabulary documented in the `02.18.7` slice and Game Session proto;
-- the richer `ackLevel` / `ingressStatus` / bound-tick response described here remains target-state and should not be read as fully live repo behavior yet.
-
 Command outcome convergence must be externally observable through one canonical authoritative API. Optional event delivery projects the same lifecycle but does not replace lookup authority. The contract is:
 
 - Canonical control-plane surfaces:

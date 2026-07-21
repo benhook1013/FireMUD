@@ -24,10 +24,10 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 > Internal synchronous RPCs use **gRPC**; asynchronous contracts (for example audit/saga events and lifecycle signals) use dedicated event flows documented in [System Architecture Overview](./system-architecture-overview.md#asynchronous-and-event-flows).
 > See [System Architecture Overview](./system-architecture-overview.md) and [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow) for the complete login and gRPC flow.
 
-- Initial routes are loaded on startup from a canonical `routes.yml` via `spring.config.import`.
+- Target-state baseline routes are loaded on startup from the version-controlled declarative `routes.yml` catalog imported through `application.yml` via `spring.config.import`.
 - Baseline route targets use in-environment DNS names by default and may be overridden explicitly with environment variables when a deployment needs different upstream targets.
-- Initial route targets are loaded on startup, but operators can override them using environment variables prefixed `FIREMUD_SERVICES_`, matching the `ServiceEndpointsProperties` approach used by other microservices. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery).
-- Dynamic route management APIs (REST and gRPC) are explicitly enabled **dev/test-only** ephemeral overrides layered on top of the baseline configuration; they are absent or disabled in player-facing environments. `routes.yml` remains the canonical source of truth for route definitions, and production route changes use the separately accepted reviewed declarative deployment workflow or a predeclared bounded failover switch.
+- Until that target-state configuration converges, the current implemented route authority remains the Java `CanonicalGatewayRoutesConfiguration`, with environment-backed service targets. Operators can override those targets using `FIREMUD_SERVICES_*`, matching the `ServiceEndpointsProperties` approach used by other microservices. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery).
+- Dynamic route management APIs (REST and gRPC) are explicitly enabled **dev/test-only** ephemeral overrides layered on top of the target baseline; they are absent or disabled in player-facing environments. The released declarative catalog remains the target source of truth for route definitions, and production route changes use the separately accepted reviewed declarative deployment workflow or a predeclared bounded failover switch.
 
 For the Telnet-to-WebSocket bridge – including the `GATEWAY_WS_URL` contract, Proxy → Gateway mutual TLS, and how gameplay traffic is normalized through `/ws/game/**` – treat [Protocol Bridging](./system-architecture-protocol-bridging.md) as the **canonical specification**. This document summarizes the gateway’s routing and configuration responsibilities and defers to the protocol-bridging design for detailed edge semantics.
 
@@ -128,7 +128,7 @@ Typed Telnet `SESSION` lines are not part of the player-facing or advanced-clien
   - Route-based filtering
   - Consistent handling across all clients
 
-At a configuration level, Spring Cloud Gateway defines WebSocket routes in `application.yml` (and profile-specific route files) and applies filters (such as rate limiting and retries) before forwarding to backend services. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for the authoritative description of route configuration, service discovery overrides, and gateway-related environment variables. For gameplay login and session semantics, this document defers to the canonical flow in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow); this doc focuses on transport-level responsibilities only.
+At the target-state configuration level, Spring Cloud Gateway defines WebSocket routes in the declarative `routes.yml` catalog imported by `application.yml` and applies filters (such as rate limiting and retries) before forwarding to backend services. Until that convergence lands, the current Java `CanonicalGatewayRoutesConfiguration` remains the implemented route authority. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for the authoritative description of route configuration, service discovery overrides, and gateway-related environment variables. For gameplay login and session semantics, this document defers to the canonical flow in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow); this doc focuses on transport-level responsibilities only.
 
 ### Gameplay WebSocket Route
 
@@ -462,7 +462,7 @@ This approach minimizes latency and matches the protocol table in the
 | Dev | `http://service:8080` | Docker Compose DNS |
 | Prod | `http://service.namespace.svc.cluster.local:8080` | Kubernetes DNS |
 
-Spring profiles select environment-specific endpoint values. Baseline routing targets are defined by the released declarative route catalog, currently represented by `routes.yml`. Environment-variable endpoint substitution may specialize that released catalog, while dynamic route overrides are limited to explicitly enabled local, development, or test profiles and never become player-facing route authority.
+Spring profiles select environment-specific endpoint values. Target-state baseline routing targets are defined by the released declarative `routes.yml` catalog imported through `application.yml`. Until convergence, `CanonicalGatewayRoutesConfiguration` remains the current implemented authority; environment-variable endpoint substitution may specialize that implementation and the target catalog. Dynamic route overrides are limited to explicitly enabled local, development, or test profiles and never become player-facing route authority.
 
 ---
 

@@ -65,7 +65,7 @@ The architecture uses four canonical traffic surfaces:
 
 These names are normative and should be used consistently in service docs and diagrams to avoid conflating infrastructure control, external admin APIs, and player gameplay traffic.
 
-- **Infrastructure management plane:** Admin/ops tools use an internal **gRPC management API** on the Gateway for diagnostics and health checks. Dev/test may explicitly enable bounded route-mutation methods; player-facing production uses the released declarative route catalog and does not expose a generic runtime route editor. This path is for infrastructure and routing concerns only; it does not directly perform moderation or gameplay actions.
+- **Infrastructure management plane:** Admin/ops tools use an internal **gRPC management API** on the Gateway for diagnostics and health checks. Dev/test may explicitly enable bounded route-mutation methods; the target player-facing production contract uses the released declarative `routes.yml` catalog imported through `application.yml` and does not expose a generic runtime route editor. Until that catalog converges, the current implemented route authority remains `CanonicalGatewayRoutesConfiguration`. This path is for infrastructure and routing concerns only; it does not directly perform moderation or gameplay actions.
 - **External admin/creator API plane:** Admin and moderation UIs talk to **Logging & Admin Service and other domain services via the Gateway**, using standard HTTP(S) APIs routed through Gateway’s configuration. Mutating operator workflows for moderation, quota overrides, runtime feature flags, and tick remediation must enter via Logging & Admin so audit capture and request validation remain canonical; direct domain-admin routes are for reads and explicitly documented bypass-safe workflows only. JWT validation and fine-grained authorization are performed by the consuming services.
 - **Published asset delivery plane:** Published assets are read through the canonical `/assets/**` surface. This surface is edge-routable for release artifact delivery and caching, but it is not an admin/creator ingress path and does not authorize design-time mutation.
 - **Internal-only dependencies:** Logging & Admin Service calls Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, and Alertmanager directly from the internal network for analytics and dashboards. These observability backends are **not** exposed to clients and are treated as internal, operator-facing dependencies of Logging & Admin.
@@ -173,7 +173,7 @@ The management-plane contract must be explicit so operator tooling does not assu
 | Gateway capability | Intended use | Current production-like status | Notes |
 | --- | --- | --- | --- |
 | gRPC/REST health and route inspection | Internal diagnostics and control-plane health checks | Supported | Internal-only network surface; mTLS-authenticated operator clients. |
-| Version-controlled baseline route catalog + environment endpoint bindings | Canonical route definitions and controlled deployment-time changes | Supported | The released declarative catalog is the sole player-facing route authority. |
+| Version-controlled baseline route catalog + environment endpoint bindings | Canonical target-state route definitions and controlled deployment-time changes | Target-state; current implementation not converged | The released declarative catalog is the sole player-facing route authority after convergence; current code remains `CanonicalGatewayRoutesConfiguration` until then. |
 | Dynamic route override APIs (runtime mutating overrides) | Ephemeral mock, fault-injection, and integration-test changes | **Dev/test only; not an initial production capability** | Production enablement requires a separate future decision; persistence, convergence, and audit do not automatically unlock it. |
 
 This matrix is canonical for high-level architecture docs and must remain aligned with [Gateway Architecture](./system-architecture-gateway.md#dynamic-route-override-lifecycle).
@@ -536,7 +536,7 @@ This section is normative for service-level API design. Service docs must treat 
 
 Deployment health checks (readiness and liveness probes) for these layers are described in detail in [Deployment Environments](./infrastructure/deployment-environments.md).
 
-Environment-specific routing and transport targets are configured through canonical `application.yml` defaults plus explicit environment-variable overrides rather than through separate local versus production runtime profiles. See [Deployment Environments](./infrastructure/deployment-environments.md#spring-profile-configuration) for the remaining `test` profile behavior and deployment-specific overrides.
+Target-state environment-specific routing and transport targets are configured through the released declarative `routes.yml` catalog imported by `application.yml`, plus explicit environment-variable overrides, rather than through separate local versus production runtime profiles. Until that target-state catalog converges, the current implemented Gateway authority is `CanonicalGatewayRoutesConfiguration`. See [Deployment Environments](./infrastructure/deployment-environments.md#spring-profile-configuration) for the remaining `test` profile behavior and deployment-specific overrides.
 
 ---
 
