@@ -8,8 +8,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import yaml
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -176,15 +174,12 @@ def _parse_expr(rule_lines: list[str]) -> str | None:
                 break
             expr_lines.append(next_line.rstrip())
         expression = "\n".join(expr_lines).strip()
-        if not is_block_scalar:
-            try:
-                parsed_scalar = yaml.safe_load(f"expr: {scalar}\n")
-            except yaml.YAMLError:
-                parsed_scalar = None
-            if isinstance(parsed_scalar, dict) and (
-                parsed_scalar.get("expr") is None or parsed_scalar.get("expr") == ""
-            ):
-                return ""
+        if not is_block_scalar and re.fullmatch(
+            r"(?:null|~|''|\"\"|!!null(?:\s+(?:null|~|''|\"\"))?|!!str\s+(?:''|\"\"))(?:\s+#.*)?",
+            scalar,
+            re.IGNORECASE,
+        ):
+            return ""
         return expression
     return None
 

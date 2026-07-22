@@ -62,10 +62,12 @@ empty_expressions = (
     'expr: |2- # empty expression',
     'expr: ""',
     'expr: null',
+    'expr: null # empty expression',
     'expr: ~',
     'expr: !!null',
     'expr: !!null ""',
     'expr: !!str ""',
+    'expr: !!str "" # empty expression',
 )
 for empty_expression in empty_expressions:
     empty_backup_expr = valid_text.replace(
