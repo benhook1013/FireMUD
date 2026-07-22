@@ -35,6 +35,7 @@ security.yml|Security Gate
 license-scan.yml|License Gate
 smoke.yml|Smoke Gate
 codeql.yml|CodeQL Gate
+validate-kustomize-overlays.yml|validate-overlays
 EOF
 
 CODEQL_WORKFLOW="$ROOT_DIR/.github/workflows/codeql.yml"
@@ -55,6 +56,10 @@ grep -Fq 'needs.changes.result' "$LICENSE_WORKFLOW" || {
 }
 grep -Fq 'types: [opened, synchronize, reopened, edited]' "$OVERLAY_WORKFLOW" || {
   echo "Overlay validation must rerun when a pull request base is edited" >&2
+  exit 1
+}
+grep -Fq "github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null)" "$OVERLAY_WORKFLOW" || {
+  echo "Overlay validation must skip metadata-only edits without replacing the required context" >&2
   exit 1
 }
 

@@ -71,8 +71,33 @@ def _read_text(path: Path) -> str:
 
 
 def _extract_fenced_blocks(markdown: str, language: str) -> list[str]:
-    pattern = re.compile(rf"```{re.escape(language)}\n(.*?)\n```", re.DOTALL)
-    return [match.group(1) for match in pattern.finditer(markdown)]
+    lines = markdown.splitlines()
+    blocks: list[str] = []
+    index = 0
+    while index < len(lines):
+        opening = re.match(
+            r"^ {0,3}(?P<fence>`{3,}|~{3,})[ \t]*(?P<info>.*)$",
+            lines[index],
+        )
+        if not opening:
+            index += 1
+            continue
+        info = opening.group("info").strip()
+        if not info or info.split(maxsplit=1)[0].lower() != language.lower():
+            index += 1
+            continue
+        fence = opening.group("fence")
+        closing = re.compile(
+            rf"^ {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*$"
+        )
+        body_start = index + 1
+        index = body_start
+        while index < len(lines) and not closing.match(lines[index]):
+            index += 1
+        if index < len(lines):
+            blocks.append("\n".join(lines[body_start:index]))
+        index += 1
+    return blocks
 
 def _github_anchor_from_heading(heading: str) -> str:
     base = heading.strip().lower()
@@ -174,12 +199,15 @@ def _parse_expr(rule_lines: list[str]) -> str | None:
                 break
             expr_lines.append(next_line.rstrip())
         expression = "\n".join(expr_lines).strip()
-        if not is_block_scalar and re.fullmatch(
-            r"(?:null|~|''|\"\"|!!null(?:\s+(?:null|~|''|\"\"))?|!!str\s+(?:''|\"\"))(?:\s+#.*)?",
-            scalar,
-            re.IGNORECASE,
-        ):
-            return ""
+        if not is_block_scalar:
+            empty_scalar = re.fullmatch(
+                r"(?:null|~|''|\"\")(?:\s+#.*)?",
+                scalar,
+                re.IGNORECASE,
+            )
+            unsupported_indirection = scalar.startswith(("#", "!!", "&", "*"))
+            if empty_scalar or unsupported_indirection:
+                return ""
         return expression
     return None
 
@@ -653,6 +681,22 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
             Finding(
                 path=path,
                 message=f"reference rules are missing required backup recordings: {', '.join(missing_required)}",
+            )
+        )
+
+    missing_expressions = sorted(
+        recording
+        for recording in REQUIRED_BACKUP_RECORDINGS & recordings.keys()
+        if not recordings[recording]
+    )
+    if missing_expressions:
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "required backup recordings are missing expr: "
+                    + ", ".join(missing_expressions)
+                ),
             )
         )
 

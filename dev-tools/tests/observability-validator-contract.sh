@@ -63,11 +63,14 @@ empty_expressions = (
     'expr: ""',
     'expr: null',
     'expr: null # empty expression',
+    'expr: # empty expression',
     'expr: ~',
     'expr: !!null',
     'expr: !!null ""',
+    'expr: !!str # empty expression',
     'expr: !!str ""',
     'expr: !!str "" # empty expression',
+    'expr: &empty # empty expression',
 )
 for empty_expression in empty_expressions:
     empty_backup_expr = valid_text.replace(
@@ -82,6 +85,26 @@ for empty_expression in empty_expressions:
 
 snippet_path = root / "design/observability/grafana/backup-alerts-snippets.md"
 valid_snippet = snippet_path.read_text(encoding="utf-8")
+invalid_snippet = valid_snippet.replace(
+    "expr: backup_pipeline_recent_backup_slo_breached > 0",
+    "expr: null",
+    1,
+)
+tilde_fenced_snippet = invalid_snippet.replace("```yaml", "~~~yaml", 1).replace(
+    "```", "~~~", 1
+)
+require_message(
+    findings_for(tilde_fenced_snippet, validator._validate_alert_snippet),
+    "alert rule is missing expr",
+)
+info_fenced_snippet = invalid_snippet.replace(
+    "```yaml", '```yaml title="alerts"', 1
+)
+require_message(
+    findings_for(info_fenced_snippet, validator._validate_alert_snippet),
+    "alert rule is missing expr",
+)
+
 for empty_expression in empty_expressions:
     empty_snippet_expr = valid_snippet.replace(
         "expr: backup_pipeline_recent_backup_slo_breached > 0",
@@ -139,6 +162,18 @@ recording_scope_invalid += """
 require_message(
     findings_for(recording_scope_invalid, validator._validate_reference_prometheus_recordings),
     "environment blocked-convergence recording must aggregate recovery_participant_convergence_blocked with max by (environment)",
+)
+
+missing_lineage_expr = valid_text.replace(
+    """        - record: backup_artifact_lineage_invalid
+          expr: |
+            1 - backup_artifact_lineage_valid""",
+    """        - record: backup_artifact_lineage_invalid""",
+    1,
+)
+require_message(
+    findings_for(missing_lineage_expr, validator._validate_reference_prometheus_recordings),
+    "required backup recordings are missing expr: backup_artifact_lineage_invalid",
 )
 
 print("observability validator contract checks passed")
