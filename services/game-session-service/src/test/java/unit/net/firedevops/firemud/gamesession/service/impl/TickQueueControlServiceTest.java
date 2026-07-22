@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -59,6 +60,7 @@ class TickQueueControlServiceTest {
     valueOps = mock(ValueOperations.class);
     when(redisTemplate.opsForList()).thenReturn(listOps);
     when(redisTemplate.opsForValue()).thenReturn(valueOps);
+    when(redisTemplate.execute(any(), any(), any(Object[].class))).thenReturn(1L);
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
         .thenReturn(true);
     gameInstanceRepository = mock(GameInstanceRepository.class);
@@ -73,6 +75,7 @@ class TickQueueControlServiceTest {
               }
               return command;
             });
+    when(gameplayCommandRepository.markAcceptedCommandStaged(any(), any())).thenReturn(true);
     runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
     when(runtimeRegionStatusRepository.save(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -93,7 +96,8 @@ class TickQueueControlServiceTest {
             gameplayCommandRepository,
             runtimeRegionStatusRepository,
             runtimeIdentity,
-            sessionAuthenticationService);
+            sessionAuthenticationService,
+            mock(java.util.concurrent.ScheduledExecutorService.class));
     logger = mock(Logger.class);
   }
 
@@ -102,6 +106,60 @@ class TickQueueControlServiceTest {
     service.enqueueCommand(1L, 2L, "cmd-123", "look", false);
 
     verify(listOps).rightPush("gamesession:tick:queue:1:2", "N|cmd-123|look");
+    verify(gameplayCommandRepository).markAcceptedCommandStaged(any(), any());
+  }
+
+  @Test
+  void enqueueCommandRemovesPayloadWhenDurableTransitionIsRejected() {
+    when(gameplayCommandRepository.markAcceptedCommandStaged(eq("cmd-terminal"), any()))
+        .thenReturn(false);
+
+    assertThrows(
+        TickQueueControlService.QueueUnavailableException.class,
+        () -> service.enqueueCommand(1L, 2L, "cmd-terminal", "look", false));
+
+    verify(listOps).remove("gamesession:tick:queue:1:2", -1, "N|cmd-terminal|look");
+  }
+
+  @Test
+  void enqueueCommandRemovesPayloadWhenTransactionRollsBack() {
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      service.enqueueCommand(1L, 2L, "cmd-rollback", "look", false);
+      verify(listOps, never()).remove(any(), anyLong(), any());
+
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(
+              synchronization ->
+                  synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+
+      verify(listOps).remove("gamesession:tick:queue:1:2", -1, "N|cmd-rollback|look");
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  @Test
+  void enqueueCommandFailsClosedWhenQueueLeaseIsLostBeforeCommit() {
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      service.enqueueCommand(1L, 2L, "cmd-lease-loss", "look", false);
+      when(redisTemplate.execute(any(), any(), any(Object[].class))).thenReturn(0L);
+
+      assertThrows(
+          TickQueueControlService.QueueUnavailableException.class,
+          () ->
+              TransactionSynchronizationManager.getSynchronizations()
+                  .forEach(synchronization -> synchronization.beforeCommit(false)));
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(
+              synchronization ->
+                  synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+
+      verify(listOps).remove("gamesession:tick:queue:1:2", -1, "N|cmd-lease-loss|look");
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
   }
 
   @Test
@@ -184,7 +242,7 @@ class TickQueueControlServiceTest {
   }
 
   @Test
-  void purgeDoesNotTerminalizeCommandWhenDrainAlreadyRemovedPayload() {
+  void purgeTerminalizesDurableCommandEvenWhenRedisPayloadIsAlreadyAbsent() {
     GameplayCommand command = gameplayCommand("cmd-race");
     command.setTenantId(1L);
     command.setGameInstanceId(2L);
@@ -195,19 +253,17 @@ class TickQueueControlServiceTest {
     when(gameplayCommandRepository.findQueuedAutomationCommandsForScriptPatch(
             1L, 2L, "region-1", "patch-1"))
         .thenReturn(List.of(command));
-    when(listOps.remove("gamesession:tick:queue:1:2", 0, "N|cmd-race|say race")).thenReturn(0L);
-
     long purged =
         service.purgeQueuedAutomationCommandsForScriptPatch(
             1L, 2L, "region-1", "patch-1", "rollback", logger);
 
-    assertEquals(0L, purged);
-    assertEquals("STAGED", command.getExecutionOutcome());
-    verify(gameplayCommandRepository, never()).saveAll(any());
+    assertEquals(1L, purged);
+    assertEquals("LOST_BEFORE_STAGING", command.getExecutionOutcome());
+    verify(gameplayCommandRepository).saveAll(List.of(command));
   }
 
   @Test
-  void purgeMapsRetryQueuedLegacyCommandToAbandoned() {
+  void purgeMapsDurablyBatchBoundCommandToAbandoned() {
     GameplayCommand command = gameplayCommand("cmd-retry");
     command.setTenantId(1L);
     command.setGameInstanceId(2L);
@@ -218,6 +274,7 @@ class TickQueueControlServiceTest {
     when(gameplayCommandRepository.findQueuedAutomationCommandsForScriptPatch(
             1L, 2L, "region-1", "patch-1"))
         .thenReturn(List.of(command));
+    when(gameplayCommandRepository.hasDurableTickEffect("cmd-retry")).thenReturn(true);
     when(listOps.remove("gamesession:tick:queue:1:2", 0, "N|cmd-retry|say retry")).thenReturn(1L);
 
     long purged =
@@ -229,22 +286,51 @@ class TickQueueControlServiceTest {
   }
 
   @Test
-  void purgeSkipsWhenTickDrainOwnsQueueLock() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
-        .thenReturn(false);
+  void purgeSkipsBatchBoundCommandThatIsNotExplicitlyQueuedForRetry() {
+    GameplayCommand command = gameplayCommand("cmd-batch-active");
+    command.setTenantId(1L);
+    command.setGameInstanceId(2L);
+    command.setSourceType("AUTOMATION");
+    command.setScriptPatchVersion("patch-1");
+    command.setCommandText("say active");
+    command.setExecutionOutcome("STAGED");
+    when(gameplayCommandRepository.findQueuedAutomationCommandsForScriptPatch(
+            1L, 2L, "region-1", "patch-1"))
+        .thenReturn(List.of(command));
+    when(gameplayCommandRepository.hasDurableTickEffect("cmd-batch-active")).thenReturn(true);
 
     long purged =
         service.purgeQueuedAutomationCommandsForScriptPatch(
             1L, 2L, "region-1", "patch-1", "rollback", logger);
 
     assertEquals(0L, purged);
-    verify(gameplayCommandRepository, never())
-        .findQueuedAutomationCommandsForScriptPatch(any(), any(), any(), any());
+    assertEquals("STAGED", command.getExecutionOutcome());
+    verify(gameplayCommandRepository, never()).saveAll(any());
     verify(listOps, never()).remove(any(), anyLong(), any());
   }
 
   @Test
-  void purgeRestoresQueuePayloadWhenDurableTerminalizationFails() {
+  void purgeFailsWhenQueueLockCannotBeAcquired() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(false);
+
+    Thread.currentThread().interrupt();
+    try {
+      assertThrows(
+          TickQueueControlService.QueueUnavailableException.class,
+          () ->
+              service.purgeQueuedAutomationCommandsForScriptPatch(
+                  1L, 2L, "region-1", "patch-1", "rollback", logger));
+      verify(gameplayCommandRepository, never())
+          .findQueuedAutomationCommandsForScriptPatch(any(), any(), any(), any());
+      verify(listOps, never()).remove(any(), anyLong(), any());
+    } finally {
+      Thread.interrupted();
+    }
+  }
+
+  @Test
+  void purgeDoesNotRemoveQueuePayloadWhenDurableTerminalizationFails() {
     GameplayCommand command = gameplayCommand("cmd-save-failure");
     command.setTenantId(1L);
     command.setGameInstanceId(2L);
@@ -255,8 +341,6 @@ class TickQueueControlServiceTest {
     when(gameplayCommandRepository.findQueuedAutomationCommandsForScriptPatch(
             1L, 2L, "region-1", "patch-1"))
         .thenReturn(List.of(command));
-    when(listOps.remove("gamesession:tick:queue:1:2", 0, "N|cmd-save-failure|say recover"))
-        .thenReturn(1L);
     doThrow(new IllegalStateException("database unavailable"))
         .when(gameplayCommandRepository)
         .saveAll(any());
@@ -267,12 +351,12 @@ class TickQueueControlServiceTest {
             service.purgeQueuedAutomationCommandsForScriptPatch(
                 1L, 2L, "region-1", "patch-1", "rollback", logger));
 
-    assertEquals("STAGED", command.getExecutionOutcome());
-    verify(listOps).leftPush("gamesession:tick:queue:1:2", "N|cmd-save-failure|say recover");
+    verify(listOps, never()).remove(any(), anyLong(), any());
+    verify(listOps, never()).leftPush(any(), any());
   }
 
   @Test
-  void purgeRestoresQueuePayloadWhenTransactionRollsBackAfterSave() {
+  void purgeRemovesQueuePayloadOnlyAfterTransactionCommit() {
     GameplayCommand command = gameplayCommand("cmd-rollback");
     command.setTenantId(1L);
     command.setGameInstanceId(2L);
@@ -283,9 +367,6 @@ class TickQueueControlServiceTest {
     when(gameplayCommandRepository.findQueuedAutomationCommandsForScriptPatch(
             1L, 2L, "region-1", "patch-1"))
         .thenReturn(List.of(command));
-    when(listOps.remove("gamesession:tick:queue:1:2", 0, "N|cmd-rollback|say recover"))
-        .thenReturn(1L);
-
     TransactionSynchronizationManager.initSynchronization();
     try {
       long purged =
@@ -294,15 +375,17 @@ class TickQueueControlServiceTest {
 
       assertEquals(1L, purged);
       assertEquals("LOST_BEFORE_STAGING", command.getExecutionOutcome());
-      verify(listOps, never()).leftPush(any(), any());
+      verify(listOps, never()).remove(any(), anyLong(), any());
 
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(TransactionSynchronization::afterCommit);
+
+      verify(listOps).remove("gamesession:tick:queue:1:2", 0, "N|cmd-rollback|say recover");
+      verify(listOps).remove("gamesession:tick:pending:1:2", 0, "N|cmd-rollback|say recover");
       TransactionSynchronizationManager.getSynchronizations()
           .forEach(
               synchronization ->
-                  synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
-
-      assertEquals("STAGED", command.getExecutionOutcome());
-      verify(listOps).leftPush("gamesession:tick:queue:1:2", "N|cmd-rollback|say recover");
+                  synchronization.afterCompletion(TransactionSynchronization.STATUS_COMMITTED));
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }

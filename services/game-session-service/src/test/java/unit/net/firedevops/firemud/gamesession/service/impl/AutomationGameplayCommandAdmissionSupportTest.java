@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -35,6 +36,21 @@ class AutomationGameplayCommandAdmissionSupportTest {
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
                 1L, 2L, "region-alpha", 7L, "dispatch-1"))
         .thenReturn(Optional.empty());
+    when(gameplayCommandRepository.save(any()))
+        .thenAnswer(
+            invocation -> {
+              GameplayCommand inserted = invocation.getArgument(0);
+              GameplayCommand reloaded = new GameplayCommand();
+              reloaded.setId(1L);
+              reloaded.setCommandId(inserted.getCommandId());
+              reloaded.setTenantId(inserted.getTenantId());
+              reloaded.setGameInstanceId(inserted.getGameInstanceId());
+              reloaded.setCommandText(inserted.getCommandText());
+              reloaded.setRequiresSoloTick(inserted.isRequiresSoloTick());
+              reloaded.setTargetEntityId(inserted.getTargetEntityId());
+              reloaded.setCharacterId(inserted.getCharacterId());
+              return reloaded;
+            });
 
     RuntimeRegionStatus ownership = new RuntimeRegionStatus();
     ownership.setTenantId(1L);
@@ -81,10 +97,11 @@ class AutomationGameplayCommandAdmissionSupportTest {
     assertEquals(true, result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(gameplayCommandRepository, org.mockito.Mockito.times(2)).save(commandCaptor.capture());
-    GameplayCommand staged = commandCaptor.getAllValues().get(1);
-    assertEquals("npc-alpha", staged.getTargetEntityId());
-    assertNull(staged.getCharacterId());
+    verify(gameplayCommandRepository).save(commandCaptor.capture());
+    GameplayCommand accepted = commandCaptor.getValue();
+    assertEquals("npc-alpha", accepted.getTargetEntityId());
+    assertNull(accepted.getCharacterId());
+    verify(tickService).enqueueCommand(1L, 2L, result.commandId(), "say hello", false);
   }
 
   @Test

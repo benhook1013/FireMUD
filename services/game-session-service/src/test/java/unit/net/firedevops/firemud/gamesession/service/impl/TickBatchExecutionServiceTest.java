@@ -87,7 +87,8 @@ class TickBatchExecutionServiceTest {
             gameplayCommandRepository,
             runtimeRegionStatusRepository,
             runtimeIdentity,
-            sessionAuthenticationService);
+            sessionAuthenticationService,
+            mock(java.util.concurrent.ScheduledExecutorService.class));
     remoteFollowupDrainService = mock(RemoteFollowupDrainService.class);
     service =
         new TickBatchExecutionService(

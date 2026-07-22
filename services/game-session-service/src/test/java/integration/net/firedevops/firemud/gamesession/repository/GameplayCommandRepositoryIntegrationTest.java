@@ -1,9 +1,11 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import static net.firedevops.firemud.gamesession.jooq.tables.TickEffect.TICK_EFFECT;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -149,5 +151,52 @@ class GameplayCommandRepositoryIntegrationTest {
             GameplayCommand::getAdmittedVersionId,
             GameplayCommand::getDeclaredEffectsJson)
         .containsExactly("STAGED", 300L, 41L, "[{\"effectKind\":\"APPLY_ACTION_STATE\"}]");
+  }
+
+  @Test
+  void stageTransitionIsConditionalAndDurableTickEffectLookupUsesStoredEvidence() {
+    GameplayCommand command = new GameplayCommand();
+    command.setCommandId("cmd-stage-1");
+    command.setTenantId(1L);
+    command.setGameInstanceId(7L);
+    command.setSessionId(11L);
+    command.setCommandName("look");
+    command.setCommandText("look");
+    command.setSanitizedCommandText("look");
+    command.setExecutionOutcome("ACCEPTED");
+    command.setGameplayResult("PENDING");
+    command.setAcceptedAt(Instant.parse("2026-07-05T06:00:00Z"));
+    command.setAttemptCount(0);
+    command.setSourceType("PLAYER");
+    command.setPlayableStateScope("");
+    command.setWorldSlug("");
+    command.setRealmSlug("");
+    repository.save(command);
+
+    Instant stagedAt = Instant.parse("2026-07-05T06:01:00Z");
+    assertThat(repository.markAcceptedCommandStaged("cmd-stage-1", stagedAt)).isTrue();
+    assertThat(repository.markAcceptedCommandStaged("cmd-stage-1", stagedAt.plusSeconds(1)))
+        .isFalse();
+    assertThat(
+            repository.markAcceptedCommandFailed(
+                "cmd-stage-1", "QUEUE_UNAVAILABLE", "must not overwrite", stagedAt.plusSeconds(2)))
+        .isFalse();
+    assertThat(repository.findByCommandId("cmd-stage-1"))
+        .get()
+        .extracting(GameplayCommand::getExecutionOutcome, GameplayCommand::getStagedAt)
+        .containsExactly("STAGED", stagedAt);
+
+    assertThat(repository.hasDurableTickEffect("cmd-stage-1")).isFalse();
+    dsl.insertInto(TICK_EFFECT)
+        .set(TICK_EFFECT.EFFECT_ID, "effect-stage-1")
+        .set(TICK_EFFECT.TICK_BATCH_ID, "batch-stage-1")
+        .set(TICK_EFFECT.COMMAND_ID, "cmd-stage-1")
+        .set(TICK_EFFECT.EFFECT_TYPE, "TEST")
+        .set(TICK_EFFECT.TARGET_AGGREGATE, "test:1")
+        .set(TICK_EFFECT.STATUS, "STAGED")
+        .set(TICK_EFFECT.STAGED_AT, LocalDateTime.parse("2026-07-05T06:01:00"))
+        .set(TICK_EFFECT.EFFECT_KEY, "effect-key-stage-1")
+        .execute();
+    assertThat(repository.hasDurableTickEffect("cmd-stage-1")).isTrue();
   }
 }

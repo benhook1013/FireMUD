@@ -149,7 +149,6 @@ public class CommandServiceImpl implements CommandService {
             gameplayCommand.getCommandId(),
             command,
             requiresSoloTick);
-        markStaged(gameplayCommand);
         triggerImmediateTick(queueTarget.get());
         sessionContext
             .filter(SessionContext::hasGameplayRegionBinding)
@@ -159,6 +158,10 @@ public class CommandServiceImpl implements CommandService {
         markFailed(gameplayCommand, "INVALID_ARGUMENT", ex.getMessage());
         return CommandEnqueueResult.failure(
             gameplayCommand.getCommandId(), "INVALID_ARGUMENT", ex.getMessage());
+      } catch (TickQueueControlService.QueueUnavailableException ex) {
+        markFailed(gameplayCommand, "QUEUE_UNAVAILABLE", ex.getMessage());
+        return CommandEnqueueResult.failure(
+            gameplayCommand.getCommandId(), "UNAVAILABLE", ex.getMessage());
       }
     }
   }
@@ -217,34 +220,18 @@ public class CommandServiceImpl implements CommandService {
     return gameplayCommandRepository.save(gameplayCommand);
   }
 
-  private void markStaged(GameplayCommand gameplayCommand) {
-    Instant now = Instant.now();
-    gameplayCommand.setExecutionOutcome("STAGED");
-    gameplayCommand.setStagedAt(now);
-    gameplayCommand.setLastAttemptAt(now);
-    gameplayCommandRepository.save(gameplayCommand);
-    logger.info(
-        "Staged gameplay command commandId={} tenantId={} gameInstanceId={}",
-        gameplayCommand.getCommandId(),
-        gameplayCommand.getTenantId(),
-        gameplayCommand.getGameInstanceId());
-  }
-
   private void markFailed(GameplayCommand gameplayCommand, String code, String message) {
     Instant now = Instant.now();
-    gameplayCommand.setExecutionOutcome("FAILED");
-    gameplayCommand.setGameplayResult("NOT_APPLIED");
-    gameplayCommand.setCompletedAt(now);
-    gameplayCommand.setLastAttemptAt(now);
-    gameplayCommand.setFailureCode(code);
-    gameplayCommand.setFailureMessage(message);
-    gameplayCommandRepository.save(gameplayCommand);
+    boolean markedFailed =
+        gameplayCommandRepository.markAcceptedCommandFailed(
+            gameplayCommand.getCommandId(), code, message, now);
     logger.warn(
-        "Failed gameplay command staging commandId={} tenantId={} gameInstanceId={} code={} message={}",
+        "Failed gameplay command staging commandId={} tenantId={} gameInstanceId={} code={} durableFailureRecorded={} message={}",
         gameplayCommand.getCommandId(),
         gameplayCommand.getTenantId(),
         gameplayCommand.getGameInstanceId(),
         code,
+        markedFailed,
         message);
   }
 

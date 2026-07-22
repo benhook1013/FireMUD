@@ -2868,30 +2868,30 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("ENQUEUED", responseRef.get().getAdmissionOutcome());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    Mockito.verify(commandRepository, Mockito.times(2)).save(commandCaptor.capture());
-    GameplayCommand staged = commandCaptor.getAllValues().get(1);
-    assertEquals(responseRef.get().getCommandId(), staged.getCommandId());
-    assertEquals("AUTOMATION", staged.getSourceType());
-    assertEquals("dispatch-1", staged.getAutomationDispatchId());
-    assertEquals("work-1", staged.getAutomationWorkItemId());
-    assertEquals("script-1", staged.getScriptId());
-    assertEquals("patch-1", staged.getScriptPatchVersion());
-    assertEquals("plugin-1", staged.getPluginId());
-    assertEquals("plugin-v1", staged.getPluginVersionId());
-    assertEquals("SHARED", staged.getPlayableStateScope());
-    assertEquals("demo", staged.getWorldSlug());
-    assertEquals("production", staged.getRealmSlug());
-    assertEquals(17L, staged.getPointerVersion());
-    assertEquals("SCHEDULE_TIMER", staged.getOriginSourceKind());
-    assertEquals("SCHEDULE_DUE_CLAIMED", staged.getOriginSourceState());
-    assertEquals(5000L, staged.getOriginSourceOrdinal());
-    assertEquals(5000L, staged.getOriginSourceDueAtMs());
-    assertEquals("entity-1", staged.getTargetEntityId());
-    assertEquals("region-1", staged.getRegionId());
-    assertEquals(12L, staged.getRegionEpoch());
-    assertEquals(34L, staged.getDueTickId());
-    assertEquals(1L, staged.getEnqueueSeq());
-    assertEquals("STAGED", staged.getExecutionOutcome());
+    Mockito.verify(commandRepository).save(commandCaptor.capture());
+    GameplayCommand accepted = commandCaptor.getValue();
+    assertEquals(responseRef.get().getCommandId(), accepted.getCommandId());
+    assertEquals("AUTOMATION", accepted.getSourceType());
+    assertEquals("dispatch-1", accepted.getAutomationDispatchId());
+    assertEquals("work-1", accepted.getAutomationWorkItemId());
+    assertEquals("script-1", accepted.getScriptId());
+    assertEquals("patch-1", accepted.getScriptPatchVersion());
+    assertEquals("plugin-1", accepted.getPluginId());
+    assertEquals("plugin-v1", accepted.getPluginVersionId());
+    assertEquals("SHARED", accepted.getPlayableStateScope());
+    assertEquals("demo", accepted.getWorldSlug());
+    assertEquals("production", accepted.getRealmSlug());
+    assertEquals(17L, accepted.getPointerVersion());
+    assertEquals("SCHEDULE_TIMER", accepted.getOriginSourceKind());
+    assertEquals("SCHEDULE_DUE_CLAIMED", accepted.getOriginSourceState());
+    assertEquals(5000L, accepted.getOriginSourceOrdinal());
+    assertEquals(5000L, accepted.getOriginSourceDueAtMs());
+    assertEquals("entity-1", accepted.getTargetEntityId());
+    assertEquals("region-1", accepted.getRegionId());
+    assertEquals(12L, accepted.getRegionEpoch());
+    assertEquals(34L, accepted.getDueTickId());
+    assertEquals(1L, accepted.getEnqueueSeq());
+    assertEquals("ACCEPTED", accepted.getExecutionOutcome());
     Mockito.verify(tickService)
         .enqueueCommand(1L, 7L, responseRef.get().getCommandId(), "say hello", false);
     Mockito.verify(tickService).processTick(1L, 7L);
@@ -2936,9 +2936,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(true, responseRef.get().getAccepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    Mockito.verify(commandRepository, Mockito.times(2)).save(commandCaptor.capture());
-    GameplayCommand staged = commandCaptor.getAllValues().get(1);
-    assertEquals(null, staged.getDueTickId());
+    Mockito.verify(commandRepository).save(commandCaptor.capture());
+    assertEquals(null, commandCaptor.getValue().getDueTickId());
   }
 
   @Test
@@ -2980,9 +2979,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(true, responseRef.get().getAccepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    Mockito.verify(commandRepository, Mockito.times(2)).save(commandCaptor.capture());
-    GameplayCommand staged = commandCaptor.getAllValues().get(1);
-    assertEquals(44L, staged.getCharacterId());
+    Mockito.verify(commandRepository).save(commandCaptor.capture());
+    assertEquals(44L, commandCaptor.getValue().getCharacterId());
   }
 
   @Test

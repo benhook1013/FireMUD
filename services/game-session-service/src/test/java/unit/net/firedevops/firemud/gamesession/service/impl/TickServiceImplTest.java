@@ -67,6 +67,9 @@ class TickServiceImplTest {
     valueOps = mock(org.springframework.data.redis.core.ValueOperations.class);
     when(redisTemplate.opsForList()).thenReturn(listOps);
     when(redisTemplate.opsForValue()).thenReturn(valueOps);
+    when(redisTemplate.execute(any(), any(), any(Object[].class))).thenReturn(1L);
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
     meterRegistry = new SimpleMeterRegistry();
     conflictTracker = mock(net.firedevops.firemud.common.conflict.ConflictTracker.class);
     repository = mock(net.firedevops.firemud.gamesession.repository.GameInstanceRepository.class);
@@ -83,6 +86,7 @@ class TickServiceImplTest {
               }
               return command;
             });
+    when(gameplayCommandRepository.markAcceptedCommandStaged(any(), any())).thenReturn(true);
     runtimeIdentity =
         new net.firedevops.firemud.common.runtime.RuntimeIdentity(
             "game-session-service",
@@ -122,7 +126,8 @@ class TickServiceImplTest {
             gameplayCommandRepository,
             runtimeRegionStatusRepository,
             runtimeIdentity,
-            sessionAuthenticationService);
+            sessionAuthenticationService,
+            mock(java.util.concurrent.ScheduledExecutorService.class));
     TickBatchExecutionService tickBatchExecutionService =
         new TickBatchExecutionService(
             meterRegistry,

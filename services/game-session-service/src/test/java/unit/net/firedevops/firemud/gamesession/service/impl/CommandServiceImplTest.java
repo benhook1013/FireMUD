@@ -210,14 +210,14 @@ class CommandServiceImplTest {
     verify(tickService, times(1)).enqueueCommand(9L, 7L, result.commandId(), "look", true);
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
-    GameplayCommand staged = commandCaptor.getAllValues().get(1);
-    assertEquals(result.commandId(), staged.getCommandId());
-    assertEquals("STAGED", staged.getExecutionOutcome());
-    assertEquals("PENDING", staged.getGameplayResult());
-    assertEquals("LOOK", staged.getCommandName());
-    assertEquals("look", staged.getSanitizedCommandText());
-    assertEquals(1L, staged.getEnqueueSeq());
+    verify(commandRepository).save(commandCaptor.capture());
+    GameplayCommand accepted = commandCaptor.getValue();
+    assertEquals(result.commandId(), accepted.getCommandId());
+    assertEquals("ACCEPTED", accepted.getExecutionOutcome());
+    assertEquals("PENDING", accepted.getGameplayResult());
+    assertEquals("LOOK", accepted.getCommandName());
+    assertEquals("look", accepted.getSanitizedCommandText());
+    assertEquals(1L, accepted.getEnqueueSeq());
   }
 
   @Test
@@ -251,7 +251,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().getFirst();
     assertEquals("wave-salute", accepted.getCommandName());
     assertEquals(300L, accepted.getAdmittedReleaseBundleId());
@@ -384,7 +384,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("44", accepted.getTargetEntityId());
     assertEquals("region-99", accepted.getRegionId());
@@ -564,7 +564,7 @@ class CommandServiceImplTest {
     assertTrue(!logs.contains("LOGIN demo@example.com swordfish"));
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     assertEquals("LOGIN [redacted]", commandCaptor.getAllValues().get(0).getSanitizedCommandText());
   }
 
@@ -629,7 +629,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("SHARED", accepted.getPlayableStateScope());
     assertEquals("demo-world", accepted.getWorldSlug());
@@ -681,7 +681,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("SHARED", accepted.getPlayableStateScope());
     assertEquals("demo-world", accepted.getWorldSlug());
@@ -746,7 +746,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("UNSPECIFIED", accepted.getPlayableStateScope());
     assertEquals("demo-world", accepted.getWorldSlug());
@@ -798,7 +798,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("UNSPECIFIED", accepted.getPlayableStateScope());
     assertEquals("demo-world", accepted.getWorldSlug());
@@ -867,7 +867,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("SHARED", accepted.getPlayableStateScope());
     assertEquals("demo-world", accepted.getWorldSlug());
@@ -923,7 +923,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("SHARED", accepted.getPlayableStateScope());
     assertEquals("demo-world", accepted.getWorldSlug());
@@ -994,7 +994,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals(1L, accepted.getGameInstanceId());
     assertEquals("SHARED", accepted.getPlayableStateScope());
@@ -1064,7 +1064,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("SHARED", accepted.getPlayableStateScope());
     assertEquals("demo-world", accepted.getWorldSlug());
@@ -1119,7 +1119,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("UNSPECIFIED", accepted.getPlayableStateScope());
     assertNull(accepted.getWorldSlug());
@@ -1174,7 +1174,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("UNSPECIFIED", accepted.getPlayableStateScope());
     assertNull(accepted.getWorldSlug());
@@ -1243,7 +1243,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("UNSPECIFIED", accepted.getPlayableStateScope());
     assertNull(accepted.getWorldSlug());
@@ -1288,14 +1288,13 @@ class CommandServiceImplTest {
     assertTrue(!result.accepted());
     assertTrue(result.commandId().startsWith("cmd-"));
     assertEquals("INVALID_ARGUMENT", result.errorCode());
-    org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
-        org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
-    GameplayCommand failed = commandCaptor.getAllValues().get(1);
-    assertEquals(result.commandId(), failed.getCommandId());
-    assertEquals("FAILED", failed.getExecutionOutcome());
-    assertEquals("NOT_APPLIED", failed.getGameplayResult());
-    assertEquals("INVALID_ARGUMENT", failed.getFailureCode());
+    verify(commandRepository).save(Mockito.any(GameplayCommand.class));
+    verify(commandRepository)
+        .markAcceptedCommandFailed(
+            Mockito.eq(result.commandId()),
+            Mockito.eq("INVALID_ARGUMENT"),
+            Mockito.eq("bad command"),
+            Mockito.any());
   }
 
   private CommandServiceImpl newCommandService(

@@ -56,7 +56,8 @@ class TickRuntimeProgressServiceTest {
                 null,
                 null,
                 null),
-            mock(net.firedevops.firemud.gamesession.service.SessionAuthenticationService.class));
+            mock(net.firedevops.firemud.gamesession.service.SessionAuthenticationService.class),
+            mock(java.util.concurrent.ScheduledExecutorService.class));
     service =
         new TickRuntimeProgressService(
             meterRegistry,

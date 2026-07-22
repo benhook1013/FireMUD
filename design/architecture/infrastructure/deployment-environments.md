@@ -267,8 +267,8 @@ Normal deployments, not only restores, must validate that backup storage, asset 
 
 By default, staging is treated as **disposable**: it is not protected by the production backup schedule and can be rebuilt from manifests and fresh data as needed.
 
-Operators may temporarily restore staging from **production** backups for disaster recovery rehearsals or investigations. When doing so, staging must follow the same post-restore secret hardening steps as production (see `system-architecture-backup-recovery.md#post-restore-secret-hardening`) so JWT keys and database credentials are rotated before opening the environment to playtests.
-When staging is restored from production-origin snapshots, operators must also run mandatory staging data sanitization and record evidence before playtests reopen (see `system-architecture-backup-recovery.md#post-restore-secret-hardening` for the restore hardening sequence).
+Operators may temporarily restore staging from **production** backups for disaster recovery rehearsals or investigations. When doing so, staging must follow the same post-restore secret hardening steps as production (see `../system-architecture-post-restore-hardening.md#post-restore-secret-hardening`) so JWT keys and database credentials are rotated before opening the environment to playtests.
+When staging is restored from production-origin snapshots, operators must also run mandatory staging data sanitization and record evidence before playtests reopen (see `../system-architecture-post-restore-hardening.md#post-restore-secret-hardening` for the restore hardening sequence).
 
 Staging does not run the production backup CronJobs listed in `schedule.md` unless staging-specific schedules are explicitly installed.
 PRs that modify `k8s/` are checked by [`.github/workflows/validate-kustomize-overlays.yml`](../../../.github/workflows/validate-kustomize-overlays.yml), which blocks staging backup schedules unless operators intentionally add `k8s/overlays/stage/STAGING_BACKUPS_ENABLED`.

@@ -164,7 +164,8 @@ Validation rules:
 - `baselineRecoveryRecordRef` must point to a finalized exported projection of an isolated drill proving the environment-wide `cold_start_restore` contract for the player-facing hobby boundary; a reopen event must additionally reference the durable actual-recovery controller for that restore
 - a reopen actual-recovery controller must be `ready_to_reopen` when preflight authorizes the event; its idempotent release reconciliation must apply and observe quarantine release and reach `finalized` before traffic flows, after which the exporter writes both checked-in projections
 - `preflightReportPath` must show `PREFLIGHT-BACKUP-003=pass`
-- `PREFLIGHT-BACKUP-003` must reject a missing or stale projection and any deployment, event, baseline-recovery, or actual-recovery lineage that does not match the current traffic-open event
+- `PREFLIGHT-BACKUP-003` authorizes release from the live `ready_to_reopen` controller and its immutable pre-release evidence; it must reject missing or stale compliance/controller evidence and any deployment, event, baseline-recovery, or actual-recovery lineage that does not match the current traffic-open event
+- the current event's checked-in traffic-open projection is not a preflight input because it is produced only after idempotent release reconciliation reaches `finalized`
 - hobby player traffic must not open when this evidence is missing, stale, mismatched, or bound to a failed preflight run
 - the traffic-open projection must be exported or refreshed after the controller finalizes every first-live or reopen event, even when the referenced compliance record did not change, so the retained projection remains bound to the current finalized deployment or recovery lineage and cannot be reused for a later event
 

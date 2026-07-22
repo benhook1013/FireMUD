@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -81,7 +82,8 @@ class TickStagingServiceTest {
                 null,
                 null,
                 null),
-            mock(net.firedevops.firemud.gamesession.service.SessionAuthenticationService.class));
+            mock(net.firedevops.firemud.gamesession.service.SessionAuthenticationService.class),
+            mock(java.util.concurrent.ScheduledExecutorService.class));
     TickBatchExecutionService tickBatchExecutionService =
         new TickBatchExecutionService(
             new SimpleMeterRegistry(),
@@ -109,6 +111,32 @@ class TickStagingServiceTest {
     when(runtimeRegionStatusRepository.save(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(tickEffectRepository.findByTickBatchId(anyString())).thenReturn(List.of());
+  }
+
+  @Test
+  void readExecutablePendingEntriesDropsMissingAcceptedAndTerminalCommands() {
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(
+            List.of(
+                "N|cmd-staged|look",
+                "N|cmd-accepted|say wait",
+                "N|cmd-terminal|wave",
+                "N|cmd-missing|north"));
+    GameplayCommand staged = gameplayCommand("cmd-staged");
+    staged.setExecutionOutcome("STAGED");
+    GameplayCommand accepted = gameplayCommand("cmd-accepted");
+    accepted.setExecutionOutcome("ACCEPTED");
+    GameplayCommand terminal = gameplayCommand("cmd-terminal");
+    terminal.setExecutionOutcome("LOST_BEFORE_STAGING");
+    when(gameplayCommandRepository.findByCommandIdIn(
+            List.of("cmd-staged", "cmd-accepted", "cmd-terminal", "cmd-missing")))
+        .thenReturn(List.of(staged, accepted, terminal));
+
+    List<TickQueuedCommandEnvelope> executable = service.readExecutablePendingEntries(1L, 2L);
+
+    assertEquals(
+        List.of("cmd-staged"),
+        executable.stream().map(TickQueuedCommandEnvelope::commandId).toList());
   }
 
   @Test

@@ -1,6 +1,8 @@
 package net.firedevops.firemud.gamesession.config;
 
 import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableAsync;
@@ -41,5 +43,15 @@ public class AsyncConfig {
     scheduler.setThreadNamePrefix("command-history-retention-");
     scheduler.initialize();
     return scheduler;
+  }
+
+  @Bean(name = "queueLockRenewalExecutor", destroyMethod = "shutdown")
+  public ScheduledExecutorService queueLockRenewalExecutor() {
+    return Executors.newSingleThreadScheduledExecutor(
+        runnable -> {
+          Thread thread = new Thread(runnable, "queue-lock-renewal");
+          thread.setDaemon(true);
+          return thread;
+        });
   }
 }

@@ -16,6 +16,7 @@ Required fields:
 - `backupVerifyLastSuccessAt`
 - `restoreDrillLastSuccessAt`
 - `restorePlanRef`
+- `restoreRecoveryRecordRef`
 - `recoveryControllerLineage`
 - `backupConfidentialityEvidence`
 - `serviceDigests`
@@ -23,7 +24,7 @@ Required fields:
 
 ## Implementation Status
 
-The field list above is the target-state contract. Current `PREFLIGHT-BACKUP-001` enforcement validates production scope, `roll-forward-only`, the current `deploymentRef`, a readable `promotionAttestationRef`, `restorePlanRef`, `evidenceRefs`, the three freshness timestamps, and `serviceDigests` equality with the attestation. It does not yet enforce `assessedAt`, `assessedBy`, `recoveryControllerLineage`, `backupConfidentialityEvidence`, or the richer environment-wide artifact and recovery-tool lineage. Those fields are target-state/partial and must not be treated as currently enforced readiness proof.
+The field list above is the target-state contract. Current `PREFLIGHT-BACKUP-001` enforcement validates production scope, `roll-forward-only`, the current `deploymentRef`, a readable `promotionAttestationRef`, `restorePlanRef`, `evidenceRefs`, the three freshness timestamps, and `serviceDigests` equality with the attestation. It does not yet enforce `assessedAt`, `assessedBy`, `restoreRecoveryRecordRef`, `recoveryControllerLineage`, `backupConfidentialityEvidence`, or the richer environment-wide artifact and recovery-tool lineage. Those fields are target-state/partial and must not be treated as currently enforced readiness proof.
 
 `promotionAttestationRef` must point to the production attestation record for the release, and `serviceDigests` must match that attested digest set exactly.
 

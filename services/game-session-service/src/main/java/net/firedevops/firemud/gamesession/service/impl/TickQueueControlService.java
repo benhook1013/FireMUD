@@ -2,15 +2,18 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
+import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
@@ -21,6 +24,7 @@ import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.v1.TickStatus;
 import org.slf4j.Logger;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -31,10 +35,15 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 @Service
 public class TickQueueControlService {
+  private static final Logger classLogger = LoggingUtil.getLogger(TickQueueControlService.class);
   static final String PURGED_FAILURE_CODE = "ROLLBACK_PURGED";
-  private static final Duration PURGE_LOCK_TTL = Duration.ofSeconds(30);
+  private static final Duration QUEUE_LOCK_TTL = Duration.ofSeconds(30);
+  private static final Duration QUEUE_LOCK_WAIT = Duration.ofSeconds(5);
+  private static final Duration QUEUE_LOCK_RETRY = Duration.ofMillis(10);
   private static final RedisScript<Long> UNLOCK_IF_OWNED_SCRIPT =
       RedisScript.of(new ClassPathResource("redis/tick_unlock_if_owned.lua"), Long.class);
+  private static final RedisScript<Long> RENEW_IF_OWNED_SCRIPT =
+      RedisScript.of(new ClassPathResource("redis/tick_renew_if_owned.lua"), Long.class);
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final GameInstanceRepository gameInstanceRepository;
@@ -42,6 +51,7 @@ public class TickQueueControlService {
   private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private final RuntimeIdentity runtimeIdentity;
   private final SessionAuthenticationService sessionAuthenticationService;
+  private final ScheduledExecutorService queueLockRenewalExecutor;
   private final AtomicBoolean pauseRequested = new AtomicBoolean(false);
   private final Set<Long> pausedGameInstances = ConcurrentHashMap.newKeySet();
   private final AtomicInteger activeTicks = new AtomicInteger();
@@ -52,13 +62,15 @@ public class TickQueueControlService {
       GameplayCommandRepository gameplayCommandRepository,
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
       RuntimeIdentity runtimeIdentity,
-      SessionAuthenticationService sessionAuthenticationService) {
+      SessionAuthenticationService sessionAuthenticationService,
+      @Qualifier("queueLockRenewalExecutor") ScheduledExecutorService queueLockRenewalExecutor) {
     this.redisTemplate = redisTemplate;
     this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayCommandRepository = gameplayCommandRepository;
     this.runtimeRegionStatusRepository = runtimeRegionStatusRepository;
     this.runtimeIdentity = runtimeIdentity;
     this.sessionAuthenticationService = sessionAuthenticationService;
+    this.queueLockRenewalExecutor = queueLockRenewalExecutor;
   }
 
   record OwnershipSnapshot(
@@ -74,16 +86,43 @@ public class TickQueueControlService {
     }
   }
 
-  void enqueueCommand(
+  static final class QueueUnavailableException extends IllegalStateException {
+    QueueUnavailableException(String message) {
+      super(message);
+    }
+  }
+
+  @Transactional
+  public void enqueueCommand(
       Long tenantId,
       Long queueTargetId,
       String commandId,
       String command,
       boolean requiresSoloTick) {
-    redisTemplate
-        .opsForList()
-        .rightPush(
-            queueKey(tenantId, queueTargetId), queuePayload(requiresSoloTick, commandId, command));
+    String payload = queuePayload(requiresSoloTick, commandId, command);
+    QueueMutationLease leases = acquireQueueMutationLease(tenantId, queueTargetId, "enqueue");
+    AtomicBoolean pushed = new AtomicBoolean(false);
+    boolean completionRegistered =
+        registerEnqueueCompletion(leases, tenantId, queueTargetId, payload, pushed);
+    try {
+      leases.requireOwned();
+      redisTemplate.opsForList().rightPush(queueKey(tenantId, queueTargetId), payload);
+      pushed.set(true);
+      leases.requireOwned();
+      if (!gameplayCommandRepository.markAcceptedCommandStaged(commandId, Instant.now())) {
+        throw new QueueUnavailableException(
+            "Command is no longer eligible for queue staging: " + commandId);
+      }
+    } catch (RuntimeException ex) {
+      if (!completionRegistered) {
+        removeLatestQueuePayload(tenantId, queueTargetId, payload);
+      }
+      throw ex;
+    } finally {
+      if (!completionRegistered) {
+        leases.close();
+      }
+    }
   }
 
   @Transactional
@@ -265,6 +304,10 @@ public class TickQueueControlService {
     return "gamesession:tick:lock:" + tenantId + ":" + sessionId;
   }
 
+  String mutationLockKey(Long tenantId, Long sessionId) {
+    return "gamesession:tick:mutation-lock:" + tenantId + ":" + sessionId;
+  }
+
   String stateKey(Long tenantId, Long sessionId) {
     return "session:" + tenantId + ":" + sessionId;
   }
@@ -273,82 +316,122 @@ public class TickQueueControlService {
     return "gamesession:tick:pending:" + tenantId + ":" + sessionId;
   }
 
+  Optional<QueueLockLease> tryAcquireTickLease(
+      Long tenantId, Long queueTargetId, String purpose, Logger logger) {
+    return tryAcquireLease(lockKey(tenantId, queueTargetId), purpose, logger);
+  }
+
+  private QueueMutationLease acquireQueueMutationLease(
+      Long tenantId, Long queueTargetId, String purpose) {
+    QueueLockLease mutationLease =
+        acquireLease(mutationLockKey(tenantId, queueTargetId), purpose + " mutation");
+    try {
+      QueueLockLease tickLease = acquireLease(lockKey(tenantId, queueTargetId), purpose + " tick");
+      return new QueueMutationLease(mutationLease, tickLease);
+    } catch (RuntimeException ex) {
+      mutationLease.close();
+      throw ex;
+    }
+  }
+
+  private QueueLockLease acquireLease(String key, String purpose) {
+    long deadline = System.nanoTime() + QUEUE_LOCK_WAIT.toNanos();
+    do {
+      Optional<QueueLockLease> acquired = tryAcquireLease(key, purpose, null);
+      if (acquired.isPresent()) {
+        return acquired.orElseThrow();
+      }
+      try {
+        Thread.sleep(QUEUE_LOCK_RETRY.toMillis());
+      } catch (InterruptedException ex) {
+        Thread.currentThread().interrupt();
+        throw new QueueUnavailableException("Interrupted while acquiring " + purpose + " lock");
+      }
+    } while (System.nanoTime() < deadline);
+    throw new QueueUnavailableException("Timed out acquiring " + purpose + " lock");
+  }
+
+  private Optional<QueueLockLease> tryAcquireLease(
+      String key, String purpose, Logger contentionLogger) {
+    String token = UUID.randomUUID().toString();
+    Boolean acquired = redisTemplate.opsForValue().setIfAbsent(key, token, QUEUE_LOCK_TTL);
+    if (!Boolean.TRUE.equals(acquired)) {
+      if (contentionLogger != null) {
+        contentionLogger.debug("Could not acquire {} lock {}", purpose, key);
+      }
+      return Optional.empty();
+    }
+    try {
+      return Optional.of(new QueueLockLease(key, token, purpose));
+    } catch (RuntimeException ex) {
+      releaseLease(key, token, purpose);
+      throw ex;
+    }
+  }
+
   private long purgeQueuedCommands(
       Long tenantId,
       Long gameInstanceId,
       Supplier<List<GameplayCommand>> commandSupplier,
       String reason,
       Logger logger) {
-    String lockKey = lockKey(tenantId, gameInstanceId);
-    String lockToken = UUID.randomUUID().toString();
-    Boolean acquired = redisTemplate.opsForValue().setIfAbsent(lockKey, lockToken, PURGE_LOCK_TTL);
-    if (!Boolean.TRUE.equals(acquired)) {
-      logger.debug("Could not acquire queue lock {} for purge", lockKey);
-      return 0L;
-    }
-    List<RemovedQueueCommand> removedCommands = new ArrayList<>();
-    boolean completionRegistered =
-        registerPurgeCompletion(
-            lockKey, lockToken, tenantId, gameInstanceId, removedCommands, logger);
+    QueueMutationLease leases = acquireQueueMutationLease(tenantId, gameInstanceId, "purge");
+    boolean completionRegistered = false;
     try {
-      List<GameplayCommand> commands = commandSupplier.get();
-      String key = queueKey(tenantId, gameInstanceId);
-      for (GameplayCommand command : commands) {
-        String payload =
-            queuePayload(
-                command.isRequiresSoloTick(), command.getCommandId(), command.getCommandText());
-        Long removed = redisTemplate.opsForList().remove(key, 0, payload);
-        if (removed != null && removed > 0L) {
-          removedCommands.add(
-              new RemovedQueueCommand(command, payload, PurgeState.capture(command)));
-        }
-      }
-      if (removedCommands.isEmpty()) {
+      List<PurgeCandidate> candidates =
+          commandSupplier.get().stream()
+              .map(this::purgeCandidate)
+              .filter(Optional::isPresent)
+              .map(Optional::orElseThrow)
+              .toList();
+      if (candidates.isEmpty()) {
         return 0L;
       }
-
+      List<GameplayCommand> commands = candidates.stream().map(PurgeCandidate::command).toList();
+      completionRegistered =
+          registerPurgeCompletion(leases, tenantId, gameInstanceId, commands, logger);
+      leases.requireOwned();
       Instant now = Instant.now();
-      for (RemovedQueueCommand removed : removedCommands) {
-        GameplayCommand command = removed.command();
-        command.setExecutionOutcome(purgeOutcome(command));
+      for (PurgeCandidate candidate : candidates) {
+        GameplayCommand command = candidate.command();
+        command.setExecutionOutcome(candidate.batchBound() ? "ABANDONED" : "LOST_BEFORE_STAGING");
         command.setGameplayResult("NOT_APPLIED");
         command.setCompletedAt(now);
         command.setLastAttemptAt(now);
         command.setFailureCode(PURGED_FAILURE_CODE);
         command.setFailureMessage(truncate(reason, 500));
       }
-      gameplayCommandRepository.saveAll(
-          removedCommands.stream().map(RemovedQueueCommand::command).toList());
+      gameplayCommandRepository.saveAll(commands);
+      leases.requireOwned();
+      if (!completionRegistered) {
+        removePurgedPayloads(tenantId, gameInstanceId, commands, logger);
+      }
       logger.info(
           "Purged {} queued automation commands tenantId={} gameInstanceId={}",
-          removedCommands.size(),
+          commands.size(),
           tenantId,
           gameInstanceId);
-      return removedCommands.size();
-    } catch (RuntimeException ex) {
-      if (!completionRegistered) {
-        restorePurgeState(tenantId, gameInstanceId, removedCommands, logger);
-      }
-      throw ex;
+      return commands.size();
     } finally {
       if (!completionRegistered) {
-        releaseQueueLock(lockKey, lockToken, logger);
+        leases.close();
       }
     }
   }
 
-  private String purgeOutcome(GameplayCommand command) {
-    return "RETRY_QUEUED".equals(command.getExecutionOutcome())
-        ? "ABANDONED"
-        : "LOST_BEFORE_STAGING";
+  private Optional<PurgeCandidate> purgeCandidate(GameplayCommand command) {
+    boolean batchBound = gameplayCommandRepository.hasDurableTickEffect(command.getCommandId());
+    if (batchBound && !"RETRY_QUEUED".equals(command.getExecutionOutcome())) {
+      return Optional.empty();
+    }
+    return Optional.of(new PurgeCandidate(command, batchBound));
   }
 
   private boolean registerPurgeCompletion(
-      String lockKey,
-      String lockToken,
+      QueueMutationLease leases,
       Long tenantId,
       Long gameInstanceId,
-      List<RemovedQueueCommand> removedCommands,
+      List<GameplayCommand> commands,
       Logger logger) {
     if (!TransactionSynchronizationManager.isSynchronizationActive()) {
       return false;
@@ -356,82 +439,169 @@ public class TickQueueControlService {
     TransactionSynchronizationManager.registerSynchronization(
         new TransactionSynchronization() {
           @Override
+          public void beforeCommit(boolean readOnly) {
+            leases.requireOwned();
+          }
+
+          @Override
+          public void afterCommit() {
+            removePurgedPayloads(tenantId, gameInstanceId, commands, logger);
+          }
+
+          @Override
           public void afterCompletion(int status) {
-            if (status != STATUS_COMMITTED) {
-              restorePurgeState(tenantId, gameInstanceId, removedCommands, logger);
-            }
-            releaseQueueLock(lockKey, lockToken, logger);
+            leases.close();
           }
         });
     return true;
   }
 
-  private void restorePurgeState(
-      Long tenantId,
-      Long gameInstanceId,
-      List<RemovedQueueCommand> removedCommands,
-      Logger logger) {
-    removedCommands.forEach(removed -> removed.priorState().restore(removed.command()));
-    restoreRemovedCommands(tenantId, gameInstanceId, removedCommands, logger);
-  }
-
-  private void restoreRemovedCommands(
-      Long tenantId,
-      Long gameInstanceId,
-      List<RemovedQueueCommand> removedCommands,
-      Logger logger) {
-    for (int index = removedCommands.size() - 1; index >= 0; index--) {
-      RemovedQueueCommand removed = removedCommands.get(index);
+  private void removePurgedPayloads(
+      Long tenantId, Long gameInstanceId, List<GameplayCommand> commands, Logger logger) {
+    for (GameplayCommand command : commands) {
+      String payload =
+          queuePayload(
+              command.isRequiresSoloTick(), command.getCommandId(), command.getCommandText());
       try {
-        redisTemplate.opsForList().leftPush(queueKey(tenantId, gameInstanceId), removed.payload());
-      } catch (RuntimeException restoreFailure) {
-        logger.error(
-            "Failed to restore queue payload after purge persistence failure tenantId={} gameInstanceId={} commandId={}",
+        redisTemplate.opsForList().remove(queueKey(tenantId, gameInstanceId), 0, payload);
+        redisTemplate.opsForList().remove(pendingKey(tenantId, gameInstanceId), 0, payload);
+      } catch (RuntimeException cleanupFailure) {
+        logger.warn(
+            "Durable purge committed but Redis cleanup failed tenantId={} gameInstanceId={} commandId={}",
             tenantId,
             gameInstanceId,
-            removed.command().getCommandId(),
-            restoreFailure);
+            command.getCommandId(),
+            cleanupFailure);
       }
     }
   }
 
-  private void releaseQueueLock(String lockKey, String lockToken, Logger logger) {
+  private boolean registerEnqueueCompletion(
+      QueueMutationLease leases,
+      Long tenantId,
+      Long queueTargetId,
+      String payload,
+      AtomicBoolean pushed) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      return false;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void beforeCommit(boolean readOnly) {
+            leases.requireOwned();
+          }
+
+          @Override
+          public void afterCompletion(int status) {
+            if (status != STATUS_COMMITTED && pushed.get()) {
+              removeLatestQueuePayload(tenantId, queueTargetId, payload);
+            }
+            leases.close();
+          }
+        });
+    return true;
+  }
+
+  private void removeLatestQueuePayload(Long tenantId, Long queueTargetId, String payload) {
     try {
-      redisTemplate.execute(UNLOCK_IF_OWNED_SCRIPT, List.of(lockKey), lockToken);
+      redisTemplate.opsForList().remove(queueKey(tenantId, queueTargetId), -1, payload);
+    } catch (RuntimeException cleanupFailure) {
+      // An ACCEPTED durable row is not executable, so a stale payload is safe to discard later.
+      classLogger.warn(
+          "Failed to remove rolled-back queue payload tenantId={} gameInstanceId={}",
+          tenantId,
+          queueTargetId,
+          cleanupFailure);
+    }
+  }
+
+  final class QueueLockLease implements AutoCloseable {
+    private final String key;
+    private final String token;
+    private final String purpose;
+    private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final AtomicBoolean lost = new AtomicBoolean(false);
+    private final ScheduledFuture<?> renewal;
+
+    private QueueLockLease(String key, String token, String purpose) {
+      this.key = key;
+      this.token = token;
+      this.purpose = purpose;
+      long renewalPeriodMs = Math.max(1L, QUEUE_LOCK_TTL.toMillis() / 3L);
+      this.renewal =
+          queueLockRenewalExecutor.scheduleAtFixedRate(
+              this::renew, renewalPeriodMs, renewalPeriodMs, TimeUnit.MILLISECONDS);
+    }
+
+    void requireOwned() {
+      if (!isOwned() || !renewOwnership()) {
+        throw new QueueUnavailableException("Lost " + purpose + " lock " + key);
+      }
+    }
+
+    boolean isOwned() {
+      return !lost.get() && !closed.get();
+    }
+
+    private void renew() {
+      renewOwnership();
+    }
+
+    private boolean renewOwnership() {
+      if (closed.get()) {
+        return false;
+      }
+      try {
+        Long renewed = redisTemplate.execute(RENEW_IF_OWNED_SCRIPT, List.of(key), token);
+        if (renewed == null || renewed != 1L) {
+          lost.set(true);
+          classLogger.error("Lost {} lock {} during renewal", purpose, key);
+          return false;
+        }
+        return true;
+      } catch (RuntimeException renewalFailure) {
+        lost.set(true);
+        classLogger.error("Failed to renew {} lock {}", purpose, key, renewalFailure);
+        return false;
+      }
+    }
+
+    @Override
+    public void close() {
+      if (!closed.compareAndSet(false, true)) {
+        return;
+      }
+      if (renewal != null) {
+        renewal.cancel(false);
+      }
+      releaseLease(key, token, purpose);
+    }
+  }
+
+  private void releaseLease(String key, String token, String purpose) {
+    try {
+      redisTemplate.execute(UNLOCK_IF_OWNED_SCRIPT, List.of(key), token);
     } catch (RuntimeException releaseFailure) {
-      logger.warn("Failed to release queue lock {} after purge", lockKey, releaseFailure);
+      classLogger.warn("Failed to release {} lock {}", purpose, key, releaseFailure);
     }
   }
 
-  private record RemovedQueueCommand(
-      GameplayCommand command, String payload, PurgeState priorState) {}
-
-  private record PurgeState(
-      String executionOutcome,
-      String gameplayResult,
-      Instant completedAt,
-      Instant lastAttemptAt,
-      String failureCode,
-      String failureMessage) {
-    private static PurgeState capture(GameplayCommand command) {
-      return new PurgeState(
-          command.getExecutionOutcome(),
-          command.getGameplayResult(),
-          command.getCompletedAt(),
-          command.getLastAttemptAt(),
-          command.getFailureCode(),
-          command.getFailureMessage());
+  private record QueueMutationLease(QueueLockLease mutationLease, QueueLockLease tickLease)
+      implements AutoCloseable {
+    private void requireOwned() {
+      mutationLease.requireOwned();
+      tickLease.requireOwned();
     }
 
-    private void restore(GameplayCommand command) {
-      command.setExecutionOutcome(executionOutcome);
-      command.setGameplayResult(gameplayResult);
-      command.setCompletedAt(completedAt);
-      command.setLastAttemptAt(lastAttemptAt);
-      command.setFailureCode(failureCode);
-      command.setFailureMessage(failureMessage);
+    @Override
+    public void close() {
+      tickLease.close();
+      mutationLease.close();
     }
   }
+
+  private record PurgeCandidate(GameplayCommand command, boolean batchBound) {}
 
   private void bumpOwnershipEpoch(Long tenantId, Long gameInstanceId, boolean paused) {
     Instant now = Instant.now();

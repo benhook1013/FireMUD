@@ -44,7 +44,7 @@ final class AutomationGameplayCommandAdmissionSupport {
     }
 
     GameplayCommand command = acceptedAutomationCommand(request);
-    gameplayCommandRepository.save(command);
+    command = gameplayCommandRepository.save(command);
     try {
       tickService.enqueueCommand(
           request.tenantId(),
@@ -52,15 +52,17 @@ final class AutomationGameplayCommandAdmissionSupport {
           command.getCommandId(),
           request.command(),
           request.requiresSoloTick());
-      markAutomationStaged(command);
-      gameplayCommandRepository.save(command);
       triggerImmediateAutomationTick(tickService, request.tenantId(), request.gameInstanceId());
       return new AdmissionResult(true, "ENQUEUED", command.getCommandId(), null, null);
     } catch (IllegalArgumentException ex) {
-      markAutomationFailed(command, "INVALID_ARGUMENT", ex.getMessage());
-      gameplayCommandRepository.save(command);
+      markAutomationFailed(command, "INVALID_ARGUMENT", ex.getMessage(), gameplayCommandRepository);
       return new AdmissionResult(
           false, "REJECTED", command.getCommandId(), "INVALID_ARGUMENT", ex.getMessage());
+    } catch (TickQueueControlService.QueueUnavailableException ex) {
+      markAutomationFailed(
+          command, "QUEUE_UNAVAILABLE", ex.getMessage(), gameplayCommandRepository);
+      return new AdmissionResult(
+          false, "REJECTED", command.getCommandId(), "UNAVAILABLE", ex.getMessage());
     }
   }
 
@@ -213,21 +215,13 @@ final class AutomationGameplayCommandAdmissionSupport {
     return "auto-" + UUID.randomUUID();
   }
 
-  private static void markAutomationStaged(GameplayCommand command) {
-    Instant now = Instant.now();
-    command.setExecutionOutcome("STAGED");
-    command.setStagedAt(now);
-    command.setLastAttemptAt(now);
-  }
-
-  private static void markAutomationFailed(GameplayCommand command, String code, String message) {
-    Instant now = Instant.now();
-    command.setExecutionOutcome("FAILED");
-    command.setGameplayResult("NOT_APPLIED");
-    command.setCompletedAt(now);
-    command.setLastAttemptAt(now);
-    command.setFailureCode(code);
-    command.setFailureMessage(message);
+  private static void markAutomationFailed(
+      GameplayCommand command,
+      String code,
+      String message,
+      GameplayCommandRepository gameplayCommandRepository) {
+    gameplayCommandRepository.markAcceptedCommandFailed(
+        command.getCommandId(), code, message, Instant.now());
   }
 
   private static void triggerImmediateAutomationTick(
