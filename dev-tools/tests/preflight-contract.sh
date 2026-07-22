@@ -198,6 +198,8 @@ actual_ids = {check["policyId"] for check in report["checkResults"]}
 missing = sorted(expected_ids - actual_ids)
 if missing:
     raise SystemExit(f"preflight report missing policy IDs: {missing}")
+if actual_ids != expected_ids or len(report["checkResults"]) != len(expected_ids):
+    raise SystemExit("preflight report did not emit exactly the complete expected policy set")
 if report.get("expectedBindingsRef") != "design/operations/environments/hobby-self-hosted/expected-bindings.yaml":
     raise SystemExit("preflight report missing expectedBindingsRef")
 failures = [
@@ -235,6 +237,20 @@ for policy_id in ("PREFLIGHT-BACKUP-001", "PREFLIGHT-BACKUP-002"):
     )
     if not failed or results[0].status != "fail" or "waiver not permitted" not in results[0].message:
         raise SystemExit(f"{policy_id} accepted a forbidden waiver: {results}")
+
+results = []
+failed = module.append_result(
+    results,
+    {"PREFLIGHT-PROMOTION-001"},
+    "contract-approver",
+    "contract-ticket",
+    "PREFLIGHT-PROMOTION-001",
+    True,
+    "fail",
+    "ordinary promotion evidence failure",
+)
+if failed or results[0].status != "pass" or "waived by" not in results[0].message:
+    raise SystemExit(f"ordinary promotion waiver behavior regressed: {results}")
 
 results = []
 failed = module.append_result(
@@ -299,6 +315,33 @@ assert spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
+complete_report = {
+    "environment": "hobby-self-hosted",
+    "expectedBindingsRef": "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
+    "deploymentRef": {"manifestRef": "contract-hobby"},
+    "checkResults": [
+        {"policyId": policy_id, "status": "pass", "message": "contract evidence"}
+        for policy_id in module.EXPECTED_PREFLIGHT_POLICY_IDS
+    ],
+}
+complete_status, complete_message = module.validate_preflight_report(
+    complete_report,
+    "hobby-self-hosted",
+    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
+    "contract-hobby",
+)
+if complete_status != "pass":
+    raise SystemExit(f"complete preflight policy set did not pass: {complete_message}")
+incomplete_report = {**complete_report, "checkResults": complete_report["checkResults"][1:]}
+incomplete_status, incomplete_message = module.validate_preflight_report(
+    incomplete_report,
+    "hobby-self-hosted",
+    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
+    "contract-hobby",
+)
+if incomplete_status != "fail" or "missing expected policy IDs" not in incomplete_message:
+    raise SystemExit(f"incomplete preflight policy set did not fail closed: {incomplete_message}")
+
 compliance_path = tmp / "passing-hobby-backup-compliance.yaml"
 compliance_path.write_text("environment: hobby-self-hosted\nstatus: pass\n", encoding="utf-8")
 preflight_path = tmp / "passing-hobby-preflight.json"
@@ -308,7 +351,14 @@ preflight_path.write_text(
             "environment": "hobby-self-hosted",
             "expectedBindingsRef": "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
             "deploymentRef": {"manifestRef": "contract-hobby"},
-            "checkResults": [{"policyId": "PREFLIGHT-DIGEST-002", "status": "fail"}],
+            "checkResults": [
+                {
+                    "policyId": policy_id,
+                    "status": "fail" if policy_id == "PREFLIGHT-DIGEST-002" else "pass",
+                    "message": "contract evidence",
+                }
+                for policy_id in module.EXPECTED_PREFLIGHT_POLICY_IDS
+            ],
         }
     ),
     encoding="utf-8",
@@ -728,11 +778,103 @@ if undeclared_pause_secrets.status != "fail" or "must be omitted" not in undecla
 now = module.dt.datetime.now(module.dt.timezone.utc).replace(microsecond=0)
 past_timestamp = (now - module.dt.timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
 future_timestamp = (now + module.dt.timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+recovery_dir = tmp / "design/operations/deployments/production/recovery"
+recovery_dir.mkdir(parents=True)
 
 def write_json(name, data):
     path = tmp / name
     path.write_text(json.dumps(data), encoding="utf-8")
     return path
+
+def timestamp(value):
+    return value.isoformat().replace("+00:00", "Z")
+
+def canonical_recovery_record(finalized_at):
+    quarantine_started_at = finalized_at - module.dt.timedelta(minutes=25)
+    restored_at = finalized_at - module.dt.timedelta(minutes=20)
+    ready_to_reopen_at = finalized_at - module.dt.timedelta(minutes=15)
+    quarantine_released_at = finalized_at - module.dt.timedelta(minutes=5)
+    credential_validated_at = timestamp(restored_at)
+    credential_records = {}
+    for class_name in ("backup-storage", "asset-storage", "outbound-comms", "operator-credentials"):
+        credential_records[class_name] = {
+            "status": "pass",
+            "evidenceRef": f"evidence/{class_name}.json",
+            "isolationAssertion": "production-equivalent drill boundary",
+            "validationMethod": "contract-test",
+            "validatedAt": credential_validated_at,
+            "validatedBy": "preflight-contract",
+            "observedValue": "redacted",
+        }
+    return {
+        "schemaVersion": "recovery-record/v1",
+        "environment": "production",
+        "recoveryRef": "baseline",
+        "operationId": "recovery-operation",
+        "recoveryStatus": "finalized",
+        "recoveryPurpose": "production-equivalent-drill",
+        "sourceEnvironmentBinding": {"environment": "production", "bindingRef": "production"},
+        "targetBoundary": {"environment": "production", "boundary": "isolated-drill"},
+        "trafficExposure": "isolated-drill",
+        "restoreSource": {"type": "current-production-lineage", "artifactRef": "backup-artifact"},
+        "restoreSafeMode": {"status": "pass", "playerIngress": "disabled"},
+        "coordinationRecoveryMode": "cold_start_restore",
+        "backupArtifactRef": "backups/artifact",
+        "artifactErasureHighWater": {"stream": "erasures", "sequence": 10},
+        "restoreHighWater": {"stream": "erasures", "sequence": 12},
+        "erasureReplay": {"ledgerRef": "erasures", "exclusiveStart": 10, "inclusiveEnd": 12, "gapFree": True},
+        "backupArtifactLineage": {"databaseIdentity": "production", "snapshotAt": credential_validated_at},
+        "backupToolDigest": "sha256:backup-tool",
+        "recoveryToolDigest": "sha256:recovery-tool",
+        "recoveryContractFingerprint": "sha256:recovery-contract",
+        "recoveryParticipantInventoryRef": "inventories/participants.json",
+        "validatorInventoryRef": "inventories/validators.json",
+        "externalEffectInventoryRef": "inventories/external-effects.json",
+        "quarantineStartedAt": timestamp(quarantine_started_at),
+        "readyToReopenAt": timestamp(ready_to_reopen_at),
+        "quarantineReleasedAt": timestamp(quarantine_released_at),
+        "finalizedAt": timestamp(finalized_at),
+        "restoredAt": timestamp(restored_at),
+        "restoredBy": "preflight-contract",
+        "recoveryControllerLineage": {
+            "recoveryStatus": "finalized",
+            "scope": "environment-wide",
+            "finalizedReleaseIdentity": "release-1",
+        },
+        "expectedBindingsRef": "design/operations/environments/production/expected-bindings.yaml",
+        "coordinationRecoveryEvidence": {"mode": "cold_start_restore", "coordinationRedis": "empty-before-rebuild"},
+        "backupConfidentialityEvidence": {"status": "pass", "transport": "encrypted", "storage": "encrypted"},
+        "durableParticipantConvergence": {"gameplay": {"disposition": "converged"}},
+        "externalEffectReconciliation": {"mail": {"disposition": "invalidated"}},
+        "sessionRecovery": {"gameSessionHandling": "invalidated", "authSessionHandling": "invalidated"},
+        "jwtHardening": {
+            "rotationJobRef": "jobs/jwt-rotation",
+            "resultingKeyIds": ["kid-1"],
+            "revocationWatermarkEvidence": "evidence/jwt-revocation",
+            "validatorConvergenceEvidence": "evidence/jwt-validators",
+        },
+        "databaseCredentialRotation": {
+            "rotationJobRef": "jobs/postgres-rotation",
+            "affectedSecretRefs": ["secret://firemud/postgres"],
+            "rolloutRestartEvidence": "evidence/postgres-rollout",
+        },
+        "certificateReissuance": {
+            "workloadLeafEvidence": "evidence/workload-certificates",
+            "bridgeLeafEvidence": "evidence/bridge-certificates",
+            "operatorLeafEvidence": "evidence/operator-certificates",
+            "peerConvergenceEvidence": "evidence/certificate-peers",
+        },
+        "externalCredentialValidation": {"records": credential_records},
+        "secretComplianceRefresh": {
+            "recordRef": "design/operations/secret-compliance/production.yaml",
+            "evidenceRef": "evidence/secret-compliance",
+            "credentialClasses": ["jwt-signing-keys-jwks", "postgres-application-credentials"],
+            "freshness": "lastRotationAt",
+        },
+        "smokeStatus": "pass",
+        "smokeEvidence": ["evidence/smoke"],
+        "reopenApprovedBy": "preflight-contract",
+    }
 
 def compatibility_result(status):
     return {
@@ -747,19 +889,32 @@ def compatibility_result(status):
         "newDrillRequired": False,
     }
 
-valid_baseline = {
+stub_baseline = {
     "environment": "production",
     "recoveryStatus": "finalized",
     "recoveryPurpose": "production-equivalent-drill",
     "trafficExposure": "isolated-drill",
     "coordinationRecoveryMode": "cold_start_restore",
     "recoveryContractFingerprint": "sha256:recovery-contract",
-    "finalizedAt": (now - module.dt.timedelta(minutes=10)).isoformat().replace("+00:00", "Z"),
+    "finalizedAt": timestamp(now - module.dt.timedelta(minutes=10)),
 }
-baseline_path = write_json("baseline.json", valid_baseline)
+stub_path = recovery_dir / "stub-baseline.json"
+stub_path.write_text(json.dumps(stub_baseline), encoding="utf-8")
+stub_status, stub_message = module.validate_recovery_baseline(
+    tmp,
+    str(stub_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+)
+if stub_status != "fail" or "canonical finalized projection fields" not in stub_message:
+    raise SystemExit(f"seven-field recovery baseline was accepted: {stub_message}")
+
+valid_baseline = canonical_recovery_record(now - module.dt.timedelta(minutes=10))
+baseline_path = recovery_dir / "baseline.json"
+baseline_path.write_text(json.dumps(valid_baseline), encoding="utf-8")
 baseline_status, baseline_message = module.validate_recovery_baseline(
     tmp,
-    baseline_path.name,
+    str(baseline_path.relative_to(tmp)),
     "sha256:recovery-contract",
     now,
 )
@@ -767,13 +922,13 @@ if baseline_status != "pass":
     raise SystemExit(f"valid finalized recovery baseline did not pass: {baseline_message}")
 
 stale_baseline = {
-    **valid_baseline,
-    "finalizedAt": (now - module.dt.timedelta(days=31)).isoformat().replace("+00:00", "Z"),
+    **canonical_recovery_record(now - module.dt.timedelta(days=31)),
 }
-stale_baseline_path = write_json("stale-baseline.json", stale_baseline)
+stale_baseline_path = recovery_dir / "stale-baseline.json"
+stale_baseline_path.write_text(json.dumps(stale_baseline), encoding="utf-8")
 stale_status, stale_message = module.validate_recovery_baseline(
     tmp,
-    stale_baseline_path.name,
+    str(stale_baseline_path.relative_to(tmp)),
     "sha256:recovery-contract",
     now,
 )
@@ -782,18 +937,34 @@ if stale_status != "fail" or "older than 30 days" not in stale_message:
 
 missing_baseline_status, missing_baseline_message = module.validate_recovery_baseline(
     tmp,
-    "missing-baseline.json",
+    "design/operations/deployments/production/recovery/missing-baseline.json",
     "sha256:recovery-contract",
     now,
 )
 if missing_baseline_status != "fail" or "not found" not in missing_baseline_message:
     raise SystemExit(f"missing recovery baseline did not fail closed: {missing_baseline_message}")
 
+outside_baseline_path = write_json("outside-baseline.json", valid_baseline)
+outside_status, outside_message = module.validate_recovery_baseline(
+    tmp,
+    outside_baseline_path.name,
+    "sha256:recovery-contract",
+    now,
+)
+if outside_status != "fail" or "production/recovery" not in outside_message:
+    raise SystemExit(f"out-of-namespace recovery baseline did not fail closed: {outside_message}")
+
 missing_compatibility_attestation = write_json(
     "missing-recovery-compatibility-attestation.json",
     {
+        "attestationVersion": "v1",
         "environment": "staging",
         "generatedAt": past_timestamp,
+        "stagingOverlayCommitSha": "deadbeef",
+        "productionOverlayRef": "contract-production",
+        "serviceDigests": {"account-service": "ghcr.io/firemud/account-service@sha256:candidate"},
+        "smokeEvidence": ["contract-smoke"],
+        "approvedBy": "preflight-contract",
         "rollbackMode": "rollback-compatible",
     },
 )
@@ -802,24 +973,182 @@ missing_status, _, missing_message = module.promotion_check(
     [],
     tmp,
 )
-if missing_status != "fail" or "missing recoveryCompatibility" not in missing_message:
+if missing_status != "fail" or "canonical fields" not in missing_message or "recoveryCompatibility" not in missing_message:
     raise SystemExit(f"missing recoveryCompatibility did not fail closed: {missing_message}")
+
+def promotion_attestation(compatibility, rollback_mode="rollback-compatible"):
+    return {
+        "attestationVersion": "v1",
+        "environment": "staging",
+        "stagingOverlayCommitSha": "deadbeef",
+        "productionOverlayRef": "contract-production",
+        "serviceDigests": {"account-service": "ghcr.io/firemud/account-service@sha256:candidate"},
+        "smokeEvidence": ["contract-smoke"],
+        "generatedAt": past_timestamp,
+        "approvedBy": "preflight-contract",
+        "rollbackMode": rollback_mode,
+        "recoveryCompatibility": compatibility,
+    }
 
 for compatibility_status in ("drill_required", "incompatible"):
     status_attestation = write_json(
         f"{compatibility_status}-attestation.json",
-        {
-            "environment": "staging",
-            "generatedAt": past_timestamp,
-            "rollbackMode": "rollback-compatible",
-            "recoveryCompatibility": compatibility_result(compatibility_status),
-        },
+        promotion_attestation(compatibility_result(compatibility_status)),
     )
     promotion_status, _, promotion_message = module.promotion_check(status_attestation, [], tmp)
     if promotion_status != "fail" or "compatibilityStatus blocks promotion" not in promotion_message:
         raise SystemExit(
             f"{compatibility_status} recoveryCompatibility did not fail closed: {promotion_message}"
         )
+
+rollback_status, rollback_message = module.production_recovery_check(
+    "pass", "rollback-compatible", "promotion valid", "", "contract-production", tmp
+)
+if rollback_status != "pass":
+    raise SystemExit(f"valid rollback-compatible recovery gate did not pass: {rollback_message}")
+
+rollback_failure_status, rollback_failure_message = module.production_recovery_check(
+    "fail", "rollback-compatible", "baseline invalid", "", "contract-production", tmp
+)
+if rollback_failure_status != "fail" or "baseline invalid" not in rollback_failure_message:
+    raise SystemExit(
+        "failed rollback-compatible recovery validation did not fail PREFLIGHT-BACKUP-001: "
+        + rollback_failure_message
+    )
+
+unknown_mode_status, unknown_mode_message = module.production_recovery_check(
+    "fail", "unknown", "invalid attestation", "", "contract-production", tmp
+)
+if unknown_mode_status != "fail" or "rollbackMode is invalid" not in unknown_mode_message:
+    raise SystemExit(f"invalid rollback mode did not fail recovery compatibility: {unknown_mode_message}")
+
+roll_forward_status, roll_forward_message = module.production_recovery_check(
+    "pass", "roll-forward-only", "promotion valid", "", "contract-production", tmp
+)
+if roll_forward_status != "fail" or "FIREMUD_BACKUP_READINESS_EVIDENCE" not in roll_forward_message:
+    raise SystemExit(f"roll-forward promotion without readiness evidence did not fail: {roll_forward_message}")
+
+gateway_image = "ghcr.io/benhook1013/spring-cloud-gateway@sha256:gateway"
+account_image = "ghcr.io/benhook1013/account-service@sha256:account"
+extracted_images = module.extract_service_images(
+    "image: " + gateway_image + "\nimage: " + account_image + "\n"
+)
+if set(extracted_images) != {gateway_image, account_image}:
+    raise SystemExit(f"production digest extraction omitted the Gateway image: {extracted_images}")
+
+import subprocess
+
+promotion_root = tmp / "promotion-git-root"
+promotion_root.mkdir()
+subprocess.run(["git", "-C", str(promotion_root), "init", "-q"], check=True)
+subprocess.run(["git", "-C", str(promotion_root), "config", "user.name", "preflight-contract"], check=True)
+subprocess.run(["git", "-C", str(promotion_root), "config", "user.email", "preflight-contract@example.test"], check=True)
+(promotion_root / "marker").write_text("staging overlay\n", encoding="utf-8")
+subprocess.run(["git", "-C", str(promotion_root), "add", "marker"], check=True)
+subprocess.run(["git", "-C", str(promotion_root), "commit", "-qm", "staging overlay"], check=True)
+staging_sha = subprocess.check_output(
+    ["git", "-C", str(promotion_root), "rev-parse", "HEAD"], text=True
+).strip()
+if not module.git_commit_exists(promotion_root, staging_sha):
+    raise SystemExit("valid stagingOverlayCommitSha was not proven to exist in Git")
+if module.git_commit_exists(promotion_root, "deadbeef"):
+    raise SystemExit("unknown stagingOverlayCommitSha was incorrectly accepted by Git validation")
+
+staging_dir = promotion_root / "design/operations/deployments/staging/deployments"
+staging_dir.mkdir(parents=True)
+secret_evidence_path = promotion_root / "secret-compliance.json"
+secret_evidence_path.write_text(
+    json.dumps(
+        {
+            "records": {
+                class_name: {"immutableArtifactId": f"contract:{class_name}:sha256:evidence"}
+                for class_name in (
+                    "jwt-signing-keys-jwks",
+                    "postgres-application-credentials",
+                    "backup-object-store-credentials",
+                    "operator-credentials",
+                )
+            }
+        }
+    ),
+    encoding="utf-8",
+)
+staging_preflight_path = promotion_root / "staging-preflight.json"
+staging_preflight_path.write_text(
+    json.dumps(
+        {
+            "environment": "staging",
+            "expectedBindingsRef": "design/operations/environments/staging/expected-bindings.yaml",
+            "deploymentRef": {"overlayCommitSha": staging_sha},
+            "checkResults": [
+                {"policyId": policy_id, "status": "pass", "message": "contract evidence"}
+                for policy_id in module.EXPECTED_PREFLIGHT_POLICY_IDS
+            ],
+        }
+    ),
+    encoding="utf-8",
+)
+staging_record = {
+    "environment": "staging",
+    "overlayCommitSha": staging_sha,
+    "appliedAt": past_timestamp,
+    "appliedBy": "preflight-contract",
+    "deployStatus": "pass",
+    "smokeStatus": "pass",
+    "serviceDigests": {"spring-cloud-gateway": gateway_image, "account-service": account_image},
+    "preflightReportPath": staging_preflight_path.name,
+    "liveStateEvidence": {
+        "status": "pass",
+        "observedOverlaySha": staging_sha,
+        "observedDigests": {"spring-cloud-gateway": gateway_image, "account-service": account_image},
+    },
+    "secretComplianceSnapshotAt": past_timestamp,
+    "secretComplianceStatus": "pass",
+    "secretComplianceEvidenceRef": secret_evidence_path.name,
+    "smokeEvidence": ["contract-smoke"],
+}
+(staging_dir / f"{staging_sha}.json").write_text(json.dumps(staging_record), encoding="utf-8")
+promotion_recovery_dir = promotion_root / "design/operations/deployments/production/recovery"
+promotion_recovery_dir.mkdir(parents=True)
+(promotion_recovery_dir / "baseline.json").write_text(json.dumps(valid_baseline), encoding="utf-8")
+promotion_attestation_path = promotion_root / "promotion-attestation.json"
+promotion_attestation_path.write_text(
+    json.dumps(
+        {
+            "attestationVersion": "v1",
+            "environment": "staging",
+            "stagingOverlayCommitSha": staging_sha,
+            "productionOverlayRef": "contract-production",
+            "serviceDigests": {"spring-cloud-gateway": gateway_image, "account-service": account_image},
+            "smokeEvidence": ["contract-smoke"],
+            "generatedAt": past_timestamp,
+            "approvedBy": "preflight-contract",
+            "rollbackMode": "rollback-compatible",
+            "recoveryCompatibility": compatibility_result("compatible"),
+        }
+    ),
+    encoding="utf-8",
+)
+promotion_status, promotion_mode, promotion_message = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if promotion_status != "pass" or promotion_mode != "rollback-compatible":
+    raise SystemExit(f"canonical promotion/staging lineage did not pass: {promotion_message}")
+
+bad_git_attestation = json.loads(promotion_attestation_path.read_text(encoding="utf-8"))
+bad_git_attestation["stagingOverlayCommitSha"] = "deadbeef"
+bad_git_path = promotion_root / "bad-git-attestation.json"
+bad_git_path.write_text(json.dumps(bad_git_attestation), encoding="utf-8")
+bad_git_status, _, bad_git_message = module.promotion_check(
+    bad_git_path,
+    [gateway_image, account_image],
+    promotion_root,
+)
+if bad_git_status != "fail" or "does not exist in Git" not in bad_git_message:
+    raise SystemExit(f"unbound stagingOverlayCommitSha did not fail closed: {bad_git_message}")
 
 legacy_attestation = write_json(
     "legacy-roll-forward-attestation.json",

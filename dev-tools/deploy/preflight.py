@@ -47,6 +47,142 @@ NON_WAIVABLE_READINESS_GATES = {
 
 RECOVERY_COMPATIBILITY_STATUSES = {"compatible", "drill_required", "incompatible"}
 
+# These are the policy results emitted by this executable. The two JWT policies
+# documented as target-state-only are deliberately not included until they are
+# implemented and emitted by every applicable run.
+EXPECTED_PREFLIGHT_POLICY_IDS = (
+    "PREFLIGHT-DIGEST-001",
+    "PREFLIGHT-DIGEST-002",
+    "PREFLIGHT-SECRETS-001",
+    "PREFLIGHT-SECRETS-002",
+    "PREFLIGHT-JWT-001",
+    "PREFLIGHT-JWKS-001",
+    "PREFLIGHT-BRIDGE-001",
+    "PREFLIGHT-REDIS-001",
+    "PREFLIGHT-BOOTSTRAP-001",
+    "PREFLIGHT-EXTERNAL-001",
+    "PREFLIGHT-SERVICES-001",
+    "PREFLIGHT-PROMOTION-001",
+    "PREFLIGHT-BACKUP-001",
+    "PREFLIGHT-BACKUP-002",
+    "PREFLIGHT-BACKUP-003",
+)
+EXPECTED_PREFLIGHT_POLICY_ID_SET = set(EXPECTED_PREFLIGHT_POLICY_IDS)
+
+PROMOTION_ATTESTATION_VERSION = "v1"
+PROMOTION_ATTESTATION_REQUIRED_FIELDS = (
+    "attestationVersion",
+    "environment",
+    "stagingOverlayCommitSha",
+    "productionOverlayRef",
+    "serviceDigests",
+    "smokeEvidence",
+    "generatedAt",
+    "approvedBy",
+    "rollbackMode",
+    "recoveryCompatibility",
+)
+
+CANONICAL_RECOVERY_REQUIRED_FIELDS = (
+    "schemaVersion",
+    "environment",
+    "recoveryRef",
+    "operationId",
+    "recoveryStatus",
+    "recoveryPurpose",
+    "sourceEnvironmentBinding",
+    "targetBoundary",
+    "trafficExposure",
+    "restoreSource",
+    "restoreSafeMode",
+    "coordinationRecoveryMode",
+    "backupArtifactRef",
+    "artifactErasureHighWater",
+    "restoreHighWater",
+    "erasureReplay",
+    "backupArtifactLineage",
+    "backupToolDigest",
+    "recoveryToolDigest",
+    "recoveryContractFingerprint",
+    "recoveryParticipantInventoryRef",
+    "validatorInventoryRef",
+    "externalEffectInventoryRef",
+    "quarantineStartedAt",
+    "readyToReopenAt",
+    "quarantineReleasedAt",
+    "finalizedAt",
+    "restoredAt",
+    "restoredBy",
+    "recoveryControllerLineage",
+    "expectedBindingsRef",
+    "coordinationRecoveryEvidence",
+    "backupConfidentialityEvidence",
+    "durableParticipantConvergence",
+    "externalEffectReconciliation",
+    "sessionRecovery",
+    "jwtHardening",
+    "databaseCredentialRotation",
+    "certificateReissuance",
+    "externalCredentialValidation",
+    "secretComplianceRefresh",
+    "smokeStatus",
+    "smokeEvidence",
+    "reopenApprovedBy",
+)
+
+CANONICAL_RECOVERY_STRING_FIELDS = (
+    "schemaVersion",
+    "environment",
+    "recoveryRef",
+    "operationId",
+    "recoveryStatus",
+    "recoveryPurpose",
+    "trafficExposure",
+    "coordinationRecoveryMode",
+    "backupArtifactRef",
+    "backupToolDigest",
+    "recoveryToolDigest",
+    "recoveryContractFingerprint",
+    "recoveryParticipantInventoryRef",
+    "validatorInventoryRef",
+    "externalEffectInventoryRef",
+    "quarantineStartedAt",
+    "readyToReopenAt",
+    "quarantineReleasedAt",
+    "finalizedAt",
+    "restoredAt",
+    "restoredBy",
+    "expectedBindingsRef",
+    "smokeStatus",
+    "reopenApprovedBy",
+)
+
+CANONICAL_RECOVERY_OBJECT_FIELDS = (
+    "restoreSafeMode",
+    "artifactErasureHighWater",
+    "restoreHighWater",
+    "erasureReplay",
+    "backupArtifactLineage",
+    "recoveryControllerLineage",
+    "coordinationRecoveryEvidence",
+    "backupConfidentialityEvidence",
+    "durableParticipantConvergence",
+    "externalEffectReconciliation",
+    "sessionRecovery",
+    "jwtHardening",
+    "databaseCredentialRotation",
+    "certificateReissuance",
+    "externalCredentialValidation",
+    "secretComplianceRefresh",
+)
+
+CANONICAL_RECOVERY_CREDENTIAL_CLASSES = (
+    "backup-storage",
+    "asset-storage",
+    "outbound-comms",
+    "operator-credentials",
+)
+
 BACKUP_READINESS_REQUIRED_FIELDS = (
     "environment",
     "deploymentRef",
@@ -111,34 +247,181 @@ def parse_timestamp(value: Any, field_name: str) -> dt.datetime:
     return parsed.astimezone(dt.timezone.utc)
 
 
+def is_missing(value: Any) -> bool:
+    return value in (None, "", [], {})
+
+
 def validate_recovery_baseline(
     root_dir: Path,
     baseline_ref: str,
     expected_fingerprint: str,
     evaluated_at: dt.datetime,
 ) -> tuple[str, str]:
-    baseline_path = resolve_repo_path(root_dir, baseline_ref)
+    baseline_ref_path = Path(baseline_ref)
+    recovery_dir = (root_dir / "design" / "operations" / "deployments" / "production" / "recovery").resolve()
+    baseline_path = resolve_repo_path(root_dir, baseline_ref).resolve()
+    if baseline_ref_path.is_absolute() or not baseline_path.is_relative_to(recovery_dir):
+        return (
+            "fail",
+            "Recovery compatibility baseline must be a repository-relative record under "
+            "design/operations/deployments/production/recovery/",
+        )
     if not baseline_path.exists():
         return ("fail", f"Recovery compatibility baseline record not found: {baseline_ref}")
     try:
         baseline = load_json(baseline_path)
     except Exception as exc:
         return ("fail", f"Recovery compatibility baseline record unreadable: {exc}")
+    if not isinstance(baseline, dict):
+        return ("fail", "Recovery compatibility baseline record must be a JSON object")
+
+    missing_fields = [
+        field
+        for field in CANONICAL_RECOVERY_REQUIRED_FIELDS
+        if field not in baseline or is_missing(baseline[field])
+    ]
+    if missing_fields:
+        return (
+            "fail",
+            "Recovery compatibility baseline is missing canonical finalized projection fields: "
+            + ", ".join(missing_fields),
+        )
+
+    invalid_string_fields = [
+        field
+        for field in CANONICAL_RECOVERY_STRING_FIELDS
+        if not isinstance(baseline.get(field), str) or not baseline[field].strip()
+    ]
+    if invalid_string_fields:
+        return (
+            "fail",
+            "Recovery compatibility baseline canonical fields must be non-empty strings: "
+            + ", ".join(invalid_string_fields),
+        )
+
+    invalid_object_fields = [
+        field
+        for field in CANONICAL_RECOVERY_OBJECT_FIELDS
+        if not isinstance(baseline.get(field), (dict, list)) or not baseline[field]
+    ]
+    if invalid_object_fields:
+        return (
+            "fail",
+            "Recovery compatibility baseline canonical evidence groups must be non-empty objects or lists: "
+            + ", ".join(invalid_object_fields),
+        )
+
+    for field in ("sourceEnvironmentBinding", "targetBoundary", "restoreSource"):
+        if is_missing(baseline.get(field)):
+            return ("fail", f"Recovery compatibility baseline {field} must be non-empty")
+
     expected_values = {
+        "schemaVersion": "recovery-record/v1",
         "environment": "production",
         "recoveryStatus": "finalized",
         "recoveryPurpose": "production-equivalent-drill",
         "trafficExposure": "isolated-drill",
         "coordinationRecoveryMode": "cold_start_restore",
         "recoveryContractFingerprint": expected_fingerprint,
+        "expectedBindingsRef": "design/operations/environments/production/expected-bindings.yaml",
     }
     for field, expected in expected_values.items():
         if baseline.get(field) != expected:
             return ("fail", f"Recovery compatibility baseline {field} must be {expected}")
+
+    if baseline.get("smokeStatus") != "pass":
+        return ("fail", "Recovery compatibility baseline smokeStatus must be pass")
+    if not isinstance(baseline.get("smokeEvidence"), list) or not baseline["smokeEvidence"]:
+        return ("fail", "Recovery compatibility baseline smokeEvidence must be a non-empty list")
+
+    session_recovery = baseline.get("sessionRecovery")
+    if not isinstance(session_recovery, dict):
+        return ("fail", "Recovery compatibility baseline sessionRecovery must be an object")
+    for field in ("gameSessionHandling", "authSessionHandling"):
+        if session_recovery.get(field) != "invalidated":
+            return ("fail", f"Recovery compatibility baseline sessionRecovery.{field} must be invalidated")
+
+    credential_validation = baseline.get("externalCredentialValidation")
+    if not isinstance(credential_validation, dict):
+        return ("fail", "Recovery compatibility baseline externalCredentialValidation must be an object")
+    credential_records = credential_validation.get("records")
+    if not isinstance(credential_records, dict):
+        return ("fail", "Recovery compatibility baseline externalCredentialValidation.records must be an object")
+    missing_credential_records = [
+        name for name in CANONICAL_RECOVERY_CREDENTIAL_CLASSES if name not in credential_records
+    ]
+    if missing_credential_records:
+        return (
+            "fail",
+            "Recovery compatibility baseline externalCredentialValidation.records missing: "
+            + ", ".join(missing_credential_records),
+        )
+    credential_fields = (
+        "status",
+        "evidenceRef",
+        "isolationAssertion",
+        "validationMethod",
+        "validatedAt",
+        "validatedBy",
+        "observedValue",
+    )
+    for class_name in CANONICAL_RECOVERY_CREDENTIAL_CLASSES:
+        record = credential_records.get(class_name)
+        if not isinstance(record, dict):
+            return (
+                "fail",
+                f"Recovery compatibility baseline external credential record must be an object: {class_name}",
+            )
+        missing_record_fields = [
+            field for field in credential_fields if field not in record or is_missing(record[field])
+        ]
+        if missing_record_fields:
+            return (
+                "fail",
+                f"Recovery compatibility baseline external credential record missing fields for {class_name}: "
+                + ", ".join(missing_record_fields),
+            )
+        if record.get("status") != "pass":
+            return (
+                "fail",
+                f"Recovery compatibility baseline external credential record status must be pass: {class_name}",
+            )
+        if not isinstance(record.get("observedValue"), str):
+            return (
+                "fail",
+                f"Recovery compatibility baseline external credential observedValue must be non-secret text: {class_name}",
+            )
+        try:
+            parse_timestamp(record.get("validatedAt"), f"Recovery baseline {class_name}.validatedAt")
+        except Exception as exc:
+            return ("fail", str(exc))
+
     try:
-        finalized_at = parse_timestamp(baseline.get("finalizedAt"), "Recovery compatibility baseline finalizedAt")
+        lifecycle_timestamps = {
+            field: parse_timestamp(baseline.get(field), f"Recovery compatibility baseline {field}")
+            for field in (
+                "quarantineStartedAt",
+                "readyToReopenAt",
+                "quarantineReleasedAt",
+                "finalizedAt",
+                "restoredAt",
+            )
+        }
     except Exception as exc:
         return ("fail", str(exc))
+    if lifecycle_timestamps["readyToReopenAt"] <= lifecycle_timestamps["quarantineStartedAt"]:
+        return ("fail", "Recovery compatibility baseline readyToReopenAt must be later than quarantineStartedAt")
+    if lifecycle_timestamps["quarantineReleasedAt"] <= lifecycle_timestamps["readyToReopenAt"]:
+        return (
+            "fail",
+            "Recovery compatibility baseline quarantineReleasedAt must be later than readyToReopenAt",
+        )
+    if lifecycle_timestamps["finalizedAt"] <= lifecycle_timestamps["quarantineReleasedAt"]:
+        return ("fail", "Recovery compatibility baseline finalizedAt must be later than quarantineReleasedAt")
+    if lifecycle_timestamps["restoredAt"] > lifecycle_timestamps["finalizedAt"]:
+        return ("fail", "Recovery compatibility baseline restoredAt must not be later than finalizedAt")
+
+    finalized_at = lifecycle_timestamps["finalizedAt"]
     if finalized_at > evaluated_at:
         return ("fail", "Recovery compatibility baseline finalizedAt is later than evaluatedAt")
     if (evaluated_at - finalized_at).total_seconds() > 30 * 24 * 60 * 60:
@@ -163,6 +446,80 @@ def resolve_repo_path(root_dir: Path, ref: str) -> Path:
     return path if path.is_absolute() else root_dir / ref
 
 
+def validate_preflight_report(
+    report: Any,
+    environment: str,
+    expected_bindings_ref: str,
+    deployment_ref: str,
+) -> tuple[str, str]:
+    label = environment.capitalize()
+    if not isinstance(report, dict):
+        return ("fail", f"{label} preflight report must be a JSON object")
+    if report.get("environment") != environment:
+        return ("fail", f"{label} preflight report must target {environment}")
+    if report.get("expectedBindingsRef") != expected_bindings_ref:
+        return ("fail", f"{label} preflight report expectedBindingsRef mismatch")
+
+    deployment_ref_obj = report.get("deploymentRef")
+    if not isinstance(deployment_ref_obj, dict):
+        return ("fail", f"{label} preflight report deploymentRef must be an object")
+    expected_ref_key = "manifestRef" if environment == "hobby-self-hosted" else "overlayCommitSha"
+    if deployment_ref_obj.get(expected_ref_key) != deployment_ref:
+        return ("fail", f"{label} preflight report deploymentRef mismatch")
+
+    preflight_results = report.get("checkResults")
+    if not isinstance(preflight_results, list) or not preflight_results:
+        return ("fail", f"{label} preflight report missing checkResults")
+    policy_ids: list[str] = []
+    malformed_results: list[str] = []
+    for index, check in enumerate(preflight_results):
+        if not isinstance(check, dict):
+            malformed_results.append(str(index))
+            continue
+        policy_id = check.get("policyId")
+        status = check.get("status")
+        message = check.get("message")
+        if (
+            not isinstance(policy_id, str)
+            or not policy_id
+            or status not in {"pass", "fail", "not_applicable"}
+            or not isinstance(message, str)
+            or not message
+        ):
+            malformed_results.append(str(index))
+            continue
+        policy_ids.append(policy_id)
+    if malformed_results:
+        return (
+            "fail",
+            f"{label} preflight report contains malformed checkResults entries: "
+            + ", ".join(malformed_results),
+        )
+
+    duplicate_ids = sorted({policy_id for policy_id in policy_ids if policy_ids.count(policy_id) > 1})
+    if duplicate_ids:
+        return ("fail", f"{label} preflight report contains duplicate policy IDs: " + ", ".join(duplicate_ids))
+    missing_ids = sorted(EXPECTED_PREFLIGHT_POLICY_ID_SET - set(policy_ids))
+    if missing_ids:
+        return ("fail", f"{label} preflight report missing expected policy IDs: " + ", ".join(missing_ids))
+    unknown_ids = sorted(set(policy_ids) - EXPECTED_PREFLIGHT_POLICY_ID_SET)
+    if unknown_ids:
+        return ("fail", f"{label} preflight report contains unknown policy IDs: " + ", ".join(unknown_ids))
+
+    required_failures = [
+        check.get("policyId")
+        for check in preflight_results
+        if check.get("status") == "fail" and check.get("policyId") != "PREFLIGHT-DIGEST-002"
+    ]
+    if required_failures:
+        return (
+            "fail",
+            f"{label} preflight report contains failing required checks: "
+            + ", ".join(required_failures),
+        )
+    return ("pass", "")
+
+
 def load_preflight_report(
     path_ref: str,
     environment: str,
@@ -179,35 +536,7 @@ def load_preflight_report(
         report = load_json(path)
     except Exception as exc:
         return ("fail", f"{environment.capitalize()} preflight report unreadable: {exc}")
-    if report.get("environment") != environment:
-        return ("fail", f"{environment.capitalize()} preflight report must target {environment}")
-    if report.get("expectedBindingsRef") != expected_bindings_ref:
-        return ("fail", f"{environment.capitalize()} preflight report expectedBindingsRef mismatch")
-    deployment_ref_obj = report.get("deploymentRef", {})
-    manifest_ref = ""
-    overlay_sha = ""
-    if isinstance(deployment_ref_obj, dict):
-        manifest_ref = str(deployment_ref_obj.get("manifestRef", ""))
-        overlay_sha = str(deployment_ref_obj.get("overlayCommitSha", ""))
-    if deployment_ref not in {manifest_ref, overlay_sha}:
-        return ("fail", f"{environment.capitalize()} preflight report deploymentRef mismatch")
-    preflight_results = report.get("checkResults")
-    if not isinstance(preflight_results, list) or not preflight_results:
-        return ("fail", f"{environment.capitalize()} preflight report missing checkResults")
-    required_failures = [
-        check.get("policyId")
-        for check in preflight_results
-        if isinstance(check, dict)
-        and check.get("status") == "fail"
-        and check.get("policyId") != "PREFLIGHT-DIGEST-002"
-    ]
-    if required_failures:
-        return (
-            "fail",
-            f"{environment.capitalize()} preflight report contains failing required checks: "
-            + ", ".join(required_failures),
-        )
-    return ("pass", "")
+    return validate_preflight_report(report, environment, expected_bindings_ref, deployment_ref)
 
 
 def walk(node: Any):
@@ -509,7 +838,10 @@ def has_secret_reference(documents: list[dict[str, Any]], name: str) -> bool:
 
 
 def extract_service_images(rendered_text: str) -> list[str]:
-    pattern = re.compile(r"^[ \t]*image:[ \t]*(ghcr\.io/benhook1013/.+-service\S*)", re.MULTILINE)
+    pattern = re.compile(
+        r"^[ \t]*image:[ \t]*(ghcr\.io/benhook1013/(?:[^ \t\r\n]+-service|spring-cloud-gateway)(?:[@:][^ \t\r\n]+))",
+        re.MULTILINE,
+    )
     return sorted(set(pattern.findall(rendered_text)))
 
 
@@ -1008,11 +1340,151 @@ def jwt_jwks_checks(documents: list[dict[str, Any]]) -> list[CheckResult]:
     return results
 
 
-def promotion_check(attestation_path: Path, images: list[str], root_dir: Path) -> tuple[str, str, str]:
+def git_commit_exists(root_dir: Path, commit_sha: str) -> bool:
+    if not re.fullmatch(r"[0-9a-f]{7,40}", commit_sha):
+        return False
+    result = subprocess.run(
+        ["git", "-C", str(root_dir), "cat-file", "-e", f"{commit_sha}^{{commit}}"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def recovery_compatibility_check(
+    attestation: dict[str, Any],
+    rollback_mode: str,
+    root_dir: Path,
+    now_dt: dt.datetime,
+) -> tuple[str, str]:
+    recovery_compatibility = attestation.get("recoveryCompatibility")
+    if not isinstance(recovery_compatibility, dict):
+        return ("fail", "Attestation missing recoveryCompatibility result")
+    compatibility_status = recovery_compatibility.get("compatibilityStatus")
+    if compatibility_status not in RECOVERY_COMPATIBILITY_STATUSES:
+        return ("fail", "Attestation recoveryCompatibility compatibilityStatus is missing or invalid")
+    required_fields = (
+        "baselineRecoveryRecordRef",
+        "baselineRecoveryContractFingerprint",
+        "candidateRecoveryContractFingerprint",
+        "changedDimensions",
+        "compatibilityRationale",
+        "evaluatedAt",
+        "evaluatorToolDigest",
+        "newDrillRequired",
+    )
+    missing_fields = [
+        field
+        for field in required_fields
+        if field not in recovery_compatibility
+        or (field != "changedDimensions" and is_missing(recovery_compatibility[field]))
+    ]
+    if missing_fields:
+        return (
+            "fail",
+            "Attestation recoveryCompatibility missing required fields: " + ", ".join(missing_fields),
+        )
+    string_fields = (
+        "baselineRecoveryRecordRef",
+        "baselineRecoveryContractFingerprint",
+        "candidateRecoveryContractFingerprint",
+        "compatibilityRationale",
+        "evaluatorToolDigest",
+    )
+    invalid_string_fields = [
+        field
+        for field in string_fields
+        if not isinstance(recovery_compatibility.get(field), str)
+        or not recovery_compatibility[field].strip()
+    ]
+    if invalid_string_fields:
+        return (
+            "fail",
+            "Attestation recoveryCompatibility fields must be non-empty strings: "
+            + ", ".join(invalid_string_fields),
+        )
+    changed_dimensions = recovery_compatibility.get("changedDimensions")
+    if not isinstance(changed_dimensions, list):
+        return ("fail", "Attestation recoveryCompatibility changedDimensions must be a list")
+    if any(not isinstance(dimension, str) or not dimension for dimension in changed_dimensions):
+        return ("fail", "Attestation recoveryCompatibility changedDimensions entries must be non-empty strings")
+    if not isinstance(recovery_compatibility.get("newDrillRequired"), bool):
+        return ("fail", "Attestation recoveryCompatibility newDrillRequired must be a boolean")
+    try:
+        evaluated_at = parse_timestamp(
+            recovery_compatibility.get("evaluatedAt"), "recoveryCompatibility.evaluatedAt"
+        )
+    except Exception as exc:
+        return ("fail", str(exc))
+    if evaluated_at > now_dt:
+        return ("fail", "recoveryCompatibility.evaluatedAt is future-dated")
+    if compatibility_status != "compatible":
+        return (
+            "fail",
+            "Attestation recoveryCompatibility compatibilityStatus blocks promotion: "
+            + str(compatibility_status),
+        )
+
+    baseline_status, baseline_message = validate_recovery_baseline(
+        root_dir,
+        str(recovery_compatibility["baselineRecoveryRecordRef"]),
+        str(recovery_compatibility["baselineRecoveryContractFingerprint"]),
+        evaluated_at,
+    )
+    if baseline_status != "pass":
+        return ("fail", baseline_message)
+
+    if rollback_mode == "roll-forward-only":
+        if recovery_compatibility.get("newDrillRequired") is not True:
+            return ("fail", "roll-forward-only attestation must set recoveryCompatibility.newDrillRequired")
+        backup_readiness_ref = recovery_compatibility.get("backupReadinessRef")
+        if not isinstance(backup_readiness_ref, str) or not backup_readiness_ref.strip():
+            return ("fail", "roll-forward-only attestation missing recoveryCompatibility.backupReadinessRef")
+    elif rollback_mode == "rollback-compatible":
+        if recovery_compatibility.get("newDrillRequired") is True:
+            return ("fail", "rollback-compatible attestation cannot require a new recovery drill")
+        if changed_dimensions:
+            return ("fail", "rollback-compatible attestation cannot declare changed recovery dimensions")
+        if recovery_compatibility.get("baselineRecoveryContractFingerprint") != recovery_compatibility.get(
+            "candidateRecoveryContractFingerprint"
+        ):
+            return ("fail", "rollback-compatible attestation recovery-contract fingerprint changed")
+    else:
+        return ("fail", "Attestation rollbackMode is missing or invalid")
+    return ("pass", "Recovery compatibility evidence is valid")
+
+
+def promotion_check(
+    attestation_path: Path,
+    images: list[str],
+    root_dir: Path,
+    expected_production_overlay_ref: str | None = None,
+) -> tuple[str, str, str]:
     try:
         att = load_json(attestation_path)
     except Exception as exc:
         return ("fail", "unknown", f"Attestation unreadable: {exc}")
+
+    if not isinstance(att, dict):
+        return ("fail", "unknown", "Attestation must be a JSON object")
+
+    missing_attestation_fields = [
+        field for field in PROMOTION_ATTESTATION_REQUIRED_FIELDS if field not in att or is_missing(att[field])
+    ]
+    if missing_attestation_fields:
+        return (
+            "fail",
+            str(att.get("rollbackMode", "unknown")),
+            "Attestation missing required canonical fields: " + ", ".join(missing_attestation_fields),
+        )
+
+    if att.get("attestationVersion") != PROMOTION_ATTESTATION_VERSION:
+        return (
+            "fail",
+            str(att.get("rollbackMode", "unknown")),
+            f"Attestation attestationVersion must be {PROMOTION_ATTESTATION_VERSION}",
+        )
 
     if att.get("environment") != "staging":
         return ("fail", "unknown", "Attestation environment must be staging")
@@ -1020,6 +1492,20 @@ def promotion_check(attestation_path: Path, images: list[str], root_dir: Path) -
     rollback_mode = str(att.get("rollbackMode", "unknown"))
     if rollback_mode not in {"rollback-compatible", "roll-forward-only"}:
         return ("fail", "unknown", "Attestation rollbackMode is missing or invalid")
+
+    if not isinstance(att.get("productionOverlayRef"), str) or not att["productionOverlayRef"].strip():
+        return ("fail", rollback_mode, "Attestation productionOverlayRef must be non-empty")
+    if expected_production_overlay_ref and att.get("productionOverlayRef") != expected_production_overlay_ref:
+        return ("fail", rollback_mode, "Attestation productionOverlayRef does not match the current deployment")
+
+    if not isinstance(att.get("serviceDigests"), dict) or not att["serviceDigests"]:
+        return ("fail", rollback_mode, "Attestation serviceDigests must be a non-empty object")
+    if not isinstance(att.get("smokeEvidence"), list) or not att["smokeEvidence"]:
+        return ("fail", rollback_mode, "Attestation smokeEvidence must be a non-empty list")
+    if any(not isinstance(evidence, str) or not evidence for evidence in att["smokeEvidence"]):
+        return ("fail", rollback_mode, "Attestation smokeEvidence entries must be non-empty strings")
+    if not isinstance(att.get("approvedBy"), str) or not att["approvedBy"].strip():
+        return ("fail", rollback_mode, "Attestation approvedBy must be non-empty")
 
     try:
         generated_at = parse_timestamp(att.get("generatedAt"), "Attestation generatedAt")
@@ -1029,81 +1515,40 @@ def promotion_check(attestation_path: Path, images: list[str], root_dir: Path) -
     if generated_at > now_dt:
         return ("fail", rollback_mode, "Attestation generatedAt is future-dated")
 
-    recovery_compatibility = att.get("recoveryCompatibility")
-    if not isinstance(recovery_compatibility, dict):
-        return ("fail", rollback_mode, "Attestation missing recoveryCompatibility result")
-    compatibility_status = recovery_compatibility.get("compatibilityStatus")
-    if compatibility_status not in RECOVERY_COMPATIBILITY_STATUSES:
-        return ("fail", rollback_mode, "Attestation recoveryCompatibility compatibilityStatus is missing or invalid")
-    required_compatibility_fields = (
-        "baselineRecoveryRecordRef",
-        "baselineRecoveryContractFingerprint",
-        "candidateRecoveryContractFingerprint",
-        "compatibilityRationale",
-        "evaluatedAt",
-        "evaluatorToolDigest",
-    )
-    missing_compatibility_fields = [
-        field
-        for field in required_compatibility_fields
-        if not recovery_compatibility.get(field)
-    ]
-    if missing_compatibility_fields:
-        return (
-            "fail",
-            rollback_mode,
-            "Attestation recoveryCompatibility missing required fields: "
-            + ", ".join(missing_compatibility_fields),
-        )
-    if not isinstance(recovery_compatibility.get("changedDimensions"), list):
-        return ("fail", rollback_mode, "Attestation recoveryCompatibility changedDimensions must be a list")
-    if not isinstance(recovery_compatibility.get("newDrillRequired"), bool):
-        return ("fail", rollback_mode, "Attestation recoveryCompatibility newDrillRequired must be a boolean")
-    try:
-        evaluated_at = parse_timestamp(recovery_compatibility.get("evaluatedAt"), "recoveryCompatibility.evaluatedAt")
-    except Exception as exc:
-        return ("fail", rollback_mode, str(exc))
-    if evaluated_at > now_dt:
-        return ("fail", rollback_mode, "recoveryCompatibility.evaluatedAt is future-dated")
-    if compatibility_status != "compatible":
-        return (
-            "fail",
-            rollback_mode,
-            "Attestation recoveryCompatibility compatibilityStatus blocks promotion: " + str(compatibility_status),
-        )
-    if rollback_mode == "roll-forward-only":
-        if recovery_compatibility.get("newDrillRequired") is not True:
-            return ("fail", rollback_mode, "roll-forward-only attestation must set recoveryCompatibility.newDrillRequired")
-        if not recovery_compatibility.get("backupReadinessRef"):
-            return ("fail", rollback_mode, "roll-forward-only attestation missing recoveryCompatibility.backupReadinessRef")
-    elif recovery_compatibility.get("newDrillRequired") is True:
-        return ("fail", rollback_mode, "rollback-compatible attestation cannot require a new recovery drill")
-    elif recovery_compatibility.get("changedDimensions"):
-        return ("fail", rollback_mode, "rollback-compatible attestation cannot declare changed recovery dimensions")
-    elif recovery_compatibility.get("baselineRecoveryContractFingerprint") != recovery_compatibility.get("candidateRecoveryContractFingerprint"):
-        return ("fail", rollback_mode, "rollback-compatible attestation recovery-contract fingerprint changed")
-    else:
-        baseline_status, baseline_message = validate_recovery_baseline(
-            root_dir,
-            str(recovery_compatibility["baselineRecoveryRecordRef"]),
-            str(recovery_compatibility["baselineRecoveryContractFingerprint"]),
-            evaluated_at,
-        )
-        if baseline_status != "pass":
-            return ("fail", rollback_mode, baseline_message)
+    recovery_status, recovery_message = recovery_compatibility_check(att, rollback_mode, root_dir, now_dt)
+    if recovery_status != "pass":
+        return ("fail", rollback_mode, recovery_message)
 
     service_digests = att.get("serviceDigests", {})
+    expected_service_names = set()
     for image in images:
         name = image.split("/")[-1].split("@")[0].split(":")[0]
+        expected_service_names.add(name)
         expected = service_digests.get(name)
         if not expected:
             return ("fail", rollback_mode, f"Missing digest for service {name} in attestation")
         if expected != image:
             return ("fail", rollback_mode, f"Digest mismatch for service {name}")
+    if set(service_digests) != expected_service_names:
+        missing = sorted(expected_service_names - set(service_digests))
+        extra = sorted(set(service_digests) - expected_service_names)
+        details = []
+        if missing:
+            details.append("missing " + ", ".join(missing))
+        if extra:
+            details.append("unexpected " + ", ".join(extra))
+        return ("fail", rollback_mode, "Attestation serviceDigests do not match rendered workload images: " + "; ".join(details))
+    if any(
+        not isinstance(value, str) or "@sha256:" not in value
+        for value in service_digests.values()
+    ):
+        return ("fail", rollback_mode, "Attestation serviceDigests values must be immutable image@sha256 references")
 
     staging_sha = att.get("stagingOverlayCommitSha", "")
-    if not staging_sha:
+    if not isinstance(staging_sha, str) or not staging_sha:
         return ("fail", rollback_mode, "Attestation missing stagingOverlayCommitSha")
+    if not git_commit_exists(root_dir, staging_sha):
+        return ("fail", rollback_mode, f"Staging overlay commit does not exist in Git: {staging_sha}")
 
     record_path = root_dir / "design" / "operations" / "deployments" / "staging" / "deployments" / f"{staging_sha}.json"
     if not record_path.exists():
@@ -1114,85 +1559,100 @@ def promotion_check(attestation_path: Path, images: list[str], root_dir: Path) -
     except Exception as exc:
         return ("fail", rollback_mode, f"Staging deployment record unreadable: {exc}")
 
+    if not isinstance(record, dict):
+        return ("fail", rollback_mode, "Staging deployment record must be a JSON object")
+
+    required_record_fields = (
+        "environment",
+        "overlayCommitSha",
+        "appliedAt",
+        "appliedBy",
+        "deployStatus",
+        "smokeStatus",
+        "serviceDigests",
+        "preflightReportPath",
+        "liveStateEvidence",
+        "secretComplianceSnapshotAt",
+        "secretComplianceStatus",
+        "secretComplianceEvidenceRef",
+        "smokeEvidence",
+    )
+    missing_record_fields = [
+        field for field in required_record_fields if field not in record or is_missing(record[field])
+    ]
+    if missing_record_fields:
+        return (
+            "fail",
+            rollback_mode,
+            "Staging deployment record missing required canonical fields: " + ", ".join(missing_record_fields),
+        )
+    if not isinstance(record.get("appliedBy"), str) or not record["appliedBy"].strip():
+        return ("fail", rollback_mode, "Staging deployment record appliedBy must be non-empty")
+    if not isinstance(record.get("serviceDigests"), dict) or not record["serviceDigests"]:
+        return ("fail", rollback_mode, "Staging deployment record serviceDigests must be a non-empty object")
+    if not isinstance(record.get("smokeEvidence"), list) or not record["smokeEvidence"]:
+        return ("fail", rollback_mode, "Staging deployment record smokeEvidence must be a non-empty list")
+
     for field in ("appliedAt", "secretComplianceSnapshotAt"):
-        if field in record:
-            try:
-                record_timestamp = parse_timestamp(record.get(field), f"Staging deployment record {field}")
-            except Exception as exc:
-                return ("fail", rollback_mode, str(exc))
-            if record_timestamp > now_dt:
-                return ("fail", rollback_mode, f"Staging deployment record {field} is future-dated")
+        try:
+            record_timestamp = parse_timestamp(record.get(field), f"Staging deployment record {field}")
+        except Exception as exc:
+            return ("fail", rollback_mode, str(exc))
+        if record_timestamp > now_dt:
+            return ("fail", rollback_mode, f"Staging deployment record {field} is future-dated")
 
     if record.get("environment") != "staging":
         return ("fail", rollback_mode, "Staging deployment record has wrong environment")
     if record.get("overlayCommitSha") != staging_sha:
         return ("fail", rollback_mode, "Staging deployment record overlayCommitSha mismatch")
 
-    record_digests = record.get("serviceDigests", {})
-    for name, expected in service_digests.items():
-        if record_digests.get(name) != expected:
-            return ("fail", rollback_mode, f"Staging deployment record digest mismatch for {name}")
+    record_digests = record["serviceDigests"]
+    if record_digests != service_digests:
+        return ("fail", rollback_mode, "Staging deployment record serviceDigests do not match the attestation")
 
     if record.get("deployStatus") != "pass":
         return ("fail", rollback_mode, "Staging deployment record deployStatus must be pass")
     if record.get("smokeStatus") != "pass":
         return ("fail", rollback_mode, "Staging deployment record smokeStatus must be pass")
-    if not record.get("smokeEvidence"):
-        return ("fail", rollback_mode, "Staging deployment record missing smokeEvidence")
     preflight_ref = record.get("preflightReportPath")
-    if not preflight_ref:
-        return ("fail", rollback_mode, "Staging deployment record missing preflightReportPath")
-    preflight_path = root_dir / str(preflight_ref)
+    if not isinstance(preflight_ref, str) or not preflight_ref.strip():
+        return ("fail", rollback_mode, "Staging deployment record preflightReportPath must be non-empty")
+    preflight_path = resolve_repo_path(root_dir, str(preflight_ref))
     if not preflight_path.exists():
         return ("fail", rollback_mode, f"Staging preflight report not found: {preflight_ref}")
     try:
         preflight_report = load_json(preflight_path)
     except Exception as exc:
         return ("fail", rollback_mode, f"Staging preflight report unreadable: {exc}")
-    if preflight_report.get("environment") != "staging":
-        return ("fail", rollback_mode, "Staging preflight report has wrong environment")
-    if preflight_report.get("expectedBindingsRef") != "design/operations/environments/staging/expected-bindings.yaml":
-        return ("fail", rollback_mode, "Staging preflight report expectedBindingsRef mismatch")
-    preflight_results = preflight_report.get("checkResults")
-    if not isinstance(preflight_results, list) or not preflight_results:
-        return ("fail", rollback_mode, "Staging preflight report missing checkResults")
-    required_failures = [
-        check.get("policyId")
-        for check in preflight_results
-        if isinstance(check, dict)
-        and check.get("status") == "fail"
-        and check.get("policyId") != "PREFLIGHT-DIGEST-002"
-    ]
-    if required_failures:
-        return (
-            "fail",
-            rollback_mode,
-            "Staging preflight report contains failing required checks: " + ", ".join(required_failures),
-        )
-    if not record.get("secretComplianceSnapshotAt"):
-        return ("fail", rollback_mode, "Staging deployment record missing secretComplianceSnapshotAt")
+    preflight_status, preflight_message = validate_preflight_report(
+        preflight_report,
+        "staging",
+        "design/operations/environments/staging/expected-bindings.yaml",
+        staging_sha,
+    )
+    if preflight_status != "pass":
+        return ("fail", rollback_mode, preflight_message)
 
     live_state = record.get("liveStateEvidence")
     if not isinstance(live_state, dict):
         return ("fail", rollback_mode, "Staging deployment record missing liveStateEvidence")
     if live_state.get("status") != "pass":
         return ("fail", rollback_mode, "Staging deployment record liveStateEvidence must be pass")
-    if not live_state.get("observedOverlaySha") or live_state.get("observedOverlaySha") != staging_sha:
+    if not isinstance(live_state.get("observedOverlaySha"), str) or live_state.get("observedOverlaySha") != staging_sha:
         return ("fail", rollback_mode, "Staging deployment record liveStateEvidence overlay SHA mismatch")
-    if not live_state.get("observedDigests"):
+    if not isinstance(live_state.get("observedDigests"), dict) or not live_state["observedDigests"]:
         return ("fail", rollback_mode, "Staging deployment record missing observedDigests")
     observed_digests = live_state.get("observedDigests", {})
-    for name, expected in service_digests.items():
-        if observed_digests.get(name) != expected:
-            return ("fail", rollback_mode, f"Staging live-state evidence digest mismatch for {name}")
+    if observed_digests != service_digests:
+        return ("fail", rollback_mode, "Staging live-state evidence observedDigests do not match the attestation")
 
     secret_status = record.get("secretComplianceStatus")
     secret_ref = record.get("secretComplianceEvidenceRef")
     if secret_status != "pass":
         return ("fail", rollback_mode, "Staging deployment record secretComplianceStatus must be pass")
-    if not secret_ref:
-        return ("fail", rollback_mode, "Staging deployment record missing secretComplianceEvidenceRef")
-    secret_path = root_dir / secret_ref
+    if not isinstance(secret_ref, str) or not secret_ref.strip():
+        return ("fail", rollback_mode, "Staging deployment record secretComplianceEvidenceRef must be non-empty")
+    secret_path = resolve_repo_path(root_dir, str(secret_ref))
     if not secret_path.exists():
         return ("fail", rollback_mode, f"Staging secret compliance evidence not found: {secret_ref}")
     try:
@@ -1205,7 +1665,11 @@ def promotion_check(attestation_path: Path, images: list[str], root_dir: Path) -
         "backup-object-store-credentials",
         "operator-credentials",
     }
-    records = (secret_evidence or {}).get("records", {})
+    if not isinstance(secret_evidence, dict):
+        return ("fail", rollback_mode, "Staging secret compliance evidence must be a JSON object")
+    records = secret_evidence.get("records", {})
+    if not isinstance(records, dict):
+        return ("fail", rollback_mode, "Staging secret compliance evidence records must be an object")
     for key in required_secret_classes:
         rec = records.get(key)
         if not isinstance(rec, dict):
@@ -1222,6 +1686,8 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
         data = load_json(path)
     except Exception as exc:
         return ("fail", f"Backup-readiness evidence unreadable: {exc}")
+    if not isinstance(data, dict):
+        return ("fail", "Backup-readiness evidence must be a JSON object")
 
     if data.get("environment") != "production":
         return ("fail", "Backup-readiness evidence must target production")
@@ -1282,6 +1748,8 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
         attestation = load_json(attestation_path)
     except Exception as exc:
         return ("fail", f"Backup-readiness attestation unreadable: {exc}")
+    if not isinstance(attestation, dict):
+        return ("fail", "Backup-readiness attestation must be a JSON object")
     if attestation.get("rollbackMode") != "roll-forward-only":
         return ("fail", "Backup-readiness evidence does not match a roll-forward-only attestation")
     recovery_compatibility = attestation.get("recoveryCompatibility")
@@ -1304,6 +1772,28 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
         "Roll-forward-only promotion remains blocked until canonical recovery-controller, "
         "participant, confidentiality, hardening, and controlled-reopen evidence validation is implemented",
     )
+
+
+def production_recovery_check(
+    compatibility_status: str,
+    rollback_mode: str,
+    compatibility_message: str,
+    backup_readiness_evidence: str,
+    deployment_ref: str,
+    root_dir: Path,
+) -> tuple[str, str]:
+    if rollback_mode == "rollback-compatible":
+        return (compatibility_status, compatibility_message)
+    if rollback_mode != "roll-forward-only":
+        return ("fail", "Recovery compatibility cannot be evaluated because attestation rollbackMode is invalid")
+    if compatibility_status != "pass":
+        return ("fail", compatibility_message)
+    if not backup_readiness_evidence:
+        return ("fail", "FIREMUD_BACKUP_READINESS_EVIDENCE is required for roll-forward-only promotions")
+    backup_path = Path(backup_readiness_evidence)
+    if not backup_path.exists():
+        return ("fail", f"Backup-readiness evidence file not found: {backup_readiness_evidence}")
+    return backup_readiness_check(backup_path, utc_now(), deployment_ref, root_dir)
 
 
 def production_traffic_check() -> tuple[str, str]:
@@ -1571,29 +2061,62 @@ def main() -> int:
     backup_readiness_evidence = os.environ.get("FIREMUD_BACKUP_READINESS_EVIDENCE", "")
     if env_class != "production":
         has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-PROMOTION-001", False, "not_applicable", "Promotion attestation applies only to production") or has_required_failure
-        has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-001", False, "not_applicable", "Backup readiness applies only to production roll-forward-only promotions") or has_required_failure
+        has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-001", False, "not_applicable", "Recovery compatibility applies only to production promotions") or has_required_failure
     elif context == "ci-static" and not promotion_attestation:
         has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-PROMOTION-001", False, "not_applicable", "Static CI validation without production attestation context") or has_required_failure
         has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-001", False, "not_applicable", "Static CI validation without production attestation context") or has_required_failure
     else:
         if not promotion_attestation:
             has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-PROMOTION-001", True, "fail", "FIREMUD_PROMOTION_ATTESTATION is required for production operator preflight") or has_required_failure
-            has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-001", False, "not_applicable", "Promotion attestation missing") or has_required_failure
+            has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-001", True, "fail", "Recovery compatibility cannot be evaluated without a promotion attestation") or has_required_failure
         elif not Path(promotion_attestation).exists():
             has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-PROMOTION-001", True, "fail", f"Attestation file not found: {promotion_attestation}") or has_required_failure
-            has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-001", False, "not_applicable", "Promotion attestation missing") or has_required_failure
+            has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-001", True, "fail", "Recovery compatibility cannot be evaluated because the promotion attestation is missing") or has_required_failure
         else:
-            promotion_status, rollback_mode, promotion_message = promotion_check(Path(promotion_attestation), service_images, root_dir)
-            has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-PROMOTION-001", True, promotion_status, promotion_message) or has_required_failure
-            if rollback_mode != "roll-forward-only":
-                has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-001", False, "not_applicable", "Backup readiness is required only for roll-forward-only promotions") or has_required_failure
-            elif not backup_readiness_evidence:
-                has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-001", True, "fail", "FIREMUD_BACKUP_READINESS_EVIDENCE is required for roll-forward-only promotions") or has_required_failure
-            elif not Path(backup_readiness_evidence).exists():
-                has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-001", True, "fail", f"Backup-readiness evidence file not found: {backup_readiness_evidence}") or has_required_failure
+            promotion_status, rollback_mode, promotion_message = promotion_check(
+                Path(promotion_attestation),
+                service_images,
+                root_dir,
+                expected_production_overlay_ref=deployment_ref,
+            )
+            has_required_failure = append_result(
+                check_results,
+                waived_ids,
+                waiver_approver,
+                waiver_ticket,
+                "PREFLIGHT-PROMOTION-001",
+                True,
+                promotion_status,
+                promotion_message,
+            ) or has_required_failure
+            try:
+                promotion_data = load_json(Path(promotion_attestation))
+            except Exception as exc:
+                recovery_status = "fail"
+                recovery_message = f"Recovery compatibility attestation unreadable: {exc}"
+                recovery_rollback_mode = "unknown"
             else:
-                backup_status, backup_message = backup_readiness_check(Path(backup_readiness_evidence), utc_now(), deployment_ref, root_dir)
-                has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-001", True, backup_status, backup_message) or has_required_failure
+                if not isinstance(promotion_data, dict):
+                    recovery_status = "fail"
+                    recovery_message = "Recovery compatibility attestation must be a JSON object"
+                    recovery_rollback_mode = "unknown"
+                else:
+                    recovery_rollback_mode = str(promotion_data.get("rollbackMode", "unknown"))
+                    recovery_status, recovery_message = recovery_compatibility_check(
+                        promotion_data,
+                        recovery_rollback_mode,
+                        root_dir,
+                        dt.datetime.now(dt.timezone.utc),
+                    )
+            recovery_status, recovery_message = production_recovery_check(
+                recovery_status,
+                recovery_rollback_mode,
+                recovery_message,
+                backup_readiness_evidence,
+                deployment_ref,
+                root_dir,
+            )
+            has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-001", True, recovery_status, recovery_message) or has_required_failure
 
     traffic_open_evidence = os.environ.get("FIREMUD_TRAFFIC_OPEN_EVIDENCE", "")
     if env_class == "production":

@@ -218,7 +218,19 @@ jobs:
 
       - name: Verify ORT results
         run: |
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "License change detection did not complete successfully: ${{ needs.changes.result }}" >&2
+            exit 1
+          fi
           if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if [ "${{ needs.changes.outputs.run_gradle_ort }}" != "true" ] && [ "${{ needs.changes.outputs.run_gradle_ort }}" != "false" ]; then
+              echo "License change detection returned an invalid Gradle result: ${{ needs.changes.outputs.run_gradle_ort }}" >&2
+              exit 1
+            fi
+            if [ "${{ needs.changes.outputs.run_npm_ort }}" != "true" ] && [ "${{ needs.changes.outputs.run_npm_ort }}" != "false" ]; then
+              echo "License change detection returned an invalid NPM result: ${{ needs.changes.outputs.run_npm_ort }}" >&2
+              exit 1
+            fi
             if [ "${{ needs.changes.outputs.run_gradle_ort }}" = "true" ] && [ "${{ needs.ort-gradle.result }}" != "success" ]; then
               echo "Gradle ORT did not succeed: ${{ needs.ort-gradle.result }}" >&2
               exit 1

@@ -37,4 +37,25 @@ smoke.yml|Smoke Gate
 codeql.yml|CodeQL Gate
 EOF
 
+CODEQL_WORKFLOW="$ROOT_DIR/.github/workflows/codeql.yml"
+LICENSE_WORKFLOW="$ROOT_DIR/.github/workflows/license-scan.yml"
+OVERLAY_WORKFLOW="$ROOT_DIR/.github/workflows/validate-kustomize-overlays.yml"
+
+grep -Fq 'needs: [changes, analyze]' "$CODEQL_WORKFLOW" || {
+  echo "CodeQL gate must depend directly on change detection" >&2
+  exit 1
+}
+grep -Fq 'needs.changes.result' "$CODEQL_WORKFLOW" || {
+  echo "CodeQL gate must fail closed when change detection fails" >&2
+  exit 1
+}
+grep -Fq 'needs.changes.result' "$LICENSE_WORKFLOW" || {
+  echo "License gate must fail closed when change detection fails" >&2
+  exit 1
+}
+grep -Fq 'types: [opened, synchronize, reopened, edited]' "$OVERLAY_WORKFLOW" || {
+  echo "Overlay validation must rerun when a pull request base is edited" >&2
+  exit 1
+}
+
 echo "PR required-gate context contract checks passed"

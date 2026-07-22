@@ -2,6 +2,7 @@ name: Validate Kustomize Overlays
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
     paths:
       - "k8s/**"
       - "design/operations/deployments/production/attestations/**"
