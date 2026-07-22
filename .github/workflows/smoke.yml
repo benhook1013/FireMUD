@@ -284,7 +284,10 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const headSha = context.payload.pull_request.head.sha;
+            const baseSha = context.payload.pull_request.base.sha;
+            const mergeSha = context.sha;
             const prNumber = String(context.payload.pull_request.number);
+            const expectedDisplayTitle = `Build Runtime Images pr-${prNumber} base-${baseSha} head-${headSha} merge-${mergeSha}`;
             const started = Date.now();
             const timeoutMs = 25 * 60 * 1000;
             const sleepMs = 15000;
@@ -301,7 +304,16 @@ jobs:
                 }
               );
 
-              const matching = runs.find((run) => run.head_sha === headSha);
+              const matching = runs.find((run) =>
+                run.event === "pull_request" &&
+                run.head_sha === headSha &&
+                run.display_title === expectedDisplayTitle &&
+                run.pull_requests?.some((pullRequest) =>
+                  String(pullRequest.number) === prNumber &&
+                  pullRequest.base?.sha === baseSha &&
+                  pullRequest.head?.sha === headSha
+                )
+              );
               if (matching) {
                 core.info(`Found runtime-images run ${matching.id} with status=${matching.status} conclusion=${matching.conclusion}`);
                 if (matching.status !== "completed") {
@@ -315,8 +327,8 @@ jobs:
                 return;
               }
 
-              core.info(`No runtime-images/full-smoke run found yet for PR #${prNumber} sha ${headSha}; waiting...`);
+              core.info(`No runtime-images/full-smoke run found yet for PR #${prNumber} base ${baseSha} head ${headSha} merge ${mergeSha}; waiting...`);
               await new Promise((resolve) => setTimeout(resolve, sleepMs));
             }
 
-            core.setFailed(`Timed out waiting for runtime-images/full-smoke run for PR #${prNumber} sha ${headSha}`);
+            core.setFailed(`Timed out waiting for runtime-images/full-smoke run for PR #${prNumber} base ${baseSha} head ${headSha} merge ${mergeSha}`);

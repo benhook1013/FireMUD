@@ -211,7 +211,8 @@ def _parse_expr(rule_lines: list[str]) -> str | None:
             collection_node = first_value_line.startswith(("{", "[")) or (
                 not scalar
                 and (
-                    re.match(r"^-\s", first_value_line) is not None
+                    re.match(r"^-(?:\s|$)", first_value_line) is not None
+                    or re.match(r"^\?(?:\s|$)", first_value_line) is not None
                     or re.match(r"^(?:[^'\"]+|'[^']+'|\"[^\"]+\"):\s", first_value_line)
                     is not None
                 )

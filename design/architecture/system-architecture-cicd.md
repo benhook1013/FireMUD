@@ -12,7 +12,7 @@ This document describes the continuous integration strategy for FireMUD using **
 - Treat `dev-demo-cluster` as validation-only infrastructure that is excluded from production promotion evidence.
 - Keep the workflow configuration easy to maintain and extensible for additional security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
-- **Perform deep static code scanning** with CodeQL on pull requests targeting `develop` and `main`, require the dedicated CodeQL gate only for `main` pull requests, and continue running the full analysis on `main` pushes, scheduled runs, and manual dispatches.
+- **Perform deep static code scanning** with CodeQL on pull requests targeting `develop` and `main`, require the dedicated CodeQL gate for both protected bases, and continue running the full analysis on `main` pushes, scheduled runs, and manual dispatches.
 - **Run AI-assisted pull request review** with CodeRabbit on `develop` and `main` pull requests using repository-local review guidance plus inherited organization defaults.
 - **Benchmark repository hardening** with OSSF Scorecard on `develop` and `main` pushes plus the weekly scorecard schedule.
 - **Scan for vulnerabilities** with Trivy during CI runs and scheduled security scans.

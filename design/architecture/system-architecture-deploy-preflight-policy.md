@@ -48,7 +48,7 @@ Bootstrap resources must be unique to the environment boundary. Reusing staging 
 
 ## Enforcement Boundaries
 
-- Overlay PR CI (`validate-kustomize-overlays.yml`) enforces static checks: digest pinning, image existence, attestation schema/digest matching, repository policy markers, and production backup-readiness binding when required.
+- Overlay PR CI (`validate-kustomize-overlays.yml`) always enforces the staging backup marker and production evidence-file selection rules. When no production attestation context applies, it also renders both overlays and checks image existence. For production-applicable changes, the current preflight stops at the fail-closed recovery-baseline authority check before attestation digest matching, expanded backup-readiness validation, or the later image-existence steps; those remain target-state enforcement gaps rather than completed checks.
 - Operator pre-apply execution (`preflight.py`) currently enforces resolved-manifest and target-environment checks for required secret/key bindings, JWKS resource type, Redis role split, bridge alignment, bootstrap completeness, and external integration isolation. Account-only private-key distribution, validator `kid`/JWKS convergence, and traffic-open JWT rotation evidence remain target-state gates; `PREFLIGHT-JWT-002` and `PREFLIGHT-JWT-ROTATION-001` are not yet emitted by the executable.
 - Deployment apply is blocked unless required checks for the target class pass (or an explicit break-glass waiver is recorded).
 

@@ -86,6 +86,21 @@ for empty_expression in empty_expressions:
         "BackupPipelineNoRecentBackup is missing expr",
     )
 
+nested_collection_expressions = (
+    "expr:\n            -",
+    "expr:\n            ? query\n            : backup_pipeline_recent_backup_slo_breached",
+)
+for collection_expression in nested_collection_expressions:
+    invalid_backup_expr = valid_text.replace(
+        "expr: backup_pipeline_recent_backup_slo_breached > 0",
+        collection_expression,
+        1,
+    )
+    require_message(
+        findings_for(invalid_backup_expr, validator._validate_reference_prometheus_rules),
+        "BackupPipelineNoRecentBackup is missing expr",
+    )
+
 snippet_path = root / "design/observability/grafana/backup-alerts-snippets.md"
 valid_snippet = snippet_path.read_text(encoding="utf-8")
 invalid_snippet = valid_snippet.replace(
@@ -116,6 +131,17 @@ for empty_expression in empty_expressions:
     )
     require_message(
         findings_for(empty_snippet_expr, validator._validate_alert_snippet),
+        "alert rule is missing expr",
+    )
+
+for collection_expression in nested_collection_expressions:
+    invalid_snippet_expr = valid_snippet.replace(
+        "expr: backup_pipeline_recent_backup_slo_breached > 0",
+        collection_expression,
+        1,
+    )
+    require_message(
+        findings_for(invalid_snippet_expr, validator._validate_alert_snippet),
         "alert rule is missing expr",
     )
 
@@ -199,6 +225,13 @@ invalid_lineage_rules = (
     """        - record: backup_artifact_lineage_invalid
           expr:
             - backup_artifact_lineage_valid""",
+    """        - record: backup_artifact_lineage_invalid
+          expr:
+            -""",
+    """        - record: backup_artifact_lineage_invalid
+          expr:
+            ? query
+            : backup_artifact_lineage_valid""",
 )
 for invalid_lineage_rule in invalid_lineage_rules:
     invalid_lineage_expr = valid_text.replace(lineage_rule, invalid_lineage_rule, 1)

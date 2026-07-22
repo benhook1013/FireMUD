@@ -3,6 +3,7 @@ name: Build Runtime Images
 on:
   pull_request:
     branches: [main, develop]
+    types: [opened, synchronize, reopened, edited]
     paths:
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
@@ -36,18 +37,21 @@ on:
     branches: [main, develop]
   workflow_dispatch:
 
+run-name: Build Runtime Images ${{ github.event_name == 'pull_request' && format('pr-{0} base-{1} head-{2} merge-{3}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha) || github.ref_name }}
+
 permissions:
   contents: read
   packages: write
   pull-requests: write
 
 concurrency:
-  group: runtime-images-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  group: runtime-images-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
   cancel-in-progress: true
 
 jobs:
   image-meta:
     name: Derive Runtime Image Metadata
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
     runs-on: ubuntu-latest
     outputs:
       head_sha: ${{ steps.meta.outputs.head_sha }}
@@ -84,6 +88,7 @@ jobs:
   build-base-image:
     name: Build Runtime Base Image
     needs: [image-meta]
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
@@ -143,6 +148,7 @@ jobs:
   build-runtime-images:
     name: Build Runtime Images (${{ matrix.service }})
     needs: [image-meta, build-base-image]
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -242,7 +248,7 @@ jobs:
   smoke-full:
     name: Smoke Tests (Full Stack)
     needs: [image-meta, build-runtime-images]
-    if: ${{ always() && needs.build-runtime-images.result == 'success' }}
+    if: ${{ always() && needs.build-runtime-images.result == 'success' && (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     uses: ./.github/workflows/smoke-full.yml
     with:
       action: full

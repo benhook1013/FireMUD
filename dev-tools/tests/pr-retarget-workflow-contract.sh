@@ -22,6 +22,7 @@ assert_job_condition() {
 
 required_condition="github.event.action != 'edited' || github.event.changes.base.ref != null"
 ci_path="$ROOT_DIR/.github/workflows/ci.yml"
+runtime_images_path="$ROOT_DIR/.github/workflows/runtime-images.yml"
 smoke_path="$ROOT_DIR/.github/workflows/smoke.yml"
 
 for path in "$ci_path" "$smoke_path"; do
@@ -68,5 +69,27 @@ done
 for job in changes smoke-lite smoke-summary smoke-gate; do
   assert_job_condition smoke.yml "$job" "$required_condition"
 done
+
+grep -Fq 'types: [opened, synchronize, reopened, edited]' "$runtime_images_path"
+grep -Fq "&& 'metadata' || 'required' }}" "$runtime_images_path"
+grep -Fq '  cancel-in-progress: true' "$runtime_images_path"
+grep -Fq 'run-name: Build Runtime Images ' "$runtime_images_path"
+grep -Fq 'github.event.pull_request.base.sha' "$runtime_images_path"
+grep -Fq 'github.event.pull_request.head.sha' "$runtime_images_path"
+grep -Fq 'github.sha' "$runtime_images_path"
+
+for job in image-meta build-base-image build-runtime-images smoke-full; do
+  assert_job_condition runtime-images.yml "$job" "$required_condition"
+done
+
+grep -Fq 'const baseSha = context.payload.pull_request.base.sha;' "$smoke_path"
+grep -Fq 'const mergeSha = context.sha;' "$smoke_path"
+grep -Fq 'run.display_title === expectedDisplayTitle' "$smoke_path"
+grep -Fq 'pullRequest.base?.sha === baseSha' "$smoke_path"
+grep -Fq 'pullRequest.head?.sha === headSha' "$smoke_path"
+if grep -Fq 'const matching = runs.find((run) => run.head_sha === headSha);' "$smoke_path"; then
+  echo "Smoke Gate must not accept a runtime-images run by head SHA alone" >&2
+  exit 1
+fi
 
 echo "PR retarget workflow contract checks passed"
