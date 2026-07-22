@@ -72,6 +72,8 @@ empty_expressions = (
     'expr: !!str "" # empty expression',
     'expr: &empty # empty expression',
     'expr: !<tag:yaml.org,2002:null> null',
+    'expr: {}',
+    'expr: []',
 )
 for empty_expression in empty_expressions:
     empty_backup_expr = valid_text.replace(
@@ -187,6 +189,16 @@ invalid_lineage_rules = (
     """        - record: backup_artifact_lineage_invalid
           expr:
             *empty""",
+    """        - record: backup_artifact_lineage_invalid
+          expr: {}""",
+    """        - record: backup_artifact_lineage_invalid
+          expr: []""",
+    """        - record: backup_artifact_lineage_invalid
+          expr:
+            query: backup_artifact_lineage_valid""",
+    """        - record: backup_artifact_lineage_invalid
+          expr:
+            - backup_artifact_lineage_valid""",
 )
 for invalid_lineage_rule in invalid_lineage_rules:
     invalid_lineage_expr = valid_text.replace(lineage_rule, invalid_lineage_rule, 1)

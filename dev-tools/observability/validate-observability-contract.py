@@ -208,7 +208,15 @@ def _parse_expr(rule_lines: list[str]) -> str | None:
                 re.IGNORECASE,
             )
             unsupported_indirection = first_value_line.startswith(("#", "!", "&", "*"))
-            if empty_scalar or unsupported_indirection:
+            collection_node = first_value_line.startswith(("{", "[")) or (
+                not scalar
+                and (
+                    re.match(r"^-\s", first_value_line) is not None
+                    or re.match(r"^(?:[^'\"]+|'[^']+'|\"[^\"]+\"):\s", first_value_line)
+                    is not None
+                )
+            )
+            if empty_scalar or unsupported_indirection or collection_node:
                 return ""
         return expression
     return None

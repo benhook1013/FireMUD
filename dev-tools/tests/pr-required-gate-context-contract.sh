@@ -50,6 +50,10 @@ grep -Fq 'needs.changes.result' "$CODEQL_WORKFLOW" || {
   echo "CodeQL gate must fail closed when change detection fails" >&2
   exit 1
 }
+grep -Fq "(github.base_ref == 'develop' || github.base_ref == 'main')" "$CODEQL_WORKFLOW" || {
+  echo "CodeQL gate must run for both protected pull request bases" >&2
+  exit 1
+}
 grep -Fq 'needs.changes.result' "$LICENSE_WORKFLOW" || {
   echo "License gate must fail closed when change detection fails" >&2
   exit 1
