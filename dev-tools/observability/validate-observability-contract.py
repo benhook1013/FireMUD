@@ -187,25 +187,27 @@ def _parse_expr(rule_lines: list[str]) -> str | None:
             )
             is not None
         )
-        expr_lines = [] if is_block_scalar else [scalar]
+        expr_lines = [] if is_block_scalar or not scalar else [scalar]
         for next_line in rule_lines[index + 1 :]:
             next_indent = len(next_line) - len(next_line.lstrip(" "))
             if next_line.strip() == "":
                 expr_lines.append("")
                 continue
-            if next_indent <= expr_indent and re.match(r"^\s*(for|labels|annotations):\s*", next_line):
-                break
-            if next_indent <= expr_indent and re.match(r"^\s*-\s*alert:\s*", next_line):
+            if next_indent <= expr_indent:
                 break
             expr_lines.append(next_line.rstrip())
         expression = "\n".join(expr_lines).strip()
         if not is_block_scalar:
+            first_value_line = next(
+                (value.strip() for value in expr_lines if value.strip()),
+                "",
+            )
             empty_scalar = re.fullmatch(
                 r"(?:null|~|''|\"\")(?:\s+#.*)?",
-                scalar,
+                first_value_line,
                 re.IGNORECASE,
             )
-            unsupported_indirection = scalar.startswith(("#", "!!", "&", "*"))
+            unsupported_indirection = first_value_line.startswith(("#", "!", "&", "*"))
             if empty_scalar or unsupported_indirection:
                 return ""
         return expression
@@ -667,15 +669,16 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
 def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
     text = _read_text(path)
     findings: list[Finding] = []
-    recordings: dict[str, str | None] = {}
+    recording_occurrences: dict[str, list[str | None]] = {}
     for rule_lines in _split_recording_rules(text):
         first_line = rule_lines[0] if rule_lines else ""
         match = re.match(r"^\s*-\s*record:\s*(\S+)", first_line)
         if not match:
             continue
-        recordings[match.group(1).strip()] = _parse_expr(rule_lines)
+        recording = match.group(1).strip()
+        recording_occurrences.setdefault(recording, []).append(_parse_expr(rule_lines))
 
-    missing_required = sorted(REQUIRED_BACKUP_RECORDINGS - recordings.keys())
+    missing_required = sorted(REQUIRED_BACKUP_RECORDINGS - recording_occurrences.keys())
     if missing_required:
         findings.append(
             Finding(
@@ -684,10 +687,26 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
             )
         )
 
+    duplicate_required = sorted(
+        recording
+        for recording in REQUIRED_BACKUP_RECORDINGS & recording_occurrences.keys()
+        if len(recording_occurrences[recording]) != 1
+    )
+    if duplicate_required:
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "required backup recordings must be declared exactly once: "
+                    + ", ".join(duplicate_required)
+                ),
+            )
+        )
+
     missing_expressions = sorted(
         recording
-        for recording in REQUIRED_BACKUP_RECORDINGS & recordings.keys()
-        if not recordings[recording]
+        for recording in REQUIRED_BACKUP_RECORDINGS & recording_occurrences.keys()
+        if any(not expression for expression in recording_occurrences[recording])
     )
     if missing_expressions:
         findings.append(
@@ -700,6 +719,11 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
             )
         )
 
+    recordings = {
+        recording: expressions[0]
+        for recording, expressions in recording_occurrences.items()
+        if len(expressions) == 1
+    }
     blocked_convergence_expr = recordings.get("recovery_participant_convergence_blocked") or ""
     if not CURRENT_BLOCKED_CONVERGENCE_EXPR.search(blocked_convergence_expr):
         findings.append(

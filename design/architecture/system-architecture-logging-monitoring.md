@@ -371,6 +371,7 @@ When Alertmanager is unavailable but Prometheus is still accessible, Logging & A
     - `backup_artifact_lineage_invalid`
     - `backup_artifact_restore_unreadable`
     - `recovery_participant_convergence_blocked`
+    - `recovery_environment_convergence_blocked`
   - `recovery_participant_convergence_state{environment,participant,state}` is the current-state source for the blocked recording; the cumulative `recovery_participant_convergence_total` counter is not an active alert source.
   - `RecoveryParticipantConvergenceMetricsAbsent` is a fail-safe alert for disappearance of the current-state source. It reports an observability gap, not participant convergence or readiness, and cannot replace the durable recovery controller or retained recovery evidence.
   - The recovery-participant source emitter is not currently reliable or proven. The target-state recording and blocked alert must not be advertised as implemented readiness observability until that emitter and its end-to-end proof exist.

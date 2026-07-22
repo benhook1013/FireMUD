@@ -48,8 +48,22 @@ public class RuntimeRegionStatusRepository {
     if (entity.getId() == null) {
       RuntimeRegionStatusRecord record = dsl.newRecord(RUNTIME_REGION_STATUS);
       populate(record, entity);
-      record.store();
-      return findById(record.getId()).orElseThrow();
+      Optional<RuntimeRegionStatus> inserted =
+          dsl.insertInto(RUNTIME_REGION_STATUS)
+              .set(record)
+              .onConflict(RUNTIME_REGION_STATUS.TENANT_ID, RUNTIME_REGION_STATUS.GAME_INSTANCE_ID)
+              .doNothing()
+              .returning()
+              .fetchOptional(this::toEntity);
+      return inserted.orElseGet(
+          () ->
+              findByTenantIdAndGameInstanceId(entity.getTenantId(), entity.getGameInstanceId())
+                  .orElseThrow(
+                      () ->
+                          new IllegalStateException(
+                              ("Natural-key conflict did not yield runtime_region_status for "
+                                      + "tenantId=%d gameInstanceId=%d")
+                                  .formatted(entity.getTenantId(), entity.getGameInstanceId()))));
     }
     int updated =
         dsl.update(RUNTIME_REGION_STATUS)

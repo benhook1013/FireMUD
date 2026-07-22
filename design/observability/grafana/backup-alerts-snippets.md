@@ -171,9 +171,9 @@ Routine backup alerts use these current artifact and recovery recordings:
 - `backup_pipeline_recent_restore_drill_slo_breached`
 - `backup_artifact_lineage_invalid`
 - `backup_artifact_restore_unreadable`
-- `recovery_participant_convergence_state{environment,participant,state}`
-- `recovery_environment_convergence_blocked{environment}`
+- `recovery_participant_convergence_blocked`
+- `recovery_environment_convergence_blocked`
 
-`RecoveryParticipantConvergenceMetricsAbsent` is a fail-safe monitoring-gap alert. It cannot provide `environment` or `participant` labels when the source family is absent and must not be treated as recovery state or readiness evidence. The current repository has no reliable recovery-participant metric emitter, so the recovery convergence recording and blocked-state alert remain unproved until that producer and its end-to-end proof exist.
+`recovery_participant_convergence_state{environment,participant,state}` is the source gauge for the two convergence recordings, not another recording rule. `RecoveryParticipantConvergenceMetricsAbsent` is a fail-safe monitoring-gap alert. It cannot provide `environment` or `participant` labels when the source family is absent and must not be treated as recovery state or readiness evidence. The current repository has no reliable recovery-participant metric emitter, so the recovery convergence recording and blocked-state alert remain unproved until that producer and its end-to-end proof exist.
 
 Environment-specific rulesets may tune thresholds, severities, and label values, but should preserve the `owner` and `runbook` annotations so alerts always point back to the relevant documentation. Tick-pause metrics belong to maintenance/reset dashboards and must not be used as routine backup health or traffic-reopen proof.

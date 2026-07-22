@@ -71,6 +71,7 @@ empty_expressions = (
     'expr: !!str ""',
     'expr: !!str "" # empty expression',
     'expr: &empty # empty expression',
+    'expr: !<tag:yaml.org,2002:null> null',
 )
 for empty_expression in empty_expressions:
     empty_backup_expr = valid_text.replace(
@@ -164,15 +165,54 @@ require_message(
     "environment blocked-convergence recording must aggregate recovery_participant_convergence_blocked with max by (environment)",
 )
 
-missing_lineage_expr = valid_text.replace(
-    """        - record: backup_artifact_lineage_invalid
+lineage_rule = """        - record: backup_artifact_lineage_invalid
           expr: |
-            1 - backup_artifact_lineage_valid""",
+            1 - backup_artifact_lineage_valid"""
+if lineage_rule not in valid_text:
+    raise AssertionError("canonical backup_artifact_lineage_invalid recording was not found")
+
+invalid_lineage_rules = (
     """        - record: backup_artifact_lineage_invalid""",
+    """        - record: backup_artifact_lineage_invalid
+          expr: !<tag:yaml.org,2002:null> null""",
+    """        - record: backup_artifact_lineage_invalid
+          expr:
+            !!null""",
+    """        - record: backup_artifact_lineage_invalid
+          expr:
+            # empty expression""",
+    """        - record: backup_artifact_lineage_invalid
+          expr:
+            &empty""",
+    """        - record: backup_artifact_lineage_invalid
+          expr:
+            *empty""",
+)
+for invalid_lineage_rule in invalid_lineage_rules:
+    invalid_lineage_expr = valid_text.replace(lineage_rule, invalid_lineage_rule, 1)
+    require_message(
+        findings_for(
+            invalid_lineage_expr,
+            validator._validate_reference_prometheus_recordings,
+        ),
+        "required backup recordings are missing expr: backup_artifact_lineage_invalid",
+    )
+
+duplicate_lineage_expr = valid_text.replace(
+    lineage_rule,
+    invalid_lineage_rules[1] + "\n" + lineage_rule,
     1,
 )
+duplicate_findings = findings_for(
+    duplicate_lineage_expr,
+    validator._validate_reference_prometheus_recordings,
+)
 require_message(
-    findings_for(missing_lineage_expr, validator._validate_reference_prometheus_recordings),
+    duplicate_findings,
+    "required backup recordings must be declared exactly once: backup_artifact_lineage_invalid",
+)
+require_message(
+    duplicate_findings,
     "required backup recordings are missing expr: backup_artifact_lineage_invalid",
 )
 

@@ -21,7 +21,6 @@ import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
 import net.firedevops.firemud.socialgroups.v1.ListFriendPresenceResponse;
 import net.firedevops.firemud.test.AccountRuntimeStubServer;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.testcontainers.containers.GenericContainer;
@@ -198,18 +197,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     status.setPaused(false);
     status.setLastCommittedTickId(0L);
     status.setUpdatedAt(Instant.now());
-    RuntimeRegionStatusRepository repository =
-        gameSession.bean(RuntimeRegionStatusRepository.class);
-    try {
-      repository.save(status);
-    } catch (DuplicateKeyException duplicate) {
-      RuntimeRegionStatus concurrent =
-          repository
-              .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-              .orElseThrow(() -> duplicate);
-      status.setId(concurrent.getId());
-      repository.save(status);
-    }
+    gameSession.bean(RuntimeRegionStatusRepository.class).save(status);
   }
 
   public void seedLiveSession(SessionContext context) {
