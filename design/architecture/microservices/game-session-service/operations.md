@@ -26,7 +26,7 @@
 - To scale out, operators add more Game Session pods and allow the scheduler to assign regions to new instances; each instance acquires leases for its assigned regions.
 - To rebalance load, an instance can stop renewing the lease for selected regions and drain in-flight work to a safe point; other instances then acquire those leases and continue tick processing from the existing Redis state.
 - Combined with region sizing, splitting hot regions and merging cold ones, this lease-based ownership model allows FireMUD to scale horizontally without global downtime.
-- The same externalized-state model supports ADR 0013's bounded ordinary restart recovery. A qualifying single-pod restart targets recovery within 10 seconds without client re-`LOGIN` or re-`PLAY`; safe hidden recovery ends after 30 seconds and falls back to `1013/backend_unavailable`. Operational proof must cover planned and abrupt real Game Session replacement, retained edge sockets, authority and presence convergence, input-buffer behavior, and the elapsed-time cutoff.
+- The same externalized-state model supports ADR 0013's bounded ordinary restart recovery. A qualifying single-pod restart targets recovery within 10 seconds without client re-`LOGIN` or re-`PLAY`. If continuation authority cannot be established safely, hidden recovery must terminate immediately; otherwise 30 seconds is the hard maximum before falling back to `1013/backend_unavailable`. Operational proof must cover planned and abrupt real Game Session replacement, retained edge sockets, authority and presence convergence, input-buffer behavior, the early fail-closed authority cutoff, and the elapsed-time cutoff.
 
 ## Local Development Path
 

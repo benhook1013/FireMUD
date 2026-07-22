@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
@@ -96,6 +97,19 @@ class TickQueueControlServiceTest {
   }
 
   @Test
+  void purgeQueuedAutomationCommandsForScriptPatchRejectsBlankReasonBeforeRepositoryRead() {
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.purgeQueuedAutomationCommandsForScriptPatch(
+                    1L, 2L, "region-1", "patch-1", "   ", logger));
+
+    assertEquals("reason is required", exception.getMessage());
+    verifyNoInteractions(gameplayCommandRepository, listOps);
+  }
+
+  @Test
   void purgeQueuedAutomationCommandsForScriptPatchRemovesRedisPayloadAndMarksTerminal() {
     GameplayCommand command = gameplayCommand("cmd-1");
     command.setTenantId(1L);
@@ -114,7 +128,7 @@ class TickQueueControlServiceTest {
 
     assertEquals(1L, purged);
     verify(listOps).remove("gamesession:tick:queue:1:2", 0, "N|cmd-1|say hello");
-    assertEquals("PURGED", command.getExecutionOutcome());
+    assertEquals("ABANDONED", command.getExecutionOutcome());
     assertEquals("NOT_APPLIED", command.getGameplayResult());
     assertEquals(TickQueueControlService.PURGED_FAILURE_CODE, command.getFailureCode());
     assertEquals("rollback", command.getFailureMessage());
@@ -140,7 +154,9 @@ class TickQueueControlServiceTest {
 
     assertEquals(1L, purged);
     verify(listOps).remove("gamesession:tick:queue:1:2", 0, "N|cmd-2|emote waves");
-    assertEquals("PURGED", command.getExecutionOutcome());
+    assertEquals("ABANDONED", command.getExecutionOutcome());
+    assertEquals("NOT_APPLIED", command.getGameplayResult());
+    assertEquals(TickQueueControlService.PURGED_FAILURE_CODE, command.getFailureCode());
     assertEquals("plugin rollback", command.getFailureMessage());
   }
 

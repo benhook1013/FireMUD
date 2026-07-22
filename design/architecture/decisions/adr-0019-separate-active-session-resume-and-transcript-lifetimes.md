@@ -54,7 +54,7 @@ Each connected-to-disconnected transition starts one immutable disconnection epi
 
 - Redis TTL is physical cleanup metadata. Key presence never grants resume authority, and early key loss makes the binding non-resumable rather than reconstructing authority from other projections.
 - Resume transcript retention is an independent bounded presentation policy. Transcript existence cannot prove identity or extend active or resume authority.
-- Explicit gameplay `LOGOUT` immediately terminates continuity/resume authority and clears or suppresses private transcript replay for that binding. Later fresh admission must not replay logged-out private context unless a separate explicit product policy authorizes it.
+- Explicit gameplay `LOGOUT` immediately terminates continuity/resume authority and makes the binding's private transcript non-replayable. Physical deletion of transcript rows or cache entries may complete asynchronously, but replay must honor the authoritative non-replayable state immediately. Later fresh admission must not replay logged-out private context unless a separate explicit product policy authorizes it.
 
 ## Consequences
 
@@ -92,7 +92,7 @@ Fresh admission after every disconnect is simpler and more conservative but mate
 - Prove Redis saves, TTL refresh, restart, failover, and stale-key recovery cannot move or bypass logical deadlines.
 - Prove current subject, membership, entitlement, revocation, and uniqueness checks on every resume.
 - Prove stale bindings fall through to fresh admission only after full current authorization and receive a new identity and anchor.
-- Prove transcript bounds independently and prove explicit logout prevents later private replay from the terminated binding.
+- Prove transcript bounds independently and prove explicit logout immediately prevents later private replay from the terminated binding, without requiring physical transcript deletion to complete synchronously.
 
 ## Reversibility and Revisit Triggers
 

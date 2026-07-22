@@ -82,6 +82,7 @@ final class TickQueueControlService {
       String scriptPatchVersion,
       String reason,
       Logger logger) {
+    requireText(reason, "reason");
     requirePositive(tenantId, "tenant_id");
     requirePositive(gameInstanceId, "game_instance_id");
     requireText(scriptPatchVersion, "script_patch_version");
@@ -99,6 +100,7 @@ final class TickQueueControlService {
       String pluginVersionId,
       String reason,
       Logger logger) {
+    requireText(reason, "reason");
     requirePositive(tenantId, "tenant_id");
     requirePositive(gameInstanceId, "game_instance_id");
     requireText(pluginId, "plugin_id");
@@ -269,7 +271,7 @@ final class TickQueueControlService {
               0,
               queuePayload(
                   command.isRequiresSoloTick(), command.getCommandId(), command.getCommandText()));
-      command.setExecutionOutcome("PURGED");
+      command.setExecutionOutcome("ABANDONED");
       command.setGameplayResult("NOT_APPLIED");
       command.setCompletedAt(now);
       command.setLastAttemptAt(now);

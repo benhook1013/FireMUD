@@ -216,8 +216,9 @@ Inputs:
 
 Semantics:
 
+- `reason` is required and must be non-blank; Game Session validates it before reading the owned instance or purging queue or durable command state.
 - Idempotent.
-- Removes matching Redis queue payloads for not-yet-drained automation commands and terminal-marks the durable Game Session command ledger rows as `PURGED` / `NOT_APPLIED` with `ROLLBACK_PURGED`.
+- Removes matching Redis queue payloads for not-yet-drained automation commands and terminal-marks the durable Game Session command ledger rows with `executionOutcome = ABANDONED`, `gameplayResult = NOT_APPLIED`, `failureCode = ROLLBACK_PURGED`, and the validated nonblank ingress `reason` as `failureMessage`.
 - Commands already drained into durable tick effects are not purged through this hook; those require effect-ledger remediation or rollback recovery because they have crossed the tick-batch boundary.
 - Emits an operator-visible metric for purge activity and for version-fence drops (exact metric names and label sets follow the observability contract, including separate script and plugin version-fence metric families).
 
@@ -240,7 +241,7 @@ Inputs:
 
 `reason` is required and must be non-blank; Game Session validates it before reading the owned instance or purging queue/durable command state.
 
-Semantics and outputs: same as `PurgeQueuedTickCommandsForScriptPatch`, scoped to plugin-produced commands by the `pluginId` and `pluginVersionId` provenance carried from Automation into Game Session during handoff.
+Semantics and outputs: same as `PurgeQueuedTickCommandsForScriptPatch`, including `executionOutcome = ABANDONED`, `gameplayResult = NOT_APPLIED`, `failureCode = ROLLBACK_PURGED`, and the validated nonblank ingress `reason` as `failureMessage`, scoped to plugin-produced commands by the `pluginId` and `pluginVersionId` provenance carried from Automation into Game Session during handoff.
 
 ### Automation & Scripting: Drain/Purge Hooks (Rollback Support)
 
