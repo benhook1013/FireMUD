@@ -266,10 +266,14 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     GameInstanceTestFixtures.ensureGameInstancesTable(jdbc);
     if (clearExisting) {
       clearRedis();
+      jdbc.update("DELETE FROM runtime_region_status");
       jdbc.update("DELETE FROM game_instances");
     }
-    return GameInstanceTestFixtures.insertRunningGameInstance(
-        jdbc, tenantId, accountId, gameTemplateId);
+    long gameInstanceId =
+        GameInstanceTestFixtures.insertRunningGameInstance(
+            jdbc, tenantId, accountId, gameTemplateId);
+    seedRuntimeOwnership(tenantId, gameInstanceId);
+    return gameInstanceId;
   }
 
   @Override
