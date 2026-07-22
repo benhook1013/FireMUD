@@ -536,9 +536,8 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         latest_full_request_dt = max(prior_full_requests, default=None)
         if latest_full_request_dt is not None:
             prior_substantive_review_checkpoint = any(
-                full_request_dt < evidence_dt < latest_incremental_request_dt
+                latest_full_request_dt < evidence_dt < latest_incremental_request_dt
                 and SUBSTANTIVE_REVIEW_MARKER in body
-                for full_request_dt in prior_full_requests
                 for evidence_dt, body in substantive_review_evidence
             )
             plan_ceiling_rejection_evidence = any(

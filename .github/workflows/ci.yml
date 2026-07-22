@@ -10,7 +10,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
@@ -724,6 +723,9 @@ jobs:
   validation-summary:
     name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Validation Summary)' || 'Validation Summary' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     needs: [buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, docs-check, frontend-checks, build-and-test, validation-gate]
     if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
@@ -839,6 +841,7 @@ jobs:
           DOCS_CHANGED: ${{ needs.changes.outputs.docs_changed }}
           FRONTEND_CHANGED: ${{ needs.changes.outputs.frontend_changed }}
           AFFECTED_SERVICES: ${{ needs.changes.outputs.affected_services }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
           BUF_CHECK: ${{ needs.buf-check.result }}
           DOCKER_LINT: ${{ needs.docker-lint.result }}
           SHELLCHECK: ${{ needs.shellcheck.result }}
@@ -861,6 +864,11 @@ jobs:
           }
 
           failed=0
+
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "Change detection did not succeed: $CHANGES_RESULT" >&2
+            failed=1
+          fi
 
           for check in \
             "Buf Generation:$BUF_CHECK" \

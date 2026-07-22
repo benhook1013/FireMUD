@@ -679,7 +679,7 @@ JSON
 sed 's/@coderabbitai full review/@coderabbitai review/' \
   "$TMP_DIR/pass.json" >"$TMP_DIR/incremental-review-no-evidence.json"
 
-python3 - "$TMP_DIR/pass.json" "$TMP_DIR/incremental-review-with-evidence.json" "$TMP_DIR/incremental-review-before-full-checkpoint.json" <<'PY'
+python3 - "$TMP_DIR/pass.json" "$TMP_DIR/incremental-review-with-evidence.json" "$TMP_DIR/incremental-review-before-full-checkpoint.json" "$TMP_DIR/incremental-review-before-latest-full-checkpoint.json" <<'PY'
 import json
 import sys
 
@@ -693,7 +693,7 @@ def comment(author, body, created_at, url):
     }
 
 
-def write_fixture(source_path, destination_path, checkpoint_at):
+def write_fixture(source_path, destination_path, checkpoint_at, include_older_full_request=False):
     payload = json.load(open(source_path, encoding="utf-8"))
     pr = payload["data"]["repository"]["pullRequest"]
     pr["headRefOid"] = "abcdef123456"
@@ -708,8 +708,7 @@ def write_fixture(source_path, destination_path, checkpoint_at):
         ]
     }
     pr.pop("reviews", None)
-    pr["comments"] = {
-        "nodes": [
+    comments = [
             comment(
                 "benhook1013",
                 "@coderabbitai full review",
@@ -740,14 +739,30 @@ def write_fixture(source_path, destination_path, checkpoint_at):
                 "2026-07-03T02:40:05Z",
                 "https://example.test/incremental-finished",
             ),
-        ]
-    }
+    ]
+    if include_older_full_request:
+        comments.insert(
+            1,
+            comment(
+                "benhook1013",
+                "@coderabbitai full review",
+                "2026-07-03T01:00:00Z",
+                "https://example.test/older-full-review",
+            ),
+        )
+    pr["comments"] = {"nodes": comments}
     with open(destination_path, "w", encoding="utf-8") as output:
         json.dump(payload, output)
 
 
 write_fixture(sys.argv[1], sys.argv[2], "2026-07-03T02:05:00Z")
 write_fixture(sys.argv[1], sys.argv[3], "2026-07-03T01:50:00Z")
+write_fixture(
+    sys.argv[1],
+    sys.argv[4],
+    "2026-07-03T01:30:00Z",
+    include_older_full_request=True,
+)
 PY
 
 EXPECT_FAILURE_STATUS=0
@@ -797,6 +812,14 @@ grep -q "plan_ceiling_rejection_evidence=true" "$TMP_DIR/incremental-review-befo
 grep -q "reviewed_commit_range_after_latest_commit=true" "$TMP_DIR/incremental-review-before-full-checkpoint.out"
 grep -q "incremental_review_exception_allowed=false" "$TMP_DIR/incremental-review-before-full-checkpoint.out"
 grep -q "ok=false" "$TMP_DIR/incremental-review-before-full-checkpoint.out"
+
+expect_failure_output "$TMP_DIR/incremental-review-before-latest-full-checkpoint.json" "$TMP_DIR/incremental-review-before-latest-full-checkpoint.out"
+[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "prior_substantive_review_checkpoint=false" "$TMP_DIR/incremental-review-before-latest-full-checkpoint.out"
+grep -q "plan_ceiling_rejection_evidence=true" "$TMP_DIR/incremental-review-before-latest-full-checkpoint.out"
+grep -q "reviewed_commit_range_after_latest_commit=true" "$TMP_DIR/incremental-review-before-latest-full-checkpoint.out"
+grep -q "incremental_review_exception_allowed=false" "$TMP_DIR/incremental-review-before-latest-full-checkpoint.out"
+grep -q "ok=false" "$TMP_DIR/incremental-review-before-latest-full-checkpoint.out"
 
 expect_failure_output "$TMP_DIR/submitted-review.json" "$TMP_DIR/submitted-review.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]

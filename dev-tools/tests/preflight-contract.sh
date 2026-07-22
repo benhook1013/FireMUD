@@ -267,16 +267,12 @@ JSON
 if python3 "$WRITER" production contract-production reopen \
   --assessed-by preflight-contract \
   --preflight-report "$PRODUCTION_REPORT" \
-  --backup-last-success-at "$(date -u -Is)" \
-  --backup-verify-last-success-at "$(date -u -Is)" \
-  --restore-drill-last-success-at "$(date -u -Is)" \
-  --tenant-id tenant-1 \
-  --region-id region-1 \
   --evidence-ref contract-test \
   --output "$LEGACY_PRODUCTION_TRAFFIC_EVIDENCE" >/tmp/firemud-preflight-write-traffic-production.out 2>&1; then
   echo "legacy production traffic-open writer unexpectedly succeeded" >&2
   exit 1
 fi
+grep -Fq "invalid choice: 'production'" /tmp/firemud-preflight-write-traffic-production.out
 
 if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF="contract-production" \
