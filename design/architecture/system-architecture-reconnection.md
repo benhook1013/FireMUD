@@ -41,9 +41,9 @@ For the **concrete `NotifyDisconnect` message shape and transport behaviour** �
 
 ### Spring Cloud Gateway (Web Clients)
 
-- Stateless WebSocket router
+- WebSocket router with no authoritative or durable gameplay/auth/session state; it may hold only bounded connection-local recovery state while an edge socket remains open
 - Resumes routing once Web clients reconnect their WebSocket connections after a blip or restart
-- Holds no gameplay, auth, or session state
+- Holds no authoritative gameplay, auth, or resumable session state
 
 > TCP Proxy restarts drop Telnet connections.
 > Spring Cloud Gateway restarts temporarily disconnect Web clients; clients must request a fresh connect token, reconnect their WebSocket, re-`LOGIN`, and re-`PLAY`, after which Game Session reloads state from Redis if available.
@@ -160,7 +160,7 @@ The active gameplay identity is `characterId`. When a new client successfully is
 | Gateway ↔ Game Session link degraded (short window) | When the edge socket remains healthy and replacement Game Session capacity plus shared authority remain available, Gateway retains the client socket, buffers accepted input within its bound, and rebinds the upstream. Rebindable upstream lifecycle or transport loss is not itself a client disconnect. Game Session may instead return bounded explicit per-command errors while reachable. |
 | Gateway ↔ Game Session link degraded (`unreachable` sustained) | Hidden recovery terminates immediately if continuation authority cannot be established safely; otherwise it stops after 30 seconds. Gateway closes affected WebSocket sessions with `1013` (`backend_unavailable`) and clients reconnect with backoff. Telnet clients receive the same result when Gateway closes the still-established proxy bridge or the TCP Proxy cannot establish or maintain that edge bridge. |
 | Game Session Service restart | An ordinary qualifying single-instance restart has a 10-second functional target and is invisible while the edge socket, healthy replacement capacity, and shared authority remain available. Gateway retains the edge socket, reuses its stable transport identity, and the replacement continues current server-side session authority without another `LOGIN` or `PLAY`. Full real-service proof remains incomplete. |
-| Manual re-`LOGIN` from same character | Treated as reconnect; resumes if Redis intact |
+| Manual re-`LOGIN` from same character | Treated as reconnect only when the binding is present, its logical continuity and episode deadlines remain valid, and current identity, membership, entitlement, revocation, and uniqueness checks all pass; otherwise admission is fresh |
 | Gameplay binding logically expired or Redis key physically missing | Treated as non-resumable; fresh login and gameplay admission start a new binding |
 | New client logs in as same character | Old session terminated; new one resumes control |
 

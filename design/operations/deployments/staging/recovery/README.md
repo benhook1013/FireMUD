@@ -16,6 +16,7 @@ Required fields:
 - `certificateReissuanceEvidence`
 - `jwtRestoreHardeningEvidence`
 - `databaseCredentialRotationEvidence`
+- `backupConfidentialityEvidence`
 - `externalCredentialValidation` with records for:
   - `backup-storage`
   - `asset-storage`
@@ -23,3 +24,5 @@ Required fields:
   - `operator-credentials`
 
 `dev-tools/restores/validate-external-credentials.sh staging` requires `SANITIZATION_EVIDENCE_REF` to point to one of these records.
+
+`backupConfidentialityEvidence` must prove environment-scoped encryption, least-privilege access and audit, retention/secure deletion, and quarantine, sanitization, validation, and deletion of production-origin data before a non-production drill can expose workloads or retain evidence.

@@ -54,7 +54,7 @@ Each connected-to-disconnected transition starts one immutable disconnection epi
 
 - Redis TTL is physical cleanup metadata. Key presence never grants resume authority, and early key loss makes the binding non-resumable rather than reconstructing authority from other projections.
 - Resume transcript retention is an independent bounded presentation policy. Transcript existence cannot prove identity or extend active or resume authority.
-- Explicit gameplay `LOGOUT` immediately terminates continuity/resume authority and makes the binding's private transcript non-replayable. Physical deletion of transcript rows or cache entries may complete asynchronously, but replay must honor the authoritative non-replayable state immediately. Later fresh admission must not replay logged-out private context unless a separate explicit product policy authorizes it.
+- Explicit gameplay `LOGOUT` immediately terminates continuity/resume authority and makes the binding's private transcript non-replayable. Physical deletion of transcript rows or cache entries may complete asynchronously, but replay must honor the authoritative non-replayable state immediately. After a fresh non-logout `LOGIN` and `PLAY`, retained transcript context may replay subject to current identity, authorization, and gameplay scope; the terminated binding's logged-out context must not replay.
 
 ## Consequences
 
@@ -96,7 +96,7 @@ Fresh admission after every disconnect is simpler and more conservative but mate
 
 ## Reversibility and Revisit Triggers
 
-The independent policy boundaries can gain explicit active-session maximum or idle-session policies later without weakening resume rules. Revisit when security requires periodic player reauthentication during uninterrupted play, when measured storage pressure makes the continuity horizon unsuitable, or when product policy defines transcript replay after deliberate logout or non-resumable fresh entry.
+The independent policy boundaries can gain explicit active-session maximum or idle-session policies later without weakening resume rules. Revisit when security requires periodic player reauthentication during uninterrupted play, when measured storage pressure makes the continuity horizon unsuitable, or when product/security policy changes the current rule for replay after fresh non-logout admission. Explicit logout remains non-replayable unless a future decision changes that rule.
 
 ## Required Documentation Alignment
 

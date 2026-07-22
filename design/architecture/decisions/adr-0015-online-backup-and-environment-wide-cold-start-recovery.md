@@ -36,6 +36,17 @@ FireMUD uses online transactionally consistent PostgreSQL backups and an environ
 - Verification proves that the artifact is readable, complete for the declared database, bound to the expected environment, and usable by the supported restore tooling. Existence in object storage alone is not verification.
 - Region pause/status remains a valid maintenance, reset, migration, and future scoped-recovery control. It is not a prerequisite for routine online backup and is not evidence that a whole-database artifact is safe.
 
+### Backup Confidentiality Invariant (Normative)
+
+Every backup artifact, transfer, temporary restore copy, and sensitive recovery evidence must remain confidential to its environment boundary:
+
+- backup and restore transfers use authenticated encryption in transit, and dumps, object-store copies, temporary restore media, and retained recovery artifacts use encryption at rest with environment-scoped key material;
+- access is least-privilege and environment-scoped for backup, restore, recovery, and key-management identities, with object, key, and administrative access audited;
+- retention follows the environment policy, and expired, aborted, and temporary copies are securely deleted with deletion evidence; and
+- production-origin data used in a non-production drill remains in an isolated quarantine boundary, is sanitized and validated before any workload or traffic exposure, and is deleted from drill storage after the permitted evidence-retention period. Production credentials and integrations are never reused in that drill.
+
+Checked-in recovery projections contain only redacted metadata and immutable references; they never contain backup contents, credentials, private keys, or bearer tokens.
+
 ### Initial Player-Facing Restore Mode
 
 The only initially supported player-facing database-rewind mode is environment-wide `cold_start_restore`:
@@ -56,7 +67,7 @@ Quarantine is a technical execution state, not an operator convention:
 - Gateway, TCP Proxy, normal Game Session workers, tick executors, automation, schedulers, outbound processors, asset publication, and other side-effecting workloads cannot accept or create normal work.
 - Restored manifests or helper scripts must not automatically restart normal workloads.
 - Only narrowly authorized recovery, validation, and hardening jobs may run before the recovery controller opens each later phase.
-- Reopen requires one explicit operator-authorized request against the durable recovery controller in `ready_to_reopen`. The controller is the runtime authority and idempotently reconciles `ready_to_reopen -> releasing -> finalized`: it applies the quarantine release, observes that the release is active, advances to `finalized`, and only then permits player traffic. A failed or ambiguous apply remains fail-closed. Checked-in recovery and traffic-open evidence is an immutable exported projection produced after the controller reaches `finalized`; repository evidence is not part of the release transaction.
+- Reopen requires one explicit operator-authorized request against the durable recovery controller in `ready_to_reopen`. The controller's durable `ready_to_reopen` state and linked immutable evidence are the pre-release authority; a checked-in recovery or traffic-open JSON record is not required for, or consulted to authorize, that same release. The controller is the runtime authority and idempotently reconciles `ready_to_reopen -> releasing -> finalized`: it applies the quarantine release, observes that the release is active, advances to `finalized`, and only then permits player traffic. A failed or ambiguous apply remains fail-closed. After `finalized`, the workflow exports checked-in recovery and traffic-open JSON as an immutable projection of the finalized controller state, including the later release timestamp; repository evidence is not part of the release transaction.
 
 ### Offline Convergence and External Reconciliation
 
@@ -79,8 +90,9 @@ Player-facing restore readiness requires a production-equivalent drill that:
 3. Runs the offline convergence, session invalidation, epoch/fence reset, JWT and credential hardening, external-binding validation, and secret-compliance refresh paths.
 4. Starts workloads under quarantine and proves representative tenant, gameplay-region, command, external-effect, and login invariants.
 5. Establishes one durable recovery-controller state linked to immutable backup, restore-tool, recovery-tool, service-digest, schema-lineage, and smoke evidence.
-6. Reopens only through the same gated transition production uses.
-7. Exports one canonical immutable recovery projection after the controller reaches `finalized`.
+6. Proves the backup confidentiality invariant, including encrypted transport/storage, environment-scoped least-privilege access and audit, retention/deletion evidence, and quarantine, sanitization, and deletion evidence for any production-origin non-production drill.
+7. Reopens only through the same gated transition production uses, with the durable controller as the pre-release authority.
+8. Exports one canonical immutable recovery projection after the controller reaches `finalized`; the projection is not a prerequisite for that release.
 
 Until this proof and its executable validators exist:
 
@@ -110,6 +122,7 @@ Cheap per-release checks compare fingerprints, digests, participant inventories,
 - Routine backups no longer create recurring gameplay stalls or stuck-pause incidents.
 - Recovery scope is honest: rewinding the shared database is an environment-wide event with full outage and forced reauthentication, not a one-region repair.
 - The backup path is simpler, but the restore path requires strong durable idempotency, reconciliation, and external-effect proof across every participating service.
+- Backup confidentiality is a release invariant rather than an operator convention; missing encryption, boundary-scoped access/audit, retention/deletion, or non-production sanitization evidence keeps recovery quarantined.
 - FireMUD may lose up to the accepted backup RPO during a restore, and Redis-only transient work is not preserved. The separate backup-policy decision owns the actual cadence and RPO.
 - Player-facing RTO includes offline convergence, hardening, smoke validation, and explicit reopen approval.
 - Tiered evidence limits routine release overhead while automatically invalidating stale proof when the recovery contract changes.
@@ -136,10 +149,11 @@ Treat any readable `pg_dump` as a valid recovery point. A database snapshot can 
 ## Implementation and Proof Obligations
 
 - Make the scheduled backup job record immutable environment, schema, service-digest, tool-digest, and snapshot lineage and prove artifact restoration, not only existence.
+- Enforce the backup confidentiality invariant and retain machine-checkable proof for encrypted transport/storage, environment-scoped least-privilege access and audit, retention/secure deletion, and production-origin non-production drill quarantine, sanitization, and deletion.
 - Enforce restore quarantine before any restored normal workload can start; remove immediate rollout restart from the player-facing restore path.
 - Implement the environment-wide cold-start controller, empty-Redis proof, epoch/fence reset, session invalidation, durable participant inventory, convergence steps, and controlled reopen transition.
 - Define external-effect reconciliation contracts for payments, communications, webhooks, and object-store publication.
-- Make release evidence carry and validate the cheap recovery-compatibility result; make preflight dereference and validate the durable recovery-controller state and its finalized exported projections, artifact digests, participant safe dispositions, recovery-contract fingerprints, and environment-wide scope rather than trusting timestamps or caller-supplied scope strings.
+- Make release evidence carry and validate the cheap recovery-compatibility result; make preflight use the durable recovery-controller state and its linked artifact digests, participant safe dispositions, recovery-contract fingerprints, confidentiality proof, and environment-wide scope as the pre-release authority rather than trusting timestamps or caller-supplied scope strings. Export checked-in recovery JSON only after controller finalization and treat it as an immutable projection for later audit and evidence reuse.
 - Implement tiered evidence invalidation and require exact release-candidate drills for `roll-forward-only` promotion.
 - Keep the capability implementation state partial until a real backup-under-write, restore, convergence, hardening, smoke, and reopen sequence is proved.
 

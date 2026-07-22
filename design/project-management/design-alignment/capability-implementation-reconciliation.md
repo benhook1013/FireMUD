@@ -7,8 +7,8 @@ This record summarizes the automated reconciliation from the complete product ca
 - All 79 leaf capabilities have exactly one primary implementation tracker.
 - All ten tracker domains have primary ownership and explicit secondary handoffs in the [capability allocation](../implementation-tracking/capability-allocation.md).
 - Every leaf has separate implementation and verification states, canonical design links, production anchors, proof anchors, handoffs, and a remaining gap or decision.
-- Current implementation totals are 10 `implemented`, 67 `partial`, and 2 `not-implemented`.
-- Current verification totals are 46 `proven`, 26 `audited`, 6 `drift-found`, and 1 `unverified`.
+- Current implementation totals are 7 `implemented`, 70 `partial`, and 2 `not-implemented`.
+- Current verification totals are 53 `proven`, 14 `audited`, 11 `drift-found`, and 1 `unverified`.
 - `AUTO-01`, `CONTENT-05`, and `SESSION-08` now have one reconciled canonical baseline each. Their decision-inventory entries preserve alternatives for later human review without presenting the sources as currently contradictory.
 
 ## Reconciled Cross-Domain Boundaries
@@ -18,7 +18,7 @@ This record summarizes the automated reconciliation from the complete product ca
 - Admission pointers and explicit routing bundles carry runtime target identity; consumers fail closed rather than reconstructing current scope from partial identifiers.
 - Game Session owns player transport/session orchestration, Game Logic owns cross-domain gameplay aggregation, and domain services remain authoritative for their persisted state.
 - Durable command, effect, scripting, and scheduler work preserve explicit identity and replay fencing; a replay hit must not bypass request-shape or scope validation.
-- The target settings contract applies platform defaults, preset expansion, operator settings, caps, and tenant/game overrides through canonical effective-settings readers. Current implementation still combines service/operator defaults with persisted overrides; preset expansion and operator caps remain unresolved under `SET-01`.
+- Accepted [ADR 0012](../../architecture/decisions/adr-0012-settings-value-precedence-and-constraints.md) owns the target settings contract for platform defaults, preset expansion, operator settings, caps, and tenant/game overrides through canonical effective-settings readers. Current implementation still combines service/operator defaults with persisted overrides; preset expansion and operator caps remain implementation gaps under `SET-01`.
 - gRPC application errors remain normal-response `ErrorDetail` values, while transport errors are reserved for infrastructure failures.
 - Operational evidence, deployment gates, recovery, and audit records are platform responsibilities fed by domain-owned health and lifecycle signals.
 
@@ -34,7 +34,7 @@ These are implementation or proof gaps, not silently competing target states:
 - Commerce and runtime entitlement reads exist, but provider fulfillment, purchased-entitlement lifecycle, quotas, donations, fees, and complete enforcement remain partial.
 - Multi-node session routing, regional execution, scheduler leadership, offline recovery, and downstream replay consumption need broader implementation and operational proof.
 - Player, creator, and operator applications remain partial scaffolds or API surfaces rather than complete first-party experiences.
-- Settings precedence remains unresolved under `SET-01`: current readers combine service/operator defaults and persisted tenant/game overrides, while target preset expansion and operator caps are not implemented.
+- Settings precedence and constraint policy are accepted under [ADR 0012](../../architecture/decisions/adr-0012-settings-value-precedence-and-constraints.md); `SET-01` remains incomplete because current readers combine only service/operator defaults and persisted tenant/game overrides, while target preset expansion and operator caps are not implemented.
 
 ## Enforcement
 

@@ -29,7 +29,7 @@ Player-facing and production-like Gateway routing has one authority: a version-c
 ### Player-Facing Routing
 
 - Production route changes update the canonical release catalog and converge through the normal reviewed rollout and rollback mechanism.
-- Emergency rerouting uses an expedited declarative rollout or a predeclared, bounded failover switch between approved targets. It does not use a generic route editor.
+- Emergency rerouting uses an expedited declarative rollout or a predeclared, bounded failover switch between approved targets. The switch is a declarative rollout selecting a predeclared version of the same version-controlled route catalog and environment-bound endpoint authority; it changes desired state through the reviewed rollout path, not by mutating routes at runtime. It does not use a generic route editor.
 - Runtime mutation components and endpoints are absent or disabled by default. Player-facing startup fails if an ephemeral mutation profile or endpoint is enabled.
 - The implementation must converge the current Java-versus-`routes.yml` discrepancy onto one version-controlled baseline representation. File format is subordinate to the single immutable release authority.
 

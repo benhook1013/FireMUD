@@ -48,6 +48,8 @@ Presets and bootstrap configuration use the same typed setting key space. A pres
 
 Value precedence is separate from constraint evaluation. Schema and platform hard bounds always apply, and configured operator caps constrain the final candidate value from every source for keys that declare such caps. A later value source can never override a hard bound or operator cap; bootstrap and runtime-default candidates are not exempt merely because the operator supplied them.
 
+- Platform hard bounds are release-owned typed schema metadata. Configured operator caps are stored as one environment-scoped, versioned operator-constraint snapshot in the shared Game Design settings authority. Bootstrap configuration may seed that snapshot; supported runtime mutation is operator-authorized, audited, and compare-and-set against its monotonic generation. Tenant/game routes cannot write operator constraints.
+- Every capped key declares cap support in the generated settings schema. Effective reads expose the validated cap value, provenance, and snapshot generation. A consumer that cannot validate the required snapshot for a capped key fails closed for that setting rather than applying an uncapped candidate or inventing a service-local cap generation.
 - New tenant or game-instance writes that violate an applicable bound or cap are rejected.
 - If an operator later tightens a cap so an existing persisted override becomes invalid, the resolver disregards that invalid override, falls back to the highest-precedence earlier valid value, and exposes a clear diagnostic suitable for operator and creator remediation.
 - Effective-setting responses report the value's provenance, including the winning source and any disregarded invalid override.
@@ -67,7 +69,7 @@ The important rule is that presets are a convenience baseline, not a second para
 
 - start from a preset that matches the deployment shape;
 - override only the specific settings that need to differ;
-- apply higher-precedence runtime overrides and caps where explicitly supported.
+- apply supported higher-precedence runtime defaults and separately enforced caps where explicitly configured.
 
 This keeps the operator experience defaults-first:
 
@@ -196,11 +198,13 @@ The target state **must** provide one bounded shared resolver or read model that
 
 That resolver or read model must:
 
-- own tenant/game behavior settings
+- read and resolve tenant/game behavior settings from their owning authorities
+- read the Game Design-owned versioned environment-scoped operator-constraint snapshot while keeping its mutation surface operator-only
 - apply the canonical value precedence and source eligibility for every surfaced key
 - enforce schema/platform hard bounds and operator caps separately from value precedence
 - reject invalid writes and handle cap-invalidated persisted overrides through the canonical fallback and diagnostic rule
 - present resolved effective values and provenance to services without each service inventing its own merge logic
+- present the validated operator-constraint generation with every capped effective value so cross-service consumers can prove convergence
 
 This does not need to become a full distributed config platform. A bounded authoritative settings read model is enough.
 

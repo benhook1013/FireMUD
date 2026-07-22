@@ -182,6 +182,8 @@ To make the re-submission contract enforceable across failover and scoped coordi
 
 - Game Session persists a dedupe record keyed by `(tenantId, gameInstanceId, commandId)` in PostgreSQL.
 - Minimum fields:
+  - immutable authenticated subject identity and gameplay actor/character identity when applicable, or the equivalent authorized internal automation/operator identity
+  - canonical normalized-request fingerprint version and digest covering the command type and semantic payload
   - `ack_level` (`ACCEPTED_VOLATILE` or `ACCEPTED_DURABLE`)
   - `ingress_status` (`RECEIVED`, `ENQUEUED`, `BOUND_TO_BATCH`, `TERMINAL`)
   - `first_seen_at`, `last_seen_at`
@@ -191,7 +193,9 @@ To make the re-submission contract enforceable across failover and scoped coordi
     - `gameplay_result` (nullable until terminal gameplay result)
     - `failure_code` and `failure_message` (required together for a terminal reason, including `ROLLBACK_PURGED`)
 - Required behavior:
-  - Re-send with same `(tenantId, gameInstanceId, commandId)` returns the prior acknowledgement and must not enqueue a second logical command.
+  - Re-send with the same `(tenantId, gameInstanceId, commandId)` returns the prior acknowledgement and must not enqueue a second logical command only when immutable subject/actor identity and normalized-request fingerprint match.
+  - A same-ID mismatch in subject, actor/character, command type, or semantic payload fails closed without returning the existing acknowledgement or status.
+  - `GetGameplayCommandStatus` authorizes the read against the immutable ingress identity or an explicitly authorized internal/operator route; knowledge of `commandId` is insufficient.
   - Region/tenant/cluster coordination resets do not delete this dedupe record; they only affect volatile queue state.
   - Retention is TTL-based at the SQL layer and must outlive expected client retry windows.
 - `ACCEPTED_VOLATILE` remains volatile for execution semantics: the dedupe record guarantees no duplicate logical enqueue for the same `commandId`, not guaranteed eventual execution, but it does guarantee eventual convergence to a terminal command outcome.
@@ -208,9 +212,9 @@ Storage rule:
   - If ingress metadata and outcome fields are split physically, the projection still behaves as one canonical record for `GetGameplayCommandStatus`; callers must not reconstruct status from Redis or by replaying effect history ad hoc.
 - Worked schema examples:
   - Single-row ingress table shape:
-    - `command_ingress(tenant_id, game_instance_id, command_id, ack_level, ingress_status, tick_batch_id, region_id, region_epoch, tick_id, execution_outcome, gameplay_result, failure_code, failure_message, updated_at, ...)`
+    - `command_ingress(tenant_id, game_instance_id, command_id, subject_id, actor_id, request_fingerprint_version, request_fingerprint, ack_level, ingress_status, tick_batch_id, region_id, region_epoch, tick_id, execution_outcome, gameplay_result, failure_code, failure_message, updated_at, ...)`
   - Split ingress plus outcome projection:
-    - `command_ingress(tenant_id, game_instance_id, command_id, ack_level, ingress_status, tick_batch_id, region_id, region_epoch, tick_id, ...)`
+    - `command_ingress(tenant_id, game_instance_id, command_id, subject_id, actor_id, request_fingerprint_version, request_fingerprint, ack_level, ingress_status, tick_batch_id, region_id, region_epoch, tick_id, ...)`
     - `command_outcome_projection(tenant_id, game_instance_id, command_id, execution_outcome, gameplay_result, failure_code, failure_message, updated_at, ... )`
   - In both shapes, `GetGameplayCommandStatus` reads one authoritative durable record keyed by `(tenantId, gameInstanceId, commandId)`; Redis is not part of the lookup path.
 - Regardless of physical schema, `GetGameplayCommandStatus` must be able to return `executionOutcome` and `gameplayResult` from durable storage without re-walking Redis coordination state.

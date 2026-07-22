@@ -30,7 +30,8 @@ FireMUD evolves `GetGameplayCommandStatus` in place as the single canonical auth
 
 - Every logical command has a stable `commandId` before the first backend retry boundary.
 - A capable client may generate the identity. For line-oriented or Telnet sessions, the first trusted Game Session/session-front-end ingress assigns and retains it before forwarding or retrying. A human player does not type or manage it.
-- Reuse of the same identity returns or advances the same logical command record; a new identity represents a new logical command.
+- The first accepted use binds the scoped identity to immutable authenticated subject identity, gameplay actor/character identity when applicable, and a versioned canonical normalized-request fingerprint. Internal automation and operator ingress bind the equivalent workload/actor identity and normalized request.
+- Reuse of the same identity returns or advances the same logical command record only when those immutable bindings match. A same-ID subject, actor, or request mismatch is rejected without returning the existing command status; a new identity represents a new logical command.
 - Ordinary interactive gameplay commands default to `ACCEPTED_VOLATILE`. The durable status record guarantees deduplication and explicit outcome convergence, but execution may still be lost before durable staging.
 - `ACCEPTED_DURABLE` is available only to a feature with an explicit durable-intake and safe-replay contract. Stale movement, combat, or similar interactive intent is not automatically replayed merely because it was accepted.
 
@@ -50,6 +51,7 @@ Existing values such as `STAGED`, `DRAINED`, and `RETRY_QUEUED` map to lifecycle
 ### Authority and Convergence
 
 - `GetGameplayCommandStatus` reads the authoritative durable record by `commandId` scoped to `tenantId` and `gameInstanceId`, or by the automation handoff identity `(tenantId, gameInstanceId, regionId, regionEpoch, automationDispatchId)`. The `regionId` and `regionEpoch` routing fields apply to the automation-identity lookup. Redis coordination state is not part of the lookup authority.
+- Status reads require the same caller-bound subject/actor authority recorded at ingress or an explicitly authorized internal/operator route. Possession or collision of a client-generated `commandId` is never status-read authority.
 - Optional outcome events or streams may reduce observation latency, but they are advisory projections of the same lifecycle.
 - Every accepted command converges to an explicit terminal result. An `ACCEPTED_VOLATILE` command lost before durable batch binding becomes `LOST_BEFORE_STAGING` with `NOT_APPLIED` rather than remaining indefinitely pending.
 - `executionOutcome` and `gameplayResult` remain distinct. For example, a multi-leg command may be `APPLIED` with a `PARTIAL` gameplay result.
@@ -85,6 +87,8 @@ Store and query the status lifecycle from Redis coordination state. This reduces
 
 - Evolve the existing proto and durable persistence to expose the canonical fields and migrate current state values without creating a second authority.
 - Assign and retain stable idempotency identity before any retrying hop and prove same-ID retry deduplication across failover.
+- Persist immutable subject/actor bindings and a canonical normalized-request fingerprint; prove same-ID cross-subject, cross-character, and payload-mismatch attempts are rejected without suppressing work or disclosing the original status.
+- Prove status reads enforce caller-bound subject/actor authorization and the explicit internal/operator route policy.
 - Bind staged commands durably to their tick batch and tick coordinates.
 - Prove reset, tail-loss, and startup recovery drive every accepted record to a valid terminal outcome, including `LOST_BEFORE_STAGING`.
 - Prove status lookup remains authoritative when optional events are delayed, duplicated, or absent.

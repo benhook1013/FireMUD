@@ -145,6 +145,8 @@ The eight-step handshake above is the authoritative order for all scoped resets 
 
 Do not collapse all Redis events into “Redis repopulates from PostgreSQL.” Failover, cold start, and explicit reset have different safety properties:
 
+The Redis-only cold-start/reset flow below is distinct from ADR 0015's PostgreSQL-rewind modes. If PostgreSQL has been rewound while Coordination Redis survives, `scoped_reset_restore` is deferred and quarantined; player-facing recovery must replace or clear Redis and use the environment-wide `cold_start_restore` controller contract instead.
+
 - **Failover** (node crash, leader change, pod restart with intact AOF/PVCs)
   - Coordination Redis retains its AOF/replication history.
   - Keys such as `tick:{tenantRegionTag}:pending` and timers may survive.
@@ -164,7 +166,7 @@ Worked example: normal failover for `<tenantId=T1, regionId=R7>`
   - Treat as a **coordination reset event**, not a normal failover.
   - There is no durable coordination history to replay; all coordination keys start empty.
   - Services re‑establish leases/locks as new activity occurs, but any coordination intent that existed only in Redis (timers, retry schedules, in‑flight queues, session bindings) is dropped unless it is also represented durably elsewhere.
-  - Empty-start recovery is not a separate operator path:
+  - For a Redis-only cold start with PostgreSQL still authoritative, empty-start recovery is not a separate operator path:
     - Operators must run the same scoped reset handshake defined above, including pause, epoch bump, scoped reset, ledger reconcile, command convergence, metadata initialization, preserved-session rebind where applicable, smoke check, and resume.
     - Lazy recreation of `tick:{tenantRegionTag}:meta` by hot-path staging may still occur as an implementation detail after the reset completes, but it is not a substitute for the reset handshake and operators must not treat an empty keyspace as “safe to resume automatically”.
 

@@ -51,6 +51,9 @@ Schema/platform hard bounds and configured operator caps are constraints, not va
 
 - Applicable bounds and caps constrain the final candidate value regardless of which value source supplied it.
 - No tenant or game-instance override may weaken or bypass them.
+- Platform hard bounds are release-owned typed schema metadata. Configured operator caps are held in one environment-scoped, versioned operator-constraint snapshot owned by the shared Game Design settings authority; tenant/game mutation surfaces cannot write that snapshot.
+- Bootstrap configuration may seed the initial snapshot. A supported runtime cap change uses an operator-authorized, audited compare-and-set against its monotonic generation; it does not create a second local cap authority in each consumer.
+- Every capped key declares its cap support and owning metadata in the generated settings schema. Runtime consumers resolve the same published snapshot generation, report that generation and cap provenance with the effective value, and fail closed for a capped key when the required snapshot cannot be validated rather than silently applying an uncapped value.
 - New tenant or game-instance writes that violate an applicable bound or cap are rejected.
 - If a later cap change makes an existing persisted override invalid, resolution disregards that override, falls back to the highest-precedence earlier valid value, and exposes a clear diagnostic for explicit remediation.
 
@@ -87,10 +90,12 @@ Store, resolve, version, and push every setting from one service. This could imp
 ## Implementation and Proof Obligations
 
 - Extend typed per-key metadata to declare allowed value sources, scopes, hard bounds, and operator-cap support.
+- Implement the environment-scoped operator-constraint snapshot, monotonic generation, bootstrap seeding, operator-authorized compare-and-set mutation, and immutable audit record in the Game Design settings authority.
 - Implement preset expansion before explicit bootstrap values without creating a second authority.
 - Implement only explicitly supported operator runtime defaults with appropriate persistence and audit semantics.
 - Reject invalid tenant/game-instance writes against current hard bounds and caps.
 - Prove deterministic fallback and diagnostics when cap changes invalidate persisted overrides.
+- Prove every consumer observes the same cap generation and fails closed rather than accepting an uncapped candidate during missing, stale, or conflicting snapshot state.
 - Report complete winning-source and invalid-override provenance on effective-setting inspection surfaces.
 - Prove the full applicable precedence matrix and equivalent effective results across every consuming service.
 - Keep infrastructure-only keys outside tenant and game-instance mutation surfaces.

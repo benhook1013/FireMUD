@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The decision is accepted; implementation and proof remain partial. The current watcher and JWKS-serving tests cover direct file behavior, but issuance and validation still use the shared-HMAC topology and validators do not consume Account JWKS. Account-only asymmetric issuance, bounded validator convergence, rotation/compromise drills, and the player-facing readiness gate remain incomplete and unproved. Acceptance records the target decision, not completion; the obligations below define the remaining proof.
+The decision is accepted; implementation and proof remain partial. The current watcher and JWKS-serving tests cover direct file behavior, but issuance and validation still use the shared-HMAC topology and validators do not consume Account JWKS. Account-authorized asymmetric issuance backed by non-exportable signer custody, bounded validator convergence, rotation/compromise drills, and the player-facing readiness gate remain incomplete and unproved. Acceptance records the target decision, not completion; the obligations below define the remaining proof.
 
 ## Decision Record
 
@@ -26,11 +26,12 @@ The implementation is further behind the target. The shared JWT utility still us
 
 ## Decision
 
-FireMUD retains Kubernetes Secrets and an operator-triggered Kubernetes rotation Job as the current storage and orchestration baseline, subject to the separate secret-storage decision. JWT rotation itself is a phased protocol with different planned-rotation and compromise modes. The protocol is storage-backend independent so a future external signer can implement the same phases without changing validator semantics.
+FireMUD's target-state private-key custody delegates private-key operations to a non-exportable signer in every environment while Account Service remains the sole issuer and lifecycle authority. Until that capability is implemented, the controlled interim fallback is Account-only Kubernetes Secret custody: only Account Service receives private material, validators receive public JWKS only, and rotation automation cannot access signing material. JWT rotation itself is a phased protocol with different planned-rotation and compromise modes. The protocol is storage-backend independent so the delegated signer or the interim fallback can implement the same phases without changing validator semantics.
 
 ### Authority and Scope
 
-- Account Service is the only issuer for the Account JWT key ring and the only application workload that may access its private signing keys.
+- Account Service is the sole issuer and authority for the Account JWT key ring, including generation validation, token-validation semantics, signer promotion, JWKS publication, and public/private pruning. A non-exportable signer may perform only private-key operations explicitly delegated by Account; it is not an issuer, validator, promotion, JWKS-publication, or pruning authority.
+- Under the interim Kubernetes Secret fallback, Account Service is the only application workload that may receive private signing material.
 - Browser, player-bootstrap, and Service JWTs use this per-environment asymmetric key ring and carry an explicit stable `kid`.
 - Validators receive no private JWT key. They validate through Account-published JWKS with a bounded cache.
 - The key ring is environment-wide, not tenant-specific. Compromise of an active Account signing key is therefore an environment-wide issuer compromise; incident response must not describe tenant-selective containment as sufficient.
@@ -40,12 +41,12 @@ FireMUD retains Kubernetes Secrets and an operator-triggered Kubernetes rotation
 
 A normal rotation uses these ordered phases:
 
-1. Generate a new asymmetric keypair and unique `kid` without changing the active signer.
+1. Account Service initiates generation of a new asymmetric keypair and unique `kid` through its delegated non-exportable signer, or generates it in the Account-only fallback, without changing the active signer.
 2. Prepublish the new public JWK alongside every public key whose tokens may still be valid. The published generation must identify the active and pending `kid` values.
-3. Wait at least the configured validator JWKS maximum cache age and prove every required validator accepts an end-to-end signed canary through its production validation path. The canary uses the production issuer, representative claims and audiences, signing algorithm, pending `kid`, and normal key-use checks; merely resolving the JWK is insufficient. An unknown `kid` causes one forced JWKS refresh and one validation retry, then fails closed. Any canary failure blocks promotion and leaves the old signer active.
-4. Atomically switch Account Service to a locally validated signing generation containing the new private key and `kid`, but only after Account has proved that the matching public JWK is in the published generation. A malformed bundle, key mismatch, or unobservable pending key aborts promotion and leaves the old signer active while readiness fails and operators are alerted.
-5. Retain the old public JWK until the last token actually signed by the old key has expired plus the allowed validation clock skew. The validator-cache convergence wait occurs before signer promotion and is not a substitute for this token-lifetime overlap. The old private key may remain in the Account-only signing Secret during this interval solely as an explicit rollback slot; it is never distributed to validators.
-6. Prune the retired public key and any retained rollback private key only after the overlap condition is satisfied. Prove that the active `kid` is accepted and retired or expired material is rejected, then retain immutable rotation evidence.
+3. Wait at least the configured validator JWKS maximum cache age and prove every required validator can verify a constrained Account-owned pending-key canary through its production JWKS validation path. Account's rotation control/status interface requests the delegated signer, or the interim Account fallback, to sign a fixed short-lived canary payload marked with a dedicated non-authorizing type and audience and containing no roles or tenant scope. Validators verify the signature and `kid` through a canary check that cannot authorize admission, grant scope, or mutate signer state; normal authorization middleware rejects the canary as non-authorizing, and the canary is not a usable Browser, player-bootstrap, or Service JWT. Merely resolving the JWK is insufficient. An unknown `kid` causes one forced JWKS refresh and one validation retry, then fails closed. Any canary failure blocks promotion and leaves the old signer active.
+4. Atomically promote the Account-owned active signer reference to the validated generation and `kid` only after Account has proved that the matching public JWK is in the published generation and the non-authorizing canary has converged. The private key remains in non-exportable signer custody, or in the interim Account-only bundle. A malformed bundle, key mismatch, or unobservable pending key aborts promotion and leaves the old signer active while readiness fails and operators are alerted.
+5. Retain the old public JWK until the last token actually signed by the old key has expired plus the allowed validation clock skew. The validator-cache convergence wait occurs before signer promotion and is not a substitute for this token-lifetime overlap. In target state, any retained rollback private-key state remains inside non-exportable signer custody; under the interim fallback it may remain in the Account-only signing Secret solely as an explicit rollback slot. It is never distributed to validators or rotation automation.
+6. Prune the retired public JWK and any retained rollback private-key state only after the overlap condition is satisfied. Prove that the active `kid` is accepted and retired or expired material is rejected, then retain immutable rotation evidence.
 
 The rotation resources carry a common generation identifier and phase so separately updated Kubernetes objects cannot be mistaken for one atomic transaction. Signer promotion is the commit point. Publishing an additional verification key is safe before that point; publishing a signer whose key is not converged is not.
 
@@ -78,7 +79,7 @@ Hard cutover intentionally causes reauthentication and may create a bounded auth
 
 No player-facing environment may be described as JWT-ready, promotable, or traffic-open on the strength of mounted file paths and a served JWKS document alone. The gate requires evidence that:
 
-- Account alone holds and uses the asymmetric private key;
+- Account remains the sole issuer and lifecycle authority; the non-exportable signer performs only Account-delegated private-key operations, and the interim fallback gives private material only to Account;
 - all validators use asymmetric `kid`/JWKS verification and HMAC-only fallback is disabled;
 - startup and preflight reject private signing-key distribution to validators and reject missing asymmetric verification;
 - a planned-rotation drill proves prepublication, old/new continuity, signer promotion, overlap, pruning, and rollback-safe JWKS retention;
@@ -92,10 +93,10 @@ Until those conditions are implemented and proved, the current shared-HMAC topol
 - Planned rotations can be invisible to users and internal callers because validators learn the new key before it signs tokens and retain the old verification key for the full remaining token lifetime.
 - The protocol prevents the common race in which newly issued tokens fail because validators have not learned the new `kid`, and prevents premature pruning from invalidating still-live tokens.
 - Compromise response is deliberately environment-wide because one environment signing key can mint claims for any tenant in that issuer.
-- Account-only private-key access materially reduces the compromise blast radius compared with distributing a symmetric signing secret to every service.
+- Non-exportable custody is the target-state reduction in key-extraction risk. The Account-only Kubernetes Secret fallback materially reduces the compromise blast radius compared with distributing a symmetric signing secret to every service, but it is not the final custody target.
 - Rotation now requires a validator inventory, cache bounds, probes, generation state, evidence retention, and two distinct operational paths. This is more complex than a maintenance-window hard cutover.
 - Existing validation can continue during a short Account/JWKS outage from bounded cache, but issuance and unknown-key discovery still depend on Account and the rotation control path.
-- Kubernetes Secrets remain extractable by principals with sufficient cluster access. A non-exportable external signer would improve custody but is not required by this decision.
+- Kubernetes Secrets remain extractable by principals with sufficient cluster access. Non-exportable signer delegation is therefore mandatory target state in every environment; Account-only Kubernetes Secret custody is only the controlled interim fallback until that capability is implemented.
 
 ## Alternatives Considered
 
@@ -103,9 +104,9 @@ Until those conditions are implemented and proved, the current shared-HMAC topol
 
 Replace one key, restart the fleet, invalidate all sessions, and accept a maintenance outage on every rotation. This is the strongest simpler interim approach because it removes overlap, cache-convergence, and watcher races. It also creates scheduled authentication outages, forces user reauthentication, interrupts short-lived internal calls, and makes correct fleet sequencing a manual burden. It remains acceptable only as an explicitly quarantined interim operation or for compromise/restore, not as the player-facing planned-rotation target.
 
-### External Non-Exportable Signer
+### Account-Only Kubernetes Secret Interim Fallback
 
-Use cloud KMS/HSM or a self-hosted equivalent, allow only Account workload identity to request signatures, and publish enabled key versions as JWKS. This materially improves key custody and auditability and removes filesystem private-key reload. It adds provider or HSM cost, IAM and disaster-recovery dependencies, latency and quota concerns, and a difficult self-hosting story. The current Kubernetes baseline remains more portable; adopting an external signer reopens the secret-storage decision while preserving the phased protocol in this record.
+Until non-exportable signer delegation is available in an environment, keep the versioned private bundle in an Account-only Kubernetes Secret, publish public JWKS through Account, and prevent validators and rotation automation from receiving private material. This is a controlled custody fallback that preserves Account authority and the phased protocol; it is not the target-state private-key custody model and must not be treated as permission to distribute signing authority.
 
 ### Keep Shared HMAC Signing
 
@@ -117,7 +118,7 @@ Use a separate key ring for each tenant to reduce tenant blast radius. This mult
 
 ## Implementation and Proof Obligations
 
-- Replace shared-HMAC player-facing issuance and validation with Account-only asymmetric signing and downstream JWKS validation.
+- Replace shared-HMAC player-facing issuance and validation with Account-authorized asymmetric signing through the delegated non-exportable signer and downstream JWKS validation. Use Account-only Secret custody only as the controlled interim fallback until signer delegation is implemented.
 - Remove Account private signing material from every validating workload and prevent local service token minting outside Account.
 - Define a reusable versioned signing/JWKS bundle and phased rotation state machine with a single signer-promotion commit point.
 - Implement bounded validator caching, proactive refresh, unknown-`kid` one-refresh/one-retry behavior, convergence probes, and validator inventory evidence.
@@ -129,9 +130,9 @@ Use a separate key ring for each tenant to reduce tenant blast radius. This mult
 
 ## Reversibility and Revisit Triggers
 
-The phased protocol is independent of Kubernetes Secret storage, which keeps a future move to KMS/HSM or another signer reversible at the application contract. Once downstream services rely on Account-only asymmetric JWKS, returning to shared HMAC would weaken the trust boundary and requires a new security decision.
+The phased protocol is independent of signer storage, which keeps changes to the non-exportable signer implementation reversible at the application contract. The interim Account-only Secret fallback does not alter Account authority or permit a second signer authority. Once downstream services rely on Account-only asymmetric JWKS, returning to shared HMAC would weaken the trust boundary and requires a new security decision.
 
-Revisit the storage backend if compliance requires non-exportable keys, Kubernetes Secret custody or rotation evidence becomes inadequate, Account signing latency or availability changes materially, or self-hosted operators cannot run the required Jobs safely. Revisit the Account-issued Service JWT model if per-call issuance makes centralized signing operationally unacceptable; managed workload identity or mTLS authorization is the preferred alternative to redistributing signing authority.
+Revisit the delegated signer implementation if its compliance evidence, availability, latency, quota, disaster-recovery behavior, or self-hosted operating model becomes inadequate. Revisit the Account-issued Service JWT model if per-call issuance makes centralized signing operationally unacceptable; managed workload identity or mTLS authorization is the preferred alternative to redistributing signing authority.
 
 ## Required Documentation Alignment
 

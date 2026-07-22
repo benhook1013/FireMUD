@@ -2,7 +2,7 @@
 
 This document outlines how FireMUD secures service communication, manages authentication keys, protects network traffic, and tracks abuse attempts. It complements the [Authentication & Authorization](./system-architecture-authentication.md) document by focusing on secret management, TLS usage, abuse resistance, and operational trust guarantees.
 
-Kubernetes Secrets has been selected as the platform's unified secret storage solution. This keeps credential management simple while working seamlessly with cert-manager for automatic rotation of TLS certificates and with Kubernetes Jobs and utilities that observe Account-owned public JWT JWKS transitions and record sensitive-credential evidence. Account Service is the sole JWKS publication/pruning authority; a non-exportable signer may perform private-key operations only under Account control. Rotation automation does not read or update the `jwt-signing-keys` Secret or write the `jwt-jwks` resource. FireMUD applies a tiered governance policy on top of this storage choice: high-impact credentials (JWT keys, DB credentials, object-store credentials, operator credentials) require explicit rotation SLAs, age/missed-rotation alerts, incident runbooks, and measurable compliance evidence even when the underlying store remains Kubernetes Secrets.
+Kubernetes Secrets is the baseline store for exportable platform credentials and the controlled interim fallback for Account JWT private material. Target-state JWT custody delegates private-key operations to a non-exportable signer in every environment while Account Service remains the sole issuer and lifecycle authority. Cert-manager continues to rotate TLS certificates, and Kubernetes Jobs may observe Account-owned public JWKS transitions and record evidence. Rotation automation does not receive private material or write the public `jwt-jwks` resource. FireMUD applies tiered governance to high-impact credentials (JWT keys, DB credentials, object-store credentials, operator credentials), including explicit rotation SLAs, age/missed-rotation alerts, incident runbooks, and measurable compliance evidence.
 
 ## Implementation Notes
 
@@ -16,8 +16,8 @@ Kubernetes Secrets has been selected as the platform's unified secret storage so
 
 - The **Account Service** signs JWTs for both control-plane browser/API sessions (`/auth/login` profile) and internal service authorization (Service JWT profile).
 - The Account JWT key ring is asymmetric and per environment. Only Account Service may access its private signing keys; validators use public JWKS and must never receive a private Account JWT key.
-- Signing keys are stored as **Kubernetes Secrets** under the phased protocol in [ADR 0014](./decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md). Account Service owns private-key generation, validation, promotion, JWKS publication, and public/private pruning; a non-exportable signer may perform only the private-key operations Account delegates. Rotation automation may request Account-owned transitions through the single Account JWT rotation control/status interface, observe the Account-published JWKS and validator convergence, and record evidence; it must never read or update `jwt-signing-keys` or write `jwt-jwks`. This storage baseline remains subject to the separate secret-storage decision.
-- In player-facing environments, Account signing keys must be mounted from files and consumed via `FIREMUD_AUTH_JWT_SECRET_PATH`; inline-only JWT secret configuration and HMAC-only signing or verification are restricted to local/dev or explicitly ephemeral stacks.
+- Target-state signing keys remain in **non-exportable signer custody** under the phased protocol in [ADR 0014](./decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md). Account Service owns key-generation requests, validation, promotion, JWKS publication, and public/private pruning; the signer performs only private-key operations Account delegates. Until signer delegation is implemented, `jwt-signing-keys` is an Account-only Kubernetes Secret fallback that rotation automation may neither read nor update.
+- In player-facing environments, inline-only JWT secret configuration and HMAC-only signing or verification are forbidden. `FIREMUD_AUTH_JWT_SECRET_PATH` is the controlled Account-only file-mount fallback, not the target non-exportable signer interface.
 - Keys are **never committed** to the repository and can be rotated without redeploying other services.
 - A **JWKS endpoint** exposes public keys for internal services to validate tokens. The Account Service serves these keys at `/.well-known/jwks.json`. In player-facing environments (`hobby-self-hosted`, staging, production), `jwt-jwks` is mounted read-only at `/var/run/secrets/firemud/jwks`, and `FIREMUD_AUTH_JWKS_PATH` points to `/var/run/secrets/firemud/jwks/jwks.json`. Non-player-facing environments may use a ConfigMap or classpath resource when keys are explicitly non-sensitive test material; those fallbacks are not permitted for player-facing traffic.
 
@@ -27,28 +27,28 @@ Kubernetes Secrets has been selected as the platform's unified secret storage so
 - Account Service remains the sole JWKS publication and pruning authority. Dedicated Kubernetes Jobs request Account-owned transitions through the single Account JWT rotation control/status interface, observe Account publication and validator convergence, and record evidence; the rotation Job/CronJob must never read or update `jwt-signing-keys` or write `jwt-jwks`. See [JWT Key & JWKS Rotation Workflow](#jwt-key--jwks-rotation-workflow) and [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for how Account and validators consume these resources.
 - All services support **hot reload** of mounted TLS materials using the `TlsCertificateWatcher` and `GrpcServerTlsReloader` utilities from the `firemud-common` library. Account Service is the only application workload that consumes Account JWT signing material; it may use `JwtSecretWatcher` to detect a new bundle, but it promotes that signer only through the validated phased protocol.
 - The environment variables `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, and `FIREMUD_GRPC_CA_CERT_PATH` control the TLS file locations that the TLS watchers monitor. Services materialize those files through Spring Boot SSL bundles under `spring.ssl.bundle.pem.*` and bind gRPC server TLS via `spring.grpc.server.ssl.bundle` and `spring.grpc.server.ssl.client-auth`. The Account Service additionally uses `FIREMUD_AUTH_JWT_SECRET_PATH` for its mounted signing-key file and `FIREMUD_AUTH_JWKS_PATH` for the mounted `jwt-jwks/jwks.json` file.
-- During rotation, Account Service may reload a validated signing generation when its files change. Filesystem watching is an implementation option, not the rotation contract; malformed or mismatched material must leave the old signer active and fail readiness.
-- The JWKS endpoint serves a key file that is mounted into the Account Service pod (from a `jwt-jwks` Secret in player-facing environments). Rotation automation requests Account-owned publication or pruning through the single Account JWT rotation control/status interface, proves validator visibility, and observes the Account-published result; Account or the non-exportable signer validates and promotes the matching private signer and remains the only authority that mutates the public JWKS. Automation records evidence without reading or updating `jwt-signing-keys` or writing `jwt-jwks`.
+- During the interim fallback, Account Service may reload a validated signing generation when its files change. Filesystem watching is an implementation option, not the rotation contract; malformed or mismatched material must leave the old signer active and fail readiness.
+- The JWKS endpoint serves Account-published public material. Rotation automation requests Account-owned publication or pruning through the single Account JWT rotation control/status interface, proves validator visibility, and observes the result. Account validates signer/public-key correspondence, promotes the signer, and remains the only authority that mutates public JWKS; the non-exportable signer performs only the delegated signing/private-key operation.
 
 ### JWT Key & JWKS Rotation Workflow
 
 JWT rotation is coordinated inside the Kubernetes cluster using one Account-owned JWT rotation control/status interface and dedicated Jobs that invoke it, observe publication/convergence, and record evidence. Account Service owns private-key generation, validation, promotion, JWKS publication, and private/public pruning; a non-exportable signer may perform only the private-key operations Account delegates. [ADR 0014](./decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md) defines the accepted rotation and readiness boundary. The goals are:
 
-- Keep signing keys in Kubernetes Secrets, never in the repository.
+- Keep target-state signing keys non-exportable and never in the repository; restrict any interim Kubernetes Secret fallback to Account Service.
 - Allow planned rotation without invalidating tokens or interrupting callers.
 - Remove compromised or restored trust material immediately during a hard cutover.
 - Make signer promotion, validator convergence, pruning, and retained evidence explicit.
 
-Data model:
+Controlled interim fallback data model:
 
-- A `jwt-signing-keys` Secret (per environment) stores an Account-only versioned signing bundle:
+- A `jwt-signing-keys` Secret (per environment) stores an Account-only versioned signing bundle only until non-exportable signer delegation is implemented:
   - the private key for the active signing generation and its stable `kid`;
   - a pending key during prepublication, or a retired key retained only as an explicit rollback slot during normal overlap;
   - required generation, phase, timestamps, and key identifiers.
 - A `jwt-jwks` resource stores:
   - `jwks.json` – the public keys for every signing generation whose tokens may still be valid, plus the common rotation generation and active/pending identifiers.
 
-The Account Service mounts both resources:
+Under the interim fallback, Account Service mounts both resources:
 
 - `jwt-signing-keys` is mounted only into Account Service as a file referenced by `FIREMUD_AUTH_JWT_SECRET_PATH`. If `JwtSecretWatcher` is used, Account validates the complete bundle and matching published JWK before atomically replacing its signer.
 - `jwt-jwks` is mounted as `jwks.json`; the Account Service serves `/.well-known/jwks.json` directly from this file. Other services continue to validate JWTs by calling the JWKS endpoint.
@@ -57,10 +57,10 @@ The Account Service mounts both resources:
 
 Rotation is coordinated by a Kubernetes `CronJob` template (for example `jwt-rotation`) and a dedicated service account (for example `sa-jwt-rotation`) with narrow authority to request Account-owned rotation transitions and status, run validator-convergence probes, and write the dedicated `jwt-rotation-status` evidence resource. It has no write access to `jwt-jwks`, no read or update access to `jwt-signing-keys`, and no `patch` authority on the Account Service Deployment; rollout/restart remains under Account or normal deployment control. The single Account JWT rotation control/status interface carries the requested transition, current Account-owned phase/generation/publication status, and convergence-observation correlation; `jwt-rotation-status` carries the automation's immutable evidence record rather than a second rotation state machine. A planned rotation is an ordered state machine rather than two resource updates treated as atomic:
 
-1. Account Service or a non-exportable signer generates a new asymmetric keypair and unique `kid` without changing the active signer. The private key never enters rotation automation.
+1. Account Service requests generation of a new asymmetric keypair and unique `kid`; the delegated non-exportable signer performs the private-key operation, or Account performs it inside the controlled Secret fallback, without changing the active signer. The private key never enters rotation automation.
 2. Rotation automation asks Account to publish the resulting public JWK alongside every still-valid old public key, carrying a common generation and pending-key phase across rotation resources.
 3. Wait at least the configured validator JWKS maximum cache age and actively prove that every required validator can resolve the pending `kid`.
-4. Account Service or a non-exportable signer validates the private key, `kid`, and matching published JWK, then promotes the new Account signer. Signer promotion is the commit point; a malformed bundle or mismatch leaves the old signer active and fails readiness.
+4. Account Service validates correspondence among the delegated signer (or interim private bundle), `kid`, and matching published JWK, then promotes the new Account signer. Signer promotion is the commit point; a malformed bundle or mismatch leaves the old signer active and fails readiness.
 5. Retain the old public JWK until the final token actually signed with it has expired plus allowed validation clock skew. An old private key may be retained only in the Account-owned signing state for explicit rollback during this window.
 6. Account-owned rotation prunes the retired public key; automation proves active-key acceptance and retired/expired-key rejection, writes the dedicated status/evidence resource, and never reads or updates `jwt-signing-keys`.
 
@@ -102,7 +102,7 @@ Post-restore certificate policy:
 When a JWT signing key is suspected to be compromised, operators follow a more aggressive rotation and cleanup flow than the normal `jwt-rotation` run:
 
 - Quarantine new JWT issuance and JWT-protected admission/control-plane traffic before changing trust material.
-- Immediately run compromise-mode key rotation through Account Service or a non-exportable signer to generate and promote a new private signing generation. Rotation automation must not read or update `jwt-signing-keys`.
+- Immediately have Account Service initiate compromise-mode rotation and promotion; the non-exportable signer performs only delegated private-key operations, or Account uses the controlled Secret fallback. Rotation automation must not receive private material or read/update `jwt-signing-keys`.
 - Through the single Account JWT rotation control/status interface, request Account to publish **only uncompromised public keys**. Do not retain a compromised key in any overlap or rollback slot during compromise response; automation must observe the Account-published result rather than writing `jwt-jwks`.
 - Treat compromise of the environment-wide Account signing key as global for that issuer. Advance the issuer-wide revocation watermark and perform required session/allowlist invalidation so reauthentication is mandatory; tenant-selective cleanup is not sufficient containment.
 - Restart or force reload JWT validators where needed, then verify validator cache convergence by checking that no service is accepting tokens signed by the compromised `kid`.

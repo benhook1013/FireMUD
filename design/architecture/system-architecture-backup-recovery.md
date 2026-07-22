@@ -18,13 +18,14 @@ The main body of this document describes the target-state backup workflow. Curre
 - The scheduled Kubernetes CronJob performs an online `pg_dump`, but it does not yet record complete environment/schema/service/tool lineage or prove that the artifact can pass the environment-wide cold-start recovery workflow.
 - `PauseTicksForScope` / `ResumeTicksForScope` and `GetRuntimeOwnershipStatus` remain incomplete maintenance/reset controls. Routine online backups do not depend on tick pause.
 - `verify-backups.sh` currently proves only Velero backup existence and optional pg-dump object-store reachability; it does not prove immutable lineage, artifact readability, restore-tool compatibility, or readiness.
-- Player-facing restore-point recovery remains unsupported because enforced restore quarantine, empty-Redis proof, environment-wide durable convergence, session/epoch invalidation, post-restore hardening automation, and complete recovery-record validation are not implemented end to end.
+- Player-facing restore-point recovery remains unsupported because enforced restore quarantine, empty-Redis proof, environment-wide durable convergence, session/epoch invalidation, post-restore hardening automation, and complete recovery-controller/projection validation are not implemented end to end.
 - Until that convergence is complete, production first-live, reopen after PostgreSQL rewind, and `roll-forward-only` production promotion are non-compliant.
 
 Canonical current-state note:
 
 - Player-facing database restore is environment-wide because the backup rewinds the shared PostgreSQL database for every tenant and service schema.
 - The initially supported recovery mode is `cold_start_restore` with empty Coordination Redis, full session invalidation, and environment-wide epoch/fence reset.
+- Player-facing `scoped_reset_restore` with surviving Coordination Redis is deferred and quarantined; it is not a current restore or readiness path.
 - Alias-scoped `game_instance_id` pause/resume remains a temporary maintenance bridge and is not backup or restore-readiness evidence.
 
 ## Documentation Map
@@ -128,20 +129,19 @@ This is distinct from:
 
 ## Restore Mode Selection
 
-Every restore that rewinds PostgreSQL must select one explicit Coordination Redis recovery mode before the environment may reopen:
+Every restore that rewinds PostgreSQL must use one explicit environment-wide `cold_start_restore` contract before the environment may reopen:
 
-- `cold_start_restore`
-  - use when Coordination Redis is known to be empty for the restored environment
-  - requires proof of empty coordination state and the same post-restore hardening, external credential validation, and smoke-verification evidence required for player-facing reopen
-- `scoped_reset_restore`
-  - use when Coordination Redis state may survive while PostgreSQL has been rewound
-  - requires proof of the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) and reset-sensitive session/auth handling
+- restore PostgreSQL into an enforced quarantine boundary and replace or clear surviving Coordination Redis so the restored database is not merged with newer coordination state;
+- invalidate gameplay and Account sessions, reset every gameplay region epoch and fence, and rebuild Coordination Redis only from restored durable authority plus post-restore activity after convergence; and
+- link the backup, restore, recovery, hardening, participant, confidentiality, and smoke evidence to one durable environment-wide recovery-controller state before controlled reopen.
+
+`scoped_reset_restore` with surviving Coordination Redis is explicitly deferred and quarantined. It may be used only for isolated non-player-facing experiments or maintenance investigation under a future separate decision and proof package. Such experiments still follow the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence), but their pause, epoch, scope, or reset evidence must not satisfy backup readiness, traffic-open, promotion, or player-facing restore proof.
 
 Ambiguous restore behavior is not allowed:
 
-- operators must not simply restore PostgreSQL and restart everything without explicitly classifying surviving coordination/session state
-- any player-facing restore that cannot prove one of the two modes above is non-compliant and must remain quarantined
-- player-facing prod-like restores must not use pause/resume scope as recovery proof; environment-wide cold-start recovery requires its own quarantine, convergence, and controlled-reopen evidence
+- operators must not simply restore PostgreSQL and restart everything without quarantine and the environment-wide recovery-controller gate;
+- any player-facing restore that cannot prove the `cold_start_restore` contract remains quarantined; and
+- player-facing prod-like restores must not use tenant/region pause or reset evidence as recovery proof. Environment-wide cold-start recovery requires its own quarantine, convergence, confidentiality, and controlled-reopen evidence.
 
 ## Kubernetes Production
 
@@ -160,10 +160,10 @@ Manual bootstrap example sequence:
 2. Copy or download the desired dump.
 3. Restore it into the target PostgreSQL pod with `psql`.
 4. Restore manifests or Velero resources with normal application workloads held at zero replicas or under an enforced restore-safe startup gate; only infrastructure and maintenance Jobs required for recovery may run.
-5. Choose and record exactly one restore mode: `cold_start_restore` or `scoped_reset_restore`.
-6. Complete the selected coordination recovery gate before any normal Game Session or automation worker can create fresh coordination state.
-7. Run post-restore hardening, external credential validation, secret-compliance evidence refresh, required sanitization checks, and smoke verification.
-8. Start normal workloads and reopen traffic only after the recovery record and refreshed secret-compliance evidence are complete.
+5. Record `cold_start_restore` and establish the durable environment-wide recovery-controller state before any normal Game Session or automation worker can create fresh coordination state.
+6. Complete the cold-start coordination recovery gate, including empty-Redis and environment-wide epoch/fence proof.
+7. Run post-restore hardening, external credential validation, secret-compliance evidence refresh, required sanitization checks, and smoke verification, recording the results in the durable recovery controller.
+8. Start normal workloads under quarantine, advance the controller to `ready_to_reopen`, perform the gated transition to `finalized`, export the immutable checked-in recovery projection, and only then reopen traffic.
 
 ## Local Development
 
@@ -179,7 +179,7 @@ Manual bootstrap example sequence:
 - `verify-backups.sh` proves only that backup artifacts exist and optional object storage is reachable. Artifact readability, restore-tool compatibility, and player-facing readiness require separate evidence.
 - Restore drills prove the artifacts, restore tooling, restore-mode selection, and post-restore hardening flow actually produce a recoverable environment.
 - Every successful restore drill must record:
-  - selected restore mode
+  - `cold_start_restore` as the player-facing restore mode
   - restore-tool success
   - smoke success
   - required post-restore hardening and validation results
@@ -192,8 +192,8 @@ Backup observability, restore-proof artifacts, and traffic-open evidence are def
 
 | Environment | Steps |
 | --- | --- |
-| **Kubernetes** | Enter restore-safe quarantine -> restore PostgreSQL from `pg_dump` -> restore manifests with normal workloads stopped or restore-safe-fenced -> choose and record `cold_start_restore` or `scoped_reset_restore` -> run the coordination recovery gate before normal startup -> run post-restore hardening and smoke checks -> reopen traffic only after recovery evidence is complete |
-| **Docker Compose** | Restore DB snapshot -> choose and record `cold_start_restore` or `scoped_reset_restore` -> restart containers only after the chosen coordination recovery path is understood -> follow cold-start/reset behavior and local validation before reopening traffic |
+| **Kubernetes** | Enter restore-safe quarantine -> restore PostgreSQL from `pg_dump` -> restore manifests with normal workloads stopped or restore-safe-fenced -> record `cold_start_restore` and establish the durable environment-wide recovery-controller state -> run the empty-Redis, convergence, hardening, and smoke gates -> reopen traffic only through the finalized controller transition |
+| **Docker Compose** | Restore DB snapshot into quarantine -> record `cold_start_restore` and establish the recovery-controller state -> complete empty-Redis, convergence, hardening, and local validation -> reopen traffic only through the controlled cold-start transition |
 
 Redis always uses AOF for crash recovery during runtime but is never restored from backup images. If Coordination Redis starts empty, treat it as a reset/cold-start scenario as described in the Redis architecture docs.
 
