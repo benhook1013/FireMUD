@@ -145,7 +145,7 @@ jobs:
 
       - name: 🔍 Initialize CodeQL (Java PR Fast Path)
         if: matrix.language == 'java' && github.event_name == 'pull_request'
-        uses: github/codeql-action/init@7188fc363630916deb702c7fdcf4e481b751f97a # v4
+        uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4
         with:
           languages: ${{ matrix.language }}
           dependency-caching: true
@@ -153,7 +153,7 @@ jobs:
 
       - name: 🔍 Initialize CodeQL (Java Full Scan)
         if: matrix.language == 'java' && github.event_name != 'pull_request'
-        uses: github/codeql-action/init@7188fc363630916deb702c7fdcf4e481b751f97a # v4
+        uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4
         with:
           languages: ${{ matrix.language }}
           dependency-caching: true
@@ -161,7 +161,7 @@ jobs:
 
       - name: 🔍 Initialize CodeQL
         if: matrix.language != 'java'
-        uses: github/codeql-action/init@7188fc363630916deb702c7fdcf4e481b751f97a # v4
+        uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4
         with:
           languages: ${{ matrix.language }}
           dependency-caching: true
@@ -171,7 +171,7 @@ jobs:
         run: ./gradlew codeqlClasses
 
       - name: 📊 Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@7188fc363630916deb702c7fdcf4e481b751f97a # v4
+        uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4
 
   codeql-gate:
     name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (CodeQL Gate)' || 'CodeQL Gate' }}

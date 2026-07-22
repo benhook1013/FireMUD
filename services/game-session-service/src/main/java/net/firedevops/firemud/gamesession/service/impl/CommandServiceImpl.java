@@ -125,6 +125,22 @@ public class CommandServiceImpl implements CommandService {
         return CommandEnqueueResult.failure("NOT_FOUND", "Unable to resolve command queue target");
       }
 
+      Optional<RuntimeRegionStatus> runtimeScope;
+      try {
+        runtimeScope = resolveRuntimeScope(queueTarget.get());
+      } catch (RuntimeException ex) {
+        return CommandEnqueueResult.failure(
+            "UNAVAILABLE", "Unable to read runtime ownership for command admission");
+      }
+      if (runtimeScope.isEmpty()) {
+        return CommandEnqueueResult.failure(
+            "UNAVAILABLE", "Runtime ownership is not established for command admission");
+      }
+      if (runtimeScope.get().isPaused()) {
+        return CommandEnqueueResult.failure(
+            "UNAVAILABLE", "Runtime ownership is paused for command admission");
+      }
+
       GameplayCommand gameplayCommand =
           persistAcceptedCommand(
               sessionId,
@@ -132,7 +148,8 @@ public class CommandServiceImpl implements CommandService {
               requiresSoloTick,
               queueTarget.get(),
               sessionContext,
-              authoredAdmission);
+              authoredAdmission,
+              runtimeScope.get());
       logger.info(
           "Accepted gameplay command commandId={} tenantId={} gameInstanceId={} sessionId={} command={}",
           gameplayCommand.getCommandId(),
@@ -172,7 +189,8 @@ public class CommandServiceImpl implements CommandService {
       boolean requiresSoloTick,
       QueueTarget queueTarget,
       Optional<SessionContext> sessionContext,
-      AuthoredCommandAdmission authoredAdmission) {
+      AuthoredCommandAdmission authoredAdmission,
+      RuntimeRegionStatus runtimeScope) {
     Instant now = Instant.now();
     GameplayCommand gameplayCommand = new GameplayCommand();
     gameplayCommand.setCommandId("cmd-" + UUID.randomUUID());
@@ -211,12 +229,8 @@ public class CommandServiceImpl implements CommandService {
     gameplayCommand.setWorldSlug(routingMetadata.worldSlug());
     gameplayCommand.setRealmSlug(routingMetadata.realmSlug());
     gameplayCommand.setPointerVersion(routingMetadata.pointerVersion());
-    resolveRuntimeScope(queueTarget)
-        .ifPresent(
-            runtimeScope -> {
-              gameplayCommand.setRegionId(runtimeScope.getRegionId());
-              gameplayCommand.setRegionEpoch(runtimeScope.getRegionEpoch());
-            });
+    gameplayCommand.setRegionId(runtimeScope.getRegionId());
+    gameplayCommand.setRegionEpoch(runtimeScope.getRegionEpoch());
     return gameplayCommandRepository.save(gameplayCommand);
   }
 
@@ -404,7 +418,9 @@ public class CommandServiceImpl implements CommandService {
     return runtimeRegionStatusRepository
         .findByTenantIdAndGameInstanceId(queueTarget.tenantId(), queueTarget.queueTargetId())
         .filter(status -> status.getRegionId() != null && !status.getRegionId().isBlank())
-        .filter(status -> status.getRegionEpoch() > 0);
+        .filter(status -> status.getRegionEpoch() > 0)
+        .filter(
+            status -> status.getExecutorFence() != null && !status.getExecutorFence().isBlank());
   }
 
   private static String blankToNull(String value) {

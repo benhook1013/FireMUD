@@ -4,14 +4,14 @@ Store one record per `first-live` or `reopen` production traffic-open event as:
 
 - `<event>-<deployment-ref>.json`
 
-Preflight consumes a transient `ready_to_reopen` projection while the actual-recovery controller still holds quarantine. After the controller reaches `finalized`, the canonical writer emits the immutable environment-wide traffic-open projection below. Both forms retain the durable actual-recovery controller reference and bind it to the exact player-facing target boundary.
+In the target flow, preflight reads the durable actual-recovery controller while it holds quarantine at `ready_to_reopen`; it does not consume a transient traffic-open projection. After the controller reaches `finalized`, the exporter emits the immutable environment-wide traffic-open projection below, retaining the controller reference and exact player-facing target boundary. The current executable has no production controller read or production projection writer, so `PREFLIGHT-BACKUP-002` intentionally fails closed.
 
 Required fields:
 
 - `schemaVersion` (`traffic-open-record/v1`)
 - `environment` (`production`)
 - `eventType`
-- `trafficOpenStatus` (`ready_to_reopen` for transient pre-release authorization; `finalized` in the checked-in projection)
+- `trafficOpenStatus` (`finalized`)
 - `deploymentRef`
 - `assessedAt`
 - `assessedBy`

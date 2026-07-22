@@ -6,7 +6,7 @@ Store one full record per `roll-forward-only` production promotion, or when the 
 
 ## Implementation Status
 
-The field list below is the target-state contract. `PREFLIGHT-BACKUP-002` validates the richer backup and finalized recovery lineage before production first-live or reopen. `PREFLIGHT-BACKUP-001` remains partial: its roll-forward-only promotion check still validates the legacy `serviceDigests` projection and does not yet enforce every source/candidate, controller-lineage, confidentiality, or erasure-high-water field below. Operators must not treat that promotion-time check alone as proof of the complete target contract.
+The field list below is the target-state contract. The target `PREFLIGHT-BACKUP-002` integration validates the richer backup lineage and reads the durable recovery controller before production first-live or reopen; the current executable intentionally fails closed because that controller read is not implemented. `PREFLIGHT-BACKUP-001` remains partial: its roll-forward-only promotion check still validates the legacy `serviceDigests` projection and does not yet enforce every source/candidate, controller-lineage, confidentiality, or erasure-high-water field below. Operators must not treat that promotion-time check alone as proof of the complete target contract.
 
 Required fields:
 

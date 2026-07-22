@@ -24,6 +24,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 class TickRuntimeProgressServiceTest {
   private SimpleMeterRegistry meterRegistry;
@@ -45,6 +46,7 @@ class TickRuntimeProgressServiceTest {
     TickQueueControlService tickQueueControlService =
         new TickQueueControlService(
             mock(RedisTemplate.class),
+            mock(StringRedisTemplate.class),
             mock(GameInstanceRepository.class),
             mock(GameplayCommandRepository.class),
             runtimeRegionStatusRepository,

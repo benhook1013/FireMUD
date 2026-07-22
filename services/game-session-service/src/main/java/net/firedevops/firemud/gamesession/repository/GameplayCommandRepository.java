@@ -25,6 +25,11 @@ import org.springframework.stereotype.Repository;
 public class GameplayCommandRepository {
   private final DSLContext dsl;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "Repository results intentionally return the managed command entity")
+  public record IdempotentInsertResult(GameplayCommand command, boolean inserted) {}
+
   public GameplayCommandRepository(DSLContext dsl) {
     this.dsl = dsl;
   }
@@ -310,6 +315,82 @@ public class GameplayCommandRepository {
     return dsl.selectFrom(GAMEPLAY_COMMAND)
         .where(GAMEPLAY_COMMAND.ID.eq(id))
         .fetchOptional(this::toEntity);
+  }
+
+  public IdempotentInsertResult insertIfAbsentByIdempotencyIdentity(GameplayCommand entity) {
+    if (entity.getId() != null || !hasIdempotencyIdentity(entity)) {
+      throw new IllegalArgumentException(
+          "A new gameplay command with an idempotency identity is required");
+    }
+    GameplayCommandRecord record = dsl.newRecord(GAMEPLAY_COMMAND);
+    populate(record, entity);
+
+    Optional<GameplayCommand> inserted;
+    if (hasText(entity.getRemoteFollowupId())) {
+      inserted =
+          dsl.insertInto(GAMEPLAY_COMMAND)
+              .set(record)
+              .onConflict(
+                  GAMEPLAY_COMMAND.TENANT_ID,
+                  GAMEPLAY_COMMAND.GAME_INSTANCE_ID,
+                  GAMEPLAY_COMMAND.REGION_ID,
+                  GAMEPLAY_COMMAND.REGION_EPOCH,
+                  GAMEPLAY_COMMAND.REMOTE_FOLLOWUP_ID)
+              .where(GAMEPLAY_COMMAND.REMOTE_FOLLOWUP_ID.isNotNull())
+              .doNothing()
+              .returning()
+              .fetchOptional(this::toEntity);
+    } else {
+      inserted =
+          dsl.insertInto(GAMEPLAY_COMMAND)
+              .set(record)
+              .onConflict(
+                  GAMEPLAY_COMMAND.TENANT_ID,
+                  GAMEPLAY_COMMAND.GAME_INSTANCE_ID,
+                  GAMEPLAY_COMMAND.REGION_ID,
+                  GAMEPLAY_COMMAND.REGION_EPOCH,
+                  GAMEPLAY_COMMAND.AUTOMATION_DISPATCH_ID)
+              .doNothing()
+              .returning()
+              .fetchOptional(this::toEntity);
+    }
+
+    if (inserted.isPresent()) {
+      return new IdempotentInsertResult(inserted.orElseThrow(), true);
+    }
+
+    Optional<GameplayCommand> existing;
+    if (hasText(entity.getRemoteFollowupId())) {
+      existing =
+          findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
+              entity.getTenantId(),
+              entity.getGameInstanceId(),
+              entity.getRegionId(),
+              entity.getRegionEpoch(),
+              entity.getRemoteFollowupId());
+    } else {
+      existing =
+          findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+              entity.getTenantId(),
+              entity.getGameInstanceId(),
+              entity.getRegionId(),
+              entity.getRegionEpoch(),
+              entity.getAutomationDispatchId());
+    }
+    return new IdempotentInsertResult(
+        existing.orElseThrow(
+            () ->
+                new IllegalStateException(
+                    "Idempotency conflict did not yield a gameplay_command row")),
+        false);
+  }
+
+  private static boolean hasIdempotencyIdentity(GameplayCommand entity) {
+    return hasText(entity.getRemoteFollowupId()) || hasText(entity.getAutomationDispatchId());
+  }
+
+  private static boolean hasText(String value) {
+    return value != null && !value.isBlank();
   }
 
   private static String truncate(String value, int maxLength) {

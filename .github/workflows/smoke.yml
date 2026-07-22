@@ -169,7 +169,7 @@ jobs:
             :tcp-proxy-service:integrationTest --tests 'net.firedevops.firemud.tcpproxy.TcpProxyServiceApplicationIntegrationTest'
 
   smoke-summary:
-    name: Smoke Summary
+    name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Summary)' || 'Smoke Summary' }}
     runs-on: ubuntu-latest
     permissions:
       # Only this job publishes or updates the pull request smoke summary comment.

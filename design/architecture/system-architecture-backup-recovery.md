@@ -181,10 +181,10 @@ Manual bootstrap example sequence:
 2. Copy or download the desired dump.
 3. Restore it into the target PostgreSQL pod with `psql`.
 4. Restore manifests or Velero resources with normal application workloads held at zero replicas or under an enforced restore-safe startup gate; only infrastructure and maintenance Jobs required for recovery may run.
-5. Prove empty Coordination Redis and record environment-wide `cold_start_restore`.
-6. Establish the durable recovery-controller state, capture immutable `restoreHighWater`, complete gap-free erasure replay from `artifactErasureHighWater`, and complete offline participant convergence, epoch/fence reset, session invalidation, and coordination initialization before any normal Game Session or automation worker can create fresh coordination state.
-7. Run post-restore hardening, external credential validation, secret-compliance evidence refresh, required sanitization and confidentiality checks, and smoke verification, recording the results in the durable controller.
-8. Call `continueRecovery(operationId, expectedPhase, evidenceRef)` and retry its idempotent reconciliation until it applies and observes the quarantine release and reaches `finalized`; start or route normal player traffic only after that observation. Export the checked-in recovery and traffic-open evidence projections afterward.
+5. Prove empty Coordination Redis, record environment-wide `cold_start_restore`, and establish the durable recovery-controller state before any normal Game Session or automation worker can create fresh coordination state.
+6. Capture immutable `restoreHighWater`, complete gap-free erasure replay from `artifactErasureHighWater`, and complete offline participant convergence, epoch/fence reset, session invalidation, and coordination initialization.
+7. Run post-restore hardening, external credential validation, secret-compliance evidence refresh, required sanitization and confidentiality checks, and smoke verification. Start normal workloads only under quarantine and record the results in the durable controller.
+8. After the controller reaches `ready_to_reopen`, call `continueRecovery(operationId, expectedPhase, evidenceRef)` and retry its idempotent reconciliation until it applies and observes quarantine release and reaches `finalized`. Open player traffic only after that observation. Export checked-in recovery and traffic-open projections afterward; repository evidence records the finalized release and is never an input to the release transaction.
 
 ## Local Development
 

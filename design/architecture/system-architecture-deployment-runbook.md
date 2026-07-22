@@ -13,12 +13,12 @@ For high-level CI/CD architecture, see `design/architecture/system-architecture-
 
 ## Implementation Notes
 
-This runbook describes the required deployment flow. Current automation is executable for the existing expected-binding report reference, mounted JWT/JWKS path contract, and traffic-open backup gates, but some required gates and evidence production remain operator- or future-automation-owned:
+This runbook describes the required deployment flow. Current automation is executable for the existing expected-binding report reference, mounted JWT/JWKS path contract, the hobby traffic-open evidence gate, and the production fail-closed placeholder, but some required gates and evidence production remain operator- or future-automation-owned:
 
 - Fresh-boundary restore bootstrap and post-restore secret-compliance refresh are canonical requirements, but current restore scripts do not yet automate the full evidence chain.
 - Current backup/preflight automation does not prove environment-wide artifact lineage, enforced quarantine, empty-Redis cold start, complete recovery-participant convergence, or controlled reopen. Production first-live, post-rewind reopen, and `roll-forward-only` promotion remain blocked until that proof exists.
 - Production release digest manifests are canonical release-lineage evidence, but current overlay CI does not yet enforce their presence or schema.
-- Expected-binding validation is first-pass repository/render validation. Real first-live and reopen decisions still require current environment evidence files produced by operators or automation.
+- Expected-binding validation is first-pass repository/render validation. Real first-live and reopen decisions require current environment evidence and the durable controller authority described below; checked-in projection files cannot authorize the release transaction.
 - `PREFLIGHT-JWT-002` and `PREFLIGHT-JWT-ROTATION-001` are not yet implemented, so the current shared-HMAC and private-key distribution topology cannot satisfy player-facing JWT readiness.
 
 Operators must treat missing real-environment evidence as a blocker even when static preflight policy IDs are present. A successful static report without the required traffic-open, restore, release-manifest, and secret-compliance evidence is not enough to open player-facing traffic.

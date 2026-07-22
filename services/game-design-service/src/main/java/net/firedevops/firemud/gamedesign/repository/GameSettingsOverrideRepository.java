@@ -14,6 +14,7 @@ import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.JSONB;
 import org.jooq.Record;
+import org.jooq.SQLDialect;
 import org.jooq.Table;
 import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
@@ -23,6 +24,8 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class GameSettingsOverrideRepository {
+  private static final int RECONNECTION_SCOPE_LOCK_NAMESPACE = 0x464d5253;
+  private static final String RECONNECTION_DOMAIN = "RECONNECTION";
   private static final Table<?> TABLE_REF = DSL.table(DSL.name("game_settings_override"));
   private static final Field<Long> ID = DSL.field(DSL.name("id"), Long.class);
   private static final Field<String> TENANT_ID = DSL.field(DSL.name("tenant_id"), String.class);
@@ -51,6 +54,35 @@ public class GameSettingsOverrideRepository {
     return dsl.selectFrom(TABLE_REF)
         .where(TENANT_ID.eq(tenantId).and(GAME_INSTANCE_ID.eq(gameInstanceId)))
         .orderBy(DOMAIN.asc())
+        .fetch(this::toEntity);
+  }
+
+  public List<GameSettingsOverride> findByTenantIdAndGameInstanceIdIsNotNullAndDomain(
+      String tenantId, String domain) {
+    return dsl.selectFrom(TABLE_REF)
+        .where(TENANT_ID.eq(tenantId).and(GAME_INSTANCE_ID.isNotNull()).and(DOMAIN.eq(domain)))
+        .orderBy(GAME_INSTANCE_ID.asc())
+        .fetch(this::toEntity);
+  }
+
+  /**
+   * Acquires the tenant's reconnection mutation lock and locks its matching rows until commit.
+   *
+   * <p>The advisory lock is required because a tenant or child row may not exist yet; the row locks
+   * then protect all currently persisted parent and child overrides while the caller validates and
+   * mutates the locked scope in the same transaction.
+   */
+  public List<GameSettingsOverride> findReconnectionRowsByTenantIdForUpdate(String tenantId) {
+    if (dsl.dialect().family() == SQLDialect.POSTGRES) {
+      dsl.execute(
+          "select pg_advisory_xact_lock(?, ?)",
+          RECONNECTION_SCOPE_LOCK_NAMESPACE,
+          tenantId.hashCode());
+    }
+    return dsl.selectFrom(TABLE_REF)
+        .where(TENANT_ID.eq(tenantId).and(DOMAIN.eq(RECONNECTION_DOMAIN)))
+        .orderBy(GAME_INSTANCE_ID.asc().nullsFirst(), ID.asc())
+        .forUpdate()
         .fetch(this::toEntity);
   }
 

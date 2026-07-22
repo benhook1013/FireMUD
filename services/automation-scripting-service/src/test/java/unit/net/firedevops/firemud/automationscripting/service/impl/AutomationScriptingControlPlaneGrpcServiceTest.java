@@ -1587,7 +1587,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
 
   @Test
   void getsPluginStatusFromRuntimeRegistry() {
-    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-session-service", "game-session-1");
     PluginRuntimeStateService pluginRuntimeStateService =
         Mockito.mock(PluginRuntimeStateService.class);
     Mockito.when(pluginRuntimeStateService.getStatus("1", "game-1", "plugin-1"))

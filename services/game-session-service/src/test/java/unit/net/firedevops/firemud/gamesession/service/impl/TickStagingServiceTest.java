@@ -32,6 +32,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 class TickStagingServiceTest {
   private RedisTemplate<String, Object> redisTemplate;
@@ -66,11 +67,15 @@ class TickStagingServiceTest {
     tickEffectRepository = mock(TickEffectRepository.class);
     when(tickEffectRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
     remoteFollowupDrainService = mock(RemoteFollowupDrainService.class);
+    GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService =
+        mock(GameplayCommandExecutionFenceService.class);
+    when(gameplayCommandExecutionFenceService.validate(any(), any())).thenReturn(Optional.empty());
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
     TickQueueControlService tickQueueControlService =
         new TickQueueControlService(
             redisTemplate,
+            mock(StringRedisTemplate.class),
             mock(GameInstanceRepository.class),
             gameplayCommandRepository,
             runtimeRegionStatusRepository,
@@ -94,7 +99,8 @@ class TickStagingServiceTest {
             mock(DurableGameplayCommandExecutionService.class),
             mock(DurableRemoteFollowupExecutionService.class),
             remoteFollowupDrainService,
-            tickQueueControlService);
+            tickQueueControlService,
+            gameplayCommandExecutionFenceService);
     service =
         new TickStagingService(
             redisTemplate,

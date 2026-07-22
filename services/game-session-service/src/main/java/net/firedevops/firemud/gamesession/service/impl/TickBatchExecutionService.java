@@ -35,6 +35,7 @@ final class TickBatchExecutionService {
   private final DurableRemoteFollowupExecutionService durableRemoteFollowupExecutionService;
   private final RemoteFollowupDrainService remoteFollowupDrainService;
   private final TickQueueControlService tickQueueControlService;
+  private final GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService;
 
   TickBatchExecutionService(
       MeterRegistry meterRegistry,
@@ -45,7 +46,8 @@ final class TickBatchExecutionService {
       DurableGameplayCommandExecutionService durableGameplayCommandExecutionService,
       DurableRemoteFollowupExecutionService durableRemoteFollowupExecutionService,
       RemoteFollowupDrainService remoteFollowupDrainService,
-      TickQueueControlService tickQueueControlService) {
+      TickQueueControlService tickQueueControlService,
+      GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService) {
     this.meterRegistry = meterRegistry;
     this.redisTemplate = redisTemplate;
     this.gameplayCommandRepository = gameplayCommandRepository;
@@ -55,6 +57,7 @@ final class TickBatchExecutionService {
     this.durableRemoteFollowupExecutionService = durableRemoteFollowupExecutionService;
     this.remoteFollowupDrainService = remoteFollowupDrainService;
     this.tickQueueControlService = tickQueueControlService;
+    this.gameplayCommandExecutionFenceService = gameplayCommandExecutionFenceService;
   }
 
   void restorePendingProjection(
@@ -164,17 +167,22 @@ final class TickBatchExecutionService {
       String failureCode,
       String failureMessage) {
     Instant now = Instant.now();
+    boolean wasDrained = "DRAINED".equals(batch.getStatus());
     batch.setStatus("ABANDONED");
     batch.setCompletedAt(now);
     batch.setFailureCode(failureCode);
     batch.setFailureMessage(truncate(failureMessage, 500));
     tickBatchRepository.save(batch);
-    updateEffectStatuses(batch.getTickBatchId(), "ABANDONED", now, failureCode, failureMessage);
-    updateGameplayCommands(
-        entries, "RETRY_QUEUED", "PENDING", now, failureCode, failureMessage, false);
+    if (wasDrained) {
+      requeueRemainingDrainedEffects(batch, now, failureCode, failureMessage);
+    } else {
+      updateEffectStatuses(batch.getTickBatchId(), "ABANDONED", now, failureCode, failureMessage);
+      updateGameplayCommands(
+          entries, "RETRY_QUEUED", "PENDING", now, failureCode, failureMessage, false);
+      recordRequeuedActions(entries);
+    }
     remoteFollowupDrainService.releaseClaimedFollowups(
         batch.getTickBatchId(), failureCode, failureMessage);
-    recordRequeuedActions(entries);
     logger.warn(
         "Abandoned durable tick batch tickBatchId={} tenantId={} gameInstanceId={} code={} message={}",
         batch.getTickBatchId(),
@@ -208,6 +216,7 @@ final class TickBatchExecutionService {
     List<TickBatch> drainedBatches =
         tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
             tenantId, gameInstanceId, "DRAINED");
+    batchLoop:
     for (TickBatch batch : drainedBatches) {
       try {
         requireCurrentOwnership(batch, false);
@@ -224,7 +233,13 @@ final class TickBatchExecutionService {
         continue;
       }
       for (TickEffect effect : drainedEffects) {
-        executeDurableEffect(effect);
+        try {
+          requireCurrentOwnership(batch, false);
+          executeDurableEffect(batch, effect);
+        } catch (TickQueueControlService.StaleOwnershipException ex) {
+          abandonStaleDrainedBatch(batch, ex.getMessage());
+          continue batchLoop;
+        }
       }
       if (tickEffectRepository
           .findByTickBatchIdAndStatusOrderByIdAsc(batch.getTickBatchId(), "DRAINED")
@@ -256,36 +271,11 @@ final class TickBatchExecutionService {
   }
 
   private void abandonStaleDrainedBatch(TickBatch batch, String failureMessage) {
-    List<TickEffect> drainedEffects =
-        tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc(
-            batch.getTickBatchId(), "DRAINED");
-    List<GameplayCommand> commands = loadCommandsForEffects(drainedEffects);
-    requeueCommands(batch.getTenantId(), batch.getGameInstanceId(), commands);
     Instant now = Instant.now();
-    for (TickEffect effect : drainedEffects) {
-      effect.setStatus("ABANDONED");
-      effect.setCompletedAt(now);
-      effect.setFailureCode("STALE_EXECUTOR_FENCE");
-      effect.setFailureMessage(truncate(failureMessage, 500));
-    }
-    if (!drainedEffects.isEmpty()) {
-      tickEffectRepository.saveAll(drainedEffects);
-    }
-    for (GameplayCommand command : commands) {
-      command.setExecutionOutcome("RETRY_QUEUED");
-      stampQueueSource(command, "RETRY_QUEUED", null, 0);
-      command.setGameplayResult("PENDING");
-      command.setCompletedAt(null);
-      command.setLastAttemptAt(now);
-      command.setFailureCode("STALE_EXECUTOR_FENCE");
-      command.setFailureMessage(truncate(failureMessage, 500));
-    }
-    if (!commands.isEmpty()) {
-      gameplayCommandRepository.saveAll(commands);
-    }
+    List<GameplayCommand> commands =
+        requeueRemainingDrainedEffects(batch, now, "STALE_EXECUTOR_FENCE", failureMessage);
     remoteFollowupDrainService.releaseClaimedFollowups(
         batch.getTickBatchId(), "STALE_EXECUTOR_FENCE", failureMessage);
-    recordRequeuedCommands(commands);
     batch.setStatus("ABANDONED");
     batch.setCompletedAt(now);
     batch.setFailureCode("STALE_EXECUTOR_FENCE");
@@ -297,6 +287,38 @@ final class TickBatchExecutionService {
         batch.getTenantId(),
         batch.getGameInstanceId(),
         commands.size());
+  }
+
+  private List<GameplayCommand> requeueRemainingDrainedEffects(
+      TickBatch batch, Instant now, String failureCode, String failureMessage) {
+    List<TickEffect> drainedEffects =
+        tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc(
+            batch.getTickBatchId(), "DRAINED");
+    List<GameplayCommand> commands = loadCommandsForEffects(drainedEffects);
+    requeueCommands(batch.getTenantId(), batch.getGameInstanceId(), commands);
+    for (TickEffect effect : drainedEffects) {
+      effect.setStatus("ABANDONED");
+      effect.setCompletedAt(now);
+      effect.setFailureCode(failureCode);
+      effect.setFailureMessage(truncate(failureMessage, 500));
+    }
+    if (!drainedEffects.isEmpty()) {
+      tickEffectRepository.saveAll(drainedEffects);
+    }
+    for (GameplayCommand command : commands) {
+      command.setExecutionOutcome("RETRY_QUEUED");
+      stampQueueSource(command, "RETRY_QUEUED", null, 0);
+      command.setGameplayResult("PENDING");
+      command.setCompletedAt(null);
+      command.setLastAttemptAt(now);
+      command.setFailureCode(failureCode);
+      command.setFailureMessage(truncate(failureMessage, 500));
+    }
+    if (!commands.isEmpty()) {
+      gameplayCommandRepository.saveAll(commands);
+    }
+    recordRequeuedCommands(commands);
+    return commands;
   }
 
   private void requeueCommands(Long tenantId, Long gameInstanceId, List<GameplayCommand> commands) {
@@ -361,7 +383,7 @@ final class TickBatchExecutionService {
     return sourceType.isBlank() ? "unknown" : sourceType.toLowerCase(java.util.Locale.ROOT);
   }
 
-  private void executeDurableEffect(TickEffect effect) {
+  private void executeDurableEffect(TickBatch batch, TickEffect effect) {
     if ("REMOTE_FOLLOWUP".equals(effect.getEffectType())) {
       DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
           durableRemoteFollowupExecutionService.execute(effect);
@@ -394,6 +416,14 @@ final class TickBatchExecutionService {
           "NOT_APPLIED",
           "COMMAND_NOT_FOUND",
           "Durable effect execution could not load the linked gameplay command");
+      return;
+    }
+    Optional<GameplayCommandExecutionFenceService.FenceFailure> fenceFailure =
+        gameplayCommandExecutionFenceService.validate(batch, command);
+    if (fenceFailure.isPresent()) {
+      GameplayCommandExecutionFenceService.FenceFailure failure = fenceFailure.orElseThrow();
+      markEffectTerminal(
+          effect, "REJECTED", "COMPLETED", "NOT_APPLIED", failure.code(), failure.message());
       return;
     }
     durableGameplayCommandExecutionService

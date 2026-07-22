@@ -12,9 +12,8 @@ RENDERED_MANIFEST="$TMP_DIR/hobby-rendered.yaml"
 REPORT_PATH="$TMP_DIR/preflight-report.json"
 TRAFFIC_EVIDENCE="$TMP_DIR/traffic-open.json"
 PRODUCTION_REPORT="$TMP_DIR/preflight-production.json"
-PRODUCTION_TRAFFIC_EVIDENCE="$TMP_DIR/production-traffic-open.json"
-PRODUCTION_BASELINE_RECOVERY="$TMP_DIR/production-baseline-recovery.json"
-PRODUCTION_BACKUP_READINESS="$TMP_DIR/production-backup-readiness.json"
+LEGACY_PRODUCTION_TRAFFIC_EVIDENCE="$TMP_DIR/production-traffic-open.json"
+PRODUCTION_WAIVER="$TMP_DIR/production-traffic-open-waiver.json"
 
 python3 - <<'PY' "$ROOT_DIR"
 import pathlib
@@ -347,150 +346,46 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
   python3 "$SCRIPT" production >/tmp/firemud-preflight-contract-production-traffic.out
 
-python3 - <<'PY' "$PRODUCTION_REPORT" "$PRODUCTION_TRAFFIC_EVIDENCE" "$PRODUCTION_BASELINE_RECOVERY" "$PRODUCTION_BACKUP_READINESS"
-import copy
-import datetime as dt
-import json
-import pathlib
-import sys
+cat >"$LEGACY_PRODUCTION_TRAFFIC_EVIDENCE" <<'JSON'
+{
+  "schemaVersion": "traffic-open-record/v1",
+  "environment": "production",
+  "eventType": "reopen",
+  "deploymentRef": "contract-production",
+  "assessedAt": "2026-07-22T00:00:00Z",
+  "assessedBy": "preflight-contract",
+  "preflightReportPath": "design/operations/deployments/production/preflight/contract-production.json",
+  "backupLastSuccessAt": "2026-07-22T00:00:00Z",
+  "backupVerifyLastSuccessAt": "2026-07-22T00:00:00Z",
+  "restoreDrillLastSuccessAt": "2026-07-22T00:00:00Z",
+  "coordinatedBackupScope": {
+    "type": "tenant_region",
+    "tenantId": "tenant-1",
+    "regionId": "region-1"
+  },
+  "evidenceRefs": ["caller-supplied-legacy-evidence"]
+}
+JSON
 
-preflight_path, traffic_path, baseline_path, readiness_path = map(pathlib.Path, sys.argv[1:])
-now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
-stamp = lambda minutes: (now - dt.timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")
-common_recovery = {
-    "schemaVersion": "recovery-record/v1",
-    "environment": "production",
-    "sourceEnvironmentBinding": "production-source",
-    "targetBoundary": "production-equivalent-boundary",
-    "restoreSource": {"type": "environment-wide-postgresql", "status": "pass"},
-    "restoreSafeMode": {"status": "pass"},
-    "coordinationRecoveryMode": "cold_start_restore",
-    "backupArtifactRef": "s3://firemud-production/backups/contract",
-    "backupArtifactLineage": {"coverage": "environment-wide-postgresql"},
-    "backupToolDigest": "sha256:backup-tool",
-    "recoveryToolDigest": "sha256:recovery-tool",
-    "recoveryContractFingerprint": "sha256:recovery-contract",
-    "recoveryParticipantInventoryRef": "contract-participants",
-    "validatorInventoryRef": "contract-validators",
-    "externalEffectInventoryRef": "contract-external-effects",
-    "quarantineStartedAt": stamp(60),
-    "restoredAt": stamp(50),
-    "restoredBy": "preflight-contract",
-    "preflightReportPath": str(preflight_path),
-    "expectedBindingsRef": "design/operations/environments/production/expected-bindings.yaml",
-    "coordinationRecoveryEvidence": {"status": "pass"},
-    "durableParticipantConvergence": {"status": "pass"},
-    "externalEffectReconciliation": {"status": "pass"},
-    "sessionRecovery": {
-        "gameSessionHandling": "invalidated",
-        "authSessionHandling": "invalidated",
-    },
-    "jwtHardening": {"status": "pass"},
-    "databaseCredentialRotation": {"status": "pass"},
-    "certificateReissuance": {"status": "pass"},
-    "externalCredentialValidation": {
-        "status": "pass",
-        "records": {
-            credential_class: {
-                "status": "pass",
-                "evidenceRef": f"contract-{credential_class}",
-                "isolationAssertion": "pass",
-                "validationMethod": "contract-test",
-                "validatedAt": stamp(40),
-                "validatedBy": "preflight-contract",
-                "observedValue": "present",
-            }
-            for credential_class in (
-                "backup-storage",
-                "asset-storage",
-                "outbound-comms",
-                "operator-credentials",
-            )
-        },
-    },
-    "secretComplianceRefresh": {"status": "pass"},
-    "smokeStatus": "pass",
-    "smokeEvidence": {"evidenceRef": "contract-smoke"},
-}
-baseline = {
-    **copy.deepcopy(common_recovery),
-    "recoveryRef": "contract-baseline-recovery",
-    "recoveryStatus": "finalized",
-    "recoveryPurpose": "production-equivalent-drill",
-    "trafficExposure": "isolated-drill",
-    "readyToReopenAt": stamp(30),
-    "quarantineReleasedAt": stamp(20),
-    "finalizedAt": stamp(10),
-    "reopenApprovedBy": "preflight-contract",
-}
-actual = {
-    **copy.deepcopy(common_recovery),
-    "recoveryRef": "contract-actual-recovery",
-    "targetBoundary": "production-player-boundary",
-    "recoveryStatus": "ready_to_reopen",
-    "recoveryPurpose": "actual-recovery",
-    "trafficExposure": "player-facing-reopen",
-    "readyToReopenAt": stamp(5),
-    "reopenApprovedBy": "preflight-contract",
-}
-actual_path = baseline_path.with_name("production-actual-recovery.json")
-baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
-actual_path.write_text(json.dumps(actual), encoding="utf-8")
-readiness_path.write_text(
-    json.dumps(
-        {
-            "environment": "production",
-            "deploymentRef": "contract-production",
-            "backupCoverage": "environment-wide-postgresql",
-            "backupArtifactRef": common_recovery["backupArtifactRef"],
-            "backupLastSuccessAt": stamp(1),
-            "backupVerifyLastSuccessAt": stamp(2),
-            "restoreDrillLastSuccessAt": stamp(10),
-            "restoreRecoveryRecordRef": str(baseline_path),
-        }
-    ),
-    encoding="utf-8",
-)
-traffic_path.write_text(
-    json.dumps(
-        {
-            "schemaVersion": "traffic-open-record/v1",
-            "environment": "production",
-            "eventType": "reopen",
-            "deploymentRef": "contract-production",
-            "trafficOpenStatus": "ready_to_reopen",
-            "assessedAt": stamp(1),
-            "assessedBy": "preflight-contract",
-            "preflightReportPath": str(preflight_path),
-            "backupStorageBinding": "secret://firemud/production-backup-object-store",
-            "backupCoverage": "environment-wide-postgresql",
-            "backupArtifactRef": common_recovery["backupArtifactRef"],
-            "backupLastSuccessAt": stamp(1),
-            "backupVerifyLastSuccessAt": stamp(2),
-            "restoreDrillLastSuccessAt": stamp(10),
-            "backupToolDigest": common_recovery["backupToolDigest"],
-            "recoveryToolDigest": common_recovery["recoveryToolDigest"],
-            "recoveryContractFingerprint": common_recovery["recoveryContractFingerprint"],
-            "backupReadinessRef": str(readiness_path),
-            "baselineRecoveryRecordRef": str(baseline_path),
-            "actualRecoveryRecordRef": str(actual_path),
-            "sourceEnvironmentBinding": common_recovery["sourceEnvironmentBinding"],
-            "drillTargetBoundary": common_recovery["targetBoundary"],
-            "playerFacingTargetBoundary": actual["targetBoundary"],
-            "trafficExposure": "isolated-drill",
-            "evidenceRefs": ["contract-test"],
-        }
-    ),
-    encoding="utf-8",
-)
-PY
+if python3 "$WRITER" production contract-production reopen \
+  --assessed-by preflight-contract \
+  --preflight-report "$PRODUCTION_REPORT" \
+  --evidence-ref contract-test \
+  --output "$LEGACY_PRODUCTION_TRAFFIC_EVIDENCE" >/tmp/firemud-preflight-write-traffic-production.out 2>&1; then
+  echo "legacy production traffic-open writer unexpectedly succeeded" >&2
+  exit 1
+fi
+grep -Fq "invalid choice: 'production'" /tmp/firemud-preflight-write-traffic-production.out
 
-FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF="contract-production" \
   FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
   FIREMUD_TRAFFIC_OPEN_EVENT=reopen \
-  FIREMUD_TRAFFIC_OPEN_EVIDENCE="$PRODUCTION_TRAFFIC_EVIDENCE" \
-  python3 "$SCRIPT" production >/tmp/firemud-preflight-contract-production-traffic-gated.out
+  FIREMUD_TRAFFIC_OPEN_EVIDENCE="$LEGACY_PRODUCTION_TRAFFIC_EVIDENCE" \
+  python3 "$SCRIPT" production >/tmp/firemud-preflight-contract-production-traffic-gated.out 2>&1; then
+  echo "legacy production traffic-open evidence unexpectedly passed" >&2
+  exit 1
+fi
 
 python3 - <<'PY' "$PRODUCTION_REPORT"
 import json
@@ -503,157 +398,43 @@ backup_002 = [
     for check in report["checkResults"]
     if check["policyId"] == "PREFLIGHT-BACKUP-002"
 ]
-if len(backup_002) != 1 or backup_002[0]["status"] != "pass":
-    raise SystemExit(f"PREFLIGHT-BACKUP-002 did not pass: {backup_002}")
+if len(backup_002) != 1 or backup_002[0]["status"] != "fail":
+    raise SystemExit(f"PREFLIGHT-BACKUP-002 did not fail closed: {backup_002}")
+if "durable environment-wide recovery-controller authority is not implemented" not in backup_002[0]["message"]:
+    raise SystemExit(f"PREFLIGHT-BACKUP-002 did not report controller unavailability: {backup_002}")
 PY
 
-python3 - <<'PY' "$ROOT_DIR" "$PRODUCTION_TRAFFIC_EVIDENCE"
-import copy
-import datetime as dt
-import importlib.util
+cat >"$PRODUCTION_WAIVER" <<'JSON'
+{
+  "approver": "preflight-contract",
+  "ticket": "contract-ticket",
+  "waivedPolicyIds": ["PREFLIGHT-BACKUP-002"]
+}
+JSON
+
+if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+  FIREMUD_DEPLOYMENT_REF="contract-production" \
+  FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
+  FIREMUD_PREFLIGHT_WAIVER="$PRODUCTION_WAIVER" \
+  FIREMUD_TRAFFIC_OPEN_EVENT=reopen \
+  python3 "$SCRIPT" production >/tmp/firemud-preflight-contract-production-traffic-waiver.out 2>&1; then
+  echo "production traffic-open gate unexpectedly accepted a waiver" >&2
+  exit 1
+fi
+
+python3 - <<'PY' "$PRODUCTION_REPORT"
 import json
 import pathlib
-import subprocess
 import sys
 
-root = pathlib.Path(sys.argv[1])
-traffic_path = pathlib.Path(sys.argv[2])
-spec = importlib.util.spec_from_file_location("preflight_production_contract", root / "dev-tools/deploy/preflight.py")
-module = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
-sys.modules[spec.name] = module
-spec.loader.exec_module(module)
-traffic = json.loads(traffic_path.read_text(encoding="utf-8"))
-status, message = module.production_traffic_check(
-    traffic_path,
-    "reopen",
-    "contract-production",
-    root,
+report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+backup_002 = next(
+    check
+    for check in report["checkResults"]
+    if check["policyId"] == "PREFLIGHT-BACKUP-002"
 )
-if status != "pass":
-    raise SystemExit(f"complete production reopen evidence did not pass: {message}")
-
-actual_path = pathlib.Path(traffic["actualRecoveryRecordRef"])
-actual = json.loads(actual_path.read_text(encoding="utf-8"))
-now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
-actual.update(
-    {
-        "recoveryStatus": "finalized",
-        "quarantineReleasedAt": (now - dt.timedelta(minutes=2)).isoformat().replace("+00:00", "Z"),
-        "finalizedAt": (now - dt.timedelta(minutes=1)).isoformat().replace("+00:00", "Z"),
-    }
-)
-actual_path.write_text(json.dumps(actual), encoding="utf-8")
-finalized_traffic_path = traffic_path.with_name("finalized-production-traffic-open.json")
-subprocess.run(
-    [
-        sys.executable,
-        str(root / "dev-tools/deploy/write-traffic-open-evidence.py"),
-        "production",
-        "contract-production",
-        "reopen",
-        "--assessed-by",
-        "preflight-contract",
-        "--preflight-report",
-        traffic["preflightReportPath"],
-        "--evidence-ref",
-        "contract-writer",
-        "--backup-storage-binding",
-        traffic["backupStorageBinding"],
-        "--backup-artifact-ref",
-        traffic["backupArtifactRef"],
-        "--backup-last-success-at",
-        traffic["backupLastSuccessAt"],
-        "--backup-verify-last-success-at",
-        traffic["backupVerifyLastSuccessAt"],
-        "--restore-drill-last-success-at",
-        traffic["restoreDrillLastSuccessAt"],
-        "--backup-tool-digest",
-        traffic["backupToolDigest"],
-        "--recovery-tool-digest",
-        traffic["recoveryToolDigest"],
-        "--recovery-contract-fingerprint",
-        traffic["recoveryContractFingerprint"],
-        "--backup-readiness-ref",
-        traffic["backupReadinessRef"],
-        "--baseline-recovery-record-ref",
-        traffic["baselineRecoveryRecordRef"],
-        "--actual-recovery-record-ref",
-        traffic["actualRecoveryRecordRef"],
-        "--source-environment-binding",
-        traffic["sourceEnvironmentBinding"],
-        "--drill-target-boundary",
-        traffic["drillTargetBoundary"],
-        "--player-facing-target-boundary",
-        traffic["playerFacingTargetBoundary"],
-        "--traffic-opened-at",
-        now.isoformat().replace("+00:00", "Z"),
-        "--output",
-        str(finalized_traffic_path),
-    ],
-    cwd=root,
-    check=True,
-)
-finalized_status, finalized_message = module.production_traffic_check(
-    finalized_traffic_path,
-    "reopen",
-    "contract-production",
-    root,
-)
-if finalized_status != "pass":
-    raise SystemExit(f"writer-generated finalized production evidence did not pass: {finalized_message}")
-
-# Continue negative checks against the pre-release controller projection.
-actual["recoveryStatus"] = "ready_to_reopen"
-actual.pop("quarantineReleasedAt")
-actual.pop("finalizedAt")
-actual_path.write_text(json.dumps(actual), encoding="utf-8")
-recovery_path = pathlib.Path(traffic["baselineRecoveryRecordRef"])
-for missing_field in ("durableParticipantConvergence", "jwtHardening", "smokeStatus"):
-    incomplete = json.loads(recovery_path.read_text(encoding="utf-8"))
-    incomplete.pop(missing_field)
-    incomplete_path = recovery_path.with_name(f"incomplete-production-recovery-{missing_field}.json")
-    incomplete_path.write_text(json.dumps(incomplete), encoding="utf-8")
-    incomplete_traffic = copy.deepcopy(traffic)
-    incomplete_traffic["baselineRecoveryRecordRef"] = str(incomplete_path)
-    incomplete_traffic_path = traffic_path.with_name(f"incomplete-production-traffic-open-{missing_field}.json")
-    incomplete_traffic_path.write_text(json.dumps(incomplete_traffic), encoding="utf-8")
-    status, message = module.production_traffic_check(
-        incomplete_traffic_path,
-        "reopen",
-        "contract-production",
-        root,
-    )
-    if status == "pass" or f"missing {missing_field}" not in message:
-        raise SystemExit(f"incomplete {missing_field} recovery record was not rejected: {status}: {message}")
-
-stale_traffic = copy.deepcopy(traffic)
-stale_traffic["restoreDrillLastSuccessAt"] = (
-    dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=31)
-).isoformat().replace("+00:00", "Z")
-stale_path = traffic_path.with_name("stale-production-traffic-open.json")
-stale_path.write_text(json.dumps(stale_traffic), encoding="utf-8")
-status, message = module.production_traffic_check(
-    stale_path,
-    "reopen",
-    "contract-production",
-    root,
-)
-if status == "pass" or "restore drill" not in message:
-    raise SystemExit(f"stale restore-drill evidence was not rejected: {status}: {message}")
-
-missing_controller = copy.deepcopy(traffic)
-missing_controller.pop("actualRecoveryRecordRef")
-missing_controller_path = traffic_path.with_name("missing-controller-production-traffic-open.json")
-missing_controller_path.write_text(json.dumps(missing_controller), encoding="utf-8")
-status, message = module.production_traffic_check(
-    missing_controller_path,
-    "reopen",
-    "contract-production",
-    root,
-)
-if status == "pass" or "actualRecoveryRecordRef" not in message:
-    raise SystemExit(f"reopen without authoritative controller was not rejected: {status}: {message}")
+if backup_002["status"] != "fail" or "waiver not permitted" not in backup_002["message"]:
+    raise SystemExit(f"PREFLIGHT-BACKUP-002 waiver was not rejected end to end: {backup_002}")
 PY
 
 for env in staging production; do

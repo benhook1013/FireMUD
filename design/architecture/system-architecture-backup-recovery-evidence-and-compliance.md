@@ -134,6 +134,8 @@ Before opening production to player traffic for the first time, or reopening it 
 
 Traffic-open evidence is a separate event-bound projection around the canonical recovery and backup-readiness evidence. Preflight authorizes the event from the durable recovery controller; the writer exports the checked-in immutable projection only after the controller has observed/applied the release and reached `finalized`.
 
+This is target-state behavior. The current production preflight has no durable controller read and intentionally fails `PREFLIGHT-BACKUP-002` closed; no production traffic-open projection writer is implemented.
+
 Canonical evidence path:
 
 - `design/operations/deployments/production/traffic-open/<first-live|reopen>-<deployment-ref>.json`
@@ -172,7 +174,7 @@ Validation rules:
 
 - backup and verification evidence must bind to the production source lineage; preflight must dereference `backupReadinessRef`, validate the backup-readiness artifact's own `restoreRecoveryRecordRef`, and independently dereference `baselineRecoveryRecordRef`. Both referenced records must be finalized isolated drills compatible with the boundary being opened
 - an isolated production-equivalent drill may run in a production-equivalent boundary using current production database lineage and compatible recovery contracts/tooling; its controlled reopen authorizes only that isolated boundary
-- a transient `reopen` authorization submitted to preflight must dereference the durable controller named by `actualRecoveryRecordRef`, require its state to be `ready_to_reopen` with `recoveryPurpose=actual-recovery` and `trafficExposure=player-facing-reopen`, and require its `targetBoundary` to equal `playerFacingTargetBoundary`
+- the target preflight integration must identify and read the durable actual-recovery controller directly, require its state to be `ready_to_reopen` with `recoveryPurpose=actual-recovery` and `trafficExposure=player-facing-reopen`, and require its `targetBoundary` to equal `playerFacingTargetBoundary`; it must not accept a transient traffic-open file as authority
 - the retained projection exported after release uses `trafficOpenStatus=finalized` and must dereference the same actual-recovery record in `finalized`; `trafficOpenedAt` is required only for this form
 - `restoreDrillLastSuccessAt` must be within 30 days
 - `backupCoverage` must be `environment-wide-postgresql`

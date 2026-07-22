@@ -394,7 +394,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if (command.type() != TextCommandType.LOGOUT || !interpretation.commandResult().accepted()) {
       return;
     }
-    session.close(new CloseStatus(CloseStatus.NORMAL.getCode(), "LOGOUT"));
+    session.close(new CloseStatus(CloseStatus.NORMAL.getCode(), "logout"));
   }
 
   private void recordGameplayActivity(

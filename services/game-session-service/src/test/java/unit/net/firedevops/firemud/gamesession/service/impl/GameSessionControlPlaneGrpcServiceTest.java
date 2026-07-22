@@ -2868,7 +2868,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("ENQUEUED", responseRef.get().getAdmissionOutcome());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    Mockito.verify(commandRepository).save(commandCaptor.capture());
+    Mockito.verify(commandRepository).insertIfAbsentByIdempotencyIdentity(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getValue();
     assertEquals(responseRef.get().getCommandId(), accepted.getCommandId());
     assertEquals("AUTOMATION", accepted.getSourceType());
@@ -2936,7 +2936,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(true, responseRef.get().getAccepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    Mockito.verify(commandRepository).save(commandCaptor.capture());
+    Mockito.verify(commandRepository).insertIfAbsentByIdempotencyIdentity(commandCaptor.capture());
     assertEquals(null, commandCaptor.getValue().getDueTickId());
   }
 
@@ -2979,7 +2979,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(true, responseRef.get().getAccepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    Mockito.verify(commandRepository).save(commandCaptor.capture());
+    Mockito.verify(commandRepository).insertIfAbsentByIdempotencyIdentity(commandCaptor.capture());
     assertEquals(44L, commandCaptor.getValue().getCharacterId());
   }
 
@@ -3620,6 +3620,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
     GameplayCommand existing = new GameplayCommand();
     existing.setCommandId("auto-existing");
+    existing.setExecutionOutcome("STAGED");
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository
@@ -6729,6 +6730,17 @@ class GameSessionControlPlaneGrpcServiceTest {
                 command.setEnqueueSeq(id);
               }
               return command;
+            });
+    Mockito.when(repository.insertIfAbsentByIdempotencyIdentity(Mockito.any(GameplayCommand.class)))
+        .thenAnswer(
+            invocation -> {
+              GameplayCommand command = invocation.getArgument(0);
+              if (command.getId() == null) {
+                long id = idSequence.incrementAndGet();
+                command.setId(id);
+                command.setEnqueueSeq(id);
+              }
+              return new GameplayCommandRepository.IdempotentInsertResult(command, true);
             });
     return repository;
   }

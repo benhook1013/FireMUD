@@ -142,6 +142,7 @@ Today, operator defaults still come from service-local typed properties, while t
   - operator caps remain future work
 - `reconnection.buffer`
   - tenant/game-configurable today for durable transcript retention bounds over service-local operator defaults
+  - because the soft and hard byte ceilings form one effective invariant while operator defaults remain service-local, a tenant override that changes either ceiling must persist both values; a game-instance override may set one ceiling only when the tenant layer supplies the complete pair, and tenant mutations validate existing game-instance children against the prospective parent
   - operator caps remain future work
 - `communication.behavior`
   - tenant/game-configurable today for message limits and whisper observer-metadata policy
