@@ -52,6 +52,7 @@ import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionReque
 import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionResponse;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.common.security.SessionContext;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
@@ -493,7 +494,7 @@ public final class AutomationScriptingControlPlaneGrpcService
       GetPluginStatusRequest request, StreamObserver<GetPluginStatusResponse> responseObserver) {
     GetPluginStatusResponse response = GetPluginStatusResponse.getDefaultInstance();
     try {
-      requireAdminRole();
+      requireInternalServiceOrAdmin();
       response = pluginControlPlaneService.getPluginStatus(request);
     } catch (IllegalArgumentException ex) {
       response =
@@ -631,5 +632,12 @@ public final class AutomationScriptingControlPlaneGrpcService
 
   private static void requireAdminRole() {
     AdminRoleGuard.requireAdminRole();
+  }
+
+  private static void requireInternalServiceOrAdmin() {
+    if (SessionContext.isInternalService() || SessionContext.hasGlobalPrivilegedRole()) {
+      return;
+    }
+    throw new AdminAuthorizationException("Internal service or admin role required");
   }
 }

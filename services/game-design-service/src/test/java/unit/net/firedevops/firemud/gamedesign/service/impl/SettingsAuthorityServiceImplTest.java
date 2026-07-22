@@ -10,6 +10,7 @@ import net.firedevops.firemud.gamedesign.repository.GameSettingsOverrideReposito
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.InOrder;
 import org.mockito.Mockito;
 import tools.jackson.databind.ObjectMapper;
 
@@ -135,7 +136,8 @@ class SettingsAuthorityServiceImplTest {
             "Reconnection buffer softMaxBytes and hardMaxBytes must be set together "
                 + "or inherited from a complete tenant override");
 
-    verifyNoInteractions(repository);
+    Mockito.verify(repository).findReconnectionRowsByTenantIdForUpdate("demo");
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
   }
 
   @Test
@@ -209,15 +211,14 @@ class SettingsAuthorityServiceImplTest {
     gameInstanceService.putDomainOverride(
         "demo", 7L, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides);
 
-    Mockito.InOrder inOrder = Mockito.inOrder(repository);
+    InOrder inOrder = Mockito.inOrder(repository);
     inOrder.verify(repository).findReconnectionRowsByTenantIdForUpdate("demo");
     inOrder.verify(repository).save(Mockito.any(GameSettingsOverride.class));
   }
 
   @Test
   void parentAndChildReconnectionWritesAcquireTheSameTenantScopeLock() {
-    Mockito.when(repository.findReconnectionRowsByTenantIdForUpdate("demo"))
-        .thenReturn(List.of());
+    Mockito.when(repository.findReconnectionRowsByTenantIdForUpdate("demo")).thenReturn(List.of());
     ScopedSettingsOverrides tenantOverrides =
         new ScopedSettingsOverrides(
             new ScopedSettingsOverrides.ReconnectionOverride(
@@ -243,8 +244,7 @@ class SettingsAuthorityServiceImplTest {
     service.putDomainOverride(
         "demo", 7L, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, childOverrides);
 
-    Mockito.verify(repository, Mockito.times(2))
-        .findReconnectionRowsByTenantIdForUpdate("demo");
+    Mockito.verify(repository, Mockito.times(2)).findReconnectionRowsByTenantIdForUpdate("demo");
   }
 
   @Test

@@ -68,9 +68,9 @@ public class GameSettingsOverrideRepository {
   /**
    * Acquires the tenant's reconnection mutation lock and locks its matching rows until commit.
    *
-   * <p>The advisory lock is required because a tenant or child row may not exist yet; the row
-   * locks then protect all currently persisted parent and child overrides while the caller
-   * validates and mutates the locked scope in the same transaction.
+   * <p>The advisory lock is required because a tenant or child row may not exist yet; the row locks
+   * then protect all currently persisted parent and child overrides while the caller validates and
+   * mutates the locked scope in the same transaction.
    */
   public List<GameSettingsOverride> findReconnectionRowsByTenantIdForUpdate(String tenantId) {
     if (dsl.dialect().family() == SQLDialect.POSTGRES) {

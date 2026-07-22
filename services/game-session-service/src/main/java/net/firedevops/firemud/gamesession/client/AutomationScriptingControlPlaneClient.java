@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.client;
 
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import jakarta.annotation.PostConstruct;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingControlPlaneServiceGrpc;
@@ -70,7 +72,10 @@ public final class AutomationScriptingControlPlaneClient
                   .setGameInstanceId(Long.toString(gameInstanceId))
                   .setPluginId(pluginId)
                   .build());
-    } catch (RuntimeException ex) {
+    } catch (StatusRuntimeException ex) {
+      if (ex.getStatus().getCode() != Status.Code.UNAVAILABLE) {
+        throw ex;
+      }
       LOG.warn("Automation & Scripting getPluginStatus failed", ex);
       return unavailable();
     }

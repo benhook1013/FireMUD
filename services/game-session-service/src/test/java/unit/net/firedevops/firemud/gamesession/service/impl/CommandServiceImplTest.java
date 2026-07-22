@@ -208,6 +208,7 @@ class CommandServiceImplTest {
     assertTrue(result.commandId().startsWith("cmd-"));
     verify(rateLimiter).allow(7L);
     verify(tickService, times(1)).enqueueCommand(9L, 7L, result.commandId(), "look", true);
+    verify(tickService).processTick(9L, 7L);
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
     verify(commandRepository).save(commandCaptor.capture());
@@ -428,6 +429,50 @@ class CommandServiceImplTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyBoolean());
+  }
+
+  @Test
+  void gameplayCommandFailsClosedWhenRuntimeOwnershipReadFails() {
+    TickService tickService = Mockito.mock(TickService.class);
+    SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
+    Mockito.when(rateLimiter.allow(17L)).thenReturn(true);
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    SessionAuthenticationService sessionAuthenticationService =
+        Mockito.mock(SessionAuthenticationService.class);
+    Mockito.when(sessionAuthenticationService.resolveUnverifiedSessionContext("17"))
+        .thenReturn(
+            Optional.of(
+                new SessionContext(17L, 9L, 3L, "demo", 44L, "char", 99L, "region-99", "jwt")));
+    Mockito.when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(9L, 99L))
+        .thenThrow(new IllegalStateException("runtime ownership unavailable"));
+    CommandServiceImpl service =
+        newCommandService(
+            tickService,
+            rateLimiter,
+            repository,
+            commandRepository,
+            runtimeRegionStatusRepository,
+            sessionAuthenticationService,
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(ScriptEventPublisher.class));
+
+    CommandEnqueueResult result = service.enqueue("17", "look", false);
+
+    assertTrue(result.hasError());
+    assertEquals("UNAVAILABLE", result.errorCode());
+    assertEquals("Unable to read runtime ownership for command admission", result.errorMessage());
+    verify(commandRepository, never()).save(Mockito.any());
+    verify(tickService, never())
+        .enqueueCommand(
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyBoolean());
+    verify(tickService, never()).processTick(Mockito.anyLong(), Mockito.anyLong());
   }
 
   @Test

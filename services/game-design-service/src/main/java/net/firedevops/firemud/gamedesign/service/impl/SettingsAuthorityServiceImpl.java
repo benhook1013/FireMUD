@@ -111,8 +111,7 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
       } else {
         entity =
             repository
-                .findByTenantIdAndGameInstanceIdIsNullAndDomain(
-                    normalizedTenantId, domain.name())
+                .findByTenantIdAndGameInstanceIdIsNullAndDomain(normalizedTenantId, domain.name())
                 .orElse(null);
       }
       if (entity != null) {
@@ -204,8 +203,7 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
   }
 
   private void validateDomainPayload(
-      ScopedSettingsOverrides.SettingsDomain domain,
-      Object payload) {
+      ScopedSettingsOverrides.SettingsDomain domain, Object payload) {
     switch (domain) {
       case RECONNECTION ->
           validateReconnectionShape((ScopedSettingsOverrides.ReconnectionOverride) payload);
