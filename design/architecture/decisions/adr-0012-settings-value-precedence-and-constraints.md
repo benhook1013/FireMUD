@@ -55,11 +55,11 @@ Schema/platform hard bounds and configured operator caps are constraints, not va
 - Bootstrap configuration may seed the initial snapshot. A supported runtime cap change uses an operator-authorized, audited compare-and-set against its monotonic generation; it does not create a second local cap authority in each consumer.
 - Every capped key declares its cap support and owning metadata in the generated settings schema. Runtime consumers resolve the same published snapshot generation, report that generation and cap provenance with the effective value, and fail closed for a capped key when the required snapshot cannot be validated rather than silently applying an uncapped value.
 - New tenant or game-instance writes that violate an applicable bound or cap are rejected.
-- If a later cap change makes an existing persisted override invalid, resolution disregards that override, falls back to the highest-precedence earlier valid value, and exposes a clear diagnostic for explicit remediation.
+- If a later cap change makes existing persisted overrides invalid, resolution evaluates every permitted candidate independently against the same validated constraint-snapshot generation, from most-specific to least-specific. It disregards each invalid game-instance or tenant layer, emits one diagnostic per discarded layer identifying the source, rejected value, constraint, and snapshot generation, and selects the first remaining valid candidate. Invalid layers never mask one another: an invalid game-instance value falls through to the tenant candidate, an invalid tenant candidate falls through to the operator candidate, and resolution fails closed when no required constrained candidate is valid.
 
 ### Resolution and Provenance
 
-Effective-setting responses identify the winning value source, such as `operatorBootstrap`, `tenantOverride:<tenantId>`, or `gameInstanceOverride:<gameInstanceId>`. They also identify a disregarded invalid override and the constraint that rejected it.
+Effective-setting responses identify the winning value source, such as `operatorBootstrap`, `tenantOverride:<tenantId>`, or `gameInstanceOverride:<gameInstanceId>`. They also identify every disregarded invalid override and the constraint-snapshot generation and constraint that rejected it.
 
 One bounded shared resolver or authoritative read model must eventually apply this contract consistently for all consuming services. The resolver may read values owned by different authorities; this decision does not require all setting sources to move into one database or service. It also does not create a general-purpose distributed configuration platform.
 

@@ -96,6 +96,11 @@ Ingress deduplication is not sufficient on its own: every accepted command must 
   - `APPLIED`
   - `ABANDONED`
   - `LOST_BEFORE_STAGING` – accepted into volatile coordination flow but never durably tied to a surviving `tick_batch_id` before reset/tail-loss/reconcile.
+- Legacy live command states map to the canonical lifecycle as follows:
+  - `STAGED` means `ENQUEUED` when it has only been written to the Redis source queue. It maps to `BOUND_TO_BATCH` only when a durable batch/effect record explicitly links the command to a `tick_batch_id`; the legacy value alone is not proof of binding.
+  - `DRAINED` means `BOUND_TO_BATCH`; Redis `pending` was consumed into a durable tick batch and the command remains pending execution or terminal reconciliation.
+  - `RETRY_QUEUED` means the command has already reached `BOUND_TO_BATCH` and its current retry source is enqueued. The prior batch binding remains part of the command lifecycle; retry source state does not make it a new ingress command.
+- These legacy values are non-terminal. They must not be exposed as new canonical terminal outcomes, and purge/recovery must classify the current attempt by the durable batch binding rather than by the legacy label alone.
 - Required recovery behavior:
   - Region/tenant/cluster resets and tail-loss reconciliation must drive every accepted command record that is not `BOUND_TO_BATCH` or already `TERMINAL` to an explicit terminal outcome.
   - For `ACCEPTED_VOLATILE`, `LOST_BEFORE_STAGING` is an expected terminal outcome and must be returned by command-status APIs/events rather than leaving the command indefinitely deduplicated with no execution result.
@@ -172,9 +177,10 @@ operations docs should link here instead of restating partial mappings in prose.
 | Cross-region partial success | `APPLIED` | `PARTIAL` | failure code/message for the failed leg when applicable |
 | Cross-region timeout before any successful remote leg | `ABANDONED` | `TIMEOUT` | failure code/message for the timeout |
 | Lost before staging during reset/tail-loss reconcile | `LOST_BEFORE_STAGING` | `NOT_APPLIED` | failure code/message for the reconcile cause |
-| Operator rollback purge of queued work | `ABANDONED` | `NOT_APPLIED` | `failureCode=ROLLBACK_PURGED`, required `failureMessage` from ingress `reason` |
+| Operator rollback purge before `BOUND_TO_BATCH` | `LOST_BEFORE_STAGING` | `NOT_APPLIED` | `failureCode=ROLLBACK_PURGED`, required `failureMessage` from ingress `reason` |
+| Operator rollback purge after `BOUND_TO_BATCH` | `ABANDONED` | `NOT_APPLIED` | `failureCode=ROLLBACK_PURGED`, required `failureMessage` from ingress `reason` |
 
-For operator rollback purge, the ingress request `reason` is required and non-blank. The durable command projection and `GetGameplayCommandStatus` response must retain and return the same structured terminal reason as `failureCode=ROLLBACK_PURGED` and `failureMessage=<the required ingress reason>`. `PURGED` is the operator action/legacy label, not a competing `executionOutcome` value; already-drained or applied work is outside this terminalization path.
+For operator rollback purge, the ingress request `reason` is required and non-blank. The durable command projection and `GetGameplayCommandStatus` response must retain and return the same structured terminal reason as `failureCode=ROLLBACK_PURGED` and `failureMessage=<the required ingress reason>`. `PURGED` is the operator action/legacy label, not a competing `executionOutcome` value. Purge may terminalize source-queued work and an explicitly purgeable batch-bound retry, but it must not rewrite work that a concurrent drain has already claimed or work that has reached an applied terminal state.
 
 #### Ingress Deduplication Store (Required)
 
@@ -210,12 +216,17 @@ Storage rule:
   - That durable surface must expose at least: `ackLevel`, `ingressStatus`, `tickBatchId`, bound tick coordinates when present (`regionId`, `regionEpoch`, `tickId`), `executionOutcome`, `gameplayResult`, `updatedAt`, and the structured terminal-reason pair `failureCode`/`failureMessage` when terminal reason applies.
   - Physical storage may use snake_case column names such as `execution_outcome`, `gameplay_result`, `failure_code`, and `failure_message`, but the logical contract above is canonical and must be documented that way in service APIs and schema docs.
   - If ingress metadata and outcome fields are split physically, the projection still behaves as one canonical record for `GetGameplayCommandStatus`; callers must not reconstruct status from Redis or by replaying effect history ad hoc.
+- Atomic/versioned consistency for split storage is mandatory:
+  - The ingress row and outcome projection share a monotonic `statusVersion` (a physical `row_version` is acceptable) and the same `updatedAt` for each logical transition.
+  - Every lifecycle transition updates both physical records in one PostgreSQL transaction using compare-and-set on the previously observed `statusVersion`; the successful writer advances the version exactly once. A transition that loses the compare-and-set race is retried from a fresh read and must not merge fields from different versions.
+  - `GetGameplayCommandStatus` reads both records in one database snapshot and only returns a joined record when their key and `statusVersion` agree. A missing or mismatched projection is an unavailable/inconsistent read that fails closed or retries; it is never reconstructed from Redis or partially joined.
+  - A terminal transition writes a terminal `ingressStatus` and its matching `executionOutcome`/`gameplayResult` in the same versioned transaction. Repeating the identical terminal write is idempotent; a conflicting terminal write is rejected for reconciliation.
 - Worked schema examples:
   - Single-row ingress table shape:
-    - `command_ingress(tenant_id, game_instance_id, command_id, subject_id, actor_id, request_fingerprint_version, request_fingerprint, ack_level, ingress_status, tick_batch_id, region_id, region_epoch, tick_id, execution_outcome, gameplay_result, failure_code, failure_message, updated_at, ...)`
+    - `command_ingress(tenant_id, game_instance_id, command_id, subject_id, actor_id, request_fingerprint_version, request_fingerprint, ack_level, ingress_status, tick_batch_id, region_id, region_epoch, tick_id, execution_outcome, gameplay_result, failure_code, failure_message, status_version, updated_at, ...)`
   - Split ingress plus outcome projection:
-    - `command_ingress(tenant_id, game_instance_id, command_id, subject_id, actor_id, request_fingerprint_version, request_fingerprint, ack_level, ingress_status, tick_batch_id, region_id, region_epoch, tick_id, ...)`
-    - `command_outcome_projection(tenant_id, game_instance_id, command_id, execution_outcome, gameplay_result, failure_code, failure_message, updated_at, ... )`
+    - `command_ingress(tenant_id, game_instance_id, command_id, subject_id, actor_id, request_fingerprint_version, request_fingerprint, ack_level, ingress_status, tick_batch_id, region_id, region_epoch, tick_id, status_version, updated_at, ...)`
+    - `command_outcome_projection(tenant_id, game_instance_id, command_id, execution_outcome, gameplay_result, failure_code, failure_message, status_version, updated_at, ... )`
   - In both shapes, `GetGameplayCommandStatus` reads one authoritative durable record keyed by `(tenantId, gameInstanceId, commandId)`; Redis is not part of the lookup path.
 - Regardless of physical schema, `GetGameplayCommandStatus` must be able to return `executionOutcome` and `gameplayResult` from durable storage without re-walking Redis coordination state.
 

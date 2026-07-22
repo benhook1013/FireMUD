@@ -193,7 +193,7 @@ Backup observability, restore-proof artifacts, and traffic-open evidence are def
 | Environment | Steps |
 | --- | --- |
 | **Kubernetes** | Enter restore-safe quarantine -> restore PostgreSQL from `pg_dump` -> restore manifests with normal workloads stopped or restore-safe-fenced -> record `cold_start_restore` and establish the durable environment-wide recovery-controller state -> run the empty-Redis, convergence, hardening, and smoke gates -> reopen traffic only through the finalized controller transition |
-| **Docker Compose** | Restore DB snapshot into quarantine -> record `cold_start_restore` and establish the recovery-controller state -> complete empty-Redis, convergence, hardening, and local validation -> reopen traffic only through the controlled cold-start transition |
+| **Docker Compose** | Restore DB snapshot into quarantine -> record `cold_start_restore` and establish the recovery-controller state -> complete empty-Redis, convergence, hardening, and local validation -> reach `ready_to_reopen` -> idempotently reconcile release through `releasing` to `finalized` -> export checked-in recovery and traffic-open projections only after `finalized` -> reopen traffic only after the controller is observed in `finalized` |
 
 Redis always uses AOF for crash recovery during runtime but is never restored from backup images. If Coordination Redis starts empty, treat it as a reset/cold-start scenario as described in the Redis architecture docs.
 

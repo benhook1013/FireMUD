@@ -2,6 +2,10 @@
 
 This directory stores environment deployment evidence used by architecture contracts.
 
+## Current Implementation Status
+
+These paths define the canonical target-state evidence locations, but current enforcement is partial. Preflight validates the basic schema, environment/deployment binding, freshness, evidence references, and existing digest or attestation checks described by each record. Expanded recovery-controller lineage, environment-wide artifact and confidentiality proof, mandatory post-finalization projection refresh, and current-event recovery-lineage rejection remain target-state until the stacked recovery-operations enforcement lands. Checked-in recovery and traffic-open files are evidence projections; the durable recovery controller is runtime authority.
+
 - `staging/deployments/<overlayCommitSha>.json`: staging apply records used by production promotion attestation validation.
 - `staging/recovery/<recovery-ref>.json`: staging post-restore sanitization evidence required before reopening traffic when restoring production-origin data.
 - `production/attestations/<deployment-ref>.json`: production promotion attestation artifacts referenced by overlay PRs.

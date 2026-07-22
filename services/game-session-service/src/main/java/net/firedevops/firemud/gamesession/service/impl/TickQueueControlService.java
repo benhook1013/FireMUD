@@ -1,6 +1,8 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -8,6 +10,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
@@ -18,12 +21,20 @@ import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.v1.TickStatus;
 import org.slf4j.Logger;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
-final class TickQueueControlService {
+public class TickQueueControlService {
   static final String PURGED_FAILURE_CODE = "ROLLBACK_PURGED";
+  private static final Duration PURGE_LOCK_TTL = Duration.ofSeconds(30);
+  private static final RedisScript<Long> UNLOCK_IF_OWNED_SCRIPT =
+      RedisScript.of(new ClassPathResource("redis/tick_unlock_if_owned.lua"), Long.class);
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final GameInstanceRepository gameInstanceRepository;
@@ -75,7 +86,8 @@ final class TickQueueControlService {
             queueKey(tenantId, queueTargetId), queuePayload(requiresSoloTick, commandId, command));
   }
 
-  long purgeQueuedAutomationCommandsForScriptPatch(
+  @Transactional
+  public long purgeQueuedAutomationCommandsForScriptPatch(
       Long tenantId,
       Long gameInstanceId,
       String regionId,
@@ -86,13 +98,18 @@ final class TickQueueControlService {
     requirePositive(tenantId, "tenant_id");
     requirePositive(gameInstanceId, "game_instance_id");
     requireText(scriptPatchVersion, "script_patch_version");
-    List<GameplayCommand> commands =
-        gameplayCommandRepository.findQueuedAutomationCommandsForScriptPatch(
-            tenantId, gameInstanceId, normalize(regionId), scriptPatchVersion);
-    return purgeQueuedCommands(tenantId, gameInstanceId, commands, reason, logger);
+    return purgeQueuedCommands(
+        tenantId,
+        gameInstanceId,
+        () ->
+            gameplayCommandRepository.findQueuedAutomationCommandsForScriptPatch(
+                tenantId, gameInstanceId, normalize(regionId), scriptPatchVersion),
+        reason,
+        logger);
   }
 
-  long purgeQueuedAutomationCommandsForPluginVersion(
+  @Transactional
+  public long purgeQueuedAutomationCommandsForPluginVersion(
       Long tenantId,
       Long gameInstanceId,
       String regionId,
@@ -105,10 +122,14 @@ final class TickQueueControlService {
     requirePositive(gameInstanceId, "game_instance_id");
     requireText(pluginId, "plugin_id");
     requireText(pluginVersionId, "plugin_version_id");
-    List<GameplayCommand> commands =
-        gameplayCommandRepository.findQueuedAutomationCommandsForPluginVersion(
-            tenantId, gameInstanceId, normalize(regionId), pluginId, pluginVersionId);
-    return purgeQueuedCommands(tenantId, gameInstanceId, commands, reason, logger);
+    return purgeQueuedCommands(
+        tenantId,
+        gameInstanceId,
+        () ->
+            gameplayCommandRepository.findQueuedAutomationCommandsForPluginVersion(
+                tenantId, gameInstanceId, normalize(regionId), pluginId, pluginVersionId),
+        reason,
+        logger);
   }
 
   OwnershipSnapshot observeOwnership(Long tenantId, Long gameInstanceId) {
@@ -255,36 +276,161 @@ final class TickQueueControlService {
   private long purgeQueuedCommands(
       Long tenantId,
       Long gameInstanceId,
-      List<GameplayCommand> commands,
+      Supplier<List<GameplayCommand>> commandSupplier,
       String reason,
       Logger logger) {
-    if (commands.isEmpty()) {
+    String lockKey = lockKey(tenantId, gameInstanceId);
+    String lockToken = UUID.randomUUID().toString();
+    Boolean acquired = redisTemplate.opsForValue().setIfAbsent(lockKey, lockToken, PURGE_LOCK_TTL);
+    if (!Boolean.TRUE.equals(acquired)) {
+      logger.debug("Could not acquire queue lock {} for purge", lockKey);
       return 0L;
     }
-    String key = queueKey(tenantId, gameInstanceId);
-    Instant now = Instant.now();
-    for (GameplayCommand command : commands) {
-      redisTemplate
-          .opsForList()
-          .remove(
-              key,
-              0,
-              queuePayload(
-                  command.isRequiresSoloTick(), command.getCommandId(), command.getCommandText()));
-      command.setExecutionOutcome("ABANDONED");
-      command.setGameplayResult("NOT_APPLIED");
-      command.setCompletedAt(now);
-      command.setLastAttemptAt(now);
-      command.setFailureCode(PURGED_FAILURE_CODE);
-      command.setFailureMessage(truncate(reason, 500));
+    List<RemovedQueueCommand> removedCommands = new ArrayList<>();
+    boolean completionRegistered =
+        registerPurgeCompletion(
+            lockKey, lockToken, tenantId, gameInstanceId, removedCommands, logger);
+    try {
+      List<GameplayCommand> commands = commandSupplier.get();
+      String key = queueKey(tenantId, gameInstanceId);
+      for (GameplayCommand command : commands) {
+        String payload =
+            queuePayload(
+                command.isRequiresSoloTick(), command.getCommandId(), command.getCommandText());
+        Long removed = redisTemplate.opsForList().remove(key, 0, payload);
+        if (removed != null && removed > 0L) {
+          removedCommands.add(
+              new RemovedQueueCommand(command, payload, PurgeState.capture(command)));
+        }
+      }
+      if (removedCommands.isEmpty()) {
+        return 0L;
+      }
+
+      Instant now = Instant.now();
+      for (RemovedQueueCommand removed : removedCommands) {
+        GameplayCommand command = removed.command();
+        command.setExecutionOutcome(purgeOutcome(command));
+        command.setGameplayResult("NOT_APPLIED");
+        command.setCompletedAt(now);
+        command.setLastAttemptAt(now);
+        command.setFailureCode(PURGED_FAILURE_CODE);
+        command.setFailureMessage(truncate(reason, 500));
+      }
+      gameplayCommandRepository.saveAll(
+          removedCommands.stream().map(RemovedQueueCommand::command).toList());
+      logger.info(
+          "Purged {} queued automation commands tenantId={} gameInstanceId={}",
+          removedCommands.size(),
+          tenantId,
+          gameInstanceId);
+      return removedCommands.size();
+    } catch (RuntimeException ex) {
+      if (!completionRegistered) {
+        restorePurgeState(tenantId, gameInstanceId, removedCommands, logger);
+      }
+      throw ex;
+    } finally {
+      if (!completionRegistered) {
+        releaseQueueLock(lockKey, lockToken, logger);
+      }
     }
-    gameplayCommandRepository.saveAll(commands);
-    logger.info(
-        "Purged {} queued automation commands tenantId={} gameInstanceId={}",
-        commands.size(),
-        tenantId,
-        gameInstanceId);
-    return commands.size();
+  }
+
+  private String purgeOutcome(GameplayCommand command) {
+    return "RETRY_QUEUED".equals(command.getExecutionOutcome())
+        ? "ABANDONED"
+        : "LOST_BEFORE_STAGING";
+  }
+
+  private boolean registerPurgeCompletion(
+      String lockKey,
+      String lockToken,
+      Long tenantId,
+      Long gameInstanceId,
+      List<RemovedQueueCommand> removedCommands,
+      Logger logger) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      return false;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCompletion(int status) {
+            if (status != STATUS_COMMITTED) {
+              restorePurgeState(tenantId, gameInstanceId, removedCommands, logger);
+            }
+            releaseQueueLock(lockKey, lockToken, logger);
+          }
+        });
+    return true;
+  }
+
+  private void restorePurgeState(
+      Long tenantId,
+      Long gameInstanceId,
+      List<RemovedQueueCommand> removedCommands,
+      Logger logger) {
+    removedCommands.forEach(removed -> removed.priorState().restore(removed.command()));
+    restoreRemovedCommands(tenantId, gameInstanceId, removedCommands, logger);
+  }
+
+  private void restoreRemovedCommands(
+      Long tenantId,
+      Long gameInstanceId,
+      List<RemovedQueueCommand> removedCommands,
+      Logger logger) {
+    for (int index = removedCommands.size() - 1; index >= 0; index--) {
+      RemovedQueueCommand removed = removedCommands.get(index);
+      try {
+        redisTemplate.opsForList().leftPush(queueKey(tenantId, gameInstanceId), removed.payload());
+      } catch (RuntimeException restoreFailure) {
+        logger.error(
+            "Failed to restore queue payload after purge persistence failure tenantId={} gameInstanceId={} commandId={}",
+            tenantId,
+            gameInstanceId,
+            removed.command().getCommandId(),
+            restoreFailure);
+      }
+    }
+  }
+
+  private void releaseQueueLock(String lockKey, String lockToken, Logger logger) {
+    try {
+      redisTemplate.execute(UNLOCK_IF_OWNED_SCRIPT, List.of(lockKey), lockToken);
+    } catch (RuntimeException releaseFailure) {
+      logger.warn("Failed to release queue lock {} after purge", lockKey, releaseFailure);
+    }
+  }
+
+  private record RemovedQueueCommand(
+      GameplayCommand command, String payload, PurgeState priorState) {}
+
+  private record PurgeState(
+      String executionOutcome,
+      String gameplayResult,
+      Instant completedAt,
+      Instant lastAttemptAt,
+      String failureCode,
+      String failureMessage) {
+    private static PurgeState capture(GameplayCommand command) {
+      return new PurgeState(
+          command.getExecutionOutcome(),
+          command.getGameplayResult(),
+          command.getCompletedAt(),
+          command.getLastAttemptAt(),
+          command.getFailureCode(),
+          command.getFailureMessage());
+    }
+
+    private void restore(GameplayCommand command) {
+      command.setExecutionOutcome(executionOutcome);
+      command.setGameplayResult(gameplayResult);
+      command.setCompletedAt(completedAt);
+      command.setLastAttemptAt(lastAttemptAt);
+      command.setFailureCode(failureCode);
+      command.setFailureMessage(failureMessage);
+    }
   }
 
   private void bumpOwnershipEpoch(Long tenantId, Long gameInstanceId, boolean paused) {

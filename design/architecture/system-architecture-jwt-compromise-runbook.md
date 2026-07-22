@@ -1,7 +1,7 @@
 # FireMUD JWT Compromise Runbook
 
 This runbook defines the mandatory response flow for suspected compromise of JWT signing key material.
-The same hard-cutover key semantics are also required for player-facing post-restore hardening (`system-architecture-backup-recovery.md#post-restore-secret-hardening`) even when no active compromise is confirmed, because restored snapshots may resurrect stale trust material.
+The same hard-cutover key semantics are also required for player-facing post-restore hardening (`system-architecture-post-restore-hardening.md#post-restore-secret-hardening`) even when no active compromise is confirmed, because restored snapshots may resurrect stale trust material.
 
 ## Implementation Status
 
@@ -58,4 +58,4 @@ Before reopening player-facing traffic, incident records must include:
 - `./system-architecture-security.md#jwt-key-compromise-response`
 - `./system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative`
 - `./decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md`
-- `./system-architecture-backup-recovery.md#post-restore-secret-hardening`
+- `./system-architecture-post-restore-hardening.md#post-restore-secret-hardening`

@@ -51,8 +51,8 @@ Value precedence is separate from constraint evaluation. Schema and platform har
 - Platform hard bounds are release-owned typed schema metadata. Configured operator caps are stored as one environment-scoped, versioned operator-constraint snapshot in the shared Game Design settings authority. Bootstrap configuration may seed that snapshot; supported runtime mutation is operator-authorized, audited, and compare-and-set against its monotonic generation. Tenant/game routes cannot write operator constraints.
 - Every capped key declares cap support in the generated settings schema. Effective reads expose the validated cap value, provenance, and snapshot generation. A consumer that cannot validate the required snapshot for a capped key fails closed for that setting rather than applying an uncapped candidate or inventing a service-local cap generation.
 - New tenant or game-instance writes that violate an applicable bound or cap are rejected.
-- If an operator later tightens a cap so an existing persisted override becomes invalid, the resolver disregards that invalid override, falls back to the highest-precedence earlier valid value, and exposes a clear diagnostic suitable for operator and creator remediation.
-- Effective-setting responses report the value's provenance, including the winning source and any disregarded invalid override.
+- If an operator later tightens a cap so persisted overrides become invalid, the resolver evaluates permitted candidates from most-specific to least-specific against one validated constraint-snapshot generation. It independently disregards each invalid game-instance or tenant layer, emits a diagnostic for every discarded layer, and selects the first remaining valid candidate; resolution fails closed when no required constrained candidate remains valid.
+- Effective-setting responses report the value's provenance, including the winning source and every disregarded invalid override with its rejecting constraint and constraint-snapshot generation.
 
 This means:
 
