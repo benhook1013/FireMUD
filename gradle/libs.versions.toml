@@ -77,7 +77,7 @@ argon2 = { module = "de.mkammerer:argon2-jvm", version = "2.12" }
 
 grpc-spring-boot-starter = { module = "org.springframework.grpc:spring-grpc-spring-boot-starter", version = "1.0.3" }
 postgresql = { module = "org.postgresql:postgresql", version = "42.7.13" }
-aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.48.4" }
+aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.49.0" }
 h2 = { module = "com.h2database:h2", version = "2.4.240" }
 
 springdoc-openapi = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version = "3.0.3" }
