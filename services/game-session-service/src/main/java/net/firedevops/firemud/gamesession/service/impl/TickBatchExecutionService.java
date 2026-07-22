@@ -29,6 +29,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 final class TickBatchExecutionService {
   private static final Logger logger = LoggingUtil.getLogger(TickBatchExecutionService.class);
+  private static final String REMOTE_FOLLOWUP_BATCH_SOURCE = "REMOTE_FOLLOWUP_DRAIN";
 
   private final MeterRegistry meterRegistry;
   private final RedisTemplate<String, Object> redisTemplate;
@@ -234,6 +235,17 @@ final class TickBatchExecutionService {
     }
   }
 
+  void requireCompleteEffectSet(TickBatch batch) {
+    List<TickEffect> effects = tickEffectRepository.findByTickBatchId(batch.getTickBatchId());
+    int actualEffectCount = effects.size();
+    if (actualEffectCount != batch.getExpectedEffectCount()) {
+      throw new IllegalStateException(
+          "Durable tick batch effect count mismatch for tickBatchId=%s expected=%d actual=%d"
+              .formatted(
+                  batch.getTickBatchId(), batch.getExpectedEffectCount(), actualEffectCount));
+    }
+  }
+
   void markBatchAbandoned(
       TickBatch batch,
       List<TickQueuedCommandEnvelope> entries,
@@ -241,6 +253,10 @@ final class TickBatchExecutionService {
       String failureMessage) {
     Instant now = Instant.now();
     boolean wasDrained = "DRAINED".equals(batch.getStatus());
+    if (wasDrained && isRemoteFollowupBatch(batch)) {
+      markRemoteFollowupBatchAbandoned(batch, failureCode, failureMessage);
+      return;
+    }
     batch.setStatus("ABANDONED");
     batch.setCompletedAt(now);
     batch.setFailureCode(failureCode);
@@ -273,7 +289,8 @@ final class TickBatchExecutionService {
     batch.setFailureCode(failureCode);
     batch.setFailureMessage(truncate(failureMessage, 500));
     tickBatchRepository.save(batch);
-    updateEffectStatuses(batch.getTickBatchId(), "ABANDONED", now, failureCode, failureMessage);
+    abandonUnfinishedRemoteFollowupEffects(
+        batch.getTickBatchId(), now, failureCode, failureMessage);
     remoteFollowupDrainService.releaseClaimedFollowups(
         batch.getTickBatchId(), failureCode, failureMessage);
     logger.warn(
@@ -294,9 +311,14 @@ final class TickBatchExecutionService {
       try {
         requireCurrentOwnership(batch, false);
       } catch (TickQueueControlService.StaleOwnershipException ex) {
-        abandonStaleDrainedBatch(batch, ex.getMessage());
+        if (isRemoteFollowupBatch(batch)) {
+          markRemoteFollowupBatchAbandoned(batch, "STALE_EXECUTOR_FENCE", ex.getMessage());
+        } else {
+          abandonStaleDrainedBatch(batch, ex.getMessage());
+        }
         continue;
       }
+      requireCompleteEffectSet(batch);
       List<TickEffect> drainedEffects =
           tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc(
               batch.getTickBatchId(), "DRAINED");
@@ -310,7 +332,11 @@ final class TickBatchExecutionService {
           requireCurrentOwnership(batch, false);
           executeDurableEffect(batch, effect);
         } catch (TickQueueControlService.StaleOwnershipException ex) {
-          abandonStaleDrainedBatch(batch, ex.getMessage());
+          if (isRemoteFollowupBatch(batch)) {
+            markRemoteFollowupBatchAbandoned(batch, "STALE_EXECUTOR_FENCE", ex.getMessage());
+          } else {
+            abandonStaleDrainedBatch(batch, ex.getMessage());
+          }
           continue batchLoop;
         }
       }
@@ -344,6 +370,10 @@ final class TickBatchExecutionService {
   }
 
   private void abandonStaleDrainedBatch(TickBatch batch, String failureMessage) {
+    if (isRemoteFollowupBatch(batch)) {
+      markRemoteFollowupBatchAbandoned(batch, "STALE_EXECUTOR_FENCE", failureMessage);
+      return;
+    }
     Instant now = Instant.now();
     List<GameplayCommand> commands =
         requeueRemainingDrainedEffects(batch, now, "STALE_EXECUTOR_FENCE", failureMessage);
@@ -392,6 +422,29 @@ final class TickBatchExecutionService {
     }
     recordRequeuedCommands(commands);
     return commands;
+  }
+
+  private boolean isRemoteFollowupBatch(TickBatch batch) {
+    return REMOTE_FOLLOWUP_BATCH_SOURCE.equals(batch.getBatchSource());
+  }
+
+  private void abandonUnfinishedRemoteFollowupEffects(
+      String tickBatchId, Instant completedAt, String failureCode, String failureMessage) {
+    List<TickEffect> unfinishedEffects =
+        tickEffectRepository.findByTickBatchId(tickBatchId).stream()
+            .filter(
+                effect ->
+                    "STAGED".equals(effect.getStatus()) || "DRAINED".equals(effect.getStatus()))
+            .toList();
+    for (TickEffect effect : unfinishedEffects) {
+      effect.setStatus("ABANDONED");
+      effect.setCompletedAt(completedAt);
+      effect.setFailureCode(failureCode);
+      effect.setFailureMessage(truncate(failureMessage, 500));
+    }
+    if (!unfinishedEffects.isEmpty()) {
+      tickEffectRepository.saveAll(unfinishedEffects);
+    }
   }
 
   private void requeueCommands(Long tenantId, Long gameInstanceId, List<GameplayCommand> commands) {

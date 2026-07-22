@@ -346,9 +346,65 @@ def _standalone_rule_sequence_range(lines: list[str]) -> tuple[int, int, int] | 
     return first_item, end, sequence_indent
 
 
+def _standalone_rule_mapping_entry(lines: list[str]) -> _RuleEntry | None:
+    first_line = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if _meaningful_yaml_line(line)
+            and _strip_yaml_comment(line).strip() not in {"---", "..."}
+        ),
+        None,
+    )
+    if first_line is None:
+        return None
+
+    first_content = _strip_yaml_comment(lines[first_line]).strip()
+    malformed_or_unsupported_root = re.match(
+        r"^(?:alert|record|\"(?:alert|record)\"|'(?:alert|record)')(?:\s|$)|^[?&*!{\[]",
+        first_content,
+    )
+    if malformed_or_unsupported_root:
+        return _RuleEntry(lines=[lines[first_line]], key=None, name=None)
+
+    root_indent = _leading_space_count(lines[first_line])
+    root_rule_fields = {"expr", "for", "labels", "annotations", "name"}
+    root_rule_like = False
+    for index in range(first_line, len(lines)):
+        if not _meaningful_yaml_line(lines[index]):
+            continue
+        content = _strip_yaml_comment(lines[index]).strip()
+        if content in {"---", "..."}:
+            continue
+        if _leading_space_count(lines[index]) < root_indent:
+            break
+        if _leading_space_count(lines[index]) != root_indent:
+            continue
+
+        parsed = _parse_mapping_header(lines[index])
+        if parsed and parsed[0] in {"alert", "record"}:
+            key, name = parsed
+            if name and name.startswith(("&", "*", "!", "{", "[", "|", ">")):
+                return _RuleEntry(lines=[lines[index]], key=None, name=None)
+            return _RuleEntry(
+                lines=lines[first_line:],
+                key=key,
+                name=name.strip("\"'") or None,
+            )
+        if parsed and parsed[0] in root_rule_fields:
+            root_rule_like = True
+
+    if root_rule_like:
+        return _RuleEntry(lines=[lines[first_line]], key=None, name=None)
+    return None
+
+
 def _scan_rule_entries(yaml_text: str) -> list[_RuleEntry]:
     lines = yaml_text.splitlines()
     entries: list[_RuleEntry] = _unsupported_rules_key_shapes(lines)
+    standalone_mapping = _standalone_rule_mapping_entry(lines)
+    if standalone_mapping is not None:
+        entries.append(standalone_mapping)
     for index, line in enumerate(lines):
         parsed = _parse_mapping_header(line)
         if not parsed or parsed[0] != "rules":

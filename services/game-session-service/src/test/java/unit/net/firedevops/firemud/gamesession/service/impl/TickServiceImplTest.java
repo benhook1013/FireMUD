@@ -155,7 +155,8 @@ class TickServiceImplTest {
             tickEffectRepository,
             remoteFollowupDrainService,
             tickQueueControlService,
-            tickBatchExecutionService);
+            tickBatchExecutionService,
+            new ImmediateTransactionOperations());
     TickRuntimeProgressService tickRuntimeProgressService =
         new TickRuntimeProgressService(
             meterRegistry,
@@ -256,6 +257,213 @@ class TickServiceImplTest {
         .setIfAbsent(eq("gamesession:tick:lock:1:2"), any(String.class), any(Duration.class));
     verify(listOps).size("gamesession:tick:pending:1:2");
     verify(listOps).index("gamesession:tick:queue:1:2", 0);
+  }
+
+  @Test
+  void processTickPassesExactLeaseFenceToCommitScript() {
+    List<String> leaseTokens = new ArrayList<>();
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenAnswer(
+            invocation -> {
+              leaseTokens.add(invocation.getArgument(1));
+              return true;
+            });
+    RedisScript<Long> commitMarker = mock(RedisScript.class);
+    setField(service, "commitScript", commitMarker);
+    List<List<String>> commitKeys = new ArrayList<>();
+    List<Object[]> commitArguments = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              if (invocation.getArgument(0) == commitMarker) {
+                @SuppressWarnings("unchecked")
+                List<String> keys = invocation.getArgument(1);
+                commitKeys.add(keys);
+                commitArguments.add(
+                    java.util.Arrays.copyOfRange(
+                        invocation.getArguments(), 2, invocation.getArguments().length));
+              }
+              return 1L;
+            })
+        .when(redisTemplate)
+        .execute(
+            any(RedisScript.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals(1, leaseTokens.size());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        List.of("gamesession:tick:pending:1:2", "gamesession:tick:lock:1:2"), commitKeys.get(0));
+    org.junit.jupiter.api.Assertions.assertArrayEquals(
+        new Object[] {leaseTokens.get(0)}, commitArguments.get(0));
+  }
+
+  @Test
+  void processTickPassesExactLeaseFenceToStageScript() {
+    List<String> leaseTokens = new ArrayList<>();
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenAnswer(
+            invocation -> {
+              leaseTokens.add(invocation.getArgument(1));
+              return true;
+            });
+    RedisScript<Long> stageMarker = mock(RedisScript.class);
+    setField(service, "stageScript", stageMarker);
+    setField(service, "tickMaxCommands", 50);
+    List<List<String>> stageKeys = new ArrayList<>();
+    List<Object[]> stageArguments = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              if (invocation.getArgument(0) == stageMarker) {
+                @SuppressWarnings("unchecked")
+                List<String> keys = invocation.getArgument(1);
+                stageKeys.add(keys);
+                stageArguments.add(
+                    java.util.Arrays.copyOfRange(
+                        invocation.getArguments(), 2, invocation.getArguments().length));
+                return 0L;
+              }
+              return 1L;
+            })
+        .when(redisTemplate)
+        .execute(
+            any(RedisScript.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals(1, leaseTokens.size());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        List.of(
+            "gamesession:tick:queue:1:2",
+            "gamesession:tick:pending:1:2",
+            "gamesession:tick:lock:1:2"),
+        stageKeys.get(0));
+    org.junit.jupiter.api.Assertions.assertArrayEquals(
+        new Object[] {leaseTokens.get(0), "50"}, stageArguments.get(0));
+  }
+
+  @Test
+  void processTickStopsAfterLeaseReplacementInsideStageScript() {
+    RedisScript<Long> stageMarker = mock(RedisScript.class);
+    RedisScript<Long> commitMarker = mock(RedisScript.class);
+    RedisScript<Long> rollbackMarker = mock(RedisScript.class);
+    setField(service, "stageScript", stageMarker);
+    setField(service, "commitScript", commitMarker);
+    setField(service, "rollbackScript", rollbackMarker);
+    List<RedisScript<?>> invokedScripts = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              RedisScript<?> script = invocation.getArgument(0);
+              invokedScripts.add(script);
+              return script == stageMarker ? -1L : 1L;
+            })
+        .when(redisTemplate)
+        .execute(
+            any(RedisScript.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertTrue(invokedScripts.contains(stageMarker));
+    org.junit.jupiter.api.Assertions.assertFalse(invokedScripts.contains(commitMarker));
+    org.junit.jupiter.api.Assertions.assertFalse(invokedScripts.contains(rollbackMarker));
+    verify(runtimeRegionStatusRepository, never()).advanceLastCommittedTickId(any());
+  }
+
+  @Test
+  void processTickStopsAfterLeaseReplacementBeforeCommitScript() {
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenReturn(true);
+    RedisScript<Long> commitMarker = mock(RedisScript.class);
+    RedisScript<Long> rollbackMarker = mock(RedisScript.class);
+    setField(service, "commitScript", commitMarker);
+    setField(service, "rollbackScript", rollbackMarker);
+    List<RedisScript<?>> invokedScripts = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              RedisScript<?> script = invocation.getArgument(0);
+              invokedScripts.add(script);
+              return script == commitMarker ? -1L : 1L;
+            })
+        .when(redisTemplate)
+        .execute(
+            any(RedisScript.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertTrue(invokedScripts.contains(commitMarker));
+    org.junit.jupiter.api.Assertions.assertFalse(invokedScripts.contains(rollbackMarker));
+    verify(runtimeRegionStatusRepository, never()).advanceLastCommittedTickId(any());
+  }
+
+  @Test
+  void processTickDoesNotAbandonBatchAfterStaleRollbackResult() {
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-stale-rollback|look");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-stale-rollback|look"));
+    when(gameplayCommandRepository.findByCommandIdIn(any()))
+        .thenReturn(List.of(gameplayCommand("cmd-stale-rollback")));
+    org.mockito.Mockito.doReturn(Optional.empty())
+        .when(runtimeRegionStatusRepository)
+        .commitDrainedBatch(any(), any());
+    RedisScript<Long> rollbackMarker = mock(RedisScript.class);
+    setField(service, "rollbackScript", rollbackMarker);
+    List<List<String>> rollbackKeys = new ArrayList<>();
+    List<Object[]> rollbackArguments = new ArrayList<>();
+    List<String> leaseTokens = new ArrayList<>();
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenAnswer(
+            invocation -> {
+              leaseTokens.add(invocation.getArgument(1));
+              return true;
+            });
+    List<String> savedBatchStatuses = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.TickBatch batch = invocation.getArgument(0);
+              savedBatchStatuses.add(batch.getStatus());
+              return batch;
+            })
+        .when(tickBatchRepository)
+        .save(any());
+    doAnswer(
+            invocation -> {
+              if (invocation.getArgument(0) == rollbackMarker) {
+                @SuppressWarnings("unchecked")
+                List<String> keys = invocation.getArgument(1);
+                rollbackKeys.add(keys);
+                rollbackArguments.add(
+                    java.util.Arrays.copyOfRange(
+                        invocation.getArguments(), 2, invocation.getArguments().length));
+                return -1L;
+              }
+              return 1L;
+            })
+        .when(redisTemplate)
+        .execute(
+            any(RedisScript.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals(1, leaseTokens.size());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        List.of(
+            "gamesession:tick:pending:1:2",
+            "gamesession:tick:queue:1:2",
+            "gamesession:tick:lock:1:2"),
+        rollbackKeys.get(0));
+    org.junit.jupiter.api.Assertions.assertArrayEquals(
+        new Object[] {leaseTokens.get(0)}, rollbackArguments.get(0));
+    org.junit.jupiter.api.Assertions.assertFalse(savedBatchStatuses.contains("ABANDONED"));
+    verify(listOps, never()).leftPush(any(), any());
   }
 
   @Test

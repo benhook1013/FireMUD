@@ -568,6 +568,18 @@ public class TickQueueControlService {
       return !lost.get() && !closed.get();
     }
 
+    String key() {
+      return key;
+    }
+
+    String token() {
+      return token;
+    }
+
+    void markLost() {
+      lost.set(true);
+    }
+
     private void renew() {
       renewOwnership();
     }

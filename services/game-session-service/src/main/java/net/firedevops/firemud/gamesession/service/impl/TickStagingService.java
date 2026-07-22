@@ -20,9 +20,13 @@ import net.firedevops.firemud.gamesession.repository.TickEffectRepository;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService;
 import org.slf4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionOperations;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 final class TickStagingService {
@@ -36,10 +40,34 @@ final class TickStagingService {
   private final RemoteFollowupDrainService remoteFollowupDrainService;
   private final TickQueueControlService tickQueueControlService;
   private final TickBatchExecutionService tickBatchExecutionService;
+  private final TransactionOperations transactionOperations;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   @Value("${game.remote-followups.max-per-tick:16}")
   private int maxRemoteFollowupsPerTick;
+
+  @Autowired
+  TickStagingService(
+      RedisTemplate<String, Object> redisTemplate,
+      GameplayCommandRepository gameplayCommandRepository,
+      RemoteFollowupRepository remoteFollowupRepository,
+      TickBatchRepository tickBatchRepository,
+      TickEffectRepository tickEffectRepository,
+      RemoteFollowupDrainService remoteFollowupDrainService,
+      TickQueueControlService tickQueueControlService,
+      TickBatchExecutionService tickBatchExecutionService,
+      PlatformTransactionManager transactionManager) {
+    this(
+        redisTemplate,
+        gameplayCommandRepository,
+        remoteFollowupRepository,
+        tickBatchRepository,
+        tickEffectRepository,
+        remoteFollowupDrainService,
+        tickQueueControlService,
+        tickBatchExecutionService,
+        new TransactionTemplate(transactionManager));
+  }
 
   TickStagingService(
       RedisTemplate<String, Object> redisTemplate,
@@ -49,7 +77,8 @@ final class TickStagingService {
       TickEffectRepository tickEffectRepository,
       RemoteFollowupDrainService remoteFollowupDrainService,
       TickQueueControlService tickQueueControlService,
-      TickBatchExecutionService tickBatchExecutionService) {
+      TickBatchExecutionService tickBatchExecutionService,
+      TransactionOperations transactionOperations) {
     this.redisTemplate = redisTemplate;
     this.gameplayCommandRepository = gameplayCommandRepository;
     this.remoteFollowupRepository = remoteFollowupRepository;
@@ -58,6 +87,7 @@ final class TickStagingService {
     this.remoteFollowupDrainService = remoteFollowupDrainService;
     this.tickQueueControlService = tickQueueControlService;
     this.tickBatchExecutionService = tickBatchExecutionService;
+    this.transactionOperations = transactionOperations;
   }
 
   void drainRemoteFollowups(
@@ -76,20 +106,22 @@ final class TickStagingService {
     List<net.firedevops.firemud.gamesession.entity.RemoteFollowup> claimedFollowups =
         remoteFollowupRepository.findByClaimedTickBatchIdOrderByIdAsc(tickBatchId);
     TickBatch batch = null;
+    boolean batchDurablyStaged = false;
     try {
       batch =
           createRemoteFollowupBatch(
               tickBatchId, tenantId, gameInstanceId, ownership, claimedFollowups);
+      batchDurablyStaged = true;
       tickBatchExecutionService.requireCurrentOwnership(batch, false);
       tickBatchExecutionService.markRemoteFollowupBatchDrained(batch);
       tickBatchExecutionService.executeDurableEffects(tenantId, gameInstanceId);
     } catch (Exception ex) {
-      if (batch != null) {
-        tickBatchExecutionService.markRemoteFollowupBatchAbandoned(
-            batch, failureCode(ex), ex.getMessage());
-      } else {
+      if (!batchDurablyStaged) {
         remoteFollowupDrainService.releaseClaimedFollowups(
             tickBatchId, failureCode(ex), ex.getMessage());
+      } else {
+        tickBatchExecutionService.markRemoteFollowupBatchAbandoned(
+            batch, failureCode(ex), ex.getMessage());
       }
       throw ex;
     }
@@ -161,6 +193,7 @@ final class TickStagingService {
         selectedWorkManifest(ownership.regionId(), commandSelections(replayEntries));
     String replayDigest = shortHash(replayManifest);
     if (replayDigest.equals(batch.getSelectedWorkManifestDigest())) {
+      tickBatchExecutionService.requireCompleteEffectSet(batch);
       return batch;
     }
     logger.warn(
@@ -187,6 +220,7 @@ final class TickStagingService {
     Instant now = Instant.now();
     requireDurableCommandIdentifiers(entries);
     List<CommandSelection> selections = commandSelections(entries);
+    List<GameplayCommand> commands = commandsForSelections(selections);
     TickBatch batch = new TickBatch();
     batch.setTickBatchId("tb-" + UUID.randomUUID());
     batch.setTenantId(tenantId);
@@ -203,9 +237,14 @@ final class TickStagingService {
     batch.setSelectedWorkManifestJson(selectedWorkManifest);
     batch.setSelectedWorkManifestDigest(shortHash(selectedWorkManifest));
     batch.setStagedAt(now);
-    TickBatch savedBatch = tickBatchRepository.save(batch);
-    persistEffects(savedBatch, gameInstanceId, now, selections);
-    bumpGameplayCommandAttempts(entries, now);
+    TickBatch savedBatch =
+        transactionOperations.execute(
+            status -> {
+              TickBatch persistedBatch = tickBatchRepository.save(batch);
+              persistEffects(persistedBatch, gameInstanceId, now, selections);
+              bumpGameplayCommandAttempts(commands, now);
+              return persistedBatch;
+            });
     logger.info(
         "Staged durable tick batch tickBatchId={} tenantId={} gameInstanceId={} source={} commandCount={}",
         savedBatch.getTickBatchId(),
@@ -284,6 +323,7 @@ final class TickStagingService {
   private void persistEffects(
       TickBatch batch, Long gameInstanceId, Instant stagedAt, List<CommandSelection> selections) {
     if (selections.isEmpty()) {
+      requirePersistedEffectCount(batch, 0);
       return;
     }
     List<TickEffect> effects = new ArrayList<>(selections.size());
@@ -300,7 +340,8 @@ final class TickStagingService {
       effect.setStagedAt(stagedAt);
       effects.add(effect);
     }
-    tickEffectRepository.saveAll(effects);
+    List<TickEffect> savedEffects = tickEffectRepository.saveAll(effects);
+    requirePersistedEffectCount(batch, savedEffects == null ? 0 : savedEffects.size());
   }
 
   private TickBatch createRemoteFollowupBatch(
@@ -326,8 +367,13 @@ final class TickStagingService {
     batch.setSelectedWorkManifestJson(selectedWorkManifest);
     batch.setSelectedWorkManifestDigest(shortHash(selectedWorkManifest));
     batch.setStagedAt(now);
-    TickBatch savedBatch = tickBatchRepository.save(batch);
-    persistRemoteFollowupEffects(savedBatch, now, followups);
+    TickBatch savedBatch =
+        transactionOperations.execute(
+            status -> {
+              TickBatch persistedBatch = tickBatchRepository.save(batch);
+              persistRemoteFollowupEffects(persistedBatch, now, followups);
+              return persistedBatch;
+            });
     logger.info(
         "Staged durable remote followup batch tickBatchId={} tenantId={} gameInstanceId={} followupCount={}",
         savedBatch.getTickBatchId(),
@@ -342,6 +388,7 @@ final class TickStagingService {
       Instant stagedAt,
       List<net.firedevops.firemud.gamesession.entity.RemoteFollowup> followups) {
     if (followups.isEmpty()) {
+      requirePersistedEffectCount(batch, 0);
       return;
     }
     List<TickEffect> effects = new ArrayList<>(followups.size());
@@ -357,7 +404,8 @@ final class TickStagingService {
       effect.setStagedAt(stagedAt);
       effects.add(effect);
     }
-    tickEffectRepository.saveAll(effects);
+    List<TickEffect> savedEffects = tickEffectRepository.saveAll(effects);
+    requirePersistedEffectCount(batch, savedEffects == null ? 0 : savedEffects.size());
   }
 
   private static String remoteFollowupTargetAggregate(
@@ -384,9 +432,7 @@ final class TickStagingService {
     return "game-instance:" + gameInstanceId;
   }
 
-  private void bumpGameplayCommandAttempts(
-      List<TickQueuedCommandEnvelope> entries, Instant attemptedAt) {
-    List<GameplayCommand> commands = loadCommands(entries);
+  private void bumpGameplayCommandAttempts(List<GameplayCommand> commands, Instant attemptedAt) {
     if (commands.isEmpty()) {
       return;
     }
@@ -395,6 +441,26 @@ final class TickStagingService {
       command.setLastAttemptAt(attemptedAt);
     }
     gameplayCommandRepository.saveAll(commands);
+  }
+
+  private List<GameplayCommand> commandsForSelections(List<CommandSelection> selections) {
+    Map<String, GameplayCommand> commandsById = new java.util.LinkedHashMap<>();
+    for (CommandSelection selection : selections) {
+      GameplayCommand command = selection.command();
+      if (command != null && command.getCommandId() != null) {
+        commandsById.putIfAbsent(command.getCommandId(), command);
+      }
+    }
+    return List.copyOf(commandsById.values());
+  }
+
+  private void requirePersistedEffectCount(TickBatch batch, int persistedEffectCount) {
+    if (persistedEffectCount != batch.getExpectedEffectCount()) {
+      throw new IllegalStateException(
+          "Durable tick batch effect count mismatch for tickBatchId=%s expected=%d actual=%d"
+              .formatted(
+                  batch.getTickBatchId(), batch.getExpectedEffectCount(), persistedEffectCount));
+    }
   }
 
   private List<CommandSelection> commandSelections(List<TickQueuedCommandEnvelope> entries) {

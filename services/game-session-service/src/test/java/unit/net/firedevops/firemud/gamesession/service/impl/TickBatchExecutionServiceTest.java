@@ -49,6 +49,7 @@ class TickBatchExecutionServiceTest {
   private RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private RemoteFollowupDrainService remoteFollowupDrainService;
   private DurableGameplayCommandExecutionService durableGameplayCommandExecutionService;
+  private DurableRemoteFollowupExecutionService durableRemoteFollowupExecutionService;
   private GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService;
   private TickBatchExecutionService service;
 
@@ -85,6 +86,7 @@ class TickBatchExecutionServiceTest {
             });
     remoteFollowupDrainService = mock(RemoteFollowupDrainService.class);
     durableGameplayCommandExecutionService = mock(DurableGameplayCommandExecutionService.class);
+    durableRemoteFollowupExecutionService = mock(DurableRemoteFollowupExecutionService.class);
     gameplayCommandExecutionFenceService = mock(GameplayCommandExecutionFenceService.class);
     when(gameplayCommandExecutionFenceService.validate(any(), any())).thenReturn(Optional.empty());
     service = newService(new ImmediateTransactionOperations());
@@ -485,6 +487,81 @@ class TickBatchExecutionServiceTest {
   }
 
   @Test
+  void executeDurableEffectsRejectsPartialEffectSetBeforeExecutingAnything() {
+    TickBatch batch = drainedBatch("tb-partial-execution", "fence-a");
+    batch.setExpectedEffectCount(2);
+    TickEffect effect = remoteDrainedEffect("tb-partial-execution", "followup-1");
+    when(tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
+            1L, 2L, "DRAINED"))
+        .thenReturn(List.of(batch));
+    when(tickEffectRepository.findByTickBatchId("tb-partial-execution"))
+        .thenReturn(List.of(effect));
+
+    assertThrows(IllegalStateException.class, () -> service.executeDurableEffects(1L, 2L));
+
+    assertEquals("DRAINED", batch.getStatus());
+    verify(durableRemoteFollowupExecutionService, never()).execute(any());
+  }
+
+  @Test
+  void remoteFailureAbandonsOnlyUnfinishedEffectsAfterLaterFailure() {
+    TickBatch batch = drainedBatch("tb-remote-partial", "fence-a");
+    batch.setBatchSource("REMOTE_FOLLOWUP_DRAIN");
+    batch.setExpectedEffectCount(2);
+    TickEffect appliedEffect = remoteDrainedEffect("tb-remote-partial", "followup-1");
+    TickEffect remainingEffect = remoteDrainedEffect("tb-remote-partial", "followup-2");
+    when(tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
+            1L, 2L, "DRAINED"))
+        .thenReturn(List.of(batch));
+    when(tickEffectRepository.findByTickBatchId("tb-remote-partial"))
+        .thenReturn(List.of(appliedEffect, remainingEffect));
+    when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc(
+            "tb-remote-partial", "DRAINED"))
+        .thenAnswer(
+            invocation ->
+                List.of(appliedEffect, remainingEffect).stream()
+                    .filter(effect -> "DRAINED".equals(effect.getStatus()))
+                    .toList());
+    when(durableRemoteFollowupExecutionService.execute(appliedEffect))
+        .thenReturn(
+            new DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult(
+                "APPLIED", null, null));
+    doThrow(new IllegalStateException("later remote effect failed"))
+        .when(durableRemoteFollowupExecutionService)
+        .execute(remainingEffect);
+
+    assertThrows(IllegalStateException.class, () -> service.executeDurableEffects(1L, 2L));
+    service.markRemoteFollowupBatchAbandoned(batch, "REMOTE_FAILURE", "later remote effect failed");
+
+    assertEquals("ABANDONED", batch.getStatus());
+    assertEquals("APPLIED", appliedEffect.getStatus());
+    assertEquals("ABANDONED", remainingEffect.getStatus());
+    verify(remoteFollowupDrainService)
+        .releaseClaimedFollowups(
+            "tb-remote-partial", "REMOTE_FAILURE", "later remote effect failed");
+  }
+
+  @Test
+  void markRemoteFollowupBatchAbandonedPreservesTerminalEffects() {
+    TickBatch batch = drainedBatch("tb-remote-terminal", "fence-a");
+    batch.setBatchSource("REMOTE_FOLLOWUP_DRAIN");
+    TickEffect appliedEffect = remoteDrainedEffect("tb-remote-terminal", "followup-1");
+    appliedEffect.setStatus("APPLIED");
+    TickEffect remainingEffect = remoteDrainedEffect("tb-remote-terminal", "followup-2");
+    when(tickEffectRepository.findByTickBatchId("tb-remote-terminal"))
+        .thenReturn(List.of(appliedEffect, remainingEffect));
+
+    service.markRemoteFollowupBatchAbandoned(batch, "REMOTE_FAILURE", "remote failed");
+
+    assertEquals("ABANDONED", batch.getStatus());
+    assertEquals("APPLIED", appliedEffect.getStatus());
+    assertEquals("ABANDONED", remainingEffect.getStatus());
+    verify(tickBatchRepository).save(batch);
+    verify(remoteFollowupDrainService)
+        .releaseClaimedFollowups("tb-remote-terminal", "REMOTE_FAILURE", "remote failed");
+  }
+
+  @Test
   void abandonDrainedBatchRequeuesOnlyEffectsThatRemainUnapplied() {
     TickBatch batch = new TickBatch();
     batch.setTickBatchId("tb-partial");
@@ -561,7 +638,7 @@ class TickBatchExecutionServiceTest {
         tickBatchRepository,
         tickEffectRepository,
         durableGameplayCommandExecutionService,
-        mock(DurableRemoteFollowupExecutionService.class),
+        durableRemoteFollowupExecutionService,
         remoteFollowupDrainService,
         newTickQueueControlService(),
         gameplayCommandExecutionFenceService,
@@ -603,6 +680,15 @@ class TickBatchExecutionServiceTest {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId(tickBatchId);
     effect.setCommandId(commandId);
+    effect.setStatus("DRAINED");
+    return effect;
+  }
+
+  private static TickEffect remoteDrainedEffect(String tickBatchId, String followupId) {
+    TickEffect effect = new TickEffect();
+    effect.setTickBatchId(tickBatchId);
+    effect.setEffectKey(followupId);
+    effect.setEffectType("REMOTE_FOLLOWUP");
     effect.setStatus("DRAINED");
     return effect;
   }

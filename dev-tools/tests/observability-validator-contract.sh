@@ -242,6 +242,106 @@ for collection_expression in nested_collection_expressions:
 
 snippet_path = root / "design/observability/grafana/backup-alerts-snippets.md"
 valid_snippet = snippet_path.read_text(encoding="utf-8")
+
+standalone_alert = """alert: StandaloneBackupAlert
+expr: backup_pipeline_recent_backup_slo_breached > 0
+labels:
+  service: postgres-backup
+  severity: P1
+  owner: infra
+  runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary
+"""
+standalone_alert_entries = validator._split_alert_rules(standalone_alert)
+if len(standalone_alert_entries) != 1:
+    raise AssertionError(f"standalone alert mapping was not parsed as one entry: {standalone_alert_entries!r}")
+standalone_alert_entry = standalone_alert_entries[0]
+if standalone_alert_entry.key != "alert" or standalone_alert_entry.name != "StandaloneBackupAlert":
+    raise AssertionError(f"standalone alert mapping was parsed incorrectly: {standalone_alert_entry!r}")
+
+standalone_record = """record: standalone_recording
+expr: backup_artifact_lineage_valid
+"""
+standalone_record_entries = validator._split_recording_rules(standalone_record)
+if len(standalone_record_entries) != 1:
+    raise AssertionError(f"standalone recording mapping was not parsed as one entry: {standalone_record_entries!r}")
+standalone_record_entry = standalone_record_entries[0]
+if standalone_record_entry.key != "record" or standalone_record_entry.name != "standalone_recording":
+    raise AssertionError(f"standalone recording mapping was parsed incorrectly: {standalone_record_entry!r}")
+
+standalone_snippet = "```yaml\n" + standalone_alert + "```\n"
+standalone_findings = findings_for(standalone_snippet, validator._validate_alert_snippet)
+if standalone_findings:
+    raise AssertionError(f"valid standalone alert mapping was rejected: {standalone_findings!r}")
+
+standalone_missing_labels = standalone_snippet.replace(
+    "  runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary\n",
+    "",
+    1,
+)
+require_message(
+    findings_for(standalone_missing_labels, validator._validate_alert_snippet),
+    "alert rule is missing required labels: runbook",
+)
+
+standalone_missing_expr = standalone_snippet.replace(
+    "expr: backup_pipeline_recent_backup_slo_breached > 0\n",
+    "",
+    1,
+)
+require_message(
+    findings_for(standalone_missing_expr, validator._validate_alert_snippet),
+    "alert rule is missing expr",
+)
+
+standalone_invalid_expression = standalone_snippet.replace(
+    "expr: backup_pipeline_recent_backup_slo_breached > 0",
+    "expr: tick_execution_time_ms_p99 > 5",
+    1,
+)
+require_message(
+    findings_for(standalone_invalid_expression, validator._validate_alert_snippet),
+    "expression compares an `_ms` metric against 5.0; this looks like seconds, but `_ms` metrics are milliseconds",
+)
+
+standalone_invalid_severity = standalone_snippet.replace(
+    "severity: P1",
+    "severity: P3",
+    1,
+)
+require_message(
+    findings_for(standalone_invalid_severity, validator._validate_alert_snippet),
+    "alert rule has invalid severity='P3'; expected one of ['P0', 'P1', 'P2']",
+)
+
+standalone_invalid_runbook = standalone_snippet.replace(
+    "runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary",
+    "runbook: not-a-runbook",
+    1,
+)
+require_message(
+    findings_for(standalone_invalid_runbook, validator._validate_alert_snippet),
+    "alert rule runbook label must be a design doc anchor (design/...md#section); got 'not-a-runbook'",
+)
+
+unsupported_standalone_roots = (
+    (
+        "flow mapping",
+        "{alert: StandaloneBackupAlert, expr: backup_pipeline_recent_backup_slo_breached > 0}",
+    ),
+    ("anchor", "&standalone_alert\nalert: StandaloneBackupAlert"),
+    ("alias", "*standalone_alert"),
+    ("explicit mapping", "? alert\n: StandaloneBackupAlert"),
+    ("malformed header", "alert StandaloneBackupAlert"),
+    ("inline alias", "alert: *standalone_alert"),
+    ("unrecognized mapping", "name: StandaloneBackupAlert\nexpr: backup_pipeline_recent_backup_slo_breached > 0"),
+)
+for _, unsupported_root in unsupported_standalone_roots:
+    unsupported_snippet = "```yaml\n" + unsupported_root + "\n```\n"
+    require_message(
+        findings_for(unsupported_snippet, validator._validate_alert_snippet),
+        "unrecognized alert rule sequence entry; the dependency-free validator cannot safely inspect this YAML shape",
+    )
+
 snippet_rule_shapes = (
     ("flow mapping", "- {alert: BackupPipelineNoRecentBackup}"),
     ("anchor", "- &backup_rule\n  alert: BackupPipelineNoRecentBackup"),
