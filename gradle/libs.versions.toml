@@ -5,7 +5,7 @@ flyway = "13.0.0"
 mapstruct = "1.6.3"
 lombok = "1.18.42"
 lombok-mapstruct-binding = "0.2.0"
-grpc = "1.82.2"
+grpc = "1.83.0"
 protobuf = "4.35.1"
 opentelemetry = "1.58.0"
 micrometer = "1.16.2"
@@ -54,11 +54,11 @@ mapstruct-processor = { module = "org.mapstruct:mapstruct-processor", version = 
 lombok = { module = "org.projectlombok:lombok", version = "1.18.46" }
 lombok-mapstruct-binding = { module = "org.projectlombok:lombok-mapstruct-binding", version = "0.2.0" }
 
-grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version = "1.82.2" }
-grpc-protobuf = { module = "io.grpc:grpc-protobuf", version = "1.82.2" }
-grpc-stub = { module = "io.grpc:grpc-stub", version = "1.82.2" }
-grpc-inprocess = { module = "io.grpc:grpc-inprocess", version = "1.82.2" }
-protoc-gen-grpc-java = { module = "io.grpc:protoc-gen-grpc-java", version = "1.82.2" }
+grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version = "1.83.0" }
+grpc-protobuf = { module = "io.grpc:grpc-protobuf", version = "1.83.0" }
+grpc-stub = { module = "io.grpc:grpc-stub", version = "1.83.0" }
+grpc-inprocess = { module = "io.grpc:grpc-inprocess", version = "1.83.0" }
+protoc-gen-grpc-java = { module = "io.grpc:protoc-gen-grpc-java", version = "1.83.0" }
 
 protobuf-java = { module = "com.google.protobuf:protobuf-java", version = "4.35.1" }
 protoc = { module = "com.google.protobuf:protoc", version = "4.35.1" }
