@@ -28,6 +28,6 @@ Production-specific requirements:
 
 `dev-tools/restores/validate-external-credentials.sh production` requires `EXTERNAL_CREDENTIAL_EVIDENCE_REF` to point to one of these records, but it still expects the legacy `certificateReissuanceEvidence`, `jwtRestoreHardeningEvidence`, and `databaseCredentialRotationEvidence` aliases. It must be updated to the canonical control-group names; a legacy-script pass is not complete recovery proof.
 
-`backupConfidentialityEvidence` must prove encrypted transport/storage, environment-scoped least-privilege access and audit, retention/secure deletion, and any production-origin non-production drill quarantine, sanitization, validation, and deletion controls.
+`backupConfidentialityEvidence` must prove encrypted transport/storage, environment-scoped least-privilege access and audit, and retention/secure deletion. Whenever production-origin data is exercised outside production, quarantine, sanitization, validation, and deletion controls are mandatory.
 
 Current implementation note: existing restore helpers do not produce the durable recovery-controller state machine, immutable erasure high-water replay, or its `collecting` -> `ready_to_reopen` -> `releasing` -> `finalized` reconciliation, so they cannot authorize player-facing reopen. The checked-in record is a post-finalization immutable projection, not runtime authority. Recovery continuation is `continueRecovery(operationId, expectedPhase, evidenceRef)`; pause/lock is internal controller state.

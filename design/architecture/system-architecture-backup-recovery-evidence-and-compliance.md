@@ -75,6 +75,7 @@ Required fields:
 - `restoreDrillLastSuccessAt`
 - `restorePlanRef`
 - `restoreRecoveryRecordRef`
+- `baselineRecoveryRecordRef`
 - `recoveryControllerLineage`
 - `backupConfidentialityEvidence`
 - `backupCoverage` (`environment-wide-postgresql`)
@@ -105,7 +106,7 @@ Validation rules:
 - `backupReadinessRef` is a backup-readiness artifact, not a recovery record. Preflight must dereference it and separately dereference and validate its `restoreRecoveryRecordRef`; that restore record does not replace validation of `baselineRecoveryRecordRef`
 - the recovery record must prove `cold_start_restore`, empty Coordination Redis, environment-wide session and epoch/fence invalidation, safe durable-participant and external-effect dispositions, and controlled reopen
 - `recoveryControllerLineage` must dereference the finalized environment-wide controller state and its immutable backup, restore-tool, participant, hardening, confidentiality, and smoke evidence; tenant/region backup-pause proof is not required or sufficient
-- `backupConfidentialityEvidence` must prove encrypted transport and storage, environment-scoped least-privilege access and audit, retention/secure deletion, and production-origin drill quarantine, sanitization, validation, and deletion when applicable
+- `backupConfidentialityEvidence` must prove encrypted transport and storage, environment-scoped least-privilege access and audit, and retention/secure deletion. Whenever production-origin data is exercised outside production, it must also prove quarantine, sanitization, validation, and deletion
 - `backupCoverage` must be `environment-wide-postgresql`; a tenant/region pair cannot stand in for the whole database
 - `backupToolDigest` must match the tool that produced the source artifact and its source lineage; `recoveryToolDigest` and the recovery-contract fingerprint must match the candidate proved by the drill
 - `sourceServiceDigests` and the backup artifact lineage identify the snapshot-time production source; `candidateServiceDigests` and `candidateMigrationPathRef` identify the exact recovery candidate proved through controlled reopen
@@ -180,7 +181,7 @@ Validation rules:
 - `restoreDrillLastSuccessAt` must be within 30 days
 - `backupCoverage` must be `environment-wide-postgresql`
 - the referenced recovery record must prove the exact environment-wide cold-start contract and controlled reopen path
-- `backupConfidentialityEvidence` must prove the backup confidentiality invariant and any required production-origin non-production sanitization/deletion evidence
+- `backupConfidentialityEvidence` must prove the backup confidentiality invariant and, whenever production-origin data is exercised outside production, quarantine, sanitization, validation, and deletion evidence
 - `PREFLIGHT-BACKUP-002` validates the event against the durable controller while the actual recovery is `ready_to_reopen`; `continueRecovery(operationId, expectedPhase, evidenceRef)` idempotently reconciles the internal `ready_to_reopen -> releasing -> finalized` phases, applying and observing quarantine release before permitting player traffic
 - the exporter writes the checked-in traffic-open projection, including `trafficOpenedAt`, only after the controller reaches `finalized`; the projection is not a prerequisite for that same release, and a runtime authorization or partially written file is not proof that the transition completed
 - the canonical gate for this artifact is the deployment preflight contract in `system-architecture-deploy-preflight-policy.md` (`PREFLIGHT-BACKUP-002`), and the deployment sequencing that consumes it is defined in `system-architecture-deployment-runbook.md`
@@ -308,7 +309,7 @@ Nested control-group requirements:
 - `externalCredentialValidation` includes one result per credential class with `validationMethod`, `validatedAt`, `validatedBy`, `observedValue`, isolation assertion, and immutable evidence ref. `observedValue` is explicitly non-secret and is limited to a resource ID, certificate/key fingerprint, or redacted presence indicator; it must never contain a password, token, private key, raw secret material, or an unredacted credential-bearing connection string
 - `secretComplianceRefresh` references the refreshed `design/operations/secret-compliance/<environment>.yaml` record, the immutable evidence payload updated by restore hardening, the credential classes refreshed, and whether each class used `lastProvisionedAt` or `lastRotationAt`
 - `recoveryControllerLineage` identifies the durable controller state, environment-wide scope, linked artifact and participant lineage, pre-release `ready_to_reopen` approval, and post-release `finalized` state when this projection is exported
-- `backupConfidentialityEvidence` proves encrypted transport/storage, environment-scoped least-privilege access and audit, retention/secure deletion, and production-origin non-production quarantine, sanitization, validation, and deletion when applicable
+- `backupConfidentialityEvidence` proves encrypted transport/storage, environment-scoped least-privilege access and audit, and retention/secure deletion. Whenever production-origin data is exercised outside production, it also proves quarantine, sanitization, validation, and deletion
 - `backupArtifactLineage` binds the environment-wide PostgreSQL artifact to its database identity, snapshot time, schema/migration lineage, service digests, and object-storage identity
 - `artifactErasureHighWater` is the immutable high-water captured in the source artifact lineage; `restoreHighWater` is captured immutably from the authoritative erasure ledger for this recovery operation and must not be inferred from restored PostgreSQL
 - `erasureReplay` identifies the authoritative ledger, exclusive start (`artifactErasureHighWater`), inclusive end (`restoreHighWater`), replayed-through sequence, and gap-free completion evidence. The interval must contain every erasure event in order, without gaps or unknown entries, before the controller reaches `ready_to_reopen`

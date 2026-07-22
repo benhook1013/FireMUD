@@ -13,7 +13,7 @@ REPORT_PATH="$TMP_DIR/preflight-report.json"
 TRAFFIC_EVIDENCE="$TMP_DIR/traffic-open.json"
 PRODUCTION_REPORT="$TMP_DIR/preflight-production.json"
 LEGACY_PRODUCTION_TRAFFIC_EVIDENCE="$TMP_DIR/production-traffic-open.json"
-PRODUCTION_WAIVER="$TMP_DIR/production-traffic-open-waiver.json"
+PRODUCTION_WAIVER="$TMP_DIR/contract-production.waiver.json"
 
 python3 - <<'PY' "$ROOT_DIR"
 import pathlib
@@ -342,6 +342,22 @@ incomplete_status, incomplete_message = module.validate_preflight_report(
 if incomplete_status != "fail" or "missing expected policy IDs" not in incomplete_message:
     raise SystemExit(f"incomplete preflight policy set did not fail closed: {incomplete_message}")
 
+not_applicable_report = {
+    **complete_report,
+    "checkResults": [
+        {"policyId": policy_id, "status": "not_applicable", "message": "synthetic evidence"}
+        for policy_id in module.EXPECTED_PREFLIGHT_POLICY_IDS
+    ],
+}
+not_applicable_status, not_applicable_message = module.validate_preflight_report(
+    not_applicable_report,
+    "hobby-self-hosted",
+    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
+    "contract-hobby",
+)
+if not_applicable_status != "fail" or "non-passing required policy IDs" not in not_applicable_message:
+    raise SystemExit(f"all-not-applicable preflight report did not fail closed: {not_applicable_message}")
+
 compliance_path = tmp / "passing-hobby-backup-compliance.yaml"
 compliance_path.write_text("environment: hobby-self-hosted\nstatus: pass\n", encoding="utf-8")
 preflight_path = tmp / "passing-hobby-preflight.json"
@@ -454,8 +470,12 @@ if "durable environment-wide recovery-controller authority is not implemented" n
     raise SystemExit(f"PREFLIGHT-BACKUP-002 did not report controller unavailability: {backup_002}")
 PY
 
-cat >"$PRODUCTION_WAIVER" <<'JSON'
+cat >"$PRODUCTION_WAIVER" <<JSON
 {
+  "environment": "production",
+  "deploymentRef": "contract-production",
+  "expiration": "deployment-event",
+  "recordedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "approver": "preflight-contract",
   "ticket": "contract-ticket",
   "waivedPolicyIds": ["PREFLIGHT-BACKUP-002"]
@@ -781,6 +801,42 @@ future_timestamp = (now + module.dt.timedelta(hours=1)).isoformat().replace("+00
 recovery_dir = tmp / "design/operations/deployments/production/recovery"
 recovery_dir.mkdir(parents=True)
 
+waiver_dir = tmp / "waiver-contract"
+waiver_dir.mkdir()
+waiver_output_path = waiver_dir / "report.json"
+waiver_path = waiver_dir / "contract-waiver.waiver.json"
+valid_waiver = {
+    "environment": "production",
+    "deploymentRef": "contract-waiver",
+    "expiration": "deployment-event",
+    "recordedAt": past_timestamp,
+    "approver": "preflight-contract",
+    "ticket": "contract-ticket",
+    "waivedPolicyIds": ["PREFLIGHT-PROMOTION-001"],
+}
+waiver_path.write_text(json.dumps(valid_waiver), encoding="utf-8")
+waived_ids, approver, ticket = module.load_waiver(
+    waiver_path, "production", "contract-waiver", waiver_output_path, now
+)
+if waived_ids != {"PREFLIGHT-PROMOTION-001"} or approver != "preflight-contract" or ticket != "contract-ticket":
+    raise SystemExit("valid deployment-bound waiver was not accepted")
+waiver_path.write_text(json.dumps({**valid_waiver, "deploymentRef": "other-event"}), encoding="utf-8")
+try:
+    module.load_waiver(waiver_path, "production", "contract-waiver", waiver_output_path, now)
+except ValueError as exc:
+    if "deploymentRef" not in str(exc):
+        raise SystemExit(f"mismatched waiver failed for the wrong reason: {exc}")
+else:
+    raise SystemExit("waiver bound to another deployment event was accepted")
+waiver_path.write_text(json.dumps({**valid_waiver, "approver": ""}), encoding="utf-8")
+try:
+    module.load_waiver(waiver_path, "production", "contract-waiver", waiver_output_path, now)
+except ValueError as exc:
+    if "approver" not in str(exc):
+        raise SystemExit(f"anonymous waiver failed for the wrong reason: {exc}")
+else:
+    raise SystemExit("anonymous waiver was accepted")
+
 def write_json(name, data):
     path = tmp / name
     path.write_text(json.dumps(data), encoding="utf-8")
@@ -991,9 +1047,14 @@ def promotion_attestation(compatibility, rollback_mode="rollback-compatible"):
     }
 
 for compatibility_status in ("drill_required", "incompatible"):
+    status_result = compatibility_result(compatibility_status)
+    if compatibility_status == "drill_required":
+        status_result.update(
+            {"newDrillRequired": True, "backupReadinessRef": "drill-required-readiness.json"}
+        )
     status_attestation = write_json(
         f"{compatibility_status}-attestation.json",
-        promotion_attestation(compatibility_result(compatibility_status)),
+        promotion_attestation(status_result),
     )
     promotion_status, _, promotion_message = module.promotion_check(status_attestation, [], tmp)
     if promotion_status != "fail" or "compatibilityStatus blocks promotion" not in promotion_message:
@@ -1061,7 +1122,7 @@ secret_evidence_path.write_text(
     json.dumps(
         {
             "records": {
-                class_name: {"immutableArtifactId": f"contract:{class_name}:sha256:evidence"}
+                class_name: {"immutableArtifactId": f"contract:{class_name}:sha256:{'a' * 64}"}
                 for class_name in (
                     "jwt-signing-keys-jwks",
                     "postgres-application-credentials",
@@ -1137,6 +1198,56 @@ promotion_status, promotion_mode, promotion_message = module.promotion_check(
 )
 if promotion_status != "pass" or promotion_mode != "rollback-compatible":
     raise SystemExit(f"canonical promotion/staging lineage did not pass: {promotion_message}")
+
+staging_record_path = staging_dir / f"{staging_sha}.json"
+malformed_smoke_record = {**staging_record, "smokeEvidence": [{}]}
+staging_record_path.write_text(json.dumps(malformed_smoke_record), encoding="utf-8")
+malformed_smoke_status, _, malformed_smoke_message = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if malformed_smoke_status != "fail" or "smokeEvidence entries" not in malformed_smoke_message:
+    raise SystemExit(f"malformed staging smoke evidence was accepted: {malformed_smoke_message}")
+staging_record_path.write_text(json.dumps({**staging_record, "smokeEvidence": ["different-smoke"]}), encoding="utf-8")
+mismatched_smoke_status, _, mismatched_smoke_message = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if mismatched_smoke_status != "fail" or "does not match" not in mismatched_smoke_message:
+    raise SystemExit(f"mismatched staging smoke evidence was accepted: {mismatched_smoke_message}")
+staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
+
+malformed_secret_evidence = json.loads(secret_evidence_path.read_text(encoding="utf-8"))
+malformed_secret_evidence["records"]["operator-credentials"]["immutableArtifactId"] = {"note": "sha256:"}
+secret_evidence_path.write_text(json.dumps(malformed_secret_evidence), encoding="utf-8")
+malformed_immutable_status, _, malformed_immutable_message = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if malformed_immutable_status != "fail" or "not immutable" not in malformed_immutable_message:
+    raise SystemExit(f"malformed immutable evidence identifier was accepted: {malformed_immutable_message}")
+secret_evidence_path.write_text(
+    json.dumps(
+        {
+            "records": {
+                class_name: {"immutableArtifactId": f"contract:{class_name}:sha256:{'a' * 64}"}
+                for class_name in (
+                    "jwt-signing-keys-jwks",
+                    "postgres-application-credentials",
+                    "backup-object-store-credentials",
+                    "operator-credentials",
+                )
+            }
+        }
+    ),
+    encoding="utf-8",
+)
 
 bad_git_attestation = json.loads(promotion_attestation_path.read_text(encoding="utf-8"))
 bad_git_attestation["stagingOverlayCommitSha"] = "deadbeef"
@@ -1216,6 +1327,7 @@ future_readiness = write_json(
         "restoreDrillLastSuccessAt": past_timestamp,
         "restorePlanRef": "restore-plan",
         "restoreRecoveryRecordRef": "recovery/restore.json",
+        "baselineRecoveryRecordRef": "design/operations/deployments/production/recovery/baseline.json",
         "recoveryControllerLineage": {"recoveryStatus": "finalized"},
         "backupConfidentialityEvidence": {"status": "pass"},
         "backupCoverage": "environment-wide-postgresql",

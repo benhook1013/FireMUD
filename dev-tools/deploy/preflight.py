@@ -24,7 +24,8 @@ Environment variables:
   FIREMUD_DEPLOYMENT_REF             Optional deployment ref token for report naming
   FIREMUD_PREFLIGHT_RENDER_PATH      Required for hobby-self-hosted; explicit manifest/render path
   FIREMUD_PREFLIGHT_WAIVER           Optional waiver JSON path with fields:
-                                     approver, ticket, waivedPolicyIds[]
+                                     environment, deploymentRef, expiration=deployment-event,
+                                     recordedAt, approver, ticket, waivedPolicyIds[]
   FIREMUD_PROMOTION_ATTESTATION      Required in operator production context; path to attestation JSON
   FIREMUD_BACKUP_READINESS_EVIDENCE  Required for production roll-forward-only promotions; path to backup-readiness JSON
   FIREMUD_TRAFFIC_OPEN_EVENT         Optional traffic-open gate: first-live or reopen
@@ -68,6 +69,18 @@ EXPECTED_PREFLIGHT_POLICY_IDS = (
     "PREFLIGHT-BACKUP-003",
 )
 EXPECTED_PREFLIGHT_POLICY_ID_SET = set(EXPECTED_PREFLIGHT_POLICY_IDS)
+
+COMMON_REQUIRED_PREFLIGHT_POLICY_IDS = {
+    "PREFLIGHT-SECRETS-001",
+    "PREFLIGHT-SECRETS-002",
+    "PREFLIGHT-JWT-001",
+    "PREFLIGHT-JWKS-001",
+    "PREFLIGHT-BRIDGE-001",
+    "PREFLIGHT-REDIS-001",
+    "PREFLIGHT-BOOTSTRAP-001",
+    "PREFLIGHT-EXTERNAL-001",
+    "PREFLIGHT-SERVICES-001",
+}
 
 PROMOTION_ATTESTATION_VERSION = "v1"
 PROMOTION_ATTESTATION_REQUIRED_FIELDS = (
@@ -195,6 +208,7 @@ BACKUP_READINESS_REQUIRED_FIELDS = (
     "restoreDrillLastSuccessAt",
     "restorePlanRef",
     "restoreRecoveryRecordRef",
+    "baselineRecoveryRecordRef",
     "recoveryControllerLineage",
     "backupConfidentialityEvidence",
     "backupCoverage",
@@ -446,6 +460,54 @@ def resolve_repo_path(root_dir: Path, ref: str) -> Path:
     return path if path.is_absolute() else root_dir / ref
 
 
+def load_waiver(
+    waiver_path: Path,
+    environment: str,
+    deployment_ref: str,
+    output_path: Path,
+    now_dt: dt.datetime,
+) -> tuple[set[str], str, str]:
+    expected_path = (output_path.parent / f"{deployment_ref}.waiver.json").resolve()
+    if waiver_path.resolve() != expected_path:
+        raise ValueError(f"Waiver must be stored beside the report as {expected_path}")
+    try:
+        waiver = load_json(waiver_path)
+    except Exception as exc:
+        raise ValueError(f"Waiver is unreadable: {exc}") from exc
+    if not isinstance(waiver, dict):
+        raise ValueError("Waiver must be a JSON object")
+
+    expected_values = {
+        "environment": environment,
+        "deploymentRef": deployment_ref,
+        "expiration": "deployment-event",
+    }
+    for field, expected in expected_values.items():
+        if waiver.get(field) != expected:
+            raise ValueError(f"Waiver {field} must be {expected}")
+    for field in ("approver", "ticket"):
+        if not isinstance(waiver.get(field), str) or not waiver[field].strip():
+            raise ValueError(f"Waiver {field} must be a non-empty string")
+    try:
+        recorded_at = parse_timestamp(waiver.get("recordedAt"), "Waiver recordedAt")
+    except Exception as exc:
+        raise ValueError(str(exc)) from exc
+    if recorded_at > now_dt:
+        raise ValueError("Waiver recordedAt is future-dated")
+
+    waived_policy_ids = waiver.get("waivedPolicyIds")
+    if not isinstance(waived_policy_ids, list) or not waived_policy_ids:
+        raise ValueError("Waiver waivedPolicyIds must be a non-empty list")
+    if any(not isinstance(policy_id, str) or not policy_id for policy_id in waived_policy_ids):
+        raise ValueError("Waiver waivedPolicyIds entries must be non-empty strings")
+    if len(set(waived_policy_ids)) != len(waived_policy_ids):
+        raise ValueError("Waiver waivedPolicyIds must not contain duplicates")
+    unknown_policy_ids = sorted(set(waived_policy_ids) - EXPECTED_PREFLIGHT_POLICY_ID_SET)
+    if unknown_policy_ids:
+        raise ValueError("Waiver contains unknown policy IDs: " + ", ".join(unknown_policy_ids))
+    return (set(waived_policy_ids), waiver["approver"].strip(), waiver["ticket"].strip())
+
+
 def validate_preflight_report(
     report: Any,
     environment: str,
@@ -505,6 +567,24 @@ def validate_preflight_report(
     unknown_ids = sorted(set(policy_ids) - EXPECTED_PREFLIGHT_POLICY_ID_SET)
     if unknown_ids:
         return ("fail", f"{label} preflight report contains unknown policy IDs: " + ", ".join(unknown_ids))
+
+    required_pass_ids = set(COMMON_REQUIRED_PREFLIGHT_POLICY_IDS)
+    if environment in {"staging", "production"}:
+        required_pass_ids.add("PREFLIGHT-DIGEST-001")
+    if environment == "production":
+        required_pass_ids.update({"PREFLIGHT-PROMOTION-001", "PREFLIGHT-BACKUP-001"})
+    if environment == "hobby-self-hosted":
+        required_pass_ids.add("PREFLIGHT-BACKUP-003")
+    status_by_policy = {check["policyId"]: check["status"] for check in preflight_results}
+    non_passing_required_ids = sorted(
+        policy_id for policy_id in required_pass_ids if status_by_policy.get(policy_id) != "pass"
+    )
+    if non_passing_required_ids:
+        return (
+            "fail",
+            f"{label} preflight report has non-passing required policy IDs: "
+            + ", ".join(non_passing_required_ids),
+        )
 
     required_failures = [
         check.get("policyId")
@@ -1411,6 +1491,13 @@ def recovery_compatibility_check(
         return ("fail", "Attestation recoveryCompatibility changedDimensions entries must be non-empty strings")
     if not isinstance(recovery_compatibility.get("newDrillRequired"), bool):
         return ("fail", "Attestation recoveryCompatibility newDrillRequired must be a boolean")
+    new_drill_required = recovery_compatibility["newDrillRequired"]
+    if compatibility_status == "drill_required" and new_drill_required is not True:
+        return ("fail", "recoveryCompatibility drill_required status must set newDrillRequired")
+    if new_drill_required:
+        backup_readiness_ref = recovery_compatibility.get("backupReadinessRef")
+        if not isinstance(backup_readiness_ref, str) or not backup_readiness_ref.strip():
+            return ("fail", "recoveryCompatibility newDrillRequired result must include backupReadinessRef")
     try:
         evaluated_at = parse_timestamp(
             recovery_compatibility.get("evaluatedAt"), "recoveryCompatibility.evaluatedAt"
@@ -1436,13 +1523,10 @@ def recovery_compatibility_check(
         return ("fail", baseline_message)
 
     if rollback_mode == "roll-forward-only":
-        if recovery_compatibility.get("newDrillRequired") is not True:
+        if new_drill_required is not True:
             return ("fail", "roll-forward-only attestation must set recoveryCompatibility.newDrillRequired")
-        backup_readiness_ref = recovery_compatibility.get("backupReadinessRef")
-        if not isinstance(backup_readiness_ref, str) or not backup_readiness_ref.strip():
-            return ("fail", "roll-forward-only attestation missing recoveryCompatibility.backupReadinessRef")
     elif rollback_mode == "rollback-compatible":
-        if recovery_compatibility.get("newDrillRequired") is True:
+        if new_drill_required is True:
             return ("fail", "rollback-compatible attestation cannot require a new recovery drill")
         if changed_dimensions:
             return ("fail", "rollback-compatible attestation cannot declare changed recovery dimensions")
@@ -1592,6 +1676,10 @@ def promotion_check(
         return ("fail", rollback_mode, "Staging deployment record serviceDigests must be a non-empty object")
     if not isinstance(record.get("smokeEvidence"), list) or not record["smokeEvidence"]:
         return ("fail", rollback_mode, "Staging deployment record smokeEvidence must be a non-empty list")
+    if any(not isinstance(evidence, str) or not evidence for evidence in record["smokeEvidence"]):
+        return ("fail", rollback_mode, "Staging deployment record smokeEvidence entries must be non-empty strings")
+    if record["smokeEvidence"] != att["smokeEvidence"]:
+        return ("fail", rollback_mode, "Staging deployment record smokeEvidence does not match the attestation")
 
     for field in ("appliedAt", "secretComplianceSnapshotAt"):
         try:
@@ -1674,8 +1762,10 @@ def promotion_check(
         rec = records.get(key)
         if not isinstance(rec, dict):
             return ("fail", rollback_mode, f"Staging secret compliance evidence missing record: {key}")
-        immutable_id = str(rec.get("immutableArtifactId", ""))
-        if "sha256:" not in immutable_id:
+        immutable_id = rec.get("immutableArtifactId")
+        if not isinstance(immutable_id, str) or not re.fullmatch(
+            r"[^\s]+:sha256:[0-9a-fA-F]{64}", immutable_id
+        ):
             return ("fail", rollback_mode, f"Staging secret compliance evidence record is not immutable: {key}")
 
     return ("pass", rollback_mode, "Production promotion attestation and staging deployment evidence are valid")
@@ -1762,6 +1852,22 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
     referenced_readiness_path = (root_dir / str(recovery_compatibility["backupReadinessRef"])).resolve()
     if referenced_readiness_path != path.resolve():
         return ("fail", "Backup-readiness evidence does not match recoveryCompatibility.backupReadinessRef")
+    if data.get("baselineRecoveryRecordRef") != recovery_compatibility.get("baselineRecoveryRecordRef"):
+        return ("fail", "Backup-readiness evidence baselineRecoveryRecordRef does not match the attestation")
+    try:
+        compatibility_evaluated_at = parse_timestamp(
+            recovery_compatibility.get("evaluatedAt"), "recoveryCompatibility.evaluatedAt"
+        )
+    except Exception as exc:
+        return ("fail", str(exc))
+    baseline_status, baseline_message = validate_recovery_baseline(
+        root_dir,
+        str(data["baselineRecoveryRecordRef"]),
+        str(recovery_compatibility.get("baselineRecoveryContractFingerprint", "")),
+        compatibility_evaluated_at,
+    )
+    if baseline_status != "pass":
+        return ("fail", baseline_message)
     if attestation.get("serviceDigests") != data.get("candidateServiceDigests"):
         return ("fail", "Backup-readiness evidence candidateServiceDigests do not match the attestation")
     if data.get("recoveryContractFingerprint") != recovery_compatibility.get("candidateRecoveryContractFingerprint"):
@@ -1915,6 +2021,8 @@ def main() -> int:
         rendered = run(["kubectl", "kustomize", str(root_dir / "k8s" / "overlays" / overlay_name)])
 
     documents = parse_documents(rendered)
+    default_output = root_dir / "design" / "operations" / "deployments" / env_class / "preflight" / f"{deployment_ref}.json"
+    output_path = Path(os.environ.get("FIREMUD_PREFLIGHT_OUTPUT", str(default_output)))
     waiver_path = os.environ.get("FIREMUD_PREFLIGHT_WAIVER", "")
     waived_ids: set[str] = set()
     waiver_approver = ""
@@ -1923,10 +2031,16 @@ def main() -> int:
         waiver_file = Path(waiver_path)
         if not waiver_file.exists():
             fail(f"Waiver path does not exist: {waiver_path}")
-        waiver = load_json(waiver_file)
-        waived_ids = set(waiver.get("waivedPolicyIds", []))
-        waiver_approver = waiver.get("approver", "")
-        waiver_ticket = waiver.get("ticket", "")
+        try:
+            waived_ids, waiver_approver, waiver_ticket = load_waiver(
+                waiver_file,
+                env_class,
+                deployment_ref,
+                output_path,
+                dt.datetime.now(dt.timezone.utc),
+            )
+        except ValueError as exc:
+            fail(str(exc))
 
     started_at = utc_now()
     traffic_open_event = os.environ.get("FIREMUD_TRAFFIC_OPEN_EVENT", "")
@@ -2140,8 +2254,6 @@ def main() -> int:
         has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-003", False, "not_applicable", "Hobby traffic-open backup gate applies only to hobby-self-hosted") or has_required_failure
 
     completed_at = utc_now()
-    default_output = root_dir / "design" / "operations" / "deployments" / env_class / "preflight" / f"{deployment_ref}.json"
-    output_path = Path(os.environ.get("FIREMUD_PREFLIGHT_OUTPUT", str(default_output)))
     write_report(
         output_path,
         env_class,

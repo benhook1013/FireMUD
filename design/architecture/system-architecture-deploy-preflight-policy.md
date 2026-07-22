@@ -62,7 +62,7 @@ Bootstrap resources must be unique to the environment boundary. Reusing staging 
 
 ## Required Policy Checks
 
-Every run must emit one result per policy ID below, with status `pass`, `fail`, or `not_applicable` (with reason):
+Every run must emit one result per implemented policy ID below, with status `pass`, `fail`, or `not_applicable` (with reason). Entries marked target-state-only are not emitted until their executable checks and contract proof land:
 
 - `PREFLIGHT-DIGEST-001` – all staging/production workload images are immutable digests (`image@sha256:...`).
 - `PREFLIGHT-DIGEST-002` – hobby/self-hosted workload manifests are digest-pinned where the operator packaging format supports digest references.
@@ -70,15 +70,15 @@ Every run must emit one result per policy ID below, with status `pass`, `fail`, 
 - `PREFLIGHT-SECRETS-002` – player-facing environments validate internal state/trust bindings (PostgreSQL endpoint and credential binding, Redis role endpoints, JWT/JWKS resource bindings, certificate issuer binding, registry pull credentials) against the target environment boundary and fail on cross-environment reuse.
 - `PREFLIGHT-JWT-001` – Account Service in player-facing environments uses `FIREMUD_AUTH_JWT_SECRET_PATH` and does not rely on inline-only JWT secrets.
 - `PREFLIGHT-JWKS-001` – JWKS resource type matches environment policy (`jwt-jwks` Secret for player-facing environments; ConfigMap only for explicitly non-player-facing/test environments).
-- `PREFLIGHT-JWT-002` – player-facing resolved manifests give the Account JWT private signing bundle only to Account Service; every validator uses asymmetric Account `kid`/JWKS verification with HMAC fallback disabled and receives no Account private key.
-- `PREFLIGHT-JWT-ROTATION-001` – player-facing first-live, reopen, and promotion evidence references successful planned-rotation and compromise-cutover drills using the production rotation artifact, including validator inventory/convergence, old/new `kid` acceptance and rejection, pruning, and immutable evidence identity.
+- `PREFLIGHT-JWT-002` (target-state-only; not currently emitted) – player-facing resolved manifests give the Account JWT private signing bundle only to Account Service; every validator uses asymmetric Account `kid`/JWKS verification with HMAC fallback disabled and receives no Account private key.
+- `PREFLIGHT-JWT-ROTATION-001` (target-state-only; not currently emitted) – player-facing first-live, reopen, and promotion evidence references successful planned-rotation and compromise-cutover drills using the production rotation artifact, including validator inventory/convergence, old/new `kid` acceptance and rejection, pruning, and immutable evidence identity.
 - `PREFLIGHT-BRIDGE-001` – `GATEWAY_WS_URL` matches the expected internal Gateway listener for the target environment.
 - `PREFLIGHT-REDIS-001` – player-facing environments resolve distinct Coordination vs Cache Redis endpoints.
 - `PREFLIGHT-BOOTSTRAP-001` – player-facing environments confirm the minimum bootstrap secret and trust resources exist before apply.
 - `PREFLIGHT-EXTERNAL-001` – player-facing environments validate that backup storage, asset storage, outbound communications, and operator credential bindings match the target environment and do not cross environment boundaries. For backup and asset storage, the proof must include the credential-binding identity that owns the object-store target.
 - `PREFLIGHT-SERVICES-001` – player-facing environments either run with default in-environment service discovery or declare explicit `FIREMUD_SERVICES_*` overrides that are allowlisted for the target environment and do not resolve across environment boundaries.
 - `PREFLIGHT-PROMOTION-001` – production promotions reference a valid staging attestation with matching digests.
-- `PREFLIGHT-BACKUP-001` – every production promotion includes the compact recovery-compatibility result; compatible rollback releases reuse the current baseline, while `drill_required` and `roll-forward-only` releases reference a full release-candidate recovery drill bound to exact candidate lineage, finalized controller lineage, and backup-confidentiality proof.
+- `PREFLIGHT-BACKUP-001` – every production promotion includes the compact recovery-compatibility result; compatible rollback releases reuse the current baseline, while `compatibilityStatus=drill_required` and `roll-forward-only` releases set `newDrillRequired=true` and reference a full release-candidate recovery drill bound to exact candidate lineage, finalized controller lineage, and backup-confidentiality proof.
 - `PREFLIGHT-BACKUP-002` – production first-live or traffic-reopen events verify a readable environment-wide PostgreSQL backup, a successful production-equivalent `cold_start_restore` drill within the required freshness window, backup-confidentiality evidence, and the current environment-specific recovery controller at `ready_to_reopen` before traffic is opened. Checked-in recovery/traffic-open JSON is emitted only after finalization and is not pre-release authority.
 - `PREFLIGHT-BACKUP-003` – hobby/self-hosted first-live or traffic-reopen events verify current backup-baseline compliance evidence before player traffic is opened.
 
@@ -90,7 +90,8 @@ Policy applicability:
 - `PREFLIGHT-BACKUP-003` is required for `hobby-self-hosted` on first-live opens and reopen-after-restore events, and `not_applicable` otherwise. The current bounded check validates `design/operations/deployments/hobby-self-hosted/backup-compliance.yaml` and `design/operations/deployments/hobby-self-hosted/traffic-open/<deployment-ref>.json`, but a passing file check does not satisfy the complete target player-facing recovery contract. Controller-backed authorization and post-finalization projection export remain target-state work, so hobby first-live/reopen remains non-compliant until those gaps close.
 - `PREFLIGHT-DIGEST-001` is required for any flow using Kustomize overlays (`staging`, `production`) and `not_applicable` for `hobby-self-hosted`.
 - `PREFLIGHT-DIGEST-002` is recommended/advisory for `hobby-self-hosted` and `not_applicable` for `staging`/`production`.
-- `PREFLIGHT-SECRETS-002`, `PREFLIGHT-JWT-002`, `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-EXTERNAL-001`, and `PREFLIGHT-SERVICES-001` are required for all player-facing environments.
+- `PREFLIGHT-SECRETS-002`, `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-EXTERNAL-001`, and `PREFLIGHT-SERVICES-001` are required for all player-facing environments.
+- Target-state `PREFLIGHT-JWT-002` is required for all player-facing environments once implemented; `PREFLIGHT-JWT-ROTATION-001` is event-scoped to first-live, reopen, and production promotion evidence.
 
 ## Canonical Expected-Binding Inputs
 

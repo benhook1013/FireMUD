@@ -43,9 +43,11 @@ REQUIRED_ABSENT_ALERT_METRICS = {
     "RecoveryParticipantConvergenceMetricsAbsent": "recovery_participant_convergence_state",
 }
 BLOCKED_REOPEN_ATTEMPT_EXPR = re.compile(
-    r'recovery_reopen_attempt_total\s*\{'
+    r'increase\s*\(\s*recovery_reopen_attempt_total\s*\{'
     r'(?=[^}]*result\s*=\s*["\']blocked["\'])'
     r'(?=[^}]*reason\s*=\s*["\']incomplete_convergence["\'])[^}]*\}'
+    r'\s*\[\s*[0-9]+(?:\.[0-9]+)?(?:ms|s|m|h|d|w|y)'
+    r'(?:[0-9]+(?:\.[0-9]+)?(?:ms|s|m|h|d|w|y))*\s*\]\s*\)\s*>\s*0'
 )
 ENVIRONMENT_BLOCKED_CONVERGENCE_EXPR = re.compile(
     r"max\s+by\s*\(\s*environment\s*\)\s*\(\s*recovery_participant_convergence_blocked\s*\)"
@@ -103,10 +105,18 @@ def _github_anchors_for_markdown(path: Path) -> set[str]:
 
 
 def _split_alert_rules(yaml_text: str) -> list[list[str]]:
+    return _split_rule_entries(yaml_text, "alert")
+
+
+def _split_recording_rules(yaml_text: str) -> list[list[str]]:
+    return _split_rule_entries(yaml_text, "record")
+
+
+def _split_rule_entries(yaml_text: str, entry_key: str) -> list[list[str]]:
     lines = yaml_text.splitlines()
     rule_starts: list[int] = []
     for index, line in enumerate(lines):
-        if re.match(r"^\s*-\s*alert:\s*\S+", line):
+        if re.match(rf"^\s*-\s*{re.escape(entry_key)}:\s*\S+", line):
             rule_starts.append(index)
     rule_starts.append(len(lines))
     rules: list[list[str]] = []
@@ -517,6 +527,8 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
             findings.append(Finding(path=path, message=f"{alert_name} must use owner=infra for Redis/coordination incidents"))
         if alert_name.startswith("Backup") and labels.get("owner") != "infra":
             findings.append(Finding(path=path, message=f"{alert_name} must use owner=infra for backup incidents"))
+        if alert_name.startswith("Recovery") and labels.get("owner") != "infra":
+            findings.append(Finding(path=path, message=f"{alert_name} must use owner=infra for recovery incidents"))
         absent_metric = REQUIRED_ABSENT_ALERT_METRICS.get(alert_name)
         if absent_metric:
             absent_expr = re.compile(rf"absent\s*\(\s*{re.escape(absent_metric)}\s*\)")
@@ -609,9 +621,16 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
 
 def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
     text = _read_text(path)
-    recordings_seen = set(re.findall(r"^\s*-\s*record:\s*(\S+)", text, re.MULTILINE))
-    missing_required = sorted(REQUIRED_BACKUP_RECORDINGS - recordings_seen)
     findings: list[Finding] = []
+    recordings: dict[str, str | None] = {}
+    for rule_lines in _split_recording_rules(text):
+        first_line = rule_lines[0] if rule_lines else ""
+        match = re.match(r"^\s*-\s*record:\s*(\S+)", first_line)
+        if not match:
+            continue
+        recordings[match.group(1).strip()] = _parse_expr(rule_lines)
+
+    missing_required = sorted(REQUIRED_BACKUP_RECORDINGS - recordings.keys())
     if missing_required:
         findings.append(
             Finding(
@@ -619,14 +638,18 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
                 message=f"reference rules are missing required backup recordings: {', '.join(missing_required)}",
             )
         )
-    if not CURRENT_BLOCKED_CONVERGENCE_EXPR.search(text):
+
+    blocked_convergence_expr = recordings.get("recovery_participant_convergence_blocked") or ""
+    if not CURRENT_BLOCKED_CONVERGENCE_EXPR.search(blocked_convergence_expr):
         findings.append(
             Finding(
                 path=path,
                 message="blocked convergence recording must use the current participant state gauge",
             )
         )
-    if not ENVIRONMENT_BLOCKED_CONVERGENCE_EXPR.search(text):
+
+    environment_blocked_convergence_expr = recordings.get("recovery_environment_convergence_blocked") or ""
+    if not ENVIRONMENT_BLOCKED_CONVERGENCE_EXPR.search(environment_blocked_convergence_expr):
         findings.append(
             Finding(
                 path=path,
@@ -636,14 +659,16 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
                 ),
             )
         )
-    if STALE_BLOCKED_CONVERGENCE_EXPR.search(text):
+    if STALE_BLOCKED_CONVERGENCE_EXPR.search(blocked_convergence_expr):
         findings.append(
             Finding(
                 path=path,
                 message="blocked convergence recording must not use the cumulative convergence counter",
             )
         )
-    if not RESTORE_DRILL_30_DAY_EXPR.search(text):
+
+    restore_drill_expr = recordings.get("backup_pipeline_recent_restore_drill_slo_breached") or ""
+    if not RESTORE_DRILL_30_DAY_EXPR.search(restore_drill_expr):
         findings.append(
             Finding(
                 path=path,

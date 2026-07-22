@@ -281,6 +281,7 @@ jobs:
           bash ./dev-tools/tests/worktree-topology-contract.sh
           bash ./dev-tools/tests/preflight-contract.sh
           bash ./dev-tools/tests/overlay-preflight-contract.sh
+          bash ./dev-tools/tests/observability-validator-contract.sh
           bash ./dev-tools/tests/secret-compliance-contract.sh
           bash ./dev-tools/tests/ensure-local-compose-env-contract.sh
           bash ./dev-tools/tests/smoke-image-env-contract.sh
