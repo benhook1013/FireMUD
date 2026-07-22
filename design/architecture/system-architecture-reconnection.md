@@ -243,7 +243,7 @@ The current reconnect and durable-context settings are exposed through:
 - `firemud.reconnection.buffer.soft-max-bytes`
 - `firemud.reconnection.buffer.hard-max-bytes`
 
-Service-local typed properties provide operator defaults, and Game Design persists optional tenant/game overrides that Game Session merges into the effective reconnection policy. Operator caps and presets remain future work. Prompt exclusion from reconnect transcript replay remains a canonical reconnect/output rule rather than a separately surfaced toggle.
+Service-local typed properties provide operator defaults, and Game Design persists optional tenant/game overrides that Game Session merges into the effective reconnection policy. Because the soft and hard byte ceilings form one effective invariant while those operator defaults remain service-local, a tenant override that changes either ceiling must persist both values; a game-instance override may set one ceiling only when the tenant layer supplies the complete pair. Tenant put and delete operations validate existing game-instance reconnection overrides against the prospective tenant layer before changing it. Operator caps and presets remain future work. Prompt exclusion from reconnect transcript replay remains a canonical reconnect/output rule rather than a separately surfaced toggle.
 
 ### Canonical durable resume-transcript policy
 

@@ -272,6 +272,39 @@ class TickBatchExecutionServiceTest {
   }
 
   @Test
+  void abandonDrainedBatchRequeuesOnlyEffectsThatRemainUnapplied() {
+    TickBatch batch = new TickBatch();
+    batch.setTickBatchId("tb-partial");
+    batch.setTenantId(1L);
+    batch.setGameInstanceId(2L);
+    batch.setStatus("DRAINED");
+    TickEffect remaining = new TickEffect();
+    remaining.setTickBatchId("tb-partial");
+    remaining.setCommandId("cmd-retry");
+    remaining.setStatus("DRAINED");
+    GameplayCommand retryCommand = gameplayCommand("cmd-retry");
+    retryCommand.setCommandText("north");
+    when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc("tb-partial", "DRAINED"))
+        .thenReturn(List.of(remaining));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-retry")))
+        .thenReturn(List.of(retryCommand));
+
+    service.markBatchAbandoned(
+        batch,
+        List.of(
+            new TickQueuedCommandEnvelope(false, "cmd-applied", "look"),
+            new TickQueuedCommandEnvelope(false, "cmd-retry", "north")),
+        "ROLLBACK_REQUEUED",
+        "Plugin authority unavailable");
+
+    verify(listOps).leftPush("gamesession:tick:queue:1:2", "N|cmd-retry|north");
+    verify(listOps, never()).leftPush("gamesession:tick:queue:1:2", "N|cmd-applied|look");
+    assertEquals("ABANDONED", remaining.getStatus());
+    assertEquals("RETRY_QUEUED", retryCommand.getExecutionOutcome());
+    assertEquals("GAMEPLAY_RETRY", retryCommand.getQueueSourceKind());
+  }
+
+  @Test
   void restorePendingProjectionRequeuesRedisOnlyEntriesAndRestoresSealedPendingList() {
     TickQueuedCommandEnvelope sealed = new TickQueuedCommandEnvelope(false, "cmd-1", "look");
     TickQueuedCommandEnvelope redisOnly = new TickQueuedCommandEnvelope(false, "cmd-2", "wave");

@@ -6,6 +6,7 @@ This script does not trust the top-level CodeRabbit status badge. It verifies:
 2. unresolved outdated review threads are zero
 3. an explicit CodeRabbit review command was posted after the latest PR commit
 4. CodeRabbit published a substantive review summary after that command
+5. an incremental review is accepted only with evidence for the documented file-ceiling exception
 """
 
 from __future__ import annotations
@@ -23,14 +24,15 @@ from typing import Any
 
 GH_TIMEOUT_SECONDS = 30
 
-REVIEW_COMMANDS = {
-    "@coderabbitai review",
-    "@coderabbitai full review",
+REVIEW_COMMAND_TYPES = {
+    "@coderabbitai review": "incremental",
+    "@coderabbitai full review": "full",
 }
 
 # A command acknowledgement can say "Review finished." while explicitly stating that no commits
 # were reviewed. The walkthrough is emitted only by CodeRabbit's actual review summary.
 SUBSTANTIVE_REVIEW_MARKER = "<!-- walkthrough_start -->"
+PLAN_REVIEW_SKIP_MARKER = "<!-- This is an auto-generated comment: skip review by coderabbit.ai -->"
 REVIEW_LIMIT_MARKER = "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
 REVIEW_LIMIT_MESSAGE = "More reviews will be available in"
 REVIEW_LIMIT_WINDOW_PATTERN = re.compile(
@@ -42,6 +44,24 @@ NOOP_REVIEW_MARKER = "does not re-review already reviewed commits"
 ACTIONABLE_COMMENTS_MARKER = "**Actionable comments posted:"
 OUTSIDE_DIFF_MARKER = "Outside diff range comments"
 DUPLICATE_COMMENTS_MARKER = "Duplicate comments"
+REVIEW_SCOPE_PATTERN = re.compile(
+    r"Reviewing files that changed from the base of the PR and between\s+"
+    r"`?([0-9a-f]{6,40})`?\s+and\s+`?([0-9a-f]{6,40})`?",
+    re.IGNORECASE,
+)
+REVIEW_FILE_COUNT_PATTERN = re.compile(
+    r"Files selected for processing \((\d+)\)",
+    re.IGNORECASE,
+)
+PLAN_CEILING_PATTERN = re.compile(
+    r"(?is)(?:"
+    r"(?:exceed\w*|too many|over|reject\w*|skip\w*).{0,120}"
+    r"(?:file|files).{0,120}(?:plan|limit|ceiling|maximum|cap)"
+    r"|(?:plan|review).{0,120}(?:file|files).{0,120}"
+    r"(?:limit|ceiling|maximum|cap).{0,120}"
+    r"(?:exceed\w*|too many|over|reject\w*|skip\w*)"
+    r")"
+)
 
 
 @dataclass
@@ -54,6 +74,7 @@ class ReviewSummary:
     unresolved_outdated: int
     unresolved_total: int
     latest_explicit_review_request_at: str | None
+    latest_explicit_review_request_type: str | None
     latest_coderabbit_review_finished_at: str | None
     explicit_review_after_latest_commit: bool
     review_finished_after_latest_request: bool
@@ -67,6 +88,10 @@ class ReviewSummary:
     outside_diff_actionable_comments: int
     duplicate_actionable_comments: int
     latest_actionable_comment_url: str | None
+    prior_substantive_review_checkpoint: bool
+    plan_ceiling_rejection_evidence: bool
+    reviewed_commit_range_after_latest_commit: bool
+    incremental_review_exception_allowed: bool
     ok: bool
     reasons: list[str]
 
@@ -372,6 +397,25 @@ def is_substantive_review_body(body: str) -> bool:
     return SUBSTANTIVE_REVIEW_MARKER in body or ACTIONABLE_COMMENTS_MARKER in body
 
 
+def review_scope(body: str) -> tuple[str, str, int] | None:
+    range_match = REVIEW_SCOPE_PATTERN.search(body)
+    file_count_match = REVIEW_FILE_COUNT_PATTERN.search(body)
+    if range_match is None or file_count_match is None:
+        return None
+    file_count = int(file_count_match.group(1))
+    if file_count <= 0:
+        return None
+    return range_match.group(1), range_match.group(2), file_count
+
+
+def oid_matches(actual: str, reported: str) -> bool:
+    actual_normalized = actual.lower()
+    reported_normalized = reported.lower()
+    return actual_normalized == reported_normalized or actual_normalized.startswith(
+        reported_normalized
+    )
+
+
 def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSummary:
     pr = payload["data"]["repository"]["pullRequest"]
     latest_commit = pr["commits"]["nodes"][-1]["commit"]
@@ -390,6 +434,10 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
 
     latest_explicit_review_request_at: str | None = None
     latest_explicit_review_request_dt: datetime | None = None
+    latest_explicit_review_request_type: str | None = None
+    review_requests: list[tuple[datetime, str]] = []
+    substantive_review_evidence: list[tuple[datetime, str]] = []
+    plan_ceiling_evidence: list[datetime] = []
     latest_coderabbit_review_finished_at: str | None = None
     latest_coderabbit_review_finished_dt: datetime | None = None
     latest_review_outcome_dt: datetime | None = None
@@ -407,13 +455,21 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         body = comment.get("body", "")
         created_at = comment.get("createdAt")
         created_at_dt = parse_timestamp(created_at)
-        if author != "coderabbitai" and normalize_command(body) in REVIEW_COMMANDS:
+        command_type = REVIEW_COMMAND_TYPES.get(normalize_command(body))
+        if author != "coderabbitai" and command_type is not None and created_at_dt is not None:
+            review_requests.append((created_at_dt, command_type))
             if (
                 latest_explicit_review_request_dt is None
                 or created_at_dt > latest_explicit_review_request_dt
             ):
                 latest_explicit_review_request_dt = created_at_dt
                 latest_explicit_review_request_at = created_at
+                latest_explicit_review_request_type = command_type
+        if author == "coderabbitai" and created_at_dt is not None:
+            if is_substantive_review_body(body):
+                substantive_review_evidence.append((created_at_dt, body))
+            if PLAN_REVIEW_SKIP_MARKER in body and PLAN_CEILING_PATTERN.search(body):
+                plan_ceiling_evidence.append(created_at_dt)
         if author == "coderabbitai" and SUBSTANTIVE_REVIEW_MARKER in body:
             if (
                 latest_coderabbit_review_finished_dt is None
@@ -434,6 +490,7 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
             or not is_substantive_review_body(review.get("body") or "")
         ):
             continue
+        substantive_review_evidence.append((submitted_at_dt, review.get("body") or ""))
         if (
             latest_coderabbit_review_finished_dt is None
             or submitted_at_dt > latest_coderabbit_review_finished_dt
@@ -445,6 +502,69 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         ):
             latest_review_outcome_dt = submitted_at_dt
             latest_review_outcome = "substantive"
+
+    for review in (pr.get("reviews") or {}).get("nodes", []):
+        if review.get("state") == "DISMISSED":
+            continue
+        author = (review.get("author") or {}).get("login", "")
+        submitted_at_dt = parse_timestamp(review.get("submittedAt"))
+        if (
+            author == "coderabbitai"
+            and submitted_at_dt is not None
+            and PLAN_REVIEW_SKIP_MARKER in (review.get("body") or "")
+            and PLAN_CEILING_PATTERN.search(review.get("body") or "")
+        ):
+            plan_ceiling_evidence.append(submitted_at_dt)
+
+    if review_requests:
+        latest_request_dt, latest_explicit_review_request_type = max(
+            review_requests, key=lambda request: request[0]
+        )
+        latest_explicit_review_request_dt = latest_request_dt
+
+    prior_substantive_review_checkpoint = False
+    plan_ceiling_rejection_evidence = False
+    reviewed_commit_range_after_latest_commit = False
+    incremental_review_exception_allowed = False
+    if latest_explicit_review_request_type == "incremental":
+        latest_incremental_request_dt = latest_explicit_review_request_dt
+        prior_full_requests = [
+            request_dt
+            for request_dt, request_type in review_requests
+            if request_type == "full" and request_dt < latest_incremental_request_dt
+        ]
+        latest_full_request_dt = max(prior_full_requests, default=None)
+        if latest_full_request_dt is not None:
+            prior_substantive_review_checkpoint = any(
+                full_request_dt < evidence_dt < latest_incremental_request_dt
+                and SUBSTANTIVE_REVIEW_MARKER in body
+                for full_request_dt in prior_full_requests
+                for evidence_dt, body in substantive_review_evidence
+            )
+            plan_ceiling_rejection_evidence = any(
+                latest_full_request_dt <= evidence_dt <= latest_incremental_request_dt
+                for evidence_dt in plan_ceiling_evidence
+            )
+        for evidence_dt, body in substantive_review_evidence:
+            if evidence_dt < latest_incremental_request_dt or (
+                latest_commit_at_dt is not None and evidence_dt < latest_commit_at_dt
+            ):
+                continue
+            scope = review_scope(body)
+            if scope is None or SUBSTANTIVE_REVIEW_MARKER not in body:
+                continue
+            reviewed_base_sha, reviewed_head_sha, _ = scope
+            if (
+                reviewed_base_sha.lower() != reviewed_head_sha.lower()
+                and oid_matches(pr["headRefOid"], reviewed_head_sha)
+            ):
+                reviewed_commit_range_after_latest_commit = True
+                break
+        incremental_review_exception_allowed = (
+            prior_substantive_review_checkpoint
+            and plan_ceiling_rejection_evidence
+            and reviewed_commit_range_after_latest_commit
+        )
 
     explicit_review_after_latest_commit = (
         latest_explicit_review_request_dt is not None
@@ -619,6 +739,12 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         reasons.append(
             "latest explicit CodeRabbit review request was acknowledged without reviewing commits"
         )
+    if latest_explicit_review_request_type == "incremental" and not incremental_review_exception_allowed:
+        reasons.append(
+            "incremental CodeRabbit review is not accepted without machine-readable evidence of "
+            "a prior substantive checkpoint, a plan-ceiling rejection, and a reviewed commit/file "
+            "range after the latest PR commit"
+        )
 
     return ReviewSummary(
         repo=repo,
@@ -629,6 +755,7 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         unresolved_outdated=unresolved_outdated,
         unresolved_total=unresolved_total,
         latest_explicit_review_request_at=latest_explicit_review_request_at,
+        latest_explicit_review_request_type=latest_explicit_review_request_type,
         latest_coderabbit_review_finished_at=latest_coderabbit_review_finished_at,
         explicit_review_after_latest_commit=explicit_review_after_latest_commit,
         review_finished_after_latest_request=review_finished_after_latest_request,
@@ -644,6 +771,10 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         outside_diff_actionable_comments=outside_diff_actionable_comments,
         duplicate_actionable_comments=duplicate_actionable_comments,
         latest_actionable_comment_url=latest_actionable_comment_url,
+        prior_substantive_review_checkpoint=prior_substantive_review_checkpoint,
+        plan_ceiling_rejection_evidence=plan_ceiling_rejection_evidence,
+        reviewed_commit_range_after_latest_commit=reviewed_commit_range_after_latest_commit,
+        incremental_review_exception_allowed=incremental_review_exception_allowed,
         ok=not reasons,
         reasons=reasons,
     )
@@ -660,6 +791,10 @@ def emit_text(summary: ReviewSummary) -> None:
     print(
         "latest_explicit_review_request_at="
         f"{summary.latest_explicit_review_request_at or 'none'}"
+    )
+    print(
+        "latest_explicit_review_request_type="
+        f"{summary.latest_explicit_review_request_type or 'none'}"
     )
     print(
         "latest_coderabbit_review_finished_at="
@@ -709,6 +844,22 @@ def emit_text(summary: ReviewSummary) -> None:
     print(
         "latest_actionable_comment_url="
         f"{summary.latest_actionable_comment_url or 'none'}"
+    )
+    print(
+        "prior_substantive_review_checkpoint="
+        f"{str(summary.prior_substantive_review_checkpoint).lower()}"
+    )
+    print(
+        "plan_ceiling_rejection_evidence="
+        f"{str(summary.plan_ceiling_rejection_evidence).lower()}"
+    )
+    print(
+        "reviewed_commit_range_after_latest_commit="
+        f"{str(summary.reviewed_commit_range_after_latest_commit).lower()}"
+    )
+    print(
+        "incremental_review_exception_allowed="
+        f"{str(summary.incremental_review_exception_allowed).lower()}"
     )
     print(f"ok={str(summary.ok).lower()}")
     if summary.unresolved_outdated:

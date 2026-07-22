@@ -264,8 +264,12 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
                 1L, 9L, "region-b", 8L, "dispatch-1"))
         .thenReturn(Optional.empty());
-    when(gameplayCommandRepository.save(org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(
+            org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation ->
+                new GameplayCommandRepository.IdempotentInsertResult(
+                    invocation.getArgument(0), true));
 
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);
@@ -274,7 +278,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     ArgumentCaptor<net.firedevops.firemud.gamesession.entity.GameplayCommand> commandCaptor =
         ArgumentCaptor.forClass(net.firedevops.firemud.gamesession.entity.GameplayCommand.class);
     org.mockito.Mockito.verify(gameplayCommandRepository, org.mockito.Mockito.atLeastOnce())
-        .save(commandCaptor.capture());
+        .insertIfAbsentByIdempotencyIdentity(commandCaptor.capture());
     net.firedevops.firemud.gamesession.entity.GameplayCommand admittedCommand =
         commandCaptor.getAllValues().get(0);
     assertEquals("AUTOMATION", admittedCommand.getSourceType());
@@ -361,8 +365,12 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
                 1L, 9L, "region-b", 8L, "dispatch-1"))
         .thenReturn(Optional.empty());
-    when(gameplayCommandRepository.save(org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(
+            org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation ->
+                new GameplayCommandRepository.IdempotentInsertResult(
+                    invocation.getArgument(0), true));
 
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);
@@ -371,7 +379,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     ArgumentCaptor<net.firedevops.firemud.gamesession.entity.GameplayCommand> commandCaptor =
         ArgumentCaptor.forClass(net.firedevops.firemud.gamesession.entity.GameplayCommand.class);
     verify(gameplayCommandRepository, org.mockito.Mockito.atLeastOnce())
-        .save(commandCaptor.capture());
+        .insertIfAbsentByIdempotencyIdentity(commandCaptor.capture());
     net.firedevops.firemud.gamesession.entity.GameplayCommand admittedCommand =
         commandCaptor.getAllValues().get(0);
     assertEquals("REMOTE_FOLLOWUP", admittedCommand.getOriginSourceKind());
@@ -729,8 +737,12 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
                 1L, 9L, "region-b", 8L, "followup-1"))
         .thenReturn(Optional.empty());
-    when(gameplayCommandRepository.save(org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(
+            org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation ->
+                new GameplayCommandRepository.IdempotentInsertResult(
+                    invocation.getArgument(0), true));
 
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);
@@ -966,8 +978,12 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
                 1L, 9L, "region-b", 8L, "dispatch-1"))
         .thenReturn(Optional.empty());
-    when(gameplayCommandRepository.save(org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(
+            org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation ->
+                new GameplayCommandRepository.IdempotentInsertResult(
+                    invocation.getArgument(0), true));
 
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);
@@ -1038,8 +1054,12 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
                 1L, 9L, "region-b", 8L, "followup-1"))
         .thenReturn(Optional.empty());
-    when(gameplayCommandRepository.save(org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(
+            org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation ->
+                new GameplayCommandRepository.IdempotentInsertResult(
+                    invocation.getArgument(0), true));
 
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);
@@ -1048,7 +1068,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     ArgumentCaptor<net.firedevops.firemud.gamesession.entity.GameplayCommand> commandCaptor =
         ArgumentCaptor.forClass(net.firedevops.firemud.gamesession.entity.GameplayCommand.class);
     org.mockito.Mockito.verify(gameplayCommandRepository, org.mockito.Mockito.atLeastOnce())
-        .save(commandCaptor.capture());
+        .insertIfAbsentByIdempotencyIdentity(commandCaptor.capture());
     net.firedevops.firemud.gamesession.entity.GameplayCommand admittedCommand =
         commandCaptor.getAllValues().get(0);
     assertEquals("REMOTE_FOLLOWUP", admittedCommand.getSourceType());

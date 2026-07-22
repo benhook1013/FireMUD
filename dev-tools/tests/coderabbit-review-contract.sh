@@ -41,7 +41,7 @@ cat >"$TMP_DIR/pass.json" <<'JSON'
               "author": {
                 "login": "benhook1013"
               },
-              "body": "@coderabbitai review",
+              "body": "@coderabbitai full review",
               "createdAt": "2026-07-03T02:40:00Z",
               "url": "https://example.test/review"
             },
@@ -472,7 +472,7 @@ cat >"$TMP_DIR/review-rate-limit-expired.json" <<'JSON'
         "commits": {"nodes": [{"commit": {"oid": "abc123", "committedDate": "2026-07-03T02:31:07Z"}}]},
         "reviewThreads": {"nodes": []},
         "comments": {"nodes": [
-          {"author": {"login": "benhook1013"}, "body": "@coderabbitai review", "createdAt": "2026-07-03T02:40:00Z", "url": "https://example.test/review"},
+          {"author": {"login": "benhook1013"}, "body": "@coderabbitai full review", "createdAt": "2026-07-03T02:40:00Z", "url": "https://example.test/review"},
           {"author": {"login": "coderabbitai"}, "body": "More reviews will be available in 1 minute.", "createdAt": "2026-07-03T02:40:05Z", "url": "https://example.test/rate-limited"}
         ]}
       }
@@ -587,7 +587,7 @@ cat >"$TMP_DIR/superseded-review-outcome.json" <<'JSON'
               "author": {
                 "login": "benhook1013"
               },
-              "body": "@coderabbitai review",
+              "body": "@coderabbitai full review",
               "createdAt": "2026-07-03T02:40:00Z",
               "url": "https://example.test/review"
             },
@@ -676,6 +676,80 @@ cat >"$TMP_DIR/outside-diff-actionable.json" <<'JSON'
 }
 JSON
 
+sed 's/@coderabbitai full review/@coderabbitai review/' \
+  "$TMP_DIR/pass.json" >"$TMP_DIR/incremental-review-no-evidence.json"
+
+python3 - "$TMP_DIR/pass.json" "$TMP_DIR/incremental-review-with-evidence.json" "$TMP_DIR/incremental-review-before-full-checkpoint.json" <<'PY'
+import json
+import sys
+
+
+def comment(author, body, created_at, url):
+    return {
+        "author": {"login": author},
+        "body": body,
+        "createdAt": created_at,
+        "url": url,
+    }
+
+
+def write_fixture(source_path, destination_path, checkpoint_at):
+    payload = json.load(open(source_path, encoding="utf-8"))
+    pr = payload["data"]["repository"]["pullRequest"]
+    pr["headRefOid"] = "abcdef123456"
+    pr["commits"] = {
+        "nodes": [
+            {
+                "commit": {
+                    "oid": "abcdef123456",
+                    "committedDate": "2026-07-03T02:31:07Z",
+                }
+            }
+        ]
+    }
+    pr.pop("reviews", None)
+    pr["comments"] = {
+        "nodes": [
+            comment(
+                "benhook1013",
+                "@coderabbitai full review",
+                "2026-07-03T02:00:00Z",
+                "https://example.test/full-review",
+            ),
+            comment(
+                "coderabbitai",
+                "<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between 11223344 and a1b2c3d4\nFiles selected for processing (2)",
+                checkpoint_at,
+                "https://example.test/checkpoint",
+            ),
+            comment(
+                "coderabbitai",
+                "<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\nFull review rejected because this PR exceeds the maximum file limit for your plan.",
+                "2026-07-03T02:10:00Z",
+                "https://example.test/plan-ceiling",
+            ),
+            comment(
+                "benhook1013",
+                "@coderabbitai review",
+                "2026-07-03T02:40:00Z",
+                "https://example.test/incremental-review",
+            ),
+            comment(
+                "coderabbitai",
+                "<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between a1b2c3d4 and abcdef123456\nFiles selected for processing (2)",
+                "2026-07-03T02:40:05Z",
+                "https://example.test/incremental-finished",
+            ),
+        ]
+    }
+    with open(destination_path, "w", encoding="utf-8") as output:
+        json.dump(payload, output)
+
+
+write_fixture(sys.argv[1], sys.argv[2], "2026-07-03T02:05:00Z")
+write_fixture(sys.argv[1], sys.argv[3], "2026-07-03T01:50:00Z")
+PY
+
 EXPECT_FAILURE_STATUS=0
 
 expect_failure_output() {
@@ -700,6 +774,29 @@ grep -q "retrigger_review_allowed=true" <<<"$pass_output"
 grep -q "manual_thread_resolution_required=false" <<<"$pass_output"
 grep -q "must_resolve_outdated_threads=false" <<<"$pass_output"
 grep -q "ok=true" <<<"$pass_output"
+
+expect_failure_output "$TMP_DIR/incremental-review-no-evidence.json" "$TMP_DIR/incremental-review-no-evidence.out"
+[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "latest_explicit_review_request_type=incremental" "$TMP_DIR/incremental-review-no-evidence.out"
+grep -q "incremental_review_exception_allowed=false" "$TMP_DIR/incremental-review-no-evidence.out"
+grep -q "reason=incremental CodeRabbit review is not accepted without machine-readable evidence" "$TMP_DIR/incremental-review-no-evidence.out"
+grep -q "ok=false" "$TMP_DIR/incremental-review-no-evidence.out"
+
+incremental_with_evidence_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/incremental-review-with-evidence.json")"
+grep -q "latest_explicit_review_request_type=incremental" <<<"$incremental_with_evidence_output"
+grep -q "prior_substantive_review_checkpoint=true" <<<"$incremental_with_evidence_output"
+grep -q "plan_ceiling_rejection_evidence=true" <<<"$incremental_with_evidence_output"
+grep -q "reviewed_commit_range_after_latest_commit=true" <<<"$incremental_with_evidence_output"
+grep -q "incremental_review_exception_allowed=true" <<<"$incremental_with_evidence_output"
+grep -q "ok=true" <<<"$incremental_with_evidence_output"
+
+expect_failure_output "$TMP_DIR/incremental-review-before-full-checkpoint.json" "$TMP_DIR/incremental-review-before-full-checkpoint.out"
+[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "prior_substantive_review_checkpoint=false" "$TMP_DIR/incremental-review-before-full-checkpoint.out"
+grep -q "plan_ceiling_rejection_evidence=true" "$TMP_DIR/incremental-review-before-full-checkpoint.out"
+grep -q "reviewed_commit_range_after_latest_commit=true" "$TMP_DIR/incremental-review-before-full-checkpoint.out"
+grep -q "incremental_review_exception_allowed=false" "$TMP_DIR/incremental-review-before-full-checkpoint.out"
+grep -q "ok=false" "$TMP_DIR/incremental-review-before-full-checkpoint.out"
 
 expect_failure_output "$TMP_DIR/submitted-review.json" "$TMP_DIR/submitted-review.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]

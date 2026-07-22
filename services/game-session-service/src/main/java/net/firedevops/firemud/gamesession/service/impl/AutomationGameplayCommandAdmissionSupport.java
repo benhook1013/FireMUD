@@ -43,7 +43,12 @@ final class AutomationGameplayCommandAdmissionSupport {
     }
 
     GameplayCommand command = acceptedAutomationCommand(request);
-    command = gameplayCommandRepository.save(command);
+    GameplayCommandRepository.IdempotentInsertResult insertResult =
+        gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(command);
+    command = insertResult.command();
+    if (!insertResult.inserted()) {
+      return existingAdmissionResult(command);
+    }
     try {
       tickService.enqueueCommand(
           request.tenantId(),
@@ -70,13 +75,51 @@ final class AutomationGameplayCommandAdmissionSupport {
   }
 
   private static AdmissionResult existingAdmissionResult(GameplayCommand command) {
-    if ("FAILED".equals(command.getExecutionOutcome())) {
-      String failureCode = command.getFailureCode();
-      String errorCode = "QUEUE_UNAVAILABLE".equals(failureCode) ? "UNAVAILABLE" : failureCode;
-      return new AdmissionResult(
-          false, "REJECTED", command.getCommandId(), errorCode, command.getFailureMessage());
+    if (isReusableExecutionOutcome(command.getExecutionOutcome())) {
+      return new AdmissionResult(true, "DUPLICATE_NOOP", command.getCommandId(), null, null);
     }
-    return new AdmissionResult(true, "DUPLICATE_NOOP", command.getCommandId(), null, null);
+    if ("ACCEPTED".equals(command.getExecutionOutcome())) {
+      return new AdmissionResult(
+          false,
+          "REJECTED",
+          command.getCommandId(),
+          "UNAVAILABLE",
+          "Gameplay command admission is still in flight");
+    }
+    if (isTerminalFailure(command.getExecutionOutcome())) {
+      String failureCode = command.getFailureCode();
+      String errorCode =
+          failureCode == null || failureCode.isBlank()
+              ? "UNAVAILABLE"
+              : "QUEUE_UNAVAILABLE".equals(failureCode) ? "UNAVAILABLE" : failureCode;
+      String failureMessage =
+          command.getFailureMessage() == null || command.getFailureMessage().isBlank()
+              ? "Gameplay command admission previously failed"
+              : command.getFailureMessage();
+      return new AdmissionResult(
+          false, "REJECTED", command.getCommandId(), errorCode, failureMessage);
+    }
+    return new AdmissionResult(
+        false,
+        "REJECTED",
+        command.getCommandId(),
+        "UNAVAILABLE",
+        "Gameplay command admission state is not safely reusable");
+  }
+
+  private static boolean isReusableExecutionOutcome(String executionOutcome) {
+    return "STAGED".equals(executionOutcome)
+        || "RETRY_QUEUED".equals(executionOutcome)
+        || "DRAINED".equals(executionOutcome)
+        || "APPLIED".equals(executionOutcome)
+        || "COMPLETED".equals(executionOutcome);
+  }
+
+  private static boolean isTerminalFailure(String executionOutcome) {
+    return "FAILED".equals(executionOutcome)
+        || "ABANDONED".equals(executionOutcome)
+        || "LOST_BEFORE_STAGING".equals(executionOutcome)
+        || "REJECTED".equals(executionOutcome);
   }
 
   private static void validate(AdmissionRequest request) {

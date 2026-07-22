@@ -167,17 +167,22 @@ final class TickBatchExecutionService {
       String failureCode,
       String failureMessage) {
     Instant now = Instant.now();
+    boolean wasDrained = "DRAINED".equals(batch.getStatus());
     batch.setStatus("ABANDONED");
     batch.setCompletedAt(now);
     batch.setFailureCode(failureCode);
     batch.setFailureMessage(truncate(failureMessage, 500));
     tickBatchRepository.save(batch);
-    updateEffectStatuses(batch.getTickBatchId(), "ABANDONED", now, failureCode, failureMessage);
-    updateGameplayCommands(
-        entries, "RETRY_QUEUED", "PENDING", now, failureCode, failureMessage, false);
+    if (wasDrained) {
+      requeueRemainingDrainedEffects(batch, now, failureCode, failureMessage);
+    } else {
+      updateEffectStatuses(batch.getTickBatchId(), "ABANDONED", now, failureCode, failureMessage);
+      updateGameplayCommands(
+          entries, "RETRY_QUEUED", "PENDING", now, failureCode, failureMessage, false);
+      recordRequeuedActions(entries);
+    }
     remoteFollowupDrainService.releaseClaimedFollowups(
         batch.getTickBatchId(), failureCode, failureMessage);
-    recordRequeuedActions(entries);
     logger.warn(
         "Abandoned durable tick batch tickBatchId={} tenantId={} gameInstanceId={} code={} message={}",
         batch.getTickBatchId(),
@@ -301,6 +306,37 @@ final class TickBatchExecutionService {
         batch.getTenantId(),
         batch.getGameInstanceId(),
         commands.size());
+  }
+
+  private void requeueRemainingDrainedEffects(
+      TickBatch batch, Instant now, String failureCode, String failureMessage) {
+    List<TickEffect> drainedEffects =
+        tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc(
+            batch.getTickBatchId(), "DRAINED");
+    List<GameplayCommand> commands = loadCommandsForEffects(drainedEffects);
+    requeueCommands(batch.getTenantId(), batch.getGameInstanceId(), commands);
+    for (TickEffect effect : drainedEffects) {
+      effect.setStatus("ABANDONED");
+      effect.setCompletedAt(now);
+      effect.setFailureCode(failureCode);
+      effect.setFailureMessage(truncate(failureMessage, 500));
+    }
+    if (!drainedEffects.isEmpty()) {
+      tickEffectRepository.saveAll(drainedEffects);
+    }
+    for (GameplayCommand command : commands) {
+      command.setExecutionOutcome("RETRY_QUEUED");
+      stampQueueSource(command, "RETRY_QUEUED", null, 0);
+      command.setGameplayResult("PENDING");
+      command.setCompletedAt(null);
+      command.setLastAttemptAt(now);
+      command.setFailureCode(failureCode);
+      command.setFailureMessage(truncate(failureMessage, 500));
+    }
+    if (!commands.isEmpty()) {
+      gameplayCommandRepository.saveAll(commands);
+    }
+    recordRequeuedCommands(commands);
   }
 
   private void requeueCommands(Long tenantId, Long gameInstanceId, List<GameplayCommand> commands) {

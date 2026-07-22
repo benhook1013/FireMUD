@@ -54,6 +54,14 @@ public class GameSettingsOverrideRepository {
         .fetch(this::toEntity);
   }
 
+  public List<GameSettingsOverride> findByTenantIdAndGameInstanceIdIsNotNullAndDomain(
+      String tenantId, String domain) {
+    return dsl.selectFrom(TABLE_REF)
+        .where(TENANT_ID.eq(tenantId).and(GAME_INSTANCE_ID.isNotNull()).and(DOMAIN.eq(domain)))
+        .orderBy(GAME_INSTANCE_ID.asc())
+        .fetch(this::toEntity);
+  }
+
   public Optional<GameSettingsOverride> findByTenantIdAndGameInstanceIdIsNullAndDomain(
       String tenantId, String domain) {
     return Optional.ofNullable(

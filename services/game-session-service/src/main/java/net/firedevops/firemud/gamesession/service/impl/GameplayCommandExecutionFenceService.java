@@ -41,6 +41,11 @@ final class GameplayCommandExecutionFenceService {
     }
 
     String commandPatch = normalize(command.getScriptPatchVersion());
+    if ("AUTOMATION".equals(normalize(command.getSourceType())) && commandPatch.isEmpty()) {
+      return failure(
+          "INCOMPLETE_SCRIPT_PATCH_FENCE",
+          "Automation gameplay command must include its admitted script patch");
+    }
     if (!commandPatch.isEmpty()
         && !commandPatch.equals(normalize(instance.getScriptPatchVersion()))) {
       return failure(

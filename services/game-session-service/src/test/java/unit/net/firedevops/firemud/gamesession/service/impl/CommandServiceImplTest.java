@@ -343,9 +343,6 @@ class CommandServiceImplTest {
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         Mockito.mock(RuntimeRegionStatusRepository.class);
-    RuntimeRegionStatus status = new RuntimeRegionStatus();
-    status.setRegionId("region-99");
-    status.setRegionEpoch(7L);
     Mockito.when(sessionAuthenticationService.resolveUnverifiedSessionContext("17"))
         .thenReturn(
             Optional.of(
@@ -366,7 +363,7 @@ class CommandServiceImplTest {
                     7L,
                     "SHARED")));
     Mockito.when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(9L, 99L))
-        .thenReturn(Optional.of(status));
+        .thenReturn(Optional.of(runtimeRegionStatus("region-99", 7L, false)));
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     CommandServiceImpl service =
         newCommandService(
@@ -389,6 +386,48 @@ class CommandServiceImplTest {
     assertEquals("44", accepted.getTargetEntityId());
     assertEquals("region-99", accepted.getRegionId());
     assertEquals(7L, accepted.getRegionEpoch());
+  }
+
+  @Test
+  void gameplayCommandFailsBeforePersistenceWhenRuntimeOwnershipIsNotEstablished() {
+    TickService tickService = Mockito.mock(TickService.class);
+    SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
+    Mockito.when(rateLimiter.allow(17L)).thenReturn(true);
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    SessionAuthenticationService sessionAuthenticationService =
+        Mockito.mock(SessionAuthenticationService.class);
+    Mockito.when(sessionAuthenticationService.resolveUnverifiedSessionContext("17"))
+        .thenReturn(
+            Optional.of(
+                new SessionContext(17L, 9L, 3L, "demo", 44L, "char", 99L, "region-99", "jwt")));
+    Mockito.when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(9L, 99L))
+        .thenReturn(Optional.empty());
+    CommandServiceImpl service =
+        newCommandService(
+            tickService,
+            rateLimiter,
+            repository,
+            commandRepository,
+            runtimeRegionStatusRepository,
+            sessionAuthenticationService,
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(ScriptEventPublisher.class));
+
+    CommandEnqueueResult result = service.enqueue("17", "look", false);
+
+    assertTrue(result.hasError());
+    assertEquals("UNAVAILABLE", result.errorCode());
+    verify(commandRepository, never()).save(Mockito.any());
+    verify(tickService, never())
+        .enqueueCommand(
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyBoolean());
   }
 
   @Test
@@ -1310,7 +1349,7 @@ class CommandServiceImplTest {
         rateLimiter,
         repository,
         commandRepository,
-        emptyRuntimeRegionStatusRepository(),
+        defaultRuntimeRegionStatusRepository(),
         sessionAuthenticationService,
         pointerAuthorityService,
         scriptEventPublisher);
@@ -1336,8 +1375,25 @@ class CommandServiceImplTest {
         scriptEventPublisher);
   }
 
-  private RuntimeRegionStatusRepository emptyRuntimeRegionStatusRepository() {
-    return Mockito.mock(RuntimeRegionStatusRepository.class);
+  private RuntimeRegionStatusRepository defaultRuntimeRegionStatusRepository() {
+    RuntimeRegionStatusRepository repository = Mockito.mock(RuntimeRegionStatusRepository.class);
+    Mockito.when(repository.findByTenantIdAndGameInstanceId(Mockito.anyLong(), Mockito.anyLong()))
+        .thenAnswer(
+            invocation ->
+                Optional.of(
+                    runtimeRegionStatus(
+                        Long.toString(invocation.getArgument(1, Long.class)), 1L, false)));
+    return repository;
+  }
+
+  private RuntimeRegionStatus runtimeRegionStatus(
+      String regionId, long regionEpoch, boolean paused) {
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId(regionId);
+    status.setRegionEpoch(regionEpoch);
+    status.setExecutorFence("fence-test");
+    status.setPaused(paused);
+    return status;
   }
 
   private GameplayCommandRepository commandRepositorySavingArgument() {

@@ -3,8 +3,8 @@ package net.firedevops.firemud.gamedesign.service.impl;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+import java.util.List;
 import java.util.Optional;
-import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.gamedesign.entity.GameSettingsOverride;
 import net.firedevops.firemud.gamedesign.repository.GameSettingsOverrideRepository;
@@ -18,10 +18,7 @@ class SettingsAuthorityServiceImplTest {
   private final GameSettingsOverrideRepository repository =
       Mockito.mock(GameSettingsOverrideRepository.class);
   private final SettingsAuthorityServiceImpl service =
-      new SettingsAuthorityServiceImpl(
-          repository,
-          Mockito.mock(ObjectMapper.class),
-          new FiremudReconnectionProperties(null, null));
+      new SettingsAuthorityServiceImpl(repository, Mockito.mock(ObjectMapper.class));
 
   @ParameterizedTest
   @ValueSource(ints = {-1, 0, 21})
@@ -118,7 +115,7 @@ class SettingsAuthorityServiceImplTest {
   }
 
   @Test
-  void rejectsSparseTenantByteBoundsAgainstOperatorDefaultsBeforePersistence() {
+  void rejectsSparseTenantByteBoundsWithoutAuthoritativeCounterpartBeforePersistence() {
     ScopedSettingsOverrides overrides =
         new ScopedSettingsOverrides(
             new ScopedSettingsOverrides.ReconnectionOverride(
@@ -135,7 +132,9 @@ class SettingsAuthorityServiceImplTest {
             () ->
                 service.putDomainOverride(
                     "demo", null, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides))
-        .withMessage("Reconnection buffer hardMaxBytes must be at least softMaxBytes");
+        .withMessage(
+            "Reconnection buffer softMaxBytes and hardMaxBytes must be set together "
+                + "or inherited from a complete tenant override");
 
     verifyNoInteractions(repository);
   }
@@ -157,8 +156,7 @@ class SettingsAuthorityServiceImplTest {
                 "tenant-reconnection", ScopedSettingsOverrides.ReconnectionOverride.class))
         .thenReturn(tenantOverride);
     SettingsAuthorityServiceImpl gameInstanceService =
-        new SettingsAuthorityServiceImpl(
-            repository, objectMapper, new FiremudReconnectionProperties(null, null));
+        new SettingsAuthorityServiceImpl(repository, objectMapper);
     ScopedSettingsOverrides overrides =
         new ScopedSettingsOverrides(
             new ScopedSettingsOverrides.ReconnectionOverride(
@@ -178,6 +176,113 @@ class SettingsAuthorityServiceImplTest {
         .withMessage("Reconnection buffer hardMaxBytes must be at least softMaxBytes");
 
     Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+  }
+
+  @Test
+  void acceptsSparseGameInstanceByteBoundsAgainstCompleteTenantValuesWithoutLocalDefaults() {
+    ObjectMapper objectMapper = Mockito.mock(ObjectMapper.class);
+    ScopedSettingsOverrides.ReconnectionOverride tenantOverride =
+        new ScopedSettingsOverrides.ReconnectionOverride(
+            null,
+            new ScopedSettingsOverrides.ReconnectionOverride.BufferOverride(
+                null, null, null, null, 50_000, 65_000));
+    GameSettingsOverride tenantRow = new GameSettingsOverride();
+    tenantRow.setPayload("tenant-reconnection");
+    Mockito.when(repository.findByTenantIdAndGameInstanceIdIsNullAndDomain("demo", "RECONNECTION"))
+        .thenReturn(Optional.of(tenantRow));
+    Mockito.when(
+            objectMapper.readValue(
+                "tenant-reconnection", ScopedSettingsOverrides.ReconnectionOverride.class))
+        .thenReturn(tenantOverride);
+    Mockito.when(repository.findByTenantIdAndGameInstanceIdAndDomain("demo", 7L, "RECONNECTION"))
+        .thenReturn(Optional.empty());
+    SettingsAuthorityServiceImpl gameInstanceService =
+        new SettingsAuthorityServiceImpl(repository, objectMapper);
+    ScopedSettingsOverrides overrides =
+        new ScopedSettingsOverrides(
+            new ScopedSettingsOverrides.ReconnectionOverride(
+                null,
+                new ScopedSettingsOverrides.ReconnectionOverride.BufferOverride(
+                    null, null, null, null, 60_000, null)),
+            null,
+            null,
+            null,
+            null);
+
+    gameInstanceService.putDomainOverride(
+        "demo", 7L, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides);
+
+    Mockito.verify(repository).save(Mockito.any(GameSettingsOverride.class));
+  }
+
+  @Test
+  void rejectsTenantPutThatInvalidatesAnExistingSparseGameInstanceChild() {
+    ObjectMapper objectMapper = Mockito.mock(ObjectMapper.class);
+    GameSettingsOverride childRow = new GameSettingsOverride();
+    childRow.setPayload("child-reconnection");
+    Mockito.when(
+            repository.findByTenantIdAndGameInstanceIdIsNotNullAndDomain("demo", "RECONNECTION"))
+        .thenReturn(List.of(childRow));
+    Mockito.when(
+            objectMapper.readValue(
+                "child-reconnection", ScopedSettingsOverrides.ReconnectionOverride.class))
+        .thenReturn(
+            new ScopedSettingsOverrides.ReconnectionOverride(
+                null,
+                new ScopedSettingsOverrides.ReconnectionOverride.BufferOverride(
+                    null, null, null, null, null, 65_000)));
+    SettingsAuthorityServiceImpl tenantService =
+        new SettingsAuthorityServiceImpl(repository, objectMapper);
+    ScopedSettingsOverrides overrides =
+        new ScopedSettingsOverrides(
+            new ScopedSettingsOverrides.ReconnectionOverride(
+                null,
+                new ScopedSettingsOverrides.ReconnectionOverride.BufferOverride(
+                    null, null, null, null, 70_000, 80_000)),
+            null,
+            null,
+            null,
+            null);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                tenantService.putDomainOverride(
+                    "demo", null, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides))
+        .withMessage("Reconnection buffer hardMaxBytes must be at least softMaxBytes");
+
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+  }
+
+  @Test
+  void rejectsTenantDeleteThatLeavesAnExistingSparseGameInstanceChildUnresolved() {
+    ObjectMapper objectMapper = Mockito.mock(ObjectMapper.class);
+    GameSettingsOverride childRow = new GameSettingsOverride();
+    childRow.setPayload("child-reconnection");
+    Mockito.when(
+            repository.findByTenantIdAndGameInstanceIdIsNotNullAndDomain("demo", "RECONNECTION"))
+        .thenReturn(List.of(childRow));
+    Mockito.when(
+            objectMapper.readValue(
+                "child-reconnection", ScopedSettingsOverrides.ReconnectionOverride.class))
+        .thenReturn(
+            new ScopedSettingsOverrides.ReconnectionOverride(
+                null,
+                new ScopedSettingsOverrides.ReconnectionOverride.BufferOverride(
+                    null, null, null, null, 70_000, null)));
+    SettingsAuthorityServiceImpl tenantService =
+        new SettingsAuthorityServiceImpl(repository, objectMapper);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                tenantService.deleteDomainOverride(
+                    "demo", null, ScopedSettingsOverrides.SettingsDomain.RECONNECTION))
+        .withMessage(
+            "Reconnection buffer softMaxBytes and hardMaxBytes must be set together "
+                + "or inherited from a complete tenant override");
+
+    Mockito.verify(repository, Mockito.never()).delete(Mockito.any());
   }
 
   @Test

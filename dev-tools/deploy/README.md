@@ -19,9 +19,9 @@ They are not generic CI utilities. They enforce the deployment contract for play
   - Used by operator deployment workflows and by CI static-policy validation.
 
 - `write-traffic-open-evidence.py`
-  - Canonical writer for production and hobby traffic-open evidence records.
-  - Use this after a successful preflight report when recording `first-live` or `reopen` decisions.
-  - It validates the referenced preflight report before emitting the evidence JSON so traffic-open records stay bound to the canonical deployment report instead of drifting into hand-authored notes.
+  - Canonical writer for hobby traffic-open projection records.
+  - It does not write production traffic-open evidence. Production projection export belongs to the durable environment-wide recovery controller after finalization, and the pre-release gate cannot use a checked-in projection or caller-supplied evidence.
+  - It validates the referenced hobby preflight report before emitting the projection JSON.
 
 - `validate-kustomize-overlays.sh`
   - CI-focused validator for the checked-in Kubernetes overlay definitions in the repo.

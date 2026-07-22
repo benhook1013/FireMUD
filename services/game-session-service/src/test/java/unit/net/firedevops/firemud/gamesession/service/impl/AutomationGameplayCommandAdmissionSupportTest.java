@@ -46,12 +46,12 @@ class AutomationGameplayCommandAdmissionSupportTest {
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
                 1L, 2L, "region-alpha", 7L, "dispatch-1"))
         .thenReturn(Optional.empty(), Optional.of(failed));
-    when(gameplayCommandRepository.save(any()))
+    when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
         .thenAnswer(
             invocation -> {
               GameplayCommand command = invocation.getArgument(0);
               command.setCommandId("auto-failed");
-              return command;
+              return new GameplayCommandRepository.IdempotentInsertResult(command, true);
             });
     when(gameplayCommandRepository.markAcceptedCommandFailed(any(), any(), any(), any()))
         .thenReturn(true);
@@ -111,20 +111,12 @@ class AutomationGameplayCommandAdmissionSupportTest {
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
                 1L, 2L, "region-alpha", 7L, "dispatch-1"))
         .thenReturn(Optional.empty());
-    when(gameplayCommandRepository.save(any()))
+    when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
         .thenAnswer(
             invocation -> {
               GameplayCommand inserted = invocation.getArgument(0);
-              GameplayCommand reloaded = new GameplayCommand();
-              reloaded.setId(1L);
-              reloaded.setCommandId(inserted.getCommandId());
-              reloaded.setTenantId(inserted.getTenantId());
-              reloaded.setGameInstanceId(inserted.getGameInstanceId());
-              reloaded.setCommandText(inserted.getCommandText());
-              reloaded.setRequiresSoloTick(inserted.isRequiresSoloTick());
-              reloaded.setTargetEntityId(inserted.getTargetEntityId());
-              reloaded.setCharacterId(inserted.getCharacterId());
-              return reloaded;
+              inserted.setId(1L);
+              return new GameplayCommandRepository.IdempotentInsertResult(inserted, true);
             });
 
     RuntimeRegionStatus ownership = new RuntimeRegionStatus();
@@ -172,11 +164,97 @@ class AutomationGameplayCommandAdmissionSupportTest {
     assertEquals(true, result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(gameplayCommandRepository).save(commandCaptor.capture());
+    verify(gameplayCommandRepository).insertIfAbsentByIdempotencyIdentity(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getValue();
     assertEquals("npc-alpha", accepted.getTargetEntityId());
     assertNull(accepted.getCharacterId());
     verify(tickService).enqueueCommand(1L, 2L, result.commandId(), "say hello", false);
+  }
+
+  @Test
+  void rejectsDuplicateWhileAdmissionIsStillAcceptedAndDoesNotQueue() {
+    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    TickService tickService = mock(TickService.class);
+
+    GameInstance instance = new GameInstance();
+    instance.setId(2L);
+    instance.setTenantId(1L);
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
+
+    GameplayCommand inFlight = new GameplayCommand();
+    inFlight.setCommandId("auto-in-flight");
+    inFlight.setExecutionOutcome("ACCEPTED");
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                1L, 2L, "region-alpha", 7L, "dispatch-1"))
+        .thenReturn(Optional.of(inFlight));
+
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+            automationRequest(),
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            tickService);
+
+    assertFalse(result.accepted());
+    assertEquals("REJECTED", result.admissionOutcome());
+    assertEquals("auto-in-flight", result.commandId());
+    assertEquals("UNAVAILABLE", result.errorCode());
+    assertEquals("Gameplay command admission is still in flight", result.errorMessage());
+    verify(gameplayCommandRepository, org.mockito.Mockito.never())
+        .insertIfAbsentByIdempotencyIdentity(any());
+    verify(tickService, org.mockito.Mockito.never())
+        .enqueueCommand(any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+  }
+
+  @Test
+  void reusesStagedCommandReturnedByAtomicInsertConflict() {
+    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    TickService tickService = mock(TickService.class);
+
+    GameInstance instance = new GameInstance();
+    instance.setId(2L);
+    instance.setTenantId(1L);
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                1L, 2L, "region-alpha", 7L, "dispatch-1"))
+        .thenReturn(Optional.empty());
+
+    RuntimeRegionStatus ownership = new RuntimeRegionStatus();
+    ownership.setTenantId(1L);
+    ownership.setGameInstanceId(2L);
+    ownership.setRegionId("region-alpha");
+    ownership.setRegionEpoch(7L);
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-alpha"))
+        .thenReturn(Optional.of(ownership));
+
+    GameplayCommand staged = new GameplayCommand();
+    staged.setCommandId("auto-winner");
+    staged.setExecutionOutcome("STAGED");
+    when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
+        .thenReturn(new GameplayCommandRepository.IdempotentInsertResult(staged, false));
+
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+            automationRequest(),
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            tickService);
+
+    assertEquals(true, result.accepted());
+    assertEquals("DUPLICATE_NOOP", result.admissionOutcome());
+    assertEquals("auto-winner", result.commandId());
+    verify(tickService, org.mockito.Mockito.never())
+        .enqueueCommand(any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
   }
 
   @Test

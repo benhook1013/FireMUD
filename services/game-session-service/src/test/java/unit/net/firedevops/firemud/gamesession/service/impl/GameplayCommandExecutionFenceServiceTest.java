@@ -67,6 +67,20 @@ class GameplayCommandExecutionFenceServiceTest {
   }
 
   @Test
+  void rejectsAutomationCommandWithoutScriptPatchFence() {
+    GameplayCommand command = command();
+    command.setSourceType("AUTOMATION");
+    command.setScriptPatchVersion(null);
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance("patch-1")));
+
+    GameplayCommandExecutionFenceService.FenceFailure failure =
+        service.validate(batch(), command).orElseThrow();
+
+    assertEquals("INCOMPLETE_SCRIPT_PATCH_FENCE", failure.code());
+    verifyNoInteractions(automationScriptingControlPlaneClient);
+  }
+
+  @Test
   void acceptsEnabledPluginVersionForCurrentRuntimeScope() {
     GameplayCommand command = command();
     command.setPluginId("plugin-1");
