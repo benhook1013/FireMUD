@@ -184,6 +184,12 @@ class TickServiceImplTest {
     when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of());
     when(runtimeRegionStatusRepository.save(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    when(runtimeRegionStatusRepository.ensureBaseline(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(runtimeRegionStatusRepository.refreshObservedOwnership(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(runtimeRegionStatusRepository.advanceOwnershipEpoch(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(anyLong(), anyLong()))
         .thenAnswer(
             invocation ->

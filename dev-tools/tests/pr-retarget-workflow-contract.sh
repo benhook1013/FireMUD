@@ -77,6 +77,7 @@ grep -Fq 'run-name: Build Runtime Images ' "$runtime_images_path"
 grep -Fq 'github.event.pull_request.base.sha' "$runtime_images_path"
 grep -Fq 'github.event.pull_request.head.sha' "$runtime_images_path"
 grep -Fq 'github.sha' "$runtime_images_path"
+grep -Fq "mode-{4}" "$runtime_images_path"
 
 for job in image-meta build-base-image build-runtime-images smoke-full; do
   assert_job_condition runtime-images.yml "$job" "$required_condition"
@@ -84,9 +85,14 @@ done
 
 grep -Fq 'const baseSha = context.payload.pull_request.base.sha;' "$smoke_path"
 grep -Fq 'const mergeSha = context.sha;' "$smoke_path"
+grep -Fq 'mode-required' "$smoke_path"
 grep -Fq 'run.display_title === expectedDisplayTitle' "$smoke_path"
 grep -Fq 'pullRequest.base?.sha === baseSha' "$smoke_path"
 grep -Fq 'pullRequest.head?.sha === headSha' "$smoke_path"
+grep -Fq 'github.rest.actions.listJobsForWorkflowRun' "$smoke_path"
+grep -Fq 'job.name === "Smoke Tests (Full Stack) / Smoke Tests (Full Stack)"' "$smoke_path"
+grep -Fq 'fullSmokeJob.status !== "completed"' "$smoke_path"
+grep -Fq 'fullSmokeJob.conclusion !== "success"' "$smoke_path"
 if grep -Fq 'const matching = runs.find((run) => run.head_sha === headSha);' "$smoke_path"; then
   echo "Smoke Gate must not accept a runtime-images run by head SHA alone" >&2
   exit 1

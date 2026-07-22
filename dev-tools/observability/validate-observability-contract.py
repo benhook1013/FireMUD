@@ -66,6 +66,13 @@ class Finding:
     message: str
 
 
+@dataclass(frozen=True)
+class _RuleEntry:
+    lines: list[str]
+    key: str | None
+    name: str | None
+
+
 def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
@@ -129,25 +136,207 @@ def _github_anchors_for_markdown(path: Path) -> set[str]:
     return anchors
 
 
-def _split_alert_rules(yaml_text: str) -> list[list[str]]:
+def _split_alert_rules(yaml_text: str) -> list[_RuleEntry]:
     return _split_rule_entries(yaml_text, "alert")
 
 
-def _split_recording_rules(yaml_text: str) -> list[list[str]]:
+def _split_recording_rules(yaml_text: str) -> list[_RuleEntry]:
     return _split_rule_entries(yaml_text, "record")
 
 
-def _split_rule_entries(yaml_text: str, entry_key: str) -> list[list[str]]:
-    lines = yaml_text.splitlines()
-    rule_starts: list[int] = []
+def _strip_yaml_comment(value: str) -> str:
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    for index, character in enumerate(value):
+        if in_double_quote:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_double_quote = False
+            continue
+        if in_single_quote:
+            if character == "'":
+                in_single_quote = False
+            continue
+        if character == '"':
+            in_double_quote = True
+        elif character == "'":
+            in_single_quote = True
+        elif character == "#" and (index == 0 or value[index - 1].isspace()):
+            return value[:index]
+    return value
+
+
+def _leading_space_count(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def _meaningful_yaml_line(line: str) -> bool:
+    return bool(_strip_yaml_comment(line).strip())
+
+
+def _is_sequence_item(line: str, indent: int | None = None) -> bool:
+    if indent is not None and _leading_space_count(line) != indent:
+        return False
+    return re.match(r"^\s*-(?:\s|$)", _strip_yaml_comment(line)) is not None
+
+
+def _parse_mapping_header(text: str) -> tuple[str, str] | None:
+    match = re.match(
+        r"^(?P<key>[A-Za-z_][A-Za-z0-9_-]*|\"[^\"]+\"|'[^']+')\s*:\s*(?P<value>.*)$",
+        _strip_yaml_comment(text).strip(),
+    )
+    if not match:
+        return None
+    key = match.group("key").strip("\"'")
+    return key, match.group("value").strip()
+
+
+def _parse_rule_entry_header(line: str) -> tuple[str | None, str | None]:
+    content = _strip_yaml_comment(line).lstrip()
+    if not content.startswith("-"):
+        return None, None
+    header = content[1:].strip()
+    parsed = _parse_mapping_header(header)
+    if not parsed:
+        return None, None
+    key, name = parsed
+    if key not in {"alert", "record"}:
+        return None, None
+    normalized_name = name.strip("\"'") or None
+    return key, normalized_name
+
+
+def _rule_sequence_ranges(lines: list[str]) -> list[tuple[int, int, int]]:
+    ranges: list[tuple[int, int, int]] = []
     for index, line in enumerate(lines):
-        if re.match(rf"^\s*-\s*{re.escape(entry_key)}:\s*\S+", line):
-            rule_starts.append(index)
-    rule_starts.append(len(lines))
-    rules: list[list[str]] = []
-    for start_index, end_index in zip(rule_starts, rule_starts[1:]):
-        rules.append(lines[start_index:end_index])
-    return rules
+        if not _meaningful_yaml_line(line):
+            continue
+        parsed = _parse_mapping_header(line)
+        if not parsed or parsed[0] != "rules" or parsed[1]:
+            continue
+
+        rules_indent = _leading_space_count(line)
+        first_item = None
+        for candidate in range(index + 1, len(lines)):
+            if not _meaningful_yaml_line(lines[candidate]):
+                continue
+            candidate_indent = _leading_space_count(lines[candidate])
+            if candidate_indent < rules_indent:
+                break
+            if _is_sequence_item(lines[candidate]) and candidate_indent >= rules_indent:
+                first_item = candidate
+            break
+        if first_item is None:
+            continue
+
+        sequence_indent = _leading_space_count(lines[first_item])
+        end = first_item
+        while end < len(lines):
+            if not _meaningful_yaml_line(lines[end]):
+                end += 1
+                continue
+            current_indent = _leading_space_count(lines[end])
+            if current_indent < rules_indent:
+                break
+            if current_indent == sequence_indent and not _is_sequence_item(lines[end]):
+                break
+            if current_indent < sequence_indent and current_indent >= rules_indent:
+                break
+            end += 1
+        ranges.append((first_item, end, sequence_indent))
+    return ranges
+
+
+def _standalone_rule_sequence_range(lines: list[str]) -> tuple[int, int, int] | None:
+    first_item = next(
+        (index for index, line in enumerate(lines) if _meaningful_yaml_line(line)),
+        None,
+    )
+    if first_item is None or not _is_sequence_item(lines[first_item]):
+        return None
+    sequence_indent = _leading_space_count(lines[first_item])
+    end = first_item
+    while end < len(lines):
+        if not _meaningful_yaml_line(lines[end]):
+            end += 1
+            continue
+        if _leading_space_count(lines[end]) < sequence_indent:
+            break
+        end += 1
+    return first_item, end, sequence_indent
+
+
+def _scan_rule_entries(yaml_text: str) -> list[_RuleEntry]:
+    lines = yaml_text.splitlines()
+    entries: list[_RuleEntry] = []
+    for index, line in enumerate(lines):
+        parsed = _parse_mapping_header(line)
+        if not parsed or parsed[0] != "rules":
+            continue
+        if parsed[1]:
+            entries.append(_RuleEntry(lines=[line], key=None, name=None))
+            continue
+
+        rules_indent = _leading_space_count(line)
+        child = next(
+            (
+                candidate
+                for candidate in range(index + 1, len(lines))
+                if _meaningful_yaml_line(lines[candidate])
+            ),
+            None,
+        )
+        if (
+            child is None
+            or _leading_space_count(lines[child]) <= rules_indent
+            or not _is_sequence_item(lines[child])
+        ):
+            entries.append(_RuleEntry(lines=[line], key=None, name=None))
+
+    ranges = _rule_sequence_ranges(lines)
+    if not ranges:
+        standalone_range = _standalone_rule_sequence_range(lines)
+        if standalone_range is not None:
+            ranges.append(standalone_range)
+
+    for start, end, sequence_indent in ranges:
+        starts = [
+            index
+            for index in range(start, end)
+            if _is_sequence_item(lines[index], sequence_indent)
+        ]
+        for entry_start, entry_end in zip(starts, [*starts[1:], end]):
+            key, name = _parse_rule_entry_header(lines[entry_start])
+            entries.append(
+                _RuleEntry(
+                    lines=lines[entry_start:entry_end],
+                    key=key,
+                    name=name,
+                )
+            )
+    return entries
+
+
+def _split_rule_entries(yaml_text: str, entry_key: str) -> list[_RuleEntry]:
+    return [
+        entry
+        for entry in _scan_rule_entries(yaml_text)
+        if entry.key in {entry_key, None}
+    ]
+
+
+def _unrecognized_rule_entry_finding(path: Path, entry_key: str, entry: _RuleEntry) -> Finding:
+    return Finding(
+        path=path,
+        message=(
+            f"unrecognized {entry_key} rule sequence entry; "
+            "the dependency-free validator cannot safely inspect this YAML shape"
+        ),
+    )
 
 
 def _parse_labels(rule_lines: list[str]) -> dict[str, str]:
@@ -264,7 +453,11 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
     markdown = _read_text(path)
     yaml_blocks = _extract_fenced_blocks(markdown, "yaml")
     for yaml_block in yaml_blocks:
-        for rule_lines in _split_alert_rules(yaml_block):
+        for entry in _split_alert_rules(yaml_block):
+            if entry.key is None:
+                findings.append(_unrecognized_rule_entry_finding(path, "alert", entry))
+                continue
+            rule_lines = entry.lines
             labels = _parse_labels(rule_lines)
             missing = sorted(REQUIRED_ALERT_LABELS - labels.keys())
             if missing:
@@ -413,14 +606,15 @@ def _validate_doc_semantics() -> list[Finding]:
     for core_alerts in CORE_ALERT_SNIPPET_PATHS:
         core_text = _read_text(core_alerts)
         for yaml_block in _extract_fenced_blocks(core_text, "yaml"):
-            for rule_lines in _split_alert_rules(yaml_block):
-                alert_name = None
-                first_line = rule_lines[0] if rule_lines else ""
-                match = re.match(r"^\s*-\s*alert:\s*(\S+)", first_line)
-                if match:
-                    alert_name = match.group(1).strip()
-                if not alert_name:
+            for entry in _split_alert_rules(yaml_block):
+                if entry.key is None:
+                    findings.append(_unrecognized_rule_entry_finding(core_alerts, "alert", entry))
                     continue
+                alert_name = entry.name
+                if not alert_name:
+                    findings.append(Finding(path=core_alerts, message="alert rule is missing name"))
+                    continue
+                rule_lines = entry.lines
                 labels = _parse_labels(rule_lines)
                 expr = _parse_expr(rule_lines) or ""
                 compact_expr = re.sub(r"\s+", "", expr)
@@ -533,12 +727,15 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
     text = _read_text(path)
     alerts_seen: set[str] = set()
 
-    for rule_lines in _split_alert_rules(text):
-        first_line = rule_lines[0] if rule_lines else ""
-        match = re.match(r"^\s*-\s*alert:\s*(\S+)", first_line)
-        if not match:
+    for entry in _split_alert_rules(text):
+        if entry.key is None:
+            findings.append(_unrecognized_rule_entry_finding(path, "alert", entry))
             continue
-        alert_name = match.group(1).strip()
+        alert_name = entry.name
+        if not alert_name:
+            findings.append(Finding(path=path, message="alert rule is missing name"))
+            continue
+        rule_lines = entry.lines
         expr = _parse_expr(rule_lines)
         if not expr:
             findings.append(Finding(path=path, message=f"{alert_name} is missing expr"))
@@ -679,13 +876,15 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
     text = _read_text(path)
     findings: list[Finding] = []
     recording_occurrences: dict[str, list[str | None]] = {}
-    for rule_lines in _split_recording_rules(text):
-        first_line = rule_lines[0] if rule_lines else ""
-        match = re.match(r"^\s*-\s*record:\s*(\S+)", first_line)
-        if not match:
+    for entry in _split_recording_rules(text):
+        if entry.key is None:
+            findings.append(_unrecognized_rule_entry_finding(path, "record", entry))
             continue
-        recording = match.group(1).strip()
-        recording_occurrences.setdefault(recording, []).append(_parse_expr(rule_lines))
+        recording = entry.name
+        if not recording:
+            findings.append(Finding(path=path, message="recording rule is missing name"))
+            continue
+        recording_occurrences.setdefault(recording, []).append(_parse_expr(entry.lines))
 
     missing_required = sorted(REQUIRED_BACKUP_RECORDINGS - recording_occurrences.keys())
     if missing_required:

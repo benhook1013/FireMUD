@@ -37,7 +37,7 @@ on:
     branches: [main, develop]
   workflow_dispatch:
 
-run-name: Build Runtime Images ${{ github.event_name == 'pull_request' && format('pr-{0} base-{1} head-{2} merge-{3}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha) || github.ref_name }}
+run-name: Build Runtime Images ${{ github.event_name == 'pull_request' && format('pr-{0} base-{1} head-{2} merge-{3} mode-{4}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha, github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required') || github.ref_name }}
 
 permissions:
   contents: read

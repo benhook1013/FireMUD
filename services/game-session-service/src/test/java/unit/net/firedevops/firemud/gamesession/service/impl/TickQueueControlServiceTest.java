@@ -83,7 +83,11 @@ class TickQueueControlServiceTest {
             });
     when(gameplayCommandRepository.markAcceptedCommandStaged(any(), any())).thenReturn(true);
     runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
-    when(runtimeRegionStatusRepository.save(any()))
+    when(runtimeRegionStatusRepository.ensureBaseline(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(runtimeRegionStatusRepository.refreshObservedOwnership(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(runtimeRegionStatusRepository.advanceOwnershipEpoch(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
     sessionAuthenticationService = mock(SessionAuthenticationService.class);
     RuntimeIdentity runtimeIdentity =
@@ -429,8 +433,8 @@ class TickQueueControlServiceTest {
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
     RuntimeRegionStatus existingForPause = runtimeOwnership(9L, 2L, 4L, "fence-a", false);
     RuntimeRegionStatus existingForResume = runtimeOwnership(9L, 2L, 5L, "fence-b", true);
-    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(9L, 2L))
-        .thenReturn(Optional.of(existingForPause), Optional.of(existingForResume));
+    when(runtimeRegionStatusRepository.advanceOwnershipEpoch(any()))
+        .thenReturn(existingForPause, existingForResume);
 
     service.pauseTicksForGameInstance(2L, "maintenance", logger);
     assertTrue(service.isPaused(2L, false));
@@ -441,14 +445,10 @@ class TickQueueControlServiceTest {
     ArgumentCaptor<RuntimeRegionStatus> statusCaptor =
         ArgumentCaptor.forClass(RuntimeRegionStatus.class);
     verify(runtimeRegionStatusRepository, org.mockito.Mockito.atLeast(2))
-        .save(statusCaptor.capture());
+        .advanceOwnershipEpoch(statusCaptor.capture());
     List<RuntimeRegionStatus> savedStatuses = statusCaptor.getAllValues();
-    assertTrue(
-        savedStatuses.stream()
-            .anyMatch(status -> status.getRegionEpoch() == 5L && status.isPaused()));
-    assertTrue(
-        savedStatuses.stream()
-            .anyMatch(status -> status.getRegionEpoch() == 6L && !status.isPaused()));
+    assertTrue(savedStatuses.stream().anyMatch(RuntimeRegionStatus::isPaused));
+    assertTrue(savedStatuses.stream().anyMatch(status -> !status.isPaused()));
     assertTrue(
         savedStatuses.stream()
             .allMatch(status -> "test-instance".equals(status.getOwnerInstanceId())));
@@ -499,7 +499,8 @@ class TickQueueControlServiceTest {
     assertTrue(snapshot.executorFence().startsWith("fence-"));
     ArgumentCaptor<RuntimeRegionStatus> statusCaptor =
         ArgumentCaptor.forClass(RuntimeRegionStatus.class);
-    verify(runtimeRegionStatusRepository).save(statusCaptor.capture());
+    verify(runtimeRegionStatusRepository).ensureBaseline(statusCaptor.capture());
+    verify(runtimeRegionStatusRepository).refreshObservedOwnership(statusCaptor.getValue());
     assertEquals("game-session-service", statusCaptor.getValue().getOwnerService());
     assertEquals("test-instance", statusCaptor.getValue().getOwnerInstanceId());
   }

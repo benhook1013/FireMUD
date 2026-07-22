@@ -194,7 +194,12 @@ public class TickQueueControlService {
     status.setOwnerService(runtimeIdentity.service());
     status.setOwnerInstanceId(runtimeIdentity.serviceInstanceId());
     status.setUpdatedAt(now);
-    RuntimeRegionStatus saved = runtimeRegionStatusRepository.save(status);
+    RuntimeRegionStatus baseline =
+        status.getId() == null ? runtimeRegionStatusRepository.ensureBaseline(status) : status;
+    baseline.setOwnerService(runtimeIdentity.service());
+    baseline.setOwnerInstanceId(runtimeIdentity.serviceInstanceId());
+    baseline.setUpdatedAt(now);
+    RuntimeRegionStatus saved = runtimeRegionStatusRepository.refreshObservedOwnership(baseline);
     return new OwnershipSnapshot(
         saved.getRegionId(),
         saved.getRegionEpoch(),
@@ -614,25 +619,16 @@ public class TickQueueControlService {
 
   private void bumpOwnershipEpoch(Long tenantId, Long gameInstanceId, boolean paused) {
     Instant now = Instant.now();
-    RuntimeRegionStatus status =
-        runtimeRegionStatusRepository
-            .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-            .orElseGet(
-                () -> {
-                  RuntimeRegionStatus created = new RuntimeRegionStatus();
-                  created.setTenantId(tenantId);
-                  created.setGameInstanceId(gameInstanceId);
-                  created.setRegionId(defaultCurrentBoundaryRegionId(gameInstanceId));
-                  created.setRegionEpoch(0L);
-                  return created;
-                });
-    status.setRegionEpoch(status.getRegionEpoch() + 1L);
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setTenantId(tenantId);
+    status.setGameInstanceId(gameInstanceId);
+    status.setRegionId(defaultCurrentBoundaryRegionId(gameInstanceId));
     status.setExecutorFence("fence-" + UUID.randomUUID());
     status.setOwnerService(runtimeIdentity.service());
     status.setOwnerInstanceId(runtimeIdentity.serviceInstanceId());
     status.setPaused(paused);
     status.setUpdatedAt(now);
-    runtimeRegionStatusRepository.save(status);
+    runtimeRegionStatusRepository.advanceOwnershipEpoch(status);
   }
 
   private String defaultCurrentBoundaryRegionId(Long gameInstanceId) {

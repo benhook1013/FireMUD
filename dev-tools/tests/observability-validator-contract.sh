@@ -53,6 +53,89 @@ require_message(
     "BackupPipelineNoRecentBackup is missing expr",
 )
 
+quoted_alert_key = valid_text.replace(
+    "        - alert: BackupPipelineNoRecentBackup",
+    '        - "alert": BackupPipelineNoRecentBackup',
+    1,
+)
+quoted_alert_findings = findings_for(
+    quoted_alert_key,
+    validator._validate_reference_prometheus_rules,
+)
+if quoted_alert_findings:
+    raise AssertionError(f"quoted alert key was not canonically validated: {quoted_alert_findings!r}")
+
+quoted_record_key = valid_text.replace(
+    "        - record: backup_artifact_lineage_invalid",
+    '        - "record": backup_artifact_lineage_invalid',
+    1,
+)
+quoted_record_findings = findings_for(
+    quoted_record_key,
+    validator._validate_reference_prometheus_recordings,
+)
+if quoted_record_findings:
+    raise AssertionError(f"quoted record key was not canonically validated: {quoted_record_findings!r}")
+
+unrecognized_rule_starts = (
+    (
+        "flow mapping",
+        valid_text.replace(
+            "        - alert: BackupPipelineNoRecentBackup",
+            "        - {alert: BackupPipelineNoRecentBackup}",
+            1,
+        ),
+    ),
+    (
+        "anchor",
+        valid_text.replace(
+            "        - alert: BackupPipelineNoRecentBackup",
+            "        - &backup_rule\n          alert: BackupPipelineNoRecentBackup",
+            1,
+        ),
+    ),
+    (
+        "alias",
+        valid_text.replace(
+            "        - alert: BackupPipelineNoRecentBackup",
+            "        - *backup_rule",
+            1,
+        ),
+    ),
+    (
+        "explicit mapping",
+        valid_text.replace(
+            "        - alert: BackupPipelineNoRecentBackup",
+            "        - ? alert\n          : BackupPipelineNoRecentBackup",
+            1,
+        ),
+    ),
+    (
+        "unrecognized mapping",
+        valid_text.replace(
+            "        - alert: BackupPipelineNoRecentBackup",
+            "        - name: BackupPipelineNoRecentBackup",
+            1,
+        ),
+    ),
+)
+for _, invalid_rule_start in unrecognized_rule_starts:
+    require_message(
+        findings_for(invalid_rule_start, validator._validate_reference_prometheus_rules),
+        "unrecognized alert rule sequence entry; the dependency-free validator cannot safely inspect this YAML shape",
+    )
+
+unrecognized_rules_collections = (
+    valid_text + "\n    - name: invalid-inline-rules\n      rules: []\n",
+    valid_text
+    + "\n    - name: invalid-block-rules\n      rules:\n        unexpected: true\n",
+)
+for invalid_rules_collection in unrecognized_rules_collections:
+    require_message(
+        findings_for(invalid_rules_collection, validator._validate_reference_prometheus_rules),
+        "unrecognized alert rule sequence entry; the dependency-free validator cannot safely inspect this YAML shape",
+    )
+
 empty_expressions = (
     'expr: |',
     'expr: |+',
@@ -103,6 +186,24 @@ for collection_expression in nested_collection_expressions:
 
 snippet_path = root / "design/observability/grafana/backup-alerts-snippets.md"
 valid_snippet = snippet_path.read_text(encoding="utf-8")
+snippet_rule_shapes = (
+    ("flow mapping", "- {alert: BackupPipelineNoRecentBackup}"),
+    ("anchor", "- &backup_rule\n  alert: BackupPipelineNoRecentBackup"),
+    ("alias", "- *backup_rule"),
+    ("explicit mapping", "- ? alert\n  : BackupPipelineNoRecentBackup"),
+    ("unrecognized mapping", "- name: BackupPipelineNoRecentBackup"),
+)
+for _, rule_start in snippet_rule_shapes:
+    invalid_shape_snippet = valid_snippet.replace(
+        "- alert: BackupPipelineNoRecentBackup",
+        rule_start,
+        1,
+    )
+    require_message(
+        findings_for(invalid_shape_snippet, validator._validate_alert_snippet),
+        "unrecognized alert rule sequence entry; the dependency-free validator cannot safely inspect this YAML shape",
+    )
+
 invalid_snippet = valid_snippet.replace(
     "expr: backup_pipeline_recent_backup_slo_breached > 0",
     "expr: null",

@@ -287,7 +287,7 @@ jobs:
             const baseSha = context.payload.pull_request.base.sha;
             const mergeSha = context.sha;
             const prNumber = String(context.payload.pull_request.number);
-            const expectedDisplayTitle = `Build Runtime Images pr-${prNumber} base-${baseSha} head-${headSha} merge-${mergeSha}`;
+            const expectedDisplayTitle = `Build Runtime Images pr-${prNumber} base-${baseSha} head-${headSha} merge-${mergeSha} mode-required`;
             const started = Date.now();
             const timeoutMs = 25 * 60 * 1000;
             const sleepMs = 15000;
@@ -321,8 +321,27 @@ jobs:
                   continue;
                 }
 
-                if (matching.conclusion !== "success") {
-                  core.setFailed(`Runtime images/full smoke run ${matching.id} finished with ${matching.conclusion}`);
+                const jobs = await github.paginate(
+                  github.rest.actions.listJobsForWorkflowRun,
+                  {
+                    owner,
+                    repo,
+                    run_id: matching.id,
+                    per_page: 100,
+                  }
+                );
+                const fullSmokeJob = jobs.find(
+                  (job) => job.name === "Smoke Tests (Full Stack) / Smoke Tests (Full Stack)"
+                );
+                if (!fullSmokeJob) {
+                  core.setFailed(`Runtime images run ${matching.id} did not expose the required Smoke Tests (Full Stack) job`);
+                  return;
+                }
+
+                if (matching.conclusion !== "success" || fullSmokeJob.status !== "completed" || fullSmokeJob.conclusion !== "success") {
+                  core.setFailed(
+                    `Runtime images/full smoke run ${matching.id} did not complete successfully: run=${matching.conclusion}, full-smoke=${fullSmokeJob.status}/${fullSmokeJob.conclusion}`
+                  );
                 }
                 return;
               }

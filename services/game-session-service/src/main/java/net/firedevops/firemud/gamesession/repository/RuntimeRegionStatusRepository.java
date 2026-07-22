@@ -46,24 +46,7 @@ public class RuntimeRegionStatusRepository {
 
   public RuntimeRegionStatus save(RuntimeRegionStatus entity) {
     if (entity.getId() == null) {
-      RuntimeRegionStatusRecord record = dsl.newRecord(RUNTIME_REGION_STATUS);
-      populate(record, entity);
-      Optional<RuntimeRegionStatus> inserted =
-          dsl.insertInto(RUNTIME_REGION_STATUS)
-              .set(record)
-              .onConflict(RUNTIME_REGION_STATUS.TENANT_ID, RUNTIME_REGION_STATUS.GAME_INSTANCE_ID)
-              .doNothing()
-              .returning()
-              .fetchOptional(this::toEntity);
-      return inserted.orElseGet(
-          () ->
-              findByTenantIdAndGameInstanceId(entity.getTenantId(), entity.getGameInstanceId())
-                  .orElseThrow(
-                      () ->
-                          new IllegalStateException(
-                              ("Natural-key conflict did not yield runtime_region_status for "
-                                      + "tenantId=%d gameInstanceId=%d")
-                                  .formatted(entity.getTenantId(), entity.getGameInstanceId()))));
+      return ensureBaseline(entity);
     }
     int updated =
         dsl.update(RUNTIME_REGION_STATUS)
@@ -87,6 +70,67 @@ public class RuntimeRegionStatusRepository {
           "Failed to update runtime_region_status id=" + entity.getId());
     }
     return findById(entity.getId()).orElseThrow();
+  }
+
+  public RuntimeRegionStatus ensureBaseline(RuntimeRegionStatus entity) {
+    RuntimeRegionStatusRecord record = dsl.newRecord(RUNTIME_REGION_STATUS);
+    populate(record, entity);
+    Optional<RuntimeRegionStatus> inserted =
+        dsl.insertInto(RUNTIME_REGION_STATUS)
+            .set(record)
+            .onConflict(RUNTIME_REGION_STATUS.TENANT_ID, RUNTIME_REGION_STATUS.GAME_INSTANCE_ID)
+            .doNothing()
+            .returning()
+            .fetchOptional(this::toEntity);
+    return inserted.orElseGet(
+        () ->
+            findByTenantIdAndGameInstanceId(entity.getTenantId(), entity.getGameInstanceId())
+                .orElseThrow(
+                    () ->
+                        new IllegalStateException(
+                            ("Natural-key conflict did not yield runtime_region_status for "
+                                    + "tenantId=%d gameInstanceId=%d")
+                                .formatted(entity.getTenantId(), entity.getGameInstanceId()))));
+  }
+
+  public RuntimeRegionStatus refreshObservedOwnership(RuntimeRegionStatus entity) {
+    return dsl.update(RUNTIME_REGION_STATUS)
+        .set(RUNTIME_REGION_STATUS.OWNER_SERVICE, entity.getOwnerService())
+        .set(RUNTIME_REGION_STATUS.OWNER_INSTANCE_ID, entity.getOwnerInstanceId())
+        .set(RUNTIME_REGION_STATUS.UPDATED_AT, toLocalDateTime(entity.getUpdatedAt()))
+        .where(
+            RUNTIME_REGION_STATUS
+                .TENANT_ID
+                .eq(entity.getTenantId())
+                .and(RUNTIME_REGION_STATUS.GAME_INSTANCE_ID.eq(entity.getGameInstanceId())))
+        .returning()
+        .fetchOptional(this::toEntity)
+        .orElseThrow(
+            () ->
+                new IllegalStateException(
+                    "Runtime ownership disappeared during observation refresh"));
+  }
+
+  public RuntimeRegionStatus advanceOwnershipEpoch(RuntimeRegionStatus entity) {
+    RuntimeRegionStatusRecord record = dsl.newRecord(RUNTIME_REGION_STATUS);
+    populate(record, entity);
+    record.setRegionEpoch(1L);
+    return dsl.insertInto(RUNTIME_REGION_STATUS)
+        .set(record)
+        .onConflict(RUNTIME_REGION_STATUS.TENANT_ID, RUNTIME_REGION_STATUS.GAME_INSTANCE_ID)
+        .doUpdate()
+        .set(RUNTIME_REGION_STATUS.REGION_EPOCH, RUNTIME_REGION_STATUS.REGION_EPOCH.plus(1L))
+        .set(RUNTIME_REGION_STATUS.EXECUTOR_FENCE, entity.getExecutorFence())
+        .set(RUNTIME_REGION_STATUS.OWNER_SERVICE, entity.getOwnerService())
+        .set(RUNTIME_REGION_STATUS.OWNER_INSTANCE_ID, entity.getOwnerInstanceId())
+        .set(RUNTIME_REGION_STATUS.PAUSED, entity.isPaused())
+        .set(RUNTIME_REGION_STATUS.UPDATED_AT, toLocalDateTime(entity.getUpdatedAt()))
+        .returning()
+        .fetchOptional(this::toEntity)
+        .orElseThrow(
+            () ->
+                new IllegalStateException(
+                    "Runtime ownership mutation did not return a committed row"));
   }
 
   private Optional<RuntimeRegionStatus> findById(Long id) {
