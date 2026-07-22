@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamedesign.service.impl;
 import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
@@ -23,7 +24,6 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
   private static final String INCOMPLETE_BYTE_BOUNDS_MESSAGE =
       "Reconnection buffer softMaxBytes and hardMaxBytes must be set together "
           + "or inherited from a complete tenant override";
-
   private final GameSettingsOverrideRepository repository;
   private final ObjectMapper objectMapper;
 
@@ -54,17 +54,33 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
     String normalizedTenantId = normalizeTenantId(tenantId);
     Long normalizedGameInstanceId = normalizeGameInstanceId(gameInstanceId);
     Object payload = extractDomainPayload(domain, overrides);
-    validateDomainPayload(domain, payload, normalizedTenantId, normalizedGameInstanceId);
+    validateDomainPayload(domain, payload);
+    List<GameSettingsOverride> lockedReconnectionRows =
+        domain == ScopedSettingsOverrides.SettingsDomain.RECONNECTION
+            ? repository.findReconnectionRowsByTenantIdForUpdate(normalizedTenantId)
+            : List.of();
+    if (domain == ScopedSettingsOverrides.SettingsDomain.RECONNECTION) {
+      validateReconnectionInheritance(
+          (ScopedSettingsOverrides.ReconnectionOverride) payload,
+          normalizedGameInstanceId,
+          lockedReconnectionRows);
+    }
 
-    GameSettingsOverride entity =
-        normalizedGameInstanceId == null
-            ? repository
-                .findByTenantIdAndGameInstanceIdIsNullAndDomain(normalizedTenantId, domain.name())
-                .orElseGet(GameSettingsOverride::new)
-            : repository
-                .findByTenantIdAndGameInstanceIdAndDomain(
-                    normalizedTenantId, normalizedGameInstanceId, domain.name())
-                .orElseGet(GameSettingsOverride::new);
+    GameSettingsOverride entity;
+    if (domain == ScopedSettingsOverrides.SettingsDomain.RECONNECTION) {
+      entity = existingOrNewReconnectionOverride(lockedReconnectionRows, normalizedGameInstanceId);
+    } else if (normalizedGameInstanceId == null) {
+      entity =
+          repository
+              .findByTenantIdAndGameInstanceIdIsNullAndDomain(normalizedTenantId, domain.name())
+              .orElseGet(GameSettingsOverride::new);
+    } else {
+      entity =
+          repository
+              .findByTenantIdAndGameInstanceIdAndDomain(
+                  normalizedTenantId, normalizedGameInstanceId, domain.name())
+              .orElseGet(GameSettingsOverride::new);
+    }
 
     entity.setTenantId(normalizedTenantId);
     entity.setGameInstanceId(normalizedGameInstanceId);
@@ -81,19 +97,42 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
       String tenantId, Long gameInstanceId, ScopedSettingsOverrides.SettingsDomain domain) {
     String normalizedTenantId = normalizeTenantId(tenantId);
     Long normalizedGameInstanceId = normalizeGameInstanceId(gameInstanceId);
+    List<GameSettingsOverride> lockedReconnectionRows =
+        domain == ScopedSettingsOverrides.SettingsDomain.RECONNECTION
+            ? repository.findReconnectionRowsByTenantIdForUpdate(normalizedTenantId)
+            : List.of();
     if (normalizedGameInstanceId == null) {
       if (domain == ScopedSettingsOverrides.SettingsDomain.RECONNECTION) {
-        validateTenantReconnectionMutation(normalizedTenantId, null);
+        validateTenantReconnectionMutation(null, lockedReconnectionRows);
       }
-      repository
-          .findByTenantIdAndGameInstanceIdIsNullAndDomain(normalizedTenantId, domain.name())
-          .ifPresent(repository::delete);
+      GameSettingsOverride entity;
+      if (domain == ScopedSettingsOverrides.SettingsDomain.RECONNECTION) {
+        entity = findReconnectionOverride(lockedReconnectionRows, null);
+      } else {
+        entity =
+            repository
+                .findByTenantIdAndGameInstanceIdIsNullAndDomain(
+                    normalizedTenantId, domain.name())
+                .orElse(null);
+      }
+      if (entity != null) {
+        repository.delete(entity);
+      }
       return;
     }
-    repository
-        .findByTenantIdAndGameInstanceIdAndDomain(
-            normalizedTenantId, normalizedGameInstanceId, domain.name())
-        .ifPresent(repository::delete);
+    GameSettingsOverride entity;
+    if (domain == ScopedSettingsOverrides.SettingsDomain.RECONNECTION) {
+      entity = findReconnectionOverride(lockedReconnectionRows, normalizedGameInstanceId);
+    } else {
+      entity =
+          repository
+              .findByTenantIdAndGameInstanceIdAndDomain(
+                  normalizedTenantId, normalizedGameInstanceId, domain.name())
+              .orElse(null);
+    }
+    if (entity != null) {
+      repository.delete(entity);
+    }
   }
 
   private ScopedSettingsOverrides toOverrides(List<GameSettingsOverride> rows) {
@@ -166,13 +205,10 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
 
   private void validateDomainPayload(
       ScopedSettingsOverrides.SettingsDomain domain,
-      Object payload,
-      String tenantId,
-      Long gameInstanceId) {
+      Object payload) {
     switch (domain) {
       case RECONNECTION ->
-          validateReconnection(
-              (ScopedSettingsOverrides.ReconnectionOverride) payload, tenantId, gameInstanceId);
+          validateReconnectionShape((ScopedSettingsOverrides.ReconnectionOverride) payload);
       case COMMAND_HISTORY ->
           validateCommandHistory((ScopedSettingsOverrides.CommandHistoryOverride) payload);
       case COMMAND_CAPABILITIES ->
@@ -184,10 +220,8 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
     }
   }
 
-  private void validateReconnection(
-      ScopedSettingsOverrides.ReconnectionOverride reconnection,
-      String tenantId,
-      Long gameInstanceId) {
+  private void validateReconnectionShape(
+      ScopedSettingsOverrides.ReconnectionOverride reconnection) {
     if (reconnection.isEmpty()) {
       throw new IllegalArgumentException("Reconnection override must set policy or buffer values");
     }
@@ -222,36 +256,54 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
         throw new IllegalArgumentException(INVALID_BYTE_BOUNDS_MESSAGE);
       }
     }
+  }
+
+  private void validateReconnectionInheritance(
+      ScopedSettingsOverrides.ReconnectionOverride reconnection,
+      Long gameInstanceId,
+      List<GameSettingsOverride> lockedReconnectionRows) {
     if (gameInstanceId == null) {
-      validateTenantReconnectionMutation(tenantId, reconnection);
+      validateTenantReconnectionMutation(reconnection, lockedReconnectionRows);
       return;
     }
-    validatePersistedReconnectionByteBounds(findTenantReconnectionOverride(tenantId), reconnection);
+    GameSettingsOverride tenantRow = findReconnectionOverride(lockedReconnectionRows, null);
+    validatePersistedReconnectionByteBounds(
+        tenantRow == null
+            ? null
+            : deserialize(
+                tenantRow.getPayload(), ScopedSettingsOverrides.ReconnectionOverride.class),
+        reconnection);
   }
 
   private void validateTenantReconnectionMutation(
-      String tenantId, ScopedSettingsOverrides.ReconnectionOverride prospectiveParent) {
+      ScopedSettingsOverrides.ReconnectionOverride prospectiveParent,
+      List<GameSettingsOverride> lockedReconnectionRows) {
     if (prospectiveParent != null) {
       validatePersistedReconnectionByteBounds(null, prospectiveParent);
     }
-    for (GameSettingsOverride childRow :
-        repository.findByTenantIdAndGameInstanceIdIsNotNullAndDomain(
-            tenantId, ScopedSettingsOverrides.SettingsDomain.RECONNECTION.name())) {
+    for (GameSettingsOverride childRow : lockedReconnectionRows) {
+      if (childRow.getGameInstanceId() == null) {
+        continue;
+      }
       validatePersistedReconnectionByteBounds(
           prospectiveParent,
           deserialize(childRow.getPayload(), ScopedSettingsOverrides.ReconnectionOverride.class));
     }
   }
 
-  private ScopedSettingsOverrides.ReconnectionOverride findTenantReconnectionOverride(
-      String tenantId) {
-    return repository
-        .findByTenantIdAndGameInstanceIdIsNullAndDomain(
-            tenantId, ScopedSettingsOverrides.SettingsDomain.RECONNECTION.name())
-        .map(
-            row ->
-                deserialize(row.getPayload(), ScopedSettingsOverrides.ReconnectionOverride.class))
+  private GameSettingsOverride findReconnectionOverride(
+      List<GameSettingsOverride> lockedReconnectionRows, Long gameInstanceId) {
+    return lockedReconnectionRows.stream()
+        .filter(row -> Objects.equals(row.getGameInstanceId(), gameInstanceId))
+        .findFirst()
         .orElse(null);
+  }
+
+  private GameSettingsOverride existingOrNewReconnectionOverride(
+      List<GameSettingsOverride> lockedReconnectionRows, Long gameInstanceId) {
+    GameSettingsOverride existing =
+        findReconnectionOverride(lockedReconnectionRows, gameInstanceId);
+    return existing == null ? new GameSettingsOverride() : existing;
   }
 
   private void validatePersistedReconnectionByteBounds(

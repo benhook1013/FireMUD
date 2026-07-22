@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.util.List;
-import java.util.Optional;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.gamedesign.entity.GameSettingsOverride;
 import net.firedevops.firemud.gamedesign.repository.GameSettingsOverrideRepository;
@@ -149,8 +148,8 @@ class SettingsAuthorityServiceImplTest {
                 null, null, null, null, 60_000, null));
     GameSettingsOverride tenantRow = new GameSettingsOverride();
     tenantRow.setPayload("tenant-reconnection");
-    Mockito.when(repository.findByTenantIdAndGameInstanceIdIsNullAndDomain("demo", "RECONNECTION"))
-        .thenReturn(Optional.of(tenantRow));
+    Mockito.when(repository.findReconnectionRowsByTenantIdForUpdate("demo"))
+        .thenReturn(List.of(tenantRow));
     Mockito.when(
             objectMapper.readValue(
                 "tenant-reconnection", ScopedSettingsOverrides.ReconnectionOverride.class))
@@ -188,14 +187,12 @@ class SettingsAuthorityServiceImplTest {
                 null, null, null, null, 50_000, 65_000));
     GameSettingsOverride tenantRow = new GameSettingsOverride();
     tenantRow.setPayload("tenant-reconnection");
-    Mockito.when(repository.findByTenantIdAndGameInstanceIdIsNullAndDomain("demo", "RECONNECTION"))
-        .thenReturn(Optional.of(tenantRow));
+    Mockito.when(repository.findReconnectionRowsByTenantIdForUpdate("demo"))
+        .thenReturn(List.of(tenantRow));
     Mockito.when(
             objectMapper.readValue(
                 "tenant-reconnection", ScopedSettingsOverrides.ReconnectionOverride.class))
         .thenReturn(tenantOverride);
-    Mockito.when(repository.findByTenantIdAndGameInstanceIdAndDomain("demo", 7L, "RECONNECTION"))
-        .thenReturn(Optional.empty());
     SettingsAuthorityServiceImpl gameInstanceService =
         new SettingsAuthorityServiceImpl(repository, objectMapper);
     ScopedSettingsOverrides overrides =
@@ -212,16 +209,51 @@ class SettingsAuthorityServiceImplTest {
     gameInstanceService.putDomainOverride(
         "demo", 7L, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides);
 
-    Mockito.verify(repository).save(Mockito.any(GameSettingsOverride.class));
+    Mockito.InOrder inOrder = Mockito.inOrder(repository);
+    inOrder.verify(repository).findReconnectionRowsByTenantIdForUpdate("demo");
+    inOrder.verify(repository).save(Mockito.any(GameSettingsOverride.class));
+  }
+
+  @Test
+  void parentAndChildReconnectionWritesAcquireTheSameTenantScopeLock() {
+    Mockito.when(repository.findReconnectionRowsByTenantIdForUpdate("demo"))
+        .thenReturn(List.of());
+    ScopedSettingsOverrides tenantOverrides =
+        new ScopedSettingsOverrides(
+            new ScopedSettingsOverrides.ReconnectionOverride(
+                null,
+                new ScopedSettingsOverrides.ReconnectionOverride.BufferOverride(
+                    null, null, null, null, 50_000, 65_000)),
+            null,
+            null,
+            null,
+            null);
+    ScopedSettingsOverrides childOverrides =
+        new ScopedSettingsOverrides(
+            new ScopedSettingsOverrides.ReconnectionOverride(
+                new ScopedSettingsOverrides.ReconnectionOverride.PolicyOverride(300_000L, false),
+                null),
+            null,
+            null,
+            null,
+            null);
+
+    service.putDomainOverride(
+        "demo", null, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, tenantOverrides);
+    service.putDomainOverride(
+        "demo", 7L, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, childOverrides);
+
+    Mockito.verify(repository, Mockito.times(2))
+        .findReconnectionRowsByTenantIdForUpdate("demo");
   }
 
   @Test
   void rejectsTenantPutThatInvalidatesAnExistingSparseGameInstanceChild() {
     ObjectMapper objectMapper = Mockito.mock(ObjectMapper.class);
     GameSettingsOverride childRow = new GameSettingsOverride();
+    childRow.setGameInstanceId(9L);
     childRow.setPayload("child-reconnection");
-    Mockito.when(
-            repository.findByTenantIdAndGameInstanceIdIsNotNullAndDomain("demo", "RECONNECTION"))
+    Mockito.when(repository.findReconnectionRowsByTenantIdForUpdate("demo"))
         .thenReturn(List.of(childRow));
     Mockito.when(
             objectMapper.readValue(
@@ -258,9 +290,9 @@ class SettingsAuthorityServiceImplTest {
   void rejectsTenantDeleteThatLeavesAnExistingSparseGameInstanceChildUnresolved() {
     ObjectMapper objectMapper = Mockito.mock(ObjectMapper.class);
     GameSettingsOverride childRow = new GameSettingsOverride();
+    childRow.setGameInstanceId(9L);
     childRow.setPayload("child-reconnection");
-    Mockito.when(
-            repository.findByTenantIdAndGameInstanceIdIsNotNullAndDomain("demo", "RECONNECTION"))
+    Mockito.when(repository.findReconnectionRowsByTenantIdForUpdate("demo"))
         .thenReturn(List.of(childRow));
     Mockito.when(
             objectMapper.readValue(
