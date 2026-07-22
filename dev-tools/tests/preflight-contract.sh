@@ -636,7 +636,6 @@ verify_binding_ref_contract(
 routine_expected = yaml.safe_load(
     (root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml").read_text(encoding="utf-8")
 )
-routine_expected["internalBindings"]["certificates"].pop("backupControlPlaneClientRef", None)
 routine_path = tmp / "routine-online-backup-bindings.yaml"
 routine_path.write_text(yaml.safe_dump(routine_expected, sort_keys=False), encoding="utf-8")
 routine_results = module.expected_binding_checks(
@@ -665,6 +664,44 @@ exceptional_results = module.expected_binding_checks(
 exceptional_secrets = next(result for result in exceptional_results if result.policy_id == "PREFLIGHT-SECRETS-002")
 if exceptional_secrets.status != "fail" or "backupControlPlaneClientRef" not in exceptional_secrets.message:
     raise SystemExit(f"explicit backup maintenance pause opt-in did not validate its client binding: {exceptional_secrets.message}")
+
+malformed_pause_expected = yaml.safe_load(
+    (root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml").read_text(encoding="utf-8")
+)
+malformed_pause_expected["backupMaintenancePause"] = {"enabled": "true"}
+malformed_pause_path = tmp / "malformed-backup-pause-bindings.yaml"
+malformed_pause_path.write_text(yaml.safe_dump(malformed_pause_expected, sort_keys=False), encoding="utf-8")
+malformed_pause_results = module.expected_binding_checks(
+    malformed_pause_path,
+    "synthetic-malformed-backup-pause-bindings",
+    "hobby-self-hosted",
+    rendered_documents,
+)
+malformed_pause_secrets = next(
+    result for result in malformed_pause_results if result.policy_id == "PREFLIGHT-SECRETS-002"
+)
+if malformed_pause_secrets.status != "fail" or "must be a boolean" not in malformed_pause_secrets.message:
+    raise SystemExit(f"malformed backup maintenance pause opt-in did not fail closed: {malformed_pause_secrets.message}")
+
+undeclared_pause_expected = yaml.safe_load(
+    (root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml").read_text(encoding="utf-8")
+)
+undeclared_pause_expected["internalBindings"]["certificates"]["backupControlPlaneClientRef"] = (
+    "cert-manager://firemud/hobby-backup-control-plane"
+)
+undeclared_pause_path = tmp / "undeclared-backup-pause-bindings.yaml"
+undeclared_pause_path.write_text(yaml.safe_dump(undeclared_pause_expected, sort_keys=False), encoding="utf-8")
+undeclared_pause_results = module.expected_binding_checks(
+    undeclared_pause_path,
+    "synthetic-undeclared-backup-pause-bindings",
+    "hobby-self-hosted",
+    rendered_documents,
+)
+undeclared_pause_secrets = next(
+    result for result in undeclared_pause_results if result.policy_id == "PREFLIGHT-SECRETS-002"
+)
+if undeclared_pause_secrets.status != "fail" or "must be omitted" not in undeclared_pause_secrets.message:
+    raise SystemExit(f"undeclared backup maintenance identity did not fail closed: {undeclared_pause_secrets.message}")
 PY
 
 echo "preflight contract checks passed"

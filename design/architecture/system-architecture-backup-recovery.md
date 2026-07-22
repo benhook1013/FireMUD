@@ -84,6 +84,7 @@ Canonical backup/recovery severity matrix:
 | `backup_artifact_lineage_invalid` | `P1` | Backup artifact lineage cannot prove the expected environment, database, schema, service, tool, or object-storage binding |
 | `backup_artifact_restore_unreadable` | `P1` | Backup artifact failed restore-readability validation |
 | `recovery_participant_convergence_blocked` | `P1` | A recovery participant lacks a safe disposition and recovery must remain quarantined |
+| Attempted player-facing reopen with incomplete cold-start convergence | `P0` | Traffic release was attempted without complete controller-authoritative recovery proof |
 
 Pause-budget alerts remain valid for maintenance/reset workflows but are not routine backup signals.
 

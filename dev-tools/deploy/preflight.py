@@ -498,7 +498,32 @@ def expected_binding_checks(
             "internalBindings.certificates.tcpProxyBridgeClientRef",
             "internalBindings.registry.imagePullSecretRef",
         ]
-        exceptional_pause_enabled = get(data, "backupMaintenancePause.enabled") is True
+        pause_config = data.get("backupMaintenancePause")
+        certificates = get(data, "internalBindings.certificates")
+        backup_control_plane_declared = (
+            isinstance(certificates, dict)
+            and "backupControlPlaneClientRef" in certificates
+        )
+        pause_config_error = None
+        if pause_config is None:
+            exceptional_pause_enabled = False
+        elif not isinstance(pause_config, dict):
+            exceptional_pause_enabled = False
+            pause_config_error = "backupMaintenancePause must be an object"
+        elif not isinstance(pause_config.get("enabled"), bool):
+            exceptional_pause_enabled = False
+            pause_config_error = "backupMaintenancePause.enabled must be a boolean"
+        else:
+            exceptional_pause_enabled = pause_config["enabled"]
+        if (
+            pause_config_error is None
+            and not exceptional_pause_enabled
+            and backup_control_plane_declared
+        ):
+            pause_config_error = (
+                "internalBindings.certificates.backupControlPlaneClientRef must be omitted "
+                "unless backupMaintenancePause.enabled is true"
+            )
         if exceptional_pause_enabled:
             required_internal.append("internalBindings.certificates.backupControlPlaneClientRef")
         missing = [key for key in required_internal if not get(data, key)]
@@ -578,7 +603,16 @@ def expected_binding_checks(
             if name and not rendered_references_secret(documents, name):
                 missing_rendered_refs.append(name)
         registry_pull_secret = secret_binding_name(get(data, "internalBindings.registry.imagePullSecretRef"))
-        if missing:
+        if pause_config_error:
+            results.append(
+                CheckResult(
+                    "PREFLIGHT-SECRETS-002",
+                    True,
+                    "fail",
+                    f"Expected-bindings backup maintenance configuration is invalid: {pause_config_error}",
+                )
+            )
+        elif missing:
             results.append(
                 CheckResult(
                     "PREFLIGHT-SECRETS-002",

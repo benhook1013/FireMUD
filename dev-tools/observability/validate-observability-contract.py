@@ -29,11 +29,22 @@ REQUIRED_BACKUP_RECORDINGS = {
     "backup_artifact_lineage_invalid",
     "backup_artifact_restore_unreadable",
     "recovery_participant_convergence_blocked",
+    "recovery_environment_convergence_blocked",
 }
 CURRENT_BLOCKED_CONVERGENCE_EXPR = re.compile(
     r'recovery_participant_convergence_state\s*\{\s*state\s*=\s*["\']blocked["\']\s*\}'
 )
 ABSENT_CONVERGENCE_EXPR = re.compile(r"absent\s*\(\s*recovery_participant_convergence_state\s*\)")
+ABSENT_ARTIFACT_LINEAGE_EXPR = re.compile(r"absent\s*\(\s*backup_artifact_lineage_valid\s*\)")
+ABSENT_ARTIFACT_READABILITY_EXPR = re.compile(r"absent\s*\(\s*backup_artifact_restore_readable\s*\)")
+BLOCKED_REOPEN_ATTEMPT_EXPR = re.compile(
+    r'recovery_reopen_attempt_total\s*\{'
+    r'(?=[^}]*result\s*=\s*["\']blocked["\'])'
+    r'(?=[^}]*reason\s*=\s*["\']incomplete_convergence["\'])[^}]*\}'
+)
+ENVIRONMENT_BLOCKED_CONVERGENCE_EXPR = re.compile(
+    r"max\s+by\s*\(\s*environment\s*\)\s*\(\s*recovery_participant_convergence_blocked\s*\)"
+)
 STALE_BLOCKED_CONVERGENCE_EXPR = re.compile(
     r'recovery_participant_convergence_total\s*\{[^}]*result\s*=\s*["\']blocked["\']'
 )
@@ -501,6 +512,28 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
             findings.append(Finding(path=path, message=f"{alert_name} must use owner=infra for backup incidents"))
         if alert_name == "RecoveryParticipantConvergenceMetricsAbsent" and not ABSENT_CONVERGENCE_EXPR.search(expr or ""):
             findings.append(Finding(path=path, message="RecoveryParticipantConvergenceMetricsAbsent must use absent(recovery_participant_convergence_state)"))
+        if alert_name == "BackupArtifactLineageMetricsAbsent" and not ABSENT_ARTIFACT_LINEAGE_EXPR.search(expr or ""):
+            findings.append(Finding(path=path, message="BackupArtifactLineageMetricsAbsent must use absent(backup_artifact_lineage_valid)"))
+        if alert_name == "BackupArtifactRestoreReadabilityMetricsAbsent" and not ABSENT_ARTIFACT_READABILITY_EXPR.search(expr or ""):
+            findings.append(
+                Finding(
+                    path=path,
+                    message="BackupArtifactRestoreReadabilityMetricsAbsent must use absent(backup_artifact_restore_readable)",
+                )
+            )
+        if alert_name == "RecoveryReopenAttemptBlocked":
+            if not BLOCKED_REOPEN_ATTEMPT_EXPR.search(expr or ""):
+                findings.append(
+                    Finding(
+                        path=path,
+                        message=(
+                            "RecoveryReopenAttemptBlocked must query blocked recovery reopen attempts "
+                            "with reason=incomplete_convergence"
+                        ),
+                    )
+                )
+            if severity != "P0":
+                findings.append(Finding(path=path, message="RecoveryReopenAttemptBlocked must use severity=P0"))
         if alert_name.startswith("Tick") and alert_name not in {
             "TickExecutionUnsafeRatio",
             "TickEffectLedgerBacklog",
@@ -517,9 +550,12 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
         "BackupPipelineNoRecentVerification",
         "BackupPipelineNoRecentRestoreDrill",
         "BackupArtifactLineageInvalid",
+        "BackupArtifactLineageMetricsAbsent",
         "BackupArtifactRestoreUnreadable",
+        "BackupArtifactRestoreReadabilityMetricsAbsent",
         "RecoveryParticipantConvergenceBlocked",
         "RecoveryParticipantConvergenceMetricsAbsent",
+        "RecoveryReopenAttemptBlocked",
         "LoginSuccessRatioLowGateway",
         "LoginSuccessRatioLowTcpProxy",
         "CommandLatencyP99HighGateway",
@@ -584,6 +620,16 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
             Finding(
                 path=path,
                 message="blocked convergence recording must use the current participant state gauge",
+            )
+        )
+    if not ENVIRONMENT_BLOCKED_CONVERGENCE_EXPR.search(text):
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "environment blocked-convergence recording must aggregate "
+                    "recovery_participant_convergence_blocked with max by (environment)"
+                ),
             )
         )
     if STALE_BLOCKED_CONVERGENCE_EXPR.search(text):

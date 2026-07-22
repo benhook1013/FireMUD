@@ -57,6 +57,9 @@ spec:
         - record: recovery_participant_convergence_blocked
           expr: |
             recovery_participant_convergence_state{state="blocked"} == 1
+        - record: recovery_environment_convergence_blocked
+          expr: |
+            max by (environment) (recovery_participant_convergence_blocked)
 
     - name: firemud.recording.player_experience
       rules:
@@ -298,6 +301,17 @@ spec:
           annotations:
             summary: Backup artifact lineage is invalid
             description: The latest backup artifact does not match the expected environment, database, schema, service, tool, or object-storage lineage. Block recovery-readiness decisions until lineage is repaired.
+        - alert: BackupArtifactLineageMetricsAbsent
+          expr: absent(backup_artifact_lineage_valid)
+          for: 5m
+          labels:
+            service: postgres-backup
+            severity: P1
+            owner: infra
+            runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
+          annotations:
+            summary: Backup artifact lineage metrics are absent
+            description: No backup_artifact_lineage_valid series are present. This is a global monitoring gap, not environment-specific readiness evidence; keep recovery-readiness decisions blocked until the source is restored.
         - alert: BackupArtifactRestoreUnreadable
           expr: backup_artifact_restore_unreadable > 0
           for: 5m
@@ -309,6 +323,17 @@ spec:
           annotations:
             summary: Backup artifact cannot be restored or read
             description: The latest backup artifact failed restore-readability validation. Block recovery-readiness decisions until a readable artifact is verified.
+        - alert: BackupArtifactRestoreReadabilityMetricsAbsent
+          expr: absent(backup_artifact_restore_readable)
+          for: 5m
+          labels:
+            service: postgres-backup
+            severity: P1
+            owner: infra
+            runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
+          annotations:
+            summary: Backup artifact restore-readability metrics are absent
+            description: No backup_artifact_restore_readable series are present. This is a global monitoring gap, not environment-specific readiness evidence; keep recovery-readiness decisions blocked until the source is restored.
         - alert: RecoveryParticipantConvergenceBlocked
           expr: recovery_participant_convergence_blocked > 0
           for: 5m
@@ -316,7 +341,7 @@ spec:
             service: postgres-backup
             severity: P1
             owner: infra
-            runbook: design/architecture/system-architecture-backup-recovery.md#environment-wide-cold-start-restore-proof
+            runbook: design/architecture/system-architecture-backup-recovery.md#recovery-controller-continuation
           annotations:
             summary: Recovery participant convergence is blocked
             description: One or more environment recovery participants have not reached a safe disposition. Keep the recovery quarantined and resolve the participant-specific blocker before reopening traffic.
@@ -331,6 +356,17 @@ spec:
           annotations:
             summary: Recovery participant convergence metrics are absent
             description: No recovery_participant_convergence_state series are present. This is an observability failure, not evidence that recovery participants are converged or blocked; keep recovery-readiness decisions blocked until a reliable emitter and current state are proven.
+        - alert: RecoveryReopenAttemptBlocked
+          expr: increase(recovery_reopen_attempt_total{result="blocked",reason="incomplete_convergence"}[5m]) > 0
+          for: 0m
+          labels:
+            service: postgres-backup
+            severity: P0
+            owner: infra
+            runbook: design/architecture/system-architecture-backup-recovery.md#recovery-controller-continuation
+          annotations:
+            summary: Player-facing reopen was attempted without complete convergence
+            description: A controller-authoritative recovery release was attempted before cold-start convergence completed. Keep traffic quarantined and investigate the operation evidence and participant dispositions immediately.
 
     - name: firemud.alerts.player_experience
       rules:

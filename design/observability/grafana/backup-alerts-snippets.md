@@ -55,6 +55,18 @@ Example alerts for missed backups and verification runs:
     summary: Backup artifact lineage is invalid
     description: The latest backup artifact cannot prove the expected environment, database, schema, service, tool, or object-storage lineage. Keep recovery quarantined and inspect the authoritative artifact record.
 
+- alert: BackupArtifactLineageMetricsAbsent
+  expr: absent(backup_artifact_lineage_valid)
+  for: 5m
+  labels:
+    service: postgres-backup
+    severity: P1
+    owner: infra
+    runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
+  annotations:
+    summary: Backup artifact lineage metrics are absent
+    description: No backup_artifact_lineage_valid series are present. This is a global monitoring gap, not environment-specific readiness evidence.
+
 - alert: BackupArtifactRestoreUnreadable
   expr: backup_artifact_restore_unreadable > 0
   for: 5m
@@ -66,6 +78,18 @@ Example alerts for missed backups and verification runs:
   annotations:
     summary: Backup artifact failed restore-readability validation
     description: The latest backup artifact exists but could not be read through the restore validation path. Keep recovery quarantined until a readable artifact is proven.
+
+- alert: BackupArtifactRestoreReadabilityMetricsAbsent
+  expr: absent(backup_artifact_restore_readable)
+  for: 5m
+  labels:
+    service: postgres-backup
+    severity: P1
+    owner: infra
+    runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
+  annotations:
+    summary: Backup artifact restore-readability metrics are absent
+    description: No backup_artifact_restore_readable series are present. This is a global monitoring gap, not environment-specific readiness evidence.
 
 - alert: RecoveryParticipantConvergenceBlocked
   expr: recovery_participant_convergence_state{state="blocked"} == 1
@@ -90,6 +114,18 @@ Example alerts for missed backups and verification runs:
   annotations:
     summary: Recovery participant convergence metrics are absent
     description: No recovery_participant_convergence_state series are present. This is an observability failure, not evidence that recovery participants are converged or blocked; keep recovery-readiness decisions blocked until a reliable emitter and current state are proven.
+
+- alert: RecoveryReopenAttemptBlocked
+  expr: increase(recovery_reopen_attempt_total{result="blocked",reason="incomplete_convergence"}[5m]) > 0
+  for: 0m
+  labels:
+    service: postgres-backup
+    severity: P0
+    owner: infra
+    runbook: design/architecture/system-architecture-backup-recovery.md#recovery-controller-continuation
+  annotations:
+    summary: Player-facing reopen was attempted without complete convergence
+    description: A controller-authoritative recovery release was attempted before cold-start convergence completed. Keep traffic quarantined and investigate immediately.
 ```
 
 Routine backup alerts use these current artifact and recovery recordings:
@@ -100,6 +136,7 @@ Routine backup alerts use these current artifact and recovery recordings:
 - `backup_artifact_lineage_invalid`
 - `backup_artifact_restore_unreadable`
 - `recovery_participant_convergence_state{environment,participant,state}`
+- `recovery_environment_convergence_blocked{environment}`
 
 `RecoveryParticipantConvergenceMetricsAbsent` is a fail-safe monitoring-gap alert. It cannot provide `environment` or `participant` labels when the source family is absent and must not be treated as recovery state or readiness evidence. The current repository has no reliable recovery-participant metric emitter, so the recovery convergence recording and blocked-state alert remain unproved until that producer and its end-to-end proof exist.
 

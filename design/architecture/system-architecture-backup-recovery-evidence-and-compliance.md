@@ -8,7 +8,7 @@ Backup-pause metrics are maintenance/reset observability, not player-facing Post
 
 Backup readiness is an evidence chain, not an artifact-shaped timestamp record. The scheduled dump, restore controller, and preflight must retain complete environment/schema/service/tool lineage and dereference the backup-readiness, baseline, and actual-recovery records independently. `verify-backups.sh` contributes only existence/reachability evidence; immutable lineage, artifact readability, restore-tool compatibility, erasure replay, and player-facing readiness require separate evidence. Player-facing readiness remains blocked until backup-under-write, inventory convergence, hardening, smoke, and controlled-reopen proof is available.
 
-The recovery-participant metrics in this document are target-state contracts, not evidence that the current runtime emits them. No reliable emitter for `recovery_participant_convergence_state` is currently implemented or proven. The reference Prometheus ruleset includes `RecoveryParticipantConvergenceMetricsAbsent` as a fail-safe monitoring-gap alert, but that alert cannot identify an environment or participant and must not be interpreted as converged or blocked recovery state. Recovery convergence observability remains unproved; the durable recovery controller and retained evidence records remain the readiness authority.
+The artifact-integrity, recovery-participant, and reopen-attempt metrics in this document are target-state contracts, not evidence that the current runtime emits them. No reliable emitter for `backup_artifact_lineage_valid`, `backup_artifact_restore_readable`, `recovery_participant_convergence_state`, or `recovery_reopen_attempt_total` is currently implemented or proven. The reference Prometheus ruleset includes fail-safe missing-source alerts, but those alerts cannot identify an environment or participant after an entire family disappears and must not be interpreted as recovery state. Recovery observability remains unproved; the durable recovery controller and retained evidence records remain the readiness authority.
 
 ## Backup Observability and Alerts
 
@@ -24,6 +24,7 @@ Backup and verification jobs must emit simple metrics with an `environment` labe
 - `recovery_participant_convergence_state{environment,participant,state}` – current participant state gauge; this is the readiness signal, not the historical event counter
 - `recovery_oldest_unresolved_age_seconds{environment,participant}`
 - `recovery_environment_convergence_total{environment,result}`
+- `recovery_reopen_attempt_total{environment,result,reason}` – bounded `result` and `reason` enums; `reason="incomplete_convergence"` identifies a blocked release attempt
 - optional `backup_run_total{environment,result}` and `backup_verify_run_total{environment,result}`
 
 Prometheus should also publish derived breach indicators:
@@ -36,7 +37,7 @@ Prometheus should also publish derived breach indicators:
 - `recovery_participant_convergence_blocked{environment,participant,state}`
 - `recovery_environment_convergence_blocked{environment}`
 
-Derived indicators and alerts must preserve these labels and group by `environment`; participant convergence alerts must not reduce an environment-wide failure to an unlabeled boolean or discard the failing `participant` or current `state`. The cumulative `recovery_participant_convergence_total` event counter is audit history only and must not drive an active blocked alert; the alert must clear when the current state converges.
+Derived indicators and alerts must preserve these labels and group by `environment`; participant convergence alerts must not reduce an environment-wide failure to an unlabeled boolean or discard the failing `participant` or current `state`. The cumulative `recovery_participant_convergence_total` event counter is audit history only and must not drive an active blocked alert; the alert must clear when the current state converges. Global `absent(...)` alerts are fail-safe monitoring-gap indicators only: because a missing family has no remaining environment label, they cannot replace environment-specific source health or readiness proof.
 
 Alerting policy:
 
