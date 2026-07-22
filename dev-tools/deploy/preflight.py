@@ -704,7 +704,7 @@ def validate_preflight_report(
         return ("fail", f"{label} preflight report must come from operator context")
     if report.get("toolVersion") != "preflight.py-v1":
         return ("fail", f"{label} preflight report toolVersion mismatch")
-    if report.get("waiverPath") is not None:
+    if "waiverPath" in report:
         return (
             "fail",
             f"{label} preflight report waivers are not consumable until one-time authority is implemented",
@@ -720,8 +720,10 @@ def validate_preflight_report(
         return ("fail", f"{label} preflight report completedAt is future-dated")
     if completed_by is not None and completed_at > completed_by:
         return ("fail", f"{label} preflight report completedAt must not be later than the apply event")
-    if completed_by is not None and completed_by - completed_at > PREFLIGHT_APPLY_MAX_AGE:
-        return ("fail", f"{label} preflight report is older than the 30-minute apply window")
+    consumed_at = completed_by or effective_now
+    if consumed_at - completed_at > PREFLIGHT_APPLY_MAX_AGE:
+        window = "apply" if completed_by is not None else "consumption"
+        return ("fail", f"{label} preflight report is older than the 30-minute {window} window")
 
     preflight_results = report.get("checkResults")
     if not isinstance(preflight_results, list) or not preflight_results:
@@ -793,7 +795,10 @@ def validate_preflight_report(
         check["policyId"]
         for check in preflight_results
         if not check["required"]
-        and check["policyId"] != "PREFLIGHT-DIGEST-002"
+        and not (
+            environment == "hobby-self-hosted"
+            and check["policyId"] == "PREFLIGHT-DIGEST-002"
+        )
         and check["status"] != "not_applicable"
     )
     if invalid_non_applicable_ids:

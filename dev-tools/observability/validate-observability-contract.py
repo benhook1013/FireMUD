@@ -8,6 +8,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -155,7 +157,13 @@ def _parse_expr(rule_lines: list[str]) -> str | None:
             continue
         expr_indent = len(match.group("indent"))
         scalar = match.group("rest").strip()
-        is_block_scalar = re.fullmatch(r"[|>][+-]?", scalar) is not None
+        is_block_scalar = (
+            re.fullmatch(
+                r"[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?(?:\s+#.*)?",
+                scalar,
+            )
+            is not None
+        )
         expr_lines = [] if is_block_scalar else [scalar]
         for next_line in rule_lines[index + 1 :]:
             next_indent = len(next_line) - len(next_line.lstrip(" "))
@@ -168,7 +176,16 @@ def _parse_expr(rule_lines: list[str]) -> str | None:
                 break
             expr_lines.append(next_line.rstrip())
         expression = "\n".join(expr_lines).strip()
-        return "" if expression.lower() in {'""', "''", "null", "~", "!!null"} else expression
+        if not is_block_scalar:
+            try:
+                parsed_scalar = yaml.safe_load(f"expr: {scalar}\n")
+            except yaml.YAMLError:
+                parsed_scalar = None
+            if isinstance(parsed_scalar, dict) and (
+                parsed_scalar.get("expr") is None or parsed_scalar.get("expr") == ""
+            ):
+                return ""
+        return expression
     return None
 
 
@@ -254,7 +271,7 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
                 findings.append(Finding(path=path, message="test alerts must use severity=P2 and alert_class=test (never severity=test)"))
 
             expr = _parse_expr(rule_lines)
-            if expr is None:
+            if not expr:
                 findings.append(Finding(path=path, message="alert rule is missing expr"))
                 continue
 

@@ -53,7 +53,21 @@ require_message(
     "BackupPipelineNoRecentBackup is missing expr",
 )
 
-for empty_expression in ('expr: |', 'expr: |+', 'expr: >+', 'expr: ""', 'expr: null', 'expr: ~', 'expr: !!null'):
+empty_expressions = (
+    'expr: |',
+    'expr: |+',
+    'expr: >+',
+    'expr: |2',
+    'expr: | # empty expression',
+    'expr: |2- # empty expression',
+    'expr: ""',
+    'expr: null',
+    'expr: ~',
+    'expr: !!null',
+    'expr: !!null ""',
+    'expr: !!str ""',
+)
+for empty_expression in empty_expressions:
     empty_backup_expr = valid_text.replace(
         "expr: backup_pipeline_recent_backup_slo_breached > 0",
         empty_expression,
@@ -62,6 +76,19 @@ for empty_expression in ('expr: |', 'expr: |+', 'expr: >+', 'expr: ""', 'expr: n
     require_message(
         findings_for(empty_backup_expr, validator._validate_reference_prometheus_rules),
         "BackupPipelineNoRecentBackup is missing expr",
+    )
+
+snippet_path = root / "design/observability/grafana/backup-alerts-snippets.md"
+valid_snippet = snippet_path.read_text(encoding="utf-8")
+for empty_expression in empty_expressions:
+    empty_snippet_expr = valid_snippet.replace(
+        "expr: backup_pipeline_recent_backup_slo_breached > 0",
+        empty_expression,
+        1,
+    )
+    require_message(
+        findings_for(empty_snippet_expr, validator._validate_alert_snippet),
+        "alert rule is missing expr",
     )
 
 

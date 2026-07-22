@@ -84,12 +84,13 @@ checks = [
     )
     for policy_id, required in requirements.items()
 ]
+report_timestamp = module.utc_now()
 module.write_report(
     output,
     "hobby-self-hosted",
     "contract-hobby",
-    "2026-01-01T00:00:00Z",
-    "2026-01-01T00:00:01Z",
+    report_timestamp,
+    report_timestamp,
     checks,
     "operator",
     "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
@@ -363,6 +364,17 @@ sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
 deployment_event_id = "11111111-1111-4111-8111-111111111111"
+validation_now = module.dt.datetime(2026, 1, 1, 0, 5, tzinfo=module.dt.timezone.utc)
+
+
+def validate_report(report, environment, deployment_ref):
+    return module.validate_preflight_report(
+        report,
+        environment,
+        f"design/operations/environments/{environment}/expected-bindings.yaml",
+        deployment_ref,
+        now_dt=validation_now,
+    )
 
 def report_results(environment, traffic_open_event=None):
     requirements = module.expected_preflight_policy_requirements(environment, traffic_open_event)
@@ -392,11 +404,8 @@ complete_report = {
     "context": "operator",
     "checkResults": report_results("hobby-self-hosted"),
 }
-complete_status, complete_message = module.validate_preflight_report(
-    complete_report,
-    "hobby-self-hosted",
-    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
-    "contract-hobby",
+complete_status, complete_message = validate_report(
+    complete_report, "hobby-self-hosted", "contract-hobby"
 )
 if complete_status != "pass":
     raise SystemExit(f"complete preflight policy set did not pass: {complete_message}")
@@ -407,11 +416,8 @@ forged_all_pass_report = {
         for check in complete_report["checkResults"]
     ],
 }
-forged_status, forged_message = module.validate_preflight_report(
-    forged_all_pass_report,
-    "hobby-self-hosted",
-    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
-    "contract-hobby",
+forged_status, forged_message = validate_report(
+    forged_all_pass_report, "hobby-self-hosted", "contract-hobby"
 )
 if forged_status != "fail" or "non-applicable policy IDs" not in forged_message:
     raise SystemExit(f"synthetic all-pass report was accepted: {forged_message}")
@@ -422,29 +428,59 @@ wrong_requirement_report = {
         for check in complete_report["checkResults"]
     ],
 }
-wrong_requirement_status, wrong_requirement_message = module.validate_preflight_report(
-    wrong_requirement_report,
-    "hobby-self-hosted",
-    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
-    "contract-hobby",
+wrong_requirement_status, wrong_requirement_message = validate_report(
+    wrong_requirement_report, "hobby-self-hosted", "contract-hobby"
 )
 if wrong_requirement_status != "fail" or "incorrect required applicability" not in wrong_requirement_message:
     raise SystemExit(f"incorrect report applicability was accepted: {wrong_requirement_message}")
+
+staging_report = {
+    **complete_report,
+    "environment": "staging",
+    "expectedBindingsRef": "design/operations/environments/staging/expected-bindings.yaml",
+    "deploymentRef": {"overlayCommitSha": "contract-staging"},
+    "checkResults": report_results("staging"),
+}
+for executable_status in ("pass", "fail"):
+    staging_digest_report = {
+        **staging_report,
+        "checkResults": [
+            (
+                {**check, "status": executable_status}
+                if check["policyId"] == "PREFLIGHT-DIGEST-002"
+                else check
+            )
+            for check in staging_report["checkResults"]
+        ],
+    }
+    digest_status, digest_message = validate_report(
+        staging_digest_report, "staging", "contract-staging"
+    )
+    if digest_status != "fail" or "non-applicable policy IDs" not in digest_message:
+        raise SystemExit(
+            f"staging hobby digest status {executable_status} was accepted: {digest_message}"
+        )
+
+stale_report = {
+    **complete_report,
+    "startedAt": "2025-12-31T23:20:00Z",
+    "completedAt": "2025-12-31T23:30:00Z",
+}
+stale_status, stale_message = validate_report(
+    stale_report, "hobby-self-hosted", "contract-hobby"
+)
+if stale_status != "fail" or "older than the 30-minute consumption window" not in stale_message:
+    raise SystemExit(f"stale generally consumed preflight report was accepted: {stale_message}")
+
 static_report = {**complete_report, "context": "ci-static"}
-static_status, static_message = module.validate_preflight_report(
-    static_report,
-    "hobby-self-hosted",
-    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
-    "contract-hobby",
+static_status, static_message = validate_report(
+    static_report, "hobby-self-hosted", "contract-hobby"
 )
 if static_status != "fail" or "operator context" not in static_message:
     raise SystemExit(f"static preflight report was accepted as operator evidence: {static_message}")
 incomplete_report = {**complete_report, "checkResults": complete_report["checkResults"][1:]}
-incomplete_status, incomplete_message = module.validate_preflight_report(
-    incomplete_report,
-    "hobby-self-hosted",
-    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
-    "contract-hobby",
+incomplete_status, incomplete_message = validate_report(
+    incomplete_report, "hobby-self-hosted", "contract-hobby"
 )
 if incomplete_status != "fail" or "missing expected policy IDs" not in incomplete_message:
     raise SystemExit(f"incomplete preflight policy set did not fail closed: {incomplete_message}")
@@ -456,11 +492,8 @@ not_applicable_report = {
         for check in complete_report["checkResults"]
     ],
 }
-not_applicable_status, not_applicable_message = module.validate_preflight_report(
-    not_applicable_report,
-    "hobby-self-hosted",
-    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
-    "contract-hobby",
+not_applicable_status, not_applicable_message = validate_report(
+    not_applicable_report, "hobby-self-hosted", "contract-hobby"
 )
 if not_applicable_status != "fail" or "non-passing required policy IDs" not in not_applicable_message:
     raise SystemExit(f"all-not-applicable preflight report did not fail closed: {not_applicable_message}")
@@ -468,6 +501,7 @@ if not_applicable_status != "fail" or "non-passing required policy IDs" not in n
 compliance_path = tmp / "passing-hobby-backup-compliance.yaml"
 compliance_path.write_text("environment: hobby-self-hosted\nstatus: pass\n", encoding="utf-8")
 preflight_path = tmp / "passing-hobby-preflight.json"
+current_report_timestamp = module.utc_now()
 preflight_path.write_text(
     json.dumps(
         {
@@ -476,8 +510,8 @@ preflight_path.write_text(
             "deploymentRef": {"manifestRef": "contract-hobby"},
             "deploymentEventId": "22222222-2222-4222-8222-222222222222",
             "trafficOpenEvent": None,
-            "startedAt": "2026-01-01T00:00:00Z",
-            "completedAt": "2026-01-01T00:00:01Z",
+            "startedAt": current_report_timestamp,
+            "completedAt": current_report_timestamp,
             "toolVersion": "preflight.py-v1",
             "context": "operator",
             "checkResults": [
@@ -1484,22 +1518,25 @@ late_report_status, _, late_report_message = module.promotion_check(
 if late_report_status != "fail" or "later than the apply event" not in late_report_message:
     raise SystemExit(f"post-apply preflight report was accepted: {late_report_message}")
 
-waived_preflight_report = json.loads(staging_preflight_path.read_text(encoding="utf-8"))
-waived_preflight_report["waiverPath"] = (
-    f"design/operations/deployments/staging/preflight/{staging_sha}.waiver.json"
-)
-staging_preflight_path.write_text(json.dumps(waived_preflight_report), encoding="utf-8")
-staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
-waived_report_status, _, waived_report_message = module.promotion_check(
-    promotion_attestation_path,
-    [gateway_image, account_image],
-    promotion_root,
-    expected_production_overlay_ref="contract-production",
-)
-if waived_report_status != "fail" or "waivers are not consumable" not in waived_report_message:
-    raise SystemExit(f"waived preflight report was accepted: {waived_report_message}")
-waived_preflight_report.pop("waiverPath")
-staging_preflight_path.write_text(json.dumps(waived_preflight_report), encoding="utf-8")
+unwaived_preflight_report = json.loads(staging_preflight_path.read_text(encoding="utf-8"))
+for waiver_value in (
+    f"design/operations/deployments/staging/preflight/{staging_sha}.waiver.json",
+    None,
+):
+    waived_preflight_report = {**unwaived_preflight_report, "waiverPath": waiver_value}
+    staging_preflight_path.write_text(json.dumps(waived_preflight_report), encoding="utf-8")
+    staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
+    waived_report_status, _, waived_report_message = module.promotion_check(
+        promotion_attestation_path,
+        [gateway_image, account_image],
+        promotion_root,
+        expected_production_overlay_ref="contract-production",
+    )
+    if waived_report_status != "fail" or "waivers are not consumable" not in waived_report_message:
+        raise SystemExit(
+            f"preflight report with waiverPath={waiver_value!r} was accepted: {waived_report_message}"
+        )
+staging_preflight_path.write_text(json.dumps(unwaived_preflight_report), encoding="utf-8")
 
 stale_preflight_report = json.loads(staging_preflight_path.read_text(encoding="utf-8"))
 stale_preflight_report["startedAt"] = timestamp(now - module.dt.timedelta(minutes=41))
