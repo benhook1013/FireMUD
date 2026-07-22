@@ -485,6 +485,10 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
         if not match:
             continue
         alert_name = match.group(1).strip()
+        expr = _parse_expr(rule_lines)
+        if not expr:
+            findings.append(Finding(path=path, message=f"{alert_name} is missing expr"))
+            continue
         alerts_seen.add(alert_name)
 
         labels = _parse_labels(rule_lines)
@@ -509,19 +513,17 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
                 )
             )
 
-        expr = _parse_expr(rule_lines)
-        if expr:
-            ms_issue = _check_ms_thresholds(expr)
-            if ms_issue:
-                findings.append(Finding(path=path, message=f"{alert_name}: {ms_issue}"))
+        ms_issue = _check_ms_thresholds(expr)
+        if ms_issue:
+            findings.append(Finding(path=path, message=f"{alert_name}: {ms_issue}"))
 
-            grpc_scope_issue = _check_grpc_app_error_scoping(expr)
-            if grpc_scope_issue:
-                findings.append(Finding(path=path, message=f"{alert_name}: {grpc_scope_issue}"))
+        grpc_scope_issue = _check_grpc_app_error_scoping(expr)
+        if grpc_scope_issue:
+            findings.append(Finding(path=path, message=f"{alert_name}: {grpc_scope_issue}"))
 
-            dotted_metric_issue = _check_dotted_metric_tokens(expr)
-            if dotted_metric_issue:
-                findings.append(Finding(path=path, message=f"{alert_name}: {dotted_metric_issue}"))
+        dotted_metric_issue = _check_dotted_metric_tokens(expr)
+        if dotted_metric_issue:
+            findings.append(Finding(path=path, message=f"{alert_name}: {dotted_metric_issue}"))
 
         if alert_name.startswith("Redis") and labels.get("owner") != "infra":
             findings.append(Finding(path=path, message=f"{alert_name} must use owner=infra for Redis/coordination incidents"))

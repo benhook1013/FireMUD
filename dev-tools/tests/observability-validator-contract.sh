@@ -37,6 +37,23 @@ def require_message(findings, expected):
         raise AssertionError(f"expected {expected!r}, got {messages!r}")
 
 
+backup_rule = """        - alert: BackupPipelineNoRecentBackup
+          expr: backup_pipeline_recent_backup_slo_breached > 0
+"""
+if backup_rule not in valid_text:
+    raise AssertionError("canonical BackupPipelineNoRecentBackup expression was not found")
+missing_backup_expr = valid_text.replace(
+    backup_rule,
+    """        - alert: BackupPipelineNoRecentBackup
+""",
+    1,
+)
+require_message(
+    findings_for(missing_backup_expr, validator._validate_reference_prometheus_rules),
+    "BackupPipelineNoRecentBackup is missing expr",
+)
+
+
 owner_invalid = re.sub(
     r"(- alert: RecoveryReopenAttemptBlocked\b[\s\S]*?\n            owner:) infra",
     r"\1 platform",

@@ -223,7 +223,7 @@ assert spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
-for policy_id in ("PREFLIGHT-BACKUP-001", "PREFLIGHT-BACKUP-002"):
+for policy_id in ("PREFLIGHT-BACKUP-001", "PREFLIGHT-BACKUP-002", "PREFLIGHT-BACKUP-003"):
     results = []
     failed = module.append_result(
         results,
@@ -319,6 +319,10 @@ complete_report = {
     "environment": "hobby-self-hosted",
     "expectedBindingsRef": "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
     "deploymentRef": {"manifestRef": "contract-hobby"},
+    "startedAt": "2026-01-01T00:00:00Z",
+    "completedAt": "2026-01-01T00:00:01Z",
+    "toolVersion": "preflight.py-v1",
+    "context": "operator",
     "checkResults": [
         {"policyId": policy_id, "status": "pass", "message": "contract evidence"}
         for policy_id in module.EXPECTED_PREFLIGHT_POLICY_IDS
@@ -332,6 +336,15 @@ complete_status, complete_message = module.validate_preflight_report(
 )
 if complete_status != "pass":
     raise SystemExit(f"complete preflight policy set did not pass: {complete_message}")
+static_report = {**complete_report, "context": "ci-static"}
+static_status, static_message = module.validate_preflight_report(
+    static_report,
+    "hobby-self-hosted",
+    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
+    "contract-hobby",
+)
+if static_status != "fail" or "operator context" not in static_message:
+    raise SystemExit(f"static preflight report was accepted as operator evidence: {static_message}")
 incomplete_report = {**complete_report, "checkResults": complete_report["checkResults"][1:]}
 incomplete_status, incomplete_message = module.validate_preflight_report(
     incomplete_report,
@@ -367,6 +380,10 @@ preflight_path.write_text(
             "environment": "hobby-self-hosted",
             "expectedBindingsRef": "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
             "deploymentRef": {"manifestRef": "contract-hobby"},
+            "startedAt": "2026-01-01T00:00:00Z",
+            "completedAt": "2026-01-01T00:00:01Z",
+            "toolVersion": "preflight.py-v1",
+            "context": "operator",
             "checkResults": [
                 {
                     "policyId": policy_id,
@@ -403,8 +420,8 @@ status, message = module.hobby_traffic_check(
     "contract-hobby",
     root,
 )
-if status != "pass":
-    raise SystemExit(f"synthetic compliant hobby evidence did not pass: {message}")
+if status != "fail" or "recovery-controller authority is not implemented" not in message:
+    raise SystemExit(f"synthetic hobby evidence did not fail closed on missing authority: {message}")
 PY
 
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
@@ -878,7 +895,13 @@ def canonical_recovery_record(finalized_at):
         "backupArtifactRef": "backups/artifact",
         "artifactErasureHighWater": {"stream": "erasures", "sequence": 10},
         "restoreHighWater": {"stream": "erasures", "sequence": 12},
-        "erasureReplay": {"ledgerRef": "erasures", "exclusiveStart": 10, "inclusiveEnd": 12, "gapFree": True},
+        "erasureReplay": {
+            "ledgerRef": "erasures",
+            "exclusiveStart": 10,
+            "inclusiveEnd": 12,
+            "replayedThrough": 12,
+            "gapFree": True,
+        },
         "backupArtifactLineage": {"databaseIdentity": "production", "snapshotAt": credential_validated_at},
         "backupToolDigest": "sha256:backup-tool",
         "recoveryToolDigest": "sha256:recovery-tool",
@@ -898,7 +921,11 @@ def canonical_recovery_record(finalized_at):
             "finalizedReleaseIdentity": "release-1",
         },
         "expectedBindingsRef": "design/operations/environments/production/expected-bindings.yaml",
-        "coordinationRecoveryEvidence": {"mode": "cold_start_restore", "coordinationRedis": "empty-before-rebuild"},
+        "coordinationRecoveryEvidence": {
+            "mode": "cold_start_restore",
+            "coordinationRedis": "empty-before-rebuild",
+            "regionEpochFences": "advanced-or-recreated",
+        },
         "backupConfidentialityEvidence": {"status": "pass", "transport": "encrypted", "storage": "encrypted"},
         "durableParticipantConvergence": {"gameplay": {"disposition": "converged"}},
         "externalEffectReconciliation": {"mail": {"disposition": "invalidated"}},
@@ -961,6 +988,7 @@ stub_status, stub_message = module.validate_recovery_baseline(
     str(stub_path.relative_to(tmp)),
     "sha256:recovery-contract",
     now,
+    now,
 )
 if stub_status != "fail" or "canonical finalized projection fields" not in stub_message:
     raise SystemExit(f"seven-field recovery baseline was accepted: {stub_message}")
@@ -973,9 +1001,41 @@ baseline_status, baseline_message = module.validate_recovery_baseline(
     str(baseline_path.relative_to(tmp)),
     "sha256:recovery-contract",
     now,
+    now,
 )
 if baseline_status != "pass":
     raise SystemExit(f"valid finalized recovery baseline did not pass: {baseline_message}")
+
+invalid_baseline_cases = {
+    "controller": {"recoveryControllerLineage": {"recoveryStatus": "collecting", "scope": "environment-wide"}},
+    "erasure": {"erasureReplay": {**valid_baseline["erasureReplay"], "gapFree": False}},
+    "coordination": {
+        "coordinationRecoveryEvidence": {
+            **valid_baseline["coordinationRecoveryEvidence"],
+            "coordinationRedis": "non-empty",
+        }
+    },
+    "confidentiality": {
+        "backupConfidentialityEvidence": {
+            **valid_baseline["backupConfidentialityEvidence"],
+            "status": "fail",
+        }
+    },
+    "participant": {"durableParticipantConvergence": {"gameplay": {"disposition": "unknown"}}},
+}
+for case_name, replacement in invalid_baseline_cases.items():
+    invalid_baseline = {**valid_baseline, **replacement}
+    invalid_path = recovery_dir / f"invalid-{case_name}-baseline.json"
+    invalid_path.write_text(json.dumps(invalid_baseline), encoding="utf-8")
+    invalid_status, invalid_message = module.validate_recovery_baseline(
+        tmp,
+        str(invalid_path.relative_to(tmp)),
+        "sha256:recovery-contract",
+        now,
+        now,
+    )
+    if invalid_status != "fail":
+        raise SystemExit(f"invalid {case_name} recovery baseline was accepted: {invalid_message}")
 
 stale_baseline = {
     **canonical_recovery_record(now - module.dt.timedelta(days=31)),
@@ -987,6 +1047,7 @@ stale_status, stale_message = module.validate_recovery_baseline(
     str(stale_baseline_path.relative_to(tmp)),
     "sha256:recovery-contract",
     now,
+    now,
 )
 if stale_status != "fail" or "older than 30 days" not in stale_message:
     raise SystemExit(f"stale recovery baseline did not fail closed: {stale_message}")
@@ -995,6 +1056,7 @@ missing_baseline_status, missing_baseline_message = module.validate_recovery_bas
     tmp,
     "design/operations/deployments/production/recovery/missing-baseline.json",
     "sha256:recovery-contract",
+    now,
     now,
 )
 if missing_baseline_status != "fail" or "not found" not in missing_baseline_message:
@@ -1005,6 +1067,7 @@ outside_status, outside_message = module.validate_recovery_baseline(
     tmp,
     outside_baseline_path.name,
     "sha256:recovery-contract",
+    now,
     now,
 )
 if outside_status != "fail" or "production/recovery" not in outside_message:
@@ -1141,6 +1204,10 @@ staging_preflight_path.write_text(
             "environment": "staging",
             "expectedBindingsRef": "design/operations/environments/staging/expected-bindings.yaml",
             "deploymentRef": {"overlayCommitSha": staging_sha},
+            "startedAt": past_timestamp,
+            "completedAt": past_timestamp,
+            "toolVersion": "preflight.py-v1",
+            "context": "operator",
             "checkResults": [
                 {"policyId": policy_id, "status": "pass", "message": "contract evidence"}
                 for policy_id in module.EXPECTED_PREFLIGHT_POLICY_IDS

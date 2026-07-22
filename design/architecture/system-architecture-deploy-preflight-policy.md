@@ -87,7 +87,7 @@ Policy applicability:
 - `PREFLIGHT-PROMOTION-001` is required for `production` and `not_applicable` for `staging` and `hobby-self-hosted`.
 - `PREFLIGHT-BACKUP-001` is required for every `production` promotion. A `rollback-compatible` release may reuse only a fresh finalized baseline whose recovery-contract fingerprint is unchanged and whose changed dimensions contain no invalidating or unknown contract change; the compact result does not create another full recovery record. A `drill_required` result fails until a new production-equivalent drill passes. A `roll-forward-only` release always fails without a drill that restores a current-production-lineage artifact under candidate recovery tooling and proves the exact candidate service digests, migration path, config, and bindings through controlled reopen.
 - `PREFLIGHT-BACKUP-002` is required for `production` on first-live opens and reopen-after-restore events, and `not_applicable` for routine steady-state rollouts that do not change traffic-open status. Its target implementation reads the environment-specific controller at `ready_to_reopen`, verifies a drill completed within 30 days and the complete `cold_start_restore` evidence set, then authorizes `continueRecovery(...)`; the controller must idempotently reconcile `ready_to_reopen -> releasing -> finalized`, apply and observe quarantine release, and keep traffic closed on failure. The current executable fails this check closed because that controller read is not implemented. Tenant/region backup-pause scope and checked-in projections are neither required nor sufficient authority.
-- `PREFLIGHT-BACKUP-003` is required for `hobby-self-hosted` on first-live opens and reopen-after-restore events, and `not_applicable` otherwise. The current bounded check validates `design/operations/deployments/hobby-self-hosted/backup-compliance.yaml` and `design/operations/deployments/hobby-self-hosted/traffic-open/<deployment-ref>.json`, but a passing file check does not satisfy the complete target player-facing recovery contract. Controller-backed authorization and post-finalization projection export remain target-state work, so hobby first-live/reopen remains non-compliant until those gaps close.
+- `PREFLIGHT-BACKUP-003` is required for `hobby-self-hosted` on first-live opens and reopen-after-restore events, and `not_applicable` otherwise. The current bounded check validates `design/operations/deployments/hobby-self-hosted/backup-compliance.yaml` and `design/operations/deployments/hobby-self-hosted/traffic-open/<deployment-ref>.json`, then fails closed because controller-backed authorization and post-finalization projection export are not implemented. Static file evidence cannot produce a passing player-traffic gate.
 - `PREFLIGHT-DIGEST-001` is required for any flow using Kustomize overlays (`staging`, `production`) and `not_applicable` for `hobby-self-hosted`.
 - `PREFLIGHT-DIGEST-002` is recommended/advisory for `hobby-self-hosted` and `not_applicable` for `staging`/`production`.
 - `PREFLIGHT-SECRETS-002`, `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-EXTERNAL-001`, and `PREFLIGHT-SERVICES-001` are required for all player-facing environments.
@@ -274,8 +274,9 @@ The report artifact must include:
 - `expectedBindingsRef` for player-facing environments
 - `startedAt` and `completedAt` timestamps
 - `toolVersion`
+- `context` (`operator` or `ci-static`)
 
-For `ci-static` runs, `expectedBindingsRef` should point to the same repository path that operator preflight would use for the target environment, even when CI validates only static contracts and not live cluster bindings.
+For `ci-static` runs, `expectedBindingsRef` should point to the same repository path that operator preflight would use for the target environment, even when CI validates only static contracts and not live cluster bindings. A consumed deployment or traffic-open report must have `context=operator`, the canonical `preflight.py-v1` tool version, ordered non-future execution timestamps, and every required policy result at `pass`; a `ci-static` report cannot authorize promotion or player traffic.
 
 Illustrative `ci-static` report shape:
 
@@ -295,7 +296,8 @@ Illustrative `ci-static` report shape:
   "expectedBindingsRef": "design/operations/environments/staging/expected-bindings.yaml",
   "startedAt": "2026-03-13T08:00:00Z",
   "completedAt": "2026-03-13T08:00:03Z",
-  "toolVersion": "preflight/v1"
+  "toolVersion": "preflight.py-v1",
+  "context": "ci-static"
 }
 ```
 
@@ -319,7 +321,7 @@ CI and manual operator runs must produce the same report shape so audit tooling 
 - Any failed required check blocks deployment.
 - Waivers are break-glass only, must be explicit, and must include approver + incident/change ticket in the report.
 - Waivers expire after the specific deployment event and must not silently carry forward.
-- `PREFLIGHT-BACKUP-001` whenever `newDrillRequired=true` (including every `roll-forward-only` promotion), plus `PREFLIGHT-BACKUP-002` for first-live or post-rewind reopen, are non-waivable readiness gates. A waiver may authorize an isolated drill or salvage action, but not the player-facing promotion/open transition those gates protect.
+- `PREFLIGHT-BACKUP-001`, `PREFLIGHT-BACKUP-002`, and `PREFLIGHT-BACKUP-003` are non-waivable readiness gates. A waiver may authorize an isolated drill or salvage action, but not the player-facing promotion/open transition those gates protect.
 
 ## Related Documentation
 

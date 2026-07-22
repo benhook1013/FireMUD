@@ -44,6 +44,7 @@ class CheckResult:
 NON_WAIVABLE_READINESS_GATES = {
     "PREFLIGHT-BACKUP-001",
     "PREFLIGHT-BACKUP-002",
+    "PREFLIGHT-BACKUP-003",
 }
 
 RECOVERY_COMPATIBILITY_STATUSES = {"compatible", "drill_required", "incompatible"}
@@ -265,11 +266,30 @@ def is_missing(value: Any) -> bool:
     return value in (None, "", [], {})
 
 
+def validate_safe_dispositions(value: Any, label: str) -> tuple[str, str]:
+    safe_dispositions = {
+        "converged",
+        "terminalized",
+        "invalidated",
+        "fenced_disabled_backlog_retained",
+    }
+    if not isinstance(value, dict) or not value:
+        return ("fail", f"Recovery compatibility baseline {label} must be a non-empty object")
+    for participant, result in value.items():
+        if not isinstance(result, dict) or result.get("disposition") not in safe_dispositions:
+            return (
+                "fail",
+                f"Recovery compatibility baseline {label} has unsafe or missing disposition: {participant}",
+            )
+    return ("pass", "")
+
+
 def validate_recovery_baseline(
     root_dir: Path,
     baseline_ref: str,
     expected_fingerprint: str,
     evaluated_at: dt.datetime,
+    now_dt: dt.datetime,
 ) -> tuple[str, str]:
     baseline_ref_path = Path(baseline_ref)
     recovery_dir = (root_dir / "design" / "operations" / "deployments" / "production" / "recovery").resolve()
@@ -342,6 +362,115 @@ def validate_recovery_baseline(
     for field, expected in expected_values.items():
         if baseline.get(field) != expected:
             return ("fail", f"Recovery compatibility baseline {field} must be {expected}")
+
+    restore_safe_mode = baseline.get("restoreSafeMode")
+    if not isinstance(restore_safe_mode, dict):
+        return ("fail", "Recovery compatibility baseline restoreSafeMode must be an object")
+    if restore_safe_mode.get("status") != "pass" or restore_safe_mode.get("playerIngress") != "disabled":
+        return ("fail", "Recovery compatibility baseline restoreSafeMode must pass with player ingress disabled")
+
+    controller_lineage = baseline.get("recoveryControllerLineage")
+    if not isinstance(controller_lineage, dict):
+        return ("fail", "Recovery compatibility baseline recoveryControllerLineage must be an object")
+    if controller_lineage.get("recoveryStatus") != "finalized":
+        return ("fail", "Recovery compatibility baseline controller lineage must be finalized")
+    if controller_lineage.get("scope") != "environment-wide":
+        return ("fail", "Recovery compatibility baseline controller lineage must be environment-wide")
+    if not isinstance(controller_lineage.get("finalizedReleaseIdentity"), str) or not controller_lineage[
+        "finalizedReleaseIdentity"
+    ].strip():
+        return ("fail", "Recovery compatibility baseline controller lineage missing finalized release identity")
+
+    artifact_high_water = baseline.get("artifactErasureHighWater")
+    restore_high_water = baseline.get("restoreHighWater")
+    erasure_replay = baseline.get("erasureReplay")
+    if not all(isinstance(value, dict) for value in (artifact_high_water, restore_high_water, erasure_replay)):
+        return ("fail", "Recovery compatibility baseline erasure high-water evidence must be objects")
+    artifact_sequence = artifact_high_water.get("sequence")
+    restore_sequence = restore_high_water.get("sequence")
+    if (
+        not isinstance(artifact_sequence, int)
+        or isinstance(artifact_sequence, bool)
+        or not isinstance(restore_sequence, int)
+        or isinstance(restore_sequence, bool)
+        or restore_sequence < artifact_sequence
+    ):
+        return ("fail", "Recovery compatibility baseline erasure high-water sequence is invalid")
+    if (
+        erasure_replay.get("gapFree") is not True
+        or erasure_replay.get("exclusiveStart") != artifact_sequence
+        or erasure_replay.get("inclusiveEnd") != restore_sequence
+        or erasure_replay.get("replayedThrough") != restore_sequence
+    ):
+        return ("fail", "Recovery compatibility baseline erasure replay must be gap-free through restoreHighWater")
+
+    coordination_evidence = baseline.get("coordinationRecoveryEvidence")
+    if not isinstance(coordination_evidence, dict):
+        return ("fail", "Recovery compatibility baseline coordinationRecoveryEvidence must be an object")
+    if (
+        coordination_evidence.get("mode") != "cold_start_restore"
+        or coordination_evidence.get("coordinationRedis") != "empty-before-rebuild"
+        or coordination_evidence.get("regionEpochFences") != "advanced-or-recreated"
+    ):
+        return (
+            "fail",
+            "Recovery compatibility baseline coordination recovery must prove empty Redis and advanced region fences",
+        )
+
+    for field, label in (
+        ("durableParticipantConvergence", "durable participant convergence"),
+        ("externalEffectReconciliation", "external-effect reconciliation"),
+    ):
+        disposition_status, disposition_message = validate_safe_dispositions(baseline.get(field), label)
+        if disposition_status != "pass":
+            return ("fail", disposition_message)
+
+    confidentiality = baseline.get("backupConfidentialityEvidence")
+    if not isinstance(confidentiality, dict):
+        return ("fail", "Recovery compatibility baseline backupConfidentialityEvidence must be an object")
+    if (
+        confidentiality.get("status") != "pass"
+        or confidentiality.get("transport") != "encrypted"
+        or confidentiality.get("storage") != "encrypted"
+    ):
+        return ("fail", "Recovery compatibility baseline backup confidentiality evidence must pass")
+
+    required_hardening_fields = {
+        "jwtHardening": (
+            "rotationJobRef",
+            "resultingKeyIds",
+            "revocationWatermarkEvidence",
+            "validatorConvergenceEvidence",
+        ),
+        "databaseCredentialRotation": (
+            "rotationJobRef",
+            "affectedSecretRefs",
+            "rolloutRestartEvidence",
+        ),
+        "certificateReissuance": (
+            "workloadLeafEvidence",
+            "bridgeLeafEvidence",
+            "operatorLeafEvidence",
+            "peerConvergenceEvidence",
+        ),
+        "secretComplianceRefresh": (
+            "recordRef",
+            "evidenceRef",
+            "credentialClasses",
+            "freshness",
+        ),
+    }
+    for group_name, required_fields in required_hardening_fields.items():
+        group = baseline.get(group_name)
+        if not isinstance(group, dict):
+            return ("fail", f"Recovery compatibility baseline {group_name} must be an object")
+        missing_group_fields = [field for field in required_fields if is_missing(group.get(field))]
+        if missing_group_fields:
+            return (
+                "fail",
+                f"Recovery compatibility baseline {group_name} missing fields: "
+                + ", ".join(missing_group_fields),
+            )
 
     if baseline.get("smokeStatus") != "pass":
         return ("fail", "Recovery compatibility baseline smokeStatus must be pass")
@@ -438,7 +567,9 @@ def validate_recovery_baseline(
     finalized_at = lifecycle_timestamps["finalizedAt"]
     if finalized_at > evaluated_at:
         return ("fail", "Recovery compatibility baseline finalizedAt is later than evaluatedAt")
-    if (evaluated_at - finalized_at).total_seconds() > 30 * 24 * 60 * 60:
+    if finalized_at > now_dt:
+        return ("fail", "Recovery compatibility baseline finalizedAt is future-dated")
+    if (now_dt - finalized_at).total_seconds() > 30 * 24 * 60 * 60:
         return ("fail", "Recovery compatibility baseline finalized drill is older than 30 days")
     return ("pass", "Recovery compatibility baseline is valid")
 
@@ -513,8 +644,10 @@ def validate_preflight_report(
     environment: str,
     expected_bindings_ref: str,
     deployment_ref: str,
+    now_dt: dt.datetime | None = None,
 ) -> tuple[str, str]:
     label = environment.capitalize()
+    effective_now = now_dt or dt.datetime.now(dt.timezone.utc)
     if not isinstance(report, dict):
         return ("fail", f"{label} preflight report must be a JSON object")
     if report.get("environment") != environment:
@@ -528,6 +661,20 @@ def validate_preflight_report(
     expected_ref_key = "manifestRef" if environment == "hobby-self-hosted" else "overlayCommitSha"
     if deployment_ref_obj.get(expected_ref_key) != deployment_ref:
         return ("fail", f"{label} preflight report deploymentRef mismatch")
+
+    if report.get("context") != "operator":
+        return ("fail", f"{label} preflight report must come from operator context")
+    if report.get("toolVersion") != "preflight.py-v1":
+        return ("fail", f"{label} preflight report toolVersion mismatch")
+    try:
+        started_at = parse_timestamp(report.get("startedAt"), f"{label} preflight report startedAt")
+        completed_at = parse_timestamp(report.get("completedAt"), f"{label} preflight report completedAt")
+    except Exception as exc:
+        return ("fail", str(exc))
+    if completed_at < started_at:
+        return ("fail", f"{label} preflight report completedAt must not precede startedAt")
+    if completed_at > effective_now:
+        return ("fail", f"{label} preflight report completedAt is future-dated")
 
     preflight_results = report.get("checkResults")
     if not isinstance(preflight_results, list) or not preflight_results:
@@ -1518,6 +1665,7 @@ def recovery_compatibility_check(
         str(recovery_compatibility["baselineRecoveryRecordRef"]),
         str(recovery_compatibility["baselineRecoveryContractFingerprint"]),
         evaluated_at,
+        now_dt,
     )
     if baseline_status != "pass":
         return ("fail", baseline_message)
@@ -1865,6 +2013,7 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
         str(data["baselineRecoveryRecordRef"]),
         str(recovery_compatibility.get("baselineRecoveryContractFingerprint", "")),
         compatibility_evaluated_at,
+        now_dt,
     )
     if baseline_status != "pass":
         return ("fail", baseline_message)
@@ -1949,7 +2098,11 @@ def hobby_traffic_check(compliance_path: Path, traffic_path: Path, event: str, d
     )
     if preflight_status != "pass":
         return ("fail", preflight_message)
-    return ("pass", "Hobby traffic-open backup compliance evidence is valid")
+    return (
+        "fail",
+        "Hobby traffic-open gate unavailable: durable environment-wide recovery-controller authority "
+        "is not implemented; backup-compliance and checked-in traffic evidence cannot authorize traffic",
+    )
 
 
 def write_report(
