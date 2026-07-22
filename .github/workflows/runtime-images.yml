@@ -33,6 +33,12 @@ on:
       - 'services/spring-cloud-gateway/**'
       - 'services/tcp-proxy-service/**'
       - 'services/world-management-service/**'
+      - 'dev-tools/build-compose-service-jars.sh'
+      - 'dev-tools/certs/generate-dev-certs.sh'
+      - 'dev-tools/verify-compose-health.sh'
+      - 'dev-tools/verify-fresh-bootstrap.sh'
+      - 'dev-tools/verify-restart-state.sh'
+      - 'dev-tools/verify-smoke-images.sh'
   push:
     branches: [main, develop]
   workflow_dispatch:

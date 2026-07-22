@@ -79,14 +79,14 @@ final class TickRuntimeProgressService {
             tenantId, gameInstanceId, ownership.regionId());
     if (status.getRegionEpoch() != ownership.regionEpoch()
         || !status.getExecutorFence().equals(ownership.executorFence())
-        || status.isPaused()) {
+        || status.isPaused()
+        || status.getLastCommittedTickId() != ownership.lastCommittedTickId()) {
       throw new TickQueueControlService.StaleOwnershipException(
           "Cannot advance stale runtime tick progress for tenantId=%d gameInstanceId=%d"
               .formatted(tenantId, gameInstanceId));
     }
-    status.setLastCommittedTickId(status.getLastCommittedTickId() + 1L);
     status.setUpdatedAt(Instant.now());
-    return tickQueueControlService.saveRuntimeOwnership(status);
+    return tickQueueControlService.advanceLastCommittedTickId(status);
   }
 
   void reconcileRemoteFollowupTimeouts(RuntimeRegionStatus status) {

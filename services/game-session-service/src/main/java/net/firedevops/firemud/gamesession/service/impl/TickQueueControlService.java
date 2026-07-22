@@ -295,8 +295,23 @@ public class TickQueueControlService {
                         .formatted(tenantId, gameInstanceId, regionId)));
   }
 
-  RuntimeRegionStatus saveRuntimeOwnership(RuntimeRegionStatus status) {
-    return runtimeRegionStatusRepository.save(status);
+  RuntimeRegionStatus advanceLastCommittedTickId(RuntimeRegionStatus expectedOwnership) {
+    return runtimeRegionStatusRepository
+        .advanceLastCommittedTickId(expectedOwnership)
+        .orElseThrow(
+            () ->
+                new StaleOwnershipException(
+                    "Runtime ownership changed before tick progress could be committed"));
+  }
+
+  RuntimeRegionStatus commitDrainedBatch(
+      RuntimeRegionStatus expectedOwnership, String tickBatchId) {
+    return runtimeRegionStatusRepository
+        .commitDrainedBatch(expectedOwnership, tickBatchId)
+        .orElseThrow(
+            () ->
+                new StaleOwnershipException(
+                    "Runtime ownership changed before drained batch could be committed"));
   }
 
   String queueKey(Long tenantId, Long sessionId) {

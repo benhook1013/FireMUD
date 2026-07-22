@@ -77,6 +77,62 @@ quoted_record_findings = findings_for(
 if quoted_record_findings:
     raise AssertionError(f"quoted record key was not canonically validated: {quoted_record_findings!r}")
 
+quoted_rules_key = valid_text.replace(
+    "      rules:",
+    '      "rules":',
+    1,
+)
+quoted_rules_findings = findings_for(
+    quoted_rules_key,
+    validator._validate_reference_prometheus_rules,
+)
+if quoted_rules_findings:
+    raise AssertionError(f"quoted rules key was not canonically validated: {quoted_rules_findings!r}")
+
+unsupported_rules_key_shapes = (
+    (
+        "explicit rules key",
+        valid_text.replace(
+            "      rules:",
+            "      ? rules\n      :",
+            1,
+        ),
+        "unsupported explicit rules key shape; the dependency-free validator cannot safely inspect this YAML shape",
+    ),
+    (
+        "sequence explicit rules key",
+        valid_text.replace(
+            "    - name: firemud.recording.tick\n      rules:",
+            "    - ? rules\n      : []\n    - name: firemud.recording.tick\n      rules:",
+            1,
+        ),
+        "unsupported explicit rules key shape; the dependency-free validator cannot safely inspect this YAML shape",
+    ),
+    (
+        "inline flow rules mapping",
+        valid_text.replace(
+            "    - name: firemud.recording.tick\n      rules:",
+            "    - {name: firemud.invalid, rules: []}\n    - name: firemud.recording.tick\n      rules:",
+            1,
+        ),
+        "unsupported flow rules key shape; the dependency-free validator cannot safely inspect this YAML shape",
+    ),
+    (
+        "multiline flow rules mapping",
+        valid_text.replace(
+            "    - name: firemud.recording.tick\n      rules:",
+            "    - {\n        name: firemud.invalid,\n        rules: []\n      }\n    - name: firemud.recording.tick\n      rules:",
+            1,
+        ),
+        "unsupported flow rules key shape; the dependency-free validator cannot safely inspect this YAML shape",
+    ),
+)
+for _, unsupported_rules_shape, expected_message in unsupported_rules_key_shapes:
+    require_message(
+        findings_for(unsupported_rules_shape, validator._validate_reference_prometheus_rules),
+        expected_message,
+    )
+
 unrecognized_rule_starts = (
     (
         "flow mapping",

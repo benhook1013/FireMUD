@@ -70,8 +70,13 @@ class TickBatchExecutionServiceTest {
     when(tickEffectRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
     GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
     runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
-    when(runtimeRegionStatusRepository.save(any()))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(runtimeRegionStatusRepository.commitDrainedBatch(any(), any()))
+        .thenAnswer(
+            invocation -> {
+              RuntimeRegionStatus expected = invocation.getArgument(0);
+              expected.setLastCommittedTickBatchId(invocation.getArgument(1));
+              return Optional.of(expected);
+            });
     net.firedevops.firemud.gamesession.service.SessionAuthenticationService
         sessionAuthenticationService =
             mock(net.firedevops.firemud.gamesession.service.SessionAuthenticationService.class);
@@ -169,6 +174,25 @@ class TickBatchExecutionServiceTest {
     assertEquals(5000L, command.getQueueSourceOrdinal());
     assertEquals(14L, command.getQueueSourceDueTickId());
     assertEquals(9000L, command.getQueueSourceDueAtMs());
+  }
+
+  @Test
+  void markBatchDrainedFailsClosedWhenPauseWinsBeforeOwnershipCas() {
+    TickBatch batch = new TickBatch();
+    batch.setTickBatchId("tb-stale-drain");
+    batch.setTenantId(1L);
+    batch.setGameInstanceId(2L);
+    batch.setRegionId("2");
+    batch.setRegionEpoch(1L);
+    batch.setExecutorFence("fence-a");
+    batch.setCommandCount(0);
+    org.mockito.Mockito.doReturn(Optional.empty())
+        .when(runtimeRegionStatusRepository)
+        .commitDrainedBatch(any(), any());
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        TickQueueControlService.StaleOwnershipException.class,
+        () -> service.markBatchDrained(batch, List.of()));
   }
 
   @Test

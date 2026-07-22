@@ -190,6 +190,22 @@ class TickServiceImplTest {
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(runtimeRegionStatusRepository.advanceOwnershipEpoch(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    when(runtimeRegionStatusRepository.advanceLastCommittedTickId(any()))
+        .thenAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus expected =
+                  invocation.getArgument(0);
+              expected.setLastCommittedTickId(expected.getLastCommittedTickId() + 1L);
+              return Optional.of(expected);
+            });
+    when(runtimeRegionStatusRepository.commitDrainedBatch(any(), any()))
+        .thenAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus expected =
+                  invocation.getArgument(0);
+              expected.setLastCommittedTickBatchId(invocation.getArgument(1));
+              return Optional.of(expected);
+            });
     when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(anyLong(), anyLong()))
         .thenAnswer(
             invocation ->
@@ -704,15 +720,14 @@ class TickServiceImplTest {
     ArgumentCaptor<net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus> statusCaptor =
         ArgumentCaptor.forClass(
             net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus.class);
+    ArgumentCaptor<String> batchIdCaptor = ArgumentCaptor.forClass(String.class);
     verify(runtimeRegionStatusRepository, org.mockito.Mockito.atLeastOnce())
-        .save(statusCaptor.capture());
+        .commitDrainedBatch(statusCaptor.capture(), batchIdCaptor.capture());
     org.junit.jupiter.api.Assertions.assertTrue(
         statusCaptor.getAllValues().stream()
-            .anyMatch(
-                status ->
-                    "test-instance".equals(status.getOwnerInstanceId())
-                        && status.getLastCommittedTickBatchId() != null
-                        && !status.getLastCommittedTickBatchId().isBlank()));
+            .anyMatch(status -> "test-instance".equals(status.getOwnerInstanceId())));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        batchIdCaptor.getAllValues().stream().anyMatch(batchId -> !batchId.isBlank()));
   }
 
   @Test

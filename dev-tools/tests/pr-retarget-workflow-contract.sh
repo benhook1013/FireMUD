@@ -85,6 +85,7 @@ done
 
 grep -Fq 'const baseSha = context.payload.pull_request.base.sha;' "$smoke_path"
 grep -Fq 'const mergeSha = context.sha;' "$smoke_path"
+grep -Fq 'head_sha: headSha,' "$smoke_path"
 grep -Fq 'mode-required' "$smoke_path"
 grep -Fq 'run.display_title === expectedDisplayTitle' "$smoke_path"
 grep -Fq 'pullRequest.base?.sha === baseSha' "$smoke_path"
@@ -97,5 +98,60 @@ if grep -Fq 'const matching = runs.find((run) => run.head_sha === headSha);' "$s
   echo "Smoke Gate must not accept a runtime-images run by head SHA alone" >&2
   exit 1
 fi
+
+python3 - "$smoke_path" "$runtime_images_path" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+smoke_path, runtime_images_path = map(Path, sys.argv[1:])
+smoke = smoke_path.read_text(encoding="utf-8")
+runtime_images = runtime_images_path.read_text(encoding="utf-8")
+
+
+def quoted_entries(source, start_marker, end_marker):
+    start = source.index(start_marker) + len(start_marker)
+    end = source.index(end_marker, start)
+    return re.findall(r'["\']([^"\']+)["\']', source[start:end])
+
+
+full_prefixes = quoted_entries(
+    smoke,
+    "const fullRelevantPrefixes = [",
+    "];",
+)
+full_files = quoted_entries(
+    smoke,
+    "const fullRelevantFiles = new Set([",
+    "]);",
+)
+runtime_paths = set(
+    quoted_entries(
+        runtime_images,
+        "    paths:\n",
+        "  push:",
+    )
+)
+
+missing_prefixes = [
+    prefix
+    for prefix in full_prefixes
+    if f"{prefix}**" not in runtime_paths and prefix not in runtime_paths
+]
+missing_files = [file for file in full_files if file not in runtime_paths]
+
+if missing_prefixes or missing_files:
+    details = []
+    if missing_prefixes:
+        details.append(f"prefixes={missing_prefixes}")
+    if missing_files:
+        details.append(f"files={missing_files}")
+    raise SystemExit(
+        "runtime-images.yml must trigger for every smoke.yml full-smoke declaration: "
+        + ", ".join(details)
+    )
+
+print("smoke/runtime-images full-scope parity checks passed")
+PY
 
 echo "PR retarget workflow contract checks passed"

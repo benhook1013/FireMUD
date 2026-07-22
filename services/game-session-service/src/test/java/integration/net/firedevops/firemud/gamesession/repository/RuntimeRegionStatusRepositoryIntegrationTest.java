@@ -126,6 +126,26 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
   }
 
   @Test
+  void optimisticTickWritersUpdateOnlyTheirOwnedColumns() {
+    repository.save(runtimeStatus("region-one", "instance-one"));
+    RuntimeRegionStatus expected = repository.findByTenantIdAndGameInstanceId(1L, 2L).orElseThrow();
+    expected.setUpdatedAt(Instant.parse("2026-07-23T00:00:01Z"));
+
+    RuntimeRegionStatus progressed = repository.advanceLastCommittedTickId(expected).orElseThrow();
+    assertThat(progressed.getLastCommittedTickId()).isEqualTo(1L);
+    assertThat(progressed.getRegionEpoch()).isEqualTo(expected.getRegionEpoch());
+    assertThat(progressed.getExecutorFence()).isEqualTo(expected.getExecutorFence());
+    assertThat(progressed.isPaused()).isFalse();
+
+    progressed.setUpdatedAt(Instant.parse("2026-07-23T00:00:02Z"));
+    RuntimeRegionStatus drained =
+        repository.commitDrainedBatch(progressed, "batch-one").orElseThrow();
+    assertThat(drained.getLastCommittedTickBatchId()).isEqualTo("batch-one");
+    assertThat(drained.getLastCommittedTickId()).isEqualTo(1L);
+    assertThat(repository.commitDrainedBatch(progressed, "batch-stale")).isEmpty();
+  }
+
+  @Test
   void concurrentBaselineAndPauseLeaveTheCommittedRowPaused() throws Exception {
     CountDownLatch ready = new CountDownLatch(2);
     CountDownLatch start = new CountDownLatch(1);
@@ -156,6 +176,48 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
       assertThat(committed.getExecutorFence()).isEqualTo(pauseResult.getExecutorFence());
       assertThat(baselineResult.getId()).isEqualTo(committed.getId());
     }
+  }
+
+  @Test
+  void staleTickProgressCannotOverwriteAConcurrentPause() {
+    repository.save(runtimeStatus("region-one", "instance-one"));
+    RuntimeRegionStatus staleWriter =
+        repository.findByTenantIdAndGameInstanceId(1L, 2L).orElseThrow();
+    RuntimeRegionStatus pause = runtimeStatus("region-one", "instance-pause");
+    pause.setPaused(true);
+    pause.setExecutorFence("fence-pause");
+    RuntimeRegionStatus paused = repository.advanceOwnershipEpoch(pause);
+
+    assertThat(repository.advanceLastCommittedTickId(staleWriter)).isEmpty();
+    assertThat(repository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .get()
+        .satisfies(
+            committed -> {
+              assertThat(committed.isPaused()).isTrue();
+              assertThat(committed.getRegionEpoch()).isEqualTo(paused.getRegionEpoch());
+              assertThat(committed.getLastCommittedTickId()).isEqualTo(0L);
+            });
+  }
+
+  @Test
+  void staleBatchDrainCannotOverwriteAConcurrentPause() {
+    repository.save(runtimeStatus("region-one", "instance-one"));
+    RuntimeRegionStatus staleWriter =
+        repository.findByTenantIdAndGameInstanceId(1L, 2L).orElseThrow();
+    RuntimeRegionStatus pause = runtimeStatus("region-one", "instance-pause");
+    pause.setPaused(true);
+    pause.setExecutorFence("fence-pause");
+    RuntimeRegionStatus paused = repository.advanceOwnershipEpoch(pause);
+
+    assertThat(repository.commitDrainedBatch(staleWriter, "batch-stale")).isEmpty();
+    assertThat(repository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .get()
+        .satisfies(
+            committed -> {
+              assertThat(committed.isPaused()).isTrue();
+              assertThat(committed.getRegionEpoch()).isEqualTo(paused.getRegionEpoch());
+              assertThat(committed.getLastCommittedTickBatchId()).isNull();
+            });
   }
 
   private RuntimeRegionStatus saveAfterBarrier(

@@ -300,6 +300,7 @@ jobs:
                   repo,
                   workflow_id: "runtime-images.yml",
                   event: "pull_request",
+                  head_sha: headSha,
                   per_page: 100,
                 }
               );

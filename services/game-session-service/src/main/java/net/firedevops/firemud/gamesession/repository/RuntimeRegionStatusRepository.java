@@ -8,6 +8,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.jooq.tables.records.RuntimeRegionStatusRecord;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
@@ -111,6 +112,34 @@ public class RuntimeRegionStatusRepository {
                     "Runtime ownership disappeared during observation refresh"));
   }
 
+  public Optional<RuntimeRegionStatus> advanceLastCommittedTickId(
+      RuntimeRegionStatus expectedOwnership) {
+    return dsl.update(RUNTIME_REGION_STATUS)
+        .set(
+            RUNTIME_REGION_STATUS.LAST_COMMITTED_TICK_ID,
+            expectedOwnership.getLastCommittedTickId() + 1L)
+        .set(RUNTIME_REGION_STATUS.UPDATED_AT, toLocalDateTime(expectedOwnership.getUpdatedAt()))
+        .where(
+            ownershipGuard(expectedOwnership)
+                .and(
+                    RUNTIME_REGION_STATUS.LAST_COMMITTED_TICK_ID.eq(
+                        expectedOwnership.getLastCommittedTickId())))
+        .returning()
+        .fetchOptional(this::toEntity);
+  }
+
+  public Optional<RuntimeRegionStatus> commitDrainedBatch(
+      RuntimeRegionStatus expectedOwnership, String tickBatchId) {
+    return dsl.update(RUNTIME_REGION_STATUS)
+        .set(RUNTIME_REGION_STATUS.LAST_COMMITTED_TICK_BATCH_ID, tickBatchId)
+        .set(RUNTIME_REGION_STATUS.UPDATED_AT, toLocalDateTime(expectedOwnership.getUpdatedAt()))
+        .where(
+            ownershipGuard(expectedOwnership)
+                .and(lastCommittedBatchGuard(expectedOwnership.getLastCommittedTickBatchId())))
+        .returning()
+        .fetchOptional(this::toEntity);
+  }
+
   public RuntimeRegionStatus advanceOwnershipEpoch(RuntimeRegionStatus entity) {
     RuntimeRegionStatusRecord record = dsl.newRecord(RUNTIME_REGION_STATUS);
     populate(record, entity);
@@ -137,6 +166,21 @@ public class RuntimeRegionStatusRepository {
     return dsl.selectFrom(RUNTIME_REGION_STATUS)
         .where(RUNTIME_REGION_STATUS.ID.eq(id))
         .fetchOptional(this::toEntity);
+  }
+
+  private Condition ownershipGuard(RuntimeRegionStatus expectedOwnership) {
+    return RUNTIME_REGION_STATUS
+        .ID
+        .eq(expectedOwnership.getId())
+        .and(RUNTIME_REGION_STATUS.REGION_EPOCH.eq(expectedOwnership.getRegionEpoch()))
+        .and(RUNTIME_REGION_STATUS.EXECUTOR_FENCE.eq(expectedOwnership.getExecutorFence()))
+        .and(RUNTIME_REGION_STATUS.PAUSED.eq(expectedOwnership.isPaused()));
+  }
+
+  private Condition lastCommittedBatchGuard(String expectedTickBatchId) {
+    return expectedTickBatchId == null
+        ? RUNTIME_REGION_STATUS.LAST_COMMITTED_TICK_BATCH_ID.isNull()
+        : RUNTIME_REGION_STATUS.LAST_COMMITTED_TICK_BATCH_ID.eq(expectedTickBatchId);
   }
 
   private void populate(RuntimeRegionStatusRecord record, RuntimeRegionStatus entity) {

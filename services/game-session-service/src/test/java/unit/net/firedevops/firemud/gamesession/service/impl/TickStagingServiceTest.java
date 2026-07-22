@@ -116,6 +116,13 @@ class TickStagingServiceTest {
         .thenReturn(Optional.of(runtimeOwnership(1L, 2L, "region-a", 1L, "fence-a", false)));
     when(runtimeRegionStatusRepository.save(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    when(runtimeRegionStatusRepository.commitDrainedBatch(any(), any()))
+        .thenAnswer(
+            invocation -> {
+              RuntimeRegionStatus expected = invocation.getArgument(0);
+              expected.setLastCommittedTickBatchId(invocation.getArgument(1));
+              return Optional.of(expected);
+            });
     when(tickEffectRepository.findByTickBatchId(anyString())).thenReturn(List.of());
   }
 

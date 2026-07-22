@@ -132,9 +132,8 @@ final class TickBatchExecutionService {
     tickBatchRepository.save(batch);
     updateEffectStatuses(batch.getTickBatchId(), "DRAINED", now, null, null);
     updateGameplayCommands(entries, "DRAINED", "PENDING", now, null, null, false);
-    ownership.setLastCommittedTickBatchId(batch.getTickBatchId());
     ownership.setUpdatedAt(now);
-    tickQueueControlService.saveRuntimeOwnership(ownership);
+    tickQueueControlService.commitDrainedBatch(ownership, batch.getTickBatchId());
     logger.info(
         "Drained durable tick batch tickBatchId={} tenantId={} gameInstanceId={} commandCount={}",
         batch.getTickBatchId(),
@@ -151,9 +150,8 @@ final class TickBatchExecutionService {
     batch.setCompletedAt(now);
     tickBatchRepository.save(batch);
     updateEffectStatuses(batch.getTickBatchId(), "DRAINED", now, null, null);
-    ownership.setLastCommittedTickBatchId(batch.getTickBatchId());
     ownership.setUpdatedAt(now);
-    tickQueueControlService.saveRuntimeOwnership(ownership);
+    tickQueueControlService.commitDrainedBatch(ownership, batch.getTickBatchId());
     logger.info(
         "Drained durable remote followup batch tickBatchId={} tenantId={} gameInstanceId={}",
         batch.getTickBatchId(),

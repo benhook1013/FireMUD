@@ -71,6 +71,7 @@ class _RuleEntry:
     lines: list[str]
     key: str | None
     name: str | None
+    issue: str | None = None
 
 
 def _read_text(path: Path) -> str:
@@ -210,6 +211,81 @@ def _parse_rule_entry_header(line: str) -> tuple[str | None, str | None]:
     return key, normalized_name
 
 
+def _flow_collection_delta(value: str) -> int:
+    delta = 0
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    for character in value:
+        if in_double_quote:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_double_quote = False
+            continue
+        if in_single_quote:
+            if character == "'":
+                in_single_quote = False
+            continue
+        if character == '"':
+            in_double_quote = True
+        elif character == "'":
+            in_single_quote = True
+        elif character in "[{":
+            delta += 1
+        elif character in "]}":
+            delta -= 1
+    return delta
+
+
+def _unsupported_rules_key_shapes(lines: list[str]) -> list[_RuleEntry]:
+    findings: list[_RuleEntry] = []
+    flow_depth = 0
+    block_scalar_indent: int | None = None
+    flow_rules_key = re.compile(r"(?:^|[,{])\s*(?:rules|\"rules\"|'rules')\s*:")
+    explicit_rules_key = re.compile(r"^(?:-\s+)?\?\s*(?:rules|\"rules\"|'rules')(?:\s|$)")
+    for line in lines:
+        content = _strip_yaml_comment(line).strip()
+        if not content:
+            continue
+        indent = _leading_space_count(line)
+        if block_scalar_indent is not None:
+            if indent <= block_scalar_indent:
+                block_scalar_indent = None
+            else:
+                continue
+        if explicit_rules_key.match(content):
+            findings.append(
+                _RuleEntry(
+                    lines=[line],
+                    key=None,
+                    name=None,
+                    issue="unsupported explicit rules key shape",
+                )
+            )
+        rules_header = re.match(r"^(?:rules|\"rules\"|'rules')\s*:", content)
+        starts_flow_collection = (
+            rules_header is None
+            and re.search(r"(?:^|-\s+|:\s*)[\[{]", content) is not None
+        )
+        if (flow_depth > 0 or starts_flow_collection) and flow_rules_key.search(content):
+            findings.append(
+                _RuleEntry(
+                    lines=[line],
+                    key=None,
+                    name=None,
+                    issue="unsupported flow rules key shape",
+                )
+            )
+        if flow_depth > 0 or starts_flow_collection:
+            flow_depth = max(0, flow_depth + _flow_collection_delta(content))
+        if re.search(r":\s*[|>](?:[+-][1-9]?|[1-9][+-]?)?(?:\s+#.*)?$", content):
+            block_scalar_indent = indent
+    return findings
+
+
 def _rule_sequence_ranges(lines: list[str]) -> list[tuple[int, int, int]]:
     ranges: list[tuple[int, int, int]] = []
     for index, line in enumerate(lines):
@@ -272,7 +348,7 @@ def _standalone_rule_sequence_range(lines: list[str]) -> tuple[int, int, int] | 
 
 def _scan_rule_entries(yaml_text: str) -> list[_RuleEntry]:
     lines = yaml_text.splitlines()
-    entries: list[_RuleEntry] = []
+    entries: list[_RuleEntry] = _unsupported_rules_key_shapes(lines)
     for index, line in enumerate(lines):
         parsed = _parse_mapping_header(line)
         if not parsed or parsed[0] != "rules":
@@ -330,6 +406,13 @@ def _split_rule_entries(yaml_text: str, entry_key: str) -> list[_RuleEntry]:
 
 
 def _unrecognized_rule_entry_finding(path: Path, entry_key: str, entry: _RuleEntry) -> Finding:
+    if entry.issue:
+        return Finding(
+            path=path,
+            message=(
+                f"{entry.issue}; the dependency-free validator cannot safely inspect this YAML shape"
+            ),
+        )
     return Finding(
         path=path,
         message=(
