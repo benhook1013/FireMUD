@@ -311,7 +311,7 @@ Terminology note:
 - `promotion evidence` is the subset of evidence used to prove a staging deployment is eligible to be promoted into production, primarily the attestation plus its referenced deployment and compliance records.
 - `traffic-open evidence` is the evidence family used to prove an environment may be opened or reopened to player traffic, for example the production traffic-open backup-readiness artifact or hobby traffic-open records.
 - `promotion candidate` means a staging deployment record that is eligible to produce production promotion evidence; quarantined or detached staging drills can remain valid deployment evidence without becoming promotion candidates.
-- `deployment-ref` is the canonical environment-agnostic identity for one deployment event and is used by preflight, attestation, and backup-readiness artifacts. For Git-managed staging/production overlays, the canonical `deployment-ref` is the same Git SHA recorded as `overlayCommitSha`; the docs use `overlayCommitSha` only where the Git-derived source of the deployment-ref matters.
+- `deployment-ref` is the canonical environment-agnostic identity for the reviewed deployment input lineage and is used by preflight, attestation, and backup-readiness artifacts. For Git-managed staging/production overlays, it is the same Git SHA recorded as `overlayCommitSha`. `deploymentEventId` is the distinct UUID for one concrete preflight/apply event, including a retry or later re-apply of the same deployment ref.
 
 Illustrative deployment record shape:
 
@@ -319,6 +319,7 @@ Illustrative deployment record shape:
 {
   "environment": "staging",
   "overlayCommitSha": "<git-sha>",
+  "deploymentEventId": "<uuid>",
   "appliedAt": "2026-03-13T10:15:00Z",
   "appliedBy": "operator@example",
   "deployStatus": "pass",

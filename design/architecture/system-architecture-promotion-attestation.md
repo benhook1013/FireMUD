@@ -61,6 +61,7 @@ For `recoveryCompatibility.compatibilityStatus=compatible`, `baselineRecoveryRec
 - The referenced staging deployment record must include live-state verification (`liveStateEvidence`) proving the running digests matched the reviewed overlay after apply.
 - `liveStateEvidence` must be machine-checkable: status `pass`, the observed overlay SHA, and observed running digests for the promoted services must match the referenced staging deployment record and attestation.
 - The referenced staging deployment record must include `deployStatus=pass` and `smokeStatus=pass`.
+- The staging record must reference `design/operations/deployments/staging/preflight/<stagingOverlayCommitSha>.json`; that operator report must carry the same `deploymentEventId`, exact staging applicability, and a `completedAt` no later than the record's `appliedAt`.
 - The referenced staging deployment record must include `secretComplianceStatus` set to `pass` and a `secretComplianceEvidenceRef`.
 - The referenced secret-compliance evidence must include immutable artifact identifiers for all required credential classes; warning-only or note-only evidence is not promotable.
 - The referenced production overlay digests must be byte-identical to the staged digests recorded in the deployment record; retags are acceptable, rebuilds are not.
@@ -79,6 +80,7 @@ External-only attestation storage is not allowed for production promotions becau
 - The staging deployment record is the canonical evidence source for `stagingOverlayCommitSha` validation and must contain at minimum:
   - `environment` (`staging`)
   - `overlayCommitSha`
+  - `deploymentEventId`
   - `appliedAt`
   - `appliedBy`
   - `deployStatus`

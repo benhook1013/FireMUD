@@ -53,6 +53,17 @@ require_message(
     "BackupPipelineNoRecentBackup is missing expr",
 )
 
+for empty_expression in ('expr: |', 'expr: ""'):
+    empty_backup_expr = valid_text.replace(
+        "expr: backup_pipeline_recent_backup_slo_breached > 0",
+        empty_expression,
+        1,
+    )
+    require_message(
+        findings_for(empty_backup_expr, validator._validate_reference_prometheus_rules),
+        "BackupPipelineNoRecentBackup is missing expr",
+    )
+
 
 owner_invalid = re.sub(
     r"(- alert: RecoveryReopenAttemptBlocked\b[\s\S]*?\n            owner:) infra",

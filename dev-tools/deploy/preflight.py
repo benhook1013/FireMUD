@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -22,9 +23,11 @@ Environment variables:
                                      allowed: operator, ci-static
   FIREMUD_PREFLIGHT_OUTPUT           Optional output report path
   FIREMUD_DEPLOYMENT_REF             Optional deployment ref token for report naming
+  FIREMUD_DEPLOYMENT_EVENT_ID        Optional deployment-event UUID; required when using a waiver
   FIREMUD_PREFLIGHT_RENDER_PATH      Required for hobby-self-hosted; explicit manifest/render path
   FIREMUD_PREFLIGHT_WAIVER           Optional waiver JSON path with fields:
-                                     environment, deploymentRef, expiration=deployment-event,
+                                     environment, deploymentRef, deploymentEventId,
+                                     expiration=deployment-event,
                                      recordedAt, approver, ticket, waivedPolicyIds[]
   FIREMUD_PROMOTION_ATTESTATION      Required in operator production context; path to attestation JSON
   FIREMUD_BACKUP_READINESS_EVIDENCE  Required for production roll-forward-only promotions; path to backup-readiness JSON
@@ -82,6 +85,24 @@ COMMON_REQUIRED_PREFLIGHT_POLICY_IDS = {
     "PREFLIGHT-EXTERNAL-001",
     "PREFLIGHT-SERVICES-001",
 }
+
+
+def expected_preflight_policy_requirements(
+    environment: str,
+    traffic_open_event: str | None,
+) -> dict[str, bool]:
+    required = {policy_id: False for policy_id in EXPECTED_PREFLIGHT_POLICY_IDS}
+    for policy_id in COMMON_REQUIRED_PREFLIGHT_POLICY_IDS:
+        required[policy_id] = True
+    if environment in {"staging", "production"}:
+        required["PREFLIGHT-DIGEST-001"] = True
+    if environment == "production":
+        required["PREFLIGHT-PROMOTION-001"] = True
+        required["PREFLIGHT-BACKUP-001"] = True
+        required["PREFLIGHT-BACKUP-002"] = traffic_open_event in {"first-live", "reopen"}
+    if environment == "hobby-self-hosted":
+        required["PREFLIGHT-BACKUP-003"] = traffic_open_event in {"first-live", "reopen"}
+    return required
 
 PROMOTION_ATTESTATION_VERSION = "v1"
 PROMOTION_ATTESTATION_REQUIRED_FIELDS = (
@@ -571,7 +592,11 @@ def validate_recovery_baseline(
         return ("fail", "Recovery compatibility baseline finalizedAt is future-dated")
     if (now_dt - finalized_at).total_seconds() > 30 * 24 * 60 * 60:
         return ("fail", "Recovery compatibility baseline finalized drill is older than 30 days")
-    return ("pass", "Recovery compatibility baseline is valid")
+    return (
+        "fail",
+        "Recovery compatibility baseline remains blocked until complete participant, validator, "
+        "external-effect inventory membership and immutable evidence references are dereferenced and validated",
+    )
 
 
 def load_yaml(path: Path) -> Any:
@@ -595,6 +620,7 @@ def load_waiver(
     waiver_path: Path,
     environment: str,
     deployment_ref: str,
+    deployment_event_id: str,
     output_path: Path,
     now_dt: dt.datetime,
 ) -> tuple[set[str], str, str]:
@@ -611,6 +637,7 @@ def load_waiver(
     expected_values = {
         "environment": environment,
         "deploymentRef": deployment_ref,
+        "deploymentEventId": deployment_event_id,
         "expiration": "deployment-event",
     }
     for field, expected in expected_values.items():
@@ -645,6 +672,8 @@ def validate_preflight_report(
     expected_bindings_ref: str,
     deployment_ref: str,
     now_dt: dt.datetime | None = None,
+    expected_deployment_event_id: str | None = None,
+    completed_by: dt.datetime | None = None,
 ) -> tuple[str, str]:
     label = environment.capitalize()
     effective_now = now_dt or dt.datetime.now(dt.timezone.utc)
@@ -662,6 +691,20 @@ def validate_preflight_report(
     if deployment_ref_obj.get(expected_ref_key) != deployment_ref:
         return ("fail", f"{label} preflight report deploymentRef mismatch")
 
+    deployment_event_id = report.get("deploymentEventId")
+    try:
+        parsed_event_id = uuid.UUID(str(deployment_event_id))
+    except (ValueError, TypeError, AttributeError):
+        return ("fail", f"{label} preflight report deploymentEventId must be a UUID")
+    if str(parsed_event_id) != deployment_event_id:
+        return ("fail", f"{label} preflight report deploymentEventId must use canonical UUID form")
+    if expected_deployment_event_id is not None and deployment_event_id != expected_deployment_event_id:
+        return ("fail", f"{label} preflight report deploymentEventId mismatch")
+
+    traffic_open_event = report.get("trafficOpenEvent")
+    if traffic_open_event not in {None, "first-live", "reopen"}:
+        return ("fail", f"{label} preflight report trafficOpenEvent is invalid")
+
     if report.get("context") != "operator":
         return ("fail", f"{label} preflight report must come from operator context")
     if report.get("toolVersion") != "preflight.py-v1":
@@ -675,6 +718,8 @@ def validate_preflight_report(
         return ("fail", f"{label} preflight report completedAt must not precede startedAt")
     if completed_at > effective_now:
         return ("fail", f"{label} preflight report completedAt is future-dated")
+    if completed_by is not None and completed_at > completed_by:
+        return ("fail", f"{label} preflight report completedAt must not be later than the apply event")
 
     preflight_results = report.get("checkResults")
     if not isinstance(preflight_results, list) or not preflight_results:
@@ -688,12 +733,14 @@ def validate_preflight_report(
         policy_id = check.get("policyId")
         status = check.get("status")
         message = check.get("message")
+        required = check.get("required")
         if (
             not isinstance(policy_id, str)
             or not policy_id
             or status not in {"pass", "fail", "not_applicable"}
             or not isinstance(message, str)
             or not message
+            or not isinstance(required, bool)
         ):
             malformed_results.append(str(index))
             continue
@@ -715,13 +762,20 @@ def validate_preflight_report(
     if unknown_ids:
         return ("fail", f"{label} preflight report contains unknown policy IDs: " + ", ".join(unknown_ids))
 
-    required_pass_ids = set(COMMON_REQUIRED_PREFLIGHT_POLICY_IDS)
-    if environment in {"staging", "production"}:
-        required_pass_ids.add("PREFLIGHT-DIGEST-001")
-    if environment == "production":
-        required_pass_ids.update({"PREFLIGHT-PROMOTION-001", "PREFLIGHT-BACKUP-001"})
-    if environment == "hobby-self-hosted":
-        required_pass_ids.add("PREFLIGHT-BACKUP-003")
+    expected_requirements = expected_preflight_policy_requirements(environment, traffic_open_event)
+    requirement_mismatches = sorted(
+        check["policyId"]
+        for check in preflight_results
+        if check["required"] is not expected_requirements[check["policyId"]]
+    )
+    if requirement_mismatches:
+        return (
+            "fail",
+            f"{label} preflight report has incorrect required applicability for policy IDs: "
+            + ", ".join(requirement_mismatches),
+        )
+
+    required_pass_ids = {policy_id for policy_id, required in expected_requirements.items() if required}
     status_by_policy = {check["policyId"]: check["status"] for check in preflight_results}
     non_passing_required_ids = sorted(
         policy_id for policy_id in required_pass_ids if status_by_policy.get(policy_id) != "pass"
@@ -733,16 +787,18 @@ def validate_preflight_report(
             + ", ".join(non_passing_required_ids),
         )
 
-    required_failures = [
-        check.get("policyId")
+    invalid_non_applicable_ids = sorted(
+        check["policyId"]
         for check in preflight_results
-        if check.get("status") == "fail" and check.get("policyId") != "PREFLIGHT-DIGEST-002"
-    ]
-    if required_failures:
+        if not check["required"]
+        and check["policyId"] != "PREFLIGHT-DIGEST-002"
+        and check["status"] != "not_applicable"
+    )
+    if invalid_non_applicable_ids:
         return (
             "fail",
-            f"{label} preflight report contains failing required checks: "
-            + ", ".join(required_failures),
+            f"{label} preflight report has non-applicable policy IDs with executable statuses: "
+            + ", ".join(invalid_non_applicable_ids),
         )
     return ("pass", "")
 
@@ -753,6 +809,7 @@ def load_preflight_report(
     expected_bindings_ref: str,
     deployment_ref: str,
     root_dir: Path,
+    expected_traffic_open_event: str | None = None,
 ) -> tuple[str, str]:
     if not path_ref:
         return ("fail", f"{environment.capitalize()} traffic-open evidence missing preflightReportPath")
@@ -763,7 +820,12 @@ def load_preflight_report(
         report = load_json(path)
     except Exception as exc:
         return ("fail", f"{environment.capitalize()} preflight report unreadable: {exc}")
-    return validate_preflight_report(report, environment, expected_bindings_ref, deployment_ref)
+    status, message = validate_preflight_report(report, environment, expected_bindings_ref, deployment_ref)
+    if status != "pass":
+        return (status, message)
+    if report.get("trafficOpenEvent") != expected_traffic_open_event:
+        return ("fail", f"{environment.capitalize()} preflight report trafficOpenEvent mismatch")
+    return ("pass", "")
 
 
 def walk(node: Any):
@@ -1797,6 +1859,7 @@ def promotion_check(
     required_record_fields = (
         "environment",
         "overlayCommitSha",
+        "deploymentEventId",
         "appliedAt",
         "appliedBy",
         "deployStatus",
@@ -1829,6 +1892,7 @@ def promotion_check(
     if record["smokeEvidence"] != att["smokeEvidence"]:
         return ("fail", rollback_mode, "Staging deployment record smokeEvidence does not match the attestation")
 
+    record_timestamps: dict[str, dt.datetime] = {}
     for field in ("appliedAt", "secretComplianceSnapshotAt"):
         try:
             record_timestamp = parse_timestamp(record.get(field), f"Staging deployment record {field}")
@@ -1836,6 +1900,7 @@ def promotion_check(
             return ("fail", rollback_mode, str(exc))
         if record_timestamp > now_dt:
             return ("fail", rollback_mode, f"Staging deployment record {field} is future-dated")
+        record_timestamps[field] = record_timestamp
 
     if record.get("environment") != "staging":
         return ("fail", rollback_mode, "Staging deployment record has wrong environment")
@@ -1853,6 +1918,9 @@ def promotion_check(
     preflight_ref = record.get("preflightReportPath")
     if not isinstance(preflight_ref, str) or not preflight_ref.strip():
         return ("fail", rollback_mode, "Staging deployment record preflightReportPath must be non-empty")
+    expected_preflight_ref = f"design/operations/deployments/staging/preflight/{staging_sha}.json"
+    if preflight_ref != expected_preflight_ref:
+        return ("fail", rollback_mode, "Staging deployment record must reference the canonical preflight report path")
     preflight_path = resolve_repo_path(root_dir, str(preflight_ref))
     if not preflight_path.exists():
         return ("fail", rollback_mode, f"Staging preflight report not found: {preflight_ref}")
@@ -1865,6 +1933,9 @@ def promotion_check(
         "staging",
         "design/operations/environments/staging/expected-bindings.yaml",
         staging_sha,
+        now_dt=now_dt,
+        expected_deployment_event_id=str(record["deploymentEventId"]),
+        completed_by=record_timestamps["appliedAt"],
     )
     if preflight_status != "pass":
         return ("fail", rollback_mode, preflight_message)
@@ -2095,6 +2166,7 @@ def hobby_traffic_check(compliance_path: Path, traffic_path: Path, event: str, d
         "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
         deployment_ref,
         root_dir,
+        None,
     )
     if preflight_status != "pass":
         return ("fail", preflight_message)
@@ -2115,6 +2187,8 @@ def write_report(
     context: str,
     waiver_path: str,
     expected_bindings_ref: str,
+    deployment_event_id: str,
+    traffic_open_event: str,
 ) -> None:
     if env_class == "hobby-self-hosted":
         deployment_ref_obj = {"manifestRef": deployment_ref}
@@ -2123,10 +2197,17 @@ def write_report(
     report: dict[str, Any] = {
         "environment": env_class,
         "deploymentRef": deployment_ref_obj,
+        "deploymentEventId": deployment_event_id,
+        "trafficOpenEvent": traffic_open_event or None,
         "startedAt": started_at,
         "completedAt": completed_at,
         "checkResults": [
-            {"policyId": check.policy_id, "status": check.status, "message": check.message}
+            {
+                "policyId": check.policy_id,
+                "required": check.required,
+                "status": check.status,
+                "message": check.message,
+            }
             for check in check_results
         ],
         "expectedBindingsRef": expected_bindings_ref,
@@ -2151,6 +2232,17 @@ def main() -> int:
     if context not in {"operator", "ci-static"}:
         fail(f"Invalid FIREMUD_PREFLIGHT_CONTEXT: {context}")
     deployment_ref = os.environ.get("FIREMUD_DEPLOYMENT_REF") or run(["git", "rev-parse", "--short=12", "HEAD"]).strip()
+    waiver_path = os.environ.get("FIREMUD_PREFLIGHT_WAIVER", "")
+    configured_event_id = os.environ.get("FIREMUD_DEPLOYMENT_EVENT_ID", "")
+    if waiver_path and not configured_event_id:
+        fail("FIREMUD_DEPLOYMENT_EVENT_ID is required when FIREMUD_PREFLIGHT_WAIVER is set")
+    deployment_event_id = configured_event_id or str(uuid.uuid4())
+    try:
+        parsed_event_id = uuid.UUID(deployment_event_id)
+    except ValueError:
+        fail("FIREMUD_DEPLOYMENT_EVENT_ID must be a UUID")
+    if str(parsed_event_id) != deployment_event_id:
+        fail("FIREMUD_DEPLOYMENT_EVENT_ID must use canonical UUID form")
     expected_bindings_ref = f"design/operations/environments/{env_class}/expected-bindings.yaml"
     expected_bindings_path = root_dir / expected_bindings_ref
     if not expected_bindings_path.exists():
@@ -2176,7 +2268,6 @@ def main() -> int:
     documents = parse_documents(rendered)
     default_output = root_dir / "design" / "operations" / "deployments" / env_class / "preflight" / f"{deployment_ref}.json"
     output_path = Path(os.environ.get("FIREMUD_PREFLIGHT_OUTPUT", str(default_output)))
-    waiver_path = os.environ.get("FIREMUD_PREFLIGHT_WAIVER", "")
     waived_ids: set[str] = set()
     waiver_approver = ""
     waiver_ticket = ""
@@ -2189,6 +2280,7 @@ def main() -> int:
                 waiver_file,
                 env_class,
                 deployment_ref,
+                deployment_event_id,
                 output_path,
                 dt.datetime.now(dt.timezone.utc),
             )
@@ -2417,6 +2509,8 @@ def main() -> int:
         context,
         waiver_path,
         expected_bindings_ref,
+        deployment_event_id,
+        traffic_open_event,
     )
 
     if has_required_failure:

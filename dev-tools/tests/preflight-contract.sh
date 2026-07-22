@@ -10,6 +10,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 RENDERED_MANIFEST="$TMP_DIR/hobby-rendered.yaml"
 REPORT_PATH="$TMP_DIR/preflight-report.json"
+OPERATOR_REPORT_PATH="$TMP_DIR/operator-preflight-report.json"
 TRAFFIC_EVIDENCE="$TMP_DIR/traffic-open.json"
 PRODUCTION_REPORT="$TMP_DIR/preflight-production.json"
 LEGACY_PRODUCTION_TRAFFIC_EVIDENCE="$TMP_DIR/production-traffic-open.json"
@@ -58,6 +59,44 @@ for env in ("production", "staging", "hobby-self-hosted"):
     missing = [path for path in required_paths if not get(data, path)]
     if missing:
         raise SystemExit(f"{ref}: missing required binding paths: {missing}")
+PY
+
+python3 - <<'PY' "$ROOT_DIR" "$OPERATOR_REPORT_PATH"
+import importlib.util
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+output = pathlib.Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location("preflight_operator_report_contract", root / "dev-tools/deploy/preflight.py")
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+requirements = module.expected_preflight_policy_requirements("hobby-self-hosted", None)
+checks = [
+    module.CheckResult(
+        policy_id,
+        required,
+        "pass" if required or policy_id == "PREFLIGHT-DIGEST-002" else "not_applicable",
+        "contract evidence",
+    )
+    for policy_id, required in requirements.items()
+]
+module.write_report(
+    output,
+    "hobby-self-hosted",
+    "contract-hobby",
+    "2026-01-01T00:00:00Z",
+    "2026-01-01T00:00:01Z",
+    checks,
+    "operator",
+    "",
+    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
+    "66666666-6666-4666-8666-666666666666",
+    "",
+)
 PY
 
 cat >"$RENDERED_MANIFEST" <<'YAML'
@@ -175,6 +214,7 @@ python3 - <<'PY' "$REPORT_PATH"
 import json
 import pathlib
 import sys
+import uuid
 
 report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 expected_ids = {
@@ -202,6 +242,14 @@ if actual_ids != expected_ids or len(report["checkResults"]) != len(expected_ids
     raise SystemExit("preflight report did not emit exactly the complete expected policy set")
 if report.get("expectedBindingsRef") != "design/operations/environments/hobby-self-hosted/expected-bindings.yaml":
     raise SystemExit("preflight report missing expectedBindingsRef")
+try:
+    uuid.UUID(report["deploymentEventId"])
+except (KeyError, ValueError) as exc:
+    raise SystemExit(f"preflight report missing canonical deploymentEventId: {exc}") from exc
+if report.get("trafficOpenEvent") is not None:
+    raise SystemExit("general preflight report unexpectedly recorded a traffic-open event")
+if any(not isinstance(check.get("required"), bool) for check in report["checkResults"]):
+    raise SystemExit("preflight report did not emit required applicability for every policy")
 failures = [
     check
     for check in report["checkResults"]
@@ -269,7 +317,7 @@ PY
 
 python3 "$WRITER" hobby-self-hosted contract-hobby first-live \
   --assessed-by preflight-contract \
-  --preflight-report "$REPORT_PATH" \
+  --preflight-report "$OPERATOR_REPORT_PATH" \
   --evidence-ref contract-test \
   --output "$TRAFFIC_EVIDENCE" >/tmp/firemud-preflight-write-traffic-hobby.out
 
@@ -315,18 +363,35 @@ assert spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
+deployment_event_id = "11111111-1111-4111-8111-111111111111"
+
+def report_results(environment, traffic_open_event=None):
+    requirements = module.expected_preflight_policy_requirements(environment, traffic_open_event)
+    return [
+        {
+            "policyId": policy_id,
+            "required": requirements[policy_id],
+            "status": (
+                "pass"
+                if requirements[policy_id] or (environment == "hobby-self-hosted" and policy_id == "PREFLIGHT-DIGEST-002")
+                else "not_applicable"
+            ),
+            "message": "contract evidence",
+        }
+        for policy_id in module.EXPECTED_PREFLIGHT_POLICY_IDS
+    ]
+
 complete_report = {
     "environment": "hobby-self-hosted",
     "expectedBindingsRef": "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
     "deploymentRef": {"manifestRef": "contract-hobby"},
+    "deploymentEventId": deployment_event_id,
+    "trafficOpenEvent": None,
     "startedAt": "2026-01-01T00:00:00Z",
     "completedAt": "2026-01-01T00:00:01Z",
     "toolVersion": "preflight.py-v1",
     "context": "operator",
-    "checkResults": [
-        {"policyId": policy_id, "status": "pass", "message": "contract evidence"}
-        for policy_id in module.EXPECTED_PREFLIGHT_POLICY_IDS
-    ],
+    "checkResults": report_results("hobby-self-hosted"),
 }
 complete_status, complete_message = module.validate_preflight_report(
     complete_report,
@@ -336,6 +401,36 @@ complete_status, complete_message = module.validate_preflight_report(
 )
 if complete_status != "pass":
     raise SystemExit(f"complete preflight policy set did not pass: {complete_message}")
+forged_all_pass_report = {
+    **complete_report,
+    "checkResults": [
+        {**check, "status": "pass"}
+        for check in complete_report["checkResults"]
+    ],
+}
+forged_status, forged_message = module.validate_preflight_report(
+    forged_all_pass_report,
+    "hobby-self-hosted",
+    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
+    "contract-hobby",
+)
+if forged_status != "fail" or "non-applicable policy IDs" not in forged_message:
+    raise SystemExit(f"synthetic all-pass report was accepted: {forged_message}")
+wrong_requirement_report = {
+    **complete_report,
+    "checkResults": [
+        ({**check, "required": not check["required"]} if check["policyId"] == "PREFLIGHT-DIGEST-001" else check)
+        for check in complete_report["checkResults"]
+    ],
+}
+wrong_requirement_status, wrong_requirement_message = module.validate_preflight_report(
+    wrong_requirement_report,
+    "hobby-self-hosted",
+    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
+    "contract-hobby",
+)
+if wrong_requirement_status != "fail" or "incorrect required applicability" not in wrong_requirement_message:
+    raise SystemExit(f"incorrect report applicability was accepted: {wrong_requirement_message}")
 static_report = {**complete_report, "context": "ci-static"}
 static_status, static_message = module.validate_preflight_report(
     static_report,
@@ -358,8 +453,8 @@ if incomplete_status != "fail" or "missing expected policy IDs" not in incomplet
 not_applicable_report = {
     **complete_report,
     "checkResults": [
-        {"policyId": policy_id, "status": "not_applicable", "message": "synthetic evidence"}
-        for policy_id in module.EXPECTED_PREFLIGHT_POLICY_IDS
+        {**check, "status": "not_applicable", "message": "synthetic evidence"}
+        for check in complete_report["checkResults"]
     ],
 }
 not_applicable_status, not_applicable_message = module.validate_preflight_report(
@@ -380,6 +475,8 @@ preflight_path.write_text(
             "environment": "hobby-self-hosted",
             "expectedBindingsRef": "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
             "deploymentRef": {"manifestRef": "contract-hobby"},
+            "deploymentEventId": "22222222-2222-4222-8222-222222222222",
+            "trafficOpenEvent": None,
             "startedAt": "2026-01-01T00:00:00Z",
             "completedAt": "2026-01-01T00:00:01Z",
             "toolVersion": "preflight.py-v1",
@@ -387,10 +484,17 @@ preflight_path.write_text(
             "checkResults": [
                 {
                     "policyId": policy_id,
-                    "status": "fail" if policy_id == "PREFLIGHT-DIGEST-002" else "pass",
+                    "required": required,
+                    "status": (
+                        "pass"
+                        if required
+                        else ("fail" if policy_id == "PREFLIGHT-DIGEST-002" else "not_applicable")
+                    ),
                     "message": "contract evidence",
                 }
-                for policy_id in module.EXPECTED_PREFLIGHT_POLICY_IDS
+                for policy_id, required in module.expected_preflight_policy_requirements(
+                    "hobby-self-hosted", None
+                ).items()
             ],
         }
     ),
@@ -491,6 +595,7 @@ cat >"$PRODUCTION_WAIVER" <<JSON
 {
   "environment": "production",
   "deploymentRef": "contract-production",
+  "deploymentEventId": "77777777-7777-4777-8777-777777777777",
   "expiration": "deployment-event",
   "recordedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "approver": "preflight-contract",
@@ -503,6 +608,7 @@ if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF="contract-production" \
   FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
   FIREMUD_PREFLIGHT_WAIVER="$PRODUCTION_WAIVER" \
+  FIREMUD_DEPLOYMENT_EVENT_ID="77777777-7777-4777-8777-777777777777" \
   FIREMUD_TRAFFIC_OPEN_EVENT=reopen \
   python3 "$SCRIPT" production >/tmp/firemud-preflight-contract-production-traffic-waiver.out 2>&1; then
   echo "production traffic-open gate unexpectedly accepted a waiver" >&2
@@ -825,6 +931,7 @@ waiver_path = waiver_dir / "contract-waiver.waiver.json"
 valid_waiver = {
     "environment": "production",
     "deploymentRef": "contract-waiver",
+    "deploymentEventId": "33333333-3333-4333-8333-333333333333",
     "expiration": "deployment-event",
     "recordedAt": past_timestamp,
     "approver": "preflight-contract",
@@ -833,21 +940,58 @@ valid_waiver = {
 }
 waiver_path.write_text(json.dumps(valid_waiver), encoding="utf-8")
 waived_ids, approver, ticket = module.load_waiver(
-    waiver_path, "production", "contract-waiver", waiver_output_path, now
+    waiver_path,
+    "production",
+    "contract-waiver",
+    valid_waiver["deploymentEventId"],
+    waiver_output_path,
+    now,
 )
 if waived_ids != {"PREFLIGHT-PROMOTION-001"} or approver != "preflight-contract" or ticket != "contract-ticket":
     raise SystemExit("valid deployment-bound waiver was not accepted")
 waiver_path.write_text(json.dumps({**valid_waiver, "deploymentRef": "other-event"}), encoding="utf-8")
 try:
-    module.load_waiver(waiver_path, "production", "contract-waiver", waiver_output_path, now)
+    module.load_waiver(
+        waiver_path,
+        "production",
+        "contract-waiver",
+        valid_waiver["deploymentEventId"],
+        waiver_output_path,
+        now,
+    )
 except ValueError as exc:
     if "deploymentRef" not in str(exc):
         raise SystemExit(f"mismatched waiver failed for the wrong reason: {exc}")
 else:
     raise SystemExit("waiver bound to another deployment event was accepted")
+waiver_path.write_text(
+    json.dumps({**valid_waiver, "deploymentEventId": "44444444-4444-4444-8444-444444444444"}),
+    encoding="utf-8",
+)
+try:
+    module.load_waiver(
+        waiver_path,
+        "production",
+        "contract-waiver",
+        valid_waiver["deploymentEventId"],
+        waiver_output_path,
+        now,
+    )
+except ValueError as exc:
+    if "deploymentEventId" not in str(exc):
+        raise SystemExit(f"replayed waiver failed for the wrong reason: {exc}")
+else:
+    raise SystemExit("waiver bound to another deployment event ID was accepted")
 waiver_path.write_text(json.dumps({**valid_waiver, "approver": ""}), encoding="utf-8")
 try:
-    module.load_waiver(waiver_path, "production", "contract-waiver", waiver_output_path, now)
+    module.load_waiver(
+        waiver_path,
+        "production",
+        "contract-waiver",
+        valid_waiver["deploymentEventId"],
+        waiver_output_path,
+        now,
+    )
 except ValueError as exc:
     if "approver" not in str(exc):
         raise SystemExit(f"anonymous waiver failed for the wrong reason: {exc}")
@@ -1003,8 +1147,8 @@ baseline_status, baseline_message = module.validate_recovery_baseline(
     now,
     now,
 )
-if baseline_status != "pass":
-    raise SystemExit(f"valid finalized recovery baseline did not pass: {baseline_message}")
+if baseline_status != "fail" or "inventory membership and immutable evidence" not in baseline_message:
+    raise SystemExit(f"undereferenced recovery baseline did not remain fail-closed: {baseline_message}")
 
 invalid_baseline_cases = {
     "controller": {"recoveryControllerLineage": {"recoveryStatus": "collecting", "scope": "environment-wide"}},
@@ -1197,20 +1341,34 @@ secret_evidence_path.write_text(
     ),
     encoding="utf-8",
 )
-staging_preflight_path = promotion_root / "staging-preflight.json"
+staging_preflight_path = (
+    promotion_root
+    / "design/operations/deployments/staging/preflight"
+    / f"{staging_sha}.json"
+)
+staging_preflight_path.parent.mkdir(parents=True)
+staging_event_id = "55555555-5555-4555-8555-555555555555"
+staging_requirements = module.expected_preflight_policy_requirements("staging", None)
 staging_preflight_path.write_text(
     json.dumps(
         {
             "environment": "staging",
             "expectedBindingsRef": "design/operations/environments/staging/expected-bindings.yaml",
             "deploymentRef": {"overlayCommitSha": staging_sha},
+            "deploymentEventId": staging_event_id,
+            "trafficOpenEvent": None,
             "startedAt": past_timestamp,
             "completedAt": past_timestamp,
             "toolVersion": "preflight.py-v1",
             "context": "operator",
             "checkResults": [
-                {"policyId": policy_id, "status": "pass", "message": "contract evidence"}
-                for policy_id in module.EXPECTED_PREFLIGHT_POLICY_IDS
+                {
+                    "policyId": policy_id,
+                    "required": required,
+                    "status": "pass" if required else "not_applicable",
+                    "message": "contract evidence",
+                }
+                for policy_id, required in staging_requirements.items()
             ],
         }
     ),
@@ -1219,12 +1377,13 @@ staging_preflight_path.write_text(
 staging_record = {
     "environment": "staging",
     "overlayCommitSha": staging_sha,
+    "deploymentEventId": staging_event_id,
     "appliedAt": past_timestamp,
     "appliedBy": "preflight-contract",
     "deployStatus": "pass",
     "smokeStatus": "pass",
     "serviceDigests": {"spring-cloud-gateway": gateway_image, "account-service": account_image},
-    "preflightReportPath": staging_preflight_path.name,
+    "preflightReportPath": str(staging_preflight_path.relative_to(promotion_root)),
     "liveStateEvidence": {
         "status": "pass",
         "observedOverlaySha": staging_sha,
@@ -1263,10 +1422,70 @@ promotion_status, promotion_mode, promotion_message = module.promotion_check(
     promotion_root,
     expected_production_overlay_ref="contract-production",
 )
-if promotion_status != "pass" or promotion_mode != "rollback-compatible":
-    raise SystemExit(f"canonical promotion/staging lineage did not pass: {promotion_message}")
+if (
+    promotion_status != "fail"
+    or promotion_mode != "rollback-compatible"
+    or "inventory membership and immutable evidence" not in promotion_message
+):
+    raise SystemExit(f"undereferenced promotion baseline did not remain fail-closed: {promotion_message}")
+
+# Exercise staging-lineage failures independently of the deliberately blocked
+# recovery-inventory dereference boundary above.
+module.validate_recovery_baseline = lambda *args, **kwargs: (
+    "pass",
+    "contract-only complete recovery evidence",
+)
 
 staging_record_path = staging_dir / f"{staging_sha}.json"
+staging_record_path.write_text(
+    json.dumps({**staging_record, "preflightReportPath": "staging-preflight.json"}),
+    encoding="utf-8",
+)
+noncanonical_status, _, noncanonical_message = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if noncanonical_status != "fail" or "canonical preflight report path" not in noncanonical_message:
+    raise SystemExit(f"noncanonical staging preflight path was accepted: {noncanonical_message}")
+
+staging_record_path.write_text(
+    json.dumps(
+        {
+            **staging_record,
+            "deploymentEventId": "88888888-8888-4888-8888-888888888888",
+        }
+    ),
+    encoding="utf-8",
+)
+mismatched_event_status, _, mismatched_event_message = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if mismatched_event_status != "fail" or "deploymentEventId mismatch" not in mismatched_event_message:
+    raise SystemExit(f"mismatched preflight deployment event was accepted: {mismatched_event_message}")
+
+staging_record_path.write_text(
+    json.dumps(
+        {
+            **staging_record,
+            "appliedAt": timestamp(now - module.dt.timedelta(minutes=10)),
+        }
+    ),
+    encoding="utf-8",
+)
+late_report_status, _, late_report_message = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if late_report_status != "fail" or "later than the apply event" not in late_report_message:
+    raise SystemExit(f"post-apply preflight report was accepted: {late_report_message}")
+
 malformed_smoke_record = {**staging_record, "smokeEvidence": [{}]}
 staging_record_path.write_text(json.dumps(malformed_smoke_record), encoding="utf-8")
 malformed_smoke_status, _, malformed_smoke_message = module.promotion_check(
