@@ -8,6 +8,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -319,6 +320,10 @@ class TickBatchExecutionServiceTest {
   void markBatchManifestMismatchMarksRetryAndIncrementsMetric() {
     TickBatch batch = new TickBatch();
     batch.setTickBatchId("tb-1");
+    batch.setTenantId(1L);
+    batch.setGameInstanceId(2L);
+    batch.setRegionId("2");
+    batch.setRegionEpoch(1L);
     batch.setSelectedWorkManifestDigest("expected");
     TickQueuedCommandEnvelope entry =
         new TickQueuedCommandEnvelope(
@@ -358,6 +363,7 @@ class TickBatchExecutionServiceTest {
     effect.setTickBatchId("tb-stale");
     effect.setCommandId("cmd-1");
     GameplayCommand command = gameplayCommand("cmd-1");
+    command.setRegionEpoch(0L);
     command.setQueueSourceOrdinal(5000L);
     command.setQueueSourceDueTickId(14L);
     command.setQueueSourceDueAtMs(9000L);
@@ -419,9 +425,11 @@ class TickBatchExecutionServiceTest {
                 List.of(subsequentEffect).stream()
                     .filter(effect -> "DRAINED".equals(effect.getStatus()))
                     .toList());
-    when(gameplayCommandRepository.findByCommandId("cmd-applied"))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(
+            1L, 2L, "cmd-applied"))
         .thenReturn(Optional.of(appliedCommand));
-    when(gameplayCommandRepository.findByCommandId("cmd-subsequent"))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(
+            1L, 2L, "cmd-subsequent"))
         .thenReturn(Optional.of(subsequentCommand));
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-retry")))
         .thenReturn(List.of(retryCommand));
@@ -469,7 +477,8 @@ class TickBatchExecutionServiceTest {
         .thenReturn(List.of(batch));
     when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc("tb-current", "DRAINED"))
         .thenReturn(List.of(effect), List.of());
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 2L, "cmd-1"))
+        .thenReturn(Optional.of(command));
     when(gameplayCommandExecutionFenceService.validate(batch, command))
         .thenReturn(
             Optional.of(
@@ -483,6 +492,34 @@ class TickBatchExecutionServiceTest {
     assertEquals("COMPLETED", command.getExecutionOutcome());
     assertEquals("NOT_APPLIED", command.getGameplayResult());
     assertEquals("STALE_COMMAND_TIMELINE", command.getFailureCode());
+    verify(durableGameplayCommandExecutionService, never()).execute(any(), any());
+  }
+
+  @Test
+  void executeDurableEffectsNeverLoadsOrMutatesCommandOutsideBatchScope() {
+    TickBatch batch = drainedBatch("tb-cross-scope", "fence-a");
+    batch.setExpectedEffectCount(1);
+    TickEffect effect = drainedEffect("tb-cross-scope", "cmd-foreign");
+    GameplayCommand foreignCommand = gameplayCommand("cmd-foreign");
+    foreignCommand.setTenantId(99L);
+    when(tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
+            1L, 2L, "DRAINED"))
+        .thenReturn(List.of(batch));
+    when(tickEffectRepository.findByTickBatchId("tb-cross-scope")).thenReturn(List.of(effect));
+    when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc("tb-cross-scope", "DRAINED"))
+        .thenAnswer(
+            invocation -> "DRAINED".equals(effect.getStatus()) ? List.of(effect) : List.of());
+    when(gameplayCommandRepository.findByCommandId("cmd-foreign"))
+        .thenReturn(Optional.of(foreignCommand));
+
+    service.executeDurableEffects(1L, 2L);
+
+    assertEquals("REJECTED", effect.getStatus());
+    assertEquals("COMMAND_NOT_FOUND", effect.getFailureCode());
+    assertEquals("STAGED", foreignCommand.getExecutionOutcome());
+    verify(gameplayCommandRepository, times(2))
+        .findByTenantIdAndGameInstanceIdAndCommandId(1L, 2L, "cmd-foreign");
+    verify(gameplayCommandRepository, never()).save(foreignCommand);
     verify(durableGameplayCommandExecutionService, never()).execute(any(), any());
   }
 
@@ -562,11 +599,134 @@ class TickBatchExecutionServiceTest {
   }
 
   @Test
+  void markRemoteFollowupBatchAbandonedRestoresBatchStateWhenTransactionRollsBack() {
+    List<String> events = new ArrayList<>();
+    service =
+        newService(
+            new TransactionOperations() {
+              @Override
+              public <T> T execute(TransactionCallback<T> action) {
+                events.add("transaction-begin");
+                action.doInTransaction(new SimpleTransactionStatus());
+                events.add("transaction-rollback");
+                throw new IllegalStateException("transaction rolled back");
+              }
+            });
+    TickBatch batch = drainedBatch("tb-remote-rollback", "fence-a");
+    batch.setBatchSource("REMOTE_FOLLOWUP_DRAIN");
+    batch.setStatus("STAGED");
+    Instant originalCompletedAt = Instant.parse("2026-04-19T00:00:00Z");
+    batch.setCompletedAt(originalCompletedAt);
+    batch.setFailureCode("ORIGINAL_FAILURE");
+    batch.setFailureMessage("original failure");
+    TickEffect terminalEffect = remoteDrainedEffect("tb-remote-rollback", "followup-terminal");
+    terminalEffect.setStatus("APPLIED");
+    TickEffect stagedEffect = remoteDrainedEffect("tb-remote-rollback", "followup-staged");
+    stagedEffect.setStatus("STAGED");
+    TickEffect drainedEffect = remoteDrainedEffect("tb-remote-rollback", "followup-drained");
+    when(tickEffectRepository.findByTickBatchId("tb-remote-rollback"))
+        .thenReturn(List.of(terminalEffect, stagedEffect, drainedEffect));
+    doAnswer(
+            invocation -> {
+              events.add("batch");
+              return invocation.getArgument(0);
+            })
+        .when(tickBatchRepository)
+        .save(any());
+    doAnswer(
+            invocation -> {
+              events.add("effects");
+              assertEquals(List.of(stagedEffect, drainedEffect), invocation.getArgument(0));
+              return invocation.getArgument(0);
+            })
+        .when(tickEffectRepository)
+        .saveAll(any());
+    doAnswer(
+            invocation -> {
+              events.add("claims");
+              return 2;
+            })
+        .when(remoteFollowupDrainService)
+        .releaseClaimedFollowups("tb-remote-rollback", "REMOTE_FAILURE", "remote failure");
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> service.markRemoteFollowupBatchAbandoned(batch, "REMOTE_FAILURE", "remote failure"));
+
+    assertEquals("STAGED", batch.getStatus());
+    assertEquals(originalCompletedAt, batch.getCompletedAt());
+    assertEquals("ORIGINAL_FAILURE", batch.getFailureCode());
+    assertEquals("original failure", batch.getFailureMessage());
+    assertEquals("APPLIED", terminalEffect.getStatus());
+    assertEquals(
+        List.of("transaction-begin", "batch", "effects", "claims", "transaction-rollback"), events);
+  }
+
+  @Test
+  void remoteEffectSaveFailureRollsBackFollowupMutationInsideTransaction() {
+    List<String> events = new ArrayList<>();
+    service =
+        newService(
+            new TransactionOperations() {
+              @Override
+              public <T> T execute(TransactionCallback<T> action) {
+                events.add("transaction-begin");
+                try {
+                  T result = action.doInTransaction(new SimpleTransactionStatus());
+                  events.add("transaction-commit");
+                  return result;
+                } catch (RuntimeException | Error ex) {
+                  events.add("transaction-rollback");
+                  throw ex;
+                }
+              }
+            });
+    TickBatch batch = drainedBatch("tb-remote-effect-failure", "fence-a");
+    batch.setBatchSource("REMOTE_FOLLOWUP_DRAIN");
+    batch.setExpectedEffectCount(1);
+    TickEffect effect = remoteDrainedEffect("tb-remote-effect-failure", "followup-1");
+    when(tickEffectRepository.findByTickBatchId("tb-remote-effect-failure"))
+        .thenReturn(List.of(effect));
+    when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc(
+            "tb-remote-effect-failure", "DRAINED"))
+        .thenReturn(List.of(effect));
+    when(tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
+            1L, 2L, "DRAINED"))
+        .thenReturn(List.of(batch));
+    doAnswer(
+            invocation -> {
+              events.add("remote-followup");
+              return new DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult(
+                  "APPLIED", null, null);
+            })
+        .when(durableRemoteFollowupExecutionService)
+        .execute(effect);
+    doAnswer(
+            invocation -> {
+              events.add("effect-save");
+              throw new IllegalStateException("effect write failed");
+            })
+        .when(tickEffectRepository)
+        .save(any());
+
+    assertThrows(IllegalStateException.class, () -> service.executeDurableEffects(1L, 2L));
+
+    assertEquals(
+        List.of("transaction-begin", "remote-followup", "effect-save", "transaction-rollback"),
+        events);
+    verify(durableRemoteFollowupExecutionService).execute(effect);
+    verify(tickEffectRepository).save(effect);
+    verify(tickBatchRepository, never()).save(batch);
+  }
+
+  @Test
   void abandonDrainedBatchRequeuesOnlyEffectsThatRemainUnapplied() {
     TickBatch batch = new TickBatch();
     batch.setTickBatchId("tb-partial");
     batch.setTenantId(1L);
     batch.setGameInstanceId(2L);
+    batch.setRegionId("2");
+    batch.setRegionEpoch(1L);
     batch.setStatus("DRAINED");
     TickEffect remaining = new TickEffect();
     remaining.setTickBatchId("tb-partial");
@@ -622,6 +782,10 @@ class TickBatchExecutionServiceTest {
   private static GameplayCommand gameplayCommand(String commandId) {
     GameplayCommand command = new GameplayCommand();
     command.setCommandId(commandId);
+    command.setTenantId(1L);
+    command.setGameInstanceId(2L);
+    command.setRegionId("2");
+    command.setRegionEpoch(1L);
     command.setCommandText("look");
     command.setSanitizedCommandText("look");
     command.setAttemptCount(1);

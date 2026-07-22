@@ -196,6 +196,31 @@ def _parse_mapping_header(text: str) -> tuple[str, str] | None:
     return key, match.group("value").strip()
 
 
+def _parse_rule_name(value: str) -> tuple[str | None, bool]:
+    value = _strip_yaml_comment(value).strip()
+    if not value:
+        return None, False
+    if value.startswith(("\"", "'")):
+        quote = value[0]
+        if len(value) < 2 or value[-1] != quote:
+            return None, True
+        name = value[1:-1]
+        if quote == "'":
+            name = name.replace("''", "'")
+    else:
+        if value.startswith(("&", "*", "!", "{", "[", "|", ">")):
+            return None, True
+        if re.match(r"^(?:\?|-(?:\s|$))", value) or re.search(r":(?:\s|$)", value):
+            return None, True
+        if value.lower() in {"null", "~"}:
+            return None, False
+        name = value
+
+    if not name.strip():
+        return None, False
+    return name, False
+
+
 def _parse_rule_entry_header(line: str) -> tuple[str | None, str | None]:
     content = _strip_yaml_comment(line).lstrip()
     if not content.startswith("-"):
@@ -207,7 +232,9 @@ def _parse_rule_entry_header(line: str) -> tuple[str | None, str | None]:
     key, name = parsed
     if key not in {"alert", "record"}:
         return None, None
-    normalized_name = name.strip("\"'") or None
+    normalized_name, unsupported_name = _parse_rule_name(name)
+    if unsupported_name:
+        return None, None
     return key, normalized_name
 
 
@@ -360,6 +387,8 @@ def _standalone_rule_mapping_entry(lines: list[str]) -> _RuleEntry | None:
         return None
 
     first_content = _strip_yaml_comment(lines[first_line]).strip()
+    if _is_sequence_item(lines[first_line]):
+        return None
     malformed_or_unsupported_root = re.match(
         r"^(?:alert|record|\"(?:alert|record)\"|'(?:alert|record)')(?:\s|$)|^[?&*!{\[]",
         first_content,
@@ -368,35 +397,86 @@ def _standalone_rule_mapping_entry(lines: list[str]) -> _RuleEntry | None:
         return _RuleEntry(lines=[lines[first_line]], key=None, name=None)
 
     root_indent = _leading_space_count(lines[first_line])
-    root_rule_fields = {"expr", "for", "labels", "annotations", "name"}
+    supported_root_fields = {
+        "alert",
+        "record",
+        "expr",
+        "for",
+        "keep_firing_for",
+        "query_offset",
+        "labels",
+        "annotations",
+    }
+    root_rule_fields = supported_root_fields | {"name"}
+    root_rule_mappings: list[tuple[int, str, str]] = []
     root_rule_like = False
-    for index in range(first_line, len(lines)):
-        if not _meaningful_yaml_line(lines[index]):
+    malformed_root_shape = False
+    unsupported_root_mapping = False
+    extra_document = False
+    document_started = False
+    document_closed = False
+    for index, line in enumerate(lines):
+        if not _meaningful_yaml_line(line):
             continue
-        content = _strip_yaml_comment(lines[index]).strip()
-        if content in {"---", "..."}:
+        content = _strip_yaml_comment(line).strip()
+        indent = _leading_space_count(line)
+        if indent <= root_indent and content == "---":
+            if document_started:
+                extra_document = True
+            document_started = True
+            document_closed = False
             continue
-        if _leading_space_count(lines[index]) < root_indent:
-            break
-        if _leading_space_count(lines[index]) != root_indent:
+        if indent <= root_indent and content == "...":
+            document_closed = True
             continue
 
-        parsed = _parse_mapping_header(lines[index])
+        if document_closed:
+            extra_document = True
+        document_started = True
+        if indent != root_indent:
+            continue
+
+        if _is_sequence_item(line, root_indent):
+            malformed_root_shape = True
+            continue
+        parsed = _parse_mapping_header(line)
+        if not parsed:
+            malformed_root_shape = True
+            continue
         if parsed and parsed[0] in {"alert", "record"}:
-            key, name = parsed
-            if name and name.startswith(("&", "*", "!", "{", "[", "|", ">")):
-                return _RuleEntry(lines=[lines[index]], key=None, name=None)
-            return _RuleEntry(
-                lines=lines[first_line:],
-                key=key,
-                name=name.strip("\"'") or None,
-            )
+            root_rule_mappings.append((index, parsed[0], parsed[1]))
+        if parsed and parsed[0] not in supported_root_fields:
+            unsupported_root_mapping = True
         if parsed and parsed[0] in root_rule_fields:
             root_rule_like = True
 
-    if root_rule_like:
-        return _RuleEntry(lines=[lines[first_line]], key=None, name=None)
-    return None
+    if not root_rule_mappings:
+        if root_rule_like:
+            return _RuleEntry(lines=[lines[first_line]], key=None, name=None)
+        return None
+
+    if (
+        extra_document
+        or malformed_root_shape
+        or unsupported_root_mapping
+        or len(root_rule_mappings) != 1
+    ):
+        return _RuleEntry(
+            lines=[lines[first_line]],
+            key=None,
+            name=None,
+            issue="standalone YAML rule form must contain exactly one supported document/root rule",
+        )
+
+    rule_index, key, raw_name = root_rule_mappings[0]
+    name, unsupported_name = _parse_rule_name(raw_name)
+    if unsupported_name:
+        return _RuleEntry(lines=[lines[rule_index]], key=None, name=None)
+    return _RuleEntry(
+        lines=lines[first_line:],
+        key=key,
+        name=name,
+    )
 
 
 def _scan_rule_entries(yaml_text: str) -> list[_RuleEntry]:
@@ -595,6 +675,9 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
         for entry in _split_alert_rules(yaml_block):
             if entry.key is None:
                 findings.append(_unrecognized_rule_entry_finding(path, "alert", entry))
+                continue
+            if not entry.name:
+                findings.append(Finding(path=path, message="alert rule is missing name"))
                 continue
             rule_lines = entry.lines
             labels = _parse_labels(rule_lines)

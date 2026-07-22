@@ -268,6 +268,11 @@ standalone_record_entry = standalone_record_entries[0]
 if standalone_record_entry.key != "record" or standalone_record_entry.name != "standalone_recording":
     raise AssertionError(f"standalone recording mapping was parsed incorrectly: {standalone_record_entry!r}")
 
+standalone_document_markers = "---\n" + standalone_alert + "...\n"
+document_marker_entries = validator._split_alert_rules(standalone_document_markers)
+if len(document_marker_entries) != 1 or document_marker_entries[0].name != "StandaloneBackupAlert":
+    raise AssertionError(f"valid standalone alert document was not preserved: {document_marker_entries!r}")
+
 standalone_snippet = "```yaml\n" + standalone_alert + "```\n"
 standalone_findings = findings_for(standalone_snippet, validator._validate_alert_snippet)
 if standalone_findings:
@@ -322,6 +327,94 @@ require_message(
     findings_for(standalone_invalid_runbook, validator._validate_alert_snippet),
     "alert rule runbook label must be a design doc anchor (design/...md#section); got 'not-a-runbook'",
 )
+
+standalone_structure_issue = (
+    "standalone YAML rule form must contain exactly one supported document/root rule; "
+    "the dependency-free validator cannot safely inspect this YAML shape"
+)
+invalid_standalone_structures = (
+    standalone_alert + "alert: TrailingAlert\n",
+    standalone_alert + "record: trailing_record\n",
+    standalone_alert + "---\nrecord:\n  hidden: malformed\n",
+    standalone_alert + "...\nalert:\n",
+    "---\n---\n" + standalone_alert,
+    standalone_alert + "name: trailing_mapping\n",
+    standalone_alert + "rules:\n  - alert:\n",
+)
+for invalid_structure in invalid_standalone_structures:
+    require_message(
+        findings_for("```yaml\n" + invalid_structure + "```\n", validator._validate_alert_snippet),
+        standalone_structure_issue,
+    )
+
+invalid_standalone_alert_names = (
+    ("missing", "alert:", "alert rule is missing name"),
+    ("null", "alert: null", "alert rule is missing name"),
+    ("tilde null", "alert: ~", "alert rule is missing name"),
+    ("blank quoted", "alert: \"\"", "alert rule is missing name"),
+    ("whitespace quoted", 'alert: "   "', "alert rule is missing name"),
+    (
+        "mapping",
+        "alert: {name: HiddenAlert}",
+        "unrecognized alert rule sequence entry; the dependency-free validator cannot safely inspect this YAML shape",
+    ),
+    (
+        "sequence",
+        "alert: [HiddenAlert]",
+        "unrecognized alert rule sequence entry; the dependency-free validator cannot safely inspect this YAML shape",
+    ),
+)
+for _, invalid_name, expected_message in invalid_standalone_alert_names:
+    invalid_name_snippet = standalone_snippet.replace(
+        "alert: StandaloneBackupAlert",
+        invalid_name,
+        1,
+    )
+    require_message(
+        findings_for(invalid_name_snippet, validator._validate_alert_snippet),
+        expected_message,
+    )
+
+invalid_standalone_record_structures = (
+    standalone_record + "record: trailing_record\n",
+    standalone_record + "alert: trailing_alert\n",
+    standalone_record + "---\nrecord:\n  hidden: malformed\n",
+    standalone_record + "name: trailing_mapping\n",
+    standalone_record + "rules:\n  - record:\n",
+)
+for invalid_structure in invalid_standalone_record_structures:
+    require_message(
+        findings_for(invalid_structure, validator._validate_reference_prometheus_recordings),
+        standalone_structure_issue,
+    )
+
+invalid_standalone_record_names = (
+    ("missing", "record:", "recording rule is missing name"),
+    ("null", "record: null", "recording rule is missing name"),
+    ("tilde null", "record: ~", "recording rule is missing name"),
+    ("blank quoted", "record: \"\"", "recording rule is missing name"),
+    ("whitespace quoted", 'record: "   "', "recording rule is missing name"),
+    (
+        "mapping",
+        "record: {name: hidden_record}",
+        "unrecognized record rule sequence entry; the dependency-free validator cannot safely inspect this YAML shape",
+    ),
+    (
+        "sequence",
+        "record: [hidden_record]",
+        "unrecognized record rule sequence entry; the dependency-free validator cannot safely inspect this YAML shape",
+    ),
+)
+for _, invalid_name, expected_message in invalid_standalone_record_names:
+    invalid_record_name = standalone_record.replace(
+        "record: standalone_recording",
+        invalid_name,
+        1,
+    )
+    require_message(
+        findings_for(invalid_record_name, validator._validate_reference_prometheus_recordings),
+        expected_message,
+    )
 
 unsupported_standalone_roots = (
     (

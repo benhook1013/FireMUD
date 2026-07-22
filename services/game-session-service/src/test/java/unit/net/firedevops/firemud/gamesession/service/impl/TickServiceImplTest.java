@@ -974,6 +974,7 @@ class TickServiceImplTest {
     existingBatch.setTickBatchId("tb-existing");
     existingBatch.setTenantId(1L);
     existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("2");
     existingBatch.setRegionEpoch(1L);
     existingBatch.setExecutorFence("fence-a");
     existingBatch.setStatus("STAGED");
@@ -1011,7 +1012,7 @@ class TickServiceImplTest {
     when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "2"))
         .thenReturn(Optional.of(initialStatus), Optional.of(staleStatus));
     when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
-        .thenReturn(Optional.of(initialStatus), Optional.of(staleStatus));
+        .thenReturn(Optional.of(initialStatus), Optional.of(initialStatus));
 
     service.processTick(1L, 2L);
 
@@ -1041,6 +1042,7 @@ class TickServiceImplTest {
     drainedBatch.setTickBatchId("tb-drained");
     drainedBatch.setTenantId(1L);
     drainedBatch.setGameInstanceId(2L);
+    drainedBatch.setRegionId("2");
     drainedBatch.setRegionEpoch(1L);
     drainedBatch.setExecutorFence("fence-a");
     drainedBatch.setStatus("DRAINED");
@@ -1073,7 +1075,7 @@ class TickServiceImplTest {
         .thenReturn(List.of(drainedEffect));
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
         .thenReturn(List.of(command));
-    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "2"))
         .thenReturn(Optional.of(runtimeOwnership(1L, 2L, 2L, "fence-b", false)));
 
     service.processTick(1L, 2L);
@@ -1134,8 +1136,10 @@ class TickServiceImplTest {
         .thenReturn(true);
     when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|look");
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
-    when(gameplayCommandRepository.findByCommandIdIn(any()))
-        .thenReturn(List.of(gameplayCommand("cmd-1")));
+    net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
+    command.setRegionId("region-alpha");
+    command.setRegionEpoch(4L);
+    when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of(command));
     net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus currentStatus =
         runtimeOwnershipByRegionId(1L, 2L, "region-alpha", 4L, "fence-a", false);
     when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-alpha"))
@@ -1249,8 +1253,8 @@ class TickServiceImplTest {
     command.setPluginId("plugin-1");
     command.setPluginVersionId("plugin-v1");
     command.setTargetEntityId("entity-1");
-    command.setRegionId("region-1");
-    command.setRegionEpoch(4L);
+    command.setRegionId("2");
+    command.setRegionEpoch(1L);
     command.setPlayableStateScope("SHARED");
     command.setWorldSlug("demo");
     command.setRealmSlug("production");
@@ -1298,9 +1302,9 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"targetEntityId\":\"entity-1\""));
     org.junit.jupiter.api.Assertions.assertTrue(
-        stagedBatch.getSelectedWorkManifestJson().contains("\"regionId\":\"region-1\""));
+        stagedBatch.getSelectedWorkManifestJson().contains("\"regionId\":\"2\""));
     org.junit.jupiter.api.Assertions.assertTrue(
-        stagedBatch.getSelectedWorkManifestJson().contains("\"regionEpoch\":4"));
+        stagedBatch.getSelectedWorkManifestJson().contains("\"regionEpoch\":1"));
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"dueTickId\":14"));
     org.junit.jupiter.api.Assertions.assertTrue(
@@ -1487,6 +1491,7 @@ class TickServiceImplTest {
     existingBatch.setTickBatchId("tb-existing");
     existingBatch.setTenantId(1L);
     existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("2");
     existingBatch.setRegionEpoch(1L);
     existingBatch.setExecutorFence("fence-a");
     existingBatch.setStatus("STAGED");
@@ -1529,6 +1534,7 @@ class TickServiceImplTest {
     existingBatch.setTickBatchId("tb-existing");
     existingBatch.setTenantId(1L);
     existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("2");
     existingBatch.setRegionEpoch(1L);
     existingBatch.setExecutorFence("fence-a");
     existingBatch.setStatus("STAGED");
@@ -1661,6 +1667,10 @@ class TickServiceImplTest {
       String commandId) {
     var command = new net.firedevops.firemud.gamesession.entity.GameplayCommand();
     command.setCommandId(commandId);
+    command.setTenantId(1L);
+    command.setGameInstanceId(2L);
+    command.setRegionId("2");
+    command.setRegionEpoch(1L);
     command.setCommandText("look");
     command.setSanitizedCommandText("look");
     command.setAttemptCount(1);

@@ -52,6 +52,7 @@ class TickStagingServiceTest {
   private RemoteFollowupDrainService remoteFollowupDrainService;
   private DurableRemoteFollowupExecutionService durableRemoteFollowupExecutionService;
   private TickQueueControlService tickQueueControlService;
+  private RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private TickBatchExecutionService tickBatchExecutionService;
   private TickStagingService service;
   private List<TickEffect> savedEffects;
@@ -93,8 +94,7 @@ class TickStagingServiceTest {
     GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService =
         mock(GameplayCommandExecutionFenceService.class);
     when(gameplayCommandExecutionFenceService.validate(any(), any())).thenReturn(Optional.empty());
-    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
-        mock(RuntimeRegionStatusRepository.class);
+    runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
     tickQueueControlService =
         new TickQueueControlService(
             redisTemplate,
@@ -137,8 +137,12 @@ class TickStagingServiceTest {
             tickBatchExecutionService,
             new ImmediateTransactionOperations());
     setField(service, "maxRemoteFollowupsPerTick", 16);
+    RuntimeRegionStatus currentOwnership =
+        runtimeOwnership(1L, 2L, "region-a", 1L, "fence-a", false);
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(Optional.of(currentOwnership));
     when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-a"))
-        .thenReturn(Optional.of(runtimeOwnership(1L, 2L, "region-a", 1L, "fence-a", false)));
+        .thenReturn(Optional.of(currentOwnership));
     when(runtimeRegionStatusRepository.save(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(runtimeRegionStatusRepository.commitDrainedBatch(any(), any()))
@@ -183,6 +187,92 @@ class TickStagingServiceTest {
   }
 
   @Test
+  void readExecutablePendingEntriesDropsCrossTenantResidue() {
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-cross-tenant|look"));
+    GameplayCommand command = gameplayCommand("cmd-cross-tenant");
+    command.setTenantId(99L);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-cross-tenant")))
+        .thenReturn(List.of(command));
+
+    assertTrue(service.readExecutablePendingEntries(1L, 2L).isEmpty());
+  }
+
+  @Test
+  void readExecutablePendingEntriesDropsCrossGameInstanceResidue() {
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-cross-game|look"));
+    GameplayCommand command = gameplayCommand("cmd-cross-game");
+    command.setGameInstanceId(99L);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-cross-game")))
+        .thenReturn(List.of(command));
+
+    assertTrue(service.readExecutablePendingEntries(1L, 2L).isEmpty());
+  }
+
+  @Test
+  void readExecutablePendingEntriesDropsStaleRegionAndEpochResidue() {
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-stale-region|look", "N|cmd-stale-epoch|look"));
+    GameplayCommand staleRegion = gameplayCommand("cmd-stale-region");
+    staleRegion.setRegionId("region-old");
+    GameplayCommand staleEpoch = gameplayCommand("cmd-stale-epoch");
+    staleEpoch.setRegionEpoch(2L);
+    when(gameplayCommandRepository.findByCommandIdIn(
+            List.of("cmd-stale-region", "cmd-stale-epoch")))
+        .thenReturn(List.of(staleRegion, staleEpoch));
+
+    assertTrue(service.readExecutablePendingEntries(1L, 2L).isEmpty());
+  }
+
+  @Test
+  void createBatchRejectsStaleExecutorFenceBeforeAnyDurableWrite() {
+    GameplayCommand command = gameplayCommand("cmd-stale-fence");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-stale-fence")))
+        .thenReturn(List.of(command));
+
+    assertThrows(
+        TickQueueControlService.StaleOwnershipException.class,
+        () ->
+            service.createBatch(
+                "FRESH_STAGE",
+                1L,
+                2L,
+                false,
+                new TickQueueControlService.OwnershipSnapshot(
+                    "region-a", 1L, "fence-stale", false, 0L),
+                List.of(new TickQueuedCommandEnvelope(false, "cmd-stale-fence", "look"))));
+
+    verify(tickBatchRepository, never()).save(any());
+    verify(tickEffectRepository, never()).saveAll(any());
+    verify(gameplayCommandRepository, never()).saveAll(any());
+  }
+
+  @Test
+  void createBatchRejectsCommandScopeDriftInsideTransactionBeforeAnyDurableWrite() {
+    GameplayCommand initial = gameplayCommand("cmd-scope-drift");
+    GameplayCommand drifted = gameplayCommand("cmd-scope-drift");
+    drifted.setRegionEpoch(2L);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-scope-drift")))
+        .thenReturn(List.of(initial), List.of(drifted));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.createBatch(
+                "FRESH_STAGE",
+                1L,
+                2L,
+                false,
+                new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+                List.of(new TickQueuedCommandEnvelope(false, "cmd-scope-drift", "look"))));
+
+    verify(tickBatchRepository, never()).save(any());
+    verify(tickEffectRepository, never()).saveAll(any());
+    verify(gameplayCommandRepository, never()).saveAll(any());
+  }
+
+  @Test
   void createBatchPersistsComparableOrderingAndCanonicalRoutingManifest() {
     GameplayCommand command = gameplayCommand("cmd-1");
     command.setSourceType("AUTOMATION");
@@ -193,8 +283,8 @@ class TickStagingServiceTest {
     command.setPluginId("plugin-1");
     command.setPluginVersionId("plugin-v1");
     command.setTargetEntityId("entity-1");
-    command.setRegionId("region-1");
-    command.setRegionEpoch(4L);
+    command.setRegionId("region-a");
+    command.setRegionEpoch(1L);
     command.setPlayableStateScope("SHARED");
     command.setWorldSlug("demo");
     command.setRealmSlug("production");
@@ -708,11 +798,15 @@ class TickStagingServiceTest {
   private static GameplayCommand gameplayCommand(String commandId) {
     var command = new GameplayCommand();
     command.setCommandId(commandId);
+    command.setTenantId(1L);
+    command.setGameInstanceId(2L);
     command.setCommandText("look");
     command.setSanitizedCommandText("look");
     command.setAttemptCount(1);
     command.setExecutionOutcome("STAGED");
     command.setGameplayResult("PENDING");
+    command.setRegionId("region-a");
+    command.setRegionEpoch(1L);
     return command;
   }
 

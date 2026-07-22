@@ -116,6 +116,10 @@ final class TickBatchExecutionService {
     if (!redisOnlyEntries.isEmpty()) {
       requeueEntries(tenantId, gameInstanceId, redisOnlyEntries);
       updateGameplayCommands(
+          tenantId,
+          gameInstanceId,
+          null,
+          null,
           redisOnlyEntries,
           "RETRY_QUEUED",
           "PENDING",
@@ -153,7 +157,17 @@ final class TickBatchExecutionService {
     updateEffectStatuses(
         batch.getTickBatchId(), "ABANDONED", now, "MANIFEST_MISMATCH", failureMessage);
     updateGameplayCommands(
-        entries, "RETRY_QUEUED", "PENDING", now, "MANIFEST_MISMATCH", failureMessage, false);
+        batch.getTenantId(),
+        batch.getGameInstanceId(),
+        batch.getRegionId(),
+        batch.getRegionEpoch(),
+        entries,
+        "RETRY_QUEUED",
+        "PENDING",
+        now,
+        "MANIFEST_MISMATCH",
+        failureMessage,
+        false);
     recordRequeuedActions(entries);
     meterRegistry.counter("tick_manifest_mismatch_total").increment();
   }
@@ -184,7 +198,18 @@ final class TickBatchExecutionService {
     batch.setCompletedAt(completedAt);
     tickBatchRepository.save(batch);
     updateEffectStatuses(batch.getTickBatchId(), "DRAINED", completedAt, null, null);
-    updateGameplayCommands(entries, "DRAINED", "PENDING", completedAt, null, null, false);
+    updateGameplayCommands(
+        batch.getTenantId(),
+        batch.getGameInstanceId(),
+        batch.getRegionId(),
+        batch.getRegionEpoch(),
+        entries,
+        "DRAINED",
+        "PENDING",
+        completedAt,
+        null,
+        null,
+        false);
     ownership.setUpdatedAt(completedAt);
     tickQueueControlService.commitDrainedBatch(ownership, batch.getTickBatchId());
   }
@@ -253,7 +278,7 @@ final class TickBatchExecutionService {
       String failureMessage) {
     Instant now = Instant.now();
     boolean wasDrained = "DRAINED".equals(batch.getStatus());
-    if (wasDrained && isRemoteFollowupBatch(batch)) {
+    if (isRemoteFollowupBatch(batch)) {
       markRemoteFollowupBatchAbandoned(batch, failureCode, failureMessage);
       return;
     }
@@ -267,7 +292,17 @@ final class TickBatchExecutionService {
     } else {
       updateEffectStatuses(batch.getTickBatchId(), "ABANDONED", now, failureCode, failureMessage);
       updateGameplayCommands(
-          entries, "RETRY_QUEUED", "PENDING", now, failureCode, failureMessage, false);
+          batch.getTenantId(),
+          batch.getGameInstanceId(),
+          batch.getRegionId(),
+          batch.getRegionEpoch(),
+          entries,
+          "RETRY_QUEUED",
+          "PENDING",
+          now,
+          failureCode,
+          failureMessage,
+          false);
       recordRequeuedActions(entries);
     }
     remoteFollowupDrainService.releaseClaimedFollowups(
@@ -284,15 +319,16 @@ final class TickBatchExecutionService {
   void markRemoteFollowupBatchAbandoned(
       TickBatch batch, String failureCode, String failureMessage) {
     Instant now = Instant.now();
-    batch.setStatus("ABANDONED");
-    batch.setCompletedAt(now);
-    batch.setFailureCode(failureCode);
-    batch.setFailureMessage(truncate(failureMessage, 500));
-    tickBatchRepository.save(batch);
-    abandonUnfinishedRemoteFollowupEffects(
-        batch.getTickBatchId(), now, failureCode, failureMessage);
-    remoteFollowupDrainService.releaseClaimedFollowups(
-        batch.getTickBatchId(), failureCode, failureMessage);
+    BatchDrainState originalState = BatchDrainState.capture(batch);
+    try {
+      transactionOperations.executeWithoutResult(
+          status ->
+              markRemoteFollowupBatchAbandonedInTransaction(
+                  batch, now, failureCode, failureMessage));
+    } catch (RuntimeException | Error ex) {
+      originalState.restore(batch);
+      throw ex;
+    }
     logger.warn(
         "Abandoned durable remote followup batch tickBatchId={} tenantId={} gameInstanceId={} code={} message={}",
         batch.getTickBatchId(),
@@ -300,6 +336,19 @@ final class TickBatchExecutionService {
         batch.getGameInstanceId(),
         failureCode,
         truncate(failureMessage, 500));
+  }
+
+  private void markRemoteFollowupBatchAbandonedInTransaction(
+      TickBatch batch, Instant completedAt, String failureCode, String failureMessage) {
+    batch.setStatus("ABANDONED");
+    batch.setCompletedAt(completedAt);
+    batch.setFailureCode(failureCode);
+    batch.setFailureMessage(truncate(failureMessage, 500));
+    tickBatchRepository.save(batch);
+    abandonUnfinishedRemoteFollowupEffects(
+        batch.getTickBatchId(), completedAt, failureCode, failureMessage);
+    remoteFollowupDrainService.releaseClaimedFollowups(
+        batch.getTickBatchId(), failureCode, failureMessage);
   }
 
   void executeDurableEffects(Long tenantId, Long gameInstanceId) {
@@ -397,7 +446,7 @@ final class TickBatchExecutionService {
     List<TickEffect> drainedEffects =
         tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc(
             batch.getTickBatchId(), "DRAINED");
-    List<GameplayCommand> commands = loadCommandsForEffects(drainedEffects);
+    List<GameplayCommand> commands = loadCommandsForEffects(batch, drainedEffects);
     requeueCommands(batch.getTenantId(), batch.getGameInstanceId(), commands);
     for (TickEffect effect : drainedEffects) {
       effect.setStatus("ABANDONED");
@@ -511,19 +560,24 @@ final class TickBatchExecutionService {
 
   private void executeDurableEffect(TickBatch batch, TickEffect effect) {
     if ("REMOTE_FOLLOWUP".equals(effect.getEffectType())) {
-      DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
-          durableRemoteFollowupExecutionService.execute(effect);
-      markEffectTerminal(
-          effect,
-          result.effectStatus(),
-          "COMPLETED",
-          "NOT_APPLIED",
-          result.failureCode(),
-          result.failureMessage());
+      transactionOperations.executeWithoutResult(
+          status -> {
+            DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
+                durableRemoteFollowupExecutionService.execute(effect);
+            markEffectTerminal(
+                batch,
+                effect,
+                result.effectStatus(),
+                "COMPLETED",
+                "NOT_APPLIED",
+                result.failureCode(),
+                result.failureMessage());
+          });
       return;
     }
     if (effect.getCommandId() == null || effect.getCommandId().isBlank()) {
       markEffectTerminal(
+          batch,
           effect,
           "REJECTED",
           "COMPLETED",
@@ -533,9 +587,13 @@ final class TickBatchExecutionService {
       return;
     }
     GameplayCommand command =
-        gameplayCommandRepository.findByCommandId(effect.getCommandId()).orElse(null);
+        gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndCommandId(
+                batch.getTenantId(), batch.getGameInstanceId(), effect.getCommandId())
+            .orElse(null);
     if (command == null) {
       markEffectTerminal(
+          batch,
           effect,
           "REJECTED",
           "COMPLETED",
@@ -549,7 +607,7 @@ final class TickBatchExecutionService {
     if (fenceFailure.isPresent()) {
       GameplayCommandExecutionFenceService.FenceFailure failure = fenceFailure.orElseThrow();
       markEffectTerminal(
-          effect, "REJECTED", "COMPLETED", "NOT_APPLIED", failure.code(), failure.message());
+          batch, effect, "REJECTED", "COMPLETED", "NOT_APPLIED", failure.code(), failure.message());
       return;
     }
     durableGameplayCommandExecutionService
@@ -557,6 +615,7 @@ final class TickBatchExecutionService {
         .ifPresent(
             result ->
                 markEffectTerminal(
+                    batch,
                     effect,
                     result.effectStatus(),
                     result.commandExecutionOutcome(),
@@ -566,6 +625,7 @@ final class TickBatchExecutionService {
   }
 
   private void markEffectTerminal(
+      TickBatch batch,
       TickEffect effect,
       String effectStatus,
       String commandExecutionOutcome,
@@ -582,7 +642,8 @@ final class TickBatchExecutionService {
       return;
     }
     gameplayCommandRepository
-        .findByCommandId(effect.getCommandId())
+        .findByTenantIdAndGameInstanceIdAndCommandId(
+            batch.getTenantId(), batch.getGameInstanceId(), effect.getCommandId())
         .ifPresent(
             command -> {
               command.setExecutionOutcome(commandExecutionOutcome);
@@ -615,6 +676,10 @@ final class TickBatchExecutionService {
   }
 
   private void updateGameplayCommands(
+      Long tenantId,
+      Long gameInstanceId,
+      String regionId,
+      Long regionEpoch,
       List<TickQueuedCommandEnvelope> entries,
       String executionOutcome,
       String gameplayResult,
@@ -622,7 +687,12 @@ final class TickBatchExecutionService {
       String failureCode,
       String failureMessage,
       boolean completed) {
-    List<GameplayCommand> commands = loadCommands(entries);
+    List<GameplayCommand> commands =
+        loadCommands(entries).stream()
+            .filter(
+                command ->
+                    commandMatchesScope(command, tenantId, gameInstanceId, regionId, regionEpoch))
+            .toList();
     if (commands.isEmpty()) {
       return;
     }
@@ -664,7 +734,7 @@ final class TickBatchExecutionService {
     return gameplayCommandRepository.findByCommandIdIn(commandIds);
   }
 
-  private List<GameplayCommand> loadCommandsForEffects(List<TickEffect> effects) {
+  private List<GameplayCommand> loadCommandsForEffects(TickBatch batch, List<TickEffect> effects) {
     List<String> commandIds =
         effects.stream()
             .map(TickEffect::getCommandId)
@@ -674,7 +744,28 @@ final class TickBatchExecutionService {
     if (commandIds.isEmpty()) {
       return List.of();
     }
-    return gameplayCommandRepository.findByCommandIdIn(commandIds);
+    return gameplayCommandRepository.findByCommandIdIn(commandIds).stream()
+        .filter(
+            command ->
+                commandMatchesScope(
+                    command,
+                    batch.getTenantId(),
+                    batch.getGameInstanceId(),
+                    batch.getRegionId(),
+                    batch.getRegionEpoch()))
+        .toList();
+  }
+
+  private boolean commandMatchesScope(
+      GameplayCommand command,
+      Long tenantId,
+      Long gameInstanceId,
+      String regionId,
+      Long regionEpoch) {
+    return java.util.Objects.equals(tenantId, command.getTenantId())
+        && java.util.Objects.equals(gameInstanceId, command.getGameInstanceId())
+        && (regionId == null || java.util.Objects.equals(regionId, command.getRegionId()))
+        && (regionEpoch == null || java.util.Objects.equals(regionEpoch, command.getRegionEpoch()));
   }
 
   private void stampQueueSource(
