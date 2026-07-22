@@ -34,9 +34,14 @@ REQUIRED_BACKUP_RECORDINGS = {
 CURRENT_BLOCKED_CONVERGENCE_EXPR = re.compile(
     r'recovery_participant_convergence_state\s*\{\s*state\s*=\s*["\']blocked["\']\s*\}'
 )
-ABSENT_CONVERGENCE_EXPR = re.compile(r"absent\s*\(\s*recovery_participant_convergence_state\s*\)")
-ABSENT_ARTIFACT_LINEAGE_EXPR = re.compile(r"absent\s*\(\s*backup_artifact_lineage_valid\s*\)")
-ABSENT_ARTIFACT_READABILITY_EXPR = re.compile(r"absent\s*\(\s*backup_artifact_restore_readable\s*\)")
+REQUIRED_ABSENT_ALERT_METRICS = {
+    "BackupLastSuccessMetricsAbsent": "backup_last_success_timestamp_seconds",
+    "BackupVerificationLastSuccessMetricsAbsent": "backup_verify_last_success_timestamp_seconds",
+    "BackupRestoreDrillLastSuccessMetricsAbsent": "backup_restore_drill_last_success_timestamp_seconds",
+    "BackupArtifactLineageMetricsAbsent": "backup_artifact_lineage_valid",
+    "BackupArtifactRestoreReadabilityMetricsAbsent": "backup_artifact_restore_readable",
+    "RecoveryParticipantConvergenceMetricsAbsent": "recovery_participant_convergence_state",
+}
 BLOCKED_REOPEN_ATTEMPT_EXPR = re.compile(
     r'recovery_reopen_attempt_total\s*\{'
     r'(?=[^}]*result\s*=\s*["\']blocked["\'])'
@@ -48,7 +53,9 @@ ENVIRONMENT_BLOCKED_CONVERGENCE_EXPR = re.compile(
 STALE_BLOCKED_CONVERGENCE_EXPR = re.compile(
     r'recovery_participant_convergence_total\s*\{[^}]*result\s*=\s*["\']blocked["\']'
 )
-RESTORE_DRILL_30_DAY_EXPR = "backup_restore_drill_last_success_timestamp_seconds > 30 * 24 * 60 * 60"
+RESTORE_DRILL_30_DAY_EXPR = re.compile(
+    r"backup_restore_drill_last_success_timestamp_seconds\s*>\s*30\s*\*\s*24\s*\*\s*60\s*\*\s*60"
+)
 
 
 @dataclass(frozen=True)
@@ -510,17 +517,11 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
             findings.append(Finding(path=path, message=f"{alert_name} must use owner=infra for Redis/coordination incidents"))
         if alert_name.startswith("Backup") and labels.get("owner") != "infra":
             findings.append(Finding(path=path, message=f"{alert_name} must use owner=infra for backup incidents"))
-        if alert_name == "RecoveryParticipantConvergenceMetricsAbsent" and not ABSENT_CONVERGENCE_EXPR.search(expr or ""):
-            findings.append(Finding(path=path, message="RecoveryParticipantConvergenceMetricsAbsent must use absent(recovery_participant_convergence_state)"))
-        if alert_name == "BackupArtifactLineageMetricsAbsent" and not ABSENT_ARTIFACT_LINEAGE_EXPR.search(expr or ""):
-            findings.append(Finding(path=path, message="BackupArtifactLineageMetricsAbsent must use absent(backup_artifact_lineage_valid)"))
-        if alert_name == "BackupArtifactRestoreReadabilityMetricsAbsent" and not ABSENT_ARTIFACT_READABILITY_EXPR.search(expr or ""):
-            findings.append(
-                Finding(
-                    path=path,
-                    message="BackupArtifactRestoreReadabilityMetricsAbsent must use absent(backup_artifact_restore_readable)",
-                )
-            )
+        absent_metric = REQUIRED_ABSENT_ALERT_METRICS.get(alert_name)
+        if absent_metric:
+            absent_expr = re.compile(rf"absent\s*\(\s*{re.escape(absent_metric)}\s*\)")
+            if not absent_expr.search(expr or ""):
+                findings.append(Finding(path=path, message=f"{alert_name} must use absent({absent_metric})"))
         if alert_name == "RecoveryReopenAttemptBlocked":
             if not BLOCKED_REOPEN_ATTEMPT_EXPR.search(expr or ""):
                 findings.append(
@@ -547,8 +548,11 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
         "RedisCoordinationTailLossSLOBreached",
         "TickExecutionUnsafeRatio",
         "BackupPipelineNoRecentBackup",
+        "BackupLastSuccessMetricsAbsent",
         "BackupPipelineNoRecentVerification",
+        "BackupVerificationLastSuccessMetricsAbsent",
         "BackupPipelineNoRecentRestoreDrill",
+        "BackupRestoreDrillLastSuccessMetricsAbsent",
         "BackupArtifactLineageInvalid",
         "BackupArtifactLineageMetricsAbsent",
         "BackupArtifactRestoreUnreadable",
@@ -639,7 +643,7 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
                 message="blocked convergence recording must not use the cumulative convergence counter",
             )
         )
-    if RESTORE_DRILL_30_DAY_EXPR not in text:
+    if not RESTORE_DRILL_30_DAY_EXPR.search(text):
         findings.append(
             Finding(
                 path=path,

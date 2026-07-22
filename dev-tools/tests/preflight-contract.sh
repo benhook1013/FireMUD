@@ -461,6 +461,7 @@ PY
 done
 
 python3 - <<'PY' "$ROOT_DIR" "$TMP_DIR"
+import json
 import importlib.util
 import pathlib
 import sys
@@ -665,6 +666,27 @@ exceptional_secrets = next(result for result in exceptional_results if result.po
 if exceptional_secrets.status != "fail" or "backupControlPlaneClientRef" not in exceptional_secrets.message:
     raise SystemExit(f"explicit backup maintenance pause opt-in did not validate its client binding: {exceptional_secrets.message}")
 
+valid_exceptional_expected = yaml.safe_load(
+    (root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml").read_text(encoding="utf-8")
+)
+valid_exceptional_expected["backupMaintenancePause"] = {"enabled": True}
+valid_exceptional_expected["internalBindings"]["certificates"]["backupControlPlaneClientRef"] = (
+    "cert-manager://firemud/hobby-backup-control-plane"
+)
+valid_exceptional_path = tmp / "valid-exceptional-backup-pause-bindings.yaml"
+valid_exceptional_path.write_text(yaml.safe_dump(valid_exceptional_expected, sort_keys=False), encoding="utf-8")
+valid_exceptional_results = module.expected_binding_checks(
+    valid_exceptional_path,
+    "synthetic-valid-exceptional-backup-pause-bindings",
+    "hobby-self-hosted",
+    rendered_documents,
+)
+valid_exceptional_secrets = next(
+    result for result in valid_exceptional_results if result.policy_id == "PREFLIGHT-SECRETS-002"
+)
+if valid_exceptional_secrets.status != "pass":
+    raise SystemExit(f"valid explicit backup maintenance pause configuration did not pass: {valid_exceptional_secrets.message}")
+
 malformed_pause_expected = yaml.safe_load(
     (root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml").read_text(encoding="utf-8")
 )
@@ -702,6 +724,222 @@ undeclared_pause_secrets = next(
 )
 if undeclared_pause_secrets.status != "fail" or "must be omitted" not in undeclared_pause_secrets.message:
     raise SystemExit(f"undeclared backup maintenance identity did not fail closed: {undeclared_pause_secrets.message}")
+
+now = module.dt.datetime.now(module.dt.timezone.utc).replace(microsecond=0)
+past_timestamp = (now - module.dt.timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+future_timestamp = (now + module.dt.timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+
+def write_json(name, data):
+    path = tmp / name
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+def compatibility_result(status):
+    return {
+        "baselineRecoveryRecordRef": "design/operations/deployments/production/recovery/baseline.json",
+        "baselineRecoveryContractFingerprint": "sha256:recovery-contract",
+        "candidateRecoveryContractFingerprint": "sha256:recovery-contract",
+        "changedDimensions": [],
+        "compatibilityStatus": status,
+        "compatibilityRationale": "contract test",
+        "evaluatedAt": past_timestamp,
+        "evaluatorToolDigest": "sha256:evaluator",
+        "newDrillRequired": False,
+    }
+
+valid_baseline = {
+    "environment": "production",
+    "recoveryStatus": "finalized",
+    "recoveryPurpose": "production-equivalent-drill",
+    "trafficExposure": "isolated-drill",
+    "coordinationRecoveryMode": "cold_start_restore",
+    "recoveryContractFingerprint": "sha256:recovery-contract",
+    "finalizedAt": (now - module.dt.timedelta(minutes=10)).isoformat().replace("+00:00", "Z"),
+}
+baseline_path = write_json("baseline.json", valid_baseline)
+baseline_status, baseline_message = module.validate_recovery_baseline(
+    tmp,
+    baseline_path.name,
+    "sha256:recovery-contract",
+    now,
+)
+if baseline_status != "pass":
+    raise SystemExit(f"valid finalized recovery baseline did not pass: {baseline_message}")
+
+stale_baseline = {
+    **valid_baseline,
+    "finalizedAt": (now - module.dt.timedelta(days=31)).isoformat().replace("+00:00", "Z"),
+}
+stale_baseline_path = write_json("stale-baseline.json", stale_baseline)
+stale_status, stale_message = module.validate_recovery_baseline(
+    tmp,
+    stale_baseline_path.name,
+    "sha256:recovery-contract",
+    now,
+)
+if stale_status != "fail" or "older than 30 days" not in stale_message:
+    raise SystemExit(f"stale recovery baseline did not fail closed: {stale_message}")
+
+missing_baseline_status, missing_baseline_message = module.validate_recovery_baseline(
+    tmp,
+    "missing-baseline.json",
+    "sha256:recovery-contract",
+    now,
+)
+if missing_baseline_status != "fail" or "not found" not in missing_baseline_message:
+    raise SystemExit(f"missing recovery baseline did not fail closed: {missing_baseline_message}")
+
+missing_compatibility_attestation = write_json(
+    "missing-recovery-compatibility-attestation.json",
+    {
+        "environment": "staging",
+        "generatedAt": past_timestamp,
+        "rollbackMode": "rollback-compatible",
+    },
+)
+missing_status, _, missing_message = module.promotion_check(
+    missing_compatibility_attestation,
+    [],
+    tmp,
+)
+if missing_status != "fail" or "missing recoveryCompatibility" not in missing_message:
+    raise SystemExit(f"missing recoveryCompatibility did not fail closed: {missing_message}")
+
+for compatibility_status in ("drill_required", "incompatible"):
+    status_attestation = write_json(
+        f"{compatibility_status}-attestation.json",
+        {
+            "environment": "staging",
+            "generatedAt": past_timestamp,
+            "rollbackMode": "rollback-compatible",
+            "recoveryCompatibility": compatibility_result(compatibility_status),
+        },
+    )
+    promotion_status, _, promotion_message = module.promotion_check(status_attestation, [], tmp)
+    if promotion_status != "fail" or "compatibilityStatus blocks promotion" not in promotion_message:
+        raise SystemExit(
+            f"{compatibility_status} recoveryCompatibility did not fail closed: {promotion_message}"
+        )
+
+legacy_attestation = write_json(
+    "legacy-roll-forward-attestation.json",
+    {
+        "environment": "staging",
+        "generatedAt": past_timestamp,
+        "rollbackMode": "roll-forward-only",
+        "serviceDigests": {"account-service": "ghcr.io/firemud/account-service@sha256:candidate"},
+        "recoveryCompatibility": {
+            **compatibility_result("compatible"),
+            "newDrillRequired": True,
+            "backupReadinessRef": "legacy-roll-forward-readiness.json",
+        },
+    },
+)
+legacy_readiness = write_json(
+    "legacy-roll-forward-readiness.json",
+    {
+        "environment": "production",
+        "deploymentRef": "contract-roll-forward",
+        "rollbackMode": "roll-forward-only",
+        "promotionAttestationRef": legacy_attestation.name,
+        "restorePlanRef": "legacy-restore-plan",
+        "evidenceRefs": ["legacy-evidence"],
+        "backupLastSuccessAt": past_timestamp,
+        "backupVerifyLastSuccessAt": past_timestamp,
+        "restoreDrillLastSuccessAt": past_timestamp,
+        "serviceDigests": {"account-service": "ghcr.io/firemud/account-service@sha256:candidate"},
+    },
+)
+legacy_status, legacy_message = module.backup_readiness_check(
+    legacy_readiness,
+    now.isoformat().replace("+00:00", "Z"),
+    "contract-roll-forward",
+    tmp,
+)
+if legacy_status != "fail" or "required target-state fields" not in legacy_message:
+    raise SystemExit(f"incomplete legacy roll-forward evidence did not fail closed: {legacy_message}")
+
+future_attestation = write_json(
+    "future-roll-forward-attestation.json",
+    {
+        "environment": "staging",
+        "generatedAt": past_timestamp,
+        "rollbackMode": "roll-forward-only",
+        "serviceDigests": {"account-service": "ghcr.io/firemud/account-service@sha256:candidate"},
+        "recoveryCompatibility": {
+            **compatibility_result("compatible"),
+            "newDrillRequired": True,
+            "backupReadinessRef": "future-roll-forward-readiness.json",
+        },
+    },
+)
+future_readiness = write_json(
+    "future-roll-forward-readiness.json",
+    {
+        "environment": "production",
+        "deploymentRef": "contract-roll-forward",
+        "promotionAttestationRef": future_attestation.name,
+        "assessedAt": past_timestamp,
+        "assessedBy": "preflight-contract",
+        "rollbackMode": "roll-forward-only",
+        "backupLastSuccessAt": future_timestamp,
+        "backupVerifyLastSuccessAt": past_timestamp,
+        "restoreDrillLastSuccessAt": past_timestamp,
+        "restorePlanRef": "restore-plan",
+        "restoreRecoveryRecordRef": "recovery/restore.json",
+        "recoveryControllerLineage": {"recoveryStatus": "finalized"},
+        "backupConfidentialityEvidence": {"status": "pass"},
+        "backupCoverage": "environment-wide-postgresql",
+        "backupArtifactRef": "backups/artifact",
+        "artifactErasureHighWater": {"stream": "erasures", "sequence": 1},
+        "sourceServiceDigests": {"account-service": "ghcr.io/firemud/account-service@sha256:source"},
+        "candidateServiceDigests": {"account-service": "ghcr.io/firemud/account-service@sha256:candidate"},
+        "candidateMigrationPathRef": "migrations/candidate",
+        "backupToolDigest": "sha256:backup-tool",
+        "recoveryToolDigest": "sha256:recovery-tool",
+        "recoveryContractFingerprint": "sha256:recovery-contract",
+        "evidenceRefs": ["contract-evidence"],
+    },
+)
+future_status, future_message = module.backup_readiness_check(
+    future_readiness,
+    now.isoformat().replace("+00:00", "Z"),
+    "contract-roll-forward",
+    tmp,
+)
+if future_status != "fail" or "future-dated timestamps" not in future_message:
+    raise SystemExit(f"future-dated backup readiness did not fail closed: {future_message}")
+
+blocked_attestation = write_json(
+    "blocked-roll-forward-attestation.json",
+    {
+        "environment": "staging",
+        "generatedAt": past_timestamp,
+        "rollbackMode": "roll-forward-only",
+        "serviceDigests": {"account-service": "ghcr.io/firemud/account-service@sha256:candidate"},
+        "recoveryCompatibility": {
+            **compatibility_result("compatible"),
+            "newDrillRequired": True,
+            "backupReadinessRef": "blocked-roll-forward-readiness.json",
+        },
+    },
+)
+blocked_readiness = write_json(
+    "blocked-roll-forward-readiness.json",
+    {
+        **json.loads(future_readiness.read_text(encoding="utf-8")),
+        "promotionAttestationRef": blocked_attestation.name,
+        "backupLastSuccessAt": past_timestamp,
+    },
+)
+blocked_status, blocked_message = module.backup_readiness_check(
+    blocked_readiness,
+    now.isoformat().replace("+00:00", "Z"),
+    "contract-roll-forward",
+    tmp,
+)
+if blocked_status != "fail" or "remains blocked until canonical recovery-controller" not in blocked_message:
+    raise SystemExit(f"incomplete nested roll-forward validation did not fail closed: {blocked_message}")
 PY
 
 echo "preflight contract checks passed"

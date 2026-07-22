@@ -19,6 +19,18 @@ Example alerts for missed backups and verification runs:
     summary: PostgreSQL backups have not succeeded recently
     description: No successful pg_dump backup has been recorded in the last 90 minutes. Investigate backup Jobs and storage endpoints.
 
+- alert: BackupLastSuccessMetricsAbsent
+  expr: absent(backup_last_success_timestamp_seconds)
+  for: 5m
+  labels:
+    service: postgres-backup
+    severity: P1
+    owner: infra
+    runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
+  annotations:
+    summary: Backup success-timestamp metrics are absent
+    description: No backup_last_success_timestamp_seconds series are present. This is a global monitoring gap; keep backup-readiness decisions blocked until the source is restored.
+
 - alert: BackupPipelineNoRecentVerification
   expr: backup_pipeline_recent_verification_slo_breached > 0
   for: 30m
@@ -31,6 +43,18 @@ Example alerts for missed backups and verification runs:
     summary: Backup verification has not succeeded recently
     description: No successful backup verification run has been recorded in the last 24 hours. Investigate the verify-backups CronJob and storage configuration.
 
+- alert: BackupVerificationLastSuccessMetricsAbsent
+  expr: absent(backup_verify_last_success_timestamp_seconds)
+  for: 5m
+  labels:
+    service: postgres-backup
+    severity: P1
+    owner: infra
+    runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
+  annotations:
+    summary: Backup verification success-timestamp metrics are absent
+    description: No backup_verify_last_success_timestamp_seconds series are present. This is a global monitoring gap; keep backup-readiness decisions blocked until the source is restored.
+
 - alert: BackupPipelineNoRecentRestoreDrill
   expr: backup_pipeline_recent_restore_drill_slo_breached > 0
   for: 30m
@@ -42,6 +66,18 @@ Example alerts for missed backups and verification runs:
   annotations:
     summary: Restore drill proof is stale
     description: No successful restore drill has been recorded within the required restore-proof freshness window. Investigate drill cadence and recovery evidence before traffic reopen decisions.
+
+- alert: BackupRestoreDrillLastSuccessMetricsAbsent
+  expr: absent(backup_restore_drill_last_success_timestamp_seconds)
+  for: 5m
+  labels:
+    service: postgres-backup
+    severity: P1
+    owner: infra
+    runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
+  annotations:
+    summary: Restore-drill success-timestamp metrics are absent
+    description: No backup_restore_drill_last_success_timestamp_seconds series are present. This is a global monitoring gap; keep recovery-readiness decisions blocked until the source is restored.
 
 - alert: BackupArtifactLineageInvalid
   expr: backup_artifact_lineage_invalid > 0

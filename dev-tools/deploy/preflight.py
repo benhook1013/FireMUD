@@ -45,6 +45,34 @@ NON_WAIVABLE_READINESS_GATES = {
     "PREFLIGHT-BACKUP-002",
 }
 
+RECOVERY_COMPATIBILITY_STATUSES = {"compatible", "drill_required", "incompatible"}
+
+BACKUP_READINESS_REQUIRED_FIELDS = (
+    "environment",
+    "deploymentRef",
+    "promotionAttestationRef",
+    "assessedAt",
+    "assessedBy",
+    "rollbackMode",
+    "backupLastSuccessAt",
+    "backupVerifyLastSuccessAt",
+    "restoreDrillLastSuccessAt",
+    "restorePlanRef",
+    "restoreRecoveryRecordRef",
+    "recoveryControllerLineage",
+    "backupConfidentialityEvidence",
+    "backupCoverage",
+    "backupArtifactRef",
+    "artifactErasureHighWater",
+    "sourceServiceDigests",
+    "candidateServiceDigests",
+    "candidateMigrationPathRef",
+    "backupToolDigest",
+    "recoveryToolDigest",
+    "recoveryContractFingerprint",
+    "evidenceRefs",
+)
+
 
 def fail(message: str) -> "NoReturn":
     print(message, file=sys.stderr)
@@ -72,6 +100,50 @@ def repo_root() -> Path:
 
 def utc_now() -> str:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def parse_timestamp(value: Any, field_name: str) -> dt.datetime:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"missing {field_name}")
+    parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError(f"{field_name} must include a timezone")
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def validate_recovery_baseline(
+    root_dir: Path,
+    baseline_ref: str,
+    expected_fingerprint: str,
+    evaluated_at: dt.datetime,
+) -> tuple[str, str]:
+    baseline_path = resolve_repo_path(root_dir, baseline_ref)
+    if not baseline_path.exists():
+        return ("fail", f"Recovery compatibility baseline record not found: {baseline_ref}")
+    try:
+        baseline = load_json(baseline_path)
+    except Exception as exc:
+        return ("fail", f"Recovery compatibility baseline record unreadable: {exc}")
+    expected_values = {
+        "environment": "production",
+        "recoveryStatus": "finalized",
+        "recoveryPurpose": "production-equivalent-drill",
+        "trafficExposure": "isolated-drill",
+        "coordinationRecoveryMode": "cold_start_restore",
+        "recoveryContractFingerprint": expected_fingerprint,
+    }
+    for field, expected in expected_values.items():
+        if baseline.get(field) != expected:
+            return ("fail", f"Recovery compatibility baseline {field} must be {expected}")
+    try:
+        finalized_at = parse_timestamp(baseline.get("finalizedAt"), "Recovery compatibility baseline finalizedAt")
+    except Exception as exc:
+        return ("fail", str(exc))
+    if finalized_at > evaluated_at:
+        return ("fail", "Recovery compatibility baseline finalizedAt is later than evaluatedAt")
+    if (evaluated_at - finalized_at).total_seconds() > 30 * 24 * 60 * 60:
+        return ("fail", "Recovery compatibility baseline finalized drill is older than 30 days")
+    return ("pass", "Recovery compatibility baseline is valid")
 
 
 def load_yaml(path: Path) -> Any:
@@ -949,6 +1021,77 @@ def promotion_check(attestation_path: Path, images: list[str], root_dir: Path) -
     if rollback_mode not in {"rollback-compatible", "roll-forward-only"}:
         return ("fail", "unknown", "Attestation rollbackMode is missing or invalid")
 
+    try:
+        generated_at = parse_timestamp(att.get("generatedAt"), "Attestation generatedAt")
+    except Exception as exc:
+        return ("fail", rollback_mode, str(exc))
+    now_dt = dt.datetime.now(dt.timezone.utc)
+    if generated_at > now_dt:
+        return ("fail", rollback_mode, "Attestation generatedAt is future-dated")
+
+    recovery_compatibility = att.get("recoveryCompatibility")
+    if not isinstance(recovery_compatibility, dict):
+        return ("fail", rollback_mode, "Attestation missing recoveryCompatibility result")
+    compatibility_status = recovery_compatibility.get("compatibilityStatus")
+    if compatibility_status not in RECOVERY_COMPATIBILITY_STATUSES:
+        return ("fail", rollback_mode, "Attestation recoveryCompatibility compatibilityStatus is missing or invalid")
+    required_compatibility_fields = (
+        "baselineRecoveryRecordRef",
+        "baselineRecoveryContractFingerprint",
+        "candidateRecoveryContractFingerprint",
+        "compatibilityRationale",
+        "evaluatedAt",
+        "evaluatorToolDigest",
+    )
+    missing_compatibility_fields = [
+        field
+        for field in required_compatibility_fields
+        if not recovery_compatibility.get(field)
+    ]
+    if missing_compatibility_fields:
+        return (
+            "fail",
+            rollback_mode,
+            "Attestation recoveryCompatibility missing required fields: "
+            + ", ".join(missing_compatibility_fields),
+        )
+    if not isinstance(recovery_compatibility.get("changedDimensions"), list):
+        return ("fail", rollback_mode, "Attestation recoveryCompatibility changedDimensions must be a list")
+    if not isinstance(recovery_compatibility.get("newDrillRequired"), bool):
+        return ("fail", rollback_mode, "Attestation recoveryCompatibility newDrillRequired must be a boolean")
+    try:
+        evaluated_at = parse_timestamp(recovery_compatibility.get("evaluatedAt"), "recoveryCompatibility.evaluatedAt")
+    except Exception as exc:
+        return ("fail", rollback_mode, str(exc))
+    if evaluated_at > now_dt:
+        return ("fail", rollback_mode, "recoveryCompatibility.evaluatedAt is future-dated")
+    if compatibility_status != "compatible":
+        return (
+            "fail",
+            rollback_mode,
+            "Attestation recoveryCompatibility compatibilityStatus blocks promotion: " + str(compatibility_status),
+        )
+    if rollback_mode == "roll-forward-only":
+        if recovery_compatibility.get("newDrillRequired") is not True:
+            return ("fail", rollback_mode, "roll-forward-only attestation must set recoveryCompatibility.newDrillRequired")
+        if not recovery_compatibility.get("backupReadinessRef"):
+            return ("fail", rollback_mode, "roll-forward-only attestation missing recoveryCompatibility.backupReadinessRef")
+    elif recovery_compatibility.get("newDrillRequired") is True:
+        return ("fail", rollback_mode, "rollback-compatible attestation cannot require a new recovery drill")
+    elif recovery_compatibility.get("changedDimensions"):
+        return ("fail", rollback_mode, "rollback-compatible attestation cannot declare changed recovery dimensions")
+    elif recovery_compatibility.get("baselineRecoveryContractFingerprint") != recovery_compatibility.get("candidateRecoveryContractFingerprint"):
+        return ("fail", rollback_mode, "rollback-compatible attestation recovery-contract fingerprint changed")
+    else:
+        baseline_status, baseline_message = validate_recovery_baseline(
+            root_dir,
+            str(recovery_compatibility["baselineRecoveryRecordRef"]),
+            str(recovery_compatibility["baselineRecoveryContractFingerprint"]),
+            evaluated_at,
+        )
+        if baseline_status != "pass":
+            return ("fail", rollback_mode, baseline_message)
+
     service_digests = att.get("serviceDigests", {})
     for image in images:
         name = image.split("/")[-1].split("@")[0].split(":")[0]
@@ -970,6 +1113,15 @@ def promotion_check(attestation_path: Path, images: list[str], root_dir: Path) -
         record = load_json(record_path)
     except Exception as exc:
         return ("fail", rollback_mode, f"Staging deployment record unreadable: {exc}")
+
+    for field in ("appliedAt", "secretComplianceSnapshotAt"):
+        if field in record:
+            try:
+                record_timestamp = parse_timestamp(record.get(field), f"Staging deployment record {field}")
+            except Exception as exc:
+                return ("fail", rollback_mode, str(exc))
+            if record_timestamp > now_dt:
+                return ("fail", rollback_mode, f"Staging deployment record {field} is future-dated")
 
     if record.get("environment") != "staging":
         return ("fail", rollback_mode, "Staging deployment record has wrong environment")
@@ -1075,38 +1227,50 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
         return ("fail", "Backup-readiness evidence must target production")
     if data.get("rollbackMode") != "roll-forward-only":
         return ("fail", "Backup-readiness evidence rollbackMode must be roll-forward-only")
-    if not data.get("deploymentRef"):
-        return ("fail", "Backup-readiness evidence missing deploymentRef")
+    missing_fields = [
+        field
+        for field in BACKUP_READINESS_REQUIRED_FIELDS
+        if field not in data or data[field] in (None, "", [], {})
+    ]
+    if missing_fields:
+        return ("fail", "Backup-readiness evidence missing required target-state fields: " + ", ".join(missing_fields))
     if deployment_ref and str(data.get("deploymentRef")) != str(deployment_ref):
         return ("fail", "Backup-readiness evidence deploymentRef does not match the current deployment")
     attestation_ref = str(data.get("promotionAttestationRef", ""))
-    if not attestation_ref:
-        return ("fail", "Backup-readiness evidence missing promotionAttestationRef")
     attestation_path = (root_dir / attestation_ref).resolve()
     if not attestation_path.exists():
         return ("fail", "Backup-readiness evidence references missing promotionAttestationRef")
-    if not data.get("restorePlanRef"):
-        return ("fail", "Backup-readiness evidence missing restorePlanRef")
-    if not data.get("evidenceRefs"):
-        return ("fail", "Backup-readiness evidence missing evidenceRefs")
-    service_digests = data.get("serviceDigests")
-    if not isinstance(service_digests, dict) or not service_digests:
-        return ("fail", "Backup-readiness evidence missing serviceDigests")
 
-    def parse_ts(name: str) -> dt.datetime:
-        value = data.get(name)
-        if not value:
-            raise ValueError(f"missing {name}")
-        return dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if not isinstance(data.get("evidenceRefs"), list) or not data["evidenceRefs"]:
+        return ("fail", "Backup-readiness evidence evidenceRefs must be a non-empty list")
+    if data.get("backupCoverage") != "environment-wide-postgresql":
+        return ("fail", "Backup-readiness evidence backupCoverage must be environment-wide-postgresql")
+    if not isinstance(data.get("sourceServiceDigests"), dict) or not data["sourceServiceDigests"]:
+        return ("fail", "Backup-readiness evidence sourceServiceDigests must be a non-empty object")
+    if not isinstance(data.get("candidateServiceDigests"), dict) or not data["candidateServiceDigests"]:
+        return ("fail", "Backup-readiness evidence candidateServiceDigests must be a non-empty object")
 
     try:
-        now_dt = dt.datetime.fromisoformat(now.replace("Z", "+00:00"))
-        backup_ts = parse_ts("backupLastSuccessAt")
-        verify_ts = parse_ts("backupVerifyLastSuccessAt")
-        drill_ts = parse_ts("restoreDrillLastSuccessAt")
+        now_dt = parse_timestamp(now, "current time")
+        evidence_timestamps = {
+            name: parse_timestamp(data.get(name), name)
+            for name in (
+                "assessedAt",
+                "backupLastSuccessAt",
+                "backupVerifyLastSuccessAt",
+                "restoreDrillLastSuccessAt",
+            )
+        }
     except Exception as exc:
         return ("fail", str(exc))
 
+    future_timestamps = [name for name, timestamp in evidence_timestamps.items() if timestamp > now_dt]
+    if future_timestamps:
+        return ("fail", "Backup-readiness evidence contains future-dated timestamps: " + ", ".join(future_timestamps))
+
+    backup_ts = evidence_timestamps["backupLastSuccessAt"]
+    verify_ts = evidence_timestamps["backupVerifyLastSuccessAt"]
+    drill_ts = evidence_timestamps["restoreDrillLastSuccessAt"]
     if (now_dt - backup_ts).total_seconds() > 90 * 60:
         return ("fail", "Backup-readiness evidence is stale: backupLastSuccessAt older than 90 minutes")
     if (now_dt - verify_ts).total_seconds() > 36 * 60 * 60:
@@ -1120,10 +1284,26 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
         return ("fail", f"Backup-readiness attestation unreadable: {exc}")
     if attestation.get("rollbackMode") != "roll-forward-only":
         return ("fail", "Backup-readiness evidence does not match a roll-forward-only attestation")
-    if attestation.get("serviceDigests") != service_digests:
-        return ("fail", "Backup-readiness evidence serviceDigests do not match the attestation")
+    recovery_compatibility = attestation.get("recoveryCompatibility")
+    if not isinstance(recovery_compatibility, dict) or recovery_compatibility.get("compatibilityStatus") != "compatible":
+        return ("fail", "Backup-readiness evidence references an attestation without a compatible recoveryCompatibility result")
+    if recovery_compatibility.get("newDrillRequired") is not True:
+        return ("fail", "roll-forward-only backup-readiness evidence requires recoveryCompatibility.newDrillRequired")
+    if not recovery_compatibility.get("backupReadinessRef"):
+        return ("fail", "roll-forward-only backup-readiness evidence missing recoveryCompatibility.backupReadinessRef")
+    referenced_readiness_path = (root_dir / str(recovery_compatibility["backupReadinessRef"])).resolve()
+    if referenced_readiness_path != path.resolve():
+        return ("fail", "Backup-readiness evidence does not match recoveryCompatibility.backupReadinessRef")
+    if attestation.get("serviceDigests") != data.get("candidateServiceDigests"):
+        return ("fail", "Backup-readiness evidence candidateServiceDigests do not match the attestation")
+    if data.get("recoveryContractFingerprint") != recovery_compatibility.get("candidateRecoveryContractFingerprint"):
+        return ("fail", "Backup-readiness evidence recoveryContractFingerprint does not match the attestation")
 
-    return ("pass", "Backup-readiness evidence is valid for roll-forward-only promotion")
+    return (
+        "fail",
+        "Roll-forward-only promotion remains blocked until canonical recovery-controller, "
+        "participant, confidentiality, hardening, and controlled-reopen evidence validation is implemented",
+    )
 
 
 def production_traffic_check() -> tuple[str, str]:
