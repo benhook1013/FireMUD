@@ -400,7 +400,10 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
               worldStub.endpoint(),
               entityStub.endpoint(),
               socialStub == null ? null : socialStub.endpoint(),
-              props -> props.putAll(gameLogicProps),
+              props -> {
+                props.put("firemud.services.gameDesignService", gameDesignStub.endpoint());
+                props.putAll(gameLogicProps);
+              },
               gameLogicConfigs);
 
       CrossServiceAppHarness.GameSessionHolder gameSession =
