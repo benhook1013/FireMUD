@@ -33,8 +33,7 @@ final class AutomationGameplayCommandAdmissionSupport {
 
     Optional<GameplayCommand> existing = findExistingCommand(request, gameplayCommandRepository);
     if (existing.isPresent()) {
-      return new AdmissionResult(
-          true, "DUPLICATE_NOOP", existing.orElseThrow().getCommandId(), null, null);
+      return existingAdmissionResult(existing.orElseThrow());
     }
 
     Optional<AdmissionResult> rejected =
@@ -63,7 +62,21 @@ final class AutomationGameplayCommandAdmissionSupport {
           command, "QUEUE_UNAVAILABLE", ex.getMessage(), gameplayCommandRepository);
       return new AdmissionResult(
           false, "REJECTED", command.getCommandId(), "UNAVAILABLE", ex.getMessage());
+    } catch (RuntimeException ex) {
+      String message = "Gameplay command queue unavailable";
+      markAutomationFailed(command, "QUEUE_UNAVAILABLE", message, gameplayCommandRepository);
+      return new AdmissionResult(false, "REJECTED", command.getCommandId(), "UNAVAILABLE", message);
     }
+  }
+
+  private static AdmissionResult existingAdmissionResult(GameplayCommand command) {
+    if ("FAILED".equals(command.getExecutionOutcome())) {
+      String failureCode = command.getFailureCode();
+      String errorCode = "QUEUE_UNAVAILABLE".equals(failureCode) ? "UNAVAILABLE" : failureCode;
+      return new AdmissionResult(
+          false, "REJECTED", command.getCommandId(), errorCode, command.getFailureMessage());
+    }
+    return new AdmissionResult(true, "DUPLICATE_NOOP", command.getCommandId(), null, null);
   }
 
   private static void validate(AdmissionRequest request) {

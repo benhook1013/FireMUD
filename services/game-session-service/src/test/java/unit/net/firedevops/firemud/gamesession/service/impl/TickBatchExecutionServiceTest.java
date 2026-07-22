@@ -29,6 +29,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.ListOperations;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 class TickBatchExecutionServiceTest {
   private SimpleMeterRegistry meterRegistry;
@@ -83,6 +84,7 @@ class TickBatchExecutionServiceTest {
     TickQueueControlService tickQueueControlService =
         new TickQueueControlService(
             redisTemplate,
+            mock(StringRedisTemplate.class),
             gameInstanceRepository,
             gameplayCommandRepository,
             runtimeRegionStatusRepository,

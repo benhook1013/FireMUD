@@ -37,14 +37,17 @@ import org.mockito.ArgumentCaptor;
 import org.slf4j.Logger;
 import org.springframework.data.redis.core.ListOperations;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class TickQueueControlServiceTest {
   private RedisTemplate<String, Object> redisTemplate;
+  private StringRedisTemplate lockRedisTemplate;
   private ListOperations<String, Object> listOps;
   private ValueOperations<String, Object> valueOps;
+  private ValueOperations<String, String> lockValueOps;
   private GameInstanceRepository gameInstanceRepository;
   private GameplayCommandRepository gameplayCommandRepository;
   private RuntimeRegionStatusRepository runtimeRegionStatusRepository;
@@ -56,12 +59,15 @@ class TickQueueControlServiceTest {
   @SuppressWarnings("unchecked")
   void setup() {
     redisTemplate = mock(RedisTemplate.class);
+    lockRedisTemplate = mock(StringRedisTemplate.class);
     listOps = mock(ListOperations.class);
     valueOps = mock(ValueOperations.class);
+    lockValueOps = mock(ValueOperations.class);
     when(redisTemplate.opsForList()).thenReturn(listOps);
     when(redisTemplate.opsForValue()).thenReturn(valueOps);
-    when(redisTemplate.execute(any(), any(), any(Object[].class))).thenReturn(1L);
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockRedisTemplate.opsForValue()).thenReturn(lockValueOps);
+    when(lockRedisTemplate.execute(any(), any(), any(Object[].class))).thenReturn(1L);
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     gameInstanceRepository = mock(GameInstanceRepository.class);
     gameplayCommandRepository = mock(GameplayCommandRepository.class);
@@ -92,6 +98,7 @@ class TickQueueControlServiceTest {
     service =
         new TickQueueControlService(
             redisTemplate,
+            lockRedisTemplate,
             gameInstanceRepository,
             gameplayCommandRepository,
             runtimeRegionStatusRepository,
@@ -107,6 +114,18 @@ class TickQueueControlServiceTest {
 
     verify(listOps).rightPush("gamesession:tick:queue:1:2", "N|cmd-123|look");
     verify(gameplayCommandRepository).markAcceptedCommandStaged(any(), any());
+  }
+
+  @Test
+  void leaseRenewalUsesJavaTtlValue() {
+    service.enqueueCommand(1L, 2L, "cmd-ttl", "look", false);
+
+    ArgumentCaptor<Object[]> arguments = ArgumentCaptor.forClass(Object[].class);
+    verify(lockRedisTemplate, org.mockito.Mockito.atLeastOnce())
+        .execute(any(), org.mockito.ArgumentMatchers.<String>anyList(), arguments.capture());
+    assertTrue(
+        arguments.getAllValues().stream()
+            .anyMatch(values -> values.length == 2 && "30000".equals(values[1])));
   }
 
   @Test
@@ -144,7 +163,7 @@ class TickQueueControlServiceTest {
     TransactionSynchronizationManager.initSynchronization();
     try {
       service.enqueueCommand(1L, 2L, "cmd-lease-loss", "look", false);
-      when(redisTemplate.execute(any(), any(), any(Object[].class))).thenReturn(0L);
+      when(lockRedisTemplate.execute(any(), any(), any(Object[].class))).thenReturn(0L);
 
       assertThrows(
           TickQueueControlService.QueueUnavailableException.class,
@@ -311,7 +330,7 @@ class TickQueueControlServiceTest {
 
   @Test
   void purgeFailsWhenQueueLockCannotBeAcquired() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(false);
 
     Thread.currentThread().interrupt();

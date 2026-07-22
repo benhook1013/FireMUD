@@ -27,6 +27,7 @@ import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -46,6 +47,7 @@ public class TickQueueControlService {
       RedisScript.of(new ClassPathResource("redis/tick_renew_if_owned.lua"), Long.class);
 
   private final RedisTemplate<String, Object> redisTemplate;
+  private final StringRedisTemplate lockRedisTemplate;
   private final GameInstanceRepository gameInstanceRepository;
   private final GameplayCommandRepository gameplayCommandRepository;
   private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
@@ -58,6 +60,7 @@ public class TickQueueControlService {
 
   TickQueueControlService(
       RedisTemplate<String, Object> redisTemplate,
+      StringRedisTemplate lockRedisTemplate,
       GameInstanceRepository gameInstanceRepository,
       GameplayCommandRepository gameplayCommandRepository,
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
@@ -65,6 +68,7 @@ public class TickQueueControlService {
       SessionAuthenticationService sessionAuthenticationService,
       @Qualifier("queueLockRenewalExecutor") ScheduledExecutorService queueLockRenewalExecutor) {
     this.redisTemplate = redisTemplate;
+    this.lockRedisTemplate = lockRedisTemplate;
     this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayCommandRepository = gameplayCommandRepository;
     this.runtimeRegionStatusRepository = runtimeRegionStatusRepository;
@@ -354,7 +358,7 @@ public class TickQueueControlService {
   private Optional<QueueLockLease> tryAcquireLease(
       String key, String purpose, Logger contentionLogger) {
     String token = UUID.randomUUID().toString();
-    Boolean acquired = redisTemplate.opsForValue().setIfAbsent(key, token, QUEUE_LOCK_TTL);
+    Boolean acquired = lockRedisTemplate.opsForValue().setIfAbsent(key, token, QUEUE_LOCK_TTL);
     if (!Boolean.TRUE.equals(acquired)) {
       if (contentionLogger != null) {
         contentionLogger.debug("Could not acquire {} lock {}", purpose, key);
@@ -553,7 +557,12 @@ public class TickQueueControlService {
         return false;
       }
       try {
-        Long renewed = redisTemplate.execute(RENEW_IF_OWNED_SCRIPT, List.of(key), token);
+        Long renewed =
+            lockRedisTemplate.execute(
+                RENEW_IF_OWNED_SCRIPT,
+                List.of(key),
+                token,
+                String.valueOf(QUEUE_LOCK_TTL.toMillis()));
         if (renewed == null || renewed != 1L) {
           lost.set(true);
           classLogger.error("Lost {} lock {} during renewal", purpose, key);
@@ -581,7 +590,7 @@ public class TickQueueControlService {
 
   private void releaseLease(String key, String token, String purpose) {
     try {
-      redisTemplate.execute(UNLOCK_IF_OWNED_SCRIPT, List.of(key), token);
+      lockRedisTemplate.execute(UNLOCK_IF_OWNED_SCRIPT, List.of(key), token);
     } catch (RuntimeException releaseFailure) {
       classLogger.warn("Failed to release {} lock {}", purpose, key, releaseFailure);
     }

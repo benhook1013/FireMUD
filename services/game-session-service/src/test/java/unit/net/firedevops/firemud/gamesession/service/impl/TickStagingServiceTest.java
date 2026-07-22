@@ -32,6 +32,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 class TickStagingServiceTest {
   private RedisTemplate<String, Object> redisTemplate;
@@ -71,6 +72,7 @@ class TickStagingServiceTest {
     TickQueueControlService tickQueueControlService =
         new TickQueueControlService(
             redisTemplate,
+            mock(StringRedisTemplate.class),
             mock(GameInstanceRepository.class),
             gameplayCommandRepository,
             runtimeRegionStatusRepository,

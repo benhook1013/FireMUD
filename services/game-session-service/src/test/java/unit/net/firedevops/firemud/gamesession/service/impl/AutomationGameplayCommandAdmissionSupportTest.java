@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -17,9 +19,82 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.TickService;
+import net.firedevops.firemud.gamesession.service.impl.AutomationGameplayCommandAdmissionSupport.AdmissionRequest;
+import net.firedevops.firemud.gamesession.service.impl.AutomationGameplayCommandAdmissionSupport.AdmissionResult;
 import org.junit.jupiter.api.Test;
 
 class AutomationGameplayCommandAdmissionSupportTest {
+  @Test
+  void terminalizesUnexpectedQueueFailureAndReturnsSameRejectionOnRetry() {
+    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    TickService tickService = mock(TickService.class);
+
+    GameInstance instance = new GameInstance();
+    instance.setId(2L);
+    instance.setTenantId(1L);
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
+
+    GameplayCommand failed = new GameplayCommand();
+    failed.setCommandId("auto-failed");
+    failed.setExecutionOutcome("FAILED");
+    failed.setFailureCode("QUEUE_UNAVAILABLE");
+    failed.setFailureMessage("Gameplay command queue unavailable");
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                1L, 2L, "region-alpha", 7L, "dispatch-1"))
+        .thenReturn(Optional.empty(), Optional.of(failed));
+    when(gameplayCommandRepository.save(any()))
+        .thenAnswer(
+            invocation -> {
+              GameplayCommand command = invocation.getArgument(0);
+              command.setCommandId("auto-failed");
+              return command;
+            });
+    when(gameplayCommandRepository.markAcceptedCommandFailed(any(), any(), any(), any()))
+        .thenReturn(true);
+
+    RuntimeRegionStatus ownership = new RuntimeRegionStatus();
+    ownership.setTenantId(1L);
+    ownership.setGameInstanceId(2L);
+    ownership.setRegionId("region-alpha");
+    ownership.setRegionEpoch(7L);
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-alpha"))
+        .thenReturn(Optional.of(ownership));
+    doThrow(new IllegalStateException("redis connection failed"))
+        .when(tickService)
+        .enqueueCommand(1L, 2L, "auto-failed", "say hello", false);
+
+    AdmissionRequest request = automationRequest();
+    AdmissionResult first =
+        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+            request,
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            tickService);
+    AdmissionResult retry =
+        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+            request,
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            tickService);
+
+    assertFalse(first.accepted());
+    assertEquals("REJECTED", first.admissionOutcome());
+    assertEquals("UNAVAILABLE", first.errorCode());
+    assertEquals(first, retry);
+    verify(gameplayCommandRepository)
+        .markAcceptedCommandFailed(
+            eq("auto-failed"),
+            eq("QUEUE_UNAVAILABLE"),
+            eq("Gameplay command queue unavailable"),
+            org.mockito.ArgumentMatchers.any());
+  }
+
   @Test
   void acceptsAutomationCommandWithMalformedTargetEntityAndLeavesCharacterIdUnset() {
     GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
@@ -259,5 +334,35 @@ class AutomationGameplayCommandAdmissionSupportTest {
     assertEquals("OWNERSHIP_UNAVAILABLE", result.admissionOutcome());
     assertEquals("runtime_ownership_not_found", result.errorCode());
     verify(runtimeRegionStatusRepository).findByTenantIdAndRegionId(1L, "region-alpha");
+  }
+
+  private static AdmissionRequest automationRequest() {
+    return new AdmissionRequest(
+        1L,
+        2L,
+        "region-alpha",
+        7L,
+        "AUTOMATION",
+        "dispatch-1",
+        "work-item-1",
+        "script-1",
+        "patch-1",
+        "plugin-1",
+        "plugin-v1",
+        "SHARED",
+        "demo",
+        "production",
+        17L,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "npc-alpha",
+        null,
+        null,
+        "say hello",
+        false,
+        null);
   }
 }
