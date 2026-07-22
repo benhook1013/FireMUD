@@ -100,7 +100,8 @@ class TickStagingServiceTest {
             mock(DurableRemoteFollowupExecutionService.class),
             remoteFollowupDrainService,
             tickQueueControlService,
-            gameplayCommandExecutionFenceService);
+            gameplayCommandExecutionFenceService,
+            new ImmediateTransactionOperations());
     service =
         new TickStagingService(
             redisTemplate,

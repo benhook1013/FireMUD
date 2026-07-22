@@ -19,8 +19,12 @@ import net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutio
 import net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecutionService;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService;
 import org.slf4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionOperations;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 final class TickBatchExecutionService {
@@ -36,6 +40,34 @@ final class TickBatchExecutionService {
   private final RemoteFollowupDrainService remoteFollowupDrainService;
   private final TickQueueControlService tickQueueControlService;
   private final GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService;
+  private final TransactionOperations transactionOperations;
+
+  @Autowired
+  TickBatchExecutionService(
+      MeterRegistry meterRegistry,
+      RedisTemplate<String, Object> redisTemplate,
+      GameplayCommandRepository gameplayCommandRepository,
+      TickBatchRepository tickBatchRepository,
+      TickEffectRepository tickEffectRepository,
+      DurableGameplayCommandExecutionService durableGameplayCommandExecutionService,
+      DurableRemoteFollowupExecutionService durableRemoteFollowupExecutionService,
+      RemoteFollowupDrainService remoteFollowupDrainService,
+      TickQueueControlService tickQueueControlService,
+      GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService,
+      PlatformTransactionManager transactionManager) {
+    this(
+        meterRegistry,
+        redisTemplate,
+        gameplayCommandRepository,
+        tickBatchRepository,
+        tickEffectRepository,
+        durableGameplayCommandExecutionService,
+        durableRemoteFollowupExecutionService,
+        remoteFollowupDrainService,
+        tickQueueControlService,
+        gameplayCommandExecutionFenceService,
+        new TransactionTemplate(transactionManager));
+  }
 
   TickBatchExecutionService(
       MeterRegistry meterRegistry,
@@ -47,7 +79,8 @@ final class TickBatchExecutionService {
       DurableRemoteFollowupExecutionService durableRemoteFollowupExecutionService,
       RemoteFollowupDrainService remoteFollowupDrainService,
       TickQueueControlService tickQueueControlService,
-      GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService) {
+      GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService,
+      TransactionOperations transactionOperations) {
     this.meterRegistry = meterRegistry;
     this.redisTemplate = redisTemplate;
     this.gameplayCommandRepository = gameplayCommandRepository;
@@ -58,6 +91,7 @@ final class TickBatchExecutionService {
     this.remoteFollowupDrainService = remoteFollowupDrainService;
     this.tickQueueControlService = tickQueueControlService;
     this.gameplayCommandExecutionFenceService = gameplayCommandExecutionFenceService;
+    this.transactionOperations = transactionOperations;
   }
 
   void restorePendingProjection(
@@ -124,16 +158,15 @@ final class TickBatchExecutionService {
   }
 
   void markBatchDrained(TickBatch batch, List<TickQueuedCommandEnvelope> entries) {
+    BatchDrainState originalState = BatchDrainState.capture(batch);
     Instant now = Instant.now();
-    RuntimeRegionStatus ownership =
-        requireCurrentOwnership(batch, false).orElseThrow(IllegalStateException::new);
-    batch.setStatus("DRAINED");
-    batch.setCompletedAt(now);
-    tickBatchRepository.save(batch);
-    updateEffectStatuses(batch.getTickBatchId(), "DRAINED", now, null, null);
-    updateGameplayCommands(entries, "DRAINED", "PENDING", now, null, null, false);
-    ownership.setUpdatedAt(now);
-    tickQueueControlService.commitDrainedBatch(ownership, batch.getTickBatchId());
+    try {
+      transactionOperations.executeWithoutResult(
+          status -> markBatchDrainedInTransaction(batch, entries, now));
+    } catch (RuntimeException | Error ex) {
+      originalState.restore(batch);
+      throw ex;
+    }
     logger.info(
         "Drained durable tick batch tickBatchId={} tenantId={} gameInstanceId={} commandCount={}",
         batch.getTickBatchId(),
@@ -142,21 +175,63 @@ final class TickBatchExecutionService {
         batch.getCommandCount());
   }
 
-  void markRemoteFollowupBatchDrained(TickBatch batch) {
-    Instant now = Instant.now();
+  private void markBatchDrainedInTransaction(
+      TickBatch batch, List<TickQueuedCommandEnvelope> entries, Instant completedAt) {
     RuntimeRegionStatus ownership =
         requireCurrentOwnership(batch, false).orElseThrow(IllegalStateException::new);
     batch.setStatus("DRAINED");
-    batch.setCompletedAt(now);
+    batch.setCompletedAt(completedAt);
     tickBatchRepository.save(batch);
-    updateEffectStatuses(batch.getTickBatchId(), "DRAINED", now, null, null);
-    ownership.setUpdatedAt(now);
+    updateEffectStatuses(batch.getTickBatchId(), "DRAINED", completedAt, null, null);
+    updateGameplayCommands(entries, "DRAINED", "PENDING", completedAt, null, null, false);
+    ownership.setUpdatedAt(completedAt);
     tickQueueControlService.commitDrainedBatch(ownership, batch.getTickBatchId());
+  }
+
+  void markRemoteFollowupBatchDrained(TickBatch batch) {
+    BatchDrainState originalState = BatchDrainState.capture(batch);
+    Instant now = Instant.now();
+    try {
+      transactionOperations.executeWithoutResult(
+          status -> markRemoteFollowupBatchDrainedInTransaction(batch, now));
+    } catch (RuntimeException | Error ex) {
+      originalState.restore(batch);
+      throw ex;
+    }
     logger.info(
         "Drained durable remote followup batch tickBatchId={} tenantId={} gameInstanceId={}",
         batch.getTickBatchId(),
         batch.getTenantId(),
         batch.getGameInstanceId());
+  }
+
+  private void markRemoteFollowupBatchDrainedInTransaction(TickBatch batch, Instant completedAt) {
+    RuntimeRegionStatus ownership =
+        requireCurrentOwnership(batch, false).orElseThrow(IllegalStateException::new);
+    batch.setStatus("DRAINED");
+    batch.setCompletedAt(completedAt);
+    tickBatchRepository.save(batch);
+    updateEffectStatuses(batch.getTickBatchId(), "DRAINED", completedAt, null, null);
+    ownership.setUpdatedAt(completedAt);
+    tickQueueControlService.commitDrainedBatch(ownership, batch.getTickBatchId());
+  }
+
+  private record BatchDrainState(
+      String status, Instant completedAt, String failureCode, String failureMessage) {
+    private static BatchDrainState capture(TickBatch batch) {
+      return new BatchDrainState(
+          batch.getStatus(),
+          batch.getCompletedAt(),
+          batch.getFailureCode(),
+          batch.getFailureMessage());
+    }
+
+    private void restore(TickBatch batch) {
+      batch.setStatus(status);
+      batch.setCompletedAt(completedAt);
+      batch.setFailureCode(failureCode);
+      batch.setFailureMessage(failureMessage);
+    }
   }
 
   void markBatchAbandoned(

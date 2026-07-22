@@ -144,7 +144,8 @@ class TickServiceImplTest {
             durableRemoteFollowupExecutionService,
             remoteFollowupDrainService,
             tickQueueControlService,
-            mock(GameplayCommandExecutionFenceService.class));
+            mock(GameplayCommandExecutionFenceService.class),
+            new ImmediateTransactionOperations());
     tickStagingService =
         new TickStagingService(
             redisTemplate,
@@ -507,6 +508,195 @@ class TickServiceImplTest {
         .save(any(net.firedevops.firemud.gamesession.entity.TickBatch.class));
     verify(tickEffectRepository).saveAll(any());
     verify(gameplayCommandRepository, org.mockito.Mockito.atLeastOnce()).saveAll(any());
+  }
+
+  @Test
+  void processTickAcknowledgesRedisPendingAfterDurableDrainWrites() {
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|look");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
+    when(gameplayCommandRepository.findByCommandIdIn(any()))
+        .thenReturn(List.of(gameplayCommand("cmd-1")));
+
+    List<String> events = new ArrayList<>();
+    RedisScript<Long> commitMarker = mock(RedisScript.class);
+    setField(service, "commitScript", commitMarker);
+    doAnswer(
+            invocation -> {
+              RedisScript<?> script = invocation.getArgument(0);
+              if (script == commitMarker) {
+                events.add("redis-commit");
+              }
+              return 1L;
+            })
+        .when(redisTemplate)
+        .execute(
+            any(RedisScript.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
+    doAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.TickBatch batch = invocation.getArgument(0);
+              if ("DRAINED".equals(batch.getStatus())) {
+                events.add("batch-drained");
+              }
+              return batch;
+            })
+        .when(tickBatchRepository)
+        .save(any());
+    doAnswer(
+            invocation -> {
+              @SuppressWarnings("unchecked")
+              List<net.firedevops.firemud.gamesession.entity.GameplayCommand> commands =
+                  invocation.getArgument(0);
+              if (commands.stream()
+                  .anyMatch(command -> "DRAINED".equals(command.getExecutionOutcome()))) {
+                events.add("commands-drained");
+              }
+              return commands;
+            })
+        .when(gameplayCommandRepository)
+        .saveAll(any());
+    doAnswer(
+            invocation -> {
+              events.add("ownership-cas");
+              net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus ownership =
+                  invocation.getArgument(0);
+              ownership.setLastCommittedTickBatchId(invocation.getArgument(1));
+              return Optional.of(ownership);
+            })
+        .when(runtimeRegionStatusRepository)
+        .commitDrainedBatch(any(), any());
+
+    service.processTick(1L, 2L);
+
+    int redisCommitIndex = events.indexOf("redis-commit");
+    org.junit.jupiter.api.Assertions.assertTrue(redisCommitIndex >= 0, events.toString());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        events.indexOf("batch-drained") < redisCommitIndex, events.toString());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        events.indexOf("commands-drained") < redisCommitIndex, events.toString());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        events.indexOf("ownership-cas") < redisCommitIndex, events.toString());
+  }
+
+  @Test
+  void processTickStillAcknowledgesPendingWhenNoExecutableBatchWasCreated() {
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-stale|look");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-stale|look"));
+    net.firedevops.firemud.gamesession.entity.GameplayCommand staleCommand =
+        gameplayCommand("cmd-stale");
+    staleCommand.setExecutionOutcome("DRAINED");
+    when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of(staleCommand));
+
+    RedisScript<Long> commitMarker = mock(RedisScript.class);
+    setField(service, "commitScript", commitMarker);
+    List<String> commits = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              if (invocation.getArgument(0) == commitMarker) {
+                commits.add("commit");
+              }
+              return 1L;
+            })
+        .when(redisTemplate)
+        .execute(
+            any(RedisScript.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals(List.of("commit"), commits);
+    verify(tickBatchRepository, never()).save(any());
+  }
+
+  @Test
+  void redisCommitFailureAfterDurableDrainDoesNotDuplicateOnRetry() {
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.size("gamesession:tick:pending:1:2")).thenReturn(0L, 0L);
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-retry|look");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-retry|look"), List.of("N|cmd-retry|look"));
+    net.firedevops.firemud.gamesession.entity.GameplayCommand command =
+        gameplayCommand("cmd-retry");
+    when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of(command));
+    List<String> savedBatchStatuses = new ArrayList<>();
+    List<String> savedEffectStatuses = new ArrayList<>();
+    List<String> savedCommandOutcomes = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.TickBatch batch = invocation.getArgument(0);
+              savedBatchStatuses.add(batch.getStatus());
+              return batch;
+            })
+        .when(tickBatchRepository)
+        .save(any());
+    net.firedevops.firemud.gamesession.entity.TickEffect effect =
+        new net.firedevops.firemud.gamesession.entity.TickEffect();
+    effect.setCommandId("cmd-retry");
+    effect.setStatus("STAGED");
+    when(tickEffectRepository.findByTickBatchId(any())).thenReturn(List.of(effect));
+    doAnswer(
+            invocation -> {
+              @SuppressWarnings("unchecked")
+              List<net.firedevops.firemud.gamesession.entity.TickEffect> effects =
+                  invocation.getArgument(0);
+              if (!effects.isEmpty()) {
+                savedEffectStatuses.add(effects.get(0).getStatus());
+              }
+              return effects;
+            })
+        .when(tickEffectRepository)
+        .saveAll(any());
+    doAnswer(
+            invocation -> {
+              @SuppressWarnings("unchecked")
+              List<net.firedevops.firemud.gamesession.entity.GameplayCommand> commands =
+                  invocation.getArgument(0);
+              if (!commands.isEmpty()) {
+                savedCommandOutcomes.add(commands.get(0).getExecutionOutcome());
+              }
+              return commands;
+            })
+        .when(gameplayCommandRepository)
+        .saveAll(any());
+
+    RedisScript<Long> commitMarker = mock(RedisScript.class);
+    RedisScript<Long> rollbackMarker = mock(RedisScript.class);
+    setField(service, "commitScript", commitMarker);
+    setField(service, "rollbackScript", rollbackMarker);
+    AtomicLong commitAttempts = new AtomicLong();
+    doAnswer(
+            invocation -> {
+              RedisScript<?> script = invocation.getArgument(0);
+              if (script == commitMarker && commitAttempts.incrementAndGet() <= 3) {
+                throw new IllegalStateException("Redis commit unavailable");
+              }
+              return 1L;
+            })
+        .when(redisTemplate)
+        .execute(
+            any(RedisScript.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
+
+    service.processTick(1L, 2L);
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1L, savedBatchStatuses.stream().filter("DRAINED"::equals).count());
+    org.junit.jupiter.api.Assertions.assertFalse(savedBatchStatuses.contains("ABANDONED"));
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1L, savedEffectStatuses.stream().filter("DRAINED"::equals).count());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1L, savedCommandOutcomes.stream().filter("DRAINED"::equals).count());
+    org.junit.jupiter.api.Assertions.assertEquals("DRAINED", command.getExecutionOutcome());
   }
 
   @Test

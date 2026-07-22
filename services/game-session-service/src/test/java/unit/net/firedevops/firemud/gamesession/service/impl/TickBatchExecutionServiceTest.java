@@ -1,8 +1,11 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -10,6 +13,7 @@ import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
@@ -31,6 +35,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.ListOperations;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionOperations;
 
 class TickBatchExecutionServiceTest {
   private SimpleMeterRegistry meterRegistry;
@@ -68,7 +75,6 @@ class TickBatchExecutionServiceTest {
     tickEffectRepository = mock(TickEffectRepository.class);
     when(tickEffectRepository.findByTickBatchId(any())).thenReturn(List.of());
     when(tickEffectRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
     runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
     when(runtimeRegionStatusRepository.commitDrainedBatch(any(), any()))
         .thenAnswer(
@@ -77,44 +83,11 @@ class TickBatchExecutionServiceTest {
               expected.setLastCommittedTickBatchId(invocation.getArgument(1));
               return Optional.of(expected);
             });
-    net.firedevops.firemud.gamesession.service.SessionAuthenticationService
-        sessionAuthenticationService =
-            mock(net.firedevops.firemud.gamesession.service.SessionAuthenticationService.class);
-    RuntimeIdentity runtimeIdentity =
-        new RuntimeIdentity(
-            "game-session-service",
-            "test-instance",
-            "test-host",
-            Instant.parse("2026-04-19T00:00:00Z"),
-            null,
-            null,
-            null);
-    TickQueueControlService tickQueueControlService =
-        new TickQueueControlService(
-            redisTemplate,
-            mock(StringRedisTemplate.class),
-            gameInstanceRepository,
-            gameplayCommandRepository,
-            runtimeRegionStatusRepository,
-            runtimeIdentity,
-            sessionAuthenticationService,
-            mock(java.util.concurrent.ScheduledExecutorService.class));
     remoteFollowupDrainService = mock(RemoteFollowupDrainService.class);
     durableGameplayCommandExecutionService = mock(DurableGameplayCommandExecutionService.class);
     gameplayCommandExecutionFenceService = mock(GameplayCommandExecutionFenceService.class);
     when(gameplayCommandExecutionFenceService.validate(any(), any())).thenReturn(Optional.empty());
-    service =
-        new TickBatchExecutionService(
-            meterRegistry,
-            redisTemplate,
-            gameplayCommandRepository,
-            tickBatchRepository,
-            tickEffectRepository,
-            durableGameplayCommandExecutionService,
-            mock(DurableRemoteFollowupExecutionService.class),
-            remoteFollowupDrainService,
-            tickQueueControlService,
-            gameplayCommandExecutionFenceService);
+    service = newService(new ImmediateTransactionOperations());
 
     RuntimeRegionStatus currentOwnership = runtimeOwnership(1L, 2L, 1L, "fence-a", false);
     when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
@@ -174,6 +147,151 @@ class TickBatchExecutionServiceTest {
     assertEquals(5000L, command.getQueueSourceOrdinal());
     assertEquals(14L, command.getQueueSourceDueTickId());
     assertEquals(9000L, command.getQueueSourceDueAtMs());
+  }
+
+  @Test
+  void markBatchDrainedKeepsAllDurableWritesInsideTransactionBoundary() {
+    List<String> events = new ArrayList<>();
+    service =
+        newService(
+            new TransactionOperations() {
+              @Override
+              public <T> T execute(TransactionCallback<T> action) {
+                events.add("transaction-begin");
+                T result = action.doInTransaction(new SimpleTransactionStatus());
+                events.add("transaction-commit");
+                return result;
+              }
+            });
+    TickBatch batch = drainedBatch("tb-atomic", "fence-a");
+    TickEffect effect = drainedEffect("tb-atomic", "cmd-atomic");
+    GameplayCommand command = gameplayCommand("cmd-atomic");
+    TickQueuedCommandEnvelope entry = new TickQueuedCommandEnvelope(false, "cmd-atomic", "look");
+    when(tickEffectRepository.findByTickBatchId("tb-atomic")).thenReturn(List.of(effect));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-atomic")))
+        .thenReturn(List.of(command));
+    doAnswer(
+            invocation -> {
+              events.add("batch");
+              return invocation.getArgument(0);
+            })
+        .when(tickBatchRepository)
+        .save(any());
+    doAnswer(
+            invocation -> {
+              events.add("effects");
+              return invocation.getArgument(0);
+            })
+        .when(tickEffectRepository)
+        .saveAll(any());
+    doAnswer(
+            invocation -> {
+              events.add("commands");
+              return invocation.getArgument(0);
+            })
+        .when(gameplayCommandRepository)
+        .saveAll(any());
+    doAnswer(
+            invocation -> {
+              events.add("ownership-cas");
+              RuntimeRegionStatus expected = invocation.getArgument(0);
+              expected.setLastCommittedTickBatchId(invocation.getArgument(1));
+              return Optional.of(expected);
+            })
+        .when(runtimeRegionStatusRepository)
+        .commitDrainedBatch(any(), any());
+
+    service.markBatchDrained(batch, List.of(entry));
+
+    assertEquals(
+        List.of(
+            "transaction-begin",
+            "batch",
+            "effects",
+            "commands",
+            "ownership-cas",
+            "transaction-commit"),
+        events);
+  }
+
+  @Test
+  void markBatchDrainedStopsBeforeEffectWriteFailureAndOwnershipCas() {
+    TickBatch batch = drainedBatch("tb-effect-failure", "fence-a");
+    TickEffect effect = drainedEffect("tb-effect-failure", "cmd-effect-failure");
+    when(tickEffectRepository.findByTickBatchId("tb-effect-failure")).thenReturn(List.of(effect));
+    org.mockito.Mockito.doThrow(new IllegalStateException("effect write failed"))
+        .when(tickEffectRepository)
+        .saveAll(any());
+
+    assertThrows(IllegalStateException.class, () -> service.markBatchDrained(batch, List.of()));
+
+    verify(runtimeRegionStatusRepository, never()).commitDrainedBatch(any(), any());
+  }
+
+  @Test
+  void markBatchDrainedRestoresCallerStateWhenTransactionFails() {
+    TickBatch batch = drainedBatch("tb-state-restore", "fence-a");
+    batch.setStatus("STAGED");
+    Instant originalCompletedAt = Instant.parse("2026-04-19T00:00:00Z");
+    batch.setCompletedAt(originalCompletedAt);
+    batch.setFailureCode("ORIGINAL_FAILURE");
+    batch.setFailureMessage("original failure");
+    TickEffect effect = drainedEffect("tb-state-restore", "cmd-state-restore");
+    when(tickEffectRepository.findByTickBatchId("tb-state-restore")).thenReturn(List.of(effect));
+    doThrow(new IllegalStateException("effect write failed"))
+        .when(tickEffectRepository)
+        .saveAll(any());
+
+    assertThrows(IllegalStateException.class, () -> service.markBatchDrained(batch, List.of()));
+
+    assertEquals("STAGED", batch.getStatus());
+    assertEquals(originalCompletedAt, batch.getCompletedAt());
+    assertEquals("ORIGINAL_FAILURE", batch.getFailureCode());
+    assertEquals("original failure", batch.getFailureMessage());
+  }
+
+  @Test
+  void markBatchDrainedStopsBeforeLaterWritesWhenBatchWriteFails() {
+    TickBatch batch = drainedBatch("tb-batch-failure", "fence-a");
+    org.mockito.Mockito.doThrow(new IllegalStateException("batch write failed"))
+        .when(tickBatchRepository)
+        .save(any());
+
+    assertThrows(IllegalStateException.class, () -> service.markBatchDrained(batch, List.of()));
+
+    verify(tickEffectRepository, never()).saveAll(any());
+    verify(gameplayCommandRepository, never()).saveAll(any());
+    verify(runtimeRegionStatusRepository, never()).commitDrainedBatch(any(), any());
+  }
+
+  @Test
+  void markBatchDrainedStopsBeforeCommandWriteFailureAndOwnershipCas() {
+    TickBatch batch = drainedBatch("tb-command-failure", "fence-a");
+    GameplayCommand command = gameplayCommand("cmd-command-failure");
+    TickQueuedCommandEnvelope entry =
+        new TickQueuedCommandEnvelope(false, "cmd-command-failure", "look");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-command-failure")))
+        .thenReturn(List.of(command));
+    org.mockito.Mockito.doThrow(new IllegalStateException("command write failed"))
+        .when(gameplayCommandRepository)
+        .saveAll(any());
+
+    assertThrows(
+        IllegalStateException.class, () -> service.markBatchDrained(batch, List.of(entry)));
+
+    verify(runtimeRegionStatusRepository, never()).commitDrainedBatch(any(), any());
+  }
+
+  @Test
+  void markBatchDrainedPropagatesOwnershipCasFailureAfterDurableWrites() {
+    TickBatch batch = drainedBatch("tb-ownership-failure", "fence-a");
+    org.mockito.Mockito.doThrow(new IllegalStateException("ownership CAS failed"))
+        .when(runtimeRegionStatusRepository)
+        .commitDrainedBatch(any(), any());
+
+    assertThrows(IllegalStateException.class, () -> service.markBatchDrained(batch, List.of()));
+
+    verify(tickBatchRepository).save(batch);
   }
 
   @Test
@@ -433,6 +551,40 @@ class TickBatchExecutionServiceTest {
     command.setExecutionOutcome("STAGED");
     command.setGameplayResult("PENDING");
     return command;
+  }
+
+  private TickBatchExecutionService newService(TransactionOperations transactionOperations) {
+    return new TickBatchExecutionService(
+        meterRegistry,
+        redisTemplate,
+        gameplayCommandRepository,
+        tickBatchRepository,
+        tickEffectRepository,
+        durableGameplayCommandExecutionService,
+        mock(DurableRemoteFollowupExecutionService.class),
+        remoteFollowupDrainService,
+        newTickQueueControlService(),
+        gameplayCommandExecutionFenceService,
+        transactionOperations);
+  }
+
+  private TickQueueControlService newTickQueueControlService() {
+    return new TickQueueControlService(
+        redisTemplate,
+        mock(StringRedisTemplate.class),
+        mock(GameInstanceRepository.class),
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        new RuntimeIdentity(
+            "game-session-service",
+            "test-instance",
+            "test-host",
+            Instant.parse("2026-04-19T00:00:00Z"),
+            null,
+            null,
+            null),
+        mock(net.firedevops.firemud.gamesession.service.SessionAuthenticationService.class),
+        mock(java.util.concurrent.ScheduledExecutorService.class));
   }
 
   private static TickBatch drainedBatch(String tickBatchId, String executorFence) {

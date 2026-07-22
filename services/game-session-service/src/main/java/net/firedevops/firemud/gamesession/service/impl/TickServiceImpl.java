@@ -213,6 +213,7 @@ public class TickServiceImpl implements TickService {
         boolean solo = false;
         TickBatch activeBatch = null;
         List<TickQueuedCommandEnvelope> activeBatchEntries = List.of();
+        boolean activeBatchDurablyDrained = false;
         boolean tickSucceeded = false;
         RuntimeRegionStatus tickProgressToPublish = null;
         try {
@@ -244,6 +245,8 @@ public class TickServiceImpl implements TickService {
                   "Replaying {} executable pending commands for {}",
                   replayEntries.size(),
                   normalizedQueueTargetId);
+              tickBatchExecutionService.markBatchDrained(replayBatch, replayEntries);
+              lease.requireOwned();
               tickTimer.record(
                   () -> {
                     luaTimer.record(
@@ -254,8 +257,6 @@ public class TickServiceImpl implements TickService {
                                     tickQueueControlService.pendingKey(
                                         normalizedTenantId, normalizedQueueTargetId))));
                   });
-              lease.requireOwned();
-              tickBatchExecutionService.markBatchDrained(replayBatch, replayEntries);
               tickBatchExecutionService.executeDurableEffects(
                   normalizedTenantId, normalizedQueueTargetId);
               lease.requireOwned();
@@ -310,22 +311,34 @@ public class TickServiceImpl implements TickService {
             tickBatchExecutionService.requireCurrentOwnership(activeBatch, false);
           }
           lease.requireOwned();
-          tickTimer.record(
-              () -> {
-                luaTimer.record(
-                    () ->
-                        executeScriptWithRetry(
-                            commitScript,
-                            List.of(
-                                tickQueueControlService.pendingKey(
-                                    normalizedTenantId, normalizedQueueTargetId))));
-              });
-          lease.requireOwned();
           if (activeBatch != null) {
             tickBatchExecutionService.markBatchDrained(activeBatch, activeBatchEntries);
+            activeBatchDurablyDrained = true;
+            lease.requireOwned();
+            tickTimer.record(
+                () -> {
+                  luaTimer.record(
+                      () ->
+                          executeScriptWithRetry(
+                              commitScript,
+                              List.of(
+                                  tickQueueControlService.pendingKey(
+                                      normalizedTenantId, normalizedQueueTargetId))));
+                });
             tickBatchExecutionService.executeDurableEffects(
                 normalizedTenantId, normalizedQueueTargetId);
             lease.requireOwned();
+          } else {
+            tickTimer.record(
+                () -> {
+                  luaTimer.record(
+                      () ->
+                          executeScriptWithRetry(
+                              commitScript,
+                              List.of(
+                                  tickQueueControlService.pendingKey(
+                                      normalizedTenantId, normalizedQueueTargetId))));
+                });
           }
           tickProgressToPublish =
               tickRuntimeProgressService.advanceRuntimeTickProgress(
@@ -348,9 +361,15 @@ public class TickServiceImpl implements TickService {
                                 normalizedTenantId, normalizedQueueTargetId),
                             tickQueueControlService.queueKey(
                                 normalizedTenantId, normalizedQueueTargetId))));
-            if (activeBatch != null) {
+            if (activeBatch != null && !activeBatchDurablyDrained) {
               tickBatchExecutionService.markBatchAbandoned(
                   activeBatch, activeBatchEntries, failureCode(ex), ex.getMessage());
+            } else if (activeBatchDurablyDrained) {
+              logger.warn(
+                  "Durable tick drain committed before post-commit failure; preserving batch state "
+                      + "for tenantId={} gameInstanceId={}",
+                  normalizedTenantId,
+                  normalizedQueueTargetId);
             }
             awaitReplication();
           } else {
