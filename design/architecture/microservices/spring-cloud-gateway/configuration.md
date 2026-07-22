@@ -7,11 +7,11 @@ Spring Cloud Gateway reads its configuration from a small set of sources. The fu
 | Source | Purpose | Authority |
 | --- | --- | --- |
 | `application.yml` | Base Spring profile configuration such as ports, gRPC settings, and default filters like `RequestRateLimiter` and `Retry`. | Service-local; environment variable mapping lives in Env & Secrets. |
-| `routes.yml` | Canonical baseline route definitions for HTTP and WebSocket paths and backend URIs, parameterized by environment variables for upstream targets. | Service-local baseline route set referenced by `spring.config.import` in `application.yml`. |
+| `routes.yml` | Target canonical baseline route definitions for HTTP and WebSocket paths and backend URIs, parameterized by environment variables for upstream targets. | Target service-local baseline. Current code still owns routes in `CanonicalGatewayRoutesConfiguration`; the resource and `spring.config.import` are not implemented. |
 | `FIREMUD_SERVICES_*` | Service discovery overrides for backend targets reached from the gateway. | See [Service Discovery](../../infrastructure/environment-and-secrets.md#service-discovery). |
 | `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT` | Cache/Rate-Limit Redis endpoint used by the gateway `RequestRateLimiter` filter. | See [Redis Connection](../../infrastructure/environment-and-secrets.md#redis-connection). |
 | `firemud.gateway.header-trust.*` | Header-trust and canonicalization configuration enforced by `HeaderTrustFilter` for public ingress versus trusted proxy sources. | Service-local gateway trust boundary; behavior must stay aligned with [Gateway Architecture](../../system-architecture-gateway.md#header-trust-model). |
-| `firemud.gateway.backendUnavailableGraceMs` / `firemud.gateway.backendUnavailableRecoverySuccessCount` | Gameplay-route backend-unavailable grace window and recovery hysteresis knobs that must stay aligned with the TCP Proxy bridge-availability contract. | Canonical behavior lives in [Gateway Architecture](../../system-architecture-gateway.md#backend-unavailable-grace-window) and [Reconnection Strategy](../../system-architecture-reconnection.md#backend-unavailable-scenarios). |
+| `firemud.gateway.backendUnavailableGraceMs` / `firemud.gateway.backendUnavailableRecoverySuccessCount` | Target gameplay-route backend-unavailable elapsed-time cutoff and recovery hysteresis knobs. The grace value must be positive and no greater than ADR 0013's 30,000 ms hard cutoff; ordinary qualifying recovery targets 10 seconds. | Not implemented in the current bound properties or bridge. Canonical behavior lives in [Gateway Architecture](../../system-architecture-gateway.md#backend-unavailable-grace-window), [Reconnection Strategy](../../system-architecture-reconnection.md#backend-unavailable-scenarios), and [ADR 0013](../../decisions/adr-0013-bounded-invisible-non-edge-restart-recovery.md). |
 | `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH` | TLS certificate and key paths for the gateway internal gRPC management plane. | See [gRPC TLS Certificates](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). |
 | `OTEL_ENDPOINT` | OpenTelemetry collector endpoint for traces. | See [Observability](../../infrastructure/environment-and-secrets.md#observability). |
 
@@ -20,9 +20,9 @@ For the TCP Proxy -> Gateway WebSocket mTLS hop, the TCP Proxy client identity a
 ## Route State and Baseline Configuration
 
 - Spring Cloud Gateway is stateless and sits in the DMZ alongside the TCP Proxy Service.
-- Route configuration lives in `routes.yml`, which is imported by `application.yml` and reloaded on startup.
-- These files define the baseline route set for each environment.
-- Dynamic route APIs can overlay additional routes or updates at runtime, but those changes are in-memory only and the system converges back to the baseline definitions on restart unless a higher-level tool updates config.
+- Target route configuration lives in `routes.yml`, imported by `application.yml` and reloaded on startup. Current code remains Java-owned until that convergence lands.
+- The target files define the baseline route set for each environment.
+- Explicitly enabled dev/test route APIs may overlay bounded in-memory changes on one disposable runtime; player-facing environments use only the version-controlled baseline and must fail startup if mutation is enabled.
 - The default route configuration defines the core service routes required for local Docker Compose environments.
 
 ## Redis Role and Prefixes

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -29,6 +30,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.ListOperations;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 class TickBatchExecutionServiceTest {
   private SimpleMeterRegistry meterRegistry;
@@ -37,7 +39,10 @@ class TickBatchExecutionServiceTest {
   private GameplayCommandRepository gameplayCommandRepository;
   private TickBatchRepository tickBatchRepository;
   private TickEffectRepository tickEffectRepository;
+  private RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private RemoteFollowupDrainService remoteFollowupDrainService;
+  private DurableGameplayCommandExecutionService durableGameplayCommandExecutionService;
+  private GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService;
   private TickBatchExecutionService service;
 
   @BeforeEach
@@ -64,8 +69,7 @@ class TickBatchExecutionServiceTest {
     when(tickEffectRepository.findByTickBatchId(any())).thenReturn(List.of());
     when(tickEffectRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
     GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
-    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
-        mock(RuntimeRegionStatusRepository.class);
+    runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
     when(runtimeRegionStatusRepository.save(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
     net.firedevops.firemud.gamesession.service.SessionAuthenticationService
@@ -83,12 +87,17 @@ class TickBatchExecutionServiceTest {
     TickQueueControlService tickQueueControlService =
         new TickQueueControlService(
             redisTemplate,
+            mock(StringRedisTemplate.class),
             gameInstanceRepository,
             gameplayCommandRepository,
             runtimeRegionStatusRepository,
             runtimeIdentity,
-            sessionAuthenticationService);
+            sessionAuthenticationService,
+            mock(java.util.concurrent.ScheduledExecutorService.class));
     remoteFollowupDrainService = mock(RemoteFollowupDrainService.class);
+    durableGameplayCommandExecutionService = mock(DurableGameplayCommandExecutionService.class);
+    gameplayCommandExecutionFenceService = mock(GameplayCommandExecutionFenceService.class);
+    when(gameplayCommandExecutionFenceService.validate(any(), any())).thenReturn(Optional.empty());
     service =
         new TickBatchExecutionService(
             meterRegistry,
@@ -96,10 +105,11 @@ class TickBatchExecutionServiceTest {
             gameplayCommandRepository,
             tickBatchRepository,
             tickEffectRepository,
-            mock(DurableGameplayCommandExecutionService.class),
+            durableGameplayCommandExecutionService,
             mock(DurableRemoteFollowupExecutionService.class),
             remoteFollowupDrainService,
-            tickQueueControlService);
+            tickQueueControlService,
+            gameplayCommandExecutionFenceService);
 
     RuntimeRegionStatus currentOwnership = runtimeOwnership(1L, 2L, 1L, "fence-a", false);
     when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
@@ -226,6 +236,146 @@ class TickBatchExecutionServiceTest {
   }
 
   @Test
+  void executeDurableEffectsRequeuesAfterMidBatchStaleFenceAndContinuesNextBatch() {
+    TickBatch staleBatch = drainedBatch("tb-stale-mid-batch", "fence-a");
+    TickBatch subsequentBatch = drainedBatch("tb-subsequent", "fence-a");
+    TickEffect appliedEffect = drainedEffect("tb-stale-mid-batch", "cmd-applied");
+    TickEffect staleEffect = drainedEffect("tb-stale-mid-batch", "cmd-retry");
+    TickEffect subsequentEffect = drainedEffect("tb-subsequent", "cmd-subsequent");
+    GameplayCommand appliedCommand = gameplayCommand("cmd-applied");
+    GameplayCommand retryCommand = gameplayCommand("cmd-retry");
+    retryCommand.setCommandText("north");
+    retryCommand.setQueueSourceOrdinal(5000L);
+    retryCommand.setQueueSourceDueTickId(14L);
+    retryCommand.setQueueSourceDueAtMs(9000L);
+    GameplayCommand subsequentCommand = gameplayCommand("cmd-subsequent");
+    RuntimeRegionStatus currentOwnership = runtimeOwnership(1L, 2L, 1L, "fence-a", false);
+    RuntimeRegionStatus staleOwnership = runtimeOwnership(1L, 2L, 2L, "fence-b", false);
+
+    when(tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
+            1L, 2L, "DRAINED"))
+        .thenReturn(List.of(staleBatch, subsequentBatch));
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(
+            Optional.of(currentOwnership),
+            Optional.of(currentOwnership),
+            Optional.of(staleOwnership),
+            Optional.of(currentOwnership),
+            Optional.of(currentOwnership));
+    when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc(
+            "tb-stale-mid-batch", "DRAINED"))
+        .thenAnswer(
+            invocation ->
+                List.of(appliedEffect, staleEffect).stream()
+                    .filter(effect -> "DRAINED".equals(effect.getStatus()))
+                    .toList());
+    when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc("tb-subsequent", "DRAINED"))
+        .thenAnswer(
+            invocation ->
+                List.of(subsequentEffect).stream()
+                    .filter(effect -> "DRAINED".equals(effect.getStatus()))
+                    .toList());
+    when(gameplayCommandRepository.findByCommandId("cmd-applied"))
+        .thenReturn(Optional.of(appliedCommand));
+    when(gameplayCommandRepository.findByCommandId("cmd-subsequent"))
+        .thenReturn(Optional.of(subsequentCommand));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-retry")))
+        .thenReturn(List.of(retryCommand));
+    when(durableGameplayCommandExecutionService.execute(any(), any()))
+        .thenReturn(
+            Optional.of(
+                new DurableGameplayCommandExecutionService.DurableGameplayCommandExecutionResult(
+                    "APPLIED", "COMPLETED", "APPLIED", null, null)));
+
+    service.executeDurableEffects(1L, 2L);
+
+    assertEquals("ABANDONED", staleBatch.getStatus());
+    assertEquals("STALE_EXECUTOR_FENCE", staleBatch.getFailureCode());
+    assertEquals("APPLIED", appliedEffect.getStatus());
+    assertEquals("ABANDONED", staleEffect.getStatus());
+    assertEquals("STALE_EXECUTOR_FENCE", staleEffect.getFailureCode());
+    assertEquals("RETRY_QUEUED", retryCommand.getExecutionOutcome());
+    assertEquals("GAMEPLAY_RETRY", retryCommand.getQueueSourceKind());
+    assertEquals("REDIS_RETRY_QUEUED", retryCommand.getQueueSourceState());
+    assertEquals(5000L, retryCommand.getQueueSourceOrdinal());
+    assertEquals(14L, retryCommand.getQueueSourceDueTickId());
+    assertEquals(9000L, retryCommand.getQueueSourceDueAtMs());
+    assertEquals("APPLIED", subsequentEffect.getStatus());
+    assertEquals("APPLIED", subsequentBatch.getStatus());
+    verify(listOps).leftPush("gamesession:tick:queue:1:2", "N|cmd-retry|north");
+    verify(durableGameplayCommandExecutionService).execute(subsequentEffect, subsequentCommand);
+  }
+
+  @Test
+  void executeDurableEffectsRejectsCommandWhenExecutionFenceFails() {
+    TickBatch batch = new TickBatch();
+    batch.setTickBatchId("tb-current");
+    batch.setTenantId(1L);
+    batch.setGameInstanceId(2L);
+    batch.setRegionId("2");
+    batch.setRegionEpoch(1L);
+    batch.setExecutorFence("fence-a");
+    TickEffect effect = new TickEffect();
+    effect.setTickBatchId("tb-current");
+    effect.setCommandId("cmd-1");
+    effect.setStatus("DRAINED");
+    GameplayCommand command = gameplayCommand("cmd-1");
+    when(tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
+            1L, 2L, "DRAINED"))
+        .thenReturn(List.of(batch));
+    when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc("tb-current", "DRAINED"))
+        .thenReturn(List.of(effect), List.of());
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
+    when(gameplayCommandExecutionFenceService.validate(batch, command))
+        .thenReturn(
+            Optional.of(
+                new GameplayCommandExecutionFenceService.FenceFailure(
+                    "STALE_COMMAND_TIMELINE", "Command belongs to an old runtime timeline")));
+
+    service.executeDurableEffects(1L, 2L);
+
+    assertEquals("REJECTED", effect.getStatus());
+    assertEquals("STALE_COMMAND_TIMELINE", effect.getFailureCode());
+    assertEquals("COMPLETED", command.getExecutionOutcome());
+    assertEquals("NOT_APPLIED", command.getGameplayResult());
+    assertEquals("STALE_COMMAND_TIMELINE", command.getFailureCode());
+    verify(durableGameplayCommandExecutionService, never()).execute(any(), any());
+  }
+
+  @Test
+  void abandonDrainedBatchRequeuesOnlyEffectsThatRemainUnapplied() {
+    TickBatch batch = new TickBatch();
+    batch.setTickBatchId("tb-partial");
+    batch.setTenantId(1L);
+    batch.setGameInstanceId(2L);
+    batch.setStatus("DRAINED");
+    TickEffect remaining = new TickEffect();
+    remaining.setTickBatchId("tb-partial");
+    remaining.setCommandId("cmd-retry");
+    remaining.setStatus("DRAINED");
+    GameplayCommand retryCommand = gameplayCommand("cmd-retry");
+    retryCommand.setCommandText("north");
+    when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc("tb-partial", "DRAINED"))
+        .thenReturn(List.of(remaining));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-retry")))
+        .thenReturn(List.of(retryCommand));
+
+    service.markBatchAbandoned(
+        batch,
+        List.of(
+            new TickQueuedCommandEnvelope(false, "cmd-applied", "look"),
+            new TickQueuedCommandEnvelope(false, "cmd-retry", "north")),
+        "ROLLBACK_REQUEUED",
+        "Plugin authority unavailable");
+
+    verify(listOps).leftPush("gamesession:tick:queue:1:2", "N|cmd-retry|north");
+    verify(listOps, never()).leftPush("gamesession:tick:queue:1:2", "N|cmd-applied|look");
+    assertEquals("ABANDONED", remaining.getStatus());
+    assertEquals("RETRY_QUEUED", retryCommand.getExecutionOutcome());
+    assertEquals("GAMEPLAY_RETRY", retryCommand.getQueueSourceKind());
+  }
+
+  @Test
   void restorePendingProjectionRequeuesRedisOnlyEntriesAndRestoresSealedPendingList() {
     TickQueuedCommandEnvelope sealed = new TickQueuedCommandEnvelope(false, "cmd-1", "look");
     TickQueuedCommandEnvelope redisOnly = new TickQueuedCommandEnvelope(false, "cmd-2", "wave");
@@ -259,6 +409,26 @@ class TickBatchExecutionServiceTest {
     command.setExecutionOutcome("STAGED");
     command.setGameplayResult("PENDING");
     return command;
+  }
+
+  private static TickBatch drainedBatch(String tickBatchId, String executorFence) {
+    TickBatch batch = new TickBatch();
+    batch.setTickBatchId(tickBatchId);
+    batch.setTenantId(1L);
+    batch.setGameInstanceId(2L);
+    batch.setRegionId("2");
+    batch.setRegionEpoch(1L);
+    batch.setExecutorFence(executorFence);
+    batch.setStatus("DRAINED");
+    return batch;
+  }
+
+  private static TickEffect drainedEffect(String tickBatchId, String commandId) {
+    TickEffect effect = new TickEffect();
+    effect.setTickBatchId(tickBatchId);
+    effect.setCommandId(commandId);
+    effect.setStatus("DRAINED");
+    return effect;
   }
 
   private static RuntimeRegionStatus runtimeOwnership(

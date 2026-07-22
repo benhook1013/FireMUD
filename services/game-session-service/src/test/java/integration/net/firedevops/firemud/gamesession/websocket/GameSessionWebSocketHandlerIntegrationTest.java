@@ -602,7 +602,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     }
 
     assertThat(closeEvent.statusCode()).isEqualTo(CloseStatus.NORMAL.getCode());
-    assertThat(closeEvent.reason()).isEqualTo("LOGOUT");
+    assertThat(closeEvent.reason()).isEqualTo("logout");
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isEmpty();
     verify(screenBufferService, never()).clear(22L, 1L, 123L);
     verify(commandService, never()).enqueue("41", "LOGOUT", false);
@@ -1098,7 +1098,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
       firstCloseEvent = client.awaitClosed();
     }
 
-    assertThat(firstCloseEvent.reason()).isEqualTo("LOGOUT");
+    assertThat(firstCloseEvent.reason()).isEqualTo("logout");
     verify(screenBufferService, never()).clear(22L, 1L, 123L);
     GameplayAsyncAssertions.assertPresenceCountEventually(
         gameplayPresenceService, 22L, 1L, 0, java.time.Duration.ofSeconds(5));
@@ -1626,7 +1626,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver(sessionId)) {
       client.send("LOGOUT");
       GameplayWebSocketDriver.CloseEvent closeEvent = client.awaitClosed();
-      assertThat(closeEvent.reason()).isEqualTo("LOGOUT");
+      assertThat(closeEvent.reason()).isEqualTo("logout");
     }
   }
 

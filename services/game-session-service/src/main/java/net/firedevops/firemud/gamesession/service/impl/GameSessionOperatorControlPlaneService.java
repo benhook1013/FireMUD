@@ -121,6 +121,7 @@ final class GameSessionOperatorControlPlaneService {
     requireText(request.getScriptPatchVersion(), "script_patch_version is required");
     requireText(request.getControlPlaneRequestId(), "control_plane_request_id is required");
     requireText(request.getActorPrincipal(), "actor_principal is required");
+    requireText(request.getReason(), "reason is required");
     getOwnedInstance(tenantId, gameInstanceId);
     long purged =
         tickService.purgeQueuedAutomationCommandsForScriptPatch(
@@ -140,6 +141,7 @@ final class GameSessionOperatorControlPlaneService {
     requireText(request.getPluginVersionId(), "plugin_version_id is required");
     requireText(request.getControlPlaneRequestId(), "control_plane_request_id is required");
     requireText(request.getActorPrincipal(), "actor_principal is required");
+    requireText(request.getReason(), "reason is required");
     getOwnedInstance(tenantId, gameInstanceId);
     long purged =
         tickService.purgeQueuedAutomationCommandsForPluginVersion(
@@ -155,6 +157,7 @@ final class GameSessionOperatorControlPlaneService {
   }
 
   PauseTicksForScopeResponse pauseTicksForScope(long tenantId, PauseTicksForScopeRequest request) {
+    requireText(request.getReason(), "reason is required");
     if (!request.getRegionId().isBlank()) {
       throw new IllegalArgumentException("region_id is not supported; set it empty");
     }
@@ -168,6 +171,7 @@ final class GameSessionOperatorControlPlaneService {
 
   ResumeTicksForScopeResponse resumeTicksForScope(
       long tenantId, ResumeTicksForScopeRequest request) {
+    requireText(request.getReason(), "reason is required");
     if (!request.getRegionId().isBlank()) {
       throw new IllegalArgumentException("region_id is not supported; set it empty");
     }

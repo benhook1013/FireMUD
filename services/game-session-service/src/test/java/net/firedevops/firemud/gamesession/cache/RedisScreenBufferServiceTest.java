@@ -163,7 +163,7 @@ class RedisScreenBufferServiceTest {
   }
 
   @Test
-  void dropsSingleEntryWhoseCanonicalEnvelopeExceedsHardLimit() {
+  void retainsSingleEntryWhoseCanonicalEnvelopeExceedsHardLimit() {
     ScreenBufferService.BufferedEntry oversized =
         ScreenBufferService.BufferedEntry.fromStructuredOutput(
             "short\n",
@@ -177,7 +177,38 @@ class RedisScreenBufferServiceTest {
 
     cacheService.append(22L, 1L, 123L, List.of(oversized));
 
-    assertThat(cacheService.get(22L, 1L, 123L)).isEmpty();
+    assertThat(cacheService.get(22L, 1L, 123L))
+        .hasValueSatisfying(
+            screen -> {
+              assertThat(screen.messageCount()).isEqualTo(1);
+              assertThat(screen.entries().getFirst().payloadJson())
+                  .isEqualTo(oversized.payloadJson());
+            });
+  }
+
+  @Test
+  void laterAppendEvictsOlderOversizedEntryToKeepTheWindowSingleEntry() {
+    ScreenBufferService.BufferedEntry oversized =
+        ScreenBufferService.BufferedEntry.fromStructuredOutput(
+            "short\n",
+            "VIEW",
+            "REPLAY",
+            "FULL",
+            "look-view",
+            "{\"description\":\"" + "x".repeat(65_536) + "\"}");
+
+    cacheService.append(22L, 1L, 123L, List.of(oversized));
+    cacheService.append(
+        22L, 1L, 123L, List.of(ScreenBufferService.BufferedEntry.fromText("CURRENT\n")));
+
+    assertThat(cacheService.get(22L, 1L, 123L))
+        .hasValueSatisfying(
+            screen -> {
+              assertThat(screen.messageCount()).isEqualTo(1);
+              assertThat(screen.protocolText()).isEqualTo("CURRENT\n");
+              assertThat(screen.entries().getFirst().payloadJson())
+                  .isNotEqualTo(oversized.payloadJson());
+            });
   }
 
   @Test

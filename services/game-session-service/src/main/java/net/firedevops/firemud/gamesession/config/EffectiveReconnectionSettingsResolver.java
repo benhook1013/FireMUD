@@ -4,12 +4,14 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
 import net.firedevops.firemud.common.config.ReconnectionSettingsResolver;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.SharedEffectiveSettingsResolver;
 import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -20,6 +22,12 @@ import org.springframework.stereotype.Component;
             + " partially initialized resolver.")
 @Component
 public class EffectiveReconnectionSettingsResolver implements ReconnectionSettingsResolver {
+  private static final String INVALID_BYTE_BOUNDS_REASON =
+      "effective buffer hardMaxBytes must be at least softMaxBytes";
+  private static final int MAX_DIAGNOSTICS = 2;
+  private static final Logger logger =
+      LoggingUtil.getLogger(EffectiveReconnectionSettingsResolver.class);
+
   private final FiremudReconnectionProperties defaults;
   private final SharedEffectiveSettingsResolver sharedEffectiveSettingsResolver;
 
@@ -31,6 +39,7 @@ public class EffectiveReconnectionSettingsResolver implements ReconnectionSettin
     this.sharedEffectiveSettingsResolver =
         Objects.requireNonNull(
             sharedEffectiveSettingsResolver, "sharedEffectiveSettingsResolver must not be null");
+    validateDefaultSettings();
   }
 
   public EffectiveReconnectionSettingsResolver(
@@ -44,24 +53,37 @@ public class EffectiveReconnectionSettingsResolver implements ReconnectionSettin
   }
 
   public ResolvedValue<FiremudReconnectionProperties> resolvedReconnection(SessionContext context) {
+    long tenantId = context == null ? 0L : context.tenantId();
+    Long gameInstanceId = resolveGameInstanceId(context);
     SharedEffectiveSettingsResolver.ResolvedScopedSettings persistedOverrides =
-        context == null || context.tenantId() <= 0L
+        tenantId <= 0L
             ? new SharedEffectiveSettingsResolver.ResolvedScopedSettings(
                 ScopedSettingsOverrides.empty(),
                 ScopedSettingsOverrides.empty(),
                 ScopedSettingsOverrides.empty())
-            : sharedEffectiveSettingsResolver.resolve(
-                context.tenantId(), resolveGameInstanceId(context));
-    FiremudReconnectionProperties effective =
-        merge(defaults, persistedOverrides.effectiveOverrides().reconnection());
+            : sharedEffectiveSettingsResolver.resolve(tenantId, gameInstanceId);
     List<String> sources = new ArrayList<>();
     sources.add("operatorDefaults");
-    sources.addAll(
-        persistedOverrides.sourcesFor(
-            ScopedSettingsOverrides.SettingsDomain.RECONNECTION,
-            context == null ? 0L : context.tenantId(),
-            resolveGameInstanceId(context)));
-    return new ResolvedValue<>(effective, sources);
+    List<String> diagnostics = new ArrayList<>(MAX_DIAGNOSTICS);
+    FiremudReconnectionProperties effective =
+        applyLayer(
+            defaults,
+            persistedOverrides.tenantOverrides().reconnection(),
+            "tenantPersistedOverride:" + tenantId,
+            sources,
+            diagnostics,
+            tenantId,
+            gameInstanceId);
+    effective =
+        applyLayer(
+            effective,
+            persistedOverrides.gameInstanceOverrides().reconnection(),
+            "gameInstancePersistedOverride:" + gameInstanceId,
+            sources,
+            diagnostics,
+            tenantId,
+            gameInstanceId);
+    return new ResolvedValue<>(effective, sources, diagnostics);
   }
 
   @Override
@@ -72,10 +94,48 @@ public class EffectiveReconnectionSettingsResolver implements ReconnectionSettin
         .effective();
   }
 
-  public record ResolvedValue<T>(T effective, List<String> sources) {
+  public record ResolvedValue<T>(T effective, List<String> sources, List<String> diagnostics) {
+    public ResolvedValue(T effective, List<String> sources) {
+      this(effective, sources, List.of());
+    }
+
     public ResolvedValue {
       sources = sources == null ? List.of() : List.copyOf(sources);
+      diagnostics =
+          diagnostics == null
+              ? List.of()
+              : List.copyOf(diagnostics.stream().limit(MAX_DIAGNOSTICS).toList());
     }
+  }
+
+  private FiremudReconnectionProperties applyLayer(
+      FiremudReconnectionProperties base,
+      ScopedSettingsOverrides.ReconnectionOverride override,
+      String source,
+      List<String> sources,
+      List<String> diagnostics,
+      long tenantId,
+      Long gameInstanceId) {
+    if (override == null || override.isEmpty()) {
+      return base;
+    }
+    FiremudReconnectionProperties candidate = merge(base, override);
+    if (!hasValidByteBounds(candidate)) {
+      String diagnostic = "Ignored " + source + " override: " + INVALID_BYTE_BOUNDS_REASON;
+      if (diagnostics.size() < MAX_DIAGNOSTICS) {
+        diagnostics.add(diagnostic);
+      }
+      logger.warn(
+          "Ignoring invalid persisted reconnection override "
+              + "source={} tenantId={} gameInstanceId={} reason={}",
+          source,
+          tenantId,
+          gameInstanceId,
+          INVALID_BYTE_BOUNDS_REASON);
+      return base;
+    }
+    sources.add(source);
+    return candidate;
   }
 
   private FiremudReconnectionProperties merge(
@@ -116,6 +176,17 @@ public class EffectiveReconnectionSettingsResolver implements ReconnectionSettin
                     ? override.buffer().hardMaxBytes()
                     : base.buffer().hardMaxBytes());
     return new FiremudReconnectionProperties(policy, buffer);
+  }
+
+  private void validateDefaultSettings() {
+    if (!hasValidByteBounds(defaults)) {
+      throw new IllegalStateException(
+          "Operator reconnection buffer hardMaxBytes must be at least softMaxBytes");
+    }
+  }
+
+  private boolean hasValidByteBounds(FiremudReconnectionProperties effective) {
+    return effective.buffer().hardMaxBytes() >= effective.buffer().softMaxBytes();
   }
 
   private Long resolveGameInstanceId(SessionContext context) {

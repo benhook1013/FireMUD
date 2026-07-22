@@ -12,7 +12,13 @@ The service requires:
 - peer service discovery via variables prefixed `FIREMUD_SERVICES_`
 - OpenTelemetry collector endpoint via `OTEL_ENDPOINT` when overriding the default
 
-JWT signing key material is configured with `FIREMUD_AUTH_JWT_SECRET` or `FIREMUD_AUTH_JWT_SECRET_PATH`; player-facing environments must use `FIREMUD_AUTH_JWT_SECRET_PATH` mounted from Kubernetes Secrets. Service verification must follow the asymmetric JWKS model from [Authentication & Authorization](../../system-architecture-authentication.md#jwt-verification-model-normative). Server-side session TTL is derived from JWT lifetime using `FIREMUD_AUTH_JWT_EXPIRATION_MS` plus `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`.
+Target-state JWT signing uses `FIREMUD_AUTH_JWT_SECRET` only for local/dev compatibility and an asymmetric versioned bundle at `FIREMUD_AUTH_JWT_SECRET_PATH` in player-facing environments, mounted only into Account Service from the `jwt-signing-keys` Secret. Account Service owns key-generation requests and remains authoritative for signing-generation validation, token-validation semantics, signer promotion, JWKS publication, and public/private rollback pruning. A non-exportable signer may perform only private-key operations explicitly delegated by Account; that delegation is mandatory for target-state asymmetric signing in every environment. Until that capability is implemented, the only controlled asymmetric fallback is the Account-only Kubernetes Secret baseline described in [ADR 0014](../../decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md): only Account Service may receive private material, validators receive public JWKS only, and rotation automation cannot read or write private key material. The inline HMAC setting is a separate legacy local/dev or explicitly ephemeral CI compatibility mode, never a player-facing or shared private-key fallback. Account promotes a new signer only after validating correspondence between the delegated signer (or controlled Account-only fallback), the prepublished JWKS public key, and the `kid`. The public JWKS file is supplied by the read-only `jwt-jwks` Secret through `FIREMUD_AUTH_JWKS_PATH` and served by Account Service. Service verification must follow the asymmetric JWKS model from [Authentication & Authorization](../../system-architecture-authentication.md#jwt-verification-model-normative). Server-side session TTL is derived from JWT lifetime using `FIREMUD_AUTH_JWT_EXPIRATION_MS` plus `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`.
+
+In the target player-facing configuration, `FIREMUD_AUTH_JWKS_PATH` resolves to the mounted `/var/run/secrets/firemud/jwks/jwks.json` file. Account startup fails closed when the path or file is missing or unreadable, the JWKS is malformed, or its public JWK does not match the Account signing key and `kid`; Account does not fall back to a classpath JWKS resource. The classpath fallback is limited to local/test configurations.
+
+## Implementation Status
+
+The current runtime still uses shared-HMAC issuance and validation, has no non-exportable signer delegation, permits the classpath fallback when the configured JWKS file is absent, and the current preflight/manifests still treat signing paths and `jwt-signing-keys` mounts as shared workload configuration rather than enforcing Account-only access. These target-state requirements are not proof of current startup, custody, or mount enforcement; runtime, preflight, and manifest alignment is outside this documentation slice.
 
 ## Service-Specific Variables
 
@@ -30,9 +36,12 @@ Additional variables configure outbound email delivery and payment behavior:
 | `FIREMUD_PAYMENT_STRIPE_API_KEY` | Stripe API key used for payments | *(none)* |
 | `FIREMUD_PAYMENT_PLATFORM_FEE_PERCENT` | Platform fee percentage applied to transactions | `0` |
 | `FIREMUD_AUTH_JWT_SECRET` | Inline JWT signing key material for local/dev or explicitly ephemeral stacks only (legacy compatibility; not for player-facing environments) | *(none)* |
-| `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing JWT signing key material (required for player-facing environments; mounted from `jwt-signing-keys`) | *(none)* |
+| `FIREMUD_AUTH_JWT_SECRET_PATH` | Account-only path to a versioned asymmetric signing bundle (required for player-facing environments; mounted read-only from `jwt-signing-keys`) | *(none)* |
+| `FIREMUD_AUTH_JWKS_PATH` | Account-only path to the published `jwks.json` file (required for player-facing environments; mounted read-only from `jwt-jwks`, normally `/var/run/secrets/firemud/jwks/jwks.json`) | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
 | `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Extra time added to the JWT lifetime when deriving server-side session TTL | `300000` |
+
+Changing `FIREMUD_AUTH_JWT_EXPIRATION_MS` changes the `exp` claim only for newly issued JWTs; already issued JWTs retain their existing `exp`. The session safety margin affects newly admitted gameplay bindings, not the expiration of existing JWTs.
 
 ## Proto Files
 

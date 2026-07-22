@@ -43,6 +43,13 @@ Example alerts for missed backups and verification runs:
     summary: Restore drill proof is stale
     description: No successful restore drill has been recorded within the required restore-proof freshness window. Investigate drill cadence and recovery evidence before traffic reopen decisions.
 
+```
+
+## Maintenance/Reset Pause Safety
+
+The pause-budget alerts below apply only to explicit maintenance, reset, migration, or scoped-recovery workflows. Routine online PostgreSQL backup does not call pause/resume or pause gameplay ticks.
+
+```yaml
 - alert: BackupTickPauseTooLongScoped
   expr: backup_tick_pause_duration_budget_breached > 0
   for: 5m
@@ -50,10 +57,10 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P0
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+    runbook: design/architecture/system-architecture-backup-recovery.md#maintenance-tick-pause-scope-contract
   annotations:
-    summary: Tick pause window too long during scoped backup
-    description: One or more backup scopes have exceeded the pause-duration budget. Investigate pause/resume controls and scope-specific backlog growth.
+    summary: Tick pause window too long during scoped maintenance
+    description: One or more maintenance scopes have exceeded the pause-duration budget. Investigate pause/resume controls and scope-specific backlog growth.
 
 - alert: BackupTickPauseWaitTooLongScoped
   expr: backup_tick_pause_wait_budget_breached > 0
@@ -62,10 +69,10 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P0
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+    runbook: design/architecture/system-architecture-backup-recovery.md#maintenance-tick-pause-scope-contract
   annotations:
-    summary: Tick pause wait exceeded budget during scoped backup
-    description: One or more backup scopes are taking too long to reach PAUSED. Investigate in-flight tick drain time and pause control health.
+    summary: Tick pause wait exceeded budget during scoped maintenance
+    description: One or more maintenance scopes are taking too long to reach PAUSED. Investigate in-flight tick drain time and pause control health.
 
 - alert: BackupTicksPausedTooLong
   expr: backup_ticks_paused_budget_breached > 0
@@ -74,10 +81,10 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P0
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+    runbook: design/architecture/system-architecture-backup-recovery.md#maintenance-tick-pause-scope-contract
   annotations:
-    summary: Backup scope remains paused unexpectedly
-    description: A backup scope has remained in paused state beyond the expected window. Check pause/resume API calls and backup job completion state.
+    summary: Maintenance scope remains paused unexpectedly
+    description: A maintenance scope has remained in paused state beyond the expected window. Check pause/resume API calls and maintenance workflow completion state.
 
 - alert: BackupPauseAliasScopeStillUsed
   expr: increase(backup_pause_scope_alias_requests_total[24h]) > 0
@@ -86,13 +93,13 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P2
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#tick-pause-scope-migration-plan
+    runbook: design/architecture/system-architecture-backup-recovery.md#maintenance-tick-pause-scope-contract
   annotations:
-    summary: Backup controls still use alias scope
-    description: One or more backup pause/resume requests still relied on game_instance_id alias scope during the last 24 hours. Migrate automation to canonical region scope.
+    summary: Maintenance controls still use alias scope
+    description: One or more maintenance pause/resume requests still relied on game_instance_id alias scope during the last 24 hours. Migrate automation to canonical region scope.
 ```
 
-This assumes backup tooling emits scoped budget gauges directly:
+This assumes maintenance/reset tooling emits the scoped budget gauges directly:
 
 - `backup_tick_pause_wait_budget_seconds{scope_type,scope}`
 - `backup_tick_pause_duration_budget_seconds{scope_type,scope}`

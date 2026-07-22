@@ -5,7 +5,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 
 /** Shared load-oriented gameplay scenario helpers above the base cross-service stack. */
 public final class GameplayLoadScenarios {
@@ -35,8 +34,7 @@ public final class GameplayLoadScenarios {
     for (int i = 0; i < count; i++) {
       long accountId = characterIds[i];
       long bootstrapGameInstanceId =
-          GameInstanceTestFixtures.insertRunningGameInstance(
-              stack.jdbc(), tenantId, accountId, gameTemplateId);
+          stack.insertRunningGameInstance(tenantId, accountId, gameTemplateId, false);
       long sessionId = firstAccountId + 10_000L + i + 1;
       String email = "player" + (i + 1) + "@example.com";
       stack.accountStub().mapAccountId(email, accountId);

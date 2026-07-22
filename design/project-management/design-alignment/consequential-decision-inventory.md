@@ -1,12 +1,12 @@
 # Consequential Design Decision Inventory
 
-Status: Complete and independently coverage/fidelity-audited. This artifact is non-normative and ready for the human-led adversarial review.
+Status: Complete and independently coverage/fidelity-audited. This artifact is non-normative; the human-led adversarial review is in progress.
 
 ## Implementation Status
 
 `Complete` applies only to inventory scan coverage and fidelity auditing. Decision implementation, approval, and adversarial-review state remain authoritative in the row statuses and review queue below; proposed, conflicting, and human-review-required decisions remain unresolved.
 
-This inventory identifies important explicit and implicit product and architecture decisions in canonical FireMUD design. It prepares evidence for a later adversarial review run manually by the human decision owner. Automated work on this inventory must not accept, reject, supersede, or resolve a decision; accepted target state remains in canonical design and consequential rationale belongs in an ADR.
+This inventory identifies important explicit and implicit product and architecture decisions in canonical FireMUD design. It provides evidence and the authoritative queue for the active adversarial review run manually by the human decision owner. Automated work on this inventory must not accept, reject, supersede, or resolve a decision; accepted target state remains in canonical design and consequential rationale belongs in an ADR.
 
 ## Decision Threshold
 
@@ -55,12 +55,12 @@ The source-scoped ledgers contain 183 unique authoritative decision keys with no
 
 | Capability | Sources reviewed | Decisions inventoried | Human-review candidates | Coverage state |
 | --- | ---: | ---: | ---: | --- |
-| Existing ADR set | 11 records plus linked canonical sources | 9 current aliases within the 68 cross-cutting decisions | Prioritized in the source ledgers | Complete initial mapping |
+| Existing ADR set | 19 records plus linked canonical sources | 9 current aliases within the 68 cross-cutting decisions | Prioritized in the source ledgers | Complete initial mapping |
 | Cross-cutting system architecture | 22 canonical sources plus ADRs | 68 | Prioritized in the source ledger | Complete and independently audited |
 | Microservice architecture | 76 sources | 23 new; stronger evidence for 40 existing keys | Prioritized in the source ledger | Complete and independently audited |
 | Specialized runtime architecture | 39 sources | 54 new; stronger evidence for 20 existing keys | Prioritized in the source ledger | Complete and independently audited |
 | Product and operations architecture | 35 sources | 38 new; stronger evidence for 11 existing keys | Prioritized in the source ledger | Complete and independently audited |
-| **Total unique decision keys** | **All 184 architecture artifacts classified; 172 decision-scan sources plus 12 decision-registry artifacts** | **183** | **Prioritized by source ledger** | **Complete and independently audited** |
+| **Total unique decision keys** | **All 192 architecture artifacts classified; 172 decision-scan sources plus 20 decision-registry artifacts** | **183** | **Prioritized by source ledger** | **Complete and independently audited** |
 
 ## Decision Ledger
 
@@ -83,16 +83,17 @@ The detailed ledgers preserve all conflicts, target/current gaps, weak rationale
 | Decision key | Conflict or missing decision |
 | --- | --- |
 | `AUTO-01` | Resolved baseline: ADR 0001 now delegates the endpoint-specific identity matrix to the canonical scripting contract table and includes runtime scope plus dry-run separation. |
-| `SET-01` | The target settings precedence includes presets and caps that the current effective-settings implementation does not yet resolve. |
+| `SET-01` | Resolved target: values follow defaults, preset, bootstrap, supported runtime-default, tenant, and game-instance precedence while hard bounds and operator caps apply separately as constraints. The current effective-settings implementation does not yet resolve the complete accepted model. |
 | `CONTENT-05` | Resolved baseline: first-party authoring uses Game Design-owned revision and domain APIs; bulk JSON import/export remains deferred until it has a validated package contract. |
-| `SESSION-04` | The invisible non-edge reconnect target and current visible restart/reconnect behavior are not one testable promise. |
-| `SESSION-08` | Resolved baseline: absolute session validity, disconnected-resume eligibility, and transcript retention are separate policies; resume uses the stricter remaining session lifetime and configured resume window. |
-| `SEC-02` | JWT rotation, overlap, pruning, and hot reload are target design while implementation readiness remains incomplete. |
-| `OPS-04` | Player-facing restore requires a coordinated region pause and traffic-open evidence that current implementation cannot yet prove. |
-| `CMD-STATUS-01` | The current narrower gameplay-command status API and target terminal command-lifecycle surface do not yet converge. |
-| `TRACE-01` | Named gameplay spans and scoped incident sampling are target capabilities, while current implementation supports only a narrower tracing surface. |
+| `SESSION-04` | Resolved target: ordinary non-edge failures use bounded invisible recovery when the edge socket, healthy replacement capacity, and shared authority remain available; the ordinary target is 10 seconds and the hard cutoff is 30 seconds before `1013/backend_unavailable`. Complete real-Game-Session continuity proof remains implementation debt. |
+| `SESSION-08` | Resolved target: healthy uninterrupted play is independent of internal JWT lifetime; immutable continuity expiry limits reuse of an old binding after transport loss, disconnected resume uses the stricter continuity and configured windows, and transcript retention or Redis presence never grants authority. Current `PLAY` admission does not yet enforce these deadlines. |
+| `SEC-02` | Resolved target: planned Account JWT rotation prepublishes and converges the new public key before signer promotion, retains old verification through token expiry, then prunes; compromise/restore uses an environment-wide hard cutover. Current shared-HMAC issuance and validation fail the accepted player-facing readiness gate. |
+| `OPS-04` | Resolved target: routine backups are online environment-wide PostgreSQL snapshots without gameplay pause; player-facing rewind uses only environment-wide `cold_start_restore` with empty Redis, safe participant dispositions, quarantine, and controlled reopen. The durable recovery controller is the runtime authority for the gated reopen transition; checked-in recovery evidence is a finalized projection. Current implementation and proof do not satisfy the accepted gates. |
+| `CMD-STATUS-01` | Resolved target: evolve `GetGameplayCommandStatus` in place as the single authoritative durable API, with stable pre-retry identity and separate acknowledgement, ingress, execution-outcome, and gameplay-result dimensions. Current fields, persistence, recovery, and proof remain incomplete. |
+| `TRACE-01` | Resolved target: metrics and structured logs are the dependable baseline; named workflow tracing, service sampling, and tenant/region sampling are progressively advertised only after end-to-end environment proof. Current tracing remains a narrower best-effort surface. |
+| `EDGE-06` / `MS-GW-DYNAMIC-ROUTES` | Resolved target: the version-controlled release catalog is the sole player-facing route authority; bounded ephemeral mutation is dev/test-only, and any production runtime control plane requires a separate future decision. Current endpoint gating, isolation, validation, and proof remain incomplete. |
 
-These are inventory findings, not decisions made by this workstream. They remain inputs to the later human-led adversarial review and explicit human resolution.
+These rows preserve the original conflict inventory and now summarize its human-reviewed resolutions. The linked ADRs and canonical design are authoritative for the accepted target state; implementation gaps remain tracked separately.
 
 ## Adversarial Review Queue
 
@@ -104,14 +105,14 @@ The review facilitator must preserve the current choice's strongest argument, co
 
 | Packet | Scope | Reviewed | Total | State |
 | --- | --- | ---: | ---: | --- |
-| 1 | Known conflicts and drift | 0 | 9 | `not-started` |
+| 1 | Known conflicts and drift | 9 | 9 | `completed` |
 | 2 | Identity, authority, and security | 0 | 32 | `not-started` |
 | 3 | Execution correctness and durability | 0 | 43 | `not-started` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **0** | **183** | `not-started` |
+| **Total** | | **9** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -121,18 +122,18 @@ No implementation-blocking override is active. Record an override here with the 
 
 #### Packet 1 P0
 
-- [ ] `SET-01`
-- [ ] `SESSION-04`
-- [ ] `SEC-02`
-- [ ] `OPS-04`
-- [ ] `CMD-STATUS-01`
-- [ ] `TRACE-01`
-- [ ] `EDGE-06`
-- [ ] `MS-GW-DYNAMIC-ROUTES`
+- [x] `SET-01` — `revised` on 2026-07-18; [ADR 0012](../../architecture/decisions/adr-0012-settings-value-precedence-and-constraints.md); [canonical settings model](../../architecture/system-architecture-settings-model.md)
+- [x] `SESSION-04` — `revised` on 2026-07-18; [ADR 0013](../../architecture/decisions/adr-0013-bounded-invisible-non-edge-restart-recovery.md); [canonical reconnection contract](../../architecture/system-architecture-reconnection.md)
+- [x] `SEC-02` — `revised` on 2026-07-18; [ADR 0014](../../architecture/decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md); [canonical JWT rotation workflow](../../architecture/system-architecture-security.md#jwt-key--jwks-rotation-workflow)
+- [x] `OPS-04` — `revised` on 2026-07-18; [ADR 0015](../../architecture/decisions/adr-0015-online-backup-and-environment-wide-cold-start-recovery.md); [canonical backup and recovery contract](../../architecture/system-architecture-backup-recovery.md)
+- [x] `CMD-STATUS-01` — `revised` on 2026-07-18; [ADR 0016](../../architecture/decisions/adr-0016-canonical-gameplay-command-status-lifecycle.md); [canonical command lifecycle](../../architecture/system-architecture-tick-execution-flows.md#command-ingress-acknowledgement-contract-required)
+- [x] `TRACE-01` — `revised` on 2026-07-18; [ADR 0017](../../architecture/decisions/adr-0017-capability-gated-operational-tracing.md); [capability-gated tracing contract](../../architecture/system-architecture-tracing.md#implementation-notes)
+- [x] `EDGE-06` — `revised` on 2026-07-18; [ADR 0018](../../architecture/decisions/adr-0018-declarative-production-gateway-routes.md); [canonical route authority](../../architecture/system-architecture-gateway.md#dynamic-route-override-lifecycle)
+- [x] `MS-GW-DYNAMIC-ROUTES` — `revised` on 2026-07-18; [ADR 0018](../../architecture/decisions/adr-0018-declarative-production-gateway-routes.md); [Gateway API boundary](../../architecture/microservices/spring-cloud-gateway/api-contracts.md#dynamic-route-management)
 
 #### Packet 1 P1
 
-- [ ] `SESSION-08`
+- [x] `SESSION-08` — `revised` on 2026-07-18; [ADR 0019](../../architecture/decisions/adr-0019-separate-active-session-resume-and-transcript-lifetimes.md); [canonical session lifetime contract](../../architecture/system-architecture-session-behavior.md#session-types-and-lifetimes)
 
 ### Packet 2: Identity, Authority, And Security
 
@@ -362,7 +363,7 @@ No implementation-blocking override is active. Record an override here with the 
 ### Allocation Notes
 
 - `EDGE-06` and `MS-GW-DYNAMIC-ROUTES` describe the same dynamic-route boundary but remain separate authoritative keys and must be reviewed together.
-- `SESSION-08` remains in Packet 1 because the control inventory previously recorded resolved target/current drift that still needs human verification.
+- `SESSION-08` remained in Packet 1 because the control inventory recorded target/current drift requiring human verification; that review is now complete.
 - Publication authority precedes deployment gates, so `CONTENT-01`, `ASSET-01`, `ASSET-02`, and `PROMO-01` remain in Packet 4 rather than Packet 6.
 - Version admission and rollback convergence precede execution, so the patch, plugin, and timer-reload decisions remain in Packet 4 rather than Packet 3.
 - Account authority, identity scope, and erasure govern their player-facing consequences, so `DATA-01` and `ACCOUNT-01` remain in Packet 2 rather than Packet 5.

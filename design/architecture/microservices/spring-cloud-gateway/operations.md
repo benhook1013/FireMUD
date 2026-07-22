@@ -25,9 +25,10 @@ Readiness transition observability follows the shared contract from [Deployment 
 
 ## Dynamic Route Operational Guardrails
 
-- Dynamic route mutation is intended for dev/test use until persistence, multi-pod convergence, and route-change audit controls are present.
-- Player-facing environments must fail startup when dynamic route mutation is enabled without those controls, including the unsafe combination `firemud.gateway.dynamic-routes.enabled=true` with `firemud.gateway.dynamic-routes.allow-player-facing=true`.
-- The required readiness predicates for safe player-facing enablement are `dynamic_routes.persistence_ready`, `dynamic_routes.convergence_ready`, `dynamic_routes.audit_ready`, and aggregate `dynamic_routes_ready`.
+- Dynamic route mutation is an explicitly enabled local/dev/test capability, not an initial production control plane. These are target-state acceptance criteria; the current implementation does not enforce all of them.
+- Target-state acceptance: player-facing environments fail startup if mutation components or endpoints are enabled, regardless of persistence or convergence claims.
+- Target-state acceptance: mutation endpoints remain internal-only and use the gateway-boundary authentication/authorization safeguards described in [Gateway Architecture](../../system-architecture-gateway.md#management-plane-security).
+- Production emergency changes use an expedited baseline rollout or a predeclared bounded failover switch. Any generic production runtime control plane requires a separate future decision.
 
 ## Scalability
 

@@ -15,18 +15,18 @@ Staging is disposable by default, but if it is restored from production-origin d
 
 The main body of this document describes the target-state backup workflow. Current implementation may lag the target state in a few areas:
 
-- `PauseTicksForScope` / `ResumeTicksForScope` support pausing by `tenant_id` + `game_instance_id` today; `region_id` scoping exists in the proto contract but is not yet enforced end to end.
-- The live ownership/status read is currently `GetRuntimeOwnershipStatus` at the `{tenantId, gameInstanceId}` boundary, not the fuller target-state `GetRegionTickStatus(scope)` surface used throughout the long-term backup and reset contract.
-- Backup-related spans and metrics should still use the target-state names and units documented here so dashboards and alert rules remain stable as scope support expands.
-- Player-facing prod-like environments are not coordinated-backup-ready until automated backups invoke pause/resume with canonical `tenant_id + region_id` scope end to end.
-- Until that convergence is complete, restore-point recovery for player-facing prod-like environments is unsupported. Player-facing production releases that would depend on restore-point recovery rather than binary rollback are non-compliant for promotion.
-- Alias-scope migration notes in this doc are temporary bridge guidance and should be removed once canonical region scope is enforced end to end.
+- The scheduled Kubernetes CronJob performs an online `pg_dump`, but it does not yet record complete environment/schema/service/tool lineage or prove that the artifact can pass the environment-wide cold-start recovery workflow.
+- `PauseTicksForScope` / `ResumeTicksForScope` and `GetRuntimeOwnershipStatus` remain incomplete maintenance/reset controls. Routine online backups do not depend on tick pause.
+- `verify-backups.sh` currently proves only Velero backup existence and optional pg-dump object-store reachability; it does not prove immutable lineage, artifact readability, restore-tool compatibility, or readiness.
+- Player-facing restore-point recovery remains unsupported because enforced restore quarantine, empty-Redis proof, environment-wide durable convergence, session/epoch invalidation, post-restore hardening automation, and complete recovery-controller/projection validation are not implemented end to end.
+- Until that convergence is complete, production first-live, reopen after PostgreSQL rewind, and `roll-forward-only` production promotion are non-compliant.
 
 Canonical current-state note:
 
-- Player-facing target state is canonical `tenant_id + region_id` scope.
-- Alias-scoped `game_instance_id` maintenance remains a temporary bridge for non-player-facing drills, quarantined rehearsals, and explicitly recorded manual maintenance only.
-- When region-scoped pause/resume is enforced end to end, the migration-plan sections in this doc and related runbooks should be removed rather than preserved as standing operator guidance.
+- Player-facing database restore is environment-wide because the backup rewinds the shared PostgreSQL database for every tenant and service schema.
+- The initially supported recovery mode is `cold_start_restore` with empty Coordination Redis, full session invalidation, and environment-wide epoch/fence reset.
+- Player-facing `scoped_reset_restore` with surviving Coordination Redis is deferred and quarantined; it is not a current restore or readiness path.
+- Alias-scoped `game_instance_id` pause/resume remains a temporary maintenance bridge and is not backup or restore-readiness evidence.
 
 ## Documentation Map
 
@@ -38,7 +38,7 @@ Canonical current-state note:
 ## PostgreSQL Logical Backups
 
 - `firemud-pg-dump` runs every 15 minutes and stores compressed SQL dumps.
-- The CronJob authenticates to the Game Session control plane to invoke `PauseTicks` / `ResumeTicks` through narrowly scoped service-account and mTLS identity bindings.
+- The CronJob takes an online transactionally consistent PostgreSQL snapshot while normal writes continue; routine backup does not pause gameplay.
 - Production Terraform deploys this CronJob automatically.
 - Retention policy:
   - 24 hours of 15-minute dumps
@@ -49,42 +49,29 @@ Canonical current-state note:
 - In production, skipped object-storage uploads are a misconfiguration even if short-term dumps remain on PVC.
 - Velero schedules back up Kubernetes manifests only, with `snapshotVolumes: false`.
 
-### Coordinated Tick Pausing
+### Online Snapshot Contract
 
-PostgreSQL dumps must capture a consistent view of gameplay state. Before `pg_dump` begins, Game Session exposes `PauseTicks` and `ResumeTicks`. The backup workflow:
+The backup artifact is one consistent PostgreSQL database view, not a tenant- or region-scoped gameplay artifact. Online backup correctness requires:
 
-1. Calls the canonical pause entrypoint for the selected scope and backup operation:
-   - target state: `PauseTicks(scope)` / `coordination-maintenance pause --operation backup ...`
-   - current bridge-only drill path: `PauseTicksForScope(tenant_id, game_instance_id)` for non-player-facing alias-scope rehearsals only
-2. Polls the canonical status surface for the chosen path until the affected scope is quiesced:
-   - target state: `GetRegionTickStatus(scope)` reports canonical `PAUSED`, meaning `commandIntakeBlocked=true`, `batchAllocationBlocked=true`, and no executor in scope can create new coordination state under the pre-pause epoch
-   - current bridge-only drill path: `GetRuntimeOwnershipStatus` proves the alias-scoped runtime row is paused and ownership has advanced to the new durable fence timeline
-3. Starts `pg_dump` immediately once pause is confirmed.
-4. Invokes the matching resume entrypoint so command intake and tick scheduling resume.
+- one transactionally consistent snapshot covering every service schema in the declared database;
+- immutable environment, database, schema/migration, service-digest, tool-digest, snapshot-time, and object-store lineage;
+- artifact integrity and a restore-readability check rather than object-existence proof alone;
+- no claim that the snapshot also preserves Coordination Redis, active sessions, queued transient work, or external provider state; and
+- periodic production-equivalent proof that durable workflow and external-effect reconciliation can recover from an artifact captured while representative writes are active.
 
-Operational constraints:
-
-- Coordinated backup jobs must acquire the deployment maintenance lock described in `system-architecture-redis-operations.md#maintenance-job-coordination` before pausing ticks. If another incompatible maintenance operation is active, the backup must fail closed rather than producing a dump from an intentionally non-steady state.
-- In the canonical workflow, `coordination-maintenance pause --operation backup ...` is the lock-owning step, and the later `resume` or `release-lock` step is responsible for releasing that same lock token.
-- Tick pausing must be bounded and observable.
-- Backup and reset tooling must use the same pause/status contract.
-- Pause scope should be limited to the smallest safe blast radius.
-- If a pause does not reach `PAUSED` within budget, the backup job must fail fast and alert operators instead of producing an inconsistent dump.
-- Recommended pause-wait budget is `max(10s, 2 * tick_interval_ms)` for the affected scope.
-- For player-facing scopes, “pause wait exceeded” and “scope still paused” are `P0`; freshness and verification failures remain `P1`.
+Cross-service workflows may be captured between durable steps, as they may be during an abrupt crash. The player-facing readiness boundary is therefore restore-time convergence, not recurring write quiescence. Every declared and enabled durable participant must have a deterministic safe disposition or block reopen.
 
 Canonical backup/recovery severity matrix:
 
 | Condition family | Canonical severity | Notes |
 | --- | --- | --- |
-| `backup_tick_pause_wait_budget_breached`, `backup_tick_pause_duration_budget_breached`, `backup_ticks_paused_budget_breached` on player-facing scopes | `P0` | Active player-facing safety breach during coordinated backup or recovery gating |
 | `backup_pipeline_recent_backup_slo_breached` | `P1` | Fresh backup signal missing for required environment class |
 | `backup_pipeline_recent_verification_slo_breached` | `P1` by default (`P2` only where environment policy explicitly downgrades) | Verification freshness degraded |
 | `backup_pipeline_recent_restore_drill_slo_breached` | `P1` | Restore-proof freshness degraded for reopen/promotion decisions |
 
-For convenience, `dev-tools/backups/firemud-backup.sh` automates the pause, wait, dump, and resume sequence.
+Pause-budget alerts remain valid for maintenance/reset workflows but are not routine backup signals. `dev-tools/backups/firemud-backup.sh` takes an online PostgreSQL snapshot without pausing gameplay ticks.
 
-### Tick Pause Scope Contract
+### Maintenance Tick Pause Scope Contract
 
 Tick pause/resume APIs support multiple ways to identify scope, but the long-term canonical scope is `tenant_id + region_id`.
 
@@ -92,8 +79,8 @@ Tick pause/resume APIs support multiple ways to identify scope, but the long-ter
 - `game_instance_id` is an alias scope allowed only when a game instance maps cleanly to a single tick region.
 - Requests must set `tenant_id` and exactly one of `region_id` or `game_instance_id`.
 - If both or neither are set, the request is rejected as `INVALID_ARGUMENT`.
-- Automated coordinated backups for player-facing prod-like environments must already use canonical region scope.
-- Alias-scoped `game_instance_id` pause/resume is allowed only for non-player-facing restore drills, quarantined staging rehearsals, and manual operator workflows that record explicit scope-resolution evidence.
+- Routine online backups do not invoke this contract and do not use pause scope as recovery evidence.
+- Alias-scoped `game_instance_id` pause/resume is allowed only for non-player-facing maintenance drills, quarantined staging rehearsals, and manual operator workflows that record explicit scope-resolution evidence.
 - Manual alias-scoped maintenance operations must write an audit record showing the requested alias scope, the resolved `tenant_id`, the resolved `region_id` set, actor identity, and start/end timestamps.
 
 Evidence schema versions referenced by this workflow:
@@ -102,7 +89,7 @@ Evidence schema versions referenced by this workflow:
 - `recovery-record/v1` for canonical player-facing restore evidence
 - `traffic-open-record/v1` for `hobby-self-hosted` first-live and reopen evidence
 
-### Tick Pause Scope Migration Plan
+### Maintenance Pause Scope Migration Plan
 
 The control-plane migration should follow explicit phases:
 
@@ -112,7 +99,7 @@ The control-plane migration should follow explicit phases:
 
 Exit criteria for Phase C:
 
-- all prod-like backup jobs use `tenant_id + region_id`
+- all prod-like maintenance, reset, migration, and future scoped-recovery tools use `tenant_id + region_id`
 - incident tooling and runbooks no longer rely on alias fallback
 - alias-scope usage is zero for a full release window
 
@@ -142,20 +129,19 @@ This is distinct from:
 
 ## Restore Mode Selection
 
-Every restore that rewinds PostgreSQL must select one explicit Coordination Redis recovery mode before the environment may reopen:
+Every restore that rewinds PostgreSQL must use one explicit environment-wide `cold_start_restore` contract before the environment may reopen:
 
-- `cold_start_restore`
-  - use when Coordination Redis is known to be empty for the restored environment
-  - requires proof of empty coordination state and the same post-restore hardening, external credential validation, and smoke-verification evidence required for player-facing reopen
-- `scoped_reset_restore`
-  - use when Coordination Redis state may survive while PostgreSQL has been rewound
-  - requires proof of the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) and reset-sensitive session/auth handling
+- restore PostgreSQL into an enforced quarantine boundary and replace or clear surviving Coordination Redis so the restored database is not merged with newer coordination state;
+- invalidate gameplay and Account sessions, reset every gameplay region epoch and fence, and rebuild Coordination Redis only from restored durable authority plus post-restore activity after convergence; and
+- link the backup, restore, recovery, hardening, participant, confidentiality, and smoke evidence to one durable environment-wide recovery-controller state before controlled reopen.
+
+`scoped_reset_restore` with surviving Coordination Redis is explicitly deferred and quarantined. It may be used only for isolated non-player-facing experiments or maintenance investigation under a future separate decision and proof package. Such experiments still follow the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence), but their pause, epoch, scope, or reset evidence must not satisfy backup readiness, traffic-open, promotion, or player-facing restore proof.
 
 Ambiguous restore behavior is not allowed:
 
-- operators must not simply restore PostgreSQL and restart everything without explicitly classifying surviving coordination/session state
-- any player-facing restore that cannot prove one of the two modes above is non-compliant and must remain quarantined
-- player-facing prod-like restores must not use alias-scoped `game_instance_id` pause/resume as the recovery proof; until canonical `tenant_id + region_id` scope is enforced end to end, restore-point recovery remains drill-only or quarantined rehearsal-only
+- operators must not simply restore PostgreSQL and restart everything without quarantine and the environment-wide recovery-controller gate;
+- any player-facing restore that cannot prove the `cold_start_restore` contract remains quarantined; and
+- player-facing prod-like restores must not use tenant/region pause or reset evidence as recovery proof. Environment-wide cold-start recovery requires its own quarantine, convergence, confidentiality, and controlled-reopen evidence.
 
 ## Kubernetes Production
 
@@ -174,10 +160,10 @@ Manual bootstrap example sequence:
 2. Copy or download the desired dump.
 3. Restore it into the target PostgreSQL pod with `psql`.
 4. Restore manifests or Velero resources with normal application workloads held at zero replicas or under an enforced restore-safe startup gate; only infrastructure and maintenance Jobs required for recovery may run.
-5. Choose and record exactly one restore mode: `cold_start_restore` or `scoped_reset_restore`.
-6. Complete the selected coordination recovery gate before any normal Game Session or automation worker can create fresh coordination state.
-7. Run post-restore hardening, external credential validation, secret-compliance evidence refresh, required sanitization checks, and smoke verification.
-8. Start normal workloads and reopen traffic only after the recovery record and refreshed secret-compliance evidence are complete.
+5. Record `cold_start_restore` and establish the durable environment-wide recovery-controller state before any normal Game Session or automation worker can create fresh coordination state.
+6. Complete the cold-start coordination recovery gate, including empty-Redis and environment-wide epoch/fence proof.
+7. Run post-restore hardening, external credential validation, secret-compliance evidence refresh, required sanitization checks, and smoke verification, recording the results in the durable recovery controller.
+8. Start normal workloads under quarantine, advance the controller to `ready_to_reopen`, and perform the gated transition to `finalized`, which authorizes traffic to reopen. Export the immutable checked-in recovery projection afterward; repository evidence records the finalized release but is not part of its transaction.
 
 ## Local Development
 
@@ -190,10 +176,10 @@ Manual bootstrap example sequence:
 
 ## Backup Verification & Restoration Testing
 
-- `verify-backups.sh` proves backup artifacts exist, are readable, and remain compatible with supported recovery tooling.
+- `verify-backups.sh` proves only that backup artifacts exist and optional object storage is reachable. Artifact readability, restore-tool compatibility, and player-facing readiness require separate evidence.
 - Restore drills prove the artifacts, restore tooling, restore-mode selection, and post-restore hardening flow actually produce a recoverable environment.
 - Every successful restore drill must record:
-  - selected restore mode
+  - `cold_start_restore` as the player-facing restore mode
   - restore-tool success
   - smoke success
   - required post-restore hardening and validation results
@@ -206,8 +192,8 @@ Backup observability, restore-proof artifacts, and traffic-open evidence are def
 
 | Environment | Steps |
 | --- | --- |
-| **Kubernetes** | Enter restore-safe quarantine -> restore PostgreSQL from `pg_dump` -> restore manifests with normal workloads stopped or restore-safe-fenced -> choose and record `cold_start_restore` or `scoped_reset_restore` -> run the coordination recovery gate before normal startup -> run post-restore hardening and smoke checks -> reopen traffic only after recovery evidence is complete |
-| **Docker Compose** | Restore DB snapshot -> choose and record `cold_start_restore` or `scoped_reset_restore` -> restart containers only after the chosen coordination recovery path is understood -> follow cold-start/reset behavior and local validation before reopening traffic |
+| **Kubernetes** | Enter restore-safe quarantine -> restore PostgreSQL from `pg_dump` -> restore manifests with normal workloads stopped or restore-safe-fenced -> record `cold_start_restore` and establish the durable environment-wide recovery-controller state -> run the empty-Redis, convergence, hardening, and smoke gates -> reopen traffic only through the finalized controller transition |
+| **Docker Compose** | Restore DB snapshot into quarantine -> record `cold_start_restore` and establish the recovery-controller state -> complete empty-Redis, convergence, hardening, and local validation -> reach `ready_to_reopen` -> idempotently reconcile release through `releasing` to `finalized` -> export checked-in recovery and traffic-open projections only after `finalized` -> reopen traffic only after the controller is observed in `finalized` |
 
 Redis always uses AOF for crash recovery during runtime but is never restored from backup images. If Coordination Redis starts empty, treat it as a reset/cold-start scenario as described in the Redis architecture docs.
 

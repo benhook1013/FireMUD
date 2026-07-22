@@ -43,7 +43,7 @@ By default, staging is treated as **disposable** and does not run the production
 
 - No scheduled `pg_dump` or Velero schedules in staging.
 - Staging rebuilds from manifests and fresh data as needed.
-- When staging is temporarily restored from production backups (for example for disaster recovery rehearsals), operators must run post-restore secret hardening before opening the environment to playtests (see `../system-architecture-backup-recovery.md#post-restore-secret-hardening`).
+- When staging is temporarily restored from production backups (for example for disaster recovery rehearsals), operators must run post-restore secret hardening before opening the environment to playtests (see `../system-architecture-post-restore-hardening.md#post-restore-secret-hardening`).
 - PRs that modify `k8s/` run [`.github/workflows/validate-kustomize-overlays.yml`](../../../.github/workflows/validate-kustomize-overlays.yml), which blocks staging backup schedule resources unless `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
 - If staging schedules are intentionally enabled, the PR should include the marker file, an explicit operator rationale, and a rollback plan to return staging to disposable defaults.
 
@@ -63,4 +63,4 @@ Required evidence record:
 - `design/operations/deployments/hobby-self-hosted/backup-compliance.yaml` must be updated after backup cadence changes, successful restore drills, or retention-policy changes.
 - Player-traffic reopen after a hobby restore requires this record to show baseline compliance (`>=1` backup/24h, `>=7` retained daily restore points, `>=1` restore drill/30d).
 - First-live and post-restore reopen events must also record `design/operations/deployments/hobby-self-hosted/traffic-open/<deployment-ref>.json` and pass the hobby traffic-open preflight gate before player traffic opens.
-- Post-restore reopen events must also complete the canonical recovery record at `design/operations/deployments/hobby-self-hosted/recovery/<recovery-ref>.json` before quarantine is lifted and player traffic reopens.
+- Post-restore reopen events must also have the durable recovery controller apply and observe quarantine release, advance to `finalized`, and only then reopen player traffic; the canonical checked-in recovery projection at `design/operations/deployments/hobby-self-hosted/recovery/<recovery-ref>.json` is exported afterward.

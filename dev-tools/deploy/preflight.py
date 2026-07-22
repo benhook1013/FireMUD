@@ -28,7 +28,7 @@ Environment variables:
   FIREMUD_PROMOTION_ATTESTATION      Required in operator production context; path to attestation JSON
   FIREMUD_BACKUP_READINESS_EVIDENCE  Required for production roll-forward-only promotions; path to backup-readiness JSON
   FIREMUD_TRAFFIC_OPEN_EVENT         Optional traffic-open gate: first-live or reopen
-  FIREMUD_TRAFFIC_OPEN_EVIDENCE      Optional explicit traffic-open evidence path
+  FIREMUD_TRAFFIC_OPEN_EVIDENCE      Optional hobby traffic-open evidence path
 """
 
 
@@ -1077,55 +1077,13 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
     return ("pass", "Backup-readiness evidence is valid for roll-forward-only promotion")
 
 
-def production_traffic_check(
-    path: Path, event: str, deployment_ref: str, root_dir: Path
-) -> tuple[str, str]:
-    if not path.exists():
-        return ("fail", f"Production traffic-open evidence not found: {path}")
-    try:
-        data = load_json(path)
-    except Exception as exc:
-        return ("fail", f"Production traffic-open evidence unreadable: {exc}")
-    if data.get("schemaVersion") != "traffic-open-record/v1":
-        return ("fail", "Production traffic-open evidence schemaVersion mismatch")
-    if data.get("environment") != "production":
-        return ("fail", "Production traffic-open evidence must target production")
-    if data.get("eventType") != event:
-        return ("fail", "Production traffic-open evidence eventType mismatch")
-    if str(data.get("deploymentRef", "")) != str(deployment_ref):
-        return ("fail", "Production traffic-open evidence deploymentRef mismatch")
-    if not data.get("assessedAt"):
-        return ("fail", "Production traffic-open evidence missing assessedAt")
-    if not data.get("assessedBy"):
-        return ("fail", "Production traffic-open evidence missing assessedBy")
-    evidence_refs = data.get("evidenceRefs")
-    if not isinstance(evidence_refs, list) or not evidence_refs:
-        return ("fail", "Production traffic-open evidence missing evidenceRefs")
-    for key in ("backupLastSuccessAt", "backupVerifyLastSuccessAt", "restoreDrillLastSuccessAt"):
-        if not data.get(key):
-            return ("fail", f"Production traffic-open evidence missing {key}")
-    preflight_status, preflight_message = load_preflight_report(
-        str(data.get("preflightReportPath", "")),
-        "production",
-        "design/operations/environments/production/expected-bindings.yaml",
-        deployment_ref,
-        root_dir,
+def production_traffic_check() -> tuple[str, str]:
+    return (
+        "fail",
+        "Production traffic-open gate unavailable: durable environment-wide "
+        "recovery-controller authority is not implemented; checked-in projections "
+        "and caller-supplied tenant/region/timestamp evidence cannot authorize traffic",
     )
-    if preflight_status != "pass":
-        return ("fail", preflight_message)
-    scope = data.get("coordinatedBackupScope", {})
-    if scope.get("type") != "tenant_region":
-        return ("fail", "Production traffic-open evidence must use canonical tenant_id + region_id coordinated-backup scope")
-    if not scope.get("tenantId") or not scope.get("regionId"):
-        return ("fail", "Production traffic-open evidence coordinatedBackupScope missing tenantId or regionId")
-    try:
-        drill = dt.datetime.fromisoformat(str(data["restoreDrillLastSuccessAt"]).replace("Z", "+00:00"))
-    except Exception as exc:
-        return ("fail", f"Production restore drill timestamp unreadable: {exc}")
-    now = dt.datetime.now(dt.timezone.utc)
-    if (now - drill).total_seconds() > 30 * 24 * 60 * 60:
-        return ("fail", "Production restore drill evidence is older than 30 days")
-    return ("pass", "Production traffic-open backup evidence is valid")
 
 
 def hobby_traffic_check(compliance_path: Path, traffic_path: Path, event: str, deployment_ref: str, root_dir: Path) -> tuple[str, str]:
@@ -1413,14 +1371,7 @@ def main() -> int:
         if not traffic_open_event:
             has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-002", False, "not_applicable", "Production traffic-open backup gate applies only to first-live or reopen events") or has_required_failure
         else:
-            traffic_evidence_path = (
-                Path(traffic_open_evidence)
-                if traffic_open_evidence
-                else root_dir / "design" / "operations" / "deployments" / "production" / "traffic-open" / f"{traffic_open_event}-{deployment_ref}.json"
-            )
-            traffic_status, traffic_message = production_traffic_check(
-                traffic_evidence_path, traffic_open_event, deployment_ref, root_dir
-            )
+            traffic_status, traffic_message = production_traffic_check()
             has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-002", True, traffic_status, traffic_message) or has_required_failure
     else:
         has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-002", False, "not_applicable", "Production traffic-open backup gate applies only to production") or has_required_failure

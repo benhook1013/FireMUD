@@ -46,7 +46,7 @@ Services connect to the shared PostgreSQL database using the following variables
 
 These defaults exist only to make local development and ephemeral stacks easy to bootstrap. Any non-ephemeral player-facing Kubernetes environment (`SPRING_PROFILES_ACTIVE=prod` in hobby-self-hosted/staging/production) must supply real, per-environment credentials via Kubernetes Secrets and must not run with `.env.sample`-style defaults.
 
-In production, these variables are normally sourced from a Secret such as `postgres-credentials`. Higher-privilege credentials (for example in a `postgres-admin-credentials` Secret) are used by Kubernetes Jobs like `db-credential-rotation` to rotate application passwords as described in `system-architecture-backup-recovery.md#post-restore-secret-hardening` and `system-architecture-backup-recovery.md#planned-db-credential-rotation`. Routine rotation uses explicit operator runbooks rather than an automatic schedule.
+In production, these variables are normally sourced from a Secret such as `postgres-credentials`. Higher-privilege credentials (for example in a `postgres-admin-credentials` Secret) are used by Kubernetes Jobs like `db-credential-rotation` to rotate application passwords as described in `../system-architecture-post-restore-hardening.md#post-restore-secret-hardening` and `../system-architecture-post-restore-hardening.md#planned-db-credential-rotation`. Routine rotation uses explicit operator runbooks rather than an automatic schedule.
 
 ---
 
@@ -110,6 +110,18 @@ A sample `Certificate` manifest is provided at `k8s/base/firemud-grpc-certificat
 | `FIREMUD_GRPC_PRIVATE_KEY_PATH` | Filesystem path to the private key matching the certificate chain | `certs/client.key` |
 | `FIREMUD_GRPC_CA_CERT_PATH` | Filesystem path to the CA bundle used to verify peer services | `certs/ca.crt` |
 
+### Gateway HTTP Management-Plane TLS (Target State)
+
+Gateway-owned HTTP management endpoints use a dedicated operator client identity and listener trust bundle. These paths are separate from the Gateway service's `FIREMUD_GRPC_*` workload identity and are supplied to operator tooling from a dedicated credential Secret:
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `FIREMUD_GATEWAY_HTTP_CLIENT_CERT_CHAIN_PATH` | Filesystem path to the operator client certificate chain presented to the Gateway HTTP management plane | *(none)* |
+| `FIREMUD_GATEWAY_HTTP_CLIENT_PRIVATE_KEY_PATH` | Filesystem path to the private key matching the Gateway HTTP management-plane client certificate chain | *(none)* |
+| `FIREMUD_GATEWAY_HTTP_CA_CERT_PATH` | Filesystem path to the CA bundle used to validate the Gateway HTTP management-plane listener certificate | *(none)* |
+
+These variables describe the target-state HTTP mTLS contract; the current Gateway implementation status is tracked in the [Gateway service README](../microservices/spring-cloud-gateway/README.md#implementation-status).
+
 For the **TCP Proxy Service → Spring Cloud Gateway WebSocket mTLS hop**, the following variables configure the dedicated client identity and trust bundle used by the proxy’s WebSocket bridge:
 
 | Variable | Purpose | Default |
@@ -136,32 +148,35 @@ In Kubernetes deployments the certificates are mounted at `/tls`, and the enviro
 
 ## Authentication & JWT
 
-JWT tokens secure internal service calls. Production keys are provided via Kubernetes Secrets and mounted key files, while development instances may generate random secrets. When `FIREMUD_AUTH_JWT_SECRET_PATH` is set, the service watches the file for changes using `JwtSecretWatcher` so keys can be rotated without restarts. Certificate and secret watching is described in `../system-architecture-security.md#key-and-certificate-rotation` and `../system-architecture-security.md#jwt-key--jwks-rotation-workflow`.
+JWT tokens secure internal service calls. The player-facing target gives only Account Service an asymmetric private signing bundle from Kubernetes Secrets; validators receive public Account JWKS with bounded refresh. Account may watch the signing bundle through `JwtSecretWatcher`, but a file change is not itself a completed rotation: the phased publication, convergence, promotion, overlap, and pruning protocol remains mandatory. Certificate and secret watching is described in `../system-architecture-security.md#key-and-certificate-rotation` and `../system-architecture-security.md#jwt-key--jwks-rotation-workflow`.
 
-Implementation note: the file-mounted JWT contract is live. Shared security can initialize from `firemud.auth.jwt-secret-path` without an inline secret, the configured file value becomes the effective signing secret even when an inline fallback is present, and `JwtSecretWatcher` reloads file changes. Account Service reads `firemud.auth.jwks-path` on each JWKS request, with the packaged classpath resource retained only as a local/test fallback. The checked-in Kubernetes baseline supplies both mounted paths. Profile-aware startup enforcement that rejects inline-only signing material or classpath-only JWKS in every player-facing environment, plus automated coordinated signing-key/JWKS rotation proof, remains incomplete.
+Target state: the file-mounted JWT path supplies Account Service with an asymmetric signing bundle, Account publishes the matching JWKS, validators use only that public JWKS, and the packaged classpath JWKS fallback is permitted only in explicit local/test profiles. Player-facing startup fails closed when the required paths, key correspondence, or asymmetric validator configuration is absent.
+
+Implementation drift: the current runtime loads and immediately replaces one shared HMAC secret, permits the packaged classpath fallback when the mounted JWKS path is absent, and downstream validators do not yet consume Account JWKS. The checked-in Kubernetes baseline supplies signing material to workloads beyond Account, and the current deployment preflight checks signing paths and mounts for every primary workload rather than enforcing the Account-only boundary. Account-only asymmetric signing, `kid`/JWKS validation, profile-aware fail-closed startup, projected-volume reload proof, and coordinated rotation/convergence evidence remain incomplete. This catalog records the target and the drift; it does not claim runtime, preflight, or manifest convergence.
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `FIREMUD_AUTH_JWT_SECRET` | Inline JWT signing key material for local/dev and ephemeral stacks only (legacy compatibility mode) | *(none)* |
-| `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing JWT signing key material; enables hot reload. In staging and production this file is typically sourced from the `jwt-signing-keys` Secret. | *(none)* |
+| `FIREMUD_AUTH_JWT_SECRET_PATH` | Account-only path to a versioned JWT signing bundle in player-facing environments; a watcher may detect changes, but Account promotes only a complete bundle whose key and `kid` match a converged published JWK. Current code still treats this as one HMAC secret. | *(none)* |
+| `FIREMUD_AUTH_JWKS_PATH` | Account-only filesystem path to the published `jwks.json` used by the Account JWKS endpoint; in player-facing environments it must point into the read-only `jwt-jwks` mount | *(unset; target-state `classpath:jwks.json` fallback is local/test only)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
-| `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Extra time added to the JWT lifetime when deriving server-side session TTL | `300000` |
+| `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Extra time added to JWT lifetime when deriving the initial gameplay continuity-retention and cleanup horizon | `300000` |
 
 Server-side gameplay sessions use a **derived lifetime** instead of a separately tuned TTL knob:
 
 - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
 
-This value derives the immutable logical gameplay-session lifetime established at admission and the initial physical cleanup TTL for `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` keys in Redis (see `../system-architecture-redis.md#session-keys-and-gameplay-binding`). `gameplaySessionExpiresAt` governs binding validity and resumability; an active write may refresh the physical TTL, but any key retained after logical expiry is non-authoritative cleanup residue. This value does not extend JWT authentication: each JWT remains valid only through its own `exp`, and an expired token is rejected even if the server-side binding or Redis key remains. It is not the player-facing disconnected-resume eligibility window.
+This value defines the initial continuity-retention and physical cleanup horizon for a gameplay binding. It establishes immutable `continuityBindingExpiresAt` at admission and seeds the Redis TTL for `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` keys (see `../system-architecture-redis.md#session-keys-and-gameplay-binding`). Passing that anchor makes the old binding non-resumable after transport loss; it does not itself kick a continuously connected player whose current authorization and rotated backend token remain valid. Each JWT remains valid only through its own `exp`.
 
-Disconnected resume eligibility is the stricter of the remaining absolute session lifetime and `firemud.reconnection.policy.resume-window-ms`, measured from disconnect/suspension; the default resume window is three minutes. A stale binding follows `firemud.reconnection.policy.stale-resume-falls-through-to-fresh-entry` when current admission still permits fresh entry. Reconnect transcript retention is a third, independent bounded policy under `firemud.reconnection.buffer.*` and does not extend either session validity or resume eligibility.
+Disconnected resume eligibility is the stricter of the remaining continuity-binding lifetime and `firemud.reconnection.policy.resume-window-ms`, measured from disconnect/suspension; the default resume window is three minutes. A stale binding follows `firemud.reconnection.policy.stale-resume-falls-through-to-fresh-entry` when current admission still permits fresh entry. Reconnect transcript retention is a separate bounded policy under `firemud.reconnection.buffer.*` and does not extend authorization or resume eligibility.
 
-Changing `FIREMUD_AUTH_JWT_EXPIRATION_MS` or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` in a running cluster affects newly issued JWTs and newly admitted gameplay bindings. An existing binding retains its immutable `gameplaySessionExpiresAt`; active writes may refresh the key's physical Redis TTL, but key presence and TTL never extend authentication validity or resume authority beyond that logical anchor. Tightening JWT validity takes effect when credentials are next validated, while tightening the session lifetime does not rewrite existing anchors and may leave physically retained keys after their bindings become non-resumable. When a major lifetime reduction requires a clean cut-over, operators must use the scoped session cleanup workflow described in `../system-architecture-runbooks.md#redis-session-schema-and-ttl-cleanup` so admission draining, active-session safety checks, audit evidence, and rollback remain part of the operation. Ad-hoc wildcard `DEL` is not a supported cleanup path.
+Changing `FIREMUD_AUTH_JWT_EXPIRATION_MS` in a running cluster changes the `exp` claim only for newly issued JWTs; already issued JWTs retain their existing `exp` unless an explicit revocation watermark, allowlist revocation, or hard cutover invalidates them. Changing `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` affects newly admitted gameplay bindings. An existing binding retains its immutable `continuityBindingExpiresAt`; active writes may refresh the key's physical Redis TTL, but key presence and TTL never extend authentication validity or resume authority beyond that logical anchor. Tightening the continuity lifetime does not rewrite existing anchors and may leave physically retained keys after their bindings become non-resumable. When a major lifetime reduction requires a clean cut-over, operators must use the scoped session cleanup workflow described in `../system-architecture-redis-incident-runbook.md#session-schema-and-ttl-cleanup` so admission draining, active-session safety checks, audit evidence, and rollback remain part of the operation. Ad-hoc wildcard `DEL` is not a supported cleanup path.
 
-In player-facing environments (`hobby-self-hosted`, staging, production), JWT signing keys are stored in a `jwt-signing-keys` Secret and exposed to the Account Service via the file pointed to by `FIREMUD_AUTH_JWT_SECRET_PATH`. The JWKS document is also stored in a `jwt-jwks` Secret in these environments. The dedicated `jwt-rotation` Job, overlap/pruning behavior, validator convergence checks, and retained rotation proof described in `../system-architecture-security.md#jwt-key--jwks-rotation-workflow` remain target-state follow-through; no checked-in rotation Job currently updates these resources automatically.
-In non-player-facing environments (`local-dev`, `pr-preview`, `dev-demo-cluster`), a JWKS ConfigMap may be used for convenience when keys are explicitly non-sensitive test material.
-Hosted `pr-preview` environments use this as the canonical default: a preview-unique signing-key `Secret` plus a preview-unique JWKS `ConfigMap` in the preview namespace. Shared preview JWT material across namespaces is not allowed.
+In player-facing environments (`hobby-self-hosted`, staging, production), JWT signing keys are stored in a `jwt-signing-keys` Secret and exposed only to Account Service via the read-only mount path referenced by `FIREMUD_AUTH_JWT_SECRET_PATH` (the canonical mount is `/var/run/secrets/firemud/jwt`, with the active bundle at `/var/run/secrets/firemud/jwt/current.key`). The public JWKS document is stored in a `jwt-jwks` Secret, mounted read-only into Account Service at `/var/run/secrets/firemud/jwks`, and selected by `FIREMUD_AUTH_JWKS_PATH` (normally `/var/run/secrets/firemud/jwks/jwks.json`). The JWKS endpoint is the only Account-key material validators consume. Account Service owns private-key generation, validation, promotion, JWKS publication, and public/private pruning; a non-exportable signer may perform only the private-key operations Account delegates. Rotation automation, including the `jwt-rotation` Job or CronJob, may request Account-owned transitions through the single Account JWT rotation control/status interface, observe publication and validator convergence, and record retained evidence; it must never read or update `jwt-signing-keys` or write `jwt-jwks`. The phased protocol, private-key mount enforcement, and retained rotation proof described in `../system-architecture-security.md#jwt-key--jwks-rotation-workflow` remain target-state follow-through; no checked-in rotation Job currently implements them.
+In non-player-facing environments (`local-dev`, `pr-preview`, `dev-demo-cluster`), Account Service may serve a JWKS document from a ConfigMap for convenience when keys are explicitly non-sensitive test material.
+Hosted `pr-preview` environments use this as the canonical default: a preview-unique signing-key `Secret` plus a preview-unique, Account-published JWKS `ConfigMap` in the preview namespace. Shared preview JWT material across namespaces is not allowed.
 Preview namespaces still participate in expected-bindings and preflight checks, but with a preview-scoped contract: preview-unique JWT/JWKS material, isolated internal service bindings, and the normal Redis role split are mandatory, while player-facing backup/admission binding proofs remain reserved for staging/production and other explicitly player-facing environments.
-In player-facing environments (`hobby-self-hosted`, staging, production), `FIREMUD_AUTH_JWT_SECRET_PATH` is required and startup should fail if the service is configured with only `FIREMUD_AUTH_JWT_SECRET`.
+In player-facing environments (`hobby-self-hosted`, staging, production), `FIREMUD_AUTH_JWT_SECRET_PATH` and `FIREMUD_AUTH_JWKS_PATH` are required for Account Service only. Account startup must fail closed when the JWKS path or file is missing or unreadable, the JWKS is malformed, or it does not contain a public JWK matching the Account signing key and `kid`; there is no classpath fallback. Account must also fail on inline-only or HMAC-only signing configuration. Validators must fail if asymmetric JWKS verification is unavailable or private signing material is mounted.
 
 ---
 
@@ -182,13 +197,13 @@ Player-facing environments (`hobby-self-hosted`, staging, production) must treat
 
 ## Observability
 
-All services export OpenTelemetry spans. The collector endpoint can be overridden with the `OTEL_ENDPOINT` environment variable (mapped to the Spring property `otel.endpoint`):
+Services are instrumented to create OpenTelemetry spans, but an environment may advertise only a capability level proved end to end under ADR 0017. The collector endpoint can be overridden with the `OTEL_ENDPOINT` environment variable (mapped to the Spring property `otel.endpoint`):
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
-| `OTEL_TRACES_SAMPLER` | OpenTelemetry sampler (for example `parentbased_traceidratio`) | `parentbased_traceidratio` |
-| `OTEL_TRACES_SAMPLER_ARG` | Sampler argument (for example ratio `0.01`) | `0.01` |
+| `OTEL_TRACES_SAMPLER` | Target OpenTelemetry sampler control; unsupported until the shared SDK consumes and proves it | Not currently supported |
+| `OTEL_TRACES_SAMPLER_ARG` | Target sampler argument; unsupported until the shared SDK consumes and proves it | Not currently supported |
 | `FLUENT_ELASTICSEARCH_HOST` | Hostname of the log storage backend | `elasticsearch` |
 | `FLUENT_ELASTICSEARCH_PORT` | Port for the log storage backend | `9200` |
 
@@ -196,10 +211,26 @@ Local Docker Compose stacks that do not run an OpenTelemetry collector should se
 
 Service design documents reference this table for the OpenTelemetry endpoint configuration.
 
-Scoped incident sampling support (matching by `tenantId` / `regionId`) also depends on OpenTelemetry Collector policy configuration, not only service env vars. Environments should be explicitly tagged as either:
+### Tracing Capability Advertisement
 
-- `service-scoped-sampling-only`, or
-- `scoped-tenant-region-sampling-enabled` (tail-sampling policy support present and verified).
+Each environment catalog entry must advertise one of the four ADR 0017 levels and its proved workflow coverage. The current repository proof supports level 1 only:
+
+| Level | Capability | Required proof before advertising |
+| --- | --- | --- |
+| `1` | Baseline observability | Metrics and structured logs are available; generic spans/export and trace-log correlation remain best-effort unless separately proved. |
+| `2` | Workflow tracing | A named workflow's semantic spans, bounded attributes, context propagation, collector ingestion, and supported queries are proved end to end. |
+| `3` | Service-scoped incident sampling | Level 2 coverage plus wired sampler controls and a successful increase/observe/revert drill. |
+| `4` | Tenant/region-scoped incident sampling | Candidate traces survive upstream sampling, scope attributes propagate, bounded collector tail sampling can be safely enabled/reverted, and increased visibility plus return to baseline are proved. |
+
+| Environment class | Current advertised level | Proved workflow coverage |
+| --- | --- | --- |
+| Local/dev/test | `1` baseline observability | Metrics and structured logs only; no named workflow or scoped-sampling guarantee. |
+| Preview/dev-demo | `1` baseline observability | Metrics and structured logs only; generic spans are best-effort and no named workflow is proved. |
+| Hobby/self-hosted, staging, production | `1` baseline observability | Metrics and structured logs only; no level-2 workflow coverage, level-3 service escalation, or level-4 tenant/region sampling is currently proved. |
+
+The advertisement must be lowered or the environment kept fail-closed for any runbook step that requires a higher level. Scoped incident sampling support (matching by `tenantId` / `regionId`) depends on OpenTelemetry Collector policy configuration and cannot be inferred from environment variables, example manifests, or the collector endpoint alone.
+
+Legacy sampling labels must not be treated as capability advertisements. If deployment metadata retains either label, it must also carry the numeric ADR 0017 level and the corresponding proof; a label alone cannot authorize a higher-level runbook step.
 
 ---
 

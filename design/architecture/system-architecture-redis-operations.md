@@ -214,11 +214,11 @@ Default runbooks should still prefer fixing deployments and relying on TTL over 
 
 ## Maintenance Job Coordination
 
-Redis maintenance flows such as session cleanup, scoped resets, normalization migrations, unknown-prefix scanning, and split-brain recovery can place non-trivial load on Coordination Redis. Other operations such as coordinated backups, restore coordination recovery, and topology-changing scaling use the same pause/status/epoch control plane and can invalidate each other if they overlap. To keep behavior predictable:
+Redis maintenance flows such as session cleanup, scoped resets, normalization migrations, unknown-prefix scanning, split-brain recovery, restore coordination recovery, and topology-changing scaling can place non-trivial load on Coordination Redis and can invalidate each other if they overlap. Routine online PostgreSQL backups do not use this pause/status/epoch control plane. To keep mutating coordination work predictable:
 
 - one control-plane actor orchestrates heavy maintenance per deployment
-- one deployment-wide maintenance lock serializes incompatible backup, restore, reset, cleanup, migration, and topology-changing scale operations
-- coordinated backup jobs must acquire this lock before pausing ticks and must fail closed if an incompatible maintenance operation is already active
+- one deployment-wide maintenance lock serializes incompatible restore, reset, cleanup, migration, and topology-changing scale operations
+- an exceptional backup-related maintenance operation that explicitly pauses or mutates coordination state must acquire the lock, but the routine online backup CronJob neither acquires it nor pauses ticks
 - restore coordination recovery, scoped resets, normalization migrations, split-brain recovery, session cleanup, and topology-changing scale changes must acquire this lock before they pause or mutate coordination state
 - read-only low-impact scanners may run only when they are declared compatible with the active operation and still back off on Redis health degradation
 - dashboards and health endpoints should expose a simple “maintenance in progress” signal while such a job is active
@@ -230,11 +230,11 @@ Canonical maintenance-lock behavior:
 - lock identity: one active record per Coordination Redis deployment / gameplay environment boundary
 - minimum fields: `operation`, `scope_type`, `tenantId`, `regionId`, `actor`, `startedAt`, `expiresAt`, `compatibilityClass`, and an evidence or incident reference
 - acquisition is fail-closed for incompatible operations; operators may only break the lock with an explicit stale-lock or break-glass evidence record
-- acquisition owner: `coordination-maintenance pause --operation ...` is the canonical lock-acquiring command for multi-step backup, restore, reset, cleanup, migration, and topology-change workflows
+- acquisition owner: `coordination-maintenance pause --operation ...` is the canonical lock-acquiring command for multi-step restore, reset, cleanup, migration, topology-change, and exceptional backup-related maintenance workflows
 - refresh owner: every subsequent mutating CLI verb in that workflow refreshes the same lock using `maintenanceLockToken`; lock refresh is not a second independent acquisition
 - success release owner: `coordination-maintenance resume ...` is the canonical success-path release step once the scope has safely returned to `RUNNING`
 - failure release owner: `coordination-maintenance release-lock ...` is the canonical failure or operator-abort release step when the workflow stops before resume
-- backup CronJobs treat lock-acquisition failure as a skipped/failed backup attempt and emit the normal backup freshness metrics instead of running without the lock
+- exceptional backup-related maintenance treats lock-acquisition failure as a skipped/failed maintenance attempt; routine online backup health is independent of this lock and is measured through artifact freshness, lineage, integrity, and restore readability
 - restore recovery and reset tooling must refresh or complete the lock before TTL expiry so another actor cannot start a conflicting pause/reset sequence mid-flow
 
 Canonical maintenance-active signal:

@@ -113,6 +113,37 @@ final class TickStagingService {
     return List.copyOf(entries);
   }
 
+  List<TickQueuedCommandEnvelope> readExecutablePendingEntries(Long tenantId, Long queueTargetId) {
+    List<TickQueuedCommandEnvelope> entries = readPendingEntries(tenantId, queueTargetId);
+    if (entries.isEmpty()) {
+      return entries;
+    }
+    Map<String, GameplayCommand> commandsById =
+        loadCommands(entries).stream()
+            .collect(
+                java.util.stream.Collectors.toMap(
+                    GameplayCommand::getCommandId, command -> command));
+    List<TickQueuedCommandEnvelope> executable = new ArrayList<>(entries.size());
+    for (TickQueuedCommandEnvelope entry : entries) {
+      GameplayCommand command = commandsById.get(entry.commandId());
+      if (command != null && isExecutableQueueOutcome(command.getExecutionOutcome())) {
+        executable.add(entry);
+        continue;
+      }
+      logger.warn(
+          "Discarding stale tick payload tenantId={} gameInstanceId={} commandId={} durableOutcome={}",
+          tenantId,
+          queueTargetId,
+          entry.commandId(),
+          command == null ? "MISSING" : command.getExecutionOutcome());
+    }
+    return List.copyOf(executable);
+  }
+
+  private boolean isExecutableQueueOutcome(String executionOutcome) {
+    return "STAGED".equals(executionOutcome) || "RETRY_QUEUED".equals(executionOutcome);
+  }
+
   TickBatch resolveReplayBatch(
       Long tenantId,
       Long gameInstanceId,

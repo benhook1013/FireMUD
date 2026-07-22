@@ -208,16 +208,17 @@ class CommandServiceImplTest {
     assertTrue(result.commandId().startsWith("cmd-"));
     verify(rateLimiter).allow(7L);
     verify(tickService, times(1)).enqueueCommand(9L, 7L, result.commandId(), "look", true);
+    verify(tickService).processTick(9L, 7L);
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
-    GameplayCommand staged = commandCaptor.getAllValues().get(1);
-    assertEquals(result.commandId(), staged.getCommandId());
-    assertEquals("STAGED", staged.getExecutionOutcome());
-    assertEquals("PENDING", staged.getGameplayResult());
-    assertEquals("LOOK", staged.getCommandName());
-    assertEquals("look", staged.getSanitizedCommandText());
-    assertEquals(1L, staged.getEnqueueSeq());
+    verify(commandRepository).save(commandCaptor.capture());
+    GameplayCommand accepted = commandCaptor.getValue();
+    assertEquals(result.commandId(), accepted.getCommandId());
+    assertEquals("ACCEPTED", accepted.getExecutionOutcome());
+    assertEquals("PENDING", accepted.getGameplayResult());
+    assertEquals("LOOK", accepted.getCommandName());
+    assertEquals("look", accepted.getSanitizedCommandText());
+    assertEquals(1L, accepted.getEnqueueSeq());
   }
 
   @Test
@@ -251,7 +252,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().getFirst();
     assertEquals("wave-salute", accepted.getCommandName());
     assertEquals(300L, accepted.getAdmittedReleaseBundleId());
@@ -343,9 +344,6 @@ class CommandServiceImplTest {
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         Mockito.mock(RuntimeRegionStatusRepository.class);
-    RuntimeRegionStatus status = new RuntimeRegionStatus();
-    status.setRegionId("region-99");
-    status.setRegionEpoch(7L);
     Mockito.when(sessionAuthenticationService.resolveUnverifiedSessionContext("17"))
         .thenReturn(
             Optional.of(
@@ -366,7 +364,7 @@ class CommandServiceImplTest {
                     7L,
                     "SHARED")));
     Mockito.when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(9L, 99L))
-        .thenReturn(Optional.of(status));
+        .thenReturn(Optional.of(runtimeRegionStatus("region-99", 7L, false)));
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     CommandServiceImpl service =
         newCommandService(
@@ -384,11 +382,97 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("44", accepted.getTargetEntityId());
     assertEquals("region-99", accepted.getRegionId());
     assertEquals(7L, accepted.getRegionEpoch());
+  }
+
+  @Test
+  void gameplayCommandFailsBeforePersistenceWhenRuntimeOwnershipIsNotEstablished() {
+    TickService tickService = Mockito.mock(TickService.class);
+    SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
+    Mockito.when(rateLimiter.allow(17L)).thenReturn(true);
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    SessionAuthenticationService sessionAuthenticationService =
+        Mockito.mock(SessionAuthenticationService.class);
+    Mockito.when(sessionAuthenticationService.resolveUnverifiedSessionContext("17"))
+        .thenReturn(
+            Optional.of(
+                new SessionContext(17L, 9L, 3L, "demo", 44L, "char", 99L, "region-99", "jwt")));
+    Mockito.when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(9L, 99L))
+        .thenReturn(Optional.empty());
+    CommandServiceImpl service =
+        newCommandService(
+            tickService,
+            rateLimiter,
+            repository,
+            commandRepository,
+            runtimeRegionStatusRepository,
+            sessionAuthenticationService,
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(ScriptEventPublisher.class));
+
+    CommandEnqueueResult result = service.enqueue("17", "look", false);
+
+    assertTrue(result.hasError());
+    assertEquals("UNAVAILABLE", result.errorCode());
+    verify(commandRepository, never()).save(Mockito.any());
+    verify(tickService, never())
+        .enqueueCommand(
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyBoolean());
+  }
+
+  @Test
+  void gameplayCommandFailsClosedWhenRuntimeOwnershipReadFails() {
+    TickService tickService = Mockito.mock(TickService.class);
+    SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
+    Mockito.when(rateLimiter.allow(17L)).thenReturn(true);
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    SessionAuthenticationService sessionAuthenticationService =
+        Mockito.mock(SessionAuthenticationService.class);
+    Mockito.when(sessionAuthenticationService.resolveUnverifiedSessionContext("17"))
+        .thenReturn(
+            Optional.of(
+                new SessionContext(17L, 9L, 3L, "demo", 44L, "char", 99L, "region-99", "jwt")));
+    Mockito.when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(9L, 99L))
+        .thenThrow(new IllegalStateException("runtime ownership unavailable"));
+    CommandServiceImpl service =
+        newCommandService(
+            tickService,
+            rateLimiter,
+            repository,
+            commandRepository,
+            runtimeRegionStatusRepository,
+            sessionAuthenticationService,
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(ScriptEventPublisher.class));
+
+    CommandEnqueueResult result = service.enqueue("17", "look", false);
+
+    assertTrue(result.hasError());
+    assertEquals("UNAVAILABLE", result.errorCode());
+    assertEquals("Unable to read runtime ownership for command admission", result.errorMessage());
+    verify(commandRepository, never()).save(Mockito.any());
+    verify(tickService, never())
+        .enqueueCommand(
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyBoolean());
+    verify(tickService, never()).processTick(Mockito.anyLong(), Mockito.anyLong());
   }
 
   @Test
@@ -564,7 +648,7 @@ class CommandServiceImplTest {
     assertTrue(!logs.contains("LOGIN demo@example.com swordfish"));
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     assertEquals("LOGIN [redacted]", commandCaptor.getAllValues().get(0).getSanitizedCommandText());
   }
 
@@ -629,7 +713,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("SHARED", accepted.getPlayableStateScope());
     assertEquals("demo-world", accepted.getWorldSlug());
@@ -681,7 +765,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("SHARED", accepted.getPlayableStateScope());
     assertEquals("demo-world", accepted.getWorldSlug());
@@ -746,7 +830,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("UNSPECIFIED", accepted.getPlayableStateScope());
     assertEquals("demo-world", accepted.getWorldSlug());
@@ -798,7 +882,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("UNSPECIFIED", accepted.getPlayableStateScope());
     assertEquals("demo-world", accepted.getWorldSlug());
@@ -867,7 +951,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("SHARED", accepted.getPlayableStateScope());
     assertEquals("demo-world", accepted.getWorldSlug());
@@ -923,7 +1007,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("SHARED", accepted.getPlayableStateScope());
     assertEquals("demo-world", accepted.getWorldSlug());
@@ -994,7 +1078,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals(1L, accepted.getGameInstanceId());
     assertEquals("SHARED", accepted.getPlayableStateScope());
@@ -1064,7 +1148,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("SHARED", accepted.getPlayableStateScope());
     assertEquals("demo-world", accepted.getWorldSlug());
@@ -1119,7 +1203,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("UNSPECIFIED", accepted.getPlayableStateScope());
     assertNull(accepted.getWorldSlug());
@@ -1174,7 +1258,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("UNSPECIFIED", accepted.getPlayableStateScope());
     assertNull(accepted.getWorldSlug());
@@ -1243,7 +1327,7 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
+    verify(commandRepository).save(commandCaptor.capture());
     GameplayCommand accepted = commandCaptor.getAllValues().get(0);
     assertEquals("UNSPECIFIED", accepted.getPlayableStateScope());
     assertNull(accepted.getWorldSlug());
@@ -1288,14 +1372,13 @@ class CommandServiceImplTest {
     assertTrue(!result.accepted());
     assertTrue(result.commandId().startsWith("cmd-"));
     assertEquals("INVALID_ARGUMENT", result.errorCode());
-    org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
-        org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(commandRepository, times(2)).save(commandCaptor.capture());
-    GameplayCommand failed = commandCaptor.getAllValues().get(1);
-    assertEquals(result.commandId(), failed.getCommandId());
-    assertEquals("FAILED", failed.getExecutionOutcome());
-    assertEquals("NOT_APPLIED", failed.getGameplayResult());
-    assertEquals("INVALID_ARGUMENT", failed.getFailureCode());
+    verify(commandRepository).save(Mockito.any(GameplayCommand.class));
+    verify(commandRepository)
+        .markAcceptedCommandFailed(
+            Mockito.eq(result.commandId()),
+            Mockito.eq("INVALID_ARGUMENT"),
+            Mockito.eq("bad command"),
+            Mockito.any());
   }
 
   private CommandServiceImpl newCommandService(
@@ -1311,7 +1394,7 @@ class CommandServiceImplTest {
         rateLimiter,
         repository,
         commandRepository,
-        emptyRuntimeRegionStatusRepository(),
+        defaultRuntimeRegionStatusRepository(),
         sessionAuthenticationService,
         pointerAuthorityService,
         scriptEventPublisher);
@@ -1337,8 +1420,25 @@ class CommandServiceImplTest {
         scriptEventPublisher);
   }
 
-  private RuntimeRegionStatusRepository emptyRuntimeRegionStatusRepository() {
-    return Mockito.mock(RuntimeRegionStatusRepository.class);
+  private RuntimeRegionStatusRepository defaultRuntimeRegionStatusRepository() {
+    RuntimeRegionStatusRepository repository = Mockito.mock(RuntimeRegionStatusRepository.class);
+    Mockito.when(repository.findByTenantIdAndGameInstanceId(Mockito.anyLong(), Mockito.anyLong()))
+        .thenAnswer(
+            invocation ->
+                Optional.of(
+                    runtimeRegionStatus(
+                        Long.toString(invocation.getArgument(1, Long.class)), 1L, false)));
+    return repository;
+  }
+
+  private RuntimeRegionStatus runtimeRegionStatus(
+      String regionId, long regionEpoch, boolean paused) {
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId(regionId);
+    status.setRegionEpoch(regionEpoch);
+    status.setExecutorFence("fence-test");
+    status.setPaused(paused);
+    return status;
   }
 
   private GameplayCommandRepository commandRepositorySavingArgument() {

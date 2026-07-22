@@ -9,7 +9,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 > **Canonical ownership:** This Spring Cloud Gateway doc set is the authoritative source for:
 >
 > - Gameplay gateway client behavior at `/ws/game/**`, including trusted TCP Proxy bridge admission and handshake/close classification.
-> - Gateway-owned management and route-mutation API contracts.
+> - Gateway-owned diagnostics and dev/test-only route-mutation API contracts.
 > - Gateway-local configuration sources, Redis role boundaries, and route-state expectations.
 > - Gateway observability and readiness expectations for route admission.
 >
@@ -21,19 +21,20 @@ This document describes the behaviour of Spring Cloud Gateway in its target arch
 
 | Area | Target behaviour | Current status |
 | --- | --- | --- |
-| Dynamic route management | REST and gRPC route mutation APIs apply in-memory overrides on top of baseline route config, with explicit readiness predicates and fail-closed rules for player-facing environments when persistence, convergence, or auditing controls are absent. | Implemented for dev/test scope only; player-facing enablement still requires the documented safety controls. |
+| Baseline route authority | The released declarative route catalog is the single player-facing route authority and is imported at startup. | Not converged: current baseline routes are Java-owned in `CanonicalGatewayRoutesConfiguration`; the target `routes.yml` resource and import do not exist yet. |
+| Dynamic route management | REST and gRPC route mutation APIs are dev/test-only overrides on top of the released route catalog. Player-facing environments reject dynamic mutation configuration at startup; production operators have diagnostics only, and route changes use the separately accepted declarative deployment workflow. Any future production runtime route-control plane requires a new architecture decision and must remain consistent with the [canonical authorization route matrix](../../system-architecture-authz-route-matrix.md). | Not converged: mutation components are currently unconditional and lack the required profile isolation, startup rejection, protected-route validation, and destination/predicate/filter allowlists. |
 | Rate limiting and Redis wiring | Gateway rate limiting uses Spring Cloud Gateway `RequestRateLimiter` backed by the Cache/Rate-Limit Redis role, with gameplay abuse policy split across Gateway, TCP Proxy, and Game Session. | Implemented. |
 | TCP Proxy bridge admission | Traffic from the TCP Proxy Service always targets `/ws/game/**`, and the proxy -> gateway hop is mTLS-authenticated in player-facing environments. | Implemented. |
-| WebSocket close and handshake observability | Gateway emits bounded close, handshake-rejection, and slow-client metrics/log classifications; bridge closes include `bridge_shutdown_class=planned_drain\|upstream_logout\|unattributed_failure` alongside the bounded reason/subreason fields. | Implemented at the current bridge and first-party handshake boundary; attribution is emitted on each downstream close handled by the bridge. |
+| WebSocket close and handshake observability | Gateway emits bounded close, handshake-rejection, and slow-client metrics/log classifications; bridge closes include `bridge_shutdown_class=planned_drain\|upstream_logout\|unattributed_failure` alongside the bounded reason/subreason fields. | Partially implemented at the current bridge and first-party handshake boundary. ADR 0013's elapsed-time cutoff, bounded input stall/rebind path, and terminal-versus-rebindable upstream classification remain gaps. |
 
 ## Responsibilities
 
 - Enforce the presence of an `Authorization` header for protected admin routes while leaving JWT parsing and validation to downstream services.
 - Upgrade WebSocket connections and forward them to backend services.
-- Keep the edge connection stable while rebinding upstream gameplay traffic to healthy same-type backend instances whenever shared state and backend contracts allow it; a non-edge service restart should not by itself become a forced client-visible reconnect in the target architecture.
+- Keep the edge connection stable during [ADR 0013](../../decisions/adr-0013-bounded-invisible-non-edge-restart-recovery.md)'s qualifying non-edge failures, target ordinary upstream recovery within 10 seconds, and close with `1013/backend_unavailable` when safe recovery cannot complete within the 30-second hard window.
 - Apply rate limits and basic abuse protections at the gateway boundary.
 - Relay gameplay and admin traffic to the correct backend services.
-- Expose internal-only gRPC management endpoints such as `Ping` on port `6565` over mTLS-authenticated internal network surfaces.
+- Expose internal-only diagnostic gRPC management endpoints such as `Ping` on port `6565` over mTLS-authenticated internal network surfaces; route-mutation methods remain dev/test-only and are absent or disabled in player-facing environments.
 - Fail readiness for new gameplay traffic when the `/ws/game/**` route is not safe to admit.
 
 ## Readiness and Liveness

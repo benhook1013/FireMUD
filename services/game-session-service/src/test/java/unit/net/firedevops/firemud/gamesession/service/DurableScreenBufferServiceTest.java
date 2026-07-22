@@ -230,7 +230,7 @@ class DurableScreenBufferServiceTest {
   }
 
   @Test
-  void appendDropsSingleEntryWhoseCanonicalStructuredEnvelopeExceedsHardLimit() {
+  void appendRetainsSingleEntryWhoseCanonicalStructuredEnvelopeExceedsHardLimit() {
     ScreenBufferService.BufferedEntry oversized =
         ScreenBufferService.BufferedEntry.fromStructuredOutput(
             "short\n",
@@ -242,14 +242,30 @@ class DurableScreenBufferServiceTest {
 
     service.append(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, List.of(oversized));
 
-    verify(repository, never()).saveAll(any());
+    ArgumentCaptor<List<ResumeTranscriptEntry>> entries = ArgumentCaptor.captor();
+    verify(repository).saveAll(entries.capture());
+    assertThat(entries.getValue())
+        .singleElement()
+        .satisfies(
+            entry -> {
+              assertThat(entry.getPayloadJson()).isEqualTo(oversized.payloadJson());
+              assertThat(entry.getByteSize()).isGreaterThan(2_000);
+            });
     verify(repository).updateExpiryByScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, null);
     verify(hotCache, never()).append(anyLong(), anyLong(), anyLong(), any());
-    verify(hotCache).replace(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, List.of());
+    verify(hotCache)
+        .replace(
+            eq(TENANT_ID),
+            eq(GAME_INSTANCE_ID),
+            eq(CHARACTER_ID),
+            org.mockito.ArgumentMatchers.argThat(
+                cached ->
+                    cached.size() == 1
+                        && cached.getFirst().payloadJson().equals(oversized.payloadJson())));
   }
 
   @Test
-  void appendRefreshesExistingExpiryAndHotCacheWhenOversizedEntriesAreDiscarded() {
+  void appendRefreshesExpiryAndReplacesExistingWindowWithOversizedEntry() {
     configureBuffer(1_000L, 256, 1, 1, 1_000, 2_000);
     ResumeTranscriptEntry retained = entry(1L, "Earlier line\n", Instant.ofEpochMilli(1_000L));
     retained.setExpiresAt(Instant.ofEpochMilli(2_000L));
@@ -268,9 +284,17 @@ class DurableScreenBufferServiceTest {
     verify(repository)
         .updateExpiryByScope(
             eq(TENANT_ID), eq(GAME_INSTANCE_ID), eq(CHARACTER_ID), any(Instant.class));
-    verify(repository, never()).saveAll(any());
+    verify(repository).saveAll(any());
+    verify(repository).deleteByIds(List.of(1L));
     verify(hotCache)
-        .replace(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, List.of(toBufferedEntry(retained)));
+        .replace(
+            eq(TENANT_ID),
+            eq(GAME_INSTANCE_ID),
+            eq(CHARACTER_ID),
+            org.mockito.ArgumentMatchers.argThat(
+                cached ->
+                    cached.size() == 1
+                        && cached.getFirst().payloadJson().equals(oversized.payloadJson())));
   }
 
   @Test

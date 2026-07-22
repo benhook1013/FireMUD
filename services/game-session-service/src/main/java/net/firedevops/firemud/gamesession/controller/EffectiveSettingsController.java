@@ -98,9 +98,14 @@ public class EffectiveSettingsController {
                 PromptSettings.from(presentation.effective().prompt()), presentation.sources()),
             new DomainSettings<>(
                 TranscriptRenderingSettings.from(presentation.effective()), presentation.sources()),
-            new DomainSettings<>(reconnection.effective(), reconnection.sources()),
-            new DomainSettings<>(reconnection.effective().policy(), reconnection.sources()),
-            new DomainSettings<>(reconnection.effective().buffer(), reconnection.sources()),
+            new DomainSettings<>(
+                reconnection.effective(), reconnection.sources(), reconnection.diagnostics()),
+            new DomainSettings<>(
+                reconnection.effective().policy(), reconnection.sources(), List.of()),
+            new DomainSettings<>(
+                reconnection.effective().buffer(),
+                reconnection.sources(),
+                reconnection.diagnostics()),
             new DomainSettings<>(commandHistory.effective(), commandHistory.sources()),
             new DomainSettings<>(commandCapabilities.effective(), commandCapabilities.sources()),
             new DomainSettings<>(movement.effective(), movement.sources()),
@@ -188,9 +193,14 @@ public class EffectiveSettingsController {
       long bootstrapGameInstanceId,
       String localeTag) {}
 
-  public record DomainSettings<T>(T effective, List<String> sources) {
+  public record DomainSettings<T>(T effective, List<String> sources, List<String> diagnostics) {
+    public DomainSettings(T effective, List<String> sources) {
+      this(effective, sources, List.of());
+    }
+
     public DomainSettings {
       sources = sources == null ? List.of() : List.copyOf(sources);
+      diagnostics = diagnostics == null ? List.of() : List.copyOf(diagnostics);
     }
   }
 

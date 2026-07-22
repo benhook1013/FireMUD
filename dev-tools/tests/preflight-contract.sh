@@ -12,7 +12,7 @@ RENDERED_MANIFEST="$TMP_DIR/hobby-rendered.yaml"
 REPORT_PATH="$TMP_DIR/preflight-report.json"
 TRAFFIC_EVIDENCE="$TMP_DIR/traffic-open.json"
 PRODUCTION_REPORT="$TMP_DIR/preflight-production.json"
-PRODUCTION_TRAFFIC_EVIDENCE="$TMP_DIR/production-traffic-open.json"
+LEGACY_PRODUCTION_TRAFFIC_EVIDENCE="$TMP_DIR/production-traffic-open.json"
 
 python3 - <<'PY' "$ROOT_DIR"
 import pathlib
@@ -243,23 +243,46 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
   python3 "$SCRIPT" production >/tmp/firemud-preflight-contract-production-traffic.out
 
-python3 "$WRITER" production contract-production reopen \
+cat >"$LEGACY_PRODUCTION_TRAFFIC_EVIDENCE" <<'JSON'
+{
+  "schemaVersion": "traffic-open-record/v1",
+  "environment": "production",
+  "eventType": "reopen",
+  "deploymentRef": "contract-production",
+  "assessedAt": "2026-07-22T00:00:00Z",
+  "assessedBy": "preflight-contract",
+  "preflightReportPath": "design/operations/deployments/production/preflight/contract-production.json",
+  "backupLastSuccessAt": "2026-07-22T00:00:00Z",
+  "backupVerifyLastSuccessAt": "2026-07-22T00:00:00Z",
+  "restoreDrillLastSuccessAt": "2026-07-22T00:00:00Z",
+  "coordinatedBackupScope": {
+    "type": "tenant_region",
+    "tenantId": "tenant-1",
+    "regionId": "region-1"
+  },
+  "evidenceRefs": ["caller-supplied-legacy-evidence"]
+}
+JSON
+
+if python3 "$WRITER" production contract-production reopen \
   --assessed-by preflight-contract \
   --preflight-report "$PRODUCTION_REPORT" \
-  --backup-last-success-at "$(date -u -Is)" \
-  --backup-verify-last-success-at "$(date -u -Is)" \
-  --restore-drill-last-success-at "$(date -u -Is)" \
-  --tenant-id tenant-1 \
-  --region-id region-1 \
   --evidence-ref contract-test \
-  --output "$PRODUCTION_TRAFFIC_EVIDENCE" >/tmp/firemud-preflight-write-traffic-production.out
+  --output "$LEGACY_PRODUCTION_TRAFFIC_EVIDENCE" >/tmp/firemud-preflight-write-traffic-production.out 2>&1; then
+  echo "legacy production traffic-open writer unexpectedly succeeded" >&2
+  exit 1
+fi
+grep -Fq "invalid choice: 'production'" /tmp/firemud-preflight-write-traffic-production.out
 
-FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF="contract-production" \
   FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
   FIREMUD_TRAFFIC_OPEN_EVENT=reopen \
-  FIREMUD_TRAFFIC_OPEN_EVIDENCE="$PRODUCTION_TRAFFIC_EVIDENCE" \
-  python3 "$SCRIPT" production >/tmp/firemud-preflight-contract-production-traffic-gated.out
+  FIREMUD_TRAFFIC_OPEN_EVIDENCE="$LEGACY_PRODUCTION_TRAFFIC_EVIDENCE" \
+  python3 "$SCRIPT" production >/tmp/firemud-preflight-contract-production-traffic-gated.out 2>&1; then
+  echo "legacy production traffic-open evidence unexpectedly passed" >&2
+  exit 1
+fi
 
 python3 - <<'PY' "$PRODUCTION_REPORT"
 import json
@@ -272,8 +295,10 @@ backup_002 = [
     for check in report["checkResults"]
     if check["policyId"] == "PREFLIGHT-BACKUP-002"
 ]
-if len(backup_002) != 1 or backup_002[0]["status"] != "pass":
-    raise SystemExit(f"PREFLIGHT-BACKUP-002 did not pass: {backup_002}")
+if len(backup_002) != 1 or backup_002[0]["status"] != "fail":
+    raise SystemExit(f"PREFLIGHT-BACKUP-002 did not fail closed: {backup_002}")
+if "durable environment-wide recovery-controller authority is not implemented" not in backup_002[0]["message"]:
+    raise SystemExit(f"PREFLIGHT-BACKUP-002 did not report controller unavailability: {backup_002}")
 PY
 
 for env in staging production; do

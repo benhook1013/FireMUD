@@ -2,9 +2,15 @@ package net.firedevops.firemud.gamedesign.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
+import net.firedevops.firemud.gamedesign.repository.GameSettingsOverrideRepository;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.junit.jupiter.api.Test;
@@ -13,6 +19,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -43,6 +51,8 @@ class SettingsAuthorityServiceIntegrationTest {
   }
 
   @Autowired private SettingsAuthorityService settingsAuthorityService;
+  @Autowired private GameSettingsOverrideRepository repository;
+  @Autowired private PlatformTransactionManager transactionManager;
 
   @Test
   void persistsTenantAndGameInstanceOverridesSeparately() {
@@ -120,5 +130,55 @@ class SettingsAuthorityServiceIntegrationTest {
                 .gameInstanceOverrides()
                 .reconnection())
         .isNull();
+  }
+
+  @Test
+  void reconnectionScopeLockIsHeldUntilOwningTransactionCompletes() throws Exception {
+    TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+    CountDownLatch firstLockAcquired = new CountDownLatch(1);
+    CountDownLatch secondTransactionStarted = new CountDownLatch(1);
+    CountDownLatch secondLockAcquired = new CountDownLatch(1);
+    CountDownLatch releaseFirstTransaction = new CountDownLatch(1);
+    try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+      Future<?> firstTransaction =
+          executor.submit(
+              () ->
+                  transactionTemplate.executeWithoutResult(
+                      status -> {
+                        repository.findReconnectionRowsByTenantIdForUpdate("lock-tenant");
+                        firstLockAcquired.countDown();
+                        awaitLatch(releaseFirstTransaction);
+                      }));
+
+      assertThat(firstLockAcquired.await(5, TimeUnit.SECONDS)).isTrue();
+      Future<?> secondTransaction =
+          executor.submit(
+              () ->
+                  transactionTemplate.executeWithoutResult(
+                      status -> {
+                        secondTransactionStarted.countDown();
+                        repository.findReconnectionRowsByTenantIdForUpdate("lock-tenant");
+                        secondLockAcquired.countDown();
+                      }));
+
+      assertThat(secondTransactionStarted.await(5, TimeUnit.SECONDS)).isTrue();
+      assertThat(secondLockAcquired.await(250, TimeUnit.MILLISECONDS)).isFalse();
+      releaseFirstTransaction.countDown();
+
+      firstTransaction.get(5, TimeUnit.SECONDS);
+      secondTransaction.get(5, TimeUnit.SECONDS);
+      assertThat(secondLockAcquired.getCount()).isZero();
+    } finally {
+      releaseFirstTransaction.countDown();
+    }
+  }
+
+  private static void awaitLatch(CountDownLatch latch) {
+    try {
+      assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    } catch (InterruptedException exception) {
+      Thread.currentThread().interrupt();
+      throw new AssertionError("Interrupted while waiting for transaction coordination", exception);
+    }
   }
 }

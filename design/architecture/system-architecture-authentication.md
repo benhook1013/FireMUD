@@ -11,6 +11,7 @@ Authentication is performed via plaintext `LOGIN` commands for gameplay protocol
 - First-party `/ws/game/**` now uses the concrete bootstrap path documented below: `POST /auth/player-bootstrap`, bootstrap-backed `POST /auth/connect-token`, gateway connect-token enforcement plus signed connect-context, then bare first-party `LOGIN` followed by `PLAY`.
 - The browser-safe `Firemud-Connect-Token` HttpOnly cookie carrier is now implemented for first-party browser gameplay. Non-browser clients may still use the dedicated `X-Firemud-Connect-Token` header carrier, but Gateway rejects handshakes that try to present both carriers at once.
 - `/sessions/{sessionId}/refresh-roles` exists as an operational hook; until full role-refresh token regeneration is wired end-to-end, implementations may expose a placeholder response while still performing automatic refresh on role updates.
+- Account's JWKS endpoint and conditional secret watcher are implemented, but Account-only asymmetric validation, non-exportable signer delegation, rotation/convergence, and `session:auth:revoked_after:*` watermark reading and writing remain target-state. No same-second watermark enforcement proof is claimed until an implemented reader exists.
 
 ## Contract Decisions (Normative)
 
@@ -29,7 +30,7 @@ The following contract decisions are mandatory and resolve cross-document ambigu
 
 ## Responsibility Split
 
-- **Account Service** – Verifies login secrets according to account-selected password/email-code modes, issues JWTs, and publishes JWKS for validation.
+- **Account Service** – Verifies login secrets according to account-selected password/email-code modes, issues JWTs, and remains authoritative for signing-generation validation, token-validation semantics, signer promotion, JWKS publication, and public/private pruning. A non-exportable signer may perform only private-key operations delegated by Account.
 - **Game Session Service** – Fronts the `LOGIN` command, stores gameplay session context in Redis, and rebinds sockets on reconnect.
 - **Spring Cloud Gateway** – Pass-through for gameplay login and admin/meta flows; enforces auth header presence on protected control-plane routes but does not validate control-plane JWTs. The deliberate exception is `/ws/game/**` edge admission: Gateway validates short-lived gameplay connect tokens, performs replay checks, and emits a signed connect context for Game Session as specified in [Gateway Architecture](./system-architecture-gateway.md#tenant-aware-edge-connect-token-gameplay-handshake).
 
@@ -100,10 +101,11 @@ Any HTTP/gRPC route that depends on identity, roles, or tenant scoping must be p
 
 1. **Validate the JWT** – Verify signature (JWKS), time-based claims (`exp`, `nbf`), and the expected token profile/audience (`aud`). Reject tokens with an unexpected profile (for example a Browser JWT presented to an internal-only endpoint).
 2. **Check baseline allowlist** – Compute `tokenHash` and require `session:auth:account:<accountId>:<tokenHash>` to exist in Coordination Redis. If missing, treat the session as revoked and return the canonical “session revoked” error (`AUTH_SESSION_REVOKED` or equivalent).
-3. **Check revocation watermarks** – Enforce bulk revocation without relying on wildcard deletes or key scans:
-   - If `session:auth:revoked_after:account:<accountId>` exists and the token’s `iat` is older than that value, treat the session as revoked.
-   - For routes classified as tenant-scoped regular or gameplay-affecting, if `session:auth:revoked_after:tenant:<tenantId>` exists and the token’s `iat` is older than that value, treat the token as revoked for that tenant-scoped operation.
-   - For routes classified as tenant-scoped regular or billing-safe tenant-scoped, if `session:auth:revoked_after:membership:<accountId>:<tenantId>` exists and the token’s `iat` is older than that value, treat the token as revoked for that caller-bound tenant operation.
+3. **Check revocation watermarks** – Enforce bulk revocation without relying on wildcard deletes or key scans. All watermark comparisons are inclusive: because both values are UTC epoch seconds, `iat <= watermark` revokes the token, including when `iat` equals the watermark second. No clock skew is applied to this comparison:
+   - If `session:auth:revoked_after:issuer:<issuerId>` exists and the token’s `iat` is less than or equal to that value, treat the session as revoked for every protected route. This environment-wide watermark is mandatory for Account signing-key compromise and player-facing post-restore trust reset, but it does not replace rejection of the affected `kid`.
+   - If `session:auth:revoked_after:account:<accountId>` exists and the token’s `iat` is less than or equal to that value, treat the session as revoked.
+   - For routes classified as tenant-scoped regular or gameplay-affecting, if `session:auth:revoked_after:tenant:<tenantId>` exists and the token’s `iat` is less than or equal to that value, treat the token as revoked for that tenant-scoped operation.
+   - For routes classified as tenant-scoped regular or billing-safe tenant-scoped, if `session:auth:revoked_after:membership:<accountId>:<tenantId>` exists and the token’s `iat` is less than or equal to that value, treat the token as revoked for that caller-bound tenant operation.
    - For routes classified as billing-safe or support-safe, tenant revocation watermarks do not by themselves revoke access; role checks and route classification still apply.
 4. **Apply route classification** – Every protected route is classified as one of the following, and the middleware must enforce the corresponding allowlist and role rules:
 

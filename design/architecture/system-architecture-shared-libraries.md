@@ -23,11 +23,7 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
   `LoggingInterceptor`, `SagaRunner`, and Temporal workflow/activity hosts attach
   correlation-friendly context using MDC so logs from different services can be
   correlated.
-- **Security Utilities** – `JwtUtil` for verifying tokens (and building them
-  within the Account Service only) plus `AuthTokenInterceptor`,
-  `SessionContext`, `ReloadableJwtUtil`, and `RequireAdminRole` helpers for
-  centrally enforcing JWT-based roles and supporting secret rotation. See the
-  [Authentication Design](./system-architecture-authentication.md).
+- **Security Utilities** – Target-state `JwtUtil` support verifies Account JWKS tokens (and builds them within the Account Service only) plus `AuthTokenInterceptor`, `SessionContext`, `ReloadableJwtUtil`, and `RequireAdminRole` helpers for centrally enforcing JWT-based roles and supporting secret rotation. The current utility still uses shared HMAC material and immediate one-key replacement; asymmetric `kid`/JWKS validation and phased overlap remain implementation debt. See the [Authentication Design](./system-architecture-authentication.md).
 - **Database Connectors** – `DatabaseAutoConfiguration` with `PostgresProperties` and `RedisProperties` reduces boilerplate setup. Defaults suit Docker Compose but any field can be overridden with `FIREMUD_POSTGRES_*` or the Redis role‑specific environment variables. Redis‑backed services choose the appropriate prefix:
   - Coordination clients (ticks, locks, timers, sessions) bind `RedisProperties` to `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT`.
   - Cache/rate‑limit clients (for example Spring Cloud Gateway) bind to `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`.
@@ -42,7 +38,7 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
   Logging and JWT helpers are available but are configured manually.
 - **Conflict Tracking** – `ConflictTracker` and `RedisConflictTracker` record
   tick conflicts in Redis for hotspot detection.
-- **TLS & Secret Watchers** – `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` reload certificates and JWT secrets without restarting the service. Client stubs already use `TlsCertificateWatcher`, while `GrpcServerTlsReloader` integrates with the running servers. These watchers monitor the paths from `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH`. HTTP and WebSocket clients that require mTLS (such as the TCP Proxy’s WebSocket connection to Spring Cloud Gateway) also reuse `TlsCertificateWatcher` and the same `FIREMUD_GRPC_*` paths. See [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) and [Authentication](./infrastructure/environment-and-secrets.md#authentication) for details.
+- **TLS & Secret Watchers** – `GrpcServerTlsReloader` and `TlsCertificateWatcher` reload certificates without restarting the service. `JwtSecretWatcher` can detect changes to Account's `FIREMUD_AUTH_JWT_SECRET_PATH`, but the target signer must validate and atomically promote a complete signing generation only after its public JWK has converged; validators never use this private-key watcher. Client stubs already use `TlsCertificateWatcher`, while `GrpcServerTlsReloader` integrates with the running servers. HTTP and WebSocket clients that require mTLS (such as the TCP Proxy’s WebSocket connection to Spring Cloud Gateway) also reuse `TlsCertificateWatcher` and the same `FIREMUD_GRPC_*` paths. See [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) and [Authentication](./infrastructure/environment-and-secrets.md#authentication) for details.
 - **gRPC Types** – Shared definitions (e.g., `ErrorDetail`, `PagingRequest`) in `protos/shared/`; each service generates its own stubs.
 
 ### Redis Key Naming & Lua Script Helpers

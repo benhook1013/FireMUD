@@ -20,6 +20,10 @@ The `session:auth:*` entries use a TTL derived from the JWT lifetime so operator
 
 JWT lifetime and the session safety margin are documented in [Environment & Secrets](./infrastructure/environment-and-secrets.md#authentication).
 
+## Implementation Status
+
+This document defines target-state token and revocation behavior. The current runtime has no `session:auth:revoked_after:*` reader or writer, and validators still use shared-HMAC verification rather than Account JWKS; therefore the inclusive watermark boundary is not yet runtime-enforced. The first implemented reader must prove rejection for `iat < watermark`, `iat == watermark`, and `iat > watermark`; no same-second runtime proof is claimed before that reader exists.
+
 ## Token Validity and Revocation
 
 Token validity semantics:
@@ -32,17 +36,21 @@ Token validity semantics:
 
 Bulk revocation (for example “logout all devices”, account bans, or tenant-wide billing suspensions) must not rely on wildcard deletes or key scans. Instead, the platform uses **revocation watermarks** in addition to per-token allowlist entries:
 
-- `session:auth:revoked_after:account:<accountId>` – tokens with `iat` older than this timestamp are treated as revoked for this account, even if their allowlist entries still exist.
-- `session:auth:revoked_after:tenant:<tenantId>` – tokens with `iat` older than this timestamp are treated as revoked for tenant-scoped operations targeting this tenant.
-- `session:auth:revoked_after:membership:<accountId>:<tenantId>` – tokens with `iat` older than this timestamp are treated as revoked for caller-bound tenant operations for this account and tenant, even if the tenant remains otherwise available.
+- `session:auth:revoked_after:account:<accountId>` – tokens with `iat` at or before this timestamp are treated as revoked for this account, even if their allowlist entries still exist.
+- `session:auth:revoked_after:tenant:<tenantId>` – tokens with `iat` at or before this timestamp are treated as revoked for tenant-scoped operations targeting this tenant.
+- `session:auth:revoked_after:membership:<accountId>:<tenantId>` – tokens with `iat` at or before this timestamp are treated as revoked for caller-bound tenant operations for this account and tenant, even if the tenant remains otherwise available.
+- `session:auth:revoked_after:issuer:<issuerId>` – tokens with `iat` at or before this timestamp are treated as revoked across the environment-wide Account issuer. This is reserved for signing-key compromise, post-restore trust reset, or another explicitly global issuer event.
 
 Revocation watermark contract requirements:
 
 - Watermark values are UTC epoch seconds so they can be compared directly to JWT `iat` without unit conversion drift.
+- All watermark boundaries are inclusive (`iat <= watermark`); a token issued in the watermark's same epoch second is revoked. The boundary is the same for account, tenant, membership, and issuer watermarks.
 - Watermark keys must have TTL at least `FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` after the last relevant event so all tokens that could still be valid are covered.
 - Account Service is the authoritative writer for watermark updates triggered by account-security and billing-state events.
 - Account Service is also the authoritative writer for `session:auth:revoked_after:membership:<accountId>:<tenantId>` updates triggered by membership or tenant-role changes that affect caller-bound tenant authority.
+- Account Service is the authoritative writer for the issuer-wide watermark. Advancing it is mandatory when the environment-wide Account signing key is compromised or replaced during player-facing post-restore hardening.
 - Services validating tokens should allow small bounded clock skew (for example up to 60 seconds) when comparing `iat` to wall-clock checks, but not when comparing `iat` to revocation watermark values.
+- An issuer watermark is defense in depth and cannot contain an attacker who can sign a token with a fresh or future `iat`. Compromise correctness therefore depends on removing the compromised `kid`, forcing validator convergence, and proving rejection before protected traffic reopens.
 
 Per-token logout remains a single-key delete of the token’s allowlist entries; bulk revocation uses watermarks and relies on TTL for eventual allowlist key cleanup.
 
@@ -132,3 +140,17 @@ JWT verification model (normative):
 - HMAC-only JWT verification is not part of the canonical contract and must not be enabled in shared or player-facing environments.
 - Player-facing environments must fail startup if asymmetric JWKS verification is not configured or if HMAC-only verification is enabled.
 - HMAC verification mode is allowed only for local/dev and explicitly ephemeral CI environments.
+- Account Service remains authoritative for signing-generation validation, token-validation semantics, signer promotion, JWKS publication, and public/private pruning. A non-exportable signer may perform only private-key operations explicitly delegated by Account and may not validate tokens, promote a signer, publish JWKS, or prune key material.
+- Target-state private-key custody delegates private-key operations to a non-exportable signer in every environment. Until that capability is implemented, the controlled fallback is the Account-only Kubernetes Secret baseline described in [ADR 0014](./decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md): only Account Service may receive private material, validators receive only public JWKS, and rotation automation cannot access signing material. Shared HMAC remains limited to local/dev or explicitly ephemeral CI compatibility and is not a player-facing fallback. Every issued JWT carries a stable `kid`.
+- Validators cache known keys for a configured bounded maximum age and refresh proactively. An unknown `kid` triggers one forced JWKS refresh and one validation retry, then fails closed.
+- A temporary JWKS outage may not invalidate a known key whose bounded cache entry remains fresh. Validators must not extend cache age or accept an unknown key to preserve availability.
+
+### Signing-Key Rotation Contract (Normative)
+
+[ADR 0014](./decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md) defines the accepted lifecycle. Planned rotation must prepublish a new public JWK, wait for the bounded validator-cache interval and prove validator visibility, promote the matching Account signer atomically, retain the retiring public key until the last token it signed has expired plus allowed clock skew, then prune and prove acceptance/rejection behavior. A common generation and phase must make separately updated signing and JWKS resources distinguishable; they must not be treated as an atomic multi-resource write.
+
+Normal rotation preserves existing sessions. Signer rollback after promotion must keep public keys for every key used by either application version until all affected tokens expire plus skew.
+
+Compromise and post-restore hardening instead quarantine JWT issuance and protected admission/control-plane traffic, remove the affected public key without overlap, advance the issuer-wide watermark, force every validator to converge, and require proof that the old `kid` is rejected and the replacement is accepted before traffic reopens. The Account key ring is per environment rather than per tenant, so compromise of that key has environment-wide invalidation scope.
+
+Player-facing readiness requires focused proof of both planned rotation through pruning and compromise hard cutover. Mounted signing/JWKS files, raw JWKS serving, or direct-file watcher callbacks do not independently satisfy this contract.

@@ -2,6 +2,14 @@
 
 This document describes the role and configuration of **Spring Cloud Gateway** in the FireMUD platform, including routing, filtering, WebSocket support, and how it integrates with both modern and legacy clients.
 
+## Implementation Status
+
+Unless otherwise noted, this document describes target-state gateway behavior. Current rollout and implementation boundaries are:
+
+- The target-state declarative `routes.yml` catalog has not yet converged as the implemented route authority. The current authority is the Java `CanonicalGatewayRoutesConfiguration`, with route-specific environment overrides `FIREMUD_GATEWAY_ROUTE_SESSION_URI`, `FIREMUD_GATEWAY_ROUTE_ADMIN_URI`, `FIREMUD_GATEWAY_ROUTE_DESIGN_URI`, `FIREMUD_GATEWAY_ROUTE_ACCOUNT_URI`, `FIREMUD_GATEWAY_ROUTE_SOCIAL_URI`, and `FIREMUD_GATEWAY_ROUTE_ASSET_STORE_URI`. These are distinct from the `FIREMUD_SERVICES_*` service-discovery variables used by other microservices. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery).
+- URI SAN is the canonical production identity for the TCP Proxy → Gateway mTLS hop. DNS SAN allowlisting remains an explicitly enabled migration-only fallback while URI SANs are not consistently issued, and leaf certificate fingerprint pinning is break-glass only. Until mTLS is fully deployed, any non-mTLS acceptance of `X-Proxy-*` headers remains a temporary dev-only stopgap protected by strict internal-only network exposure and NetworkPolicies; it is not suitable for player-facing environments.
+- Dynamic REST and gRPC route-management APIs remain local/dev/test-only ephemeral capabilities. The current implementation does not yet enforce the target profile, endpoint isolation, validation, or startup boundary, so these APIs must not be treated as production-safe merely because they exist.
+
 ## Gateway Pattern
 
 **Spring Cloud Gateway** serves as the **single HTTP(S) and WebSocket entry point** into the FireMUD system for all **external client traffic** that speaks HTTP or WebSocket. Traditional Telnet/TCP clients enter via the dedicated TCP Proxy Service as described in [Protocol Bridging](./system-architecture-protocol-bridging.md); together, Spring Cloud Gateway (for HTTP and WebSocket) and the TCP Proxy Service (for Telnet/TCP) form the public edge of the platform. The behaviour of this edge – including ordering guarantees, backpressure, and reconnection semantics for gameplay command streams – is defined canonically in [Protocol Bridging](./system-architecture-protocol-bridging.md); this document focuses on gateway responsibilities and defers to that design for detailed client-path invariants.
@@ -24,10 +32,9 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 > Internal synchronous RPCs use **gRPC**; asynchronous contracts (for example audit/saga events and lifecycle signals) use dedicated event flows documented in [System Architecture Overview](./system-architecture-overview.md#asynchronous-and-event-flows).
 > See [System Architecture Overview](./system-architecture-overview.md) and [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow) for the complete login and gRPC flow.
 
-- Initial routes are loaded on startup from a canonical `routes.yml` via `spring.config.import`.
+- Target-state baseline routes are loaded on startup from the version-controlled declarative `routes.yml` catalog imported through `application.yml` via `spring.config.import`.
 - Baseline route targets use in-environment DNS names by default and may be overridden explicitly with environment variables when a deployment needs different upstream targets.
-- Initial route targets are loaded on startup, but operators can override them using environment variables prefixed `FIREMUD_SERVICES_`, matching the `ServiceEndpointsProperties` approach used by other microservices. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery).
-- Dynamic route management APIs (REST and gRPC) can add or remove routes at runtime as **ephemeral overrides** layered on top of the baseline configuration; `routes.yml` remains the canonical source of truth for route definitions.
+- Dynamic route management is not part of the player-facing target-state route authority. The released declarative catalog remains the target source of truth for route definitions, and production route changes use the separately accepted reviewed declarative deployment workflow or a predeclared bounded failover switch.
 
 For the Telnet-to-WebSocket bridge – including the `GATEWAY_WS_URL` contract, Proxy → Gateway mutual TLS, and how gameplay traffic is normalized through `/ws/game/**` – treat [Protocol Bridging](./system-architecture-protocol-bridging.md) as the **canonical specification**. This document summarizes the gateway’s routing and configuration responsibilities and defers to the protocol-bridging design for detailed edge semantics.
 
@@ -84,12 +91,10 @@ If either check fails, the gateway rejects the WebSocket handshake and does not 
 Gateway config enforces this trust boundary by allowlisting the expected TCP Proxy identity from the mTLS peer certificate. The canonical production model is:
 
 - **Canonical (prod):** allowlist the TCP Proxy by **URI SAN** (SPIFFE-style identity), configured via `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-uri-sans` (for example `spiffe://firemud/ns/<namespace>/sa/tcp-proxy-service`).
-- **Transitional (migration only):** allowlist by **DNS SAN** when URI SANs are not yet consistently issued, configured via `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-dns-sans` (for example `tcp-proxy-service.<namespace>.svc.cluster.local`).
+- **Migration only:** an explicitly enabled DNS SAN allowlist may be evaluated only while URI SAN issuance is not yet available. It is not an accepted steady-state production identity and must be tracked to removal.
 - **Break-glass (incident only):** pin by leaf certificate **SHA-256 fingerprint** when SAN-based identity is unavailable or compromised, configured via `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-fingerprints-sha256`. This is intentionally operationally expensive and should not be treated as the steady state because it makes rotation and multi-environment deployments harder.
 
 This policy is normative per `design/architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md`.
-
-Until mTLS is fully deployed for the TCP Proxy → Gateway hop, treat any non-mTLS acceptance of `X-Proxy-*` headers as a **temporary dev-only stopgap**, protected by strict internal-only network exposure and NetworkPolicies. Do not rely on “internal network” alone for player-facing environments.
 
 ### Gateway Output Rules (Downstream-Trusted)
 
@@ -128,7 +133,7 @@ Typed Telnet `SESSION` lines are not part of the player-facing or advanced-clien
   - Route-based filtering
   - Consistent handling across all clients
 
-At a configuration level, Spring Cloud Gateway defines WebSocket routes in `application.yml` (and profile-specific route files) and applies filters (such as rate limiting and retries) before forwarding to backend services. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for the authoritative description of route configuration, service discovery overrides, and gateway-related environment variables. For gameplay login and session semantics, this document defers to the canonical flow in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow); this doc focuses on transport-level responsibilities only.
+At the target-state configuration level, Spring Cloud Gateway defines WebSocket routes in the declarative `routes.yml` catalog imported by `application.yml` and applies filters (such as rate limiting and retries) before forwarding to backend services. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for the authoritative description of route configuration, service discovery overrides, and gateway-related environment variables. For gameplay login and session semantics, this document defers to the canonical flow in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow); this doc focuses on transport-level responsibilities only.
 
 ### Gameplay WebSocket Route
 
@@ -222,17 +227,19 @@ Spring Cloud Gateway applies a small grace window before closing WebSocket sessi
 - Gateway uses two explicit backend health states for gameplay routes:
   - `degraded_but_reachable` – upstream is connected and can still return bounded explicit gameplay/protocol errors for requests.
   - `unreachable` – upstream cannot be established or maintained (`UNAVAILABLE`, connect failures, handshake failures, or equivalent all-failed route state).
-- The `firemud.gateway.backendUnavailableGraceMs` configuration property applies only to the `unreachable` state and controls how long Gateway tolerates continuous unreachability before closing affected sessions with `1013/backend_unavailable`.
+- The `firemud.gateway.backendUnavailableGraceMs` configuration property applies only to the `unreachable` state and implements [ADR 0013](./decisions/adr-0013-bounded-invisible-non-edge-restart-recovery.md)'s elapsed-time cutoff. It must be positive and no greater than 30,000 ms. Ordinary qualifying restart recovery targets no more than 10 seconds; retry-attempt counts do not replace either elapsed-time criterion.
 - `firemud.gateway.backendUnavailableRecoverySuccessCount` defines recovery hysteresis for exiting `unreachable`. Gateway returns to `degraded_but_reachable` or healthy routing only after at least this many consecutive successful upstream connect/forward attempts (default `3`).
 - Gateway enters `unreachable` when the `/ws/game/**` upstream cannot be established or maintained and route checks are continuously failing.
 - While in `degraded_but_reachable`, sessions stay open and command outcomes are explicit backend errors. “Bounded explicit response” here means within the platform’s normal command/request timeout budget for the affected path; this state must not be used for stalled sessions that cannot produce a timely explicit gameplay/protocol response. Those sessions must transition to `unreachable`. While in `unreachable`, the backend unavailable timer runs and handshake/sending behavior follows the rules below.
 - When the backend is currently unavailable, Gateway rejects new gameplay-route connections (`/ws/game/**`) with HTTP `503` so clients can apply the reconnection and backoff rules defined in [Reconnection Strategy](./system-architecture-reconnection.md#http-handshake-failures-on-ws-game). The grace window is an established-session behaviour; it does not create “maybe works” handshake outcomes.
 - When the backend has been continuously unavailable beyond `firemud.gateway.backendUnavailableGraceMs` without any successful calls or healthy checks, Gateway must close affected gameplay WebSocket sessions with `1013/backend_unavailable`.
 - Load balancers or CDNs in front of Gateway should be configured with idle and failure timeouts that do not undercut this grace window; otherwise, they may terminate connections before Gateway can emit the canonical `backend_unavailable` signal.
-- Gateway startup must fail fast when `firemud.gateway.backendUnavailableGraceMs <= 0` or `firemud.gateway.backendUnavailableRecoverySuccessCount <= 0`.
+- Gateway startup must fail fast when `firemud.gateway.backendUnavailableGraceMs <= 0`, `firemud.gateway.backendUnavailableGraceMs > 30000`, or `firemud.gateway.backendUnavailableRecoverySuccessCount <= 0`.
 - **Established-session input handling while backend is unavailable** – Gateway is a WebSocket proxy and does not generate gameplay-protocol error frames when the upstream Game Session hop is down. To avoid silently discarding gameplay commands while a connection appears healthy:
-  - If an established `/ws/game/**` session is in `unreachable` state and the client attempts to send a gameplay message while upstream is unavailable, Gateway closes that session immediately with `1013/backend_unavailable` (and logs/records metrics for the close reason).
+  - An established `/ws/game/**` session in `unreachable` state retains its edge socket during bounded upstream rebind. Input accepted into its bounded stall buffer remains FIFO and is delivered once to the replacement upstream. Buffer exhaustion closes that session explicitly with `1013/backend_unavailable`; Gateway never silently drops stalled input while leaving the session open.
   - If the backend unavailable timer exceeds `firemud.gateway.backendUnavailableGraceMs`, Gateway closes remaining affected sessions with `1013/backend_unavailable` even if they are idle, so clients receive a clear canonical signal instead of sitting on half-open connections indefinitely.
+
+Gateway-to-Game-Session close handling uses a bounded internal classification that distinguishes rebindable backend lifecycle or transport loss from terminal session outcomes such as logout, takeover, policy rejection, revocation, and loss of current authorization. A rebindable internal close is not forwarded to the client when recovery succeeds. This classification does not add a public close category; exhausted recovery still maps to `1013/backend_unavailable`.
 
 ### Gateway Restart Semantics
 
@@ -410,29 +417,26 @@ If gameplay execution is sharded across multiple Game Session instances, that sh
 
 ## Management Plane Security
 
-- Spring Cloud Gateway exposes REST and gRPC management endpoints (such as dynamic route operations and `GatewayManagementService` RPCs) **only on internal network surfaces**, not via the public player-facing ingress.
-- In Kubernetes, these endpoints are reachable only from inside the cluster or a dedicated admin network segment via `ClusterIP` Services, private ingress, and `NetworkPolicy` rules; the public Service/Ingress is limited to HTTP and WebSocket data-plane traffic.
-- Authentication and authorization for these management endpoints is enforced at the gateway boundary: operator tooling must connect using mutual TLS (mTLS) client certificates (issued by cert-manager under ClusterIssuer `firemud-ca-issuer`, with `clientAuth` EKU), and only trusted operator identities are permitted to invoke management operations. JWT-based admin roles apply to product/admin APIs behind the gateway, but gateway-owned management endpoints do not rely on downstream services for authorization. Implementation details and the recommended internal-only exposure model are documented in the [Spring Cloud Gateway service README](./microservices/spring-cloud-gateway/README.md#management-plane-security).
+The following are target-state acceptance criteria, not current guarantees. The implementation-status section records that route-mutation isolation, validation, and startup boundaries are not yet enforced.
+
+- Where explicitly enabled for local, development, or test use, REST and gRPC route-mutation endpoints must be **only on internal network surfaces**, never via player-facing ingress. Player-facing deployments must leave those mutation components and endpoints disabled or absent; the production operator surface is diagnostics and health inspection only.
+- In Kubernetes, these endpoints must be reachable only from inside the cluster or a dedicated admin network segment via `ClusterIP` Services, private ingress, and `NetworkPolicy` rules; the public Service/Ingress must be limited to HTTP and WebSocket data-plane traffic.
+- Authentication and authorization for diagnostics and any dev/test mutation endpoints must be enforced at the gateway boundary: operator tooling must connect using mutual TLS (mTLS) client certificates (issued by cert-manager under ClusterIssuer `firemud-ca-issuer`, with `clientAuth` EKU), and only trusted operator identities may invoke approved internal operations. JWT-based admin roles apply to product/admin APIs behind the gateway, but gateway-owned diagnostics must not rely on downstream services for authorization. Production route changes use the separately accepted declarative deployment workflow, not these runtime mutation methods. Implementation details and the recommended internal-only exposure model are documented in the [Spring Cloud Gateway service README](./microservices/spring-cloud-gateway/README.md#management-plane-security).
 
 ### Dynamic Route Override Lifecycle
 
-Dynamic route management APIs exist to apply **ephemeral overrides** on top of the baseline route configuration loaded from `routes.yml`.
+Player-facing routing has one authority: the version-controlled declarative route catalog released with environment-bound service endpoints. Route changes converge through the normal reviewed deployment and rollback workflow. Emergency routing uses an expedited declarative rollout or a predeclared bounded switch between approved targets.
 
-The lifecycle expectations for these overrides must be explicit so operators understand convergence and persistence:
+Dynamic mutation is an explicitly enabled local/dev/test capability only, subject to the following target-state acceptance criteria:
 
-- **Persistence:** dynamic overrides are not the canonical source of truth and must not be treated as durable configuration. A restart of all Gateway pods must revert to baseline config unless an operator re-applies the override.
-- **Multi-pod convergence:** in horizontally scaled gateway deployments, an override must either (a) be stored in a shared backend (so all pods observe the same override set) or (b) be applied to every pod consistently. If neither is true, the API must be documented as “single-pod only” and must not be used in production-like environments.
-- **Auditing:** every dynamic route change must emit an audit log entry (who/what changed, previous value, new value, correlation IDs) so operators can reconstruct edge behavior during incidents.
-- **Safety bounds:** dynamic overrides must not allow bypassing management-plane isolation (internal-only surfaces) or weakening header trust rules. Overrides are limited to route targets/predicates/filters and must not enable new public exposure of management endpoints.
-- **Player-facing fail-fast guard:** in player-facing environments, gateway startup must fail if dynamic route mutation is enabled while shared persistence, multi-pod convergence, and route-change auditing are not enabled.
-  - Recommended control flags: `firemud.gateway.dynamic-routes.enabled` and `firemud.gateway.dynamic-routes.allow-player-facing`; startup should fail when both evaluate true without the required control-plane capabilities above.
-- **Readiness predicates:** startup/readiness checks must expose explicit booleans `dynamic_routes.persistence_ready`, `dynamic_routes.convergence_ready`, and `dynamic_routes.audit_ready`.
-  - If any predicate is false while both `firemud.gateway.dynamic-routes.enabled=true` and `firemud.gateway.dynamic-routes.allow-player-facing=true`, gateway startup must fail hard before serving traffic.
-  - Gateway health must expose an aggregate `dynamic_routes_ready` state so operators can verify enforcement from health endpoints and dashboards.
+- mutation components and endpoints are absent or disabled by default, and player-facing startup fails if they are enabled;
+- overrides are process-local, non-durable, visibly non-convergent, and reset to baseline on restart;
+- protected baseline, management, authentication, gameplay, and header-trust routes cannot be replaced or shadowed;
+- route IDs, destinations, predicates, and filters are allowlisted;
+- mutation endpoints remain outside player-facing ingress and use trusted test/operator authorization; and
+- audit records include actor, authorization basis, before/after values, outcome, and correlation identity.
 
-If the implementation cannot meet these lifecycle rules yet, the Gateway documentation should include an “Implemented Status” note that explicitly scopes dynamic route APIs to dev/test only.
-
-**Current decision:** until shared persistence, multi-pod convergence, and full route-change auditing are implemented, dynamic route override APIs are scoped to dev/test only and must not be used as a production control plane.
+Persistence, multi-pod convergence, audit, and readiness predicates are not sufficient on their own to promote this developer API. A production runtime-routing control plane requires a separate decision covering versioned desired state, validation, staged activation, expiry, rollback, conflict handling, recovery, and fail-closed behavior.
 
 ## Observability
 
@@ -463,8 +467,7 @@ This approach minimizes latency and matches the protocol table in the
 | Dev | `http://service:8080` | Docker Compose DNS |
 | Prod | `http://service.namespace.svc.cluster.local:8080` | Kubernetes DNS |
 
-Spring profiles defined in `application.yml` and selected via
-Baseline routing targets are defined in `routes.yml`, and any environment-variable overrides or dynamic route changes apply *on top* of that file rather than replacing it as the canonical source of truth.
+Spring profiles are deployment and test plumbing only; they do not define player-facing route authority. Target-state baseline routing targets are defined by the released declarative `routes.yml` catalog imported through `application.yml`; environment-variable endpoint substitution may specialize that declared catalog. Dynamic route overrides never become player-facing route authority.
 
 ---
 

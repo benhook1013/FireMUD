@@ -1,5 +1,13 @@
 # Game Session Service Runtime and Data
 
+## Implementation Status
+
+The sections below define the target-state runtime contract. Current implementation and proof status is:
+
+- Hidden same-type Game Session recovery within ADR 0013's qualifying conditions remains an implementation or proof gap; the target is to preserve the session through upstream rebind rather than require a player-visible re-`LOGIN` / re-`PLAY` cycle.
+- Current `onCommand` ingress uses the live `{tenantId, gameInstanceId}` boundary as a region surrogate until true region partitioning is shipped; it carries the current `regionEpoch` and a producer-supplied `readSnapshotToken` derived from the command and ownership fence.
+- Durable command/effect execution currently covers movement, the `GET` / `DROP` / `PUT` / `TAKE` / `WEAR` / `REMOVE` item surface, and `BLOCK`; other state-changing command families still need to migrate onto the same effect-idempotent replay/no-op seam.
+
 ## Runtime Model
 
 Game Session coordinates with Redis to store volatile session state and command queues and with PostgreSQL to persist durable game-instance control-plane metadata. It provides a single point of truth for current tick and world time while exposing gameplay-session state to the protocol front door.
@@ -8,7 +16,7 @@ The service runtime model assumes replaceable workers, not authoritative in-proc
 
 - Redis and PostgreSQL hold the meaningful gameplay-session, tick-coordination, and control-plane state needed for takeover.
 - A Game Session instance may cache or buffer transient transport-local details while it is healthy, but those details must never be the sole source of truth for reconnect, tick ownership, or gameplay admission.
-- Ordinary non-edge Game Session restarts should therefore degrade to a short stall or upstream rebinding event, not a mandatory player-visible re-`LOGIN` / re-`PLAY` cycle.
+- Ordinary qualifying Game Session restarts therefore use ADR 0013's bounded upstream rebind, not a mandatory player-visible re-`LOGIN` / re-`PLAY` cycle. Recovery targets 10 seconds while the edge socket, healthy replacement capacity, and shared authority remain available. If continuation authority cannot be established safely, hidden recovery terminates immediately; otherwise 30 seconds is the hard maximum before falling back to `1013/backend_unavailable`.
 
 - PostgreSQL stores `game_instances`, `game_manifest`, pinned runtime-version/script-patch selections, active runtime feature-flag overrides, and audit-relevant disconnect/remediation metadata.
 - Redis stores gameplay session bindings, tick queues, timers, retries, and region leases.
@@ -25,8 +33,9 @@ Game Session uses the gameplay layer’s session front-end plus lease-owner exec
 - Connected sockets bind to a stable session front-end pod, while region-scoped tick execution remains fenced to the current `<tenantId, regionId>` lease owner.
 - Session front-ends may forward work to lease owners over internal gRPC, but only lease owners may mutate region-scoped coordination state.
 - Tick-related multi-key operations, including locks, pending state, queues, timers, and retry metadata, are performed exclusively via the shared Lua scripts described in [Redis Architecture](../../system-architecture-redis.md#atomicity-and-concurrency-control). Ad-hoc multi-key sequences against tick keys are not allowed outside these scripts.
-- Because session bindings, leases, queues, timers, and retry markers are externalized, another Game Session instance of the same type must be able to assume session-front-end or lease-owner responsibility after failure. If a non-edge Game Session restart still forces a visible reconnect in practice, treat that as an implementation gap rather than an accepted contract.
-- Lease ownership and session front-end routing are deliberately takeover-ready. Another same-type Game Session instance must be able to acquire the relevant lease or front-end responsibility from shared state after restart; visible reconnect is acceptable only when the edge transport itself was lost.
+- Because session bindings, leases, queues, timers, and retry markers are externalized, another Game Session instance of the same type must be able to assume session-front-end or lease-owner responsibility after an ordinary qualifying failure. Exhausted recovery, unavailable shared authority, unsafe ownership ambiguity, terminal session policy, or edge transport loss uses explicit fallback instead.
+- Lease ownership and session front-end routing are deliberately takeover-ready. Another same-type Game Session instance must be able to acquire the relevant lease or front-end responsibility from shared state after restart. Replacement continues the current server-side session authority using the stable edge transport identity rather than requiring the original connect token to remain valid as fresh admission; current membership, entitlement, revocation, authorization, tenant/game scope, and fencing still apply.
+- Closure of only the Gateway-to-Game-Session upstream is not authoritative player transport loss. Presence removal, disconnect lifecycle events, and gameplay-binding teardown must account for retained edge liveness and replacement registration so a successful hidden rebind neither publishes a false disconnect nor leaves the resumed player absent.
 
 Game Session treats Redis Coordination and Cache/Rate-Limit roles as separate concerns:
 
@@ -117,9 +126,9 @@ Game Session persists the latest processed `disconnectSequence` per `<proxyConne
 
 Recent/offline account-presence state should preserve the last admitted routing bundle too. When live presence drops to recent presence after transport loss, takeover, or logout, the bounded recent-presence record keeps the last admitted `gameInstanceId`, `worldSlug`, `realmSlug`, and `pointerVersion` so account-presence and friend-presence reads can continue to describe the last resolved realm target directly instead of collapsing immediately to a routing-less timestamp.
 
-Deliberate logout remains a different lifecycle from transport loss. `LOGOUT` clears the session's reconnect-oriented replay and restore eligibility, retires the live gameplay presence row, records bounded recent-presence disconnect disposition as deliberate logout, and routes gameplay-bound runtime shutdown through the shared termination seam instead of preserving a reconnect-suspended gameplay shell.
+Deliberate logout remains a different lifecycle from transport loss. `LOGOUT` immediately makes the binding's private transcript non-replayable and removes the session's reconnect-oriented replay and restore eligibility; physical transcript deletion may complete asynchronously. It retires the live gameplay presence row, records bounded recent-presence disconnect disposition as deliberate logout, and routes gameplay-bound runtime shutdown through the shared termination seam instead of preserving a reconnect-suspended gameplay shell.
 
-Game Session also owns the canonical live gameplay-presence substrate rather than treating authenticated session context as an online-presence proxy. The bounded current implementation persists one live presence record per gameplay-bound session with tenant/game-instance/account/character identity, current role bucket for `WHO`, explicit-AFK state, accepted-command activity, meaningful-gameplay activity, and the admitted routing bundle used by later account/friend presence reads. It does not resolve, cache, or transport profile visibility policy. Player-facing `WHO` is scoped to the current game instance and reads this presence substrate directly, while later social consumers use the same substrate plus bounded recent-presence handoff and Account-owned policy instead of rebuilding online/offline truth from raw Redis session shells.
+Game Session also owns the canonical live gameplay-presence substrate rather than treating authenticated session context as an online-presence proxy. The bounded live presence record contains tenant/game-instance/account/character identity, current role bucket for `WHO`, explicit-AFK state, accepted-command activity, meaningful-gameplay activity, and the admitted routing bundle used by later account/friend presence reads. It does not resolve, cache, or transport profile visibility policy. Player-facing `WHO` is scoped to the current game instance and reads this presence substrate directly, while later social consumers use the same substrate plus bounded recent-presence handoff and Account-owned policy instead of rebuilding online/offline truth from raw Redis session shells.
 
 ## Runtime Feature Flags
 
@@ -130,7 +139,7 @@ Feature flags are stored in the `feature_flag` table and can be toggled through 
 Each running game instance has a pinned `scriptPatchVersion` alongside its `runtimeVersion`:
 
 - Event ingress to the Automation & Scripting Service includes the currently pinned `scriptPatchVersion` so script evaluation is tied to the active patch for the instance.
-- Current Game Session emits `onCommand` events after durable player-command staging and immediate tick kick when a gameplay session context, pinned script patch, and current runtime ownership row are all available. The request uses the live `{tenantId, gameInstanceId}` boundary as the current region surrogate until true region partitioning is shipped, includes the current `regionEpoch`, and carries a producer-supplied `readSnapshotToken` derived from the command and ownership fence.
+- Game Session emits `onCommand` events after durable player-command staging and immediate tick kick when a gameplay session context, pinned script patch, and current runtime ownership row are all available.
 - Script-generated commands accepted from the Automation & Scripting Service must carry the originating `scriptPatchVersion`, `scriptId`, and `scriptEventId`.
 - On execution, Game Session enforces a version fence: if a queued command’s `scriptPatchVersion` does not match the instance’s currently pinned value, it must not be executed and the drop must be observable for operators.
 
@@ -153,12 +162,12 @@ The first migrated command families are movement plus the first item/equipment/c
 - movement execution reuses the shared move-planning logic to preserve player-visible semantics, but `MoveCommandHandler` no longer exposes a public synchronous session-write path and the authoritative room change now flows through one dedicated idempotent movement-apply seam keyed by `effectId`;
 - duplicate movement effect application converges to replay/no-op rather than a second room mutation;
 - player-visible movement output is delivered asynchronously through the same active-websocket plus screen-buffer-aware delivery path used for runtime recipient delivery;
-- item/equipment/container mutation commands, currently `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, and `REMOVE`, enqueue durably from the player-facing command path and execute from the durable post-drain effect executor before their player-visible outputs are delivered;
+- item/equipment/container mutation commands, including `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, and `REMOVE`, enqueue durably from the player-facing command path and execute from the durable post-drain effect executor before their player-visible outputs are delivered;
 - Game Session passes the durable `tick_effect.effectId` to Entity Management for those item/equipment/container mutations so duplicate downstream delivery can replay the stored domain response instead of applying the mutation again;
 - `BLOCK` is the first transient action-state command on the same durable execution seam: Game Session stores/replays the durable effect, Game Logic routes `ApplyActorCondition`, and Entity Management persists the short-lived `blocking` active condition.
 - read-only item views such as `INVENTORY`, `EQUIPMENT`, and `CONTAINER` remain direct view commands because they do not mutate authoritative gameplay state.
 
-Other command families still need to migrate onto this same durable seam. Pure view/meta commands may remain direct until there is a concrete reason to queue them, but state-changing gameplay families should not introduce new synchronous bypasses. The next durability gap is pushing the same effect-idempotent replay/no-op pattern through later domain mutation boundaries, not merely routing more commands through the Game Session ledger.
+Pure view/meta commands may remain direct until there is a concrete reason to queue them, but state-changing gameplay families should not introduce new synchronous bypasses.
 
 ### Automation Command Admission
 

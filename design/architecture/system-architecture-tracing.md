@@ -4,7 +4,16 @@ This document explains how distributed traces are collected and visualized acros
 
 ## Implementation Notes
 
-The current implementation exports generic gRPC server spans through the shared `TracingInterceptor` and tags application-level gRPC errors on the active span. The named gameplay, tick, TCP Proxy, and backup spans in the catalog below are target-state instrumentation contracts for future implementation and smoke proofing; do not assume they are emitted by the current services unless a service-specific slice says so. Environments should only claim tenant/region-scoped incident sampling after the collector and service spans both support the required attributes.
+The current implementation exports generic gRPC server spans through the shared `TracingInterceptor` and tags application-level gRPC errors on the active span. The repository does not yet prove cross-service context propagation, named workflow spans, configurable service sampling, or collector tail sampling. The named gameplay, tick, TCP Proxy, and backup spans below are target vocabulary, not universally shipped behavior. The manual shared SDK configuration does not yet consume `OTEL_TRACES_SAMPLER` or `OTEL_TRACES_SAMPLER_ARG`, so their presence alone does not establish service-scoped incident-sampling capability.
+
+Operational tracing claims are capability-gated:
+
+1. **Baseline observability** relies on metrics and structured logs; generic RPC spans and correlation are best-effort unless proved for the environment.
+2. **Workflow tracing** covers only named workflows whose semantic spans, bounded attributes, context propagation, ingestion, and queries have end-to-end proof.
+3. **Service-scoped incident sampling** additionally requires a wired sampler control and a proved increase/observe/revert drill.
+4. **Tenant/region-scoped incident sampling** additionally requires compatible upstream sampling, propagated scope attributes, bounded collector tail sampling, and safe time-limited enable/revert proof.
+
+Each environment must advertise its proved level and covered workflows. Runbooks must branch on that declaration and must not make mitigation depend on traces.
 
 ---
 
@@ -23,7 +32,7 @@ All services emit spans using the OpenTelemetry SDK. A dedicated **OpenTelemetry
 - The collector forwards spans to Jaeger over gRPC port `14250`.
 - Metrics about the collector itself are scraped by Prometheus from `/metrics`
   on port `8888`.
-- The local Docker Compose stack includes the collector and Jaeger so developers can inspect traces locally.
+- The repository provides example Kubernetes collector and Jaeger manifests. A local or hosted environment must deploy and verify its own supported tracing path; the current Docker Compose file does not include those services.
 
 Every service relies on a shared `TracingConfig` in the `common-library` (`services/common-library/src/main/java/net/firedevops/firemud/common/config/TracingConfig.java`). This
 configuration sets the `service.name` resource from `spring.application.name`,
@@ -71,10 +80,11 @@ To make traces consistently useful across services and runbooks, FireMUD uses a 
 - **Cross-region and saga flows**
   - `gamesession_remote_followup_enqueue` – span for enqueuing cross-region follow-ups, tagged with origin and target `regionId`, `tenantId`, and a coarse `followup_type`.
   - `gamesession_remote_followup_drain` – span for draining remote follow-ups in the target region, tagged similarly and correlated with tick execution spans.
-- **Backup and pause/resume flows**
-  - `backup_pause_ticks` – span for pausing ticks before `pg_dump`, tagged with `scope_type`, `tenantId`, `regionId` when bounded, `alias_scope_used` when the request still uses `game_instance_id`, and a `reason`.
-  - `backup_pg_dump_snapshot` – span measuring the logical backup operation itself.
-  - `backup_resume_ticks` – span for resuming ticks after the snapshot, tagged consistently with `backup_pause_ticks`.
+- **Backup and recovery flows**
+  - `backup_pg_dump_snapshot` – span measuring the online transactionally consistent logical backup, tagged with environment/database identity and immutable artifact lineage rather than gameplay scope.
+  - `backup_verify_artifact` – span for integrity and restore-readability verification, tagged with artifact and backup/restore-tool identities.
+  - `recovery_converge_participant` – span for one declared recovery participant's safe disposition, tagged with bounded participant type and outcome.
+  - Tick pause/resume spans belong to maintenance, reset, migration, and future scoped-recovery traces. Routine backup does not emit or require them.
 
 All spans should include, where applicable:
 
@@ -84,9 +94,8 @@ All spans should include, where applicable:
 ## Sampling and Sensitive Attributes
 
 - **Sampling**
-  - Production-like environments should assume sampling is enabled and that not every request/tick will produce a trace.
-  - Baseline expectation: a non-zero sampling rate that makes it possible to find representative traces for common incident classes (for example, at least ~1% for high-volume entry paths). This is not a correctness boundary; it is an operational usability target.
-  - Incident mode: operators should be able to temporarily increase sampling for a scoped tenant/region/service during an investigation, then return to baseline once the incident is resolved.
+  - An environment at a sampling-capable level declares and proves its baseline. A common target for high-volume entry paths is at least ~1%, but this is an operational usability target rather than a correctness boundary.
+  - Incident mode may be promised only at a proved service-scoped or tenant/region-scoped level, and every escalation must return to its declared baseline.
   - Runbooks must treat traces as a best-effort diagnostic: when sampling is too low to find a representative trace, operators should pivot to metrics (SLO/SLI panels) and logs (Kibana searches filtered by `tenantId`, `regionId`, and `traceId` when available).
   - If a workflow requires trace availability as part of an operational contract (for example debugging a recurring tick stall), document the minimum sampling expectations for that workflow explicitly in the owning runbook.
 - **Sensitive attributes**
@@ -98,7 +107,7 @@ All spans should include, where applicable:
 
 ### Incident-Mode Sampling Procedure (Design Contract)
 
-FireMUD supports two escalation levels for “incident mode” sampling. Operators should choose the least invasive option that provides enough data and should always record start/end times and the chosen scope in the incident timeline.
+FireMUD defines two target escalation levels for incident-mode sampling. An operator may use only a level advertised and proved by that environment, must choose the least invasive sufficient option, and must record start/end times and scope in the incident timeline.
 
 1. **Service-scoped sampling (fast, coarse)**
    - Mechanism: adjust head sampling in the affected service(s) via standard OpenTelemetry env vars:
@@ -116,9 +125,9 @@ FireMUD supports two escalation levels for “incident mode” sampling. Operato
      - Add a temporary “always sample” policy for the target `<tenantId, regionId>` (and optionally `service.name`) and a time-bound note in the collector config (for example “remove after incident X”).
      - Verify: in Jaeger, filtering by `tenantId`/`regionId` should yield traces even when baseline sampling is low.
      - Revert: remove the temporary policy and reload the collector configuration.
-   - Limits: this requires that the collector is deployed with tail-sampling enabled and that the relevant spans actually carry `tenantId`/`regionId` attributes.
+   - Limits: this requires tail sampling, relevant span attributes, and an upstream sampling strategy that delivers candidate traces to the collector. Tail sampling cannot recover a trace already discarded by service-side head sampling.
 
-Environment defaults and the baseline sampler ratio are documented in `design/architecture/infrastructure/environment-and-secrets-catalog.md#observability`.
+Declared sampler controls and their current support status are documented in `design/architecture/infrastructure/environment-and-secrets-catalog.md#observability`.
 
 #### Collector Capability Contract (For Scoped Incident Sampling)
 
@@ -131,11 +140,11 @@ Environments that claim support for tenant/region-scoped incident sampling (stag
   - Positive check: traces for the scoped `<tenantId, regionId>` appear above baseline after policy enablement.
   - Negative check: trace volume returns to baseline after policy removal.
 
-If an environment does not meet this contract, it must be documented as **service-scoped sampling only** and incident procedures must not claim tenant/region-scoped escalation there.
+If an environment does not meet this contract, it must advertise its highest proved lower level—service-scoped sampling or baseline observability—and incident procedures must not claim tenant/region-scoped escalation there.
 
 ## Operational Playbook: Using Traces During Incidents
 
-During incidents, Jaeger is a first-class tool alongside logs and metrics. The following queries and patterns are used by runbooks:
+During incidents, Jaeger is a first-class tool alongside logs and metrics only for workflows included in the environment's proved tracing level. Otherwise use the corresponding metrics and structured-log path. The following are target queries for environments that advertise the required workflow spans:
 
 - **Stuck or degraded tick region**
   - Filter by `operation= "tick_execute"` (or the equivalent span name) and `tenantId`/`regionId`.
@@ -147,9 +156,9 @@ During incidents, Jaeger is a first-class tool alongside logs and metrics. The f
 - **Telnet/TCP Proxy incidents**
   - Filter by `service.name = "tcp-proxy-service"` and spans such as `tcpproxy_connection` or `tcpproxy_notify_disconnect`.
   - Correlate high `tcpproxy.telnet.discarded` and `tcpproxy.disconnect.notify.transport_failure` metrics with specific traces to understand whether failures are due to abusive clients, PROXY header issues, or downstream Game Session behavior.
-- **Backup and pause/resume issues**
-  - Search for `backup_pause_ticks` and `backup_resume_ticks` spans around the time of a backup.
-  - Confirm that `backup_pg_dump_snapshot` spans align with the expected backup schedule and that pauses are short-lived relative to SLOs.
+- **Backup and recovery issues**
+  - Search for `backup_pg_dump_snapshot` and `backup_verify_artifact` around the expected schedule and confirm their artifact lineage matches.
+  - For drills or restores, inspect `recovery_converge_participant` outcomes, including the participant entries retained for controlled reopen; do not infer routine backup failure from the absence of tick-pause spans.
 
 Runbooks for Redis incidents, tick failures, scaling decisions, and backup/recovery reference these span names and query patterns so operators have concrete examples to follow rather than starting from scratch in Jaeger.
 

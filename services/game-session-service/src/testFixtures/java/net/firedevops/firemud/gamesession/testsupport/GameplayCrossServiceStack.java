@@ -2,12 +2,15 @@ package net.firedevops.firemud.gamesession.testsupport;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import javax.sql.DataSource;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.CrossServiceAppHarness;
+import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
+import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
@@ -170,12 +173,31 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     clearRedis();
     JdbcTemplate jdbc = jdbc();
     GameInstanceTestFixtures.ensureGameInstancesTable(jdbc);
+    jdbc.execute("TRUNCATE TABLE runtime_region_status RESTART IDENTITY");
     jdbc.execute("TRUNCATE TABLE game_instances RESTART IDENTITY");
     if (characterIds.length > 0) {
       clearScreenBuffers(tenantId, gameplayInstanceId, characterIds);
     }
-    return GameInstanceTestFixtures.insertRunningGameInstance(
-        jdbc, tenantId, ownerAccountId, gameTemplateId);
+    long gameInstanceId =
+        GameInstanceTestFixtures.insertRunningGameInstance(
+            jdbc, tenantId, ownerAccountId, gameTemplateId);
+    seedRuntimeOwnership(tenantId, gameInstanceId);
+    return gameInstanceId;
+  }
+
+  private void seedRuntimeOwnership(long tenantId, long gameInstanceId) {
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setTenantId(tenantId);
+    status.setGameInstanceId(gameInstanceId);
+    status.setRegionId("cross-service-region-" + gameInstanceId);
+    status.setRegionEpoch(1L);
+    status.setExecutorFence("cross-service-fence-" + gameInstanceId);
+    status.setOwnerService("game-session-cross-service-test");
+    status.setOwnerInstanceId("game-session-cross-service-test-1");
+    status.setPaused(false);
+    status.setLastCommittedTickId(0L);
+    status.setUpdatedAt(Instant.now());
+    gameSession.bean(RuntimeRegionStatusRepository.class).save(status);
   }
 
   public void seedLiveSession(SessionContext context) {
@@ -244,10 +266,14 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     GameInstanceTestFixtures.ensureGameInstancesTable(jdbc);
     if (clearExisting) {
       clearRedis();
+      jdbc.update("DELETE FROM runtime_region_status");
       jdbc.update("DELETE FROM game_instances");
     }
-    return GameInstanceTestFixtures.insertRunningGameInstance(
-        jdbc, tenantId, accountId, gameTemplateId);
+    long gameInstanceId =
+        GameInstanceTestFixtures.insertRunningGameInstance(
+            jdbc, tenantId, accountId, gameTemplateId);
+    seedRuntimeOwnership(tenantId, gameInstanceId);
+    return gameInstanceId;
   }
 
   @Override
@@ -374,7 +400,10 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
               worldStub.endpoint(),
               entityStub.endpoint(),
               socialStub == null ? null : socialStub.endpoint(),
-              props -> props.putAll(gameLogicProps),
+              props -> {
+                props.put("firemud.services.gameDesignService", gameDesignStub.endpoint());
+                props.putAll(gameLogicProps);
+              },
               gameLogicConfigs);
 
       CrossServiceAppHarness.GameSessionHolder gameSession =

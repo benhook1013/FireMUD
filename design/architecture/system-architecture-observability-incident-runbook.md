@@ -171,9 +171,9 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 ### Jaeger/collector recovery and verification
 
-1. Restore collector + Jaeger.
-2. Verify at least one trace appears for a known request path (login or a representative command).
-3. Verify that traces include required attributes (`tenantId`, `regionId`, and when applicable `characterId`).
+1. Restore collector + Jaeger and verify their health and export/query paths.
+2. Branch on the environment's advertised ADR 0017 capability. At level 1, confirm metrics and structured logs remain usable and treat trace arrival as best-effort rather than a recovery gate.
+3. At level 2 or above, verify a trace for a workflow explicitly proved at that level and confirm its required bounded attributes. Do not require login, command, or tenant/region trace evidence unless that exact workflow and scope are advertised and proved.
 
 ## Post-Incident Checklist
 

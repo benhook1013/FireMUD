@@ -72,13 +72,13 @@ Environment variables that configure gRPC TLS certificate paths and the TCP Prox
 
 ### Authentication
 
-JWT and session-related environment variables, including `FIREMUD_AUTH_JWT_SECRET`, `FIREMUD_AUTH_JWT_SECRET_PATH`, `FIREMUD_AUTH_JWT_EXPIRATION_MS`, and `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`, are documented in `environment-and-secrets-catalog.md#authentication--jwt`. The authentication architecture and Telnet transport guidance are described in:
+JWT and session-related environment variables, including `FIREMUD_AUTH_JWT_SECRET`, `FIREMUD_AUTH_JWT_SECRET_PATH`, `FIREMUD_AUTH_JWKS_PATH`, `FIREMUD_AUTH_JWT_EXPIRATION_MS`, and `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`, are documented in `environment-and-secrets-catalog.md#authentication--jwt`. The authentication architecture and Telnet transport guidance are described in:
 
 - `../system-architecture-authentication.md`
 - `../system-architecture-security.md`
 
 The catalog’s Authentication section also documents how the JWT expiration and session safety margin combine into a single derived session TTL, including operational guidance for tightening or relaxing this window.
-For player-facing environments (`hobby-self-hosted`, staging, production), use file-mounted JWT key material via `FIREMUD_AUTH_JWT_SECRET_PATH`; inline-only JWT secrets are for local/dev and explicitly ephemeral stacks.
+The packaged classpath JWKS fallback is permitted only in local/test environments. Hosted `pr-preview` environments require a preview-unique JWT signing-key `Secret` and matching JWKS `ConfigMap` in each preview namespace; shared preview trust material is not allowed. For player-facing environments (`hobby-self-hosted`, staging, production), use file-mounted JWT key material via `FIREMUD_AUTH_JWT_SECRET_PATH` and the read-only `jwt-jwks` Secret via `FIREMUD_AUTH_JWKS_PATH=/var/run/secrets/firemud/jwks/jwks.json`; inline-only JWT secrets and classpath JWKS fallback are not allowed. Account startup must fail when either path or file is missing or unreadable, the JWKS is malformed, or its public JWK does not match the Account signing key and `kid`.
 
 ### Service Discovery
 

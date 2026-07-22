@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Pause ticks, wait until paused, run pg_dump, then resume ticks.
+# Run an online PostgreSQL snapshot without pausing gameplay ticks.
 set -euo pipefail
 
-ADDR=${FIREMUD_GAME_SESSION_GRPC_ADDR:-localhost:9090}
-REASON=${1:-"backup"}
+timestamp="$(date +%Y%m%d%H%M%S)"
+tmp_file="$(mktemp "firemud_${timestamp}.XXXXXX.sql.gz.tmp")"
+target_file="${tmp_file%.tmp}"
 
-grpcurl -plaintext -d '{"reason":"'"$REASON"'"}' "$ADDR" game_session.v1.GameSessionService/PauseTicks
+cleanup() {
+  rm -f -- "$tmp_file"
+}
 
-until grpcurl -plaintext -d '{}' "$ADDR" game_session.v1.GameSessionService/GetTickStatus | grep -q 'PAUSED'; do
-  sleep 1
-done
+trap cleanup EXIT
 
-pg_dump -h "${FIREMUD_POSTGRES_HOST}" -U "${FIREMUD_POSTGRES_USER}" -d "${FIREMUD_POSTGRES_DB}" | gzip > "firemud_$(date +%Y%m%d%H%M%S).sql.gz"
-
-grpcurl -plaintext -d '{"reason":"'"$REASON"'"}' "$ADDR" game_session.v1.GameSessionService/ResumeTicks
-
+pg_dump -h "${FIREMUD_POSTGRES_HOST}" -U "${FIREMUD_POSTGRES_USER}" -d "${FIREMUD_POSTGRES_DB}" | gzip > "$tmp_file"
+mv -- "$tmp_file" "$target_file"
+trap - EXIT

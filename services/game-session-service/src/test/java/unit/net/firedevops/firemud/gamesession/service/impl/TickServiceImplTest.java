@@ -28,12 +28,14 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.slf4j.MDC;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 
 class TickServiceImplTest {
   private RedisTemplate<String, Object> redisTemplate;
+  private StringRedisTemplate lockRedisTemplate;
   private org.springframework.data.redis.core.ListOperations<String, Object> listOps;
-  private org.springframework.data.redis.core.ValueOperations<String, Object> valueOps;
+  private org.springframework.data.redis.core.ValueOperations<String, String> lockValueOps;
   private SimpleMeterRegistry meterRegistry;
   private net.firedevops.firemud.common.conflict.ConflictTracker conflictTracker;
   private net.firedevops.firemud.gamesession.repository.GameInstanceRepository repository;
@@ -63,10 +65,15 @@ class TickServiceImplTest {
   @SuppressWarnings("unchecked")
   void setup() {
     redisTemplate = mock(RedisTemplate.class);
+    lockRedisTemplate = mock(StringRedisTemplate.class);
     listOps = mock(org.springframework.data.redis.core.ListOperations.class);
-    valueOps = mock(org.springframework.data.redis.core.ValueOperations.class);
+    lockValueOps = mock(org.springframework.data.redis.core.ValueOperations.class);
     when(redisTemplate.opsForList()).thenReturn(listOps);
-    when(redisTemplate.opsForValue()).thenReturn(valueOps);
+    when(lockRedisTemplate.opsForValue()).thenReturn(lockValueOps);
+    when(redisTemplate.execute(any(), any(), any(Object[].class))).thenReturn(1L);
+    when(lockRedisTemplate.execute(any(), any(), any(Object[].class))).thenReturn(1L);
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenReturn(true);
     meterRegistry = new SimpleMeterRegistry();
     conflictTracker = mock(net.firedevops.firemud.common.conflict.ConflictTracker.class);
     repository = mock(net.firedevops.firemud.gamesession.repository.GameInstanceRepository.class);
@@ -83,6 +90,7 @@ class TickServiceImplTest {
               }
               return command;
             });
+    when(gameplayCommandRepository.markAcceptedCommandStaged(any(), any())).thenReturn(true);
     runtimeIdentity =
         new net.firedevops.firemud.common.runtime.RuntimeIdentity(
             "game-session-service",
@@ -118,11 +126,13 @@ class TickServiceImplTest {
     TickQueueControlService tickQueueControlService =
         new TickQueueControlService(
             redisTemplate,
+            lockRedisTemplate,
             repository,
             gameplayCommandRepository,
             runtimeRegionStatusRepository,
             runtimeIdentity,
-            sessionAuthenticationService);
+            sessionAuthenticationService,
+            mock(java.util.concurrent.ScheduledExecutorService.class));
     TickBatchExecutionService tickBatchExecutionService =
         new TickBatchExecutionService(
             meterRegistry,
@@ -133,7 +143,8 @@ class TickServiceImplTest {
             durableGameplayCommandExecutionService,
             durableRemoteFollowupExecutionService,
             remoteFollowupDrainService,
-            tickQueueControlService);
+            tickQueueControlService,
+            mock(GameplayCommandExecutionFenceService.class));
     tickStagingService =
         new TickStagingService(
             redisTemplate,
@@ -213,20 +224,20 @@ class TickServiceImplTest {
 
   @Test
   void processTickUsesGameplayNamespacedLockAndPendingKeys() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
 
     service.processTick(1L, 2L);
 
-    verify(valueOps)
-        .setIfAbsent(eq("gamesession:tick:lock:1:2"), any(Object.class), any(Duration.class));
+    verify(lockValueOps)
+        .setIfAbsent(eq("gamesession:tick:lock:1:2"), any(String.class), any(Duration.class));
     verify(listOps).size("gamesession:tick:pending:1:2");
     verify(listOps).index("gamesession:tick:queue:1:2", 0);
   }
 
   @Test
   void processTickRecordsRemoteFollowupBacklogOverBudget() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(remoteFollowupRepository
             .countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
@@ -241,7 +252,7 @@ class TickServiceImplTest {
 
   @Test
   void processTickPublishesRemoteFollowupDueAndDrainLagByScope() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(remoteFollowupRepository
             .countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
@@ -265,7 +276,7 @@ class TickServiceImplTest {
 
   @Test
   void processTickDrainsClaimedRemoteFollowupsIntoDurableBatchEffects() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(remoteFollowupDrainService.claimDueFollowups(
             eq(1L), eq("2"), eq(1L), any(String.class), eq(16)))
@@ -385,29 +396,35 @@ class TickServiceImplTest {
 
   @Test
   void processTickAttemptsLockAndExecutesScript() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     service.processTick(1L, 2L);
     ArgumentCaptor<RedisScript<?>> scriptCaptor = redisScriptCaptor();
-    verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
-        .execute(scriptCaptor.capture(), org.mockito.ArgumentMatchers.<String>anyList());
+    verify(lockRedisTemplate, org.mockito.Mockito.atLeastOnce())
+        .execute(
+            scriptCaptor.capture(),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
   }
 
   @Test
   void processTickReleasesLockViaOwnershipCheckedScript() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
 
     service.processTick(1L, 2L);
 
-    verify(redisTemplate, never()).delete("gamesession:tick:lock:1:2");
-    verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
-        .execute(any(RedisScript.class), org.mockito.ArgumentMatchers.<String>anyList());
+    verify(lockRedisTemplate, never()).delete("gamesession:tick:lock:1:2");
+    verify(lockRedisTemplate, org.mockito.Mockito.atLeastOnce())
+        .execute(
+            any(RedisScript.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
   }
 
   @Test
   void lockContentionIncrementsMetric() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(false);
 
     service.processTick(1L, 2L);
@@ -420,7 +437,7 @@ class TickServiceImplTest {
   @Test
   @SuppressWarnings("unchecked")
   void slowTickIncrementsBudgetMetric() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(redisTemplate.execute(
             any(RedisScript.class), org.mockito.ArgumentMatchers.<String>anyList()))
@@ -437,7 +454,7 @@ class TickServiceImplTest {
 
   @Test
   void retryQueueGaugeRecorded() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(listOps.size(any(String.class))).thenReturn(3L);
     var instance = new net.firedevops.firemud.gamesession.entity.GameInstance();
@@ -455,7 +472,7 @@ class TickServiceImplTest {
 
   @Test
   void processTickCreatesDurableBatchAndEffectsForStagedCommands() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|look");
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
@@ -472,7 +489,7 @@ class TickServiceImplTest {
 
   @Test
   void processTickPersistsSelectedWorkManifestOnBatch() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("S|cmd-1|say \"hello\"");
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
@@ -505,7 +522,7 @@ class TickServiceImplTest {
   @Test
   @SuppressWarnings("unchecked")
   void processTickPersistsDeterministicEffectIdentity() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|look");
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
@@ -527,7 +544,7 @@ class TickServiceImplTest {
 
   @Test
   void processTickFinalizesExistingReplayBatchBeforeNewStage() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(listOps.size("gamesession:tick:pending:1:2")).thenReturn(1L);
     List<Object> replayEntries = List.of("N|cmd-1|look");
@@ -561,7 +578,7 @@ class TickServiceImplTest {
 
   @Test
   void processTickRejectsStaleOwnershipBeforeDrainCommit() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|look");
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
@@ -597,7 +614,7 @@ class TickServiceImplTest {
 
   @Test
   void processTickRequeuesDrainedEffectsWhenFenceIsStaleBeforeApplication() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     net.firedevops.firemud.gamesession.entity.TickBatch drainedBatch =
         new net.firedevops.firemud.gamesession.entity.TickBatch();
@@ -664,7 +681,7 @@ class TickServiceImplTest {
 
   @Test
   void processTickUpdatesLastCommittedBatchOnDurableOwnershipRow() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|look");
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
@@ -694,7 +711,7 @@ class TickServiceImplTest {
 
   @Test
   void processTickPreservesPersistedRuntimeRegionScopeAcrossTickAdvanceAndBatchManifest() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|look");
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
@@ -731,7 +748,7 @@ class TickServiceImplTest {
 
   @Test
   void processTickAdvancesAndPublishesRuntimeTickProgress() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus currentStatus =
         runtimeOwnership(1L, 2L, 4L, "fence-a", false);
@@ -759,7 +776,7 @@ class TickServiceImplTest {
 
   @Test
   void processTickReconcilesRemoteFollowupTimeoutsAfterTickAdvance() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(remoteFollowupRuntimeService.reconcileResults(1L, "2", 4L)).thenReturn(1);
     when(remoteFollowupRuntimeService.reconcileTimeouts(1L, "2", 4L, 8L)).thenReturn(2);
@@ -793,13 +810,13 @@ class TickServiceImplTest {
     verify(remoteFollowupRuntimeService).reconcileResults(1L, "2", 4L);
     verify(remoteFollowupRuntimeService, never())
         .reconcileTimeouts(anyLong(), any(), anyLong(), anyLong());
-    verify(valueOps, never())
-        .setIfAbsent(any(String.class), any(Object.class), any(Duration.class));
+    verify(lockValueOps, never())
+        .setIfAbsent(any(String.class), any(String.class), any(Duration.class));
   }
 
   @Test
   void processTickPersistsComparableOrderingInSelectedWorkManifest() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|say hello");
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
@@ -913,7 +930,7 @@ class TickServiceImplTest {
 
   @Test
   void processTickDropsPartialRoutingBundleFromSelectedWorkManifest() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|say hello");
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
@@ -947,7 +964,7 @@ class TickServiceImplTest {
 
   @Test
   void processTickPersistsRetryClaimMetadataInSelectedWorkManifest() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|retry look");
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
@@ -1018,7 +1035,7 @@ class TickServiceImplTest {
 
   @Test
   void processTickPersistsCharacterTargetAggregateWhenCharacterIdentityIsKnown() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|say hello");
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
@@ -1042,7 +1059,7 @@ class TickServiceImplTest {
 
   @Test
   void processTickAbandonsReplayBatchWhenPendingDigestNoLongerMatchesSealedManifest() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(listOps.size("gamesession:tick:pending:1:2")).thenReturn(1L);
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
@@ -1083,7 +1100,7 @@ class TickServiceImplTest {
 
   @Test
   void processTickRequeuesRedisOnlyEntriesWhenReplayFallsBackToSealedManifest() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(listOps.size("gamesession:tick:pending:1:2")).thenReturn(2L);
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
@@ -1157,7 +1174,7 @@ class TickServiceImplTest {
 
   @Test
   void processTickDropsPartialRoutingBundleFromRemoteFollowupManifest() {
-    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     net.firedevops.firemud.gamesession.entity.RemoteFollowup followup =
         new net.firedevops.firemud.gamesession.entity.RemoteFollowup();

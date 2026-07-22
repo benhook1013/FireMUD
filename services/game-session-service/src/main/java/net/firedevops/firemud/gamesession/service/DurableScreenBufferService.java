@@ -87,7 +87,6 @@ public class DurableScreenBufferService implements ScreenBufferService {
     repository.assignOrderingTokens(retainedEntries);
     retainedEntries.forEach(
         entry -> entry.setByteSize(ResumeTranscriptEntryCanonicalizer.byteSize(entry)));
-    retainedEntries.removeIf(entry -> entry.getByteSize() > buffer.hardMaxBytes());
     if (scopeExpiresAt != null) {
       repository.updateExpiryByScope(tenantId, gameInstanceId, characterId, scopeExpiresAt);
     }
@@ -190,14 +189,6 @@ public class DurableScreenBufferService implements ScreenBufferService {
       repository.updateByteSizes(reaccounted);
     }
     List<Long> discardedIds = new ArrayList<>();
-    retained.removeIf(
-        entry -> {
-          if (entry.getByteSize() <= buffer.hardMaxBytes()) {
-            return false;
-          }
-          discardedIds.add(entry.getId());
-          return true;
-        });
     while (retained.size() > buffer.maxEntries()) {
       discardedIds.add(retained.removeFirst().getId());
     }

@@ -167,6 +167,7 @@ Command recovery must converge just like effect recovery:
   - `gameplayResult` set by the command type's documented terminal mapping (for the shared default, `NOT_APPLIED` unless a more specific command contract says otherwise)
 - Commands that are `BOUND_TO_BATCH` follow the batch/effect replay path and converge based on the batch's terminal command status mapping.
   - For commands, this means they converge to terminal command status fields (`executionOutcome`, `gameplayResult`) based on the documented command mapping for those batch-bound effects; do not collapse command status into effect-ledger status names alone.
+- Whenever recovery, reset, or purge terminalizes a command with a reason, it must persist the structured `failureCode` and `failureMessage` pair together on the authoritative command status record. A nonblank operator purge reason is retained as `failureMessage` rather than being left only in logs or audit metadata.
 - Reconciliation of command records is part of the same operational scope as ledger replay/reset tooling; operators must not need a separate ad-hoc command repair path just to clear dedupe rows stranded before staging.
 - This keeps command deduplication safe: the same `commandId` can be retried by clients for status lookup without leaving an unexecutable, permanently non-terminal record behind.
 - For the canonical shared command terminal mapping table and worked examples, see `system-architecture-tick-execution-flows.md` under `Canonical Command Terminal Mapping Table`.
@@ -179,10 +180,11 @@ Minimum command-status surface for operators and clients:
   - `ingressStatus`
   - `executionOutcome`
   - `gameplayResult`
+  - `failureCode` and `failureMessage` when terminalization has a reason
   - `tickBatchId`
   - bound tick coordinates when present (`regionId`, `regionEpoch`, `tickId`)
 - Canonical control-plane naming for first implementation is:
-  - `GetCommandStatus` for authoritative lookup
+  - `GetGameplayCommandStatus` for authoritative lookup
   - optional `StreamCommandOutcomes` for advisory event delivery
 - `executionOutcome` uses the shared terminal vocabulary:
   - `APPLIED`
@@ -197,7 +199,8 @@ Minimum command-status surface for operators and clients:
 - `LOST_BEFORE_STAGING` is a first-class terminal execution outcome, not an internal-only repair code.
 - Durable storage rule:
   - The authoritative status surface must persist both `executionOutcome` and `gameplayResult`, either on the command-ingress row itself or in a durable outcome projection keyed by `(tenantId, gameInstanceId, commandId)`.
-  - Recovery and reset tooling update that durable status surface directly; they do not rely on Redis queues or in-memory command trackers to answer `GetCommandStatus`.
+  - When terminalization has a reason, it must persist `failureCode` and `failureMessage` together on that same authoritative surface; neither field may be used as a substitute for the other.
+  - Recovery and reset tooling update that durable status surface directly; they do not rely on Redis queues or in-memory command trackers to answer `GetGameplayCommandStatus`.
   - Schema docs may use storage-oriented names such as `execution_outcome` / `gameplay_result`, but the logical command-status contract remains the camel-case field set above.
 
 ### EffectId, Ledger Rows, and Guard Keys

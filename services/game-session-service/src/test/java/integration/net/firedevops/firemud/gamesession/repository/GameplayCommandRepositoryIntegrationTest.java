@@ -1,9 +1,17 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import static net.firedevops.firemud.gamesession.jooq.tables.GameplayCommand.GAMEPLAY_COMMAND;
+import static net.firedevops.firemud.gamesession.jooq.tables.TickEffect.TICK_EFFECT;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -149,5 +157,125 @@ class GameplayCommandRepositoryIntegrationTest {
             GameplayCommand::getAdmittedVersionId,
             GameplayCommand::getDeclaredEffectsJson)
         .containsExactly("STAGED", 300L, 41L, "[{\"effectKind\":\"APPLY_ACTION_STATE\"}]");
+  }
+
+  @Test
+  void stageTransitionIsConditionalAndDurableTickEffectLookupUsesStoredEvidence() {
+    GameplayCommand command = new GameplayCommand();
+    command.setCommandId("cmd-stage-1");
+    command.setTenantId(1L);
+    command.setGameInstanceId(7L);
+    command.setSessionId(11L);
+    command.setCommandName("look");
+    command.setCommandText("look");
+    command.setSanitizedCommandText("look");
+    command.setExecutionOutcome("ACCEPTED");
+    command.setGameplayResult("PENDING");
+    command.setAcceptedAt(Instant.parse("2026-07-05T06:00:00Z"));
+    command.setAttemptCount(0);
+    command.setSourceType("PLAYER");
+    command.setPlayableStateScope("");
+    command.setWorldSlug("");
+    command.setRealmSlug("");
+    repository.save(command);
+
+    Instant stagedAt = Instant.parse("2026-07-05T06:01:00Z");
+    assertThat(repository.markAcceptedCommandStaged("cmd-stage-1", stagedAt)).isTrue();
+    assertThat(repository.markAcceptedCommandStaged("cmd-stage-1", stagedAt.plusSeconds(1)))
+        .isFalse();
+    assertThat(
+            repository.markAcceptedCommandFailed(
+                "cmd-stage-1", "QUEUE_UNAVAILABLE", "must not overwrite", stagedAt.plusSeconds(2)))
+        .isFalse();
+    assertThat(repository.findByCommandId("cmd-stage-1"))
+        .get()
+        .extracting(GameplayCommand::getExecutionOutcome, GameplayCommand::getStagedAt)
+        .containsExactly("STAGED", stagedAt);
+
+    assertThat(repository.hasDurableTickEffect("cmd-stage-1")).isFalse();
+    dsl.insertInto(TICK_EFFECT)
+        .set(TICK_EFFECT.EFFECT_ID, "effect-stage-1")
+        .set(TICK_EFFECT.TICK_BATCH_ID, "batch-stage-1")
+        .set(TICK_EFFECT.COMMAND_ID, "cmd-stage-1")
+        .set(TICK_EFFECT.EFFECT_TYPE, "TEST")
+        .set(TICK_EFFECT.TARGET_AGGREGATE, "test:1")
+        .set(TICK_EFFECT.STATUS, "STAGED")
+        .set(TICK_EFFECT.STAGED_AT, LocalDateTime.parse("2026-07-05T06:01:00"))
+        .set(TICK_EFFECT.EFFECT_KEY, "effect-key-stage-1")
+        .execute();
+    assertThat(repository.hasDurableTickEffect("cmd-stage-1")).isTrue();
+  }
+
+  @Test
+  void concurrentAutomationAdmissionsUseOneDurableIdentityRow() throws Exception {
+    GameplayCommand first = automationCommand("auto-concurrent-1", "dispatch-concurrent");
+    GameplayCommand second = automationCommand("auto-concurrent-2", "dispatch-concurrent");
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+
+    try {
+      Future<GameplayCommandRepository.IdempotentInsertResult> firstResult =
+          executor.submit(
+              () -> {
+                start.await();
+                return repository.insertIfAbsentByIdempotencyIdentity(first);
+              });
+      Future<GameplayCommandRepository.IdempotentInsertResult> secondResult =
+          executor.submit(
+              () -> {
+                start.await();
+                return repository.insertIfAbsentByIdempotencyIdentity(second);
+              });
+      start.countDown();
+
+      GameplayCommandRepository.IdempotentInsertResult firstInsert = firstResult.get();
+      GameplayCommandRepository.IdempotentInsertResult secondInsert = secondResult.get();
+      GameplayCommand firstSaved = firstInsert.command();
+      GameplayCommand secondSaved = secondInsert.command();
+      assertThat(List.of(firstInsert.inserted(), secondInsert.inserted()))
+          .containsExactlyInAnyOrder(true, false);
+      assertThat(firstSaved.getId()).isEqualTo(secondSaved.getId());
+      assertThat(firstSaved.getCommandId()).isEqualTo(secondSaved.getCommandId());
+      assertThat(firstSaved.getCommandId()).isIn(List.of("auto-concurrent-1", "auto-concurrent-2"));
+      assertThat(dsl.fetchCount(GAMEPLAY_COMMAND)).isEqualTo(1);
+      assertThat(
+              repository
+                  .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                      1L, 7L, "region-1", 12L, "dispatch-concurrent"))
+          .get()
+          .extracting(GameplayCommand::getExecutionOutcome)
+          .isEqualTo("ACCEPTED");
+    } finally {
+      executor.shutdownNow();
+    }
+  }
+
+  private static GameplayCommand automationCommand(String commandId, String dispatchId) {
+    GameplayCommand command = new GameplayCommand();
+    command.setCommandId(commandId);
+    command.setTenantId(1L);
+    command.setGameInstanceId(7L);
+    command.setSessionId(0L);
+    command.setCommandName("say");
+    command.setCommandText("say hello");
+    command.setSanitizedCommandText("say hello");
+    command.setRequiresSoloTick(false);
+    command.setExecutionOutcome("ACCEPTED");
+    command.setGameplayResult("PENDING");
+    command.setAcceptedAt(Instant.parse("2026-07-05T06:00:00Z"));
+    command.setLastAttemptAt(Instant.parse("2026-07-05T06:00:00Z"));
+    command.setAttemptCount(1);
+    command.setSourceType("AUTOMATION");
+    command.setAutomationDispatchId(dispatchId);
+    command.setAutomationWorkItemId("work-1");
+    command.setScriptId("script-1");
+    command.setScriptPatchVersion("patch-1");
+    command.setPlayableStateScope("");
+    command.setWorldSlug("");
+    command.setRealmSlug("");
+    command.setTargetEntityId("npc-1");
+    command.setRegionId("region-1");
+    command.setRegionEpoch(12L);
+    return command;
   }
 }

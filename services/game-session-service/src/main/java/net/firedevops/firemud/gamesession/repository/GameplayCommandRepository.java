@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.repository;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
 import static net.firedevops.firemud.gamesession.jooq.tables.GameplayCommand.GAMEPLAY_COMMAND;
+import static net.firedevops.firemud.gamesession.jooq.tables.TickEffect.TICK_EFFECT;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
@@ -23,6 +24,11 @@ import org.springframework.stereotype.Repository;
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class GameplayCommandRepository {
   private final DSLContext dsl;
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "Repository results intentionally return the managed command entity")
+  public record IdempotentInsertResult(GameplayCommand command, boolean inserted) {}
 
   public GameplayCommandRepository(DSLContext dsl) {
     this.dsl = dsl;
@@ -119,6 +125,45 @@ public class GameplayCommandRepository {
         .where(GAMEPLAY_COMMAND.COMMAND_ID.in(commandIds))
         .orderBy(GAMEPLAY_COMMAND.ID.asc())
         .fetch(this::toEntity);
+  }
+
+  public boolean hasDurableTickEffect(String commandId) {
+    return dsl.fetchExists(
+        dsl.selectOne().from(TICK_EFFECT).where(TICK_EFFECT.COMMAND_ID.eq(commandId)));
+  }
+
+  public boolean markAcceptedCommandStaged(String commandId, Instant stagedAt) {
+    return dsl.update(GAMEPLAY_COMMAND)
+            .set(GAMEPLAY_COMMAND.EXECUTION_OUTCOME, "STAGED")
+            .set(GAMEPLAY_COMMAND.STAGED_AT, toLocalDateTime(stagedAt))
+            .set(GAMEPLAY_COMMAND.LAST_ATTEMPT_AT, toLocalDateTime(stagedAt))
+            .where(
+                GAMEPLAY_COMMAND
+                    .COMMAND_ID
+                    .eq(commandId)
+                    .and(GAMEPLAY_COMMAND.EXECUTION_OUTCOME.eq("ACCEPTED"))
+                    .and(GAMEPLAY_COMMAND.COMPLETED_AT.isNull()))
+            .execute()
+        == 1;
+  }
+
+  public boolean markAcceptedCommandFailed(
+      String commandId, String failureCode, String failureMessage, Instant completedAt) {
+    return dsl.update(GAMEPLAY_COMMAND)
+            .set(GAMEPLAY_COMMAND.EXECUTION_OUTCOME, "FAILED")
+            .set(GAMEPLAY_COMMAND.GAMEPLAY_RESULT, "NOT_APPLIED")
+            .set(GAMEPLAY_COMMAND.COMPLETED_AT, toLocalDateTime(completedAt))
+            .set(GAMEPLAY_COMMAND.LAST_ATTEMPT_AT, toLocalDateTime(completedAt))
+            .set(GAMEPLAY_COMMAND.FAILURE_CODE, failureCode)
+            .set(GAMEPLAY_COMMAND.FAILURE_MESSAGE, truncate(failureMessage, 500))
+            .where(
+                GAMEPLAY_COMMAND
+                    .COMMAND_ID
+                    .eq(commandId)
+                    .and(GAMEPLAY_COMMAND.EXECUTION_OUTCOME.eq("ACCEPTED"))
+                    .and(GAMEPLAY_COMMAND.COMPLETED_AT.isNull()))
+            .execute()
+        == 1;
   }
 
   public long countByTenantIdAndGameInstanceIdAndCompletedAtIsNullAndExecutionOutcomeIn(
@@ -270,6 +315,86 @@ public class GameplayCommandRepository {
     return dsl.selectFrom(GAMEPLAY_COMMAND)
         .where(GAMEPLAY_COMMAND.ID.eq(id))
         .fetchOptional(this::toEntity);
+  }
+
+  public IdempotentInsertResult insertIfAbsentByIdempotencyIdentity(GameplayCommand entity) {
+    if (entity.getId() != null || !hasIdempotencyIdentity(entity)) {
+      throw new IllegalArgumentException(
+          "A new gameplay command with an idempotency identity is required");
+    }
+    GameplayCommandRecord record = dsl.newRecord(GAMEPLAY_COMMAND);
+    populate(record, entity);
+
+    Optional<GameplayCommand> inserted;
+    if (hasText(entity.getRemoteFollowupId())) {
+      inserted =
+          dsl.insertInto(GAMEPLAY_COMMAND)
+              .set(record)
+              .onConflict(
+                  GAMEPLAY_COMMAND.TENANT_ID,
+                  GAMEPLAY_COMMAND.GAME_INSTANCE_ID,
+                  GAMEPLAY_COMMAND.REGION_ID,
+                  GAMEPLAY_COMMAND.REGION_EPOCH,
+                  GAMEPLAY_COMMAND.REMOTE_FOLLOWUP_ID)
+              .where(GAMEPLAY_COMMAND.REMOTE_FOLLOWUP_ID.isNotNull())
+              .doNothing()
+              .returning()
+              .fetchOptional(this::toEntity);
+    } else {
+      inserted =
+          dsl.insertInto(GAMEPLAY_COMMAND)
+              .set(record)
+              .onConflict(
+                  GAMEPLAY_COMMAND.TENANT_ID,
+                  GAMEPLAY_COMMAND.GAME_INSTANCE_ID,
+                  GAMEPLAY_COMMAND.REGION_ID,
+                  GAMEPLAY_COMMAND.REGION_EPOCH,
+                  GAMEPLAY_COMMAND.AUTOMATION_DISPATCH_ID)
+              .doNothing()
+              .returning()
+              .fetchOptional(this::toEntity);
+    }
+
+    if (inserted.isPresent()) {
+      return new IdempotentInsertResult(inserted.orElseThrow(), true);
+    }
+
+    Optional<GameplayCommand> existing;
+    if (hasText(entity.getRemoteFollowupId())) {
+      existing =
+          findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
+              entity.getTenantId(),
+              entity.getGameInstanceId(),
+              entity.getRegionId(),
+              entity.getRegionEpoch(),
+              entity.getRemoteFollowupId());
+    } else {
+      existing =
+          findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+              entity.getTenantId(),
+              entity.getGameInstanceId(),
+              entity.getRegionId(),
+              entity.getRegionEpoch(),
+              entity.getAutomationDispatchId());
+    }
+    return new IdempotentInsertResult(
+        existing.orElseThrow(
+            () ->
+                new IllegalStateException(
+                    "Idempotency conflict did not yield a gameplay_command row")),
+        false);
+  }
+
+  private static boolean hasIdempotencyIdentity(GameplayCommand entity) {
+    return hasText(entity.getRemoteFollowupId()) || hasText(entity.getAutomationDispatchId());
+  }
+
+  private static boolean hasText(String value) {
+    return value != null && !value.isBlank();
+  }
+
+  private static String truncate(String value, int maxLength) {
+    return value == null || value.length() <= maxLength ? value : value.substring(0, maxLength);
   }
 
   private void populate(GameplayCommandRecord record, GameplayCommand entity) {

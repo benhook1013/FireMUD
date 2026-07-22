@@ -33,12 +33,13 @@ Each scenario below assumes Redis/database metrics are wired according to the Re
 
 Tick incidents often benefit from trace-level diagnosis, but mitigation must not block on trace availability.
 
-- Baseline expectation: production-like environments keep non-zero trace sampling (the tracing contract uses ~1% as the common usability baseline for high-volume paths).
-- If `tick_execute` / `tick_apply_effect` traces are too sparse:
-  - First apply temporary service-scoped sampling escalation for affected services and record start/end times.
-  - If collector tail-sampling by `tenantId`/`regionId` is supported, prefer scoped escalation for the impacted region and remove it after triage.
-- If the environment does not satisfy collector capability requirements for scoped escalation, treat it as service-scoped-only.
-- If traces remain unavailable, continue with metrics + logs and proceed with region/tenant reset decisions using runbook thresholds.
+All trace-specific guidance in this runbook is conditional on the environment advertising and proving the named workflow-tracing capability. Without that proof, use metrics and structured logs for detection, diagnosis, and mitigation.
+
+- Metrics and structured logs are the dependable baseline in every environment; mitigation must proceed without traces.
+- Use `tick_execute` / `tick_apply_effect` traces only when the environment advertises and proves the named workflow-tracing capability.
+- Apply temporary service-scoped sampling escalation only when that control is advertised and proved, and record start/end times.
+- Use collector tail-sampling by `tenantId`/`regionId` only when the environment advertises and proves scoped escalation; remove it after triage.
+- If the relevant capability is absent or traces remain unavailable, continue with metrics and logs and proceed with region/tenant reset decisions using runbook thresholds.
 
 ## Stalled Tick Region
 
@@ -50,9 +51,9 @@ Tick incidents often benefit from trace-level diagnosis, but mitigation must not
 - Redis coordination metrics and dashboards show:
   - A region holding `tick-executor-lease:{tenantRegionTag}` for longer than expected without advancing `tickId`.
   - Growing `tick_retry_queue_depth` or `tick_command_queue_depth` for the affected `<tenantId, regionId>`.
-- Logs and traces:
+- Logs and optional workflow traces:
   - Game Session logs show repeated retries or warnings for the affected region.
-  - Jaeger traces for `tick_execute` or equivalent spans show long durations or repeated retries for the same region.
+  - When the Trace Preconditions are satisfied, Jaeger traces for `tick_execute` or equivalent spans show long durations or repeated retries for the same region.
 
 ### Decide (Stalled tick region)
 
@@ -68,11 +69,11 @@ Tick incidents often benefit from trace-level diagnosis, but mitigation must not
 1. **Quiesce tick work for the region**
    - Pause tick scheduling for the affected `<tenantId, regionId>` using the Game Session controls described in the tick architecture and Redis reset docs.
    - Ensure no new executor instances are attempting to acquire the region lease while you inspect metrics.
-2. **Inspect metrics and traces**
+2. **Inspect metrics and optional workflow traces**
    - Use the Tick Health dashboard to confirm:
      - `tick_status` indicates stalled or degraded state.
      - `tick_execution_time_ms_*` ratios and queue depths support the stalled diagnosis.
-   - Use Jaeger to inspect `tick_execute` spans for this region to verify whether the stall is due to downstream services, coordination, or domain logic.
+   - When the Trace Preconditions are satisfied, use Jaeger to inspect `tick_execute` spans for this region to verify whether the stall is due to downstream services, coordination, or domain logic. Otherwise, use the correlated metrics and Game Session logs.
 3. **Apply a region-scoped coordination reset**
    - Follow the **Per-region reset** flow in `system-architecture-redis-reset-and-recovery.md`, scoping the Job to:
      - `tick:{tenantRegionTag}:*`
@@ -131,7 +132,7 @@ Tick incidents often benefit from trace-level diagnosis, but mitigation must not
    - Correlate with tick execution duration metrics and any recent increase in active session count.
 3. **Inspect runtime cause**
    - Review Game Session logs for scheduler-pressure summaries and threshold-reached warnings.
-   - Use traces and dashboards to determine whether pressure is caused by long tick execution, downstream service latency, or unusually high command volume.
+   - When the Trace Preconditions are satisfied, use workflow traces and dashboards to determine whether pressure is caused by long tick execution, downstream service latency, or unusually high command volume. Otherwise, use correlated metrics and structured logs.
 4. **Mitigate**
    - If pressure is caused by degraded downstream dependencies, handle those dependencies first.
    - If pressure is caused by sustained player/runtime load, scale the Game Session runtime or reduce the concurrent session load on the affected deployment.
@@ -149,9 +150,9 @@ Tick incidents often benefit from trace-level diagnosis, but mitigation must not
   - Elevated `gamesession_tick_replayed_total` relative to `gamesession_tick_executed_total` (or equivalent service-specific counters) for one or more regions.
   - `tick_effect_outcome_total{outcome="replay_ok"}` significantly higher than `tick_effect_outcome_total{outcome="first_apply"}` for specific `effect_type` or services.
   - Redis tail-loss metrics (`redis_coordination_tail_loss_ms`) repeatedly approaching or breaching the SLO envelope, indicating frequent coordination replays.
-- Logs and traces:
+- Logs and optional workflow traces:
   - Game Session and domain services log frequent idempotent replays or guard conflicts.
-  - Jaeger traces for tick-driven flows show the same effect identities being attempted repeatedly.
+  - When the Trace Preconditions are satisfied, Jaeger traces for tick-driven flows show the same effect identities being attempted repeatedly.
 
 ### Decide (Tick replay storm)
 
@@ -170,10 +171,11 @@ Tick incidents often benefit from trace-level diagnosis, but mitigation must not
    - Review the relevant domain service docs and code to ensure:
      - Per-aggregate `last_tick_id` or operation-level guard tables (`tick_effect_guard`) are implemented as described in the tick architecture docs.
      - External side effects are separated via saga/outbox flows rather than being executed directly in tick-driven handlers.
-3. **Use traces to pinpoint replays**
-   - In Jaeger, search for spans tagged with the effect identity for the hot `effect_type` and inspect:
+3. **Use proved workflow traces to pinpoint replays**
+   - When the Trace Preconditions are satisfied, search Jaeger for spans tagged with the effect identity for the hot `effect_type` and inspect:
      - How many times the same effect identity is attempted.
      - Whether replays are driven by Redis tail-loss, downstream timeouts, or domain-level classification of errors.
+   - Otherwise, use replay counters, Redis tail-loss metrics, and structured service logs for the same diagnosis.
 4. **Mitigate and follow up**
    - For infrastructure-driven replays:
      - Investigate Redis tail-loss, database timeouts, or service saturation using the Redis and scaling runbooks.
@@ -189,9 +191,9 @@ Tick incidents often benefit from trace-level diagnosis, but mitigation must not
 - Metrics and dashboards show:
   - `tick_durable_commit_total` continues increasing, but `tick_coordination_cleared_total` lags for the same regions.
   - `tick_cleanup_lag_ms` remains elevated for affected `<tenantId, regionId>` scopes.
-- Logs and traces:
+- Logs and optional workflow traces:
   - Game Session logs show repeated cleanup retries or failed transitions from durable commit to coordination-cleared.
-  - `tick_execute` traces show long or repeated cleanup-related phases after durable state has been committed.
+  - When the Trace Preconditions are satisfied, `tick_execute` traces show long or repeated cleanup-related phases after durable state has been committed.
 
 ### Decide (durable commit/coordination cleanup divergence)
 
@@ -207,7 +209,7 @@ Tick incidents often benefit from trace-level diagnosis, but mitigation must not
    - Identify regions where `tick_durable_commit_total - tick_coordination_cleared_total` stays non-zero and growing.
    - Correlate with `tick_cleanup_lag_ms` to confirm sustained divergence.
 2. **Inspect cleanup path**
-   - Check Game Session logs and traces for cleanup-token mismatches, Redis write failures, or retry exhaustion in cleanup phases.
+   - Check Game Session logs for cleanup-token mismatches, Redis write failures, or retry exhaustion in cleanup phases. When the Trace Preconditions are satisfied, correlate those findings with workflow traces.
    - Validate Redis health (latency, memory pressure, tail-loss) using Redis coordination dashboards.
 3. **Apply scoped remediation**
    - For isolated regions, pause and resume tick scheduling to force a clean cleanup cycle.
@@ -229,9 +231,9 @@ Tick incidents often benefit from trace-level diagnosis, but mitigation must not
   - Replay fairness signals distinguish two failure shapes:
     - `tick_effects_pending_total > 0` while `tick_effects_replay_batches_total` does not advance for the same region, or `tick_effects_replay_starved{scope}` becomes `1`.
     - `tick_effects_replay_scan_lag_ms{scope}` grows for a subset of regions even though the controller is still making progress elsewhere.
-- Logs and traces:
+- Logs and optional workflow traces:
   - Game Session logs may show repeated attempts to process the same effects or gaps in processing for certain tick IDs.
-  - Traces for those tick IDs show missing or incomplete spans for expected domain calls.
+  - When the Trace Preconditions are satisfied, traces for those tick IDs show missing or incomplete spans for expected domain calls.
 
 ### Decide (Stuck tick effect ledger entries)
 
@@ -272,15 +274,16 @@ Tick incidents often benefit from trace-level diagnosis, but mitigation must not
 4. **Prevent recurrence**
    - Review Game Session and domain handlers to ensure:
      - Ledger status transitions happen atomically with domain commits where required.
-     - Errors that prevent ledger updates are surfaced clearly via logs, metrics, and traces.
+     - Errors that prevent ledger updates are surfaced clearly via logs and metrics, with workflow traces when the Trace Preconditions are satisfied.
    - Add or tighten alerts on `tick_effects_pending_total`, `tick_effects_replay_batches_total`, and `tick_effects_replay_scan_lag_ms` so both idle and unfair replay-controller behavior are detected earlier.
 
-## Using Traces During Tick Incidents
+## Using Proved Workflow Traces During Tick Incidents
 
-For all of the scenarios above, Jaeger should be treated as a first-class diagnostic tool:
+For all of the scenarios above, workflow traces are optional diagnostics rather than the operational baseline:
 
-- Search for spans representing tick scheduling and execution (for example `tick_schedule`, `tick_execute`) filtered by `tenantId`, `regionId`, and, where available, `tickId`.
-- For stalled regions, look for long-running or repeated spans for the same tick IDs and cross-reference with domain service spans to identify downstream bottlenecks.
-- For replay storms, search by effect identity attributes (for example `effectKey`, `effect_type`) and verify how often the same identity appears in recent traces.
+- Only when the environment advertises and proves the named workflow-tracing capability, use Jaeger to search for spans representing tick scheduling and execution (for example `tick_schedule`, `tick_execute`) filtered by `tenantId`, `regionId`, and, where available, `tickId`.
+- When that capability is proved, inspect stalled regions for long-running or repeated spans for the same tick IDs and cross-reference domain service spans to identify downstream bottlenecks.
+- When that capability is proved, search replay storms by effect identity attributes (for example `effectKey`, `effect_type`) and verify how often the same identity appears in recent traces.
+- If the capability is absent or unproved, use metrics and structured logs for each of these investigations and do not delay mitigation for trace collection.
 
 The Tracing architecture doc (`system-architecture-tracing.md`) includes example Jaeger queries and attribute conventions to make these investigations repeatable.

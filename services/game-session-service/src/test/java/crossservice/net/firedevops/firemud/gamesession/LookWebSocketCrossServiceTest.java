@@ -5,11 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
-import javax.sql.DataSource;
 import net.firedevops.firemud.entitymanagement.v1.ActorConditionState;
 import net.firedevops.firemud.entitymanagement.v1.ActorResourceValue;
 import net.firedevops.firemud.entitymanagement.v1.QueryActorStateResponse;
-import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayCrossServiceStack;
@@ -19,7 +17,6 @@ import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketScenarios
 import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -349,10 +346,7 @@ class LookWebSocketCrossServiceTest {
     if (clearExisting) {
       return STACK.freshGameplayBaseline(TENANT_ID, 1L, ACCOUNT_ID, 7L, CHARACTER_ID);
     }
-    DataSource dataSource = gameSession().bean(DataSource.class);
-    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
-    GameInstanceTestFixtures.ensureGameInstancesTable(jdbc);
-    return GameInstanceTestFixtures.insertRunningGameInstance(jdbc, TENANT_ID, ACCOUNT_ID, 7L);
+    return STACK.insertRunningGameInstance(TENANT_ID, ACCOUNT_ID, 7L, false);
   }
 
   private List<String> runLookSequence(long sessionId) throws Exception {

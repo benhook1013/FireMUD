@@ -2,13 +2,17 @@
 
 This directory stores environment deployment evidence used by architecture contracts.
 
+## Current Implementation Status
+
+These paths define the canonical target-state evidence locations, but current enforcement is partial. Production preflight validates its current schema, environment/deployment binding, freshness timestamps, evidence references, and digest/attestation checks. Hobby traffic-open preflight currently validates schema, environment/event/deployment binding, compliance status, evidence references, and the referenced preflight report, but does not yet validate compliance freshness or live current-event recovery-controller lineage. Expanded recovery-controller lineage, environment-wide artifact and confidentiality proof, mandatory post-finalization projection refresh, and current-event recovery-lineage rejection remain target-state until the stacked recovery-operations enforcement lands. Checked-in recovery and traffic-open files are post-finalization evidence projections; the durable recovery controller and pre-release controller evidence are runtime authority.
+
 - `staging/deployments/<overlayCommitSha>.json`: staging apply records used by production promotion attestation validation.
 - `staging/recovery/<recovery-ref>.json`: staging post-restore sanitization evidence required before reopening traffic when restoring production-origin data.
 - `production/attestations/<deployment-ref>.json`: production promotion attestation artifacts referenced by overlay PRs.
 - `production/release-manifests/<release-tag-or-deployment-ref>.json`: release digest manifests binding official release tags or deployment refs to the promoted digest set.
 - `production/recovery/<recovery-ref>.json`: production post-restore recovery evidence including external credential validation results.
 - `production/backup-readiness/<deployment-ref>.json`: production backup-readiness evidence for `roll-forward-only` promotions.
-- `production/traffic-open/<event>-<deployment-ref>.json`: production traffic-open evidence bound to the canonical production preflight report and coordinated-backup scope.
+- `production/traffic-open/<event>-<deployment-ref>.json`: post-finalization production traffic-open projection bound to the canonical production preflight report and environment-wide recovery-controller lineage.
 - `<environment>/preflight/<deployment-ref>.json`: preflight policy reports.
 - `<environment>/preflight/<deployment-ref>.waiver.json`: break-glass waiver records for a single deployment event.
 - `hobby-self-hosted/deployments/<deployment-ref>.json`: hobby deploy evidence records.
