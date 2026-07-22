@@ -25,7 +25,7 @@ while IFS='|' read -r workflow gate; do
     echo "$workflow must cancel only within its metadata/required concurrency namespace" >&2
     exit 1
   fi
-  if grep -Fq 'cancel-in-progress: ${{ github.event_name != '\''pull_request'\'' || github.event.action != '\''edited'\''' "$path"; then
+  if grep -Fq "cancel-in-progress: \${{ github.event_name != 'pull_request' || github.event.action != 'edited'" "$path"; then
     echo "$workflow still uses shared-group conditional cancellation that can race required contexts" >&2
     exit 1
   fi
