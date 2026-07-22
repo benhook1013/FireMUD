@@ -11,7 +11,7 @@ import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import yaml
 
@@ -23,12 +23,9 @@ Environment variables:
                                      allowed: operator, ci-static
   FIREMUD_PREFLIGHT_OUTPUT           Optional output report path
   FIREMUD_DEPLOYMENT_REF             Optional deployment ref token for report naming
-  FIREMUD_DEPLOYMENT_EVENT_ID        Optional deployment-event UUID; required when using a waiver
   FIREMUD_PREFLIGHT_RENDER_PATH      Required for hobby-self-hosted; explicit manifest/render path
-  FIREMUD_PREFLIGHT_WAIVER           Optional waiver JSON path with fields:
-                                     environment, deploymentRef, deploymentEventId,
-                                     expiration=deployment-event,
-                                     recordedAt, approver, ticket, waivedPolicyIds[]
+  FIREMUD_PREFLIGHT_WAIVER           Reserved waiver JSON path; execution is blocked until
+                                     one-time consumption authority is implemented
   FIREMUD_PROMOTION_ATTESTATION      Required in operator production context; path to attestation JSON
   FIREMUD_BACKUP_READINESS_EVIDENCE  Required for production roll-forward-only promotions; path to backup-readiness JSON
   FIREMUD_TRAFFIC_OPEN_EVENT         Optional traffic-open gate: first-live or reopen
@@ -43,12 +40,6 @@ class CheckResult:
     status: str
     message: str
 
-
-NON_WAIVABLE_READINESS_GATES = {
-    "PREFLIGHT-BACKUP-001",
-    "PREFLIGHT-BACKUP-002",
-    "PREFLIGHT-BACKUP-003",
-}
 
 RECOVERY_COMPATIBILITY_STATUSES = {"compatible", "drill_required", "incompatible"}
 
@@ -85,6 +76,8 @@ COMMON_REQUIRED_PREFLIGHT_POLICY_IDS = {
     "PREFLIGHT-EXTERNAL-001",
     "PREFLIGHT-SERVICES-001",
 }
+
+PREFLIGHT_APPLY_MAX_AGE = dt.timedelta(minutes=30)
 
 
 def expected_preflight_policy_requirements(
@@ -623,7 +616,7 @@ def load_waiver(
     deployment_event_id: str,
     output_path: Path,
     now_dt: dt.datetime,
-) -> tuple[set[str], str, str]:
+) -> NoReturn:
     expected_path = (output_path.parent / f"{deployment_ref}.waiver.json").resolve()
     if waiver_path.resolve() != expected_path:
         raise ValueError(f"Waiver must be stored beside the report as {expected_path}")
@@ -663,7 +656,9 @@ def load_waiver(
     unknown_policy_ids = sorted(set(waived_policy_ids) - EXPECTED_PREFLIGHT_POLICY_ID_SET)
     if unknown_policy_ids:
         raise ValueError("Waiver contains unknown policy IDs: " + ", ".join(unknown_policy_ids))
-    return (set(waived_policy_ids), waiver["approver"].strip(), waiver["ticket"].strip())
+    raise ValueError(
+        "Preflight waiver execution remains blocked until one-time consumption authority is implemented"
+    )
 
 
 def validate_preflight_report(
@@ -709,6 +704,11 @@ def validate_preflight_report(
         return ("fail", f"{label} preflight report must come from operator context")
     if report.get("toolVersion") != "preflight.py-v1":
         return ("fail", f"{label} preflight report toolVersion mismatch")
+    if report.get("waiverPath") is not None:
+        return (
+            "fail",
+            f"{label} preflight report waivers are not consumable until one-time authority is implemented",
+        )
     try:
         started_at = parse_timestamp(report.get("startedAt"), f"{label} preflight report startedAt")
         completed_at = parse_timestamp(report.get("completedAt"), f"{label} preflight report completedAt")
@@ -720,6 +720,8 @@ def validate_preflight_report(
         return ("fail", f"{label} preflight report completedAt is future-dated")
     if completed_by is not None and completed_at > completed_by:
         return ("fail", f"{label} preflight report completedAt must not be later than the apply event")
+    if completed_by is not None and completed_by - completed_at > PREFLIGHT_APPLY_MAX_AGE:
+        return ("fail", f"{label} preflight report is older than the 30-minute apply window")
 
     preflight_results = report.get("checkResults")
     if not isinstance(preflight_results, list) or not preflight_results:
@@ -1137,8 +1139,8 @@ def extract_service_images(rendered_text: str) -> list[str]:
 def append_result(
     check_results: list[CheckResult],
     waived_ids: set[str],
-    waiver_approver: str,
-    waiver_ticket: str,
+    _waiver_approver: str,
+    _waiver_ticket: str,
     policy_id: str,
     required: bool,
     status: str,
@@ -1147,11 +1149,7 @@ def append_result(
     effective_status = status
     effective_message = message
     if status == "fail" and policy_id in waived_ids:
-        if policy_id in NON_WAIVABLE_READINESS_GATES:
-            effective_message = f"waiver not permitted for {policy_id}: {message}"
-        else:
-            effective_status = "pass"
-            effective_message = f"waived by {waiver_approver or 'unknown'} ({waiver_ticket or 'no-ticket'}): {message}"
+        effective_message = f"waiver execution blocked for {policy_id}: {message}"
     check_results.append(CheckResult(policy_id, required, effective_status, effective_message))
     return required and effective_status == "fail"
 
@@ -2185,7 +2183,6 @@ def write_report(
     completed_at: str,
     check_results: list[CheckResult],
     context: str,
-    waiver_path: str,
     expected_bindings_ref: str,
     deployment_event_id: str,
     traffic_open_event: str,
@@ -2214,8 +2211,6 @@ def write_report(
         "toolVersion": "preflight.py-v1",
         "context": context,
     }
-    if waiver_path:
-        report["waiverPath"] = waiver_path
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
@@ -2233,16 +2228,9 @@ def main() -> int:
         fail(f"Invalid FIREMUD_PREFLIGHT_CONTEXT: {context}")
     deployment_ref = os.environ.get("FIREMUD_DEPLOYMENT_REF") or run(["git", "rev-parse", "--short=12", "HEAD"]).strip()
     waiver_path = os.environ.get("FIREMUD_PREFLIGHT_WAIVER", "")
-    configured_event_id = os.environ.get("FIREMUD_DEPLOYMENT_EVENT_ID", "")
-    if waiver_path and not configured_event_id:
-        fail("FIREMUD_DEPLOYMENT_EVENT_ID is required when FIREMUD_PREFLIGHT_WAIVER is set")
-    deployment_event_id = configured_event_id or str(uuid.uuid4())
-    try:
-        parsed_event_id = uuid.UUID(deployment_event_id)
-    except ValueError:
-        fail("FIREMUD_DEPLOYMENT_EVENT_ID must be a UUID")
-    if str(parsed_event_id) != deployment_event_id:
-        fail("FIREMUD_DEPLOYMENT_EVENT_ID must use canonical UUID form")
+    if waiver_path:
+        fail("Preflight waiver execution remains blocked until one-time consumption authority is implemented")
+    deployment_event_id = str(uuid.uuid4())
     expected_bindings_ref = f"design/operations/environments/{env_class}/expected-bindings.yaml"
     expected_bindings_path = root_dir / expected_bindings_ref
     if not expected_bindings_path.exists():
@@ -2271,22 +2259,6 @@ def main() -> int:
     waived_ids: set[str] = set()
     waiver_approver = ""
     waiver_ticket = ""
-    if waiver_path:
-        waiver_file = Path(waiver_path)
-        if not waiver_file.exists():
-            fail(f"Waiver path does not exist: {waiver_path}")
-        try:
-            waived_ids, waiver_approver, waiver_ticket = load_waiver(
-                waiver_file,
-                env_class,
-                deployment_ref,
-                deployment_event_id,
-                output_path,
-                dt.datetime.now(dt.timezone.utc),
-            )
-        except ValueError as exc:
-            fail(str(exc))
-
     started_at = utc_now()
     traffic_open_event = os.environ.get("FIREMUD_TRAFFIC_OPEN_EVENT", "")
     if traffic_open_event not in {"", "first-live", "reopen"}:
@@ -2507,7 +2479,6 @@ def main() -> int:
         completed_at,
         check_results,
         context,
-        waiver_path,
         expected_bindings_ref,
         deployment_event_id,
         traffic_open_event,

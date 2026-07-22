@@ -17,6 +17,7 @@ Required fields:
 - `preflightReportPath`
   - must equal `design/operations/deployments/staging/preflight/<overlayCommitSha>.json`
   - report `completedAt` must not be later than `appliedAt`
+  - report `completedAt` must be no more than 30 minutes before `appliedAt`
 - `liveStateEvidence`
   - `status` (`pass`)
   - `observedOverlaySha`

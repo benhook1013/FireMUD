@@ -155,7 +155,8 @@ def _parse_expr(rule_lines: list[str]) -> str | None:
             continue
         expr_indent = len(match.group("indent"))
         scalar = match.group("rest").strip()
-        expr_lines = [] if scalar in {"|", "|-", ">", ">-"} else [scalar]
+        is_block_scalar = re.fullmatch(r"[|>][+-]?", scalar) is not None
+        expr_lines = [] if is_block_scalar else [scalar]
         for next_line in rule_lines[index + 1 :]:
             next_indent = len(next_line) - len(next_line.lstrip(" "))
             if next_line.strip() == "":
@@ -167,7 +168,7 @@ def _parse_expr(rule_lines: list[str]) -> str | None:
                 break
             expr_lines.append(next_line.rstrip())
         expression = "\n".join(expr_lines).strip()
-        return "" if expression in {'""', "''"} else expression
+        return "" if expression.lower() in {'""', "''", "null", "~", "!!null"} else expression
     return None
 
 

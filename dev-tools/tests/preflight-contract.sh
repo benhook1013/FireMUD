@@ -92,7 +92,6 @@ module.write_report(
     "2026-01-01T00:00:01Z",
     checks,
     "operator",
-    "",
     "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
     "66666666-6666-4666-8666-666666666666",
     "",
@@ -283,7 +282,7 @@ for policy_id in ("PREFLIGHT-BACKUP-001", "PREFLIGHT-BACKUP-002", "PREFLIGHT-BAC
         "fail",
         "readiness evidence missing",
     )
-    if not failed or results[0].status != "fail" or "waiver not permitted" not in results[0].message:
+    if not failed or results[0].status != "fail" or "waiver execution blocked" not in results[0].message:
         raise SystemExit(f"{policy_id} accepted a forbidden waiver: {results}")
 
 results = []
@@ -297,8 +296,8 @@ failed = module.append_result(
     "fail",
     "ordinary promotion evidence failure",
 )
-if failed or results[0].status != "pass" or "waived by" not in results[0].message:
-    raise SystemExit(f"ordinary promotion waiver behavior regressed: {results}")
+if not failed or results[0].status != "fail" or "waiver execution blocked" not in results[0].message:
+    raise SystemExit(f"ordinary promotion waiver did not fail closed: {results}")
 
 results = []
 failed = module.append_result(
@@ -311,8 +310,8 @@ failed = module.append_result(
     "fail",
     "digest evidence missing",
 )
-if failed or results[0].status != "pass":
-    raise SystemExit(f"ordinary waiver behavior regressed: {results}")
+if not failed or results[0].status != "fail" or "waiver execution blocked" not in results[0].message:
+    raise SystemExit(f"digest advisory waiver did not fail closed: {results}")
 PY
 
 python3 "$WRITER" hobby-self-hosted contract-hobby first-live \
@@ -604,31 +603,26 @@ cat >"$PRODUCTION_WAIVER" <<JSON
 }
 JSON
 
+rm -f "$PRODUCTION_REPORT"
 if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF="contract-production" \
   FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
   FIREMUD_PREFLIGHT_WAIVER="$PRODUCTION_WAIVER" \
-  FIREMUD_DEPLOYMENT_EVENT_ID="77777777-7777-4777-8777-777777777777" \
   FIREMUD_TRAFFIC_OPEN_EVENT=reopen \
   python3 "$SCRIPT" production >/tmp/firemud-preflight-contract-production-traffic-waiver.out 2>&1; then
   echo "production traffic-open gate unexpectedly accepted a waiver" >&2
   exit 1
 fi
 
-python3 - <<'PY' "$PRODUCTION_REPORT"
-import json
-import pathlib
-import sys
-
-report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-backup_002 = next(
-    check
-    for check in report["checkResults"]
-    if check["policyId"] == "PREFLIGHT-BACKUP-002"
-)
-if backup_002["status"] != "fail" or "waiver not permitted" not in backup_002["message"]:
-    raise SystemExit(f"PREFLIGHT-BACKUP-002 waiver was not rejected end to end: {backup_002}")
-PY
+if ! grep -q "waiver execution remains blocked" /tmp/firemud-preflight-contract-production-traffic-waiver.out; then
+  echo "production waiver failed for the wrong reason" >&2
+  cat /tmp/firemud-preflight-contract-production-traffic-waiver.out >&2
+  exit 1
+fi
+if [[ -e "$PRODUCTION_REPORT" ]]; then
+  echo "blocked waiver unexpectedly produced an authoritative report" >&2
+  exit 1
+fi
 
 for env in staging production; do
   REPORT="$TMP_DIR/preflight-$env.json"
@@ -939,16 +933,20 @@ valid_waiver = {
     "waivedPolicyIds": ["PREFLIGHT-PROMOTION-001"],
 }
 waiver_path.write_text(json.dumps(valid_waiver), encoding="utf-8")
-waived_ids, approver, ticket = module.load_waiver(
-    waiver_path,
-    "production",
-    "contract-waiver",
-    valid_waiver["deploymentEventId"],
-    waiver_output_path,
-    now,
-)
-if waived_ids != {"PREFLIGHT-PROMOTION-001"} or approver != "preflight-contract" or ticket != "contract-ticket":
-    raise SystemExit("valid deployment-bound waiver was not accepted")
+try:
+    module.load_waiver(
+        waiver_path,
+        "production",
+        "contract-waiver",
+        valid_waiver["deploymentEventId"],
+        waiver_output_path,
+        now,
+    )
+except ValueError as exc:
+    if "one-time consumption authority" not in str(exc):
+        raise SystemExit(f"valid-shaped waiver failed for the wrong reason: {exc}")
+else:
+    raise SystemExit("valid-shaped waiver bypassed the one-time-authority block")
 waiver_path.write_text(json.dumps({**valid_waiver, "deploymentRef": "other-event"}), encoding="utf-8")
 try:
     module.load_waiver(
@@ -1485,6 +1483,47 @@ late_report_status, _, late_report_message = module.promotion_check(
 )
 if late_report_status != "fail" or "later than the apply event" not in late_report_message:
     raise SystemExit(f"post-apply preflight report was accepted: {late_report_message}")
+
+waived_preflight_report = json.loads(staging_preflight_path.read_text(encoding="utf-8"))
+waived_preflight_report["waiverPath"] = (
+    f"design/operations/deployments/staging/preflight/{staging_sha}.waiver.json"
+)
+staging_preflight_path.write_text(json.dumps(waived_preflight_report), encoding="utf-8")
+staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
+waived_report_status, _, waived_report_message = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if waived_report_status != "fail" or "waivers are not consumable" not in waived_report_message:
+    raise SystemExit(f"waived preflight report was accepted: {waived_report_message}")
+waived_preflight_report.pop("waiverPath")
+staging_preflight_path.write_text(json.dumps(waived_preflight_report), encoding="utf-8")
+
+stale_preflight_report = json.loads(staging_preflight_path.read_text(encoding="utf-8"))
+stale_preflight_report["startedAt"] = timestamp(now - module.dt.timedelta(minutes=41))
+stale_preflight_report["completedAt"] = timestamp(now - module.dt.timedelta(minutes=40))
+staging_preflight_path.write_text(json.dumps(stale_preflight_report), encoding="utf-8")
+staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
+stale_report_status, _, stale_report_message = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if stale_report_status != "fail" or "older than the 30-minute apply window" not in stale_report_message:
+    raise SystemExit(f"stale preflight report was accepted: {stale_report_message}")
+staging_preflight_path.write_text(
+    json.dumps(
+        {
+            **stale_preflight_report,
+            "startedAt": past_timestamp,
+            "completedAt": past_timestamp,
+        }
+    ),
+    encoding="utf-8",
+)
 
 malformed_smoke_record = {**staging_record, "smokeEvidence": [{}]}
 staging_record_path.write_text(json.dumps(malformed_smoke_record), encoding="utf-8")

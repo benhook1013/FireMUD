@@ -53,7 +53,7 @@ require_message(
     "BackupPipelineNoRecentBackup is missing expr",
 )
 
-for empty_expression in ('expr: |', 'expr: ""'):
+for empty_expression in ('expr: |', 'expr: |+', 'expr: >+', 'expr: ""', 'expr: null', 'expr: ~', 'expr: !!null'):
     empty_backup_expr = valid_text.replace(
         "expr: backup_pipeline_recent_backup_slo_breached > 0",
         empty_expression,
