@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -39,6 +40,8 @@ class TickBatchExecutionServiceTest {
   private TickBatchRepository tickBatchRepository;
   private TickEffectRepository tickEffectRepository;
   private RemoteFollowupDrainService remoteFollowupDrainService;
+  private DurableGameplayCommandExecutionService durableGameplayCommandExecutionService;
+  private GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService;
   private TickBatchExecutionService service;
 
   @BeforeEach
@@ -92,6 +95,9 @@ class TickBatchExecutionServiceTest {
             sessionAuthenticationService,
             mock(java.util.concurrent.ScheduledExecutorService.class));
     remoteFollowupDrainService = mock(RemoteFollowupDrainService.class);
+    durableGameplayCommandExecutionService = mock(DurableGameplayCommandExecutionService.class);
+    gameplayCommandExecutionFenceService = mock(GameplayCommandExecutionFenceService.class);
+    when(gameplayCommandExecutionFenceService.validate(any(), any())).thenReturn(Optional.empty());
     service =
         new TickBatchExecutionService(
             meterRegistry,
@@ -99,10 +105,11 @@ class TickBatchExecutionServiceTest {
             gameplayCommandRepository,
             tickBatchRepository,
             tickEffectRepository,
-            mock(DurableGameplayCommandExecutionService.class),
+            durableGameplayCommandExecutionService,
             mock(DurableRemoteFollowupExecutionService.class),
             remoteFollowupDrainService,
-            tickQueueControlService);
+            tickQueueControlService,
+            gameplayCommandExecutionFenceService);
 
     RuntimeRegionStatus currentOwnership = runtimeOwnership(1L, 2L, 1L, "fence-a", false);
     when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
@@ -226,6 +233,42 @@ class TickBatchExecutionServiceTest {
     assertEquals(5000L, command.getQueueSourceOrdinal());
     assertEquals(14L, command.getQueueSourceDueTickId());
     assertEquals(9000L, command.getQueueSourceDueAtMs());
+  }
+
+  @Test
+  void executeDurableEffectsRejectsCommandWhenExecutionFenceFails() {
+    TickBatch batch = new TickBatch();
+    batch.setTickBatchId("tb-current");
+    batch.setTenantId(1L);
+    batch.setGameInstanceId(2L);
+    batch.setRegionId("2");
+    batch.setRegionEpoch(1L);
+    batch.setExecutorFence("fence-a");
+    TickEffect effect = new TickEffect();
+    effect.setTickBatchId("tb-current");
+    effect.setCommandId("cmd-1");
+    effect.setStatus("DRAINED");
+    GameplayCommand command = gameplayCommand("cmd-1");
+    when(tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
+            1L, 2L, "DRAINED"))
+        .thenReturn(List.of(batch));
+    when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc("tb-current", "DRAINED"))
+        .thenReturn(List.of(effect), List.of());
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
+    when(gameplayCommandExecutionFenceService.validate(batch, command))
+        .thenReturn(
+            Optional.of(
+                new GameplayCommandExecutionFenceService.FenceFailure(
+                    "STALE_COMMAND_TIMELINE", "Command belongs to an old runtime timeline")));
+
+    service.executeDurableEffects(1L, 2L);
+
+    assertEquals("REJECTED", effect.getStatus());
+    assertEquals("STALE_COMMAND_TIMELINE", effect.getFailureCode());
+    assertEquals("COMPLETED", command.getExecutionOutcome());
+    assertEquals("NOT_APPLIED", command.getGameplayResult());
+    assertEquals("STALE_COMMAND_TIMELINE", command.getFailureCode());
+    verify(durableGameplayCommandExecutionService, never()).execute(any(), any());
   }
 
   @Test

@@ -35,6 +35,7 @@ final class TickBatchExecutionService {
   private final DurableRemoteFollowupExecutionService durableRemoteFollowupExecutionService;
   private final RemoteFollowupDrainService remoteFollowupDrainService;
   private final TickQueueControlService tickQueueControlService;
+  private final GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService;
 
   TickBatchExecutionService(
       MeterRegistry meterRegistry,
@@ -45,7 +46,8 @@ final class TickBatchExecutionService {
       DurableGameplayCommandExecutionService durableGameplayCommandExecutionService,
       DurableRemoteFollowupExecutionService durableRemoteFollowupExecutionService,
       RemoteFollowupDrainService remoteFollowupDrainService,
-      TickQueueControlService tickQueueControlService) {
+      TickQueueControlService tickQueueControlService,
+      GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService) {
     this.meterRegistry = meterRegistry;
     this.redisTemplate = redisTemplate;
     this.gameplayCommandRepository = gameplayCommandRepository;
@@ -55,6 +57,7 @@ final class TickBatchExecutionService {
     this.durableRemoteFollowupExecutionService = durableRemoteFollowupExecutionService;
     this.remoteFollowupDrainService = remoteFollowupDrainService;
     this.tickQueueControlService = tickQueueControlService;
+    this.gameplayCommandExecutionFenceService = gameplayCommandExecutionFenceService;
   }
 
   void restorePendingProjection(
@@ -224,7 +227,8 @@ final class TickBatchExecutionService {
         continue;
       }
       for (TickEffect effect : drainedEffects) {
-        executeDurableEffect(effect);
+        requireCurrentOwnership(batch, false);
+        executeDurableEffect(batch, effect);
       }
       if (tickEffectRepository
           .findByTickBatchIdAndStatusOrderByIdAsc(batch.getTickBatchId(), "DRAINED")
@@ -361,7 +365,7 @@ final class TickBatchExecutionService {
     return sourceType.isBlank() ? "unknown" : sourceType.toLowerCase(java.util.Locale.ROOT);
   }
 
-  private void executeDurableEffect(TickEffect effect) {
+  private void executeDurableEffect(TickBatch batch, TickEffect effect) {
     if ("REMOTE_FOLLOWUP".equals(effect.getEffectType())) {
       DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
           durableRemoteFollowupExecutionService.execute(effect);
@@ -394,6 +398,14 @@ final class TickBatchExecutionService {
           "NOT_APPLIED",
           "COMMAND_NOT_FOUND",
           "Durable effect execution could not load the linked gameplay command");
+      return;
+    }
+    Optional<GameplayCommandExecutionFenceService.FenceFailure> fenceFailure =
+        gameplayCommandExecutionFenceService.validate(batch, command);
+    if (fenceFailure.isPresent()) {
+      GameplayCommandExecutionFenceService.FenceFailure failure = fenceFailure.orElseThrow();
+      markEffectTerminal(
+          effect, "REJECTED", "COMPLETED", "NOT_APPLIED", failure.code(), failure.message());
       return;
     }
     durableGameplayCommandExecutionService

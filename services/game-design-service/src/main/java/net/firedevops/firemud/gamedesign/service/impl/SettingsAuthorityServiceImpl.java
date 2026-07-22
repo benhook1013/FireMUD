@@ -4,6 +4,7 @@ import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamedesign.entity.GameSettingsOverride;
@@ -20,6 +21,7 @@ import tools.jackson.databind.ObjectMapper;
 public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
   private final GameSettingsOverrideRepository repository;
   private final ObjectMapper objectMapper;
+  private final FiremudReconnectionProperties reconnectionDefaults;
 
   @Override
   @Transactional(readOnly = true)
@@ -250,7 +252,10 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
     if (child != null && child.buffer() != null && child.buffer().softMaxBytes() != null) {
       return child.buffer().softMaxBytes();
     }
-    return parent == null || parent.buffer() == null ? null : parent.buffer().softMaxBytes();
+    if (parent != null && parent.buffer() != null && parent.buffer().softMaxBytes() != null) {
+      return parent.buffer().softMaxBytes();
+    }
+    return reconnectionDefaults.buffer().softMaxBytes();
   }
 
   private Integer inheritedHardMaxBytes(
@@ -259,7 +264,10 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
     if (child != null && child.buffer() != null && child.buffer().hardMaxBytes() != null) {
       return child.buffer().hardMaxBytes();
     }
-    return parent == null || parent.buffer() == null ? null : parent.buffer().hardMaxBytes();
+    if (parent != null && parent.buffer() != null && parent.buffer().hardMaxBytes() != null) {
+      return parent.buffer().hardMaxBytes();
+    }
+    return reconnectionDefaults.buffer().hardMaxBytes();
   }
 
   private void validateCommandHistory(

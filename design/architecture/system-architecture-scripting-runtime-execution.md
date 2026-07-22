@@ -242,7 +242,8 @@ When script components call other services over gRPC, they must pass a stable id
 Rollback of a script patch must not allow previously queued work from the rolled-back patch to continue affecting gameplay.
 
 - Script work items and tick commands carry the effective `scriptPatchVersion` used to produce them.
-- Game Session enforces a version fence at execution time.
+- Game Session revalidates the admitted runtime scope and current pinned script patch immediately before durable effect execution. Plugin-backed commands also re-read the authoritative Automation & Scripting plugin status and require the same enabled version and runtime scope.
+- A version or runtime-scope mismatch terminalizes the command as not applied. Temporary inability to read the plugin authority leaves the durable effect retryable rather than executing without a fence.
 - Operational rollback flows include a drain/purge step for queued automation work items and staging entries that cannot satisfy the version fence.
 
 ## Timer Failure Semantics

@@ -143,7 +143,8 @@ class TickServiceImplTest {
             durableGameplayCommandExecutionService,
             durableRemoteFollowupExecutionService,
             remoteFollowupDrainService,
-            tickQueueControlService);
+            tickQueueControlService,
+            mock(GameplayCommandExecutionFenceService.class));
     tickStagingService =
         new TickStagingService(
             redisTemplate,

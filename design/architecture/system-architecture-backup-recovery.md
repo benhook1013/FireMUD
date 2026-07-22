@@ -163,7 +163,7 @@ Manual bootstrap example sequence:
 5. Record `cold_start_restore` and establish the durable environment-wide recovery-controller state before any normal Game Session or automation worker can create fresh coordination state.
 6. Complete the cold-start coordination recovery gate, including empty-Redis and environment-wide epoch/fence proof.
 7. Run post-restore hardening, external credential validation, secret-compliance evidence refresh, required sanitization checks, and smoke verification, recording the results in the durable recovery controller.
-8. Start normal workloads under quarantine, advance the controller to `ready_to_reopen`, perform the gated transition to `finalized`, export the immutable checked-in recovery projection, and only then reopen traffic.
+8. Start normal workloads under quarantine, advance the controller to `ready_to_reopen`, and perform the gated transition to `finalized`, which authorizes traffic to reopen. Export the immutable checked-in recovery projection afterward; repository evidence records the finalized release but is not part of its transaction.
 
 ## Local Development
 

@@ -67,6 +67,9 @@ class TickStagingServiceTest {
     tickEffectRepository = mock(TickEffectRepository.class);
     when(tickEffectRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
     remoteFollowupDrainService = mock(RemoteFollowupDrainService.class);
+    GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService =
+        mock(GameplayCommandExecutionFenceService.class);
+    when(gameplayCommandExecutionFenceService.validate(any(), any())).thenReturn(Optional.empty());
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
     TickQueueControlService tickQueueControlService =
@@ -96,7 +99,8 @@ class TickStagingServiceTest {
             mock(DurableGameplayCommandExecutionService.class),
             mock(DurableRemoteFollowupExecutionService.class),
             remoteFollowupDrainService,
-            tickQueueControlService);
+            tickQueueControlService,
+            gameplayCommandExecutionFenceService);
     service =
         new TickStagingService(
             redisTemplate,
