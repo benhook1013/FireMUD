@@ -14,7 +14,7 @@ JWT lifetime and the session safety margin are documented in [Environment & Secr
 
 ## Implementation Status
 
-This document defines target-state token and revocation behavior. The current runtime has no `session:auth:revoked_after:*` reader or writer, and validators still use shared-HMAC verification rather than Account JWKS; therefore the inclusive watermark boundary is not yet runtime-enforced. The first implemented reader must prove rejection for `iat < watermark`, `iat == watermark`, and `iat > watermark`; no same-second runtime proof is claimed before that reader exists.
+This document defines target-state token and revocation behavior. The current runtime has no complete issued-token registry or Account-owned authority-generation issuance, advancement, propagation, and validation path, and validators still use shared-HMAC verification rather than Account JWKS. The first implemented authority-generation path must prove that issuance and refresh cannot cross a concurrent generation advance and that every affected route rejects stale generations; no such runtime proof is currently claimed.
 
 ## Token Validity and Revocation
 
