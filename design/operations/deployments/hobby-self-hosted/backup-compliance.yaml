@@ -9,7 +9,7 @@ retentionDailyPoints: 7
 backupTooling: cron + pg_dump + object storage
 lastSuccessfulRecoveryRecordRef: null
 recoveryContractFingerprint: null
+notes: Legacy evidence does not prove the environment-wide cold-start contract.
 evidenceRefs:
   - notes/hobby-backup-check-2026-02-24
   - notes/hobby-restore-drill-2026-02-10
-# Legacy evidence does not prove the environment-wide cold-start contract.

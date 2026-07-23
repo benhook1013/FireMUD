@@ -1062,8 +1062,7 @@ class TickServiceImplTest {
     List<String> savedBatchStatuses = new ArrayList<>();
     doAnswer(
             invocation -> {
-              net.firedevops.firemud.gamesession.entity.TickBatch batch =
-                  invocation.getArgument(0);
+              net.firedevops.firemud.gamesession.entity.TickBatch batch = invocation.getArgument(0);
               savedBatchStatuses.add(batch.getStatus());
               return batch;
             })

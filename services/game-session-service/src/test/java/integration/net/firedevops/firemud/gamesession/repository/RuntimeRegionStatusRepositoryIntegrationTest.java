@@ -2,10 +2,10 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static net.firedevops.firemud.gamesession.jooq.tables.RuntimeRegionStatus.RUNTIME_REGION_STATUS;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -152,7 +152,7 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
     CountDownLatch pauseCommitted = new CountDownLatch(1);
 
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
-      Future<RuntimeRegionStatus> baseline =
+      Future<Optional<RuntimeRegionStatus>> baseline =
           executor.submit(
               () -> {
                 RuntimeRegionStatus baselineStatus =
@@ -160,14 +160,12 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
                         runtimeStatus("region-baseline", "instance-baseline"));
                 baselineRead.countDown();
                 assertThat(pauseCommitted.await(5, TimeUnit.SECONDS)).isTrue();
-                return repository
-                    .claimObservedOwnership(
-                        baselineStatus,
-                        "game-session-service",
-                        "instance-baseline",
-                        baselineStatus.getExecutorFence(),
-                        Instant.parse("2026-07-23T00:00:01Z"))
-                    .orElseThrow();
+                return repository.claimObservedOwnership(
+                    baselineStatus,
+                    "game-session-service",
+                    "instance-baseline",
+                    baselineStatus.getExecutorFence(),
+                    Instant.parse("2026-07-23T00:00:01Z"));
               });
       Future<RuntimeRegionStatus> pause =
           executor.submit(
@@ -182,9 +180,7 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
               });
 
       RuntimeRegionStatus pauseResult = pause.get(10, TimeUnit.SECONDS);
-      assertThatThrownBy(() -> baseline.get(10, TimeUnit.SECONDS))
-          .hasCauseInstanceOf(IllegalStateException.class)
-          .hasRootCauseMessage("Runtime ownership changed during lease-backed claim");
+      assertThat(baseline.get(10, TimeUnit.SECONDS)).isEmpty();
       RuntimeRegionStatus committed =
           repository.findByTenantIdAndGameInstanceId(1L, 2L).orElseThrow();
 

@@ -109,7 +109,7 @@ class TickQueueControlServiceTest {
     renewalFuture = mock(ScheduledFuture.class);
     when(queueLockRenewalExecutor.scheduleAtFixedRate(
             any(Runnable.class), anyLong(), anyLong(), any(TimeUnit.class)))
-        .thenReturn(renewalFuture);
+        .thenAnswer(invocation -> renewalFuture);
     RuntimeIdentity runtimeIdentity =
         new RuntimeIdentity(
             "game-session-service",
@@ -159,8 +159,7 @@ class TickQueueControlServiceTest {
       lease.markLost();
 
       assertFalse(lease.isOwned());
-      assertThrows(
-          TickQueueControlService.QueueUnavailableException.class, lease::requireOwned);
+      assertThrows(TickQueueControlService.QueueUnavailableException.class, lease::requireOwned);
       verify(renewalFuture).cancel(false);
     }
   }
