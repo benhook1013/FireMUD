@@ -87,9 +87,13 @@ run_validator() {
     cd "$TMP_DIR"
     PATH="$FAKE_BIN:/usr/bin:/bin" \
       PG_DUMP_BUCKET="production-backups" \
+      PG_DUMP_ENDPOINT="" \
       ASSET_STORE_BUCKET="production-assets" \
+      ASSET_STORE_ENDPOINT="" \
       EXPECTED_PG_DUMP_BUCKET="production-backups" \
+      EXPECTED_PG_DUMP_ENDPOINT="" \
       EXPECTED_ASSET_STORE_BUCKET="production-assets" \
+      EXPECTED_ASSET_STORE_ENDPOINT="" \
       EXTERNAL_CREDENTIAL_EVIDENCE_REF="$evidence_ref" \
       "$SCRIPT" production
   )

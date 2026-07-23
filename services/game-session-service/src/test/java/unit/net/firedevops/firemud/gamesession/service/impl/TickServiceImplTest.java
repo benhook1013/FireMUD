@@ -188,8 +188,17 @@ class TickServiceImplTest {
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(runtimeRegionStatusRepository.ensureBaseline(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    when(runtimeRegionStatusRepository.refreshObservedOwnership(any()))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(runtimeRegionStatusRepository.refreshObservedOwnership(
+            any(), any(String.class), any(String.class), any(Instant.class)))
+        .thenAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus status =
+                  invocation.getArgument(0);
+              status.setOwnerService(invocation.getArgument(1));
+              status.setOwnerInstanceId(invocation.getArgument(2));
+              status.setUpdatedAt(invocation.getArgument(3));
+              return status;
+            });
     when(runtimeRegionStatusRepository.advanceOwnershipEpoch(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(runtimeRegionStatusRepository.advanceLastCommittedTickId(any()))

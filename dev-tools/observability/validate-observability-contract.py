@@ -62,6 +62,16 @@ PARTICIPANT_COVERAGE_EXPR = _compact_promql(
       recovery_required_participant_inventory_complete != bool 1
     )
     or
+    (
+      count by (environment) (
+        recovery_required_participant_inventory
+      )
+      unless on (environment)
+      (
+        recovery_required_participant_inventory_complete == 1
+      )
+    )
+    or
     absent(recovery_required_participant_inventory_complete)
     or
     absent(recovery_required_participant_inventory)

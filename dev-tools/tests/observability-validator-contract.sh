@@ -559,6 +559,16 @@ coverage_record = """        - record: recovery_participant_convergence_coverage
               recovery_required_participant_inventory_complete != bool 1
             )
             or
+            (
+              count by (environment) (
+                recovery_required_participant_inventory
+              )
+              unless on (environment)
+              (
+                recovery_required_participant_inventory_complete == 1
+              )
+            )
+            or
             absent(recovery_required_participant_inventory_complete)
             or
             absent(recovery_required_participant_inventory)"""

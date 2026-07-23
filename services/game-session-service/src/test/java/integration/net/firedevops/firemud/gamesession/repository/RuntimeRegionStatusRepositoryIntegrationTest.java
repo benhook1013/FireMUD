@@ -160,10 +160,11 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
                         runtimeStatus("region-baseline", "instance-baseline"));
                 baselineRead.countDown();
                 assertThat(pauseCommitted.await(5, TimeUnit.SECONDS)).isTrue();
-                baselineStatus.setOwnerService("game-session-service");
-                baselineStatus.setOwnerInstanceId("instance-baseline");
-                baselineStatus.setUpdatedAt(Instant.parse("2026-07-23T00:00:01Z"));
-                return repository.refreshObservedOwnership(baselineStatus);
+                return repository.refreshObservedOwnership(
+                    baselineStatus,
+                    "game-session-service",
+                    "instance-baseline",
+                    Instant.parse("2026-07-23T00:00:01Z"));
               });
       Future<RuntimeRegionStatus> pause =
           executor.submit(
@@ -191,6 +192,39 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
       assertThat(committed.getOwnerService()).isEqualTo(pauseResult.getOwnerService());
       assertThat(committed.getOwnerInstanceId()).isEqualTo(pauseResult.getOwnerInstanceId());
     }
+  }
+
+  @Test
+  void staleOwnerRefreshCannotOverwriteSameFenceOwnerHandoff() {
+    repository.save(runtimeStatus("region-one", "instance-original"));
+    RuntimeRegionStatus stale = repository.findByTenantIdAndGameInstanceId(1L, 2L).orElseThrow();
+    RuntimeRegionStatus current = repository.findByTenantIdAndGameInstanceId(1L, 2L).orElseThrow();
+
+    RuntimeRegionStatus handedOff =
+        repository.refreshObservedOwnership(
+            current,
+            "game-session-service",
+            "instance-current",
+            Instant.parse("2026-07-23T00:00:01Z"));
+
+    assertThatThrownBy(
+            () ->
+                repository.refreshObservedOwnership(
+                    stale,
+                    "game-session-service",
+                    "instance-stale",
+                    Instant.parse("2026-07-23T00:00:02Z")))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Runtime ownership changed during observation refresh");
+    assertThat(repository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .get()
+        .satisfies(
+            committed -> {
+              assertThat(committed.getRegionEpoch()).isEqualTo(handedOff.getRegionEpoch());
+              assertThat(committed.getExecutorFence()).isEqualTo(handedOff.getExecutorFence());
+              assertThat(committed.getOwnerService()).isEqualTo(handedOff.getOwnerService());
+              assertThat(committed.getOwnerInstanceId()).isEqualTo(handedOff.getOwnerInstanceId());
+            });
   }
 
   @Test

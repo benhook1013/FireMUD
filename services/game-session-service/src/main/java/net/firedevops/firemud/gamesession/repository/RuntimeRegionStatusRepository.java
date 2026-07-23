@@ -5,6 +5,7 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import static net.firedevops.firemud.gamesession.jooq.tables.RuntimeRegionStatus.RUNTIME_REGION_STATUS;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.time.Instant;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.jooq.tables.records.RuntimeRegionStatusRecord;
@@ -94,12 +95,21 @@ public class RuntimeRegionStatusRepository {
                                 .formatted(entity.getTenantId(), entity.getGameInstanceId()))));
   }
 
-  public RuntimeRegionStatus refreshObservedOwnership(RuntimeRegionStatus entity) {
+  public RuntimeRegionStatus refreshObservedOwnership(
+      RuntimeRegionStatus expectedOwnership,
+      String ownerService,
+      String ownerInstanceId,
+      Instant updatedAt) {
     return dsl.update(RUNTIME_REGION_STATUS)
-        .set(RUNTIME_REGION_STATUS.OWNER_SERVICE, entity.getOwnerService())
-        .set(RUNTIME_REGION_STATUS.OWNER_INSTANCE_ID, entity.getOwnerInstanceId())
-        .set(RUNTIME_REGION_STATUS.UPDATED_AT, toLocalDateTime(entity.getUpdatedAt()))
-        .where(ownershipGuard(entity))
+        .set(RUNTIME_REGION_STATUS.OWNER_SERVICE, ownerService)
+        .set(RUNTIME_REGION_STATUS.OWNER_INSTANCE_ID, ownerInstanceId)
+        .set(RUNTIME_REGION_STATUS.UPDATED_AT, toLocalDateTime(updatedAt))
+        .where(
+            ownershipGuard(expectedOwnership)
+                .and(RUNTIME_REGION_STATUS.OWNER_SERVICE.eq(expectedOwnership.getOwnerService()))
+                .and(
+                    RUNTIME_REGION_STATUS.OWNER_INSTANCE_ID.eq(
+                        expectedOwnership.getOwnerInstanceId())))
         .returning()
         .fetchOptional(this::toEntity)
         .orElseThrow(

@@ -85,8 +85,16 @@ class TickQueueControlServiceTest {
     runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
     when(runtimeRegionStatusRepository.ensureBaseline(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    when(runtimeRegionStatusRepository.refreshObservedOwnership(any()))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(runtimeRegionStatusRepository.refreshObservedOwnership(
+            any(), any(String.class), any(String.class), any(Instant.class)))
+        .thenAnswer(
+            invocation -> {
+              RuntimeRegionStatus status = invocation.getArgument(0);
+              status.setOwnerService(invocation.getArgument(1));
+              status.setOwnerInstanceId(invocation.getArgument(2));
+              status.setUpdatedAt(invocation.getArgument(3));
+              return status;
+            });
     when(runtimeRegionStatusRepository.advanceOwnershipEpoch(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
     sessionAuthenticationService = mock(SessionAuthenticationService.class);
@@ -500,7 +508,12 @@ class TickQueueControlServiceTest {
     ArgumentCaptor<RuntimeRegionStatus> statusCaptor =
         ArgumentCaptor.forClass(RuntimeRegionStatus.class);
     verify(runtimeRegionStatusRepository).ensureBaseline(statusCaptor.capture());
-    verify(runtimeRegionStatusRepository).refreshObservedOwnership(statusCaptor.getValue());
+    verify(runtimeRegionStatusRepository)
+        .refreshObservedOwnership(
+            statusCaptor.getValue(),
+            "game-session-service",
+            "test-instance",
+            statusCaptor.getValue().getUpdatedAt());
     assertEquals("game-session-service", statusCaptor.getValue().getOwnerService());
     assertEquals("test-instance", statusCaptor.getValue().getOwnerInstanceId());
   }

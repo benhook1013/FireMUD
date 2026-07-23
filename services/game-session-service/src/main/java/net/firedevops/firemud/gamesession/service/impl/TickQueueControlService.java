@@ -191,15 +191,18 @@ public class TickQueueControlService {
                   created.setPaused(false);
                   return created;
                 });
-    status.setOwnerService(runtimeIdentity.service());
-    status.setOwnerInstanceId(runtimeIdentity.serviceInstanceId());
-    status.setUpdatedAt(now);
-    RuntimeRegionStatus baseline =
-        status.getId() == null ? runtimeRegionStatusRepository.ensureBaseline(status) : status;
-    baseline.setOwnerService(runtimeIdentity.service());
-    baseline.setOwnerInstanceId(runtimeIdentity.serviceInstanceId());
-    baseline.setUpdatedAt(now);
-    RuntimeRegionStatus saved = runtimeRegionStatusRepository.refreshObservedOwnership(baseline);
+    RuntimeRegionStatus baseline;
+    if (status.getId() == null) {
+      status.setOwnerService(runtimeIdentity.service());
+      status.setOwnerInstanceId(runtimeIdentity.serviceInstanceId());
+      status.setUpdatedAt(now);
+      baseline = runtimeRegionStatusRepository.ensureBaseline(status);
+    } else {
+      baseline = status;
+    }
+    RuntimeRegionStatus saved =
+        runtimeRegionStatusRepository.refreshObservedOwnership(
+            baseline, runtimeIdentity.service(), runtimeIdentity.serviceInstanceId(), now);
     return new OwnershipSnapshot(
         saved.getRegionId(),
         saved.getRegionEpoch(),
