@@ -8,7 +8,7 @@ Every record must follow `design/architecture/system-architecture-backup-recover
 
 ## Implementation Status
 
-- `dev-tools/restores/validate-external-credentials.sh hobby-self-hosted` currently still expects the legacy `certificateReissuanceEvidence`, `jwtRestoreHardeningEvidence`, and `databaseCredentialRotationEvidence` aliases instead of the canonical control-group names; a legacy-script pass is not complete recovery proof.
+- `dev-tools/restores/validate-external-credentials.sh hobby-self-hosted` validates the canonical `certificateReissuance`, `jwtHardening`, and `databaseCredentialRotation` control groups; passing this credential check is not complete recovery proof.
 - The checked-in hobby evidence and writer do not yet export or validate the durable controller's complete cold-start recovery state, including `collecting` -> `ready_to_reopen` -> `releasing` -> `finalized`; player-facing reopen remains blocked. The checked-in record is a post-finalization immutable projection, not runtime authority.
 - Recovery continuation is public only as `continueRecovery(operationId, expectedPhase, evidenceRef)`; pause/lock remains an internal durable phase, not a public recovery verb.
 
