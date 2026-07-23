@@ -21,6 +21,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -53,6 +56,8 @@ class TickQueueControlServiceTest {
   private GameplayCommandRepository gameplayCommandRepository;
   private RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private SessionAuthenticationService sessionAuthenticationService;
+  private ScheduledExecutorService queueLockRenewalExecutor;
+  private ScheduledFuture<?> renewalFuture;
   private TickQueueControlService service;
   private Logger logger;
 
@@ -95,11 +100,16 @@ class TickQueueControlServiceTest {
               status.setOwnerInstanceId(invocation.getArgument(2));
               status.setExecutorFence(invocation.getArgument(3));
               status.setUpdatedAt(invocation.getArgument(4));
-              return status;
+              return Optional.of(status);
             });
     when(runtimeRegionStatusRepository.advanceOwnershipEpoch(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
     sessionAuthenticationService = mock(SessionAuthenticationService.class);
+    queueLockRenewalExecutor = mock(ScheduledExecutorService.class);
+    renewalFuture = mock(ScheduledFuture.class);
+    when(queueLockRenewalExecutor.scheduleAtFixedRate(
+            any(Runnable.class), anyLong(), anyLong(), any(TimeUnit.class)))
+        .thenReturn(renewalFuture);
     RuntimeIdentity runtimeIdentity =
         new RuntimeIdentity(
             "game-session-service",
@@ -118,7 +128,7 @@ class TickQueueControlServiceTest {
             runtimeRegionStatusRepository,
             runtimeIdentity,
             sessionAuthenticationService,
-            mock(java.util.concurrent.ScheduledExecutorService.class));
+            queueLockRenewalExecutor);
     logger = mock(Logger.class);
   }
 
@@ -140,6 +150,19 @@ class TickQueueControlServiceTest {
     assertTrue(
         arguments.getAllValues().stream()
             .anyMatch(values -> values.length == 2 && "30000".equals(values[1])));
+  }
+
+  @Test
+  void markLostCancelsScheduledRenewalAndMakesLeaseUnavailable() {
+    try (TickQueueControlService.QueueLockLease lease =
+        service.tryAcquireTickLease(1L, 2L, "test lease loss", logger).orElseThrow()) {
+      lease.markLost();
+
+      assertFalse(lease.isOwned());
+      assertThrows(
+          TickQueueControlService.QueueUnavailableException.class, lease::requireOwned);
+      verify(renewalFuture).cancel(false);
+    }
   }
 
   @Test
@@ -549,6 +572,28 @@ class TickQueueControlServiceTest {
             "test-instance",
             snapshot.executorFence(),
             previous.getUpdatedAt());
+  }
+
+  @Test
+  void claimOwnershipTranslatesEmptyObservedClaimToStaleOwnership() {
+    RuntimeRegionStatus previous = runtimeOwnership(1L, 2L, 3L, "fence-previous", false);
+    previous.setOwnerService("game-session-service");
+    previous.setOwnerInstanceId("test-instance");
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(Optional.of(previous));
+    when(runtimeRegionStatusRepository.claimObservedOwnership(
+            any(), any(String.class), any(String.class), any(String.class), any(Instant.class)))
+        .thenReturn(Optional.empty());
+
+    try (TickQueueControlService.QueueLockLease lease =
+        service.tryAcquireTickLease(1L, 2L, "test stale ownership claim", logger).orElseThrow()) {
+      TickQueueControlService.StaleOwnershipException exception =
+          assertThrows(
+              TickQueueControlService.StaleOwnershipException.class,
+              () -> service.claimOwnership(1L, 2L, lease));
+
+      assertEquals("Runtime ownership changed during lease-backed claim", exception.getMessage());
+    }
   }
 
   @Test

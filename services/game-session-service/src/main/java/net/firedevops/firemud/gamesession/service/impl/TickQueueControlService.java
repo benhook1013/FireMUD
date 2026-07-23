@@ -202,12 +202,17 @@ public class TickQueueControlService {
       baseline = status;
     }
     RuntimeRegionStatus saved =
-        runtimeRegionStatusRepository.claimObservedOwnership(
-            baseline,
-            runtimeIdentity.service(),
-            runtimeIdentity.serviceInstanceId(),
-            tickLease.token(),
-            now);
+        runtimeRegionStatusRepository
+            .claimObservedOwnership(
+                baseline,
+                runtimeIdentity.service(),
+                runtimeIdentity.serviceInstanceId(),
+                tickLease.token(),
+                now)
+            .orElseThrow(
+                () ->
+                    new StaleOwnershipException(
+                        "Runtime ownership changed during lease-backed claim"));
     tickLease.requireOwned();
     return new OwnershipSnapshot(
         saved.getRegionId(),
@@ -555,6 +560,7 @@ public class TickQueueControlService {
     private final String purpose;
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final AtomicBoolean lost = new AtomicBoolean(false);
+    private final AtomicBoolean renewalCancelled = new AtomicBoolean(false);
     private final ScheduledFuture<?> renewal;
 
     private QueueLockLease(String key, String token, String purpose) {
@@ -587,6 +593,7 @@ public class TickQueueControlService {
 
     void markLost() {
       lost.set(true);
+      cancelRenewal();
     }
 
     private void renew() {
@@ -594,7 +601,7 @@ public class TickQueueControlService {
     }
 
     private boolean renewOwnership() {
-      if (closed.get()) {
+      if (closed.get() || lost.get()) {
         return false;
       }
       try {
@@ -605,13 +612,13 @@ public class TickQueueControlService {
                 token,
                 String.valueOf(QUEUE_LOCK_TTL.toMillis()));
         if (renewed == null || renewed != 1L) {
-          lost.set(true);
+          markLost();
           classLogger.error("Lost {} lock {} during renewal", purpose, key);
           return false;
         }
         return true;
       } catch (RuntimeException renewalFailure) {
-        lost.set(true);
+        markLost();
         classLogger.error("Failed to renew {} lock {}", purpose, key, renewalFailure);
         return false;
       }
@@ -622,10 +629,14 @@ public class TickQueueControlService {
       if (!closed.compareAndSet(false, true)) {
         return;
       }
-      if (renewal != null) {
+      cancelRenewal();
+      releaseLease(key, token, purpose);
+    }
+
+    private void cancelRenewal() {
+      if (renewal != null && renewalCancelled.compareAndSet(false, true)) {
         renewal.cancel(false);
       }
-      releaseLease(key, token, purpose);
     }
   }
 

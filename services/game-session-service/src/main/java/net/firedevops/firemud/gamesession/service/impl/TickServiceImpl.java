@@ -326,6 +326,9 @@ public class TickServiceImpl implements TickService {
                   replayEntries.size(),
                   normalizedQueueTargetId);
               tickBatchExecutionService.markBatchDrained(replayBatch, replayEntries);
+              activeBatch = replayBatch;
+              activeBatchEntries = replayEntries;
+              activeBatchDurablyDrained = true;
               lease.requireOwned();
               tickTimer.record(
                   () -> {

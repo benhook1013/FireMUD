@@ -95,7 +95,7 @@ public class RuntimeRegionStatusRepository {
                                 .formatted(entity.getTenantId(), entity.getGameInstanceId()))));
   }
 
-  public RuntimeRegionStatus claimObservedOwnership(
+  public Optional<RuntimeRegionStatus> claimObservedOwnership(
       RuntimeRegionStatus expectedOwnership,
       String ownerService,
       String ownerInstanceId,
@@ -113,9 +113,7 @@ public class RuntimeRegionStatusRepository {
                     RUNTIME_REGION_STATUS.OWNER_INSTANCE_ID.eq(
                         expectedOwnership.getOwnerInstanceId())))
         .returning()
-        .fetchOptional(this::toEntity)
-        .orElseThrow(
-            () -> new IllegalStateException("Runtime ownership changed during lease-backed claim"));
+        .fetchOptional(this::toEntity);
   }
 
   public Optional<RuntimeRegionStatus> advanceLastCommittedTickId(

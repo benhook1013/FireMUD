@@ -160,12 +160,14 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
                         runtimeStatus("region-baseline", "instance-baseline"));
                 baselineRead.countDown();
                 assertThat(pauseCommitted.await(5, TimeUnit.SECONDS)).isTrue();
-                return repository.claimObservedOwnership(
-                    baselineStatus,
-                    "game-session-service",
-                    "instance-baseline",
-                    baselineStatus.getExecutorFence(),
-                    Instant.parse("2026-07-23T00:00:01Z"));
+                return repository
+                    .claimObservedOwnership(
+                        baselineStatus,
+                        "game-session-service",
+                        "instance-baseline",
+                        baselineStatus.getExecutorFence(),
+                        Instant.parse("2026-07-23T00:00:01Z"))
+                    .orElseThrow();
               });
       Future<RuntimeRegionStatus> pause =
           executor.submit(
@@ -202,23 +204,23 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
     RuntimeRegionStatus current = repository.findByTenantIdAndGameInstanceId(1L, 2L).orElseThrow();
 
     RuntimeRegionStatus handedOff =
-        repository.claimObservedOwnership(
-            current,
-            "game-session-service",
-            "instance-current",
-            "fence-current",
-            Instant.parse("2026-07-23T00:00:01Z"));
+        repository
+            .claimObservedOwnership(
+                current,
+                "game-session-service",
+                "instance-current",
+                "fence-current",
+                Instant.parse("2026-07-23T00:00:01Z"))
+            .orElseThrow();
 
-    assertThatThrownBy(
-            () ->
-                repository.claimObservedOwnership(
-                    stale,
-                    "game-session-service",
-                    "instance-stale",
-                    "fence-stale",
-                    Instant.parse("2026-07-23T00:00:02Z")))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("Runtime ownership changed during lease-backed claim");
+    assertThat(
+            repository.claimObservedOwnership(
+                stale,
+                "game-session-service",
+                "instance-stale",
+                "fence-stale",
+                Instant.parse("2026-07-23T00:00:02Z")))
+        .isEmpty();
     stale.setUpdatedAt(Instant.parse("2026-07-23T00:00:03Z"));
     assertThat(repository.advanceLastCommittedTickId(stale)).isEmpty();
     assertThat(repository.commitDrainedBatch(stale, "stale-batch")).isEmpty();
