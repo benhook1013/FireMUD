@@ -128,10 +128,24 @@ full_files = quoted_entries(
 runtime_paths = set(
     quoted_entries(
         runtime_images,
-        "    paths:\n",
-        "  push:",
+        "\n    paths:\n",
+        "\n  push:\n",
     )
 )
+
+runtime_images_fixture = """on:
+  pull_request:
+    paths:
+      - 'services/example/**'
+      - 'literal  push: value'
+  push:
+    branches: [main]
+"""
+assert quoted_entries(
+    runtime_images_fixture,
+    "\n    paths:\n",
+    "\n  push:\n",
+) == ["services/example/**", "literal  push: value"]
 
 
 def path_pattern_covers_prefix(pattern, prefix):

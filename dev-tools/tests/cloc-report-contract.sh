@@ -213,6 +213,8 @@ assert spec is not None and spec.loader is not None
 cloc_report = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = cloc_report
 spec.loader.exec_module(cloc_report)
+assert cloc_report.source_classification("services/foo/README.md") is None
+assert cloc_report.source_classification("README.md") is None
 assert cloc_report.render_scope([], "tests", by_file=True) == (
     "path  language  blank  comments  lines"
 )
@@ -343,6 +345,8 @@ assert minimal_prod["totals"]["files"] > 0
 classification = subprocess.check_output(
     [*script, "classify"], cwd=repo, stderr=subprocess.DEVNULL, text=True
 )
+assert "services/foo/README.md" not in classification
+assert "\tREADME.md" not in classification
 assert "tests\tdev_tools_contract_tests\tdev-tools/tests/contract.sh" in classification
 assert "tests\tdev_tools_validation_test\tdev-tools/validation/test_helper.py" in classification
 assert "tests\tgradle_src_test\tservices/foo/src/test/java/example/DuplicateFootprint.java" in classification

@@ -234,7 +234,7 @@ def test_rule(path: str) -> str | None:
 
 
 def source_classification(path: str) -> tuple[str, str] | None:
-    is_source = is_under_source_root(path) or (is_root_file(path) and not is_markdown(path))
+    is_source = (is_under_source_root(path) or is_root_file(path)) and not is_markdown(path)
     if not is_source:
         return None
     rule = test_rule(path)
