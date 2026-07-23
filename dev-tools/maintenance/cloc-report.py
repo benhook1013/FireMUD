@@ -332,10 +332,9 @@ def build_summary_tree(files: list[FileStats]) -> ReportNode:
     )
     markdown = ReportNode(
         key="markdown",
-        label="markdown (overlaps source)",
+        label="markdown (overlaps source and design)",
         counts=totals["markdown"],
-        children=[design],
-        overlaps=("source",),
+        overlaps=("source", "design"),
     )
     source = ReportNode(
         key="source",
@@ -350,7 +349,7 @@ def build_summary_tree(files: list[FileStats]) -> ReportNode:
         key="repo",
         label="repo",
         counts=totals["repo"],
-        children=[source, markdown],
+        children=[source, markdown, design],
     )
 
 
@@ -455,7 +454,7 @@ def render_summary(root: ReportNode, bar_width: int) -> str:
     lines.extend(
         (
             "",
-            "Additive branches: source = prod + tests; design = its listed sections. Markdown overlaps source.",
+            "Additive branches: source = prod + tests; design = its listed sections. Markdown overlaps source and design.",
             "Bars compare each row's lines with its immediate parent; repo is the 100% root.",
             "Lines exclude blank and comment-only lines.",
         )

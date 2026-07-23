@@ -133,10 +133,22 @@ runtime_paths = set(
     )
 )
 
+
+def path_pattern_covers_prefix(pattern, prefix):
+    if pattern.startswith("!"):
+        return False
+    if pattern in {prefix, f"{prefix}**"}:
+        return True
+    return pattern.endswith("**") and prefix.startswith(pattern.removesuffix("**"))
+
+
+assert path_pattern_covers_prefix("services/**", "services/common-library/")
+assert not path_pattern_covers_prefix("web-client/**", "services/common-library/")
+
 missing_prefixes = [
     prefix
     for prefix in full_prefixes
-    if f"{prefix}**" not in runtime_paths and prefix not in runtime_paths
+    if not any(path_pattern_covers_prefix(pattern, prefix) for pattern in runtime_paths)
 ]
 missing_files = [file for file in full_files if file not in runtime_paths]
 

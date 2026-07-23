@@ -114,6 +114,23 @@ class Finding:
     message: str
 
 
+def _recovery_coverage_alert_finding(
+    path: Path, alert_name: str | None, expr: str
+) -> Finding | None:
+    if (
+        alert_name == "RecoveryParticipantConvergenceMetricsAbsent"
+        and _compact_promql(expr) != PARTICIPANT_COVERAGE_ALERT_EXPR
+    ):
+        return Finding(
+            path=path,
+            message=(
+                "RecoveryParticipantConvergenceMetricsAbsent must use "
+                "recovery_participant_convergence_coverage_missing > 0"
+            ),
+        )
+    return None
+
+
 @dataclass(frozen=True)
 class _RuleEntry:
     lines: list[str]
@@ -784,19 +801,9 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
             if dotted_metric_issue:
                 findings.append(Finding(path=path, message=dotted_metric_issue))
 
-            if (
-                entry.name == "RecoveryParticipantConvergenceMetricsAbsent"
-                and _compact_promql(expr) != PARTICIPANT_COVERAGE_ALERT_EXPR
-            ):
-                findings.append(
-                    Finding(
-                        path=path,
-                        message=(
-                            "RecoveryParticipantConvergenceMetricsAbsent must use "
-                            "recovery_participant_convergence_coverage_missing > 0"
-                        ),
-                    )
-                )
+            recovery_coverage_issue = _recovery_coverage_alert_finding(path, entry.name, expr)
+            if recovery_coverage_issue:
+                findings.append(recovery_coverage_issue)
 
     return findings
 
@@ -923,19 +930,11 @@ def _validate_doc_semantics() -> list[Finding]:
                         findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighTcpProxy must use labels.service=tcp-proxy-service"))
                     if 'command_end_to_end_latency_ms_bucket{service="tcp-proxy-service"' not in compact_expr:
                         findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighTcpProxy must scope expr to service=\"tcp-proxy-service\""))
-                if (
-                    alert_name == "RecoveryParticipantConvergenceMetricsAbsent"
-                    and _compact_promql(expr) != PARTICIPANT_COVERAGE_ALERT_EXPR
-                ):
-                    findings.append(
-                        Finding(
-                            path=core_alerts,
-                            message=(
-                                "RecoveryParticipantConvergenceMetricsAbsent must use "
-                                "recovery_participant_convergence_coverage_missing > 0"
-                            ),
-                        )
-                    )
+                recovery_coverage_issue = _recovery_coverage_alert_finding(
+                    core_alerts, alert_name, expr
+                )
+                if recovery_coverage_issue:
+                    findings.append(recovery_coverage_issue)
 
     player_runbook = REPO_ROOT / "design" / "architecture" / "system-architecture-player-experience-incident-runbook.md"
     player_runbook_text = _read_text(player_runbook)
@@ -1073,19 +1072,9 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
         if dotted_metric_issue:
             findings.append(Finding(path=path, message=f"{alert_name}: {dotted_metric_issue}"))
 
-        if (
-            alert_name == "RecoveryParticipantConvergenceMetricsAbsent"
-            and _compact_promql(expr) != PARTICIPANT_COVERAGE_ALERT_EXPR
-        ):
-            findings.append(
-                Finding(
-                    path=path,
-                    message=(
-                        "RecoveryParticipantConvergenceMetricsAbsent must use "
-                        "recovery_participant_convergence_coverage_missing > 0"
-                    ),
-                )
-            )
+        recovery_coverage_issue = _recovery_coverage_alert_finding(path, alert_name, expr)
+        if recovery_coverage_issue:
+            findings.append(recovery_coverage_issue)
 
         if alert_name.startswith("Redis") and labels.get("owner") != "infra":
             findings.append(Finding(path=path, message=f"{alert_name} must use owner=infra for Redis/coordination incidents"))

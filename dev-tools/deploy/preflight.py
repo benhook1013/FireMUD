@@ -627,58 +627,6 @@ def default_preflight_output_path(
     )
 
 
-def load_waiver(
-    waiver_path: Path,
-    environment: str,
-    deployment_ref: str,
-    deployment_event_id: str,
-    output_path: Path,
-    now_dt: dt.datetime,
-) -> NoReturn:
-    expected_path = (output_path.parent / f"{deployment_event_id}.waiver.json").resolve()
-    if waiver_path.resolve() != expected_path:
-        raise ValueError(f"Waiver must be stored beside the report as {expected_path}")
-    try:
-        waiver = load_json(waiver_path)
-    except Exception as exc:
-        raise ValueError(f"Waiver is unreadable: {exc}") from exc
-    if not isinstance(waiver, dict):
-        raise ValueError("Waiver must be a JSON object")
-
-    expected_values = {
-        "environment": environment,
-        "deploymentRef": deployment_ref,
-        "deploymentEventId": deployment_event_id,
-        "expiration": "deployment-event",
-    }
-    for field, expected in expected_values.items():
-        if waiver.get(field) != expected:
-            raise ValueError(f"Waiver {field} must be {expected}")
-    for field in ("approver", "ticket"):
-        if not isinstance(waiver.get(field), str) or not waiver[field].strip():
-            raise ValueError(f"Waiver {field} must be a non-empty string")
-    try:
-        recorded_at = parse_timestamp(waiver.get("recordedAt"), "Waiver recordedAt")
-    except Exception as exc:
-        raise ValueError(str(exc)) from exc
-    if recorded_at > now_dt:
-        raise ValueError("Waiver recordedAt is future-dated")
-
-    waived_policy_ids = waiver.get("waivedPolicyIds")
-    if not isinstance(waived_policy_ids, list) or not waived_policy_ids:
-        raise ValueError("Waiver waivedPolicyIds must be a non-empty list")
-    if any(not isinstance(policy_id, str) or not policy_id for policy_id in waived_policy_ids):
-        raise ValueError("Waiver waivedPolicyIds entries must be non-empty strings")
-    if len(set(waived_policy_ids)) != len(waived_policy_ids):
-        raise ValueError("Waiver waivedPolicyIds must not contain duplicates")
-    unknown_policy_ids = sorted(set(waived_policy_ids) - EXPECTED_PREFLIGHT_POLICY_ID_SET)
-    if unknown_policy_ids:
-        raise ValueError("Waiver contains unknown policy IDs: " + ", ".join(unknown_policy_ids))
-    raise ValueError(
-        "Preflight waiver execution remains blocked until one-time consumption authority is implemented"
-    )
-
-
 def validate_preflight_report(
     report: Any,
     environment: str,
@@ -1168,20 +1116,13 @@ def extract_service_images(rendered_text: str) -> list[str]:
 
 def append_result(
     check_results: list[CheckResult],
-    waived_ids: set[str],
-    _waiver_approver: str,
-    _waiver_ticket: str,
     policy_id: str,
     required: bool,
     status: str,
     message: str,
 ) -> bool:
-    effective_status = status
-    effective_message = message
-    if status == "fail" and policy_id in waived_ids:
-        effective_message = f"waiver execution blocked for {policy_id}: {message}"
-    check_results.append(CheckResult(policy_id, required, effective_status, effective_message))
-    return required and effective_status == "fail"
+    check_results.append(CheckResult(policy_id, required, status, message))
+    return required and status == "fail"
 
 
 def expected_binding_checks(
@@ -1743,6 +1684,15 @@ def recovery_compatibility_check(
         return ("fail", str(exc))
     if evaluated_at > now_dt:
         return ("fail", "recoveryCompatibility.evaluatedAt is future-dated")
+    try:
+        generated_at = parse_timestamp(attestation.get("generatedAt"), "Attestation generatedAt")
+    except Exception as exc:
+        return ("fail", str(exc))
+    if evaluated_at > generated_at:
+        return (
+            "fail",
+            "recoveryCompatibility.evaluatedAt must not be after attestation generatedAt",
+        )
     if compatibility_status != "compatible":
         return (
             "fail",
@@ -2266,9 +2216,6 @@ def main() -> int:
         deployment_event_id,
     )
     output_path = Path(os.environ.get("FIREMUD_PREFLIGHT_OUTPUT", str(default_output)))
-    waived_ids: set[str] = set()
-    waiver_approver = ""
-    waiver_ticket = ""
     started_at = utc_now()
     traffic_open_event = os.environ.get("FIREMUD_TRAFFIC_OPEN_EVENT", "")
     if traffic_open_event not in {"", "first-live", "reopen"}:
@@ -2280,9 +2227,6 @@ def main() -> int:
     for check in expected_binding_checks(expected_bindings_path, expected_bindings_ref, env_class, documents):
         has_required_failure = append_result(
             check_results,
-            waived_ids,
-            waiver_approver,
-            waiver_ticket,
             check.policy_id,
             check.required,
             check.status,
@@ -2293,41 +2237,41 @@ def main() -> int:
     if env_class == "hobby-self-hosted":
         if not service_images:
             has_required_failure = append_result(
-                check_results, waived_ids, waiver_approver, waiver_ticket,
+                check_results,
                 "PREFLIGHT-DIGEST-002", False, "not_applicable", "No workload images found for hobby manifest rendering",
             ) or has_required_failure
         elif any("@sha256:" not in image for image in service_images):
             has_required_failure = append_result(
-                check_results, waived_ids, waiver_approver, waiver_ticket,
+                check_results,
                 "PREFLIGHT-DIGEST-002", False, "fail", "One or more hobby workload images are not digest-pinned",
             ) or has_required_failure
         else:
             has_required_failure = append_result(
-                check_results, waived_ids, waiver_approver, waiver_ticket,
+                check_results,
                 "PREFLIGHT-DIGEST-002", False, "pass", "All hobby workload images are digest-pinned",
             ) or has_required_failure
         has_required_failure = append_result(
-            check_results, waived_ids, waiver_approver, waiver_ticket,
+            check_results,
             "PREFLIGHT-DIGEST-001", False, "not_applicable", "Overlay digest policy does not apply to hobby deployments",
         ) or has_required_failure
     else:
         if not service_images:
             has_required_failure = append_result(
-                check_results, waived_ids, waiver_approver, waiver_ticket,
+                check_results,
                 "PREFLIGHT-DIGEST-001", True, "fail", "No workload images found in rendered overlay",
             ) or has_required_failure
         elif any("@sha256:" not in image for image in service_images):
             has_required_failure = append_result(
-                check_results, waived_ids, waiver_approver, waiver_ticket,
+                check_results,
                 "PREFLIGHT-DIGEST-001", True, "fail", "Staging/production overlay contains non-digest service image references",
             ) or has_required_failure
         else:
             has_required_failure = append_result(
-                check_results, waived_ids, waiver_approver, waiver_ticket,
+                check_results,
                 "PREFLIGHT-DIGEST-001", True, "pass", "All rendered workload images are digest-pinned",
             ) or has_required_failure
         has_required_failure = append_result(
-            check_results, waived_ids, waiver_approver, waiver_ticket,
+            check_results,
             "PREFLIGHT-DIGEST-002", False, "not_applicable", "Hobby digest advisory does not apply to overlay deployment",
         ) or has_required_failure
 
@@ -2336,14 +2280,14 @@ def main() -> int:
         for secret_name in ("postgres-credentials", "jwt-signing-keys", "jwt-jwks"):
             if not rendered_references_secret(documents, secret_name):
                 has_required_failure = append_result(
-                    check_results, waived_ids, waiver_approver, waiver_ticket,
+                    check_results,
                     "PREFLIGHT-SECRETS-001", True, "fail", f"Rendered workloads do not reference required Secret binding: {secret_name}",
                 ) or has_required_failure
                 secret_check_failed = True
                 break
         if not secret_check_failed:
             has_required_failure = append_result(
-                check_results, waived_ids, waiver_approver, waiver_ticket,
+                check_results,
                 "PREFLIGHT-SECRETS-001", True, "pass", "Rendered workloads reference required player-facing Secret bindings",
             ) or has_required_failure
     else:
@@ -2351,20 +2295,20 @@ def main() -> int:
             result = subprocess.run(["kubectl", "get", "secret", "-n", "firemud", secret_name], capture_output=True, text=True)
             if result.returncode != 0:
                 has_required_failure = append_result(
-                    check_results, waived_ids, waiver_approver, waiver_ticket,
+                    check_results,
                     "PREFLIGHT-SECRETS-001", True, "fail", f"Missing required Secret in cluster: firemud/{secret_name}",
                 ) or has_required_failure
                 secret_check_failed = True
                 break
         if not secret_check_failed:
             has_required_failure = append_result(
-                check_results, waived_ids, waiver_approver, waiver_ticket,
+                check_results,
                 "PREFLIGHT-SECRETS-001", True, "pass", "Required player-facing Secrets exist in the target cluster",
             ) or has_required_failure
 
     for check in jwt_jwks_checks(documents):
         has_required_failure = append_result(
-            check_results, waived_ids, waiver_approver, waiver_ticket,
+            check_results,
             check.policy_id, check.required, check.status, check.message,
         ) or has_required_failure
 
@@ -2378,40 +2322,40 @@ def main() -> int:
         if gw_value:
             break
     if not gw_value:
-        has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BRIDGE-001", True, "fail", "GATEWAY_WS_URL is not explicitly configured") or has_required_failure
+        has_required_failure = append_result(check_results, "PREFLIGHT-BRIDGE-001", True, "fail", "GATEWAY_WS_URL is not explicitly configured") or has_required_failure
     elif not gw_value.startswith("wss://"):
-        has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BRIDGE-001", True, "fail", "GATEWAY_WS_URL must use wss:// in player-facing environments") or has_required_failure
+        has_required_failure = append_result(check_results, "PREFLIGHT-BRIDGE-001", True, "fail", "GATEWAY_WS_URL must use wss:// in player-facing environments") or has_required_failure
     elif "spring-cloud-gateway-mtls" not in gw_value:
-        has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BRIDGE-001", True, "fail", "GATEWAY_WS_URL does not target the internal gateway mTLS listener") or has_required_failure
+        has_required_failure = append_result(check_results, "PREFLIGHT-BRIDGE-001", True, "fail", "GATEWAY_WS_URL does not target the internal gateway mTLS listener") or has_required_failure
     else:
-        has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BRIDGE-001", True, "pass", "Gateway bridge alignment is valid") or has_required_failure
+        has_required_failure = append_result(check_results, "PREFLIGHT-BRIDGE-001", True, "pass", "Gateway bridge alignment is valid") or has_required_failure
 
     coord_host = config_value(documents, "FIREMUD_REDIS_COORD_HOST")
     coord_port = config_value(documents, "FIREMUD_REDIS_COORD_PORT")
     cache_host = config_value(documents, "FIREMUD_REDIS_CACHE_HOST")
     cache_port = config_value(documents, "FIREMUD_REDIS_CACHE_PORT")
     if not coord_host or not cache_host:
-        has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-REDIS-001", True, "fail", "Could not resolve both Coordination and Cache Redis endpoints") or has_required_failure
+        has_required_failure = append_result(check_results, "PREFLIGHT-REDIS-001", True, "fail", "Could not resolve both Coordination and Cache Redis endpoints") or has_required_failure
     elif f"{coord_host}:{coord_port}" == f"{cache_host}:{cache_port}":
-        has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-REDIS-001", True, "fail", "Coordination and Cache Redis endpoints resolve to the same host:port") or has_required_failure
+        has_required_failure = append_result(check_results, "PREFLIGHT-REDIS-001", True, "fail", "Coordination and Cache Redis endpoints resolve to the same host:port") or has_required_failure
     else:
-        has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-REDIS-001", True, "pass", "Redis role split contract is satisfied") or has_required_failure
+        has_required_failure = append_result(check_results, "PREFLIGHT-REDIS-001", True, "pass", "Redis role split contract is satisfied") or has_required_failure
 
     promotion_attestation = os.environ.get("FIREMUD_PROMOTION_ATTESTATION", "")
     backup_readiness_evidence = os.environ.get("FIREMUD_BACKUP_READINESS_EVIDENCE", "")
     if env_class != "production":
-        has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-PROMOTION-001", False, "not_applicable", "Promotion attestation applies only to production") or has_required_failure
-        has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-001", False, "not_applicable", "Recovery compatibility applies only to production promotions") or has_required_failure
+        has_required_failure = append_result(check_results, "PREFLIGHT-PROMOTION-001", False, "not_applicable", "Promotion attestation applies only to production") or has_required_failure
+        has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-001", False, "not_applicable", "Recovery compatibility applies only to production promotions") or has_required_failure
     elif context == "ci-static" and not promotion_attestation:
-        has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-PROMOTION-001", False, "not_applicable", "Static CI validation without production attestation context") or has_required_failure
-        has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-001", False, "not_applicable", "Static CI validation without production attestation context") or has_required_failure
+        has_required_failure = append_result(check_results, "PREFLIGHT-PROMOTION-001", False, "not_applicable", "Static CI validation without production attestation context") or has_required_failure
+        has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-001", False, "not_applicable", "Static CI validation without production attestation context") or has_required_failure
     else:
         if not promotion_attestation:
-            has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-PROMOTION-001", True, "fail", "FIREMUD_PROMOTION_ATTESTATION is required for production operator preflight") or has_required_failure
-            has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-001", True, "fail", "Recovery compatibility cannot be evaluated without a promotion attestation") or has_required_failure
+            has_required_failure = append_result(check_results, "PREFLIGHT-PROMOTION-001", True, "fail", "FIREMUD_PROMOTION_ATTESTATION is required for production operator preflight") or has_required_failure
+            has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-001", True, "fail", "Recovery compatibility cannot be evaluated without a promotion attestation") or has_required_failure
         elif not Path(promotion_attestation).exists():
-            has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-PROMOTION-001", True, "fail", f"Attestation file not found: {promotion_attestation}") or has_required_failure
-            has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-001", True, "fail", "Recovery compatibility cannot be evaluated because the promotion attestation is missing") or has_required_failure
+            has_required_failure = append_result(check_results, "PREFLIGHT-PROMOTION-001", True, "fail", f"Attestation file not found: {promotion_attestation}") or has_required_failure
+            has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-001", True, "fail", "Recovery compatibility cannot be evaluated because the promotion attestation is missing") or has_required_failure
         else:
             promotion_status, _, promotion_message = promotion_check(
                 Path(promotion_attestation),
@@ -2421,9 +2365,6 @@ def main() -> int:
             )
             has_required_failure = append_result(
                 check_results,
-                waived_ids,
-                waiver_approver,
-                waiver_ticket,
                 "PREFLIGHT-PROMOTION-001",
                 True,
                 promotion_status,
@@ -2456,26 +2397,23 @@ def main() -> int:
                 deployment_ref,
                 root_dir,
             )
-            has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-001", True, recovery_status, recovery_message) or has_required_failure
+            has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-001", True, recovery_status, recovery_message) or has_required_failure
 
     if env_class == "production":
         if not traffic_open_event:
-            has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-002", False, "not_applicable", "Production traffic-open backup gate applies only to first-live or reopen events") or has_required_failure
+            has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-002", False, "not_applicable", "Production traffic-open backup gate applies only to first-live or reopen events") or has_required_failure
         else:
             traffic_status, traffic_message = production_traffic_check()
-            has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-002", True, traffic_status, traffic_message) or has_required_failure
+            has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-002", True, traffic_status, traffic_message) or has_required_failure
     else:
-        has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-002", False, "not_applicable", "Production traffic-open backup gate applies only to production") or has_required_failure
+        has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-002", False, "not_applicable", "Production traffic-open backup gate applies only to production") or has_required_failure
 
     if env_class == "hobby-self-hosted":
         if not traffic_open_event:
-            has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-003", False, "not_applicable", "Hobby traffic-open backup gate applies only to first-live or reopen events") or has_required_failure
+            has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-003", False, "not_applicable", "Hobby traffic-open backup gate applies only to first-live or reopen events") or has_required_failure
         else:
             has_required_failure = append_result(
                 check_results,
-                waived_ids,
-                waiver_approver,
-                waiver_ticket,
                 "PREFLIGHT-BACKUP-003",
                 True,
                 "fail",
@@ -2484,7 +2422,7 @@ def main() -> int:
                 "cannot authorize traffic",
             ) or has_required_failure
     else:
-        has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-003", False, "not_applicable", "Hobby traffic-open backup gate applies only to hobby-self-hosted") or has_required_failure
+        has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-003", False, "not_applicable", "Hobby traffic-open backup gate applies only to hobby-self-hosted") or has_required_failure
 
     completed_at = utc_now()
     write_report(

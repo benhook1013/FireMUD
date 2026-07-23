@@ -64,6 +64,11 @@ cat >design/architecture/system.md <<'EOF'
 Architecture-only doc.
 EOF
 
+cat >design/architecture/metadata.yaml <<'EOF'
+schemaVersion: v1
+kind: ArchitectureMetadata
+EOF
+
 cat >dev-tools/tests/contract.sh <<'EOF'
 echo contract
 EOF
@@ -289,20 +294,28 @@ assert summary_nodes["architecture"]["files"] == architecture["totals"]["files"]
 assert summary_nodes["architecture"]["lines"] == architecture["totals"]["lines"]
 assert summary_nodes["design"]["files"] == design["totals"]["files"]
 assert summary_nodes["design"]["lines"] == design["totals"]["lines"]
-assert summary_nodes["markdown"]["overlaps"] == ["source"]
+assert [child["name"] for child in summary["root"]["children"]] == [
+    "source",
+    "markdown",
+    "design",
+]
+assert summary_nodes["design"]["parent"] == "repo"
+assert summary_nodes["design"]["files"] == 3
+assert summary_nodes["markdown"]["children"] == []
+assert summary_nodes["markdown"]["overlaps"] == ["source", "design"]
 
 assert "scope / relationship" in summary_table
 assert "files  lines  share of parent (lines)" in summary_table.splitlines()[0]
 assert "|-- source (= prod + tests)" in summary_table
 assert "|   |-- prod" in summary_table
 assert "|   `-- tests" in summary_table
-assert "`-- markdown (overlaps source)" in summary_table
-assert "    `-- design (= sections below)" in summary_table
-assert "        |-- architecture" in summary_table
-assert "        |-- project management" in summary_table
-assert "        |-- observability" in summary_table
-assert "        |-- operations" in summary_table
-assert "        `-- other design" in summary_table
+assert "|-- markdown (overlaps source and design)" in summary_table
+assert "`-- design (= sections below)" in summary_table
+assert "    |-- architecture" in summary_table
+assert "    |-- project management" in summary_table
+assert "    |-- observability" in summary_table
+assert "    |-- operations" in summary_table
+assert "    `-- other design" in summary_table
 assert "service-docs" not in summary_table
 assert "[################] 100.0%" in summary_table
 assert "[########] 100.0%" in custom_bar_table
@@ -357,6 +370,7 @@ assert diff_nodes["prod"]["lines"] == diff_total["prod_lines"]
 assert diff_nodes["tests"]["files"] == diff_total["test_files"]
 assert diff_nodes["tests"]["lines"] == diff_total["test_lines"]
 assert diff_nodes["design"]["files"] > 0
+assert diff_nodes["design"]["parent"] == "repo"
 
 deletion_diff = subprocess.run(
     [*script, "diff", "HEAD~1...HEAD", "--json"],

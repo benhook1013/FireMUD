@@ -259,62 +259,6 @@ if failures:
     raise SystemExit(f"unexpected required preflight failures: {failures}")
 PY
 
-python3 - <<'PY' "$ROOT_DIR"
-import importlib.util
-import pathlib
-import sys
-
-root = pathlib.Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location("preflight_non_waivable_contract", root / "dev-tools/deploy/preflight.py")
-module = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
-sys.modules[spec.name] = module
-spec.loader.exec_module(module)
-
-for policy_id in ("PREFLIGHT-BACKUP-001", "PREFLIGHT-BACKUP-002", "PREFLIGHT-BACKUP-003"):
-    results = []
-    failed = module.append_result(
-        results,
-        {policy_id},
-        "contract-approver",
-        "contract-ticket",
-        policy_id,
-        True,
-        "fail",
-        "readiness evidence missing",
-    )
-    if not failed or results[0].status != "fail" or "waiver execution blocked" not in results[0].message:
-        raise SystemExit(f"{policy_id} accepted a forbidden waiver: {results}")
-
-results = []
-failed = module.append_result(
-    results,
-    {"PREFLIGHT-PROMOTION-001"},
-    "contract-approver",
-    "contract-ticket",
-    "PREFLIGHT-PROMOTION-001",
-    True,
-    "fail",
-    "ordinary promotion evidence failure",
-)
-if not failed or results[0].status != "fail" or "waiver execution blocked" not in results[0].message:
-    raise SystemExit(f"ordinary promotion waiver did not fail closed: {results}")
-
-results = []
-failed = module.append_result(
-    results,
-    {"PREFLIGHT-DIGEST-002"},
-    "contract-approver",
-    "contract-ticket",
-    "PREFLIGHT-DIGEST-002",
-    True,
-    "fail",
-    "digest evidence missing",
-)
-if not failed or results[0].status != "fail" or "waiver execution blocked" not in results[0].message:
-    raise SystemExit(f"digest advisory waiver did not fail closed: {results}")
-PY
-
 python3 "$WRITER" hobby-self-hosted contract-hobby first-live \
   --assessed-by preflight-contract \
   --preflight-report "$OPERATOR_REPORT_PATH" \
@@ -944,84 +888,6 @@ expected_first_path = (
 if first_output_path != expected_first_path or first_output_path == second_output_path:
     raise SystemExit("preflight default output paths are not immutable per deployment event")
 
-waiver_dir = tmp / "waiver-contract"
-waiver_dir.mkdir()
-waiver_output_path = waiver_dir / "report.json"
-valid_waiver = {
-    "environment": "production",
-    "deploymentRef": "contract-waiver",
-    "deploymentEventId": "33333333-3333-4333-8333-333333333333",
-    "expiration": "deployment-event",
-    "recordedAt": past_timestamp,
-    "approver": "preflight-contract",
-    "ticket": "contract-ticket",
-    "waivedPolicyIds": ["PREFLIGHT-PROMOTION-001"],
-}
-waiver_path = waiver_dir / f"{valid_waiver['deploymentEventId']}.waiver.json"
-waiver_path.write_text(json.dumps(valid_waiver), encoding="utf-8")
-try:
-    module.load_waiver(
-        waiver_path,
-        "production",
-        "contract-waiver",
-        valid_waiver["deploymentEventId"],
-        waiver_output_path,
-        now,
-    )
-except ValueError as exc:
-    if "one-time consumption authority" not in str(exc):
-        raise SystemExit(f"valid-shaped waiver failed for the wrong reason: {exc}")
-else:
-    raise SystemExit("valid-shaped waiver bypassed the one-time-authority block")
-waiver_path.write_text(json.dumps({**valid_waiver, "deploymentRef": "other-event"}), encoding="utf-8")
-try:
-    module.load_waiver(
-        waiver_path,
-        "production",
-        "contract-waiver",
-        valid_waiver["deploymentEventId"],
-        waiver_output_path,
-        now,
-    )
-except ValueError as exc:
-    if "deploymentRef" not in str(exc):
-        raise SystemExit(f"mismatched waiver failed for the wrong reason: {exc}")
-else:
-    raise SystemExit("waiver bound to another deployment event was accepted")
-waiver_path.write_text(
-    json.dumps({**valid_waiver, "deploymentEventId": "44444444-4444-4444-8444-444444444444"}),
-    encoding="utf-8",
-)
-try:
-    module.load_waiver(
-        waiver_path,
-        "production",
-        "contract-waiver",
-        valid_waiver["deploymentEventId"],
-        waiver_output_path,
-        now,
-    )
-except ValueError as exc:
-    if "deploymentEventId" not in str(exc):
-        raise SystemExit(f"replayed waiver failed for the wrong reason: {exc}")
-else:
-    raise SystemExit("waiver bound to another deployment event ID was accepted")
-waiver_path.write_text(json.dumps({**valid_waiver, "approver": ""}), encoding="utf-8")
-try:
-    module.load_waiver(
-        waiver_path,
-        "production",
-        "contract-waiver",
-        valid_waiver["deploymentEventId"],
-        waiver_output_path,
-        now,
-    )
-except ValueError as exc:
-    if "approver" not in str(exc):
-        raise SystemExit(f"anonymous waiver failed for the wrong reason: {exc}")
-else:
-    raise SystemExit("anonymous waiver was accepted")
-
 def write_json(name, data):
     path = tmp / name
     path.write_text(json.dumps(data), encoding="utf-8")
@@ -1294,6 +1160,20 @@ for compatibility_status in ("drill_required", "incompatible"):
         raise SystemExit(
             f"{compatibility_status} recoveryCompatibility did not fail closed: {promotion_message}"
         )
+
+future_evaluation = compatibility_result("compatible")
+future_evaluation["evaluatedAt"] = timestamp(now - module.dt.timedelta(minutes=1))
+future_evaluation_attestation = promotion_attestation(future_evaluation)
+future_evaluation_attestation["generatedAt"] = timestamp(now - module.dt.timedelta(minutes=2))
+future_evaluation_path = write_json(
+    "future-recovery-evaluation-attestation.json",
+    future_evaluation_attestation,
+)
+future_status, _, future_message = module.promotion_check(future_evaluation_path, [], tmp)
+if future_status != "fail" or "must not be after attestation generatedAt" not in future_message:
+    raise SystemExit(
+        f"future-dated recovery compatibility evaluation did not fail closed: {future_message}"
+    )
 
 rollback_status, rollback_message = module.production_recovery_check(
     "pass", "rollback-compatible", "promotion valid", "", "contract-production", tmp

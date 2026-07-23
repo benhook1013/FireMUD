@@ -117,10 +117,7 @@ run_preflight_policy_checks() {
 
     if production_policy_applies_to_changes "$changed_files"; then
       mapfile -t attestation_files < <(printf '%s\n' "$changed_files" | grep '^design/operations/deployments/production/attestations/.*\.json$' || true)
-      if [[ "${#attestation_files[@]}" -eq 0 ]]; then
-        echo "Production-applicable Kubernetes PRs must include exactly one attestation file under design/operations/deployments/production/attestations/." >&2
-        exit 1
-      elif [[ "${#attestation_files[@]}" -ne 1 ]]; then
+      if [[ "${#attestation_files[@]}" -ne 1 ]]; then
         echo "Production-applicable Kubernetes PRs must include exactly one attestation file under design/operations/deployments/production/attestations/." >&2
         exit 1
       else
