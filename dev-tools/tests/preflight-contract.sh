@@ -325,10 +325,22 @@ python3 - <<'PY' "$OPERATOR_REPORT_PATH" "$TRAFFIC_EVIDENCE"
 import json
 import pathlib
 import sys
+import uuid
 
 preflight = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 traffic = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
-if traffic.get("deploymentEventId") != preflight.get("deploymentEventId"):
+preflight_event_id = preflight.get("deploymentEventId")
+traffic_event_id = traffic.get("deploymentEventId")
+for label, event_id in (("preflight", preflight_event_id), ("traffic-open", traffic_event_id)):
+    if not isinstance(event_id, str):
+        raise SystemExit(f"{label} deploymentEventId is missing")
+    try:
+        parsed_event_id = uuid.UUID(event_id)
+    except ValueError as exc:
+        raise SystemExit(f"{label} deploymentEventId is not a UUID: {exc}") from exc
+    if str(parsed_event_id) != event_id:
+        raise SystemExit(f"{label} deploymentEventId is not canonical")
+if traffic_event_id != preflight_event_id:
     raise SystemExit("traffic-open writer did not preserve the preflight deploymentEventId")
 PY
 
@@ -337,9 +349,8 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_PREFLIGHT_RENDER_PATH="$RENDERED_MANIFEST" \
   FIREMUD_PREFLIGHT_OUTPUT="$REPORT_PATH" \
   FIREMUD_TRAFFIC_OPEN_EVENT=first-live \
-  FIREMUD_TRAFFIC_OPEN_EVIDENCE="$TRAFFIC_EVIDENCE" \
   python3 "$SCRIPT" hobby-self-hosted >/tmp/firemud-preflight-contract-traffic.out 2>&1 && {
-    echo "expected incomplete checked-in hobby backup evidence to fail first-live preflight" >&2
+    echo "expected hobby first-live preflight without controller authority to fail" >&2
     exit 1
   }
 
@@ -356,7 +367,7 @@ backup_003 = [
 ]
 if len(backup_003) != 1 or backup_003[0]["status"] != "fail":
     raise SystemExit(f"PREFLIGHT-BACKUP-003 did not fail closed: {backup_003}")
-if "status must be pass" not in backup_003[0]["message"]:
+if "durable environment-wide recovery-controller authority is not implemented" not in backup_003[0]["message"]:
     raise SystemExit(f"PREFLIGHT-BACKUP-003 failed for the wrong reason: {backup_003}")
 PY
 
@@ -374,7 +385,7 @@ assert spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
-deployment_event_id = "11111111-1111-4111-8111-111111111111"
+deployment_event_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 validation_now = module.dt.datetime(2026, 1, 1, 0, 5, tzinfo=module.dt.timezone.utc)
 
 
@@ -420,6 +431,15 @@ complete_status, complete_message = validate_report(
 )
 if complete_status != "pass":
     raise SystemExit(f"complete preflight policy set did not pass: {complete_message}")
+for invalid_event_id in (None, "not-a-uuid", "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"):
+    invalid_report = {**complete_report, "deploymentEventId": invalid_event_id}
+    invalid_status, invalid_message = validate_report(
+        invalid_report, "hobby-self-hosted", "contract-hobby"
+    )
+    if invalid_status != "fail" or "deploymentEventId" not in invalid_message:
+        raise SystemExit(
+            f"invalid preflight deployment event ID was accepted: {invalid_event_id!r}, {invalid_message}"
+        )
 forged_all_pass_report = {
     **complete_report,
     "checkResults": [
@@ -509,83 +529,6 @@ not_applicable_status, not_applicable_message = validate_report(
 if not_applicable_status != "fail" or "non-passing required policy IDs" not in not_applicable_message:
     raise SystemExit(f"all-not-applicable preflight report did not fail closed: {not_applicable_message}")
 
-compliance_path = tmp / "passing-hobby-backup-compliance.yaml"
-compliance_path.write_text("environment: hobby-self-hosted\nstatus: pass\n", encoding="utf-8")
-preflight_path = tmp / "passing-hobby-preflight.json"
-current_report_timestamp = module.utc_now()
-deployment_event_id = "22222222-2222-4222-8222-222222222222"
-preflight_path.write_text(
-    json.dumps(
-        {
-            "environment": "hobby-self-hosted",
-            "expectedBindingsRef": "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
-            "deploymentRef": {"manifestRef": "contract-hobby"},
-            "deploymentEventId": deployment_event_id,
-            "trafficOpenEvent": None,
-            "startedAt": current_report_timestamp,
-            "completedAt": current_report_timestamp,
-            "toolVersion": "preflight.py-v1",
-            "context": "operator",
-            "checkResults": [
-                {
-                    "policyId": policy_id,
-                    "required": required,
-                    "status": (
-                        "pass"
-                        if required
-                        else ("fail" if policy_id == "PREFLIGHT-DIGEST-002" else "not_applicable")
-                    ),
-                    "message": "contract evidence",
-                }
-                for policy_id, required in module.expected_preflight_policy_requirements(
-                    "hobby-self-hosted", None
-                ).items()
-            ],
-        }
-    ),
-    encoding="utf-8",
-)
-traffic_path = tmp / "passing-hobby-traffic-open.json"
-traffic_path.write_text(
-    json.dumps(
-        {
-            "schemaVersion": "traffic-open-record/v1",
-            "environment": "hobby-self-hosted",
-            "eventType": "first-live",
-            "deploymentRef": "contract-hobby",
-            "deploymentEventId": deployment_event_id,
-            "assessedAt": "2026-01-01T00:00:00Z",
-            "assessedBy": "preflight-contract",
-            "backupComplianceRef": "design/operations/deployments/hobby-self-hosted/backup-compliance.yaml",
-            "preflightReportPath": str(preflight_path),
-            "evidenceRefs": ["contract-test"],
-        }
-    ),
-    encoding="utf-8",
-)
-status, message = module.hobby_traffic_check(
-    compliance_path,
-    traffic_path,
-    "first-live",
-    "contract-hobby",
-    root,
-)
-if status != "fail" or "recovery-controller authority is not implemented" not in message:
-    raise SystemExit(f"synthetic hobby evidence did not fail closed on missing authority: {message}")
-traffic = json.loads(traffic_path.read_text(encoding="utf-8"))
-traffic["deploymentEventId"] = "33333333-3333-4333-8333-333333333333"
-traffic_path.write_text(json.dumps(traffic), encoding="utf-8")
-mismatch_status, mismatch_message = module.hobby_traffic_check(
-    compliance_path,
-    traffic_path,
-    "first-live",
-    "contract-hobby",
-    root,
-)
-if mismatch_status != "fail" or "deploymentEventId mismatch" not in mismatch_message:
-    raise SystemExit(
-        f"mismatched hobby traffic-open event identity did not fail closed: {mismatch_message}"
-    )
 PY
 
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
@@ -628,9 +571,8 @@ if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF="contract-production" \
   FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
   FIREMUD_TRAFFIC_OPEN_EVENT=reopen \
-  FIREMUD_TRAFFIC_OPEN_EVIDENCE="$LEGACY_PRODUCTION_TRAFFIC_EVIDENCE" \
   python3 "$SCRIPT" production >/tmp/firemud-preflight-contract-production-traffic-gated.out 2>&1; then
-  echo "legacy production traffic-open evidence unexpectedly passed" >&2
+  echo "production traffic-open preflight unexpectedly passed without controller authority" >&2
   exit 1
 fi
 

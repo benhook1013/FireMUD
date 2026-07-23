@@ -65,7 +65,19 @@ JSON
 # Keep the contract independent of any configured cloud CLI or external target.
 cat >"$FAKE_BIN/aws" <<'SH'
 #!/usr/bin/env bash
-exit 0
+set -euo pipefail
+
+case "$#:$*" in
+  "4:s3api head-bucket --bucket production-backups"|\
+  "4:s3api head-bucket --bucket production-assets")
+    exit 0
+    ;;
+  *)
+    printf 'unexpected aws invocation: %q ' "$@" >&2
+    printf '\n' >&2
+    exit 1
+    ;;
+esac
 SH
 chmod +x "$FAKE_BIN/aws"
 

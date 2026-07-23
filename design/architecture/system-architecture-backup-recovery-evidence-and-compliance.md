@@ -22,6 +22,8 @@ Backup and verification jobs must emit simple metrics with an `environment` labe
 - `backup_artifact_restore_readable{environment}`
 - `recovery_participant_convergence_total{environment,participant,result}`
 - `recovery_participant_convergence_state{environment,participant,state}` – current participant state gauge; this is the readiness signal, not the historical event counter
+- `recovery_required_participant_inventory{environment,participant}` – controller projection of the authoritative required-participant set
+- `recovery_required_participant_inventory_complete{environment}` – `0` while an environment projection is being refreshed and `1` only when the complete authoritative set is visible
 - `recovery_oldest_unresolved_age_seconds{environment,participant}`
 - `recovery_environment_convergence_total{environment,result}`
 - `recovery_reopen_attempt_total{environment,result,reason}` – bounded `result` and `reason` enums; `reason="incomplete_convergence"` identifies a blocked release attempt
@@ -36,8 +38,9 @@ Prometheus should also publish derived breach indicators:
 - `backup_artifact_restore_unreadable{environment}`
 - `recovery_participant_convergence_blocked{environment,participant,state}`
 - `recovery_environment_convergence_blocked{environment}`
+- `recovery_participant_convergence_coverage_missing` – preserves `environment,participant` when a known participant is missing, `environment` for an incomplete environment projection, or no labels when the source families are globally absent
 
-Derived indicators and alerts must preserve these labels and group by `environment`; participant convergence alerts must not reduce an environment-wide failure to an unlabeled boolean or discard the failing `participant` or current `state`. The cumulative `recovery_participant_convergence_total` event counter is audit history only and must not drive an active blocked alert; the alert must clear when the current state converges. Global `absent(...)` alerts are fail-safe monitoring-gap indicators only: because a missing family has no remaining environment label, they cannot replace environment-specific source health or readiness proof.
+The controller publishes each environment's required-participant inventory as one all-or-nothing projection. It sets the completeness marker to `0` before changing participant series, exposes the entire authoritative set, and sets the marker to `1` only after that set is complete; a partial projection must never carry `complete=1`. Derived indicators and alerts must preserve these labels and group by `environment`; participant convergence alerts must not reduce an environment-wide failure to an unlabeled boolean or discard the failing `participant` or current `state`. The cumulative `recovery_participant_convergence_total` event counter is audit history only and must not drive an active blocked alert; the alert must clear when the current state converges. Global `absent(...)` alerts are fail-safe monitoring-gap indicators only: because a missing family has no remaining environment label, they cannot replace environment-specific source health or readiness proof.
 
 Alerting policy:
 
@@ -132,7 +135,7 @@ The evaluator compares backup/restore tool compatibility, database and migration
 
 ## Production Traffic-Open Backup Evidence
 
-Before opening production to player traffic for the first time, or reopening it after restore into a fresh environment boundary, operators must record proof that the backup pipeline is already functioning for that environment.
+Before opening production to player traffic for the first time, or reopening it after restore into a fresh environment boundary, preflight must consume proof that the backup pipeline is already functioning for that environment. The exporter records the traffic-open projection only after the durable controller finalizes the release.
 
 Traffic-open evidence is a separate event-bound projection around the canonical recovery and backup-readiness evidence. Preflight authorizes the event from the durable recovery controller; the writer exports the checked-in immutable projection only after the controller has observed/applied the release and reached `finalized`.
 
@@ -168,7 +171,7 @@ Required fields:
 - `recoveryContractFingerprint`
 - `sourceEnvironmentBinding`
 - `drillTargetBoundary`
-- `trafficExposure` (`isolated-drill` for the referenced drill)
+- `trafficExposure` (`player-facing-first-live` or `player-facing-reopen`, matching `eventType`; any referenced baseline drill retains `isolated-drill` in its own recovery record)
 - `backupConfidentialityEvidence`
 - `trafficOpenedAt` when `trafficOpenStatus=finalized`
 - `evidenceRefs[]`
@@ -212,7 +215,7 @@ Restore hardening for hobby/self-hosted must fail closed for player-traffic reop
 
 ## Hobby Traffic-Open Evidence
 
-Before opening `hobby-self-hosted` to player traffic for the first time, or reopening it after a restore, operators must record traffic-open evidence at:
+After the durable controller finalizes a `hobby-self-hosted` first-live or reopen event, the exporter records the retained traffic-open projection at:
 
 - `design/operations/deployments/hobby-self-hosted/traffic-open/<deployment-ref>/<deployment-event-id>.json`
 
@@ -264,7 +267,7 @@ Required top-level fields:
 - `recoveryPurpose` (`production-equivalent-drill` or `actual-recovery`)
 - `sourceEnvironmentBinding`
 - `targetBoundary`
-- `trafficExposure` (`isolated-drill` or `player-facing-reopen`)
+- `trafficExposure` (`isolated-drill` for a production-equivalent drill, `player-facing-first-live` for an actual recovery opening the first live player boundary, or `player-facing-reopen` for an actual recovery reopening that boundary)
 - `restoreSource`
 - `restoreSafeMode`
 - `coordinationRecoveryMode` (`cold_start_restore`)

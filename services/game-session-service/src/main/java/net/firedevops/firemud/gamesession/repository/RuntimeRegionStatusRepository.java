@@ -99,17 +99,12 @@ public class RuntimeRegionStatusRepository {
         .set(RUNTIME_REGION_STATUS.OWNER_SERVICE, entity.getOwnerService())
         .set(RUNTIME_REGION_STATUS.OWNER_INSTANCE_ID, entity.getOwnerInstanceId())
         .set(RUNTIME_REGION_STATUS.UPDATED_AT, toLocalDateTime(entity.getUpdatedAt()))
-        .where(
-            RUNTIME_REGION_STATUS
-                .TENANT_ID
-                .eq(entity.getTenantId())
-                .and(RUNTIME_REGION_STATUS.GAME_INSTANCE_ID.eq(entity.getGameInstanceId())))
+        .where(ownershipGuard(entity))
         .returning()
         .fetchOptional(this::toEntity)
         .orElseThrow(
             () ->
-                new IllegalStateException(
-                    "Runtime ownership disappeared during observation refresh"));
+                new IllegalStateException("Runtime ownership changed during observation refresh"));
   }
 
   public Optional<RuntimeRegionStatus> advanceLastCommittedTickId(

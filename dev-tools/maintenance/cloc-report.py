@@ -389,7 +389,7 @@ def table_lines(
     columns: Sequence[tuple[str, str, str]],
 ) -> list[str]:
     widths = {
-        key: max(len(label), *(len(str(row[key])) for row in rows))
+        key: max(len(label), max((len(str(row[key])) for row in rows), default=0))
         for key, label, _alignment in columns
     }
 

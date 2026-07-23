@@ -218,6 +218,7 @@ jobs:
 
       - name: Verify ORT results
         env:
+          EVENT_NAME: ${{ github.event_name }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           RUN_GRADLE_ORT: ${{ needs.changes.outputs.run_gradle_ort }}
           GRADLE_ORT_RESULT: ${{ needs['ort-gradle'].result }}
@@ -228,7 +229,7 @@ jobs:
             echo "License change detection did not complete successfully: $CHANGES_RESULT" >&2
             exit 1
           fi
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ]; then
             if [ "$RUN_GRADLE_ORT" != "true" ] && [ "$RUN_GRADLE_ORT" != "false" ]; then
               echo "License change detection returned an invalid Gradle result: $RUN_GRADLE_ORT" >&2
               exit 1

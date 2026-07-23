@@ -192,12 +192,25 @@ EOF
 
 python3 - <<'PY'
 import json
+import importlib.util
 import subprocess
+import sys
 from pathlib import Path
 
 repo = Path.cwd()
 script = ["python3", "dev-tools/maintenance/cloc-report.py"]
 minimal_repo = repo.parent / "minimal"
+
+spec = importlib.util.spec_from_file_location(
+    "cloc_report", repo / "dev-tools/maintenance/cloc-report.py"
+)
+assert spec is not None and spec.loader is not None
+cloc_report = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = cloc_report
+spec.loader.exec_module(cloc_report)
+assert cloc_report.render_scope([], "tests", by_file=True) == (
+    "path  language  blank  comments  lines"
+)
 
 
 def run_json(*args: str, cwd: Path = repo) -> dict:

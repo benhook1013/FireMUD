@@ -555,6 +555,12 @@ coverage_record = """        - record: recovery_participant_convergence_coverage
               )
             )
             or
+            (
+              recovery_required_participant_inventory_complete != bool 1
+            )
+            or
+            absent(recovery_required_participant_inventory_complete)
+            or
             absent(recovery_required_participant_inventory)"""
 if coverage_record not in valid_text:
     raise AssertionError("canonical participant coverage recording was not found")
@@ -569,7 +575,17 @@ invalid_coverage = valid_text.replace(
 )
 require_message(
     findings_for(invalid_coverage, validator._validate_reference_prometheus_recordings),
-    "participant coverage recording must compare authoritative required-participant inventory with current participant-state coverage and fail closed when inventory is absent",
+    "participant coverage recording must compare authoritative required-participant inventory with current participant-state coverage and fail closed when inventory or its atomic-completeness marker is absent",
+)
+
+extra_coverage_branch = valid_text.replace(
+    coverage_record,
+    coverage_record + "\n            or\n            vector(1)",
+    1,
+)
+require_message(
+    findings_for(extra_coverage_branch, validator._validate_reference_prometheus_recordings),
+    "participant coverage recording must compare authoritative required-participant inventory with current participant-state coverage and fail closed when inventory or its atomic-completeness marker is absent",
 )
 
 family_only_alert = valid_text.replace(
@@ -579,6 +595,16 @@ family_only_alert = valid_text.replace(
 )
 require_message(
     findings_for(family_only_alert, validator._validate_reference_prometheus_rules),
+    "RecoveryParticipantConvergenceMetricsAbsent must use recovery_participant_convergence_coverage_missing > 0",
+)
+
+extra_alert_branch = valid_text.replace(
+    "expr: recovery_participant_convergence_coverage_missing > 0",
+    "expr: recovery_participant_convergence_coverage_missing > 0 or vector(1)",
+    1,
+)
+require_message(
+    findings_for(extra_alert_branch, validator._validate_reference_prometheus_rules),
     "RecoveryParticipantConvergenceMetricsAbsent must use recovery_participant_convergence_coverage_missing > 0",
 )
 

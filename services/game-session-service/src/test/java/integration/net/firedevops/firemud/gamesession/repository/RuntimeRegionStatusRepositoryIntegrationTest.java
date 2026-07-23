@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static net.firedevops.firemud.gamesession.jooq.tables.RuntimeRegionStatus.RUNTIME_REGION_STATUS;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -146,27 +147,40 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
   }
 
   @Test
-  void concurrentBaselineAndPauseLeaveTheCommittedRowPaused() throws Exception {
-    CountDownLatch ready = new CountDownLatch(2);
-    CountDownLatch start = new CountDownLatch(1);
+  void staleBaselineRefreshCannotOverwriteConcurrentPause() throws Exception {
+    CountDownLatch baselineRead = new CountDownLatch(1);
+    CountDownLatch pauseCommitted = new CountDownLatch(1);
 
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
       Future<RuntimeRegionStatus> baseline =
           executor.submit(
-              () ->
-                  ensureBaselineAfterBarrier(
-                      runtimeStatus("region-baseline", "instance-baseline"), ready, start));
+              () -> {
+                RuntimeRegionStatus baselineStatus =
+                    repository.ensureBaseline(
+                        runtimeStatus("region-baseline", "instance-baseline"));
+                baselineRead.countDown();
+                assertThat(pauseCommitted.await(5, TimeUnit.SECONDS)).isTrue();
+                baselineStatus.setOwnerService("game-session-service");
+                baselineStatus.setOwnerInstanceId("instance-baseline");
+                baselineStatus.setUpdatedAt(Instant.parse("2026-07-23T00:00:01Z"));
+                return repository.refreshObservedOwnership(baselineStatus);
+              });
       Future<RuntimeRegionStatus> pause =
           executor.submit(
-              () ->
-                  advancePauseAfterBarrier(
-                      runtimeStatus("region-pause", "instance-pause"), ready, start));
+              () -> {
+                assertThat(baselineRead.await(5, TimeUnit.SECONDS)).isTrue();
+                RuntimeRegionStatus pauseStatus = runtimeStatus("region-pause", "instance-pause");
+                pauseStatus.setPaused(true);
+                pauseStatus.setExecutorFence("fence-pause");
+                RuntimeRegionStatus paused = repository.advanceOwnershipEpoch(pauseStatus);
+                pauseCommitted.countDown();
+                return paused;
+              });
 
-      assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
-      start.countDown();
-
-      RuntimeRegionStatus baselineResult = baseline.get(10, TimeUnit.SECONDS);
       RuntimeRegionStatus pauseResult = pause.get(10, TimeUnit.SECONDS);
+      assertThatThrownBy(() -> baseline.get(10, TimeUnit.SECONDS))
+          .hasCauseInstanceOf(IllegalStateException.class)
+          .hasRootCauseMessage("Runtime ownership changed during observation refresh");
       RuntimeRegionStatus committed =
           repository.findByTenantIdAndGameInstanceId(1L, 2L).orElseThrow();
 
@@ -174,7 +188,8 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
       assertThat(committed.isPaused()).isTrue();
       assertThat(committed.getRegionEpoch()).isEqualTo(pauseResult.getRegionEpoch());
       assertThat(committed.getExecutorFence()).isEqualTo(pauseResult.getExecutorFence());
-      assertThat(baselineResult.getId()).isEqualTo(committed.getId());
+      assertThat(committed.getOwnerService()).isEqualTo(pauseResult.getOwnerService());
+      assertThat(committed.getOwnerInstanceId()).isEqualTo(pauseResult.getOwnerInstanceId());
     }
   }
 
@@ -225,26 +240,6 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
     ready.countDown();
     assertThat(start.await(5, TimeUnit.SECONDS)).isTrue();
     return repository.save(status);
-  }
-
-  private RuntimeRegionStatus ensureBaselineAfterBarrier(
-      RuntimeRegionStatus status, CountDownLatch ready, CountDownLatch start) throws Exception {
-    ready.countDown();
-    assertThat(start.await(5, TimeUnit.SECONDS)).isTrue();
-    RuntimeRegionStatus baseline = repository.ensureBaseline(status);
-    baseline.setOwnerService("game-session-service");
-    baseline.setOwnerInstanceId("instance-baseline");
-    baseline.setUpdatedAt(Instant.parse("2026-07-23T00:00:01Z"));
-    return repository.refreshObservedOwnership(baseline);
-  }
-
-  private RuntimeRegionStatus advancePauseAfterBarrier(
-      RuntimeRegionStatus status, CountDownLatch ready, CountDownLatch start) throws Exception {
-    status.setPaused(true);
-    status.setExecutorFence("fence-pause");
-    ready.countDown();
-    assertThat(start.await(5, TimeUnit.SECONDS)).isTrue();
-    return repository.advanceOwnershipEpoch(status);
   }
 
   private static RuntimeRegionStatus runtimeStatus(String regionId, String ownerInstanceId) {

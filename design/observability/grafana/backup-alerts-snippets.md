@@ -149,7 +149,7 @@ Example alerts for missed backups and verification runs:
     runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
   annotations:
     summary: Recovery participant convergence metrics are absent
-    description: At least one required participant in the authoritative recovery inventory has no current convergence-state series, or the inventory itself is unavailable. Keep recovery-readiness decisions blocked.
+    description: At least one required participant in the authoritative recovery inventory has no current convergence-state series, or the inventory projection is incomplete or unavailable. Keep recovery-readiness decisions blocked.
 
 - alert: RecoveryReopenAttemptBlocked
   expr: increase(recovery_reopen_attempt_total{result="blocked",reason="incomplete_convergence"}[5m]) > 0
@@ -173,8 +173,8 @@ Routine backup alerts use these current artifact and recovery recordings:
 - `backup_artifact_restore_unreadable`
 - `recovery_participant_convergence_blocked`
 - `recovery_environment_convergence_blocked`
-- `recovery_participant_convergence_coverage_missing{environment,participant}`
+- `recovery_participant_convergence_coverage_missing`
 
-Recovery participant coverage is fail-closed: `recovery_required_participant_inventory{environment,participant}` is the controller projection of the authoritative required-participant inventory, and every required participant must have current `recovery_participant_convergence_state{environment,participant,state}` coverage. The coverage recording emits missing required participants and emits an unlabeled failure when the inventory itself is absent. `RecoveryParticipantConvergenceMetricsAbsent` must block recovery readiness until this coverage is restored and the durable recovery controller proves readiness.
+Recovery participant coverage is fail-closed: `recovery_required_participant_inventory{environment,participant}` is the controller projection of the authoritative required-participant inventory, and every required participant must have current `recovery_participant_convergence_state{environment,participant,state}` coverage. The controller publishes this inventory atomically per environment: `recovery_required_participant_inventory_complete{environment}` remains `0` during refresh and becomes `1` only after the complete authoritative set is visible. The coverage recording emits missing required participants, incomplete projections, and an unlabeled failure when either inventory family is unavailable. `RecoveryParticipantConvergenceMetricsAbsent` must block recovery readiness until this coverage is restored and the durable recovery controller proves readiness.
 
 Environment-specific rulesets may tune thresholds, severities, and label values, but should preserve the `owner` and `runbook` annotations so alerts always point back to the relevant documentation. Tick-pause metrics belong to maintenance/reset dashboards and must not be used as routine backup health or traffic-reopen proof.

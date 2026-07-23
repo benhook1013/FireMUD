@@ -29,7 +29,6 @@ Environment variables:
   FIREMUD_PROMOTION_ATTESTATION      Required in operator production context; path to attestation JSON
   FIREMUD_BACKUP_READINESS_EVIDENCE  Required for production roll-forward-only promotions; path to backup-readiness JSON
   FIREMUD_TRAFFIC_OPEN_EVENT         Optional traffic-open gate: first-live or reopen
-  FIREMUD_TRAFFIC_OPEN_EVIDENCE      Optional hobby traffic-open evidence path
 """
 
 
@@ -2181,60 +2180,6 @@ def production_traffic_check() -> tuple[str, str]:
     )
 
 
-def hobby_traffic_check(compliance_path: Path, traffic_path: Path, event: str, deployment_ref: str, root_dir: Path) -> tuple[str, str]:
-    if not compliance_path.exists():
-        return ("fail", f"Hobby backup-compliance record not found: {compliance_path}")
-    if not traffic_path.exists():
-        return ("fail", f"Hobby traffic-open evidence not found: {traffic_path}")
-    try:
-        compliance = load_yaml(compliance_path) or {}
-        traffic = load_json(traffic_path)
-    except Exception as exc:
-        return ("fail", f"Hobby traffic-open evidence unreadable: {exc}")
-    if traffic.get("schemaVersion") != "traffic-open-record/v1":
-        return ("fail", "Hobby traffic-open evidence schemaVersion mismatch")
-    if compliance.get("environment") != "hobby-self-hosted" or traffic.get("environment") != "hobby-self-hosted":
-        return ("fail", "Hobby traffic-open evidence must target hobby-self-hosted")
-    if traffic.get("eventType") != event:
-        return ("fail", "Hobby traffic-open evidence eventType mismatch")
-    if str(traffic.get("deploymentRef", "")) != str(deployment_ref):
-        return ("fail", "Hobby traffic-open evidence deploymentRef mismatch")
-    deployment_event_id = traffic.get("deploymentEventId")
-    try:
-        parsed_event_id = uuid.UUID(str(deployment_event_id))
-    except (ValueError, TypeError, AttributeError):
-        return ("fail", "Hobby traffic-open evidence deploymentEventId must be a UUID")
-    if str(parsed_event_id) != deployment_event_id:
-        return ("fail", "Hobby traffic-open evidence deploymentEventId must use canonical UUID form")
-    if not traffic.get("assessedAt"):
-        return ("fail", "Hobby traffic-open evidence missing assessedAt")
-    if not traffic.get("assessedBy"):
-        return ("fail", "Hobby traffic-open evidence missing assessedBy")
-    evidence_refs = traffic.get("evidenceRefs")
-    if not isinstance(evidence_refs, list) or not evidence_refs:
-        return ("fail", "Hobby traffic-open evidence missing evidenceRefs")
-    if traffic.get("backupComplianceRef") != "design/operations/deployments/hobby-self-hosted/backup-compliance.yaml":
-        return ("fail", "Hobby traffic-open evidence must reference the canonical backup-compliance record")
-    if compliance.get("status") != "pass":
-        return ("fail", "Hobby backup-compliance status must be pass")
-    preflight_status, preflight_message = load_preflight_report(
-        str(traffic.get("preflightReportPath", "")),
-        "hobby-self-hosted",
-        "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
-        deployment_ref,
-        root_dir,
-        None,
-        deployment_event_id,
-    )
-    if preflight_status != "pass":
-        return ("fail", preflight_message)
-    return (
-        "fail",
-        "Hobby traffic-open gate unavailable: durable environment-wide recovery-controller authority "
-        "is not implemented; backup-compliance and checked-in traffic evidence cannot authorize traffic",
-    )
-
-
 def write_report(
     output_path: Path,
     env_class: str,
@@ -2513,7 +2458,6 @@ def main() -> int:
             )
             has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-001", True, recovery_status, recovery_message) or has_required_failure
 
-    traffic_open_evidence = os.environ.get("FIREMUD_TRAFFIC_OPEN_EVIDENCE", "")
     if env_class == "production":
         if not traffic_open_event:
             has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-002", False, "not_applicable", "Production traffic-open backup gate applies only to first-live or reopen events") or has_required_failure
@@ -2527,10 +2471,18 @@ def main() -> int:
         if not traffic_open_event:
             has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-003", False, "not_applicable", "Hobby traffic-open backup gate applies only to first-live or reopen events") or has_required_failure
         else:
-            traffic_evidence_path = Path(traffic_open_evidence) if traffic_open_evidence else root_dir / "design" / "operations" / "deployments" / "hobby-self-hosted" / "traffic-open" / f"{deployment_ref}.json"
-            compliance_path = root_dir / "design" / "operations" / "deployments" / "hobby-self-hosted" / "backup-compliance.yaml"
-            hobby_status, hobby_message = hobby_traffic_check(compliance_path, traffic_evidence_path, traffic_open_event, deployment_ref, root_dir)
-            has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-003", True, hobby_status, hobby_message) or has_required_failure
+            has_required_failure = append_result(
+                check_results,
+                waived_ids,
+                waiver_approver,
+                waiver_ticket,
+                "PREFLIGHT-BACKUP-003",
+                True,
+                "fail",
+                "Hobby traffic-open gate unavailable: durable environment-wide recovery-controller "
+                "authority is not implemented; checked-in projections and backup-compliance evidence "
+                "cannot authorize traffic",
+            ) or has_required_failure
     else:
         has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-003", False, "not_applicable", "Hobby traffic-open backup gate applies only to hobby-self-hosted") or has_required_failure
 

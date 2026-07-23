@@ -9,6 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def _compact_promql(expr: str) -> str:
+    return re.sub(r"\s+", "", expr)
+
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 ALLOWED_SEVERITIES = {"P0", "P1", "P2"}
@@ -42,15 +46,29 @@ REQUIRED_ABSENT_ALERT_METRICS = {
     "BackupArtifactLineageMetricsAbsent": "backup_artifact_lineage_valid",
     "BackupArtifactRestoreReadabilityMetricsAbsent": "backup_artifact_restore_readable",
 }
-PARTICIPANT_COVERAGE_EXPR = re.compile(
-    r"recovery_required_participant_inventory\s*==\s*1"
-    r"[\s\S]*unless\s+on\s*\(\s*environment\s*,\s*participant\s*\)"
-    r"[\s\S]*count\s+by\s*\(\s*environment\s*,\s*participant\s*\)"
-    r"[\s\S]*recovery_participant_convergence_state"
-    r"[\s\S]*or\s+absent\s*\(\s*recovery_required_participant_inventory\s*\)"
+PARTICIPANT_COVERAGE_EXPR = _compact_promql(
+    """
+    (
+      recovery_required_participant_inventory == 1
+      unless on (environment, participant)
+      (
+        count by (environment, participant) (
+          recovery_participant_convergence_state
+        ) > 0
+      )
+    )
+    or
+    (
+      recovery_required_participant_inventory_complete != bool 1
+    )
+    or
+    absent(recovery_required_participant_inventory_complete)
+    or
+    absent(recovery_required_participant_inventory)
+    """
 )
-PARTICIPANT_COVERAGE_ALERT_EXPR = re.compile(
-    r"recovery_participant_convergence_coverage_missing\s*>\s*0"
+PARTICIPANT_COVERAGE_ALERT_EXPR = _compact_promql(
+    "recovery_participant_convergence_coverage_missing > 0"
 )
 BLOCKED_REOPEN_ATTEMPT_EXPR = re.compile(
     r'increase\s*\(\s*recovery_reopen_attempt_total\s*\{'
@@ -531,7 +549,7 @@ def _scan_rule_entries(yaml_text: str) -> list[_RuleEntry]:
             for index in range(start, end)
             if _is_sequence_item(lines[index], sequence_indent)
         ]
-        for entry_start, entry_end in zip(starts, [*starts[1:], end]):
+        for entry_start, entry_end in zip(starts, [*starts[1:], end], strict=True):
             key, name = _parse_rule_entry_header(lines[entry_start])
             entries.append(
                 _RuleEntry(
@@ -746,7 +764,10 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
             if dotted_metric_issue:
                 findings.append(Finding(path=path, message=dotted_metric_issue))
 
-            if entry.name == "RecoveryParticipantConvergenceMetricsAbsent" and not PARTICIPANT_COVERAGE_ALERT_EXPR.search(expr):
+            if (
+                entry.name == "RecoveryParticipantConvergenceMetricsAbsent"
+                and _compact_promql(expr) != PARTICIPANT_COVERAGE_ALERT_EXPR
+            ):
                 findings.append(
                     Finding(
                         path=path,
@@ -882,7 +903,10 @@ def _validate_doc_semantics() -> list[Finding]:
                         findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighTcpProxy must use labels.service=tcp-proxy-service"))
                     if 'command_end_to_end_latency_ms_bucket{service="tcp-proxy-service"' not in compact_expr:
                         findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighTcpProxy must scope expr to service=\"tcp-proxy-service\""))
-                if alert_name == "RecoveryParticipantConvergenceMetricsAbsent" and not PARTICIPANT_COVERAGE_ALERT_EXPR.search(expr):
+                if (
+                    alert_name == "RecoveryParticipantConvergenceMetricsAbsent"
+                    and _compact_promql(expr) != PARTICIPANT_COVERAGE_ALERT_EXPR
+                ):
                     findings.append(
                         Finding(
                             path=core_alerts,
@@ -1029,7 +1053,10 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
         if dotted_metric_issue:
             findings.append(Finding(path=path, message=f"{alert_name}: {dotted_metric_issue}"))
 
-        if alert_name == "RecoveryParticipantConvergenceMetricsAbsent" and not PARTICIPANT_COVERAGE_ALERT_EXPR.search(expr):
+        if (
+            alert_name == "RecoveryParticipantConvergenceMetricsAbsent"
+            and _compact_promql(expr) != PARTICIPANT_COVERAGE_ALERT_EXPR
+        ):
             findings.append(
                 Finding(
                     path=path,
@@ -1225,13 +1252,14 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
         )
 
     participant_coverage_expr = recordings.get("recovery_participant_convergence_coverage_missing") or ""
-    if not PARTICIPANT_COVERAGE_EXPR.search(participant_coverage_expr):
+    if _compact_promql(participant_coverage_expr) != PARTICIPANT_COVERAGE_EXPR:
         findings.append(
             Finding(
                 path=path,
                 message=(
                     "participant coverage recording must compare authoritative required-participant inventory "
-                    "with current participant-state coverage and fail closed when inventory is absent"
+                    "with current participant-state coverage and fail closed when inventory or its "
+                    "atomic-completeness marker is absent"
                 ),
             )
         )
