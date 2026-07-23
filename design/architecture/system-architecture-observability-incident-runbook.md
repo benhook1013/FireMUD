@@ -94,8 +94,9 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 - Use the fallback recording-rule approach documented in `design/architecture/system-architecture-logging-monitoring.md` only for a small, explicitly supported set of critical conditions.
 - During fallback, explicitly check all supported player SLO conditions (login success ratio, command p99 latency, entry-path availability, and chat delivery latency) so edge and chat incidents are not hidden when Alertmanager is unavailable.
-- Also check the installed backup fallback conditions (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_pipeline_recent_restore_drill_slo_breached`, `backup_artifact_lineage_invalid`, `backup_artifact_restore_unreadable`, and `recovery_participant_convergence_blocked`). Treat the cumulative `recovery_participant_convergence_total` counter as historical evidence only; use the current participant-state recording to determine whether a blocker remains active.
-- If `RecoveryParticipantConvergenceMetricsAbsent` is active, recovery participant observability is unavailable. Do not infer convergence or readiness from the absence alert; keep the recovery quarantined and use the durable recovery controller and retained evidence records.
+- Also check the installed backup fallback conditions (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_pipeline_recent_restore_drill_slo_breached`, `backup_artifact_lineage_invalid`, `backup_artifact_restore_unreadable`, `recovery_participant_convergence_blocked`, and `recovery_participant_convergence_coverage_missing`). Treat the cumulative `recovery_participant_convergence_total` counter as historical evidence only; use the current participant-state and coverage recordings to determine whether a blocker remains active.
+- Explicitly check all six backup/recovery metrics-absence alerts: `BackupLastSuccessMetricsAbsent`, `BackupVerificationLastSuccessMetricsAbsent`, `BackupRestoreDrillLastSuccessMetricsAbsent`, `BackupArtifactLineageMetricsAbsent`, `BackupArtifactRestoreReadabilityMetricsAbsent`, and `RecoveryParticipantConvergenceMetricsAbsent`. Treat any active one as readiness-blocking; do not infer backup or recovery readiness while a required source or participant coverage signal is missing.
+- `RecoveryParticipantConvergenceMetricsAbsent` is driven by `recovery_participant_convergence_coverage_missing{environment,participant}`. That recording compares current participant-state coverage against authoritative `recovery_required_participant_inventory{environment,participant}` and fails closed when the inventory is unavailable. Keep recovery quarantined until coverage is restored and the durable recovery controller proves readiness.
 - If Logging & Admin consumes Alertmanager notifications, ensure the UI clearly shows “Alertmanager unavailable” and does not present fallback conditions as canonical alerts.
 
 ### Alertmanager recovery and verification
@@ -147,7 +148,8 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
   - entry-path availability (`entrypath_availability_gateway_5m`, `entrypath_availability_tcpproxy_5m`, plus `entrypath_availability_gateway_1d` / `entrypath_availability_tcpproxy_1d` for compliance context),
   - entry-path blackbox reachability (`entrypath_blackbox_probe_success{path=...}` or the environment-equivalent external probe metric) so total edge failures that never reached Gateway/TCP Proxy are still visible,
   - chat latency (`chat_delivery_latency_ms_p99_5m`),
-  - backup fallback conditions (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_pipeline_recent_restore_drill_slo_breached`, `backup_artifact_lineage_invalid`, `backup_artifact_restore_unreadable`, `recovery_participant_convergence_blocked`),
+  - backup fallback conditions (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_pipeline_recent_restore_drill_slo_breached`, `backup_artifact_lineage_invalid`, `backup_artifact_restore_unreadable`, `recovery_participant_convergence_blocked`, `recovery_participant_convergence_coverage_missing`),
+  - all six backup/recovery metrics-absence alerts (`BackupLastSuccessMetricsAbsent`, `BackupVerificationLastSuccessMetricsAbsent`, `BackupRestoreDrillLastSuccessMetricsAbsent`, `BackupArtifactLineageMetricsAbsent`, `BackupArtifactRestoreReadabilityMetricsAbsent`, `RecoveryParticipantConvergenceMetricsAbsent`); any active alert blocks readiness,
   - tick safety ratio (`tick_execution_safety_ratio_p99`),
   - coordination tail-loss (`redis_coordination_tail_loss_ms`, `redis_coordination_tail_loss_budget_ms`, and `redis_coordination_tail_loss_slo_breached`).
 - Prefer recorded rules where available so operators do not hand-craft complex PromQL during an incident.
@@ -207,6 +209,7 @@ Recording rules:
 - `backup_artifact_lineage_invalid`
 - `backup_artifact_restore_unreadable`
 - `recovery_participant_convergence_blocked`
+- `recovery_participant_convergence_coverage_missing`
 - `tick_effects_pending_oldest_age_seconds`
 - `tick_effects_replay_convergence_budget_seconds`
 - `tick_effects_replay_slo_breached`

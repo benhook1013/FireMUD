@@ -30,6 +30,7 @@ REQUIRED_BACKUP_RECORDINGS = {
     "backup_artifact_restore_unreadable",
     "recovery_participant_convergence_blocked",
     "recovery_environment_convergence_blocked",
+    "recovery_participant_convergence_coverage_missing",
 }
 CURRENT_BLOCKED_CONVERGENCE_EXPR = re.compile(
     r'recovery_participant_convergence_state\s*\{\s*state\s*=\s*["\']blocked["\']\s*\}'
@@ -40,8 +41,17 @@ REQUIRED_ABSENT_ALERT_METRICS = {
     "BackupRestoreDrillLastSuccessMetricsAbsent": "backup_restore_drill_last_success_timestamp_seconds",
     "BackupArtifactLineageMetricsAbsent": "backup_artifact_lineage_valid",
     "BackupArtifactRestoreReadabilityMetricsAbsent": "backup_artifact_restore_readable",
-    "RecoveryParticipantConvergenceMetricsAbsent": "recovery_participant_convergence_state",
 }
+PARTICIPANT_COVERAGE_EXPR = re.compile(
+    r"recovery_required_participant_inventory\s*==\s*1"
+    r"[\s\S]*unless\s+on\s*\(\s*environment\s*,\s*participant\s*\)"
+    r"[\s\S]*count\s+by\s*\(\s*environment\s*,\s*participant\s*\)"
+    r"[\s\S]*recovery_participant_convergence_state"
+    r"[\s\S]*or\s+absent\s*\(\s*recovery_required_participant_inventory\s*\)"
+)
+PARTICIPANT_COVERAGE_ALERT_EXPR = re.compile(
+    r"recovery_participant_convergence_coverage_missing\s*>\s*0"
+)
 BLOCKED_REOPEN_ATTEMPT_EXPR = re.compile(
     r'increase\s*\(\s*recovery_reopen_attempt_total\s*\{'
     r'(?=[^}]*result\s*=\s*["\']blocked["\'])'
@@ -736,6 +746,17 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
             if dotted_metric_issue:
                 findings.append(Finding(path=path, message=dotted_metric_issue))
 
+            if entry.name == "RecoveryParticipantConvergenceMetricsAbsent" and not PARTICIPANT_COVERAGE_ALERT_EXPR.search(expr):
+                findings.append(
+                    Finding(
+                        path=path,
+                        message=(
+                            "RecoveryParticipantConvergenceMetricsAbsent must use "
+                            "recovery_participant_convergence_coverage_missing > 0"
+                        ),
+                    )
+                )
+
     return findings
 
 
@@ -861,6 +882,16 @@ def _validate_doc_semantics() -> list[Finding]:
                         findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighTcpProxy must use labels.service=tcp-proxy-service"))
                     if 'command_end_to_end_latency_ms_bucket{service="tcp-proxy-service"' not in compact_expr:
                         findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighTcpProxy must scope expr to service=\"tcp-proxy-service\""))
+                if alert_name == "RecoveryParticipantConvergenceMetricsAbsent" and not PARTICIPANT_COVERAGE_ALERT_EXPR.search(expr):
+                    findings.append(
+                        Finding(
+                            path=core_alerts,
+                            message=(
+                                "RecoveryParticipantConvergenceMetricsAbsent must use "
+                                "recovery_participant_convergence_coverage_missing > 0"
+                            ),
+                        )
+                    )
 
     player_runbook = REPO_ROOT / "design" / "architecture" / "system-architecture-player-experience-incident-runbook.md"
     player_runbook_text = _read_text(player_runbook)
@@ -997,6 +1028,17 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
         dotted_metric_issue = _check_dotted_metric_tokens(expr)
         if dotted_metric_issue:
             findings.append(Finding(path=path, message=f"{alert_name}: {dotted_metric_issue}"))
+
+        if alert_name == "RecoveryParticipantConvergenceMetricsAbsent" and not PARTICIPANT_COVERAGE_ALERT_EXPR.search(expr):
+            findings.append(
+                Finding(
+                    path=path,
+                    message=(
+                        "RecoveryParticipantConvergenceMetricsAbsent must use "
+                        "recovery_participant_convergence_coverage_missing > 0"
+                    ),
+                )
+            )
 
         if alert_name.startswith("Redis") and labels.get("owner") != "infra":
             findings.append(Finding(path=path, message=f"{alert_name} must use owner=infra for Redis/coordination incidents"))
@@ -1179,6 +1221,18 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
             Finding(
                 path=path,
                 message="blocked convergence recording must not use the cumulative convergence counter",
+            )
+        )
+
+    participant_coverage_expr = recordings.get("recovery_participant_convergence_coverage_missing") or ""
+    if not PARTICIPANT_COVERAGE_EXPR.search(participant_coverage_expr):
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "participant coverage recording must compare authoritative required-participant inventory "
+                    "with current participant-state coverage and fail closed when inventory is absent"
+                ),
             )
         )
 

@@ -543,6 +543,55 @@ require_message(
     "environment blocked-convergence recording must aggregate recovery_participant_convergence_blocked with max by (environment)",
 )
 
+coverage_record = """        - record: recovery_participant_convergence_coverage_missing
+          expr: |
+            (
+              recovery_required_participant_inventory == 1
+              unless on (environment, participant)
+              (
+                count by (environment, participant) (
+                  recovery_participant_convergence_state
+                ) > 0
+              )
+            )
+            or
+            absent(recovery_required_participant_inventory)"""
+if coverage_record not in valid_text:
+    raise AssertionError("canonical participant coverage recording was not found")
+if validator._validate_reference_prometheus_recordings(rules_path):
+    raise AssertionError("canonical participant coverage recording was rejected")
+
+invalid_coverage = valid_text.replace(
+    coverage_record,
+    """        - record: recovery_participant_convergence_coverage_missing
+          expr: absent(recovery_participant_convergence_state)""",
+    1,
+)
+require_message(
+    findings_for(invalid_coverage, validator._validate_reference_prometheus_recordings),
+    "participant coverage recording must compare authoritative required-participant inventory with current participant-state coverage and fail closed when inventory is absent",
+)
+
+family_only_alert = valid_text.replace(
+    "expr: recovery_participant_convergence_coverage_missing > 0",
+    "expr: absent(recovery_participant_convergence_state)",
+    1,
+)
+require_message(
+    findings_for(family_only_alert, validator._validate_reference_prometheus_rules),
+    "RecoveryParticipantConvergenceMetricsAbsent must use recovery_participant_convergence_coverage_missing > 0",
+)
+
+invalid_snippet_coverage = valid_snippet.replace(
+    "expr: recovery_participant_convergence_coverage_missing > 0",
+    "expr: absent(recovery_participant_convergence_state)",
+    1,
+)
+require_message(
+    findings_for(invalid_snippet_coverage, validator._validate_alert_snippet),
+    "RecoveryParticipantConvergenceMetricsAbsent must use recovery_participant_convergence_coverage_missing > 0",
+)
+
 lineage_rule = """        - record: backup_artifact_lineage_invalid
           expr: |
             1 - backup_artifact_lineage_valid"""

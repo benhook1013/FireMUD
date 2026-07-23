@@ -217,35 +217,41 @@ jobs:
           egress-policy: audit
 
       - name: Verify ORT results
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          RUN_GRADLE_ORT: ${{ needs.changes.outputs.run_gradle_ort }}
+          GRADLE_ORT_RESULT: ${{ needs['ort-gradle'].result }}
+          RUN_NPM_ORT: ${{ needs.changes.outputs.run_npm_ort }}
+          NPM_ORT_RESULT: ${{ needs['ort-npm'].result }}
         run: |
-          if [ "${{ needs.changes.result }}" != "success" ]; then
-            echo "License change detection did not complete successfully: ${{ needs.changes.result }}" >&2
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "License change detection did not complete successfully: $CHANGES_RESULT" >&2
             exit 1
           fi
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            if [ "${{ needs.changes.outputs.run_gradle_ort }}" != "true" ] && [ "${{ needs.changes.outputs.run_gradle_ort }}" != "false" ]; then
-              echo "License change detection returned an invalid Gradle result: ${{ needs.changes.outputs.run_gradle_ort }}" >&2
+            if [ "$RUN_GRADLE_ORT" != "true" ] && [ "$RUN_GRADLE_ORT" != "false" ]; then
+              echo "License change detection returned an invalid Gradle result: $RUN_GRADLE_ORT" >&2
               exit 1
             fi
-            if [ "${{ needs.changes.outputs.run_npm_ort }}" != "true" ] && [ "${{ needs.changes.outputs.run_npm_ort }}" != "false" ]; then
-              echo "License change detection returned an invalid NPM result: ${{ needs.changes.outputs.run_npm_ort }}" >&2
+            if [ "$RUN_NPM_ORT" != "true" ] && [ "$RUN_NPM_ORT" != "false" ]; then
+              echo "License change detection returned an invalid NPM result: $RUN_NPM_ORT" >&2
               exit 1
             fi
-            if [ "${{ needs.changes.outputs.run_gradle_ort }}" = "true" ] && [ "${{ needs.ort-gradle.result }}" != "success" ]; then
-              echo "Gradle ORT did not succeed: ${{ needs.ort-gradle.result }}" >&2
+            if [ "$RUN_GRADLE_ORT" = "true" ] && [ "$GRADLE_ORT_RESULT" != "success" ]; then
+              echo "Gradle ORT did not succeed: $GRADLE_ORT_RESULT" >&2
               exit 1
             fi
-            if [ "${{ needs.changes.outputs.run_npm_ort }}" = "true" ] && [ "${{ needs.ort-npm.result }}" != "success" ]; then
-              echo "NPM ORT did not succeed: ${{ needs.ort-npm.result }}" >&2
+            if [ "$RUN_NPM_ORT" = "true" ] && [ "$NPM_ORT_RESULT" != "success" ]; then
+              echo "NPM ORT did not succeed: $NPM_ORT_RESULT" >&2
               exit 1
             fi
           else
-            if [ "${{ needs.ort-gradle.result }}" != "success" ]; then
-              echo "Gradle ORT did not succeed: ${{ needs.ort-gradle.result }}" >&2
+            if [ "$GRADLE_ORT_RESULT" != "success" ]; then
+              echo "Gradle ORT did not succeed: $GRADLE_ORT_RESULT" >&2
               exit 1
             fi
-            if [ "${{ needs.ort-npm.result }}" != "success" ]; then
-              echo "NPM ORT did not succeed: ${{ needs.ort-npm.result }}" >&2
+            if [ "$NPM_ORT_RESULT" != "success" ]; then
+              echo "NPM ORT did not succeed: $NPM_ORT_RESULT" >&2
               exit 1
             fi
           fi

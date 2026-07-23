@@ -12,9 +12,9 @@ These paths define the canonical target-state evidence locations, but current en
 - `production/release-manifests/<release-tag-or-deployment-ref>.json`: release digest manifests binding official release tags or deployment refs to the promoted digest set.
 - `production/recovery/<recovery-ref>.json`: production post-restore recovery evidence including external credential validation results.
 - `production/backup-readiness/<deployment-ref>.json`: full production recovery evidence for `roll-forward-only` promotions and releases whose compatibility result requires a new drill.
-- `production/traffic-open/<event>-<deployment-ref>.json`: post-finalization production first-live/reopen projection bound to the canonical preflight report, the production backup binding, an `environment-wide-postgresql` artifact, and finalized `cold_start_restore` recovery-controller lineage. Tenant/region scope and standalone restore-drill timestamps are not traffic-open authority.
+- `production/traffic-open/<event>-<deployment-ref>-<deployment-event-id>.json`: post-finalization production first-live/reopen projection bound to the canonical preflight event, the production backup binding, an `environment-wide-postgresql` artifact, and finalized `cold_start_restore` recovery-controller lineage. Tenant/region scope and standalone restore-drill timestamps are not traffic-open authority.
 - `<environment>/preflight/<deployment-ref>/<deploymentEventId>.json`: immutable preflight policy reports for one concrete run/apply event.
 - `<environment>/preflight/<deployment-ref>/<deploymentEventId>.waiver.json`: target-state break-glass waiver records bound to the report's deployment event UUID; not currently executable.
 - `hobby-self-hosted/deployments/<deployment-ref>/<deploymentEventId>.json`: immutable hobby deploy evidence records.
-- `hobby-self-hosted/traffic-open/<deployment-ref>.json`: hobby traffic-open evidence bound to the canonical hobby preflight report and backup-compliance record.
+- `hobby-self-hosted/traffic-open/<deployment-ref>/<deployment-event-id>.json`: hobby traffic-open evidence bound to the canonical hobby preflight event and backup-compliance record.
 - `hobby-self-hosted/recovery/<recovery-ref>.json`: hobby restore-hardening evidence records.

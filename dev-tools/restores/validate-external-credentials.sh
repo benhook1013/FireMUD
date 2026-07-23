@@ -104,7 +104,7 @@ if data.get("environment") != environment:
 if not data.get("recoveryRef"):
     print("External credential evidence missing recoveryRef.", file=sys.stderr)
     raise SystemExit(1)
-for key in ["certificateReissuanceEvidence", "jwtRestoreHardeningEvidence", "databaseCredentialRotationEvidence"]:
+for key in ["certificateReissuance", "jwtHardening", "databaseCredentialRotation"]:
     if not data.get(key):
         print(f"External credential evidence missing {key}.", file=sys.stderr)
         raise SystemExit(1)

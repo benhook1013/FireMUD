@@ -62,5 +62,5 @@ Required evidence record:
 
 - `design/operations/deployments/hobby-self-hosted/backup-compliance.yaml` must be updated after backup cadence changes, successful restore drills, or retention-policy changes.
 - Player-traffic reopen after a hobby restore requires this record to show baseline compliance (`>=1` backup/24h, `>=7` retained daily restore points, `>=1` restore drill/30d).
-- First-live and post-restore reopen events must also record `design/operations/deployments/hobby-self-hosted/traffic-open/<deployment-ref>.json` and pass the hobby traffic-open preflight gate before player traffic opens.
+- First-live and post-restore reopen events must also record `design/operations/deployments/hobby-self-hosted/traffic-open/<deployment-ref>/<deployment-event-id>.json` and pass the hobby traffic-open preflight gate before player traffic opens.
 - Post-restore reopen events must also have the durable recovery controller apply and observe quarantine release, advance to `finalized`, and only then reopen player traffic; the canonical checked-in recovery projection at `design/operations/deployments/hobby-self-hosted/recovery/<recovery-ref>.json` is exported afterward.

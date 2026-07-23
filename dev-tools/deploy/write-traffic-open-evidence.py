@@ -93,7 +93,12 @@ def validate_preflight_report(
         fail("Preflight report used to create traffic-open evidence must be the general pre-apply report")
 
 
-def hobby_record(args: argparse.Namespace, root_dir: Path, preflight_ref: str) -> dict[str, Any]:
+def hobby_record(
+    args: argparse.Namespace,
+    root_dir: Path,
+    preflight_ref: str,
+    deployment_event_id: str,
+) -> dict[str, Any]:
     compliance_path = resolve_path(root_dir, args.backup_compliance_ref)
     if not compliance_path.exists():
         fail(f"Hobby backup-compliance record not found: {args.backup_compliance_ref}")
@@ -102,6 +107,7 @@ def hobby_record(args: argparse.Namespace, root_dir: Path, preflight_ref: str) -
         "environment": "hobby-self-hosted",
         "eventType": args.event_type,
         "deploymentRef": args.deployment_ref,
+        "deploymentEventId": deployment_event_id,
         "assessedAt": utc_now(),
         "assessedBy": args.assessed_by,
         "backupComplianceRef": normalize_repo_ref(root_dir, compliance_path),
@@ -110,13 +116,16 @@ def hobby_record(args: argparse.Namespace, root_dir: Path, preflight_ref: str) -
     }
 
 
-def default_output(root_dir: Path, args: argparse.Namespace) -> Path:
+def default_output(
+    root_dir: Path, args: argparse.Namespace, deployment_event_id: str
+) -> Path:
     if args.output:
         return resolve_path(root_dir, args.output)
     return (
         root_dir
         / "design/operations/deployments/hobby-self-hosted/traffic-open"
-        / f"{args.deployment_ref}.json"
+        / args.deployment_ref
+        / f"{deployment_event_id}.json"
     )
 
 
@@ -135,8 +144,9 @@ def main() -> None:
     if not args.evidence_ref:
         fail("At least one --evidence-ref is required")
 
-    record = hobby_record(args, root_dir, preflight_ref)
-    output_path = default_output(root_dir, args)
+    deployment_event_id = str(preflight_report["deploymentEventId"])
+    record = hobby_record(args, root_dir, preflight_ref, deployment_event_id)
+    output_path = default_output(root_dir, args, deployment_event_id)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     print(normalize_repo_ref(root_dir, output_path))

@@ -60,6 +60,19 @@ spec:
         - record: recovery_environment_convergence_blocked
           expr: |
             max by (environment) (recovery_participant_convergence_blocked)
+        - record: recovery_participant_convergence_coverage_missing
+          expr: |
+            (
+              recovery_required_participant_inventory == 1
+              unless on (environment, participant)
+              (
+                count by (environment, participant) (
+                  recovery_participant_convergence_state
+                ) > 0
+              )
+            )
+            or
+            absent(recovery_required_participant_inventory)
 
     - name: firemud.recording.player_experience
       rules:
@@ -379,7 +392,7 @@ spec:
             summary: Recovery participant convergence is blocked
             description: One or more environment recovery participants have not reached a safe disposition. Keep the recovery quarantined and resolve the participant-specific blocker before reopening traffic.
         - alert: RecoveryParticipantConvergenceMetricsAbsent
-          expr: absent(recovery_participant_convergence_state)
+          expr: recovery_participant_convergence_coverage_missing > 0
           for: 5m
           labels:
             service: postgres-backup
@@ -388,7 +401,7 @@ spec:
             runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
           annotations:
             summary: Recovery participant convergence metrics are absent
-            description: No recovery_participant_convergence_state series are present. This is an observability failure, not evidence that recovery participants are converged or blocked; keep recovery-readiness decisions blocked until a reliable emitter and current state are proven.
+            description: At least one required participant in the authoritative recovery inventory has no current convergence-state series, or the inventory itself is unavailable. Keep recovery-readiness decisions blocked.
         - alert: RecoveryReopenAttemptBlocked
           expr: increase(recovery_reopen_attempt_total{result="blocked",reason="incomplete_convergence"}[5m]) > 0
           for: 0m

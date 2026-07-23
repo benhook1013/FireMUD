@@ -185,16 +185,20 @@ jobs:
           egress-policy: audit
 
       - name: Enforce successful CodeQL analysis
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SHOULD_RUN: ${{ needs.changes.outputs.should_run }}
+          ANALYZE_RESULT: ${{ needs.analyze.result }}
         run: |
-          if [ "${{ needs.changes.result }}" != "success" ]; then
-            echo "CodeQL change detection did not complete successfully: ${{ needs.changes.result }}" >&2
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "CodeQL change detection did not complete successfully: $CHANGES_RESULT" >&2
             exit 1
           fi
-          if [ "${{ needs.changes.outputs.should_run }}" = "true" ] && [ "${{ needs.analyze.result }}" != "success" ]; then
-            echo "Required CodeQL analysis did not complete successfully: ${{ needs.analyze.result }}" >&2
+          if [ "$SHOULD_RUN" = "true" ] && [ "$ANALYZE_RESULT" != "success" ]; then
+            echo "Required CodeQL analysis did not complete successfully: $ANALYZE_RESULT" >&2
             exit 1
           fi
-          if [ "${{ needs.changes.outputs.should_run }}" != "true" ] && [ "${{ needs.changes.outputs.should_run }}" != "false" ]; then
-            echo "CodeQL change detection returned an invalid should_run value: ${{ needs.changes.outputs.should_run }}" >&2
+          if [ "$SHOULD_RUN" != "true" ] && [ "$SHOULD_RUN" != "false" ]; then
+            echo "CodeQL change detection returned an invalid should_run value: $SHOULD_RUN" >&2
             exit 1
           fi

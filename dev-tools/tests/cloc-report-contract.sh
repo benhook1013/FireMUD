@@ -2,14 +2,13 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SCRIPT_SOURCE="$ROOT_DIR/dev-tools/maintenance/cloc-report.sh"
+SCRIPT_SOURCE="$ROOT_DIR/dev-tools/maintenance/cloc-report.py"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 TEST_REPO="$TMP_DIR/repo"
 mkdir -p "$TEST_REPO/dev-tools/maintenance"
-cp "$SCRIPT_SOURCE" "$TEST_REPO/dev-tools/maintenance/cloc-report.sh"
-chmod +x "$TEST_REPO/dev-tools/maintenance/cloc-report.sh"
+cp "$SCRIPT_SOURCE" "$TEST_REPO/dev-tools/maintenance/cloc-report.py"
 
 cd "$TEST_REPO"
 git init -q
@@ -175,8 +174,7 @@ git commit -q -m "Delete fixture test file"
 
 MINIMAL_REPO="$TMP_DIR/minimal"
 mkdir -p "$MINIMAL_REPO/dev-tools/maintenance"
-cp "$SCRIPT_SOURCE" "$MINIMAL_REPO/dev-tools/maintenance/cloc-report.sh"
-chmod +x "$MINIMAL_REPO/dev-tools/maintenance/cloc-report.sh"
+cp "$SCRIPT_SOURCE" "$MINIMAL_REPO/dev-tools/maintenance/cloc-report.py"
 
 (
   cd "$MINIMAL_REPO"
@@ -187,7 +185,7 @@ chmod +x "$MINIMAL_REPO/dev-tools/maintenance/cloc-report.sh"
 # Minimal Repo
 Only markdown here.
 EOF
-  # Track the copied cloc wrapper so prod scope still has one file in the minimal fixture repo.
+  # Track the copied cloc tool so prod scope still has one file in the minimal fixture repo.
   git add .
   git commit -q -m "Initial minimal fixture"
 )
@@ -196,96 +194,156 @@ python3 - <<'PY'
 import json
 import subprocess
 from pathlib import Path
-import tempfile
-import shutil
 
 repo = Path.cwd()
-script = ["bash", "dev-tools/maintenance/cloc-report.sh"]
+script = ["python3", "dev-tools/maintenance/cloc-report.py"]
 minimal_repo = repo.parent / "minimal"
 
 
-def run_json(*args: str) -> dict:
-    out = subprocess.check_output([*script, *args], cwd=repo, stderr=subprocess.DEVNULL, text=True)
-    return json.loads(out)
+def run_json(*args: str, cwd: Path = repo) -> dict:
+    output = subprocess.check_output(
+        [*script, *args], cwd=cwd, stderr=subprocess.DEVNULL, text=True
+    )
+    return json.loads(output)
 
 
-def run_json_in(path: Path, *args: str) -> dict:
-    out = subprocess.check_output([*script, *args], cwd=path, stderr=subprocess.DEVNULL, text=True)
-    return json.loads(out)
+def nodes_by_name(summary: dict) -> dict[str, dict]:
+    nodes = {}
+
+    def visit(node: dict) -> None:
+        nodes[node["name"]] = node
+        for child in node["children"]:
+            visit(child)
+
+    visit(summary["root"])
+    return nodes
 
 
-source = run_json("source", "--json")
-prod = run_json("prod", "--json")
-tests = run_json("tests", "--json")
+source = run_json("scope", "source", "--json")
+prod = run_json("scope", "prod", "--json")
+tests = run_json("scope", "tests", "--json")
+design = run_json("scope", "design", "--json")
+architecture = run_json("scope", "architecture", "--json")
+service_docs = run_json("scope", "service-docs", "--json")
 summary = run_json("summary", "--json")
-by_module = run_json("by-module", "--json")
-design = run_json("design", "--json")
-architecture = run_json("architecture", "--json")
-service_local_docs = run_json("service-local-docs", "--json")
-service_local_docs_alias = run_json("service-docs", "--json")
+modules = run_json("modules", "--json")
 diff_summary = run_json("diff", "HEAD~2...HEAD~1", "--json")
-diff_by_module = run_json("diff", "HEAD~2...HEAD~1", "--by-module", "--json")
+diff_modules = run_json("diff", "HEAD~2...HEAD~1", "--modules", "--json")
 
-minimal_tests = run_json_in(minimal_repo, "tests", "--json")
-minimal_service_local_docs = run_json_in(minimal_repo, "service-local-docs", "--json")
-minimal_prod = run_json_in(minimal_repo, "prod", "--json")
+minimal_tests = run_json("scope", "tests", "--json", cwd=minimal_repo)
+minimal_service_docs = run_json("scope", "service-docs", "--json", cwd=minimal_repo)
+minimal_prod = run_json("scope", "prod", "--json", cwd=minimal_repo)
 
-source_sum = source["SUM"]
-prod_sum = prod["SUM"]
-tests_sum = tests["SUM"]
+summary_table = subprocess.check_output(script, cwd=repo, stderr=subprocess.DEVNULL, text=True)
+custom_bar_table = subprocess.check_output(
+    [*script, "summary", "--bar-width", "8"],
+    cwd=repo,
+    stderr=subprocess.DEVNULL,
+    text=True,
+)
 
-assert source_sum["nFiles"] == prod_sum["nFiles"] + tests_sum["nFiles"], (source_sum, prod_sum, tests_sum)
-assert source_sum["code"] == prod_sum["code"] + tests_sum["code"], (source_sum, prod_sum, tests_sum)
+source_total = source["totals"]
+prod_total = prod["totals"]
+test_total = tests["totals"]
+assert source_total["files"] == prod_total["files"] + test_total["files"]
+assert source_total["lines"] == prod_total["lines"] + test_total["lines"]
 
-summary_scopes = {row["scope"]: row for row in summary["scopes"]}
-assert summary_scopes["source"]["files"] == source_sum["nFiles"]
-assert summary_scopes["source"]["code"] == source_sum["code"]
-assert summary_scopes["prod"]["files"] == prod_sum["nFiles"]
-assert summary_scopes["prod"]["code"] == prod_sum["code"]
-assert summary_scopes["tests"]["files"] == tests_sum["nFiles"]
-assert summary_scopes["tests"]["code"] == tests_sum["code"]
-assert summary_scopes["service_local_docs"]["files"] == 4
-assert summary_scopes["service_local_docs"]["code"] > 0
+summary_nodes = nodes_by_name(summary)
+assert set(summary_nodes) == {
+    "repo",
+    "source",
+    "prod",
+    "tests",
+    "markdown",
+    "design",
+    "architecture",
+    "project_management",
+    "observability",
+    "operations",
+    "other_design",
+}
+assert summary_nodes["source"]["files"] == source_total["files"]
+assert summary_nodes["source"]["lines"] == source_total["lines"]
+assert summary_nodes["prod"]["files"] == prod_total["files"]
+assert summary_nodes["prod"]["lines"] == prod_total["lines"]
+assert summary_nodes["tests"]["files"] == test_total["files"]
+assert summary_nodes["tests"]["lines"] == test_total["lines"]
 
-assert design["SUM"]["nFiles"] >= architecture["SUM"]["nFiles"]
-assert design["SUM"]["code"] >= architecture["SUM"]["code"]
-assert service_local_docs["SUM"]["nFiles"] == 4
-assert service_local_docs["SUM"] == service_local_docs_alias["SUM"]
+design_children = summary_nodes["design"]["children"]
+assert sum(row["files"] for row in design_children) == summary_nodes["design"]["files"]
+assert sum(row["lines"] for row in design_children) == summary_nodes["design"]["lines"]
+assert summary_nodes["architecture"]["files"] == architecture["totals"]["files"]
+assert summary_nodes["architecture"]["lines"] == architecture["totals"]["lines"]
+assert summary_nodes["design"]["files"] == design["totals"]["files"]
+assert summary_nodes["design"]["lines"] == design["totals"]["lines"]
+assert summary_nodes["markdown"]["overlaps"] == ["source"]
 
-assert minimal_tests["SUM"]["nFiles"] == 0
-assert minimal_tests["SUM"]["code"] == 0
-assert minimal_service_local_docs["SUM"]["nFiles"] == 0
-assert minimal_service_local_docs["SUM"]["code"] == 0
-assert minimal_prod["SUM"]["nFiles"] > 0
+assert "scope / relationship" in summary_table
+assert "files  lines  share of parent (lines)" in summary_table.splitlines()[0]
+assert "|-- source (= prod + tests)" in summary_table
+assert "|   |-- prod" in summary_table
+assert "|   `-- tests" in summary_table
+assert "`-- markdown (overlaps source)" in summary_table
+assert "    `-- design (= sections below)" in summary_table
+assert "        |-- architecture" in summary_table
+assert "        |-- project management" in summary_table
+assert "        |-- observability" in summary_table
+assert "        |-- operations" in summary_table
+assert "        `-- other design" in summary_table
+assert "service-docs" not in summary_table
+assert "[################] 100.0%" in summary_table
+assert "[########] 100.0%" in custom_bar_table
+source_share = 100.0 * summary_nodes["source"]["lines"] / summary_nodes["repo"]["lines"]
+architecture_share = (
+    100.0 * summary_nodes["architecture"]["lines"] / summary_nodes["design"]["lines"]
+)
+assert f"{source_share:5.1f}%" in next(
+    line for line in summary_table.splitlines() if "source (= prod + tests)" in line
+)
+assert f"{architecture_share:5.1f}%" in next(
+    line for line in summary_table.splitlines() if "|-- architecture" in line
+)
+assert "Additive branches: source = prod + tests; design = its listed sections" in summary_table
+assert "Bars compare each row's lines with its immediate parent" in summary_table
+assert "Lines exclude blank and comment-only lines" in summary_table
 
-debug_output = subprocess.check_output([*script, "debug"], cwd=repo, stderr=subprocess.DEVNULL, text=True)
-assert "tests\tdev_tools_contract_tests\tdev-tools/tests/contract.sh" in debug_output
-assert "tests\tdev_tools_validation_test\tdev-tools/validation/test_helper.py" in debug_output
-assert "tests\tgradle_src_test\tservices/foo/src/test/java/example/DuplicateFootprint.java" in debug_output
-assert "prod\tsource_root:services\tservices/foo/bin/Generated.java" in debug_output
+assert service_docs["totals"]["files"] == 4
+assert minimal_tests["totals"]["files"] == 0
+assert minimal_tests["totals"]["lines"] == 0
+assert minimal_service_docs["totals"]["files"] == 0
+assert minimal_service_docs["totals"]["lines"] == 0
+assert minimal_prod["totals"]["files"] > 0
 
-module_summary = by_module["summary"]
-assert module_summary["total_files"] == source_sum["nFiles"]
-assert module_summary["total_code"] == source_sum["code"]
-assert module_summary["prod_files"] == prod_sum["nFiles"]
-assert module_summary["prod_code"] == prod_sum["code"]
-assert module_summary["tests_files"] == tests_sum["nFiles"]
-assert module_summary["tests_code"] == tests_sum["code"]
+classification = subprocess.check_output(
+    [*script, "classify"], cwd=repo, stderr=subprocess.DEVNULL, text=True
+)
+assert "tests\tdev_tools_contract_tests\tdev-tools/tests/contract.sh" in classification
+assert "tests\tdev_tools_validation_test\tdev-tools/validation/test_helper.py" in classification
+assert "tests\tgradle_src_test\tservices/foo/src/test/java/example/DuplicateFootprint.java" in classification
+assert "prod\tsource_root:services\tservices/foo/bin/Generated.java" in classification
 
-module_rows = {row["module"]: row for row in by_module["modules"]}
-assert module_rows["services/foo"]["tests_files"] > 0
-assert module_rows["dev-tools"]["tests_files"] > 0
+module_total = modules["total"]
+assert module_total["files"] == source_total["files"]
+assert module_total["lines"] == source_total["lines"]
+assert module_total["prod_files"] == prod_total["files"]
+assert module_total["prod_lines"] == prod_total["lines"]
+assert module_total["test_files"] == test_total["files"]
+assert module_total["test_lines"] == test_total["lines"]
+
+module_rows = {row["module"]: row for row in modules["modules"]}
+assert module_rows["services/foo"]["test_files"] > 0
+assert module_rows["dev-tools"]["test_files"] > 0
 assert module_rows["repo-root"]["prod_files"] > 0
 
-diff_scopes = {row["scope"]: row for row in diff_summary["scopes"]}
-assert diff_scopes["source"]["files"] == diff_by_module["summary"]["total_files"]
-assert diff_scopes["source"]["code"] == diff_by_module["summary"]["total_code"]
-assert diff_scopes["prod"]["files"] == diff_by_module["summary"]["prod_files"]
-assert diff_scopes["prod"]["code"] == diff_by_module["summary"]["prod_code"]
-assert diff_scopes["tests"]["files"] == diff_by_module["summary"]["tests_files"]
-assert diff_scopes["tests"]["code"] == diff_by_module["summary"]["tests_code"]
-assert diff_scopes["design"]["files"] > 0
-assert diff_scopes["service_local_docs"]["files"] > 0
+diff_nodes = nodes_by_name(diff_summary)
+diff_total = diff_modules["total"]
+assert diff_nodes["source"]["files"] == diff_total["files"]
+assert diff_nodes["source"]["lines"] == diff_total["lines"]
+assert diff_nodes["prod"]["files"] == diff_total["prod_files"]
+assert diff_nodes["prod"]["lines"] == diff_total["prod_lines"]
+assert diff_nodes["tests"]["files"] == diff_total["test_files"]
+assert diff_nodes["tests"]["lines"] == diff_total["test_lines"]
+assert diff_nodes["design"]["files"] > 0
 
 deletion_diff = subprocess.run(
     [*script, "diff", "HEAD~1...HEAD", "--json"],
@@ -294,10 +352,16 @@ deletion_diff = subprocess.run(
     text=True,
     check=True,
 )
-deletion_summary = json.loads(deletion_diff.stdout)
-deletion_scopes = {row["scope"]: row for row in deletion_summary["scopes"]}
-assert all(row["files"] == 0 and row["code"] == 0 for row in deletion_scopes.values())
-assert "omitted 1 tracked path(s) that are deleted or otherwise missing in the current checkout" in deletion_diff.stderr
+deletion_nodes = nodes_by_name(json.loads(deletion_diff.stdout))
+assert all(row["files"] == 0 and row["lines"] == 0 for row in deletion_nodes.values())
+assert "omitted 1 tracked path(s) that are deleted or missing" in deletion_diff.stderr
+
+help_output = subprocess.check_output([*script, "--help"], cwd=repo, text=True)
+assert "summary" in help_output
+assert "scope" in help_output
+assert "modules" in help_output
+assert "diff" in help_output
+assert "classify" in help_output
 
 print("cloc report contract checks passed")
 PY

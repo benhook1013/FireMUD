@@ -836,6 +836,7 @@ def load_preflight_report(
     deployment_ref: str,
     root_dir: Path,
     expected_traffic_open_event: str | None = None,
+    expected_deployment_event_id: str | None = None,
 ) -> tuple[str, str]:
     if not path_ref:
         return ("fail", f"{environment.capitalize()} traffic-open evidence missing preflightReportPath")
@@ -846,7 +847,13 @@ def load_preflight_report(
         report = load_json(path)
     except Exception as exc:
         return ("fail", f"{environment.capitalize()} preflight report unreadable: {exc}")
-    status, message = validate_preflight_report(report, environment, expected_bindings_ref, deployment_ref)
+    status, message = validate_preflight_report(
+        report,
+        environment,
+        expected_bindings_ref,
+        deployment_ref,
+        expected_deployment_event_id=expected_deployment_event_id,
+    )
     if status != "pass":
         return (status, message)
     if report.get("trafficOpenEvent") != expected_traffic_open_event:
@@ -2192,6 +2199,13 @@ def hobby_traffic_check(compliance_path: Path, traffic_path: Path, event: str, d
         return ("fail", "Hobby traffic-open evidence eventType mismatch")
     if str(traffic.get("deploymentRef", "")) != str(deployment_ref):
         return ("fail", "Hobby traffic-open evidence deploymentRef mismatch")
+    deployment_event_id = traffic.get("deploymentEventId")
+    try:
+        parsed_event_id = uuid.UUID(str(deployment_event_id))
+    except (ValueError, TypeError, AttributeError):
+        return ("fail", "Hobby traffic-open evidence deploymentEventId must be a UUID")
+    if str(parsed_event_id) != deployment_event_id:
+        return ("fail", "Hobby traffic-open evidence deploymentEventId must use canonical UUID form")
     if not traffic.get("assessedAt"):
         return ("fail", "Hobby traffic-open evidence missing assessedAt")
     if not traffic.get("assessedBy"):
@@ -2210,6 +2224,7 @@ def hobby_traffic_check(compliance_path: Path, traffic_path: Path, event: str, d
         deployment_ref,
         root_dir,
         None,
+        deployment_event_id,
     )
     if preflight_status != "pass":
         return ("fail", preflight_message)
@@ -2437,7 +2452,6 @@ def main() -> int:
     else:
         has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-REDIS-001", True, "pass", "Redis role split contract is satisfied") or has_required_failure
 
-    rollback_mode = ""
     promotion_attestation = os.environ.get("FIREMUD_PROMOTION_ATTESTATION", "")
     backup_readiness_evidence = os.environ.get("FIREMUD_BACKUP_READINESS_EVIDENCE", "")
     if env_class != "production":
@@ -2454,7 +2468,7 @@ def main() -> int:
             has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-PROMOTION-001", True, "fail", f"Attestation file not found: {promotion_attestation}") or has_required_failure
             has_required_failure = append_result(check_results, waived_ids, waiver_approver, waiver_ticket, "PREFLIGHT-BACKUP-001", True, "fail", "Recovery compatibility cannot be evaluated because the promotion attestation is missing") or has_required_failure
         else:
-            promotion_status, rollback_mode, promotion_message = promotion_check(
+            promotion_status, _, promotion_message = promotion_check(
                 Path(promotion_attestation),
                 service_images,
                 root_dir,

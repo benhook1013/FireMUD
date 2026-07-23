@@ -2,7 +2,7 @@
 
 Store one record per `first-live` or `reopen` hobby traffic-open event as:
 
-- `<deployment-ref>.json`
+- `<deployment-ref>/<deployment-event-id>.json`
 
 ## Implementation Status
 
@@ -15,13 +15,15 @@ Required fields:
 - `eventType`
 - `trafficOpenStatus` (`finalized` in the checked-in projection; runtime authorization is held by the recovery controller)
 - `deploymentRef`
+- `deploymentEventId` (must equal the referenced preflight report)
 - `assessedAt`
 - `assessedBy`
 - `backupComplianceRef`
 - `baselineRecoveryRecordRef`
-- `actualRecoveryRecordRef` when `eventType=reopen` (durable actual-recovery controller reference; checked-in projection follows finalization)
+- `actualRecoveryRecordRef` (durable actual-recovery controller reference for first-live or reopen; checked-in projection follows finalization)
+- `playerFacingTargetBoundary`
 - `preflightReportPath`
 - `trafficOpenedAt` when finalized
 - `evidenceRefs`
 
-Hobby preflight requires the traffic-open projection to reference the canonical backup-compliance file, the current environment-wide cold-start baseline with immutable erasure high-water capture and gap-free replay, and a successful hobby preflight report that consumed `design/operations/environments/hobby-self-hosted/expected-bindings.yaml`. Reopen additionally reads the durable actual-recovery controller in `ready_to_reopen`; `continueRecovery(operationId, expectedPhase, evidenceRef)` idempotently reconciles through the internal `releasing` phase, applies and observes quarantine release, and reaches `finalized` before traffic flows. The exporter writes both immutable projections only afterward.
+Hobby preflight requires the traffic-open projection to reference the canonical backup-compliance file, the current environment-wide cold-start baseline with immutable erasure high-water capture and gap-free replay, and a successful hobby preflight report with the same `deploymentEventId` that consumed `design/operations/environments/hobby-self-hosted/expected-bindings.yaml`. First-live and reopen additionally read the durable actual-recovery controller in `ready_to_reopen`, verify the event-matching player-facing target boundary, and require `PREFLIGHT-BACKUP-003=pass`; `continueRecovery(operationId, expectedPhase, evidenceRef)` idempotently reconciles through the internal `releasing` phase, applies and observes quarantine release, and reaches `finalized` before traffic flows. The exporter writes both immutable projections only afterward.

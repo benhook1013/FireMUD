@@ -26,7 +26,7 @@ Production-specific requirements:
 - `validatedBy`
 - `observedValue`
 
-`dev-tools/restores/validate-external-credentials.sh production` requires `EXTERNAL_CREDENTIAL_EVIDENCE_REF` to point to one of these records, but it still expects the legacy `certificateReissuanceEvidence`, `jwtRestoreHardeningEvidence`, and `databaseCredentialRotationEvidence` aliases. It must be updated to the canonical control-group names; a legacy-script pass is not complete recovery proof.
+`dev-tools/restores/validate-external-credentials.sh production` requires `EXTERNAL_CREDENTIAL_EVIDENCE_REF` to point to one of these records and validates the canonical `certificateReissuance`, `jwtHardening`, and `databaseCredentialRotation` control groups.
 
 `backupConfidentialityEvidence` must prove encrypted transport/storage, environment-scoped least-privilege access and audit, and retention/secure deletion. Whenever production-origin data is exercised outside production, quarantine, sanitization, validation, and deletion controls are mandatory.
 

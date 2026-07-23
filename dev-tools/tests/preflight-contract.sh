@@ -321,6 +321,17 @@ python3 "$WRITER" hobby-self-hosted contract-hobby first-live \
   --evidence-ref contract-test \
   --output "$TRAFFIC_EVIDENCE" >/tmp/firemud-preflight-write-traffic-hobby.out
 
+python3 - <<'PY' "$OPERATOR_REPORT_PATH" "$TRAFFIC_EVIDENCE"
+import json
+import pathlib
+import sys
+
+preflight = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+traffic = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+if traffic.get("deploymentEventId") != preflight.get("deploymentEventId"):
+    raise SystemExit("traffic-open writer did not preserve the preflight deploymentEventId")
+PY
+
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF=contract-hobby \
   FIREMUD_PREFLIGHT_RENDER_PATH="$RENDERED_MANIFEST" \
@@ -502,13 +513,14 @@ compliance_path = tmp / "passing-hobby-backup-compliance.yaml"
 compliance_path.write_text("environment: hobby-self-hosted\nstatus: pass\n", encoding="utf-8")
 preflight_path = tmp / "passing-hobby-preflight.json"
 current_report_timestamp = module.utc_now()
+deployment_event_id = "22222222-2222-4222-8222-222222222222"
 preflight_path.write_text(
     json.dumps(
         {
             "environment": "hobby-self-hosted",
             "expectedBindingsRef": "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
             "deploymentRef": {"manifestRef": "contract-hobby"},
-            "deploymentEventId": "22222222-2222-4222-8222-222222222222",
+            "deploymentEventId": deployment_event_id,
             "trafficOpenEvent": None,
             "startedAt": current_report_timestamp,
             "completedAt": current_report_timestamp,
@@ -541,6 +553,7 @@ traffic_path.write_text(
             "environment": "hobby-self-hosted",
             "eventType": "first-live",
             "deploymentRef": "contract-hobby",
+            "deploymentEventId": deployment_event_id,
             "assessedAt": "2026-01-01T00:00:00Z",
             "assessedBy": "preflight-contract",
             "backupComplianceRef": "design/operations/deployments/hobby-self-hosted/backup-compliance.yaml",
@@ -559,6 +572,20 @@ status, message = module.hobby_traffic_check(
 )
 if status != "fail" or "recovery-controller authority is not implemented" not in message:
     raise SystemExit(f"synthetic hobby evidence did not fail closed on missing authority: {message}")
+traffic = json.loads(traffic_path.read_text(encoding="utf-8"))
+traffic["deploymentEventId"] = "33333333-3333-4333-8333-333333333333"
+traffic_path.write_text(json.dumps(traffic), encoding="utf-8")
+mismatch_status, mismatch_message = module.hobby_traffic_check(
+    compliance_path,
+    traffic_path,
+    "first-live",
+    "contract-hobby",
+    root,
+)
+if mismatch_status != "fail" or "deploymentEventId mismatch" not in mismatch_message:
+    raise SystemExit(
+        f"mismatched hobby traffic-open event identity did not fail closed: {mismatch_message}"
+    )
 PY
 
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
