@@ -106,7 +106,7 @@ The drill evidence may be reused within the configured freshness window only whi
    - Evaluate the implemented policy IDs from `design/architecture/system-architecture-deploy-preflight-policy.md` (for example `PREFLIGHT-DIGEST-001`, `PREFLIGHT-SECRETS-001`, `PREFLIGHT-SECRETS-002`, `PREFLIGHT-JWT-001`, `PREFLIGHT-JWKS-001`, `PREFLIGHT-BRIDGE-001`, `PREFLIGHT-REDIS-001`, `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-EXTERNAL-001`, `PREFLIGHT-SERVICES-001`, `PREFLIGHT-PROMOTION-001`, and `PREFLIGHT-BACKUP-001` for production). `PREFLIGHT-JWT-002` and event-scoped `PREFLIGHT-JWT-ROTATION-001` remain target-state-only until the executable and contract tests emit them.
    - Treat preflight as blocking. Do not run `kubectl apply` until all checks pass.
    - Use the canonical entrypoint: `./dev-tools/deploy/preflight.py <staging|production|hobby-self-hosted>`.
-   - Store the preflight report artifact under `design/operations/deployments/<environment>/preflight/<deployment-ref>.json`. Preflight generates a new `deploymentEventId` for each concrete run; copy that UUID into the deployment record, apply within 30 minutes of report completion, and regenerate the report for every retry or re-apply. The target-state waiver record is `.../<deployment-ref>.waiver.json`, but executable waiver use remains blocked until trusted one-time consumption authority exists.
+   - Store the preflight report artifact under `design/operations/deployments/<environment>/preflight/<deployment-ref>/<deploymentEventId>.json`. Preflight generates a new `deploymentEventId` for each concrete run; copy that UUID into the immutable deployment record, apply within 30 minutes of report completion, and generate a new event path for every retry or re-apply. The target-state waiver record is the adjacent `<deploymentEventId>.waiver.json`, but executable waiver use remains blocked until trusted one-time consumption authority exists.
 4. **Update the Environment Overlay (Git-Tracked)**
    - Update the image digests in the environment-specific Kustomize overlay for the target environment (for example `k8s/overlays/stage` or `k8s/overlays/prod`) via a Git change.
    - Use a pull request for the overlay change so promotion and rollback remain auditable (the merged commit is the source of truth for what is intended to be running in that environment).
@@ -157,7 +157,7 @@ The drill evidence may be reused within the configured freshness window only whi
    - Treat required preflight checks as blocking for player-facing traffic.
    - For first-live opens and reopen-after-restore events, require `PREFLIGHT-BACKUP-003=pass` before requesting controller release and opening player traffic.
    - Treat `PREFLIGHT-BACKUP-003` as a traffic-open gate for first-live and reopen events, not as a required check for ordinary steady-state hobby rollouts that do not change player-traffic status.
-   - Store the preflight report at `design/operations/deployments/hobby-self-hosted/preflight/<deployment-ref>.json`. Waiver artifacts use the adjacent target-state path `.../<deployment-ref>.waiver.json`, but executable waiver use remains blocked until trusted one-time consumption authority exists.
+   - Store the preflight report at `design/operations/deployments/hobby-self-hosted/preflight/<deployment-ref>/<deploymentEventId>.json`. Waiver artifacts use the adjacent target-state path `<deploymentEventId>.waiver.json`, but executable waiver use remains blocked until trusted one-time consumption authority exists.
 3. **Apply Manifests/Charts**
    - Apply from a secure operator environment using the chosen manifest/chart input.
    - Record the applied `manifestRef`/`chartVersion`, timestamp, and operator identity in deployment evidence.
@@ -165,7 +165,7 @@ The drill evidence may be reused within the configured freshness window only whi
    - Verify pod readiness/liveness, secrets loading, and Redis/PostgreSQL connectivity.
    - Run login/session smoke checks and confirm player connectivity paths.
 5. **Record Deployment Evidence**
-   - Record deployment evidence at `design/operations/deployments/hobby-self-hosted/deployments/<deployment-ref>.json`.
+   - Record deployment evidence at `design/operations/deployments/hobby-self-hosted/deployments/<deployment-ref>/<deploymentEventId>.json`.
    - Include: deployment input reference, preflight report path, live-state verification summary, smoke evidence references, rollback reference, and any backup/open-traffic gate evidence required to reopen player traffic.
 
 ## Canary or Phased Rollouts

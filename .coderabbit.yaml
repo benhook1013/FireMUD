@@ -6,6 +6,7 @@ reviews:
   profile: "assertive"
   request_changes_workflow: false
   high_level_summary: true
+  high_level_summary_in_walkthrough: true
   high_level_summary_instructions: |
     Summarize the change in concise release-note style for FireMUD contributors.
     Explicitly name the affected services, shared modules, workflows, or docs.

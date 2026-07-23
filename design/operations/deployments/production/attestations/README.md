@@ -9,6 +9,7 @@ Required fields:
 - `attestationVersion`
 - `environment` (`staging`)
 - `stagingOverlayCommitSha`
+- `stagingDeploymentEventId` (canonical UUID selecting the immutable staging apply record)
 - `productionOverlayRef`
 - `serviceDigests`
 - `smokeEvidence`
@@ -28,3 +29,4 @@ Required fields:
   - `backupReadinessRef` when `newDrillRequired=true`
 
 Production overlay PR validation rejects promotions when this directory does not contain exactly one attestation artifact for the promotion being merged.
+Validation also rejects `recoveryCompatibility.compatibilityStatus=incompatible` unconditionally. `drill_required` and `roll-forward-only` remain subject to their separate fresh-drill and full-evidence requirements.

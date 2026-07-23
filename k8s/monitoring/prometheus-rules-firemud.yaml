@@ -44,7 +44,7 @@ spec:
             time() - backup_last_success_timestamp_seconds > 90 * 60
         - record: backup_pipeline_recent_verification_slo_breached
           expr: |
-            time() - backup_verify_last_success_timestamp_seconds > 24 * 60 * 60
+            time() - backup_verify_last_success_timestamp_seconds > 36 * 60 * 60
         - record: backup_pipeline_recent_restore_drill_slo_breached
           expr: |
             time() - backup_restore_drill_last_success_timestamp_seconds > 30 * 24 * 60 * 60
@@ -289,7 +289,7 @@ spec:
             runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
           annotations:
             summary: Backup verification has not succeeded recently
-            description: No successful backup verification run has been recorded in the last 24 hours. Investigate the verify-backups CronJob and storage configuration.
+            description: No successful backup verification run has been recorded in the last 36 hours. Investigate the verify-backups CronJob and storage configuration.
         - alert: BackupVerificationLastSuccessMetricsAbsent
           expr: absent(backup_verify_last_success_timestamp_seconds)
           for: 5m

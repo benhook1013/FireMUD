@@ -1,8 +1,8 @@
 # Staging Deployment Records
 
-Store one deployment record per staging overlay apply as:
+Store one immutable deployment record per staging overlay apply as:
 
-- `<stagingOverlayCommitSha>.json`
+- `<stagingOverlayCommitSha>/<deploymentEventId>.json`
 
 Required fields:
 
@@ -15,7 +15,7 @@ Required fields:
 - `smokeStatus` (`pass`)
 - `serviceDigests`
 - `preflightReportPath`
-  - must equal `design/operations/deployments/staging/preflight/<overlayCommitSha>.json`
+  - must equal `design/operations/deployments/staging/preflight/<overlayCommitSha>/<deploymentEventId>.json`
   - report `completedAt` must not be later than `appliedAt`
   - report `completedAt` must be no more than 30 minutes before `appliedAt`
 - `liveStateEvidence`

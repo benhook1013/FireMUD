@@ -27,6 +27,7 @@ Required fields:
 - `attestationVersion` – schema version string (for example `v1`).
 - `environment` – must be `staging`.
 - `stagingOverlayCommitSha` – Git SHA of the staging overlay commit applied.
+- `stagingDeploymentEventId` – canonical UUID selecting the immutable staging apply event being promoted.
 - `serviceDigests` – map of service name to immutable digest (`image@sha256:...`).
 - `smokeEvidence` – list of URLs or artifact IDs for smoke-test results.
 - `generatedAt` – UTC timestamp in ISO-8601 format.
@@ -57,11 +58,11 @@ For `recoveryCompatibility.compatibilityStatus=compatible`, `baselineRecoveryRec
 - Every production overlay digest must match the digest in `serviceDigests`.
 - Official production release PRs must include exactly one release digest manifest whose `promotionAttestationRef` points to the attestation and whose `serviceDigests` match byte-for-byte.
 - `environment` must be `staging`.
-- `stagingOverlayCommitSha` must exist in Git history and correspond to a successful staging deployment record.
+- `stagingOverlayCommitSha` must exist in Git history and, together with `stagingDeploymentEventId`, select a successful staging deployment record.
 - The referenced staging deployment record must include live-state verification (`liveStateEvidence`) proving the running digests matched the reviewed overlay after apply.
 - `liveStateEvidence` must be machine-checkable: status `pass`, the observed overlay SHA, and observed running digests for the promoted services must match the referenced staging deployment record and attestation.
 - The referenced staging deployment record must include `deployStatus=pass` and `smokeStatus=pass`.
-- The staging record must reference `design/operations/deployments/staging/preflight/<stagingOverlayCommitSha>.json`; that operator report must carry the same `deploymentEventId`, exact staging applicability, and a `completedAt` no later than and no more than 30 minutes before the record's `appliedAt`.
+- The staging record must reference `design/operations/deployments/staging/preflight/<stagingOverlayCommitSha>/<stagingDeploymentEventId>.json`; that operator report must carry the same `deploymentEventId`, exact staging applicability, and a `completedAt` no later than and no more than 30 minutes before the record's `appliedAt`.
 - The referenced staging deployment record must include `secretComplianceStatus` set to `pass` and a `secretComplianceEvidenceRef`.
 - The referenced secret-compliance evidence must include immutable artifact identifiers for all required credential classes; warning-only or note-only evidence is not promotable.
 - The referenced production overlay digests must be byte-identical to the staged digests recorded in the deployment record; retags are acceptable, rebuilds are not.
@@ -76,8 +77,8 @@ External-only attestation storage is not allowed for production promotions becau
 
 - Keep the attestation in the repository with the production promotion evidence and reference it from the PR body.
 - Production overlay PRs must include exactly one changed attestation file under `design/operations/deployments/production/attestations/`.
-- Staging deployment records are stored in-repo at `design/operations/deployments/staging/deployments/<stagingOverlayCommitSha>.json`.
-- The staging deployment record is the canonical evidence source for `stagingOverlayCommitSha` validation and must contain at minimum:
+- Staging deployment records are stored in-repo at `design/operations/deployments/staging/deployments/<stagingOverlayCommitSha>/<stagingDeploymentEventId>.json`.
+- The staging deployment record is the canonical evidence source for the selected `stagingOverlayCommitSha` and `stagingDeploymentEventId` pair and must contain at minimum:
   - `environment` (`staging`)
   - `overlayCommitSha`
   - `deploymentEventId`

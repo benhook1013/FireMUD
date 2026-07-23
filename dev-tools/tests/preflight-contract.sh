@@ -952,10 +952,32 @@ future_timestamp = (now + module.dt.timedelta(hours=1)).isoformat().replace("+00
 recovery_dir = tmp / "design/operations/deployments/production/recovery"
 recovery_dir.mkdir(parents=True)
 
+first_event_id = "11111111-1111-4111-8111-111111111111"
+second_event_id = "22222222-2222-4222-8222-222222222222"
+first_output_path = module.default_preflight_output_path(
+    tmp,
+    "staging",
+    "contract-overlay",
+    first_event_id,
+)
+second_output_path = module.default_preflight_output_path(
+    tmp,
+    "staging",
+    "contract-overlay",
+    second_event_id,
+)
+expected_first_path = (
+    tmp
+    / "design/operations/deployments/staging/preflight"
+    / "contract-overlay"
+    / f"{first_event_id}.json"
+)
+if first_output_path != expected_first_path or first_output_path == second_output_path:
+    raise SystemExit("preflight default output paths are not immutable per deployment event")
+
 waiver_dir = tmp / "waiver-contract"
 waiver_dir.mkdir()
 waiver_output_path = waiver_dir / "report.json"
-waiver_path = waiver_dir / "contract-waiver.waiver.json"
 valid_waiver = {
     "environment": "production",
     "deploymentRef": "contract-waiver",
@@ -966,6 +988,7 @@ valid_waiver = {
     "ticket": "contract-ticket",
     "waivedPolicyIds": ["PREFLIGHT-PROMOTION-001"],
 }
+waiver_path = waiver_dir / f"{valid_waiver['deploymentEventId']}.waiver.json"
 waiver_path.write_text(json.dumps(valid_waiver), encoding="utf-8")
 try:
     module.load_waiver(
@@ -1256,6 +1279,7 @@ missing_compatibility_attestation = write_json(
         "environment": "staging",
         "generatedAt": past_timestamp,
         "stagingOverlayCommitSha": "deadbeef",
+        "stagingDeploymentEventId": "55555555-5555-4555-8555-555555555555",
         "productionOverlayRef": "contract-production",
         "serviceDigests": {"account-service": "ghcr.io/firemud/account-service@sha256:candidate"},
         "smokeEvidence": ["contract-smoke"],
@@ -1276,6 +1300,7 @@ def promotion_attestation(compatibility, rollback_mode="rollback-compatible"):
         "attestationVersion": "v1",
         "environment": "staging",
         "stagingOverlayCommitSha": "deadbeef",
+        "stagingDeploymentEventId": "55555555-5555-4555-8555-555555555555",
         "productionOverlayRef": "contract-production",
         "serviceDigests": {"account-service": "ghcr.io/firemud/account-service@sha256:candidate"},
         "smokeEvidence": ["contract-smoke"],
@@ -1354,8 +1379,6 @@ if not module.git_commit_exists(promotion_root, staging_sha):
 if module.git_commit_exists(promotion_root, "deadbeef"):
     raise SystemExit("unknown stagingOverlayCommitSha was incorrectly accepted by Git validation")
 
-staging_dir = promotion_root / "design/operations/deployments/staging/deployments"
-staging_dir.mkdir(parents=True)
 secret_evidence_path = promotion_root / "secret-compliance.json"
 secret_evidence_path.write_text(
     json.dumps(
@@ -1373,13 +1396,20 @@ secret_evidence_path.write_text(
     ),
     encoding="utf-8",
 )
+staging_event_id = "55555555-5555-4555-8555-555555555555"
+staging_dir = (
+    promotion_root
+    / "design/operations/deployments/staging/deployments"
+    / staging_sha
+)
+staging_dir.mkdir(parents=True)
 staging_preflight_path = (
     promotion_root
     / "design/operations/deployments/staging/preflight"
-    / f"{staging_sha}.json"
+    / staging_sha
+    / f"{staging_event_id}.json"
 )
 staging_preflight_path.parent.mkdir(parents=True)
-staging_event_id = "55555555-5555-4555-8555-555555555555"
 staging_requirements = module.expected_preflight_policy_requirements("staging", None)
 staging_preflight_path.write_text(
     json.dumps(
@@ -1426,7 +1456,7 @@ staging_record = {
     "secretComplianceEvidenceRef": secret_evidence_path.name,
     "smokeEvidence": ["contract-smoke"],
 }
-(staging_dir / f"{staging_sha}.json").write_text(json.dumps(staging_record), encoding="utf-8")
+(staging_dir / f"{staging_event_id}.json").write_text(json.dumps(staging_record), encoding="utf-8")
 promotion_recovery_dir = promotion_root / "design/operations/deployments/production/recovery"
 promotion_recovery_dir.mkdir(parents=True)
 (promotion_recovery_dir / "baseline.json").write_text(json.dumps(valid_baseline), encoding="utf-8")
@@ -1437,6 +1467,7 @@ promotion_attestation_path.write_text(
             "attestationVersion": "v1",
             "environment": "staging",
             "stagingOverlayCommitSha": staging_sha,
+            "stagingDeploymentEventId": staging_event_id,
             "productionOverlayRef": "contract-production",
             "serviceDigests": {"spring-cloud-gateway": gateway_image, "account-service": account_image},
             "smokeEvidence": ["contract-smoke"],
@@ -1468,7 +1499,7 @@ module.validate_recovery_baseline = lambda *args, **kwargs: (
     "contract-only complete recovery evidence",
 )
 
-staging_record_path = staging_dir / f"{staging_sha}.json"
+staging_record_path = staging_dir / f"{staging_event_id}.json"
 staging_record_path.write_text(
     json.dumps({**staging_record, "preflightReportPath": "staging-preflight.json"}),
     encoding="utf-8",
@@ -1520,7 +1551,7 @@ if late_report_status != "fail" or "later than the apply event" not in late_repo
 
 unwaived_preflight_report = json.loads(staging_preflight_path.read_text(encoding="utf-8"))
 for waiver_value in (
-    f"design/operations/deployments/staging/preflight/{staging_sha}.waiver.json",
+    f"design/operations/deployments/staging/preflight/{staging_sha}/{staging_event_id}.waiver.json",
     None,
 ):
     waived_preflight_report = {**unwaived_preflight_report, "waiverPath": waiver_value}

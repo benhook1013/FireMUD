@@ -102,6 +102,7 @@ PROMOTION_ATTESTATION_REQUIRED_FIELDS = (
     "attestationVersion",
     "environment",
     "stagingOverlayCommitSha",
+    "stagingDeploymentEventId",
     "productionOverlayRef",
     "serviceDigests",
     "smokeEvidence",
@@ -609,6 +610,24 @@ def resolve_repo_path(root_dir: Path, ref: str) -> Path:
     return path if path.is_absolute() else root_dir / ref
 
 
+def default_preflight_output_path(
+    root_dir: Path,
+    environment: str,
+    deployment_ref: str,
+    deployment_event_id: str,
+) -> Path:
+    return (
+        root_dir
+        / "design"
+        / "operations"
+        / "deployments"
+        / environment
+        / "preflight"
+        / deployment_ref
+        / f"{deployment_event_id}.json"
+    )
+
+
 def load_waiver(
     waiver_path: Path,
     environment: str,
@@ -617,7 +636,7 @@ def load_waiver(
     output_path: Path,
     now_dt: dt.datetime,
 ) -> NoReturn:
-    expected_path = (output_path.parent / f"{deployment_ref}.waiver.json").resolve()
+    expected_path = (output_path.parent / f"{deployment_event_id}.waiver.json").resolve()
     if waiver_path.resolve() != expected_path:
         raise ValueError(f"Waiver must be stored beside the report as {expected_path}")
     try:
@@ -1847,7 +1866,24 @@ def promotion_check(
     if not git_commit_exists(root_dir, staging_sha):
         return ("fail", rollback_mode, f"Staging overlay commit does not exist in Git: {staging_sha}")
 
-    record_path = root_dir / "design" / "operations" / "deployments" / "staging" / "deployments" / f"{staging_sha}.json"
+    staging_event_id = att.get("stagingDeploymentEventId")
+    try:
+        parsed_staging_event_id = uuid.UUID(str(staging_event_id))
+    except (ValueError, TypeError, AttributeError):
+        return ("fail", rollback_mode, "Attestation stagingDeploymentEventId must be a UUID")
+    if str(parsed_staging_event_id) != staging_event_id:
+        return ("fail", rollback_mode, "Attestation stagingDeploymentEventId must use canonical UUID form")
+
+    record_path = (
+        root_dir
+        / "design"
+        / "operations"
+        / "deployments"
+        / "staging"
+        / "deployments"
+        / staging_sha
+        / f"{staging_event_id}.json"
+    )
     if not record_path.exists():
         return ("fail", rollback_mode, f"Staging deployment record not found: {record_path}")
 
@@ -1909,6 +1945,8 @@ def promotion_check(
         return ("fail", rollback_mode, "Staging deployment record has wrong environment")
     if record.get("overlayCommitSha") != staging_sha:
         return ("fail", rollback_mode, "Staging deployment record overlayCommitSha mismatch")
+    if record.get("deploymentEventId") != staging_event_id:
+        return ("fail", rollback_mode, "Staging deployment record deploymentEventId mismatch")
 
     record_digests = record["serviceDigests"]
     if record_digests != service_digests:
@@ -1921,7 +1959,9 @@ def promotion_check(
     preflight_ref = record.get("preflightReportPath")
     if not isinstance(preflight_ref, str) or not preflight_ref.strip():
         return ("fail", rollback_mode, "Staging deployment record preflightReportPath must be non-empty")
-    expected_preflight_ref = f"design/operations/deployments/staging/preflight/{staging_sha}.json"
+    expected_preflight_ref = (
+        f"design/operations/deployments/staging/preflight/{staging_sha}/{staging_event_id}.json"
+    )
     if preflight_ref != expected_preflight_ref:
         return ("fail", rollback_mode, "Staging deployment record must reference the canonical preflight report path")
     preflight_path = resolve_repo_path(root_dir, str(preflight_ref))
@@ -2259,7 +2299,12 @@ def main() -> int:
         rendered = run(["kubectl", "kustomize", str(root_dir / "k8s" / "overlays" / overlay_name)])
 
     documents = parse_documents(rendered)
-    default_output = root_dir / "design" / "operations" / "deployments" / env_class / "preflight" / f"{deployment_ref}.json"
+    default_output = default_preflight_output_path(
+        root_dir,
+        env_class,
+        deployment_ref,
+        deployment_event_id,
+    )
     output_path = Path(os.environ.get("FIREMUD_PREFLIGHT_OUTPUT", str(default_output)))
     waived_ids: set[str] = set()
     waiver_approver = ""

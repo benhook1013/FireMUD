@@ -255,8 +255,8 @@ FireMUD uses a simple promotion flow from pull requests through staging to produ
 - Overlay PRs are validated by [`.github/workflows/validate-kustomize-overlays.yml`](../../.github/workflows/validate-kustomize-overlays.yml), which checks that referenced images exist in GHCR, enforces digest pinning for staging/production overlays, and blocks staging backup schedules unless the explicit marker `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
 - Overlay PRs run the canonical preflight entrypoint (`dev-tools/deploy/preflight.py`) in `ci-static` context so policy IDs and report shape match operator pre-apply validation. CI-static mode may mark production attestation policy as `not_applicable` when no production promotion is being executed.
 - Production overlay PRs must include exactly one in-repo staging promotion attestation under `design/operations/deployments/production/attestations/<deployment-ref>.json` that follows `system-architecture-promotion-attestation.md`. Production PRs are rejected if they reference digests that cannot be tied to that attestation, a successful staging deployment record with live-state verification, and a staging deployment record whose `secretComplianceStatus` is `pass`.
-- Production overlay PR CI must evaluate the attestation and compact recovery-compatibility result for every promotion and, when the result requires a drill or the release is `roll-forward-only`, the matching full backup-readiness evidence before merge. Deferring those checks to operator-only preflight is non-compliant.
-- Staging apply evidence must include the in-repo deployment record `design/operations/deployments/staging/deployments/<stagingOverlayCommitSha>.json`; production promotion validation fails when this record is missing, digest-mismatched, lacks live-state verification, or lacks passing secret-compliance evidence.
+- Production overlay PR CI must evaluate the attestation and compact recovery-compatibility result for every promotion. `compatibilityStatus=incompatible` is unconditionally non-promotable; when the result requires a drill or the release is `roll-forward-only`, the matching full backup-readiness evidence is also required before merge. Deferring those checks to operator-only preflight is non-compliant.
+- Staging apply evidence must include the immutable in-repo deployment record `design/operations/deployments/staging/deployments/<stagingOverlayCommitSha>/<stagingDeploymentEventId>.json`; production promotion validation fails when the attestation does not select the exact event record or that record is missing, digest-mismatched, lacks live-state verification, or lacks passing secret-compliance evidence.
 - Player-facing preflight and operator validation must also verify environment bootstrap completeness and external integration isolation before apply; these checks are not limited to restore events.
 - `manual-backup-restore.yml` is limited to throwaway recovery drills. It may target only explicit non-player-facing restore namespaces or isolated drill clusters using dedicated low-privilege credentials and GitHub Environment approvals. It must not restore into live staging or production namespaces and must not hold credentials capable of modifying the currently player-facing cluster boundary.
 
@@ -274,7 +274,7 @@ Every production promotion records a compact recovery-compatibility result again
 - recent backup-verification success, and
 - a current environment-wide `cold_start_restore` record suitable for the release, including empty Redis, safe recovery-participant dispositions, hardening, and controlled reopen.
 
-The canonical full-evidence path is `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`. The compact result uses `compatibilityStatus` (`compatible`, `drill_required`, or `incompatible`) as the outcome and `newDrillRequired` as the machine-readable drill gate. `newDrillRequired=true` is mandatory for `compatibilityStatus=drill_required` and for every `roll-forward-only` release. Production CI/preflight must reject every `newDrillRequired=true` promotion when full evidence is missing, stale, or not bound to the source production database lineage, candidate recovery tooling, exact candidate digests, migration path, config, bindings, and promotion attestation. Compatible rollback releases keep only the compact result or immutable reference in promotion/deployment evidence rather than copying the full recovery record.
+The canonical full-evidence path is `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`. The compact result uses `compatibilityStatus` (`compatible`, `drill_required`, or `incompatible`) as the outcome and `newDrillRequired` as the machine-readable drill gate. `incompatible` is a terminal failed result and is rejected before conditional evidence handling. `newDrillRequired=true` is mandatory for `compatibilityStatus=drill_required` and for every `roll-forward-only` release. Production CI/preflight must reject every `newDrillRequired=true` promotion when full evidence is missing, stale, or not bound to the source production database lineage, candidate recovery tooling, exact candidate digests, migration path, config, bindings, and promotion attestation. Compatible rollback releases keep only the compact result or immutable reference in promotion/deployment evidence rather than copying the full recovery record.
 
 Traffic-open readiness for production first-live or reopen events uses `design/operations/deployments/production/traffic-open/<first-live|reopen>-<deployment-ref>.json` and references the canonical backup-readiness, recovery-controller, and confidentiality evidence. Routine online backups cover the environment-wide PostgreSQL database and do not use Game Session pause/resume as readiness proof.
 
@@ -286,23 +286,23 @@ Pre-apply policy checks for staging and production must run through the canonica
 
 FireMUD uses one deployment-evidence chain per deployment event so promotion, rollback, and incident review all answer from the same record set:
 
-1. Preflight produces `design/operations/deployments/<environment>/preflight/<deployment-ref>.json`.
+1. Preflight produces `design/operations/deployments/<environment>/preflight/<deployment-ref>/<deploymentEventId>.json`.
 2. Secret-compliance validation produces or references `design/operations/secret-compliance/<environment>.yaml` plus immutable supporting evidence.
-3. Operator apply produces or updates the environment deployment record:
-   - staging: `design/operations/deployments/staging/deployments/<overlayCommitSha>.json`
-   - production: `design/operations/deployments/production/deployments/<overlayCommitSha>.json`
-   - hobby-self-hosted: `design/operations/deployments/hobby-self-hosted/deployments/<deployment-ref>.json`
+3. Operator apply produces one immutable environment deployment record:
+   - staging: `design/operations/deployments/staging/deployments/<overlayCommitSha>/<deploymentEventId>.json`
+   - production: `design/operations/deployments/production/deployments/<overlayCommitSha>/<deploymentEventId>.json`
+   - hobby-self-hosted: `design/operations/deployments/hobby-self-hosted/deployments/<deployment-ref>/<deploymentEventId>.json`
 4. Production promotion references exactly one staging attestation at `design/operations/deployments/production/attestations/<deployment-ref>.json`.
 5. Production release publication references one release digest manifest at `design/operations/deployments/production/release-manifests/<release-tag-or-deployment-ref>.json`.
 6. Every production release records its compact recovery-compatibility result; if that result requires a drill or the release is `roll-forward-only`, production also references `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`.
 
 Lifecycle rules:
 
-- The deployment record is the canonical answer to “what is currently deployed and promotable for this environment.”
+- The latest successful event record selected by the environment's deployment index or promotion attestation is the canonical answer to “what is currently deployed and promotable for this environment.”
 - Preflight artifacts, secret-compliance snapshots, smoke evidence, and live-state verification are supporting evidence linked from the deployment record rather than parallel sources of truth.
 - Current promotion trust is repository-reviewed evidence with immutable artifact references. CI treats the in-repo deployment record and production attestation as the deterministic promotion index, then verifies digest equality, live-state evidence shape, and immutable secret-compliance references. Detached signatures are not required in the current single-admin/operator model.
-- Re-applying the same overlay commit does not create a second competing promotion record; operators update the same deployment record with a new apply event timestamp, new live-state evidence, and the outcome of the latest smoke checks.
-- A promotion attestation is valid only if its referenced staging deployment record remains the latest successful apply record for that staging overlay commit.
+- Re-applying the same overlay commit creates a new immutable event record and never overwrites prior preflight or apply evidence.
+- A promotion attestation is valid only if `stagingOverlayCommitSha` plus `stagingDeploymentEventId` selects the latest successful promotable apply event for that staging overlay commit.
 - Rollback uses the deployment record and original attestation lineage for the digest set being restored.
 
 Terminology note:
@@ -328,7 +328,7 @@ Illustrative deployment record shape:
     "spring-cloud-gateway": "ghcr.io/example/spring-cloud-gateway@sha256:...",
     "game-session-service": "ghcr.io/example/game-session-service@sha256:..."
   },
-  "preflightReportPath": "design/operations/deployments/staging/preflight/<git-sha>.json",
+  "preflightReportPath": "design/operations/deployments/staging/preflight/<git-sha>/<deployment-event-id>.json",
   "liveStateEvidence": {
     "status": "pass",
     "observedOverlaySha": "<git-sha>",

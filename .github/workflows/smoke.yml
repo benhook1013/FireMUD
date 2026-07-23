@@ -252,6 +252,10 @@ jobs:
   smoke-gate:
     name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Gate)' || 'Smoke Gate' }}
     runs-on: ubuntu-latest
+    permissions:
+      # This job reads workflow and job results for the matching runtime-image run.
+      contents: read
+      actions: read
     needs: [changes, smoke-lite]
     if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     timeout-minutes: 30

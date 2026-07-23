@@ -41,7 +41,7 @@ Example alerts for missed backups and verification runs:
     runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary
   annotations:
     summary: Backup verification has not succeeded recently
-    description: No successful backup verification run has been recorded in the last 24 hours. Investigate the verify-backups CronJob and storage configuration.
+    description: No successful backup verification run has been recorded in the last 36 hours. Investigate the verify-backups CronJob and storage configuration.
 
 - alert: BackupVerificationLastSuccessMetricsAbsent
   expr: absent(backup_verify_last_success_timestamp_seconds)

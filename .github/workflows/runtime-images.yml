@@ -47,8 +47,6 @@ run-name: Build Runtime Images ${{ github.event_name == 'pull_request' && format
 
 permissions:
   contents: read
-  packages: write
-  pull-requests: write
 
 concurrency:
   group: runtime-images-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
@@ -96,6 +94,10 @@ jobs:
     needs: [image-meta]
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
     runs-on: ubuntu-latest
+    permissions:
+      # This job publishes the shared runtime base image to GHCR.
+      contents: read
+      packages: write
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -156,6 +158,10 @@ jobs:
     needs: [image-meta, build-base-image]
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
     runs-on: ubuntu-latest
+    permissions:
+      # This job publishes service runtime images to GHCR.
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -255,6 +261,11 @@ jobs:
     name: Smoke Tests (Full Stack)
     needs: [image-meta, build-runtime-images]
     if: ${{ always() && needs.build-runtime-images.result == 'success' && (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) }}
+    permissions:
+      # The reusable smoke workflow pulls GHCR images and updates its PR summary.
+      contents: read
+      packages: read
+      pull-requests: write
     uses: ./.github/workflows/smoke-full.yml
     with:
       action: full
