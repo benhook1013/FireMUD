@@ -229,6 +229,7 @@ BACKUP_READINESS_REQUIRED_FIELDS = (
     "backupCoverage",
     "backupArtifactRef",
     "artifactErasureHighWater",
+    "restoreHighWater",
     "sourceServiceDigests",
     "candidateServiceDigests",
     "candidateMigrationPathRef",

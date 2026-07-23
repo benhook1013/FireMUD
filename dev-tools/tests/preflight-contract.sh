@@ -1588,6 +1588,7 @@ future_readiness = write_json(
         "backupCoverage": "environment-wide-postgresql",
         "backupArtifactRef": "backups/artifact",
         "artifactErasureHighWater": {"stream": "erasures", "sequence": 1},
+        "restoreHighWater": {"stream": "erasures", "sequence": 3},
         "sourceServiceDigests": {"account-service": "ghcr.io/firemud/account-service@sha256:source"},
         "candidateServiceDigests": {"account-service": "ghcr.io/firemud/account-service@sha256:candidate"},
         "candidateMigrationPathRef": "migrations/candidate",
@@ -1597,6 +1598,27 @@ future_readiness = write_json(
         "evidenceRefs": ["contract-evidence"],
     },
 )
+missing_restore_high_water_data = json.loads(future_readiness.read_text(encoding="utf-8"))
+missing_restore_high_water_data.pop("restoreHighWater")
+missing_restore_high_water = write_json(
+    "missing-restore-high-water-readiness.json",
+    missing_restore_high_water_data,
+)
+missing_restore_status, missing_restore_message = module.backup_readiness_check(
+    missing_restore_high_water,
+    now.isoformat().replace("+00:00", "Z"),
+    "contract-roll-forward",
+    tmp,
+)
+if (
+    missing_restore_status != "fail"
+    or "required target-state fields" not in missing_restore_message
+    or "restoreHighWater" not in missing_restore_message
+):
+    raise SystemExit(
+        f"backup readiness without restoreHighWater did not fail closed: {missing_restore_message}"
+    )
+
 future_status, future_message = module.backup_readiness_check(
     future_readiness,
     now.isoformat().replace("+00:00", "Z"),
