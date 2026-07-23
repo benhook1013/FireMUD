@@ -12,4 +12,4 @@ recoveryContractFingerprint: null
 evidenceRefs:
   - notes/hobby-backup-check-2026-02-24
   - notes/hobby-restore-drill-2026-02-10
-  - legacy evidence does not prove the accepted environment-wide cold-start contract
+# Legacy evidence does not prove the environment-wide cold-start contract.

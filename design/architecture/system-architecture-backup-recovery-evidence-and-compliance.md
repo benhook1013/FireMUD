@@ -289,6 +289,7 @@ Required top-level fields:
 - `restoredAt`
 - `restoredBy`
 - `preflightReportPath` when applicable
+- `deploymentEventId` when an actual-recovery record opens a player-facing boundary; it must match the event-scoped preflight report and traffic-open projection
 - `recoveryControllerLineage`
 - `expectedBindingsRef`
 - `coordinationRecoveryEvidence`
@@ -332,6 +333,7 @@ Validation rules:
 - after the controller applies and observes the release, it advances its durable state to `finalized`; only then may actual player traffic flow, and only then may the checked-in recovery and traffic-open projections be exported
 - a `production-equivalent-drill` uses `trafficExposure=isolated-drill`; its controlled reopen authorizes only the isolated test boundary and cannot authorize production traffic
 - an `actual-recovery` that will open player traffic uses event-matching `trafficExposure` (`player-facing-first-live` or `player-facing-reopen`) and is bound to that exact target boundary
+- an actual-recovery record that opens player traffic must bind `deploymentEventId` and `preflightReportPath` to the same event-scoped preflight report as the traffic-open projection; production-equivalent drills omit `deploymentEventId` and cannot authorize player traffic
 - `coordinationRecoveryMode` must be `cold_start_restore` for player-facing recovery; `scoped_reset_restore` experiments remain quarantined and cannot satisfy this record
 - every declared and enabled participant named by `recoveryParticipantInventoryRef` must have a safe disposition; a durable fenced backlog may survive reopen only when the participant remains disabled and its owning recovery contract defines the later operator action
 - `readyToReopenAt` must be later than restore-safe-mode entry, coordination recovery, erasure replay completion, hardening, external-credential validation, secret-compliance refresh, and smoke-check completion times; `quarantineReleasedAt` and `finalizedAt` must be later than `readyToReopenAt`, and exported projections must carry the controller's finalized release identity

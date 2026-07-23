@@ -29,7 +29,7 @@ Staging production-origin requirements:
 
 Restore validation must fail closed unless `SANITIZATION_EVIDENCE_REF` is present, points under this staging recovery namespace, and contains non-empty `validationEvidence`. Passing external credential validation alone is not sufficient to release quarantine or reopen traffic.
 
-The current `dev-tools/restores/validate-external-credentials.sh staging` still expects legacy hardening key names and does not validate this separate sanitization record contract. It must be updated to the canonical control-group names and sanitization evidence path; a legacy-script pass is not complete recovery proof.
+`dev-tools/restores/validate-external-credentials.sh staging` validates the canonical hardening control-group names and the separate `SANITIZATION_EVIDENCE_REF` path. A pass from this helper is only one recovery control group and is not complete recovery proof.
 
 `backupConfidentialityEvidence` must prove environment-scoped encryption, least-privilege access and audit, retention/secure deletion, and quarantine, sanitization, validation, and deletion of production-origin data before a non-production drill can expose workloads or retain evidence.
 

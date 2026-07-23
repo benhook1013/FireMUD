@@ -24,6 +24,10 @@ This document describes the continuous integration strategy for FireMUD using **
 - **Generate database ERD diagrams** as build artifacts after each run. The [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) script writes them to `design/erd/`, and the workflow uploads this directory as artifacts.
 - **Cancel previous runs for the same branch** using a concurrency group so CI resources are conserved and deployment jobs do not race each other for the same environment.
 
+## Implementation Status
+
+The current executable blocks every player-facing production promotion class, including `rollback-compatible`, before incomplete production evidence can become promotion authority. Static CI still validates the checked-in evidence shape and available bindings, but production preflight does not yet execute the staging-lineage, expanded backup-readiness, or nested candidate recovery-controller validations behind that unconditional block. No rollback classification becomes current promotion authority until those diagnostics, recovery inventory membership, immutable evidence dereferencing, participant, confidentiality, hardening, and controlled-reopen validations are implemented.
+
 ---
 
 ## Workflow Structure
@@ -276,9 +280,7 @@ Every production promotion records a compact recovery-compatibility result again
 
 The canonical full-evidence path is `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`. The compact result uses `compatibilityStatus` (`compatible`, `drill_required`, or `incompatible`) as the outcome and `newDrillRequired` as the machine-readable drill gate. `incompatible` is a terminal failed result and is rejected before conditional evidence handling. `newDrillRequired=true` is mandatory for `compatibilityStatus=drill_required` and for every `roll-forward-only` release. Production CI/preflight must reject every `newDrillRequired=true` promotion when full evidence is missing, stale, or not bound to the source production database lineage, candidate recovery tooling, exact candidate digests, migration path, config, bindings, and promotion attestation. Compatible rollback releases keep only the compact result or immutable reference in promotion/deployment evidence rather than copying the full recovery record.
 
-Traffic-open readiness for production first-live or reopen events uses `design/operations/deployments/production/traffic-open/<first-live|reopen>-<deployment-ref>-<deployment-event-id>.json` and references the canonical backup-readiness, recovery-controller, and confidentiality evidence. Routine online backups cover the environment-wide PostgreSQL database and do not use Game Session pause/resume as readiness proof.
-
-Current implementation note: the executable blocks every player-facing production promotion class, including `rollback-compatible`, before the incomplete production evidence can become promotion authority. Static CI still validates the checked-in evidence shape and available bindings, but production preflight does not yet execute the staging-lineage, expanded backup-readiness, or nested candidate recovery-controller validations behind that unconditional block. No rollback classification becomes current promotion authority until those diagnostics, recovery inventory membership, immutable evidence dereferencing, participant, confidentiality, hardening, and controlled-reopen validations are implemented.
+Traffic-open readiness for production first-live or reopen events uses `design/operations/deployments/production/traffic-open/<first-live|reopen>-<deployment-ref>-<deployment-event-id>.json`, whose stored event identity matches the referenced preflight report, and references the canonical backup-readiness, recovery-controller, and confidentiality evidence. Routine online backups cover the environment-wide PostgreSQL database and do not use Game Session pause/resume as readiness proof.
 
 Pre-apply policy checks for staging and production must run through the canonical preflight contract in `system-architecture-deploy-preflight-policy.md`. Static checks run in overlay PR CI, and resolved-manifest/runtime checks run in operator preflight execution. Both use the same policy IDs and evidence shape.
 

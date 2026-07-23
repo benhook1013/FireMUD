@@ -15,7 +15,7 @@ Required fields:
 - `eventType`
 - `trafficOpenStatus` (`finalized` in the checked-in projection; runtime authorization is held by the recovery controller)
 - `deploymentRef`
-- `deploymentEventId` (must equal the referenced preflight report)
+- `deploymentEventId` (must equal the UUID in `preflightReportPath` and the `<deployment-event-id>` filename component)
 - `assessedAt`
 - `assessedBy`
 - `backupComplianceRef`
@@ -26,4 +26,4 @@ Required fields:
 - `trafficOpenedAt` when finalized
 - `evidenceRefs`
 
-The traffic-open projection is post-finalization retained output and is not a preflight input or release authority. Before first-live or reopen, preflight consumes the canonical backup-compliance record, general preflight evidence, immutable pre-release recovery evidence, and the durable actual-recovery controller in `ready_to_reopen`, with an event-matching player-facing target boundary and `PREFLIGHT-BACKUP-003=pass`. `continueRecovery(operationId, expectedPhase, evidenceRef)` idempotently reconciles through the internal `releasing` phase, applies and observes quarantine release, and reaches `finalized` before traffic flows. The exporter writes both immutable projections only afterward, preserving the matching `deploymentEventId` lineage.
+The traffic-open projection is post-finalization retained output and is not a preflight input or release authority. Before first-live or reopen, preflight consumes the canonical backup-compliance record, general preflight evidence, immutable pre-release recovery evidence, and the durable actual-recovery controller in fresh `ready_to_reopen`, with an event-matching player-facing target boundary and `PREFLIGHT-BACKUP-003=pass`; `releasing` is not authorization. `continueRecovery(operationId, expectedPhase, evidenceRef)` idempotently reconciles through the internal `releasing` phase, applies and observes quarantine release, and reaches `finalized` before traffic flows. The exporter writes both immutable projections only afterward, preserving the matching `deploymentEventId` and `preflightReportPath` lineage.
