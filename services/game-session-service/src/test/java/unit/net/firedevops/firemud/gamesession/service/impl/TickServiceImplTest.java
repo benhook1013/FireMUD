@@ -1097,8 +1097,7 @@ class TickServiceImplTest {
     when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             1L, 2L, "STAGED"))
         .thenReturn(Optional.of(existingBatch));
-    when(tickEffectRepository.findByTickBatchId("tb-replay-commit-failure"))
-        .thenReturn(List.of());
+    when(tickEffectRepository.findByTickBatchId("tb-replay-commit-failure")).thenReturn(List.of());
     when(gameplayCommandRepository.findByCommandIdIn(any()))
         .thenReturn(List.of(gameplayCommand("cmd-1")));
     existingBatch.setSelectedWorkManifestDigest(
