@@ -1076,6 +1076,60 @@ class TickServiceImplTest {
   }
 
   @Test
+  void processTickPreservesReplayBatchWhenCommitFailsAfterDurableDrain() {
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.size("gamesession:tick:pending:1:2")).thenReturn(1L);
+    List<Object> replayEntries = List.of("N|cmd-1|look");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(replayEntries);
+    net.firedevops.firemud.gamesession.entity.TickBatch existingBatch =
+        new net.firedevops.firemud.gamesession.entity.TickBatch();
+    existingBatch.setTickBatchId("tb-replay-commit-failure");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("2");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(Optional.of(runtimeOwnership(1L, 2L, 1L, "fence-a", false)));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+    when(tickEffectRepository.findByTickBatchId("tb-replay-commit-failure"))
+        .thenReturn(List.of());
+    when(gameplayCommandRepository.findByCommandIdIn(any()))
+        .thenReturn(List.of(gameplayCommand("cmd-1")));
+    existingBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest(tickStagingService, replayEntries));
+
+    RedisScript<Long> commitMarker = mock(RedisScript.class);
+    RedisScript<Long> rollbackMarker = mock(RedisScript.class);
+    setField(service, "commitScript", commitMarker);
+    setField(service, "rollbackScript", rollbackMarker);
+    doAnswer(
+            invocation -> {
+              RedisScript<?> script = invocation.getArgument(0);
+              if (script == commitMarker) {
+                throw new IllegalStateException("Redis commit unavailable");
+              }
+              return 1L;
+            })
+        .when(redisTemplate)
+        .execute(
+            any(RedisScript.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals("DRAINED", existingBatch.getStatus());
+    verify(tickBatchExecutionService, never())
+        .markBatchAbandoned(any(), any(), any(String.class), any(String.class));
+  }
+
+  @Test
   void processTickRejectsStaleOwnershipBeforeDrainCommit() {
     when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
