@@ -329,6 +329,13 @@ assert spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
+main_source = (root / "dev-tools/deploy/preflight.py").read_text(encoding="utf-8")
+main_source = main_source[main_source.index("def main()") :]
+if "promotion_data = load_json(Path(promotion_attestation))" in main_source:
+    raise SystemExit("production preflight reloaded the promotion attestation")
+if "recovery_compatibility_check(" in main_source:
+    raise SystemExit("production preflight duplicated recovery compatibility evaluation")
+
 deployment_event_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 validation_now = module.dt.datetime(2026, 1, 1, 0, 5, tzinfo=module.dt.timezone.utc)
 
@@ -1122,12 +1129,18 @@ missing_compatibility_attestation = write_json(
         "rollbackMode": "rollback-compatible",
     },
 )
-missing_status, _, missing_message = module.promotion_check(
+missing_status, _, missing_message, missing_recovery_status, missing_recovery_message = module.promotion_check(
     missing_compatibility_attestation,
     [],
     tmp,
 )
-if missing_status != "fail" or "canonical fields" not in missing_message or "recoveryCompatibility" not in missing_message:
+if (
+    missing_status != "fail"
+    or "canonical fields" not in missing_message
+    or "recoveryCompatibility" not in missing_message
+    or missing_recovery_status != "fail"
+    or "recoveryCompatibility" not in missing_recovery_message
+):
     raise SystemExit(f"missing recoveryCompatibility did not fail closed: {missing_message}")
 
 def promotion_attestation(compatibility, rollback_mode="rollback-compatible"):
@@ -1155,7 +1168,7 @@ for compatibility_status in ("drill_required", "incompatible"):
         f"{compatibility_status}-attestation.json",
         promotion_attestation(status_result),
     )
-    promotion_status, _, promotion_message = module.promotion_check(status_attestation, [], tmp)
+    promotion_status, _, promotion_message, _, _ = module.promotion_check(status_attestation, [], tmp)
     if promotion_status != "fail" or "compatibilityStatus blocks promotion" not in promotion_message:
         raise SystemExit(
             f"{compatibility_status} recoveryCompatibility did not fail closed: {promotion_message}"
@@ -1169,7 +1182,7 @@ future_evaluation_path = write_json(
     "future-recovery-evaluation-attestation.json",
     future_evaluation_attestation,
 )
-future_status, _, future_message = module.promotion_check(future_evaluation_path, [], tmp)
+future_status, _, future_message, _, _ = module.promotion_check(future_evaluation_path, [], tmp)
 if future_status != "fail" or "must not be after attestation generatedAt" not in future_message:
     raise SystemExit(
         f"future-dated recovery compatibility evaluation did not fail closed: {future_message}"
@@ -1328,7 +1341,7 @@ promotion_attestation_path.write_text(
     ),
     encoding="utf-8",
 )
-promotion_status, promotion_mode, promotion_message = module.promotion_check(
+promotion_status, promotion_mode, promotion_message, _, _ = module.promotion_check(
     promotion_attestation_path,
     [gateway_image, account_image],
     promotion_root,
@@ -1353,7 +1366,7 @@ staging_record_path.write_text(
     json.dumps({**staging_record, "preflightReportPath": "staging-preflight.json"}),
     encoding="utf-8",
 )
-noncanonical_status, _, noncanonical_message = module.promotion_check(
+noncanonical_status, _, noncanonical_message, _, _ = module.promotion_check(
     promotion_attestation_path,
     [gateway_image, account_image],
     promotion_root,
@@ -1371,7 +1384,7 @@ staging_record_path.write_text(
     ),
     encoding="utf-8",
 )
-mismatched_event_status, _, mismatched_event_message = module.promotion_check(
+mismatched_event_status, _, mismatched_event_message, _, _ = module.promotion_check(
     promotion_attestation_path,
     [gateway_image, account_image],
     promotion_root,
@@ -1389,7 +1402,7 @@ staging_record_path.write_text(
     ),
     encoding="utf-8",
 )
-late_report_status, _, late_report_message = module.promotion_check(
+late_report_status, _, late_report_message, _, _ = module.promotion_check(
     promotion_attestation_path,
     [gateway_image, account_image],
     promotion_root,
@@ -1406,7 +1419,7 @@ for waiver_value in (
     waived_preflight_report = {**unwaived_preflight_report, "waiverPath": waiver_value}
     staging_preflight_path.write_text(json.dumps(waived_preflight_report), encoding="utf-8")
     staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
-    waived_report_status, _, waived_report_message = module.promotion_check(
+    waived_report_status, _, waived_report_message, _, _ = module.promotion_check(
         promotion_attestation_path,
         [gateway_image, account_image],
         promotion_root,
@@ -1423,7 +1436,7 @@ stale_preflight_report["startedAt"] = timestamp(now - module.dt.timedelta(minute
 stale_preflight_report["completedAt"] = timestamp(now - module.dt.timedelta(minutes=40))
 staging_preflight_path.write_text(json.dumps(stale_preflight_report), encoding="utf-8")
 staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
-stale_report_status, _, stale_report_message = module.promotion_check(
+stale_report_status, _, stale_report_message, _, _ = module.promotion_check(
     promotion_attestation_path,
     [gateway_image, account_image],
     promotion_root,
@@ -1444,7 +1457,7 @@ staging_preflight_path.write_text(
 
 malformed_smoke_record = {**staging_record, "smokeEvidence": [{}]}
 staging_record_path.write_text(json.dumps(malformed_smoke_record), encoding="utf-8")
-malformed_smoke_status, _, malformed_smoke_message = module.promotion_check(
+malformed_smoke_status, _, malformed_smoke_message, _, _ = module.promotion_check(
     promotion_attestation_path,
     [gateway_image, account_image],
     promotion_root,
@@ -1453,7 +1466,7 @@ malformed_smoke_status, _, malformed_smoke_message = module.promotion_check(
 if malformed_smoke_status != "fail" or "smokeEvidence entries" not in malformed_smoke_message:
     raise SystemExit(f"malformed staging smoke evidence was accepted: {malformed_smoke_message}")
 staging_record_path.write_text(json.dumps({**staging_record, "smokeEvidence": ["different-smoke"]}), encoding="utf-8")
-mismatched_smoke_status, _, mismatched_smoke_message = module.promotion_check(
+mismatched_smoke_status, _, mismatched_smoke_message, _, _ = module.promotion_check(
     promotion_attestation_path,
     [gateway_image, account_image],
     promotion_root,
@@ -1466,7 +1479,7 @@ staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
 malformed_secret_evidence = json.loads(secret_evidence_path.read_text(encoding="utf-8"))
 malformed_secret_evidence["records"]["operator-credentials"]["immutableArtifactId"] = {"note": "sha256:"}
 secret_evidence_path.write_text(json.dumps(malformed_secret_evidence), encoding="utf-8")
-malformed_immutable_status, _, malformed_immutable_message = module.promotion_check(
+malformed_immutable_status, _, malformed_immutable_message, _, _ = module.promotion_check(
     promotion_attestation_path,
     [gateway_image, account_image],
     promotion_root,
@@ -1495,7 +1508,7 @@ bad_git_attestation = json.loads(promotion_attestation_path.read_text(encoding="
 bad_git_attestation["stagingOverlayCommitSha"] = "deadbeef"
 bad_git_path = promotion_root / "bad-git-attestation.json"
 bad_git_path.write_text(json.dumps(bad_git_attestation), encoding="utf-8")
-bad_git_status, _, bad_git_message = module.promotion_check(
+bad_git_status, _, bad_git_message, _, _ = module.promotion_check(
     bad_git_path,
     [gateway_image, account_image],
     promotion_root,

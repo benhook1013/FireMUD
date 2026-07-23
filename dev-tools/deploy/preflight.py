@@ -1732,14 +1732,47 @@ def promotion_check(
     images: list[str],
     root_dir: Path,
     expected_production_overlay_ref: str | None = None,
-) -> tuple[str, str, str]:
+) -> tuple[str, str, str, str, str]:
     try:
         att = load_json(attestation_path)
     except Exception as exc:
-        return ("fail", "unknown", f"Attestation unreadable: {exc}")
+        message = f"Attestation unreadable: {exc}"
+        return ("fail", "unknown", message, "fail", f"Recovery compatibility attestation unreadable: {exc}")
 
     if not isinstance(att, dict):
-        return ("fail", "unknown", "Attestation must be a JSON object")
+        message = "Attestation must be a JSON object"
+        return ("fail", "unknown", message, "fail", "Recovery compatibility attestation must be a JSON object")
+
+    rollback_mode = str(att.get("rollbackMode", "unknown"))
+    now_dt = dt.datetime.now(dt.timezone.utc)
+    recovery_status, recovery_message = recovery_compatibility_check(att, rollback_mode, root_dir, now_dt)
+    promotion_status, promotion_rollback_mode, promotion_message = _promotion_check(
+        att,
+        images,
+        root_dir,
+        expected_production_overlay_ref,
+        now_dt,
+        recovery_status,
+        recovery_message,
+    )
+    return (
+        promotion_status,
+        promotion_rollback_mode,
+        promotion_message,
+        recovery_status,
+        recovery_message,
+    )
+
+
+def _promotion_check(
+    att: dict[str, Any],
+    images: list[str],
+    root_dir: Path,
+    expected_production_overlay_ref: str | None,
+    now_dt: dt.datetime,
+    recovery_status: str,
+    recovery_message: str,
+) -> tuple[str, str, str]:
 
     missing_attestation_fields = [
         field for field in PROMOTION_ATTESTATION_REQUIRED_FIELDS if field not in att or is_missing(att[field])
@@ -1783,11 +1816,9 @@ def promotion_check(
         generated_at = parse_timestamp(att.get("generatedAt"), "Attestation generatedAt")
     except Exception as exc:
         return ("fail", rollback_mode, str(exc))
-    now_dt = dt.datetime.now(dt.timezone.utc)
     if generated_at > now_dt:
         return ("fail", rollback_mode, "Attestation generatedAt is future-dated")
 
-    recovery_status, recovery_message = recovery_compatibility_check(att, rollback_mode, root_dir, now_dt)
     if recovery_status != "pass":
         return ("fail", rollback_mode, recovery_message)
 
@@ -2357,7 +2388,13 @@ def main() -> int:
             has_required_failure = append_result(check_results, "PREFLIGHT-PROMOTION-001", True, "fail", f"Attestation file not found: {promotion_attestation}") or has_required_failure
             has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-001", True, "fail", "Recovery compatibility cannot be evaluated because the promotion attestation is missing") or has_required_failure
         else:
-            promotion_status, _, promotion_message = promotion_check(
+            (
+                promotion_status,
+                recovery_rollback_mode,
+                promotion_message,
+                recovery_status,
+                recovery_message,
+            ) = promotion_check(
                 Path(promotion_attestation),
                 service_images,
                 root_dir,
@@ -2370,25 +2407,6 @@ def main() -> int:
                 promotion_status,
                 promotion_message,
             ) or has_required_failure
-            try:
-                promotion_data = load_json(Path(promotion_attestation))
-            except Exception as exc:
-                recovery_status = "fail"
-                recovery_message = f"Recovery compatibility attestation unreadable: {exc}"
-                recovery_rollback_mode = "unknown"
-            else:
-                if not isinstance(promotion_data, dict):
-                    recovery_status = "fail"
-                    recovery_message = "Recovery compatibility attestation must be a JSON object"
-                    recovery_rollback_mode = "unknown"
-                else:
-                    recovery_rollback_mode = str(promotion_data.get("rollbackMode", "unknown"))
-                    recovery_status, recovery_message = recovery_compatibility_check(
-                        promotion_data,
-                        recovery_rollback_mode,
-                        root_dir,
-                        dt.datetime.now(dt.timezone.utc),
-                    )
             recovery_status, recovery_message = production_recovery_check(
                 recovery_status,
                 recovery_rollback_mode,
