@@ -201,7 +201,7 @@ Required fields:
 
 - `schemaVersion`
 - `environment`
-- `status` (`pass`)
+- `status` (`pass` or `incomplete`; only `pass` can contribute to traffic-open authorization)
 - `lastSuccessfulBackupAt`
 - `lastSuccessfulRestoreDrillAt`
 - `lastRestoreDrillAt`
@@ -211,7 +211,7 @@ Required fields:
 - `recoveryContractFingerprint`
 - `evidenceRefs[]`
 
-Restore hardening for hobby/self-hosted must fail closed for player-traffic reopen if this record is missing, stale, or below baseline.
+An `incomplete` record is the canonical blocking representation while required recovery proof is unavailable. Its `lastSuccessfulRecoveryRecordRef` and `recoveryContractFingerprint` may be `null`; a `pass` record requires both fields to resolve to the qualifying finalized recovery evidence. Restore hardening for hobby/self-hosted must fail closed for player-traffic reopen if this record is incomplete, missing, stale, or below baseline.
 
 ## Hobby Traffic-Open Evidence
 

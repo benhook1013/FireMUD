@@ -4,7 +4,7 @@ Store one record per production restore as:
 
 - `<recovery-ref>.json`
 
-Every record must follow `design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#canonical-recovery-record`, including environment-wide artifact lineage, immutable `artifactErasureHighWater`, immutable `restoreHighWater` capture, gap-free erasure replay, lifecycle status, cold-start proof, empty Coordination Redis, session and epoch/fence invalidation, recovery-participant dispositions, hardening, smoke, and controlled-reopen fields.
+Every record must follow the [canonical recovery record](../../../../architecture/system-architecture-backup-recovery-evidence-and-compliance.md#canonical-recovery-record), including environment-wide artifact lineage, immutable `artifactErasureHighWater`, immutable `restoreHighWater` capture, gap-free erasure replay, lifecycle status, cold-start proof, empty Coordination Redis, session and epoch/fence invalidation, recovery-participant dispositions, hardening, smoke, and controlled-reopen fields.
 
 Production-specific requirements:
 

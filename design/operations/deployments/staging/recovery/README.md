@@ -4,7 +4,7 @@ Store one record per staging restore that originates from production data:
 
 - `<recovery-ref>.json`
 
-Every player-facing staging recovery record must follow `design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#canonical-recovery-record`, including immutable `artifactErasureHighWater`, immutable `restoreHighWater` capture, and gap-free erasure replay before reopen. A restore sourced from production also adds the sanitization requirements below.
+Every player-facing staging recovery record must follow the [canonical recovery record](../../../../architecture/system-architecture-backup-recovery-evidence-and-compliance.md#canonical-recovery-record), including immutable `artifactErasureHighWater`, immutable `restoreHighWater` capture, and gap-free erasure replay before reopen. A restore sourced from production also adds the sanitization requirements below.
 
 Staging production-origin requirements:
 
