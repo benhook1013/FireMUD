@@ -188,15 +188,15 @@ class TickServiceImplTest {
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(runtimeRegionStatusRepository.ensureBaseline(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    when(runtimeRegionStatusRepository.refreshObservedOwnership(
-            any(), any(String.class), any(String.class), any(Instant.class)))
+    when(runtimeRegionStatusRepository.claimObservedOwnership(
+            any(), any(String.class), any(String.class), any(String.class), any(Instant.class)))
         .thenAnswer(
             invocation -> {
               net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus status =
                   invocation.getArgument(0);
               status.setOwnerService(invocation.getArgument(1));
               status.setOwnerInstanceId(invocation.getArgument(2));
-              status.setUpdatedAt(invocation.getArgument(3));
+              status.setUpdatedAt(invocation.getArgument(4));
               return status;
             });
     when(runtimeRegionStatusRepository.advanceOwnershipEpoch(any()))
@@ -672,6 +672,20 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0, meterRegistry.get("game_session_lock_contention_total").counter().count(), 0.001);
     verify(conflictTracker).recordConflict("session:1:2");
+    verify(runtimeRegionStatusRepository, never())
+        .claimObservedOwnership(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void durableOwnershipClaimFailureStopsBeforeTickWork() {
+    when(runtimeRegionStatusRepository.claimObservedOwnership(any(), any(), any(), any(), any()))
+        .thenThrow(new IllegalStateException("ownership changed"));
+
+    service.processTick(1L, 2L);
+
+    verify(conflictTracker).recordConflict("session:1:2");
+    verify(listOps, never()).size(any(String.class));
+    verify(listOps, never()).index(any(String.class), anyLong());
   }
 
   @Test
@@ -1242,8 +1256,14 @@ class TickServiceImplTest {
     verify(remoteFollowupRuntimeService).reconcileResults(1L, "2", 4L);
     verify(remoteFollowupRuntimeService, never())
         .reconcileTimeouts(anyLong(), any(), anyLong(), anyLong());
-    verify(lockValueOps, never())
-        .setIfAbsent(any(String.class), any(String.class), any(Duration.class));
+    verify(lockValueOps).setIfAbsent(any(String.class), any(String.class), any(Duration.class));
+    verify(runtimeRegionStatusRepository)
+        .claimObservedOwnership(
+            eq(currentStatus),
+            eq("game-session-service"),
+            eq("test-instance"),
+            any(String.class),
+            any(Instant.class));
   }
 
   @Test

@@ -175,7 +175,8 @@ public class TickQueueControlService {
         logger);
   }
 
-  OwnershipSnapshot observeOwnership(Long tenantId, Long gameInstanceId) {
+  OwnershipSnapshot claimOwnership(Long tenantId, Long gameInstanceId, QueueLockLease tickLease) {
+    tickLease.requireOwned();
     Instant now = Instant.now();
     RuntimeRegionStatus status =
         runtimeRegionStatusRepository
@@ -187,7 +188,7 @@ public class TickQueueControlService {
                   created.setGameInstanceId(gameInstanceId);
                   created.setRegionId(defaultCurrentBoundaryRegionId(gameInstanceId));
                   created.setRegionEpoch(1L);
-                  created.setExecutorFence("fence-" + UUID.randomUUID());
+                  created.setExecutorFence(tickLease.token());
                   created.setPaused(false);
                   return created;
                 });
@@ -201,8 +202,13 @@ public class TickQueueControlService {
       baseline = status;
     }
     RuntimeRegionStatus saved =
-        runtimeRegionStatusRepository.refreshObservedOwnership(
-            baseline, runtimeIdentity.service(), runtimeIdentity.serviceInstanceId(), now);
+        runtimeRegionStatusRepository.claimObservedOwnership(
+            baseline,
+            runtimeIdentity.service(),
+            runtimeIdentity.serviceInstanceId(),
+            tickLease.token(),
+            now);
+    tickLease.requireOwned();
     return new OwnershipSnapshot(
         saved.getRegionId(),
         saved.getRegionEpoch(),

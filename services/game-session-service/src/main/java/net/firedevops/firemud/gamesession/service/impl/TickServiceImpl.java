@@ -255,15 +255,6 @@ public class TickServiceImpl implements TickService {
     Long normalizedQueueTargetId = queueTargetId != null ? queueTargetId : 0L;
     try (GameplayLoggingContext ignored =
         GameplayLoggingContext.open(Long.toString(normalizedTenantId), null, null, null)) {
-      TickQueueControlService.OwnershipSnapshot ownership =
-          tickQueueControlService.observeOwnership(normalizedTenantId, normalizedQueueTargetId);
-      tickRuntimeProgressService.observeRemoteFollowupBacklog(normalizedTenantId, ownership);
-      if (tickQueueControlService.isPaused(normalizedQueueTargetId, ownership.paused())) {
-        tickRuntimeProgressService.reconcilePausedRemoteFollowupResults(
-            normalizedTenantId, ownership);
-        logger.debug("Tick processing skipped while paused");
-        return;
-      }
       long start = System.nanoTime();
       Optional<TickQueueControlService.QueueLockLease> maybeLease =
           tickQueueControlService.tryAcquireTickLease(
@@ -275,6 +266,21 @@ public class TickServiceImpl implements TickService {
         return;
       }
       try (TickQueueControlService.QueueLockLease lease = maybeLease.orElseThrow()) {
+        TickQueueControlService.OwnershipSnapshot ownership;
+        try {
+          ownership =
+              tickQueueControlService.claimOwnership(
+                  normalizedTenantId, normalizedQueueTargetId, lease);
+        } catch (RuntimeException ownershipFailure) {
+          logger.error(
+              "Failed to claim durable tick ownership tenantId={} gameInstanceId={}",
+              normalizedTenantId,
+              normalizedQueueTargetId,
+              ownershipFailure);
+          conflictTracker.recordConflict(
+              "session:" + normalizedTenantId + ":" + normalizedQueueTargetId);
+          return;
+        }
         tickQueueControlService.markTickStarted();
         String head = null;
         boolean solo = false;
@@ -284,6 +290,13 @@ public class TickServiceImpl implements TickService {
         boolean tickSucceeded = false;
         RuntimeRegionStatus tickProgressToPublish = null;
         try {
+          tickRuntimeProgressService.observeRemoteFollowupBacklog(normalizedTenantId, ownership);
+          if (tickQueueControlService.isPaused(normalizedQueueTargetId, ownership.paused())) {
+            tickRuntimeProgressService.reconcilePausedRemoteFollowupResults(
+                normalizedTenantId, ownership);
+            logger.debug("Tick processing skipped while paused");
+            return;
+          }
           tickBatchExecutionService.executeDurableEffects(
               normalizedTenantId, normalizedQueueTargetId);
           tickStagingService.drainRemoteFollowups(
@@ -415,6 +428,7 @@ public class TickServiceImpl implements TickService {
                               "commit"));
                 });
           }
+          lease.requireOwned();
           tickProgressToPublish =
               tickRuntimeProgressService.advanceRuntimeTickProgress(
                   normalizedTenantId, normalizedQueueTargetId, ownership);

@@ -95,14 +95,16 @@ public class RuntimeRegionStatusRepository {
                                 .formatted(entity.getTenantId(), entity.getGameInstanceId()))));
   }
 
-  public RuntimeRegionStatus refreshObservedOwnership(
+  public RuntimeRegionStatus claimObservedOwnership(
       RuntimeRegionStatus expectedOwnership,
       String ownerService,
       String ownerInstanceId,
+      String executorFence,
       Instant updatedAt) {
     return dsl.update(RUNTIME_REGION_STATUS)
         .set(RUNTIME_REGION_STATUS.OWNER_SERVICE, ownerService)
         .set(RUNTIME_REGION_STATUS.OWNER_INSTANCE_ID, ownerInstanceId)
+        .set(RUNTIME_REGION_STATUS.EXECUTOR_FENCE, executorFence)
         .set(RUNTIME_REGION_STATUS.UPDATED_AT, toLocalDateTime(updatedAt))
         .where(
             ownershipGuard(expectedOwnership)
@@ -113,8 +115,7 @@ public class RuntimeRegionStatusRepository {
         .returning()
         .fetchOptional(this::toEntity)
         .orElseThrow(
-            () ->
-                new IllegalStateException("Runtime ownership changed during observation refresh"));
+            () -> new IllegalStateException("Runtime ownership changed during lease-backed claim"));
   }
 
   public Optional<RuntimeRegionStatus> advanceLastCommittedTickId(

@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -85,14 +86,15 @@ class TickQueueControlServiceTest {
     runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
     when(runtimeRegionStatusRepository.ensureBaseline(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    when(runtimeRegionStatusRepository.refreshObservedOwnership(
-            any(), any(String.class), any(String.class), any(Instant.class)))
+    when(runtimeRegionStatusRepository.claimObservedOwnership(
+            any(), any(String.class), any(String.class), any(String.class), any(Instant.class)))
         .thenAnswer(
             invocation -> {
               RuntimeRegionStatus status = invocation.getArgument(0);
               status.setOwnerService(invocation.getArgument(1));
               status.setOwnerInstanceId(invocation.getArgument(2));
-              status.setUpdatedAt(invocation.getArgument(3));
+              status.setExecutorFence(invocation.getArgument(3));
+              status.setUpdatedAt(invocation.getArgument(4));
               return status;
             });
     when(runtimeRegionStatusRepository.advanceOwnershipEpoch(any()))
@@ -496,26 +498,57 @@ class TickQueueControlServiceTest {
   }
 
   @Test
-  void observeOwnershipCreatesDefaultRuntimeRowWithRuntimeIdentity() {
+  void claimOwnershipCreatesDefaultRuntimeRowWithRuntimeIdentityAfterLeaseAcquisition() {
     when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
         .thenReturn(Optional.empty());
 
-    TickQueueControlService.OwnershipSnapshot snapshot = service.observeOwnership(1L, 2L);
+    TickQueueControlService.OwnershipSnapshot snapshot;
+    String leaseToken;
+    try (TickQueueControlService.QueueLockLease lease =
+        service.tryAcquireTickLease(1L, 2L, "test ownership claim", logger).orElseThrow()) {
+      leaseToken = lease.token();
+      snapshot = service.claimOwnership(1L, 2L, lease);
+    }
 
     assertEquals("2", snapshot.regionId());
     assertEquals(1L, snapshot.regionEpoch());
-    assertTrue(snapshot.executorFence().startsWith("fence-"));
+    assertEquals(leaseToken, snapshot.executorFence());
     ArgumentCaptor<RuntimeRegionStatus> statusCaptor =
         ArgumentCaptor.forClass(RuntimeRegionStatus.class);
     verify(runtimeRegionStatusRepository).ensureBaseline(statusCaptor.capture());
     verify(runtimeRegionStatusRepository)
-        .refreshObservedOwnership(
+        .claimObservedOwnership(
             statusCaptor.getValue(),
             "game-session-service",
             "test-instance",
+            statusCaptor.getValue().getExecutorFence(),
             statusCaptor.getValue().getUpdatedAt());
     assertEquals("game-session-service", statusCaptor.getValue().getOwnerService());
     assertEquals("test-instance", statusCaptor.getValue().getOwnerInstanceId());
+  }
+
+  @Test
+  void claimOwnershipRotatesExecutorFenceForEveryNewLeaseGeneration() {
+    RuntimeRegionStatus previous = runtimeOwnership(1L, 2L, 3L, "fence-previous", false);
+    previous.setOwnerService("game-session-service");
+    previous.setOwnerInstanceId("test-instance");
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(Optional.of(previous));
+
+    TickQueueControlService.OwnershipSnapshot snapshot;
+    try (TickQueueControlService.QueueLockLease lease =
+        service.tryAcquireTickLease(1L, 2L, "test ownership takeover", logger).orElseThrow()) {
+      snapshot = service.claimOwnership(1L, 2L, lease);
+    }
+
+    assertNotEquals("fence-previous", snapshot.executorFence());
+    verify(runtimeRegionStatusRepository)
+        .claimObservedOwnership(
+            previous,
+            "game-session-service",
+            "test-instance",
+            snapshot.executorFence(),
+            previous.getUpdatedAt());
   }
 
   @Test
