@@ -192,6 +192,8 @@ import re
 import sys
 from pathlib import Path
 
+import yaml
+
 smoke_path, runtime_images_path = map(Path, sys.argv[1:])
 smoke = smoke_path.read_text(encoding="utf-8")
 runtime_images = runtime_images_path.read_text(encoding="utf-8")
@@ -201,6 +203,25 @@ def quoted_entries(source, start_marker, end_marker):
     start = source.index(start_marker) + len(start_marker)
     end = source.index(end_marker, start)
     return re.findall(r'["\']([^"\']+)["\']', source[start:end])
+
+
+def pull_request_paths(source, label):
+    try:
+        workflow = yaml.load(source, Loader=yaml.BaseLoader)
+    except yaml.YAMLError as exc:
+        raise AssertionError(f"{label} is not valid YAML: {exc}") from exc
+    if not isinstance(workflow, dict):
+        raise AssertionError(f"{label} must contain a workflow mapping")
+    triggers = workflow.get("on")
+    if not isinstance(triggers, dict) or "pull_request" not in triggers:
+        raise AssertionError(f"{label} must define on.pull_request")
+    pull_request = triggers["pull_request"]
+    if not isinstance(pull_request, dict):
+        raise AssertionError(f"{label} on.pull_request must be a mapping")
+    paths = pull_request.get("paths")
+    if not isinstance(paths, list) or not paths or not all(isinstance(path, str) for path in paths):
+        raise AssertionError(f"{label} on.pull_request.paths must be a non-empty string list")
+    return set(paths)
 
 
 full_prefixes = quoted_entries(
@@ -213,13 +234,7 @@ full_files = quoted_entries(
     "const fullRelevantFiles = new Set([",
     "]);",
 )
-runtime_paths = set(
-    quoted_entries(
-        runtime_images,
-        "\n    paths:\n",
-        "\n  push:\n",
-    )
-)
+runtime_paths = pull_request_paths(runtime_images, "runtime-images.yml")
 
 runtime_images_fixture = """on:
   pull_request:
@@ -229,11 +244,21 @@ runtime_images_fixture = """on:
   push:
     branches: [main]
 """
-assert quoted_entries(
-    runtime_images_fixture,
-    "\n    paths:\n",
-    "\n  push:\n",
-) == ["services/example/**", "literal  push: value"]
+assert pull_request_paths(runtime_images_fixture, "runtime fixture") == {
+    "services/example/**",
+    "literal  push: value",
+}
+
+for invalid_source, expected_message in (
+    ("on:\n  push:\n    branches: [main]\n", "must define on.pull_request"),
+    ("on:\n  pull_request:\n    paths:\n      invalid: value\n", "must be a non-empty string list"),
+):
+    try:
+        pull_request_paths(invalid_source, "invalid runtime fixture")
+    except AssertionError as exc:
+        assert expected_message in str(exc)
+    else:
+        raise AssertionError(f"invalid runtime fixture {expected_message}")
 
 
 def path_pattern_covers_prefix(pattern, prefix):

@@ -1240,18 +1240,24 @@ for compatibility_status in ("drill_required", "incompatible"):
             f"{compatibility_status} recoveryCompatibility did not fail closed: {promotion_message}"
         )
 
-future_evaluation = compatibility_result("compatible")
-future_evaluation["evaluatedAt"] = timestamp(now - module.dt.timedelta(minutes=1))
-future_evaluation_attestation = promotion_attestation(future_evaluation)
-future_evaluation_attestation["generatedAt"] = timestamp(now - module.dt.timedelta(minutes=2))
-future_evaluation_path = write_json(
-    "future-recovery-evaluation-attestation.json",
-    future_evaluation_attestation,
+evaluated_after_generated = compatibility_result("compatible")
+evaluated_after_generated["evaluatedAt"] = timestamp(now - module.dt.timedelta(minutes=1))
+evaluated_after_generated_attestation = promotion_attestation(evaluated_after_generated)
+evaluated_after_generated_attestation["generatedAt"] = timestamp(now - module.dt.timedelta(minutes=2))
+evaluated_after_generated_path = write_json(
+    "evaluated-after-generated-attestation.json",
+    evaluated_after_generated_attestation,
 )
-future_status, _, future_message, _, _ = module.promotion_check(future_evaluation_path, [], tmp)
-if future_status != "fail" or "must not be after attestation generatedAt" not in future_message:
+evaluated_after_generated_status, _, evaluated_after_generated_message, _, _ = module.promotion_check(
+    evaluated_after_generated_path, [], tmp
+)
+if (
+    evaluated_after_generated_status != "fail"
+    or "must not be after attestation generatedAt" not in evaluated_after_generated_message
+):
     raise SystemExit(
-        f"future-dated recovery compatibility evaluation did not fail closed: {future_message}"
+        "recovery compatibility evaluated after attestation generation did not fail closed: "
+        + evaluated_after_generated_message
     )
 
 rollback_status, rollback_message = module.production_recovery_check(

@@ -2,7 +2,9 @@
 
 Store one record per `first-live` or `reopen` production traffic-open event as:
 
-- `<event>-<deployment-ref>-<deployment-event-id>.json`
+- `design/operations/deployments/production/traffic-open/<event>-<deployment-ref>-<deployment-event-id>.json`
+
+For production, `<deployment-ref>` is the exact lowercase hexadecimal Git commit reference from the event's preflight `deploymentRef.overlayCommitSha`; copy it verbatim rather than deriving or sanitizing a display label. It therefore cannot introduce path separators. `<deployment-event-id>` is the canonical lowercase UUID from the same preflight report. The filename event is `first-live` or `reopen`, must equal the stored `eventType`, and the stored `deploymentEventId` must equal the final filename component.
 
 In the target flow, preflight reads the durable actual-recovery controller while it holds quarantine at `ready_to_reopen`; it does not consume a transient traffic-open projection. After the controller reaches `finalized`, the exporter emits the immutable environment-wide traffic-open projection below, retaining the controller reference and exact player-facing target boundary. The current executable has no production controller read or production projection writer, so `PREFLIGHT-BACKUP-002` intentionally fails closed.
 

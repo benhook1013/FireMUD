@@ -59,7 +59,8 @@ The backup artifact is one consistent PostgreSQL database view, not a tenant- or
 
 - one transactionally consistent snapshot covering every service schema in the declared database;
 - immutable environment, database, schema/migration, service-digest, tool-digest, snapshot-time, and object-store lineage;
-- immutable `artifactErasureHighWater` captured as the greatest authoritative erasure-ledger sequence visible inside the same PostgreSQL snapshot and bound into the artifact manifest before that snapshot closes;
+- immutable `artifactErasureHighWater` captured as the greatest authoritative erasure-ledger sequence visible inside the same PostgreSQL snapshot, then bound with the immutable artifact digest and snapshot identity in one immutable manifest;
+- one atomic or compare-and-set ready-publication record created only after the artifact bytes and manifest are durably stored; a crash, duplicate publication, missing object, mutable object, or digest/high-water mismatch leaves the candidate unpublished or quarantined and makes recovery reject it;
 - artifact integrity and a restore-readability check rather than object-existence proof alone;
 - no claim that the snapshot also preserves Coordination Redis, active sessions, queued transient work, or external provider state; and
 - periodic production-equivalent proof that durable workflow and external-effect reconciliation can recover from an artifact captured while representative writes are active.

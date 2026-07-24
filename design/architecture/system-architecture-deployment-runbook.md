@@ -101,15 +101,17 @@ The drill evidence may be reused within the configured freshness window only whi
    - For production releases, confirm the release digest manifest exists and binds the release tag, production deployment reference, production attestation, staging deployment record, and exact service digest set being promoted.
    - Confirm deployment evidence includes rollback-mode classification (`rollback-compatible` or `roll-forward-only`) for the release candidate.
    - Treat rollback compatibility as broader than binary compatibility alone: previous digests must remain safe to re-apply against the current database schema, secret/config contract, mounted file-path contract, and expected external bindings.
-3. **Run Preflight Policy Checks**
+3. **Update and Merge the Environment Overlay**
+   - Update the image digests in the environment-specific Kustomize overlay for the target environment (for example `k8s/overlays/stage` or `k8s/overlays/prod`) via a Git change.
+   - Use a pull request for the overlay change so promotion and rollback remain auditable. The merged commit is the source of truth for what is intended to run in that environment.
+   - Check out that exact merged commit in the secure operator environment before preflight. Do not preflight an unmerged branch, a synthetic merge ref, or a later working-tree state.
+4. **Run Preflight Policy Checks**
    - Validate the target overlay before apply and fail fast on policy violations.
+   - Render and evaluate the exact already-merged overlay commit that will be applied. The preflight report `deploymentRef.overlayCommitSha`, immutable deployment record, namespace annotation or deploy-info ConfigMap, and live-state verification must all bind that same commit.
    - Evaluate the implemented policy IDs from `design/architecture/system-architecture-deploy-preflight-policy.md` (for example `PREFLIGHT-DIGEST-001`, `PREFLIGHT-SECRETS-001`, `PREFLIGHT-SECRETS-002`, `PREFLIGHT-JWT-001`, `PREFLIGHT-JWKS-001`, `PREFLIGHT-BRIDGE-001`, `PREFLIGHT-REDIS-001`, `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-EXTERNAL-001`, `PREFLIGHT-SERVICES-001`, `PREFLIGHT-PROMOTION-001`, and `PREFLIGHT-BACKUP-001` for production). `PREFLIGHT-JWT-002` and event-scoped `PREFLIGHT-JWT-ROTATION-001` remain target-state-only until the executable and contract tests emit them.
    - Treat preflight as blocking. Do not run `kubectl apply` until all checks pass.
    - Use the canonical entrypoint: `./dev-tools/deploy/preflight.py <staging|production|hobby-self-hosted>`.
    - Store the preflight report artifact under `design/operations/deployments/<environment>/preflight/<deployment-ref>/<deploymentEventId>.json`. Preflight generates a new `deploymentEventId` for each concrete run; copy that UUID into the immutable deployment record, apply within 30 minutes of report completion, and generate a new event path for every retry or re-apply. The target-state waiver record is the adjacent `<deploymentEventId>.waiver.json`, but executable waiver use remains blocked until trusted one-time consumption authority exists.
-4. **Update the Environment Overlay (Git-Tracked)**
-   - Update the image digests in the environment-specific Kustomize overlay for the target environment (for example `k8s/overlays/stage` or `k8s/overlays/prod`) via a Git change.
-   - Use a pull request for the overlay change so promotion and rollback remain auditable (the merged commit is the source of truth for what is intended to be running in that environment).
 5. **Apply Kubernetes Manifests**
    - From a secure operator environment, apply the overlay (for example `kubectl apply -k k8s/overlays/prod`).
    - Each environment boundary (staging vs production) uses its own cluster credentials and secret sources; `firemud` is the default namespace name within each boundary. When using a non-default namespace for drills or temporary restores, treat that namespace as an explicit override tied to the selected overlay or restore script inputs.
@@ -121,7 +123,7 @@ The drill evidence may be reused within the configured freshness window only whi
          - `kubectl annotate namespace <namespace> firemud.io/overlay-sha=<git-sha> --overwrite`
        - Alternative: create/update a dedicated ConfigMap (for example `firemud-deploy-info`) that stores `overlay_sha` and `applied_at` as data keys.
 6. **Verify Live State**
-   - Confirm the apply was executed from the exact merged overlay commit used for preflight and review.
+   - Confirm the apply was executed from the exact merged overlay commit used for preflight and review; any commit or working-tree drift invalidates that preflight run.
    - Capture the live workload state after rollout:
      - actual running image digests for updated Deployments/StatefulSets,
      - the namespace overlay SHA annotation (or `firemud-deploy-info` equivalent),
