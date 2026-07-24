@@ -205,25 +205,59 @@ fi
 
 if [[ "$ENVIRONMENT" == "staging" ]]; then
   check_required_var "SANITIZATION_EVIDENCE_REF"
-  if [[ ! "$SANITIZATION_EVIDENCE_REF" =~ ^design/operations/deployments/staging/recovery/ ]]; then
-    echo "SANITIZATION_EVIDENCE_REF must point to a staged recovery record under design/operations/deployments/staging/recovery/." >&2
+  if [[ ! "$SANITIZATION_EVIDENCE_REF" =~ ^design/operations/deployments/staging/recovery/[^/]+\.sanitization\.json$ ]]; then
+    echo "SANITIZATION_EVIDENCE_REF must point to a pre-release *.sanitization.json artifact under design/operations/deployments/staging/recovery/." >&2
     exit 1
   fi
   if [[ ! -f "$SANITIZATION_EVIDENCE_REF" ]]; then
     echo "SANITIZATION_EVIDENCE_REF not found: $SANITIZATION_EVIDENCE_REF" >&2
     exit 1
   fi
-  python3 - <<'PY' "$SANITIZATION_EVIDENCE_REF"
+  python3 - <<'PY' "$SANITIZATION_EVIDENCE_REF" "$EXTERNAL_CREDENTIAL_EVIDENCE_REF"
 import json
 import pathlib
 import sys
 
 path = pathlib.Path(sys.argv[1])
+external_path = pathlib.Path(sys.argv[2])
 data = json.loads(path.read_text(encoding="utf-8"))
-required = ["sanitizedAt", "sanitizedBy", "controlsApplied", "validationEvidence"]
+external_data = json.loads(external_path.read_text(encoding="utf-8"))
+if data.get("schemaVersion") != "recovery-sanitization-evidence/v1":
+    print("Staging sanitization evidence schemaVersion must be recovery-sanitization-evidence/v1.", file=sys.stderr)
+    raise SystemExit(1)
+if data.get("environment") != "staging":
+    print("Staging sanitization evidence environment mismatch.", file=sys.stderr)
+    raise SystemExit(1)
+required = [
+    "recoveryRef",
+    "operationId",
+    "deploymentEventId",
+    "backupArtifactDigest",
+    "sanitizedAt",
+    "sanitizedBy",
+    "controlsApplied",
+    "validationEvidence",
+]
 for key in required:
     if not data.get(key):
         print(f"Staging sanitization evidence missing {key}.", file=sys.stderr)
+        raise SystemExit(1)
+if path.name != f"{data['recoveryRef']}.sanitization.json":
+    print("Staging sanitization evidence filename must match recoveryRef.", file=sys.stderr)
+    raise SystemExit(1)
+external_lineage = external_data.get("backupArtifactLineage") or {}
+expected_values = {
+    "recoveryRef": external_data.get("recoveryRef"),
+    "operationId": external_data.get("operationId"),
+    "deploymentEventId": external_data.get("deploymentEventId"),
+    "backupArtifactDigest": external_lineage.get("artifactDigest"),
+}
+for key, expected in expected_values.items():
+    if not expected:
+        print(f"External credential evidence missing staging lineage field: {key}.", file=sys.stderr)
+        raise SystemExit(1)
+    if data.get(key) != expected:
+        print(f"Staging sanitization evidence {key} mismatch.", file=sys.stderr)
         raise SystemExit(1)
 PY
 fi

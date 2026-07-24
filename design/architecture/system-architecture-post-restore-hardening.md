@@ -102,7 +102,7 @@ Expected inputs include environment-specific values such as:
 - `EXTERNAL_CREDENTIAL_EVIDENCE_REF`
 - optionally `PRODUCTION_PG_DUMP_BUCKET` and `PRODUCTION_ASSET_STORE_BUCKET` when validating staging isolation
 
-For staging restores sourced from production-origin snapshots, `SANITIZATION_EVIDENCE_REF` must point at the required controller-visible sanitization result before release; its checked-in sanitization projection is exported after the controller reaches `finalized`.
+For staging restores sourced from production-origin snapshots, `SANITIZATION_EVIDENCE_REF` must point at an immutable `<recovery-ref>.sanitization.json` pre-release artifact whose operation, deployment event, and backup-artifact digest match the durable controller. The finalized recovery projection references that same artifact after the controller reaches `finalized`; it is not used circularly as the pre-release input.
 
 ### 5. Secret-compliance evidence refresh
 

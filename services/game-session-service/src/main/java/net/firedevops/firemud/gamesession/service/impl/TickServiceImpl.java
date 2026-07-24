@@ -336,13 +336,7 @@ public class TickServiceImpl implements TickService {
                   normalizedTenantId, normalizedQueueTargetId);
               lease.requireOwned();
             } else {
-              executeFencedScript(
-                  commitScript,
-                  lease,
-                  List.of(
-                      tickQueueControlService.pendingKey(
-                          normalizedTenantId, normalizedQueueTargetId)),
-                  "commit");
+              commitPending(lease, normalizedTenantId, normalizedQueueTargetId);
             }
             awaitReplication();
           }

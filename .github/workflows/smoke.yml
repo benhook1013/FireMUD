@@ -314,16 +314,21 @@ jobs:
                 }
               );
 
-              const matching = runs.find((run) =>
-                run.event === "pull_request" &&
-                run.head_sha === headSha &&
-                run.display_title === expectedDisplayTitle &&
-                run.pull_requests?.some((pullRequest) =>
+              const matching = runs.find((run) => {
+                if (
+                  run.event !== "pull_request" ||
+                  run.head_sha !== headSha ||
+                  run.display_title !== expectedDisplayTitle
+                ) {
+                  return false;
+                }
+                const pullRequests = run.pull_requests ?? [];
+                return pullRequests.length === 0 || pullRequests.some((pullRequest) =>
                   String(pullRequest.number) === prNumber &&
                   pullRequest.base?.sha === baseSha &&
                   pullRequest.head?.sha === headSha
-                )
-              );
+                );
+              });
               if (matching) {
                 core.info(`Found runtime-images run ${matching.id} with status=${matching.status} conclusion=${matching.conclusion}`);
                 if (matching.status !== "completed") {

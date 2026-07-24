@@ -223,6 +223,13 @@ The following are canonical alert names. Use them when checking alert state in P
 
 - `TickEffectsReplaySloBreached`
 - `TickEffectsReplayStarved`
+- `BackupLastSuccessMetricsAbsent`
+- `BackupVerificationLastSuccessMetricsAbsent`
+- `BackupRestoreDrillLastSuccessMetricsAbsent`
+- `BackupArtifactLineageMetricsAbsent`
+- `BackupArtifactRestoreReadabilityMetricsAbsent`
+- `RecoveryParticipantConvergenceMetricsAbsent`
+- `RecoveryParticipantConvergenceCoverageMissing`
 
 Mirrored external signals:
 

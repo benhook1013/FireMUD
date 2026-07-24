@@ -261,7 +261,7 @@ Operational scripts and CronJobs rely on the following variables when uploading 
 | `PG_DUMP_ENDPOINT` | Optional S3-compatible endpoint URL | *(none)* |
 | `FIREMUD_K8S_NAMESPACE` | Namespace override used by restore/verification scripts for drills or non-default restores | `firemud` |
 | `EXTERNAL_CREDENTIAL_EVIDENCE_REF` | In-repo recovery record with external credential validation results (`design/operations/deployments/<environment>/recovery/<recovery-ref>.json`) | *(none)* |
-| `SANITIZATION_EVIDENCE_REF` | In-repo evidence path proving staging data sanitization after production-origin restore (`design/operations/deployments/staging/recovery/<recovery-ref>.json`) | *(none)* |
+| `SANITIZATION_EVIDENCE_REF` | Immutable pre-release evidence path proving staging data sanitization after production-origin restore (`design/operations/deployments/staging/recovery/<recovery-ref>.sanitization.json`) | *(none)* |
 | `EXPECTED_BINDINGS_REF` | Canonical expected-binding manifest consumed by deploy preflight and restore validation (`design/operations/environments/<environment>/expected-bindings.yaml`) | *(none)* |
 
 In Kubernetes environments, object-store credentials should be stored in per-environment Secrets and must not be shared between staging and production. `PG_DUMP_ENDPOINT` is required only for S3-compatible endpoints such as MinIO; when unset, tooling uses the AWS default endpoint behavior.

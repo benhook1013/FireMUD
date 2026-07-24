@@ -58,17 +58,17 @@ For `recoveryCompatibility.compatibilityStatus=compatible`, `baselineRecoveryRec
 - Every production overlay digest must match the digest in `serviceDigests`.
 - Official production release PRs must include exactly one release digest manifest whose `promotionAttestationRef` points to the attestation and whose `serviceDigests` match byte-for-byte.
 - `environment` must be `staging`.
-- `stagingOverlayCommitSha` must exist in Git history and, together with `stagingDeploymentEventId`, select a successful staging deployment record.
+- `stagingOverlayCommitSha` must exist in Git history and, together with `stagingDeploymentEventId`, select a successful staging deployment record. That record's `overlayCommitSha` must equal `stagingOverlayCommitSha`, and its `deploymentEventId` must equal `stagingDeploymentEventId`.
 - The referenced staging deployment record must include live-state verification (`liveStateEvidence`) proving the running digests matched the reviewed overlay after apply.
 - `liveStateEvidence` must be machine-checkable: status `pass`, the observed overlay SHA, and observed running digests for the promoted services must match the referenced staging deployment record and attestation.
 - The referenced staging deployment record must include `deployStatus=pass` and `smokeStatus=pass`.
-- The staging record must reference `design/operations/deployments/staging/preflight/<stagingOverlayCommitSha>/<stagingDeploymentEventId>.json`; that operator report must carry the same `deploymentEventId`, exact staging applicability, and a `completedAt` no later than and no more than 30 minutes before the record's `appliedAt`.
+- The staging record must reference `design/operations/deployments/staging/preflight/<stagingOverlayCommitSha>/<stagingDeploymentEventId>.json`; that operator report's `deploymentRef.overlayCommitSha` must equal `stagingOverlayCommitSha`, its `deploymentEventId` must equal `stagingDeploymentEventId`, and its `completedAt` must be no later than and no more than 30 minutes before the record's `appliedAt`.
 - The referenced staging deployment record must include `secretComplianceStatus` set to `pass` and a `secretComplianceEvidenceRef`.
 - The referenced secret-compliance evidence must include immutable artifact identifiers for all required credential classes; warning-only or note-only evidence is not promotable.
 - The referenced production overlay digests must be byte-identical to the staged digests recorded in the deployment record; retags are acceptable, rebuilds are not.
 - `secretComplianceEvidenceRef` may satisfy compliance through either immutable bootstrap provisioning evidence or immutable rotation evidence, as defined in `infrastructure/environment-and-secrets-overview.md`, but warning-only compliance records are never promotable.
 - Attestation schema must validate against the current `attestationVersion`.
-- `recoveryCompatibility.compatibilityStatus=compatible` may reuse a baseline only for a `rollback-compatible` release when the fresh finalized-drill requirements above pass, the candidate fingerprint is unchanged, and `changedDimensions[]` contains no invalidating or unknown recovery-contract change. `drill_required` and every `roll-forward-only` release must reference the matching full backup-readiness record; `incompatible` blocks promotion.
+- `recoveryCompatibility.compatibilityStatus=compatible` may reuse a baseline only for a `rollback-compatible` release when the fresh finalized-drill requirements above pass, the candidate fingerprint is unchanged, and `changedDimensions[]` contains no invalidating or unknown recovery-contract change. `drill_required` blocks promotion until a fresh drill is complete and the result is regenerated as `compatible`; evidence attached to the stale result does not make it promotable. Every `roll-forward-only` release requires the regenerated compatible result and the matching full backup-readiness record. `incompatible` blocks promotion.
 - If any check fails, production promotion is blocked.
 
 External-only attestation storage is not allowed for production promotions because it prevents deterministic PR validation.
