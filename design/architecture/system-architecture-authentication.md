@@ -333,7 +333,7 @@ Authorization: Bearer <bootstrapToken>
 -> [{
      realmSlug: "production",
      displayName: "Live Realm",
-     tenantId: "tenant-demo",
+     tenantId: "7b3b074e-d597-4e9b-b96f-4f5946d26120",
      gameInstanceId: "2f1c7ad0-8d5a-4a61-9d4b-6c93f11a2e01",
      connectScopeId: "cs_demo_production_v17"
    }]
@@ -346,7 +346,7 @@ POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_production_v17", requestId: "req-123" }
 Set-Cookie: Firemud-Connect-Token=<connectToken>; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30
--> { accountId, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "2f1c7ad0-8d5a-4a61-9d4b-6c93f11a2e01", expiresAt, jti, issuedAt }
+-> { accountId, tenantId: "7b3b074e-d597-4e9b-b96f-4f5946d26120", realmSlug: "production", gameInstanceId: "2f1c7ad0-8d5a-4a61-9d4b-6c93f11a2e01", expiresAt, jti, issuedAt }
 
 GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 
@@ -435,14 +435,14 @@ Authorization: Bearer <bootstrapToken>
      {
        realmSlug: "production",
        displayName: "Live Realm",
-       tenantId: "tenant-demo",
+       tenantId: "7b3b074e-d597-4e9b-b96f-4f5946d26120",
        gameInstanceId: "2f1c7ad0-8d5a-4a61-9d4b-6c93f11a2e01",
        connectScopeId: "cs_demo_production_v17"
      },
      {
        realmSlug: "playtest-docks",
        displayName: "Playtest Fork",
-       tenantId: "tenant-demo",
+       tenantId: "7b3b074e-d597-4e9b-b96f-4f5946d26120",
        gameInstanceId: "ad63c32f-b076-48de-9434-87fb16b73c1d",
        connectScopeId: "cs_demo_playtest_docks_v4"
      }
@@ -456,7 +456,7 @@ POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_playtest_docks_v4", requestId: "req-456" }
 Set-Cookie: Firemud-Connect-Token=<connectToken>; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30
--> { accountId, tenantId: "tenant-demo", realmSlug: "playtest-docks", gameInstanceId: "ad63c32f-b076-48de-9434-87fb16b73c1d", expiresAt, jti, issuedAt }
+-> { accountId, tenantId: "7b3b074e-d597-4e9b-b96f-4f5946d26120", realmSlug: "playtest-docks", gameInstanceId: "ad63c32f-b076-48de-9434-87fb16b73c1d", expiresAt, jti, issuedAt }
 
 GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 

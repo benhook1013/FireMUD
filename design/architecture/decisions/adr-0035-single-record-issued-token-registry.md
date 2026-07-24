@@ -50,6 +50,16 @@ The current implementation writes account and tenant keys but does not consisten
 - Generation-bound private player-delegation rotation creates the replacement record before returning it, atomically swaps the gameplay binding as defined by ADR 0031, and deletes the old record after the bounded in-flight overlap.
 - Registry absence is default denial. Coordination reset therefore forces reauthentication/reissuance rather than making unregistered but cryptographically valid tokens acceptable.
 
+### Durable Idempotency Evidence And Retry Semantics
+
+ADR 0031's idempotent retirement, per-token logout, and logout-all rules require durable Account-owned evidence in addition to the Redis registry record. Redis absence is not, by itself, proof that one of those operations completed.
+
+- Every retirement acknowledgement, per-token logout, and logout-all request carries a high-entropy operation ID. Account binds the ID to the operation kind and an immutable request digest containing the relevant token hash/lineage or account authority scope. Reusing an operation ID with different meaning or scope is rejected.
+- Account stores a bounded durable operation record outside Coordination Redis. A completed token retirement or per-token logout records the operation ID, exact token identity/lineage, and a completed tombstone proving that the registry mutation succeeded. A completed logout-all records the operation ID, durable logout event identity, and the account authority generation that superseded the presented token. The evidence is not an authorization grant and contains no raw JWT.
+- A retry with the same operation ID and matching request returns the stored success after full local token/profile/subject validation required by ADR 0031; it does not mint, reauthorize, or repeat unrelated mutations. An incomplete operation record is resumed or reconciled, not reported as success. A missing registry record without matching completed/tombstone evidence remains denied for per-token logout and retirement.
+- A logout-all retry may return no-op success when the presented token is already superseded only if durable Account evidence proves the prior logout-all event and generation that caused the supersession. That retry does not advance the generation or mutate state. Current, ambiguous, or differently scoped requests remain denied.
+- Durable evidence has an explicit bounded retention horizon: no shorter than the maximum supported retry/idempotency window plus the required audit/outbox delivery window, and for token-specific tombstones no shorter than the token's `exp` plus validation skew. Logout-all supersession proof is retained through the configured authority-event/retry horizon needed to classify later retries. Background cleanup physically removes evidence only after its horizon and must not remove the only proof still required for a stored-success or supersession response. Cleanup is itself idempotent and does not change revocation authority.
+
 ## Consequences
 
 - Each revocable token creates one bounded key and requires one registry lookup rather than account plus tenant/global key combinations.

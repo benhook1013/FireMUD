@@ -6,7 +6,7 @@ The authoritative REST schema source lives in [../../../../services/account-serv
 
 ## Implementation Status
 
-The account lifecycle, full-account export, tenant-scoped export, and deletion precondition contracts below are implemented at the current Account Service boundary. `ExportAccount` and `DeleteAccount` are account-scoped and no longer accept a caller-selected `tenantId`; `ExportTenantData` is the separate tenant-scoped recovery/export surface. Password reset, username reminder, and email-verification tokens are account-scoped rather than tenant-keyed. Explicit `JOIN` / `Join & Play` is not implemented: current connect-token and `PLAY` paths may invoke `EnsurePublicProductionPlayerMembership` implicitly. That is recorded drift; the target contracts below require an explicit join and return `JOIN_REQUIRED` from later admission surfaces when membership is absent.
+The account lifecycle, full-account export, tenant-scoped export, and deletion precondition contracts below are implemented at the current Account Service boundary. `ExportAccount` and `DeleteAccount` are account-scoped and no longer accept a caller-selected `tenantId`; `ExportTenantData` is the separate tenant-scoped recovery/export surface. Password reset, username reminder, and email-verification tokens are account-scoped rather than tenant-keyed. Explicit `JOIN` / `Join & Play` is not implemented: current connect-token and `PLAY` paths may invoke `EnsurePublicProductionPlayerMembership` implicitly. That is recorded drift; the target contracts below require an explicit join and return `JOIN_REQUIRED` from later admission surfaces when membership is absent. Current REST DTOs/OpenAPI also retain numeric account and tenant IDs, and the legacy login request still carries `tenantId`; migration to ADR 0020 UUID wire identities and account-first login remains incomplete.
 
 ## gRPC APIs
 
@@ -137,7 +137,7 @@ Illustrative `GetTenantMembershipForRuntime(accountId, tenantId)` response:
 ```json
 {
   "accountId": "acct_123",
-  "tenantId": "tenant-demo",
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
   "gameplayAdmissionAllowed": true,
   "roles": ["player"],
   "membershipVersion": 42,
@@ -157,7 +157,7 @@ Illustrative `GetRealmAccessGrant(accountId, tenantId, worldSlug, realmSlug)` re
 ```json
 {
   "accountId": "acct_123",
-  "tenantId": "tenant-demo",
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
   "worldSlug": "demo",
   "realmSlug": "playtest-docks",
   "accessAllowed": true,
@@ -181,7 +181,7 @@ Illustrative `GetTenantEntitlementsForRuntime(tenantId)` response:
 
 ```json
 {
-  "tenantId": "tenant-demo",
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
   "subscriptionStatus": "active",
   "gameplayAvailable": true,
   "allowPublicJoin": true,
@@ -261,12 +261,12 @@ curl -X POST http://localhost:8080/accounts \
   -d '{"username":"demo","email":"demo@example.com","password":"secret"}'
 ```
 
-Example login request:
+Target account-first login request:
 
 ```bash
 curl -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":1,"username":"demo","password":"secret"}'
+  -d '{"username":"demo","password":"secret"}'
 ```
 
 Call the gRPC method with:

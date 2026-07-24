@@ -4,6 +4,10 @@ This document describes the structure and tooling for FireMUD's browser-based us
 
 Other UIs include a role-based admin interface and a game design editor. See [Role-Based Admin UI](./microservices/logging-admin-service/admin-ui.md) and [Web-Based Visual Design Interface](./microservices/game-design-service/web-visual-interface.md).
 
+## Implementation Status
+
+Explicit `JOIN`/`Join & Play` and removal of implicit membership creation are target behavior, not implemented in the current runtime. Current connect-token and text `PLAY` paths may still create membership implicitly; the target flow below must not be read as runtime completion.
+
 ## Implementation Notes
 
 - The current `web-client` baseline now uses `TanStack Query` plus local feature state rather than Redux starter scaffolding.
@@ -127,7 +131,7 @@ POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_production_v17", requestId: "req-reconnect-1" }
 Set-Cookie: Firemud-Connect-Token=<connectToken>; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30
--> { expiresAt, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "2f1c7ad0-8d5a-4a61-9d4b-6c93f11a2e01", jti, issuedAt }
+-> { expiresAt, tenantId: "7b3b074e-d597-4e9b-b96f-4f5946d26120", realmSlug: "production", gameInstanceId: "2f1c7ad0-8d5a-4a61-9d4b-6c93f11a2e01", jti, issuedAt }
 
 GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 
@@ -142,7 +146,7 @@ POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_production_v17", requestId: "req-reconnect-2" }
 Set-Cookie: Firemud-Connect-Token=<connectToken>; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30
--> { expiresAt, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "2f1c7ad0-8d5a-4a61-9d4b-6c93f11a2e01", jti, issuedAt }
+-> { expiresAt, tenantId: "7b3b074e-d597-4e9b-b96f-4f5946d26120", realmSlug: "production", gameInstanceId: "2f1c7ad0-8d5a-4a61-9d4b-6c93f11a2e01", jti, issuedAt }
 
 GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 

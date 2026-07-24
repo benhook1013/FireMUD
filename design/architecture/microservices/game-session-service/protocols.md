@@ -157,7 +157,7 @@ OK PLAY Entered world: Demo World / Live Realm
 
 The transcript above shows the intended prompt flow. In the current implementation the same exchange is represented by a single `LOGIN <username> <password>` call because the prompt-driven handler still returns `ERROR PROMPT_LOGIN_UNSUPPORTED ...`.
 
-Telnet success, using the normal simple player-facing path:
+Planned target Telnet first-join success transcript; explicit `JOIN` is not current behavior:
 
 ```text
 WORLDS

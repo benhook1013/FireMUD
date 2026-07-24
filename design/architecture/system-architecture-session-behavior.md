@@ -49,9 +49,9 @@ Membership-change event delivery semantics are required, not best-effort folklor
 - If Game Session detects a version gap or has no prior version for an active binding, it must reconcile immediately via the authoritative internal membership API before deciding whether the session remains valid.
 - Account Service owns the version increment rules; other services must not synthesize membership versions locally.
 
-Account commits each security, membership, grant, or billing authority change, the corresponding durable Account-owned authority-generation or grant-version advance, and its monotonic outbox event in one database transaction. Redis and other downstream projections then idempotently reflect the committed authority state. The cutoff workflow does not report enforcement complete until the required projection and consumer convergence succeeds. Game Session consumes the durable events through an idempotent consumer and maintains bounded indexes from account, tenant, and private-realm grant scope to active bindings; correctness must not depend on wildcard Redis scans.
+Account commits each security, membership, grant, or billing authority change, the corresponding durable Account-owned authority-generation or grant-version advance, and its monotonic outbox event in one database transaction. Redis and other downstream projections then idempotently reflect the committed authority state. The cutoff workflow does not report enforcement complete until the required projection and consumer convergence succeeds. Game Session consumes the durable events through an idempotent consumer and maintains the canonical bounded active-binding indexes listed below; correctness must not depend on wildcard Redis scans.
 
-Event delivery is the fast path, but not the sole safety mechanism. Game Session performs batched authority-generation/version reconciliation often enough that a missed event cannot preserve revoked gameplay authority for more than 60 seconds. If that reconciliation lease cannot be renewed, new admission fails closed and active bindings whose authority cannot be re-established are terminated at the 60-second bound. This is periodic per-authority reconciliation, not an Account or Redis lookup on each gameplay command.
+An accepted, delivered authority event is the immediate revocation path: Game Session targets the affected bindings, closes their active sockets, and removes their admission state without waiting for the reconciliation interval. The `<=60-second` bound applies only when an event is missed, delayed, or cannot be consumed; batched authority-generation/version reconciliation must then discover the stale authority and terminate the affected bindings within that bound. If the reconciliation lease cannot be renewed, new admission fails closed and active bindings whose authority cannot be re-established are terminated at the bound. This is periodic per-authority reconciliation, not an Account or Redis lookup on each gameplay command.
 
 ## Session and Identity Management
 
@@ -90,15 +90,18 @@ FireMUD uses distinct lifetimes and invariants for each session type:
 Game Session must also maintain bounded authoritative secondary indexes for gameplay bindings so takeover, reconnect, and revocation do not require scans:
 
 - `session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>` -> `sessionId`
+- `session:game:index:account:<accountId>` -> active tenant-qualified `sessionId` set across all tenants for the account
 - `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>` -> active `sessionId` set
 - `session:game:index:tenant:{tenantGameplayTag}` -> active `sessionId` set
+- `session:game:index:realm-grant:{tenantGameplayTag}:<worldSlug>:<realmSlug>:<accountId>` -> active `sessionId` set for grant-gated realms
 
 Index contract requirements:
 
-- Game Session is the sole writer for these indexes.
-- The session record plus these tenant-scoped indexes must be mutated through one shard-local session-only CAS/update flow where all keys share `{tenantGameplayTag}`. This is the atomic boundary for takeover and resume decisions inside Redis Cluster.
+- Game Session is the sole writer for all five index families; Account authority and realm-grant state remain the authorization source, not the indexes.
+- The gameplay session record plus the tenant-scoped character, account-tenant, tenant, and realm-grant indexes must be mutated through one shard-local session-only CAS/update flow where all keys share `{tenantGameplayTag}`. This is the atomic boundary for takeover, resume, and tenant/grant-binding decisions inside Redis Cluster.
+- The account-wide cross-tenant index cannot share that slot with every tenant record. Game Session updates it as a separate idempotent secondary write after the tenant-scoped CAS; a transient missing entry is repaired by bounded reconciliation and is never used as sole admission authority.
 - Region-local gameplay binding is intentionally outside that atomic boundary and follows the separate session-to-region bridge contract in the Redis architecture docs.
-- Index entries must be removed or expired when the bound gameplay session ends or becomes non-resumable.
+- Normal termination, revocation, takeover, and expiry remove or expire all applicable index entries idempotently. Reconciliation verifies indexed session records, removes stale entries, and recreates missing entries from active authoritative bindings without wildcard keyspace scans.
 - Billing- and membership-driven revocation flows must use these bounded indexes rather than wildcard key scans.
 
 Each gameplay session binding must store the server-side auth token identity it is operating under:

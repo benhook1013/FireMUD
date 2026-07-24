@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The accepted UUID logical-identifier decision is target state. Current public and cross-service contracts still have numeric identifier gaps, and runtime numeric identifiers still need explicit scoped-stability and non-reuse proof. Existing numeric database keys remain implementation details where they are already private; this status does not claim identifier migration or runtime proof is complete.
+
 ## Decision Record
 
 - Decision date: 2026-07-18

@@ -105,7 +105,7 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
     - Illustrative Redis hash contents:
 
       ```text
-      HGETALL tick:{tenant-demo:region:starter-village}:meta
+      HGETALL tick:{123e4567-e89b-42d3-a456-426614174000:region:starter-village}:meta
       region_epoch               14
       current_tick_id            9285
       current_tick_state         RESOLVING
@@ -303,7 +303,7 @@ Session revocation actions (for example “kick all sessions for tenant X” on 
 - Publishing a tenant-scoped billing/security event that Game Session consumes promptly, and
 - Closing affected sockets and removing the corresponding per-session keys using in-memory registries and/or purpose-built, bounded indexes.
 
-Issued-token registry records (`session:auth:token:<tokenHash>`) use each record's actual JWT `exp` plus the cleanup margin rather than gameplay's global `session_expiration_ms` derivation. They share the reset expectations of gameplay sessions, but are documented in detail in `system-architecture-jwt-and-token-contracts.md` and the Account Service design; they live on Coordination Redis so resets can force re-authentication in a controlled way.
+Issued-token registry records (`session:auth:token:<tokenHash>`) use each record's actual JWT `exp` plus the cleanup margin rather than gameplay's global `session_expiration_ms` derivation. Their reset policy is independent of gameplay-session preservation: region- and tenant-scoped coordination resets preserve these Account-owned records, while a cluster-scoped reset drops them and forces reauthentication/reissuance. The `--preserve-sessions` option applies only to gameplay session and bootstrap-context records; it never preserves or deletes issued-token registry records. They are documented in detail in `system-architecture-jwt-and-token-contracts.md` and the Account Service design, and live on Coordination Redis so a cluster reset can force re-authentication in a controlled way.
 
 ---
 

@@ -2,6 +2,10 @@
 
 This document defines canonical identifier names and scopes used across FireMUD service designs. When other documents use ambiguous terms like `roomId`, treat this glossary as the tie-breaker and update the doc to use the appropriate scoped identifier.
 
+## Implementation Status
+
+The canonical UUID identifiers below are an accepted target that has not fully converged. Several current REST DTOs, OpenAPI schemas, database-facing service contracts, and persisted rows still expose numeric account, tenant, version, game-instance, character, or template IDs. Existing gRPC strings and architecture examples must carry canonical UUID values rather than decimal strings or mnemonic placeholders, but that does not make the remaining schema and persistence migration complete. Runtime room/entity/item numeric exceptions remain valid only inside their complete typed scope.
+
 ## Core Identifiers
 
 - `accountId` – identifies a platform account. Present on authentication/session records and account-owned domain relationships.

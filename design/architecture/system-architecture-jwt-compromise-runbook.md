@@ -25,7 +25,7 @@ Run this flow when any of the following is true:
    - Through the single Account JWT rotation control/status interface, have rotation automation request Account to publish only uncompromised public keys. Do not overlap, retain, or roll back to a compromised key.
    - The rotation Job/CronJob must never read or update `jwt-signing-keys` or write `jwt-jwks`; it observes Account-owned publication and pruning, runs validator-convergence checks, and records evidence only.
 3. Invalidate environment-wide issuer authority.
-   - Advance the issuer authority generation through Account authority, invalidate affected issued-token registry records, and perform bounded gameplay/control-session cleanup so reauthentication is mandatory.
+   - Advance the issuer authority generation through Account authority and globally invalidate every issued-token registry record whose issuer generation is prior to the new generation, regardless of account, tenant, or token profile. Do not wait for physical deletion: bounded cleanup refers only to physical deletion of already-invalid records and gameplay/control-session cleanup, while the issuer-generation invalidation is the immediate correctness authority.
    - Treat compromise of the per-environment Account key as global for that issuer. Tenant-selective cleanup is not sufficient.
    - Do not treat the authority-generation advance as a substitute for key rejection; an attacker holding the old private key can mint fresh claims.
 4. Force validator convergence.

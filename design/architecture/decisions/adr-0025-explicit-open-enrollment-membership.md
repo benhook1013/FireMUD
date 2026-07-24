@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The accepted explicit-join decision is target state. Current runtime paths still have implicit membership behavior in connect-token issuance and `PLAY`, and the membership transaction, monotonic versioning, and durable audit/outbox boundary remain incomplete. No runtime completion is claimed by this ADR.
+
 ## Decision Record
 
 - Decision date: 2026-07-19

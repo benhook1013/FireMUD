@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+Bootstrap, connect-token, and visible `LOGIN`/`PLAY` pieces exist, but the target sequence is not runtime-complete: explicit `JOIN` before character/connect-token work and the required current-membership reread at connect-token issuance remain gaps. The target sequence is `LOGIN` -> explicit `JOIN` for a first public-production entry -> `CHARS`/character creation as needed -> `POST /auth/connect-token` with a fresh membership and authority reread -> WebSocket `LOGIN` -> `PLAY`; returning members and grant-backed private/playtest players do not use `JOIN` or create new membership.
+
 ## Decision Record
 
 - Decision date: 2026-07-18
@@ -16,7 +20,7 @@ Accepted
 
 First-party browsers can authenticate over HTTPS before opening gameplay WebSockets, while Telnet and generic protocol clients need an in-band credential path. FireMUD must distinguish transport admission, account authentication, and gameplay binding without making the Gateway the general account-authentication authority.
 
-The staged sequence is substantially implemented and tested. It adds an explicit browser `LOGIN` transition and short-lived token infrastructure, but preserves one visible `LOGIN` then `PLAY` protocol and leaves Game Session as the final gameplay-login state owner.
+The staged sequence is partially implemented and tested. It adds an explicit browser `LOGIN` transition and short-lived token infrastructure, but preserves one visible `LOGIN` then `PLAY` protocol and leaves Game Session as the final gameplay-login state owner. Explicit membership joining and the final membership-authority reread remain target-state work.
 
 ## Decision
 
@@ -24,11 +28,13 @@ The staged sequence is substantially implemented and tested. It adds an explicit
 
 1. `POST /auth/player-bootstrap` authenticates the platform account without requiring a tenant selection and issues only a short-lived player-bootstrap identity.
 2. Bootstrap discovery lets the authenticated player select a visible world, realm, and character context.
-3. `POST /auth/connect-token` revalidates the selected target and issues a single-use connect token with a lifetime no longer than 30 seconds.
-4. Browser clients receive that token only in a `Secure`, `HttpOnly`, appropriately scoped cookie. Browser JavaScript receives non-secret connection metadata, not the token value.
-5. Gateway validates expiry, signature, audience, scope, and one-time use before admitting `/ws/game/**`, then attaches a signed internal connect context. This is transport admission, not general Gateway-owned account authentication.
-6. The browser sends bare `LOGIN`. Game Session validates and consumes the signed connect context, establishes the authenticated account state, and does not request credentials again.
-7. `PLAY` remains mandatory and separately binds the selected `{tenantId, gameInstanceId, characterId}` after current admission checks.
+3. A first public-production entry explicitly invokes `JOIN` or `Join & Play`; grant-backed private/playtest realms use their existing grant and skip this membership-creating step.
+4. Character discovery and any allowed character creation occur for the selected realm after the explicit join where one is required.
+5. `POST /auth/connect-token` revalidates the selected target, rereads current caller-bound membership and membership authority, and issues a single-use connect token with a lifetime no longer than 30 seconds. It never creates membership.
+6. Browser clients receive that token only in a `Secure`, `HttpOnly`, appropriately scoped cookie. Browser JavaScript receives non-secret connection metadata, not the token value.
+7. Gateway validates expiry, signature, audience, scope, and one-time use before admitting `/ws/game/**`, then attaches a signed internal connect context. This is transport admission, not general Gateway-owned account authentication.
+8. The browser sends bare `LOGIN`. Game Session validates and consumes the signed connect context, establishes the authenticated account state, and does not request credentials again.
+9. `PLAY` remains mandatory and separately binds the selected `{tenantId, gameInstanceId, characterId}` after current admission checks.
 
 Reconnect uses a fresh bootstrap/connect-token sequence where required by the owning token lifetime, followed by fresh `LOGIN` and `PLAY`. A resumable gameplay session does not eliminate these authentication and binding steps after transport loss.
 

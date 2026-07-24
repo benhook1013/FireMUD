@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.controller;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.matchesPattern;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -137,7 +138,10 @@ class AuthControllerTest {
         .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Secure")))
         .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Strict")))
         .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/ws/game")))
-        .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=30")));
+        .andExpect(
+            header()
+                .string(
+                    HttpHeaders.SET_COOKIE, matchesPattern(".*(?:^|;\\s*)Max-Age=30(?:;|$).*")));
   }
 
   @Test

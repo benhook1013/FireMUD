@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The accepted separation of global control-plane roles from gameplay authority is target state. Current global-role presence classification still has drift, and the regression test proving a normally joined global-role account remains an ordinary player is missing. No runtime completion is claimed by this ADR.
+
 ## Decision Record
 
 - Decision date: 2026-07-19

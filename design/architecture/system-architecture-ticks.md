@@ -149,7 +149,7 @@ For any consumer or operator that needs to locate “where a region is” on the
 
     ```json
     {
-      "tenantId": "tenant-demo",
+      "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
       "regionId": "room:starter-village",
       "regionEpoch": 14,
       "lastCommittedTickId": 9284,

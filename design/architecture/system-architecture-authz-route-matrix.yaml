@@ -98,6 +98,7 @@ routes:
     classification: public_production_onboarding
     auth_path: player_bootstrap
     accepted_token_profiles: [player-bootstrap]
+    subject_binding: caller_account_id
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements]
@@ -241,7 +242,7 @@ routes:
     issued_token_audience: gameplay-connect
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [membership, membership_generation, runtime_entitlements, admission_pointer]
+    required_live_checks: [membership, membership_generation, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
     canonical_errors:
       any_of: [ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, ENTITLEMENT_UNAVAILABLE]
     subject_binding: caller_account_id
