@@ -121,15 +121,15 @@ jobs:
               return;
             }
 
-            const runSmokeLite = nonDocFiles.some(
-              (file) =>
-                liteRelevantFiles.has(file) ||
-                liteRelevantPrefixes.some((prefix) => file.startsWith(prefix))
-            );
             const runSmokeFull = nonDocFiles.some(
               (file) =>
                 fullRelevantFiles.has(file) ||
                 fullRelevantPrefixes.some((prefix) => file.startsWith(prefix))
+            );
+            const runSmokeLite = !runSmokeFull && nonDocFiles.some(
+              (file) =>
+                liteRelevantFiles.has(file) ||
+                liteRelevantPrefixes.some((prefix) => file.startsWith(prefix))
             );
             core.setOutput("run_smoke_lite", runSmokeLite ? "true" : "false");
             core.setOutput("run_smoke_full", runSmokeFull ? "true" : "false");
