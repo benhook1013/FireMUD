@@ -96,7 +96,7 @@ This reuses token infrastructure but conflates workload authentication with play
 
 ## Superseded Guidance
 
-This decision supersedes the `SessionAttestation` requirements in ADR 0014 and the legacy Authentication & Authorization, Security, JWT and Token Contracts, and gameplay service API documentation. ADR 0022 already uses the accepted unsigned typed context and therefore is not a superseded source. This decision does not change Account JWT rotation, Gateway connect-context signing, mTLS certificate lifecycle, or command/effect idempotency.
+This decision supersedes only the legacy `SessionAttestation` and per-RPC delegated-gameplay requirements in the affected authentication, security, JWT/token, and gameplay API text. ADR 0022 already uses the accepted unsigned typed context and therefore is not a superseded source. This decision does not change JWT issuance or rotation, the issued-token registry, authority generations, Gateway gameplay-connect token or signed-context contracts, mTLS certificate lifecycle, or command/effect idempotency.
 
 ## Required Documentation Alignment
 

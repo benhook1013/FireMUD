@@ -40,9 +40,9 @@ JWT validity, active gameplay authorization, continuity-binding eligibility, dis
 
 On successful gameplay admission, Game Session records an immutable continuity anchor:
 
-`continuityBindingExpiresAt = admissionAt + session_expiration_ms`
+`continuityBindingExpiresAt = admissionAt + min(FIREMUD_AUTH_SESSION_EXPIRATION_MS, 300000 ms)`
 
-where `session_expiration_ms` remains derived from the configured JWT lifetime plus safety margin for the initial continuity-retention horizon. Passing this anchor does not itself kick a continuously connected, currently authorized player. It means that after the next transport loss the old binding cannot be resumed.
+where `FIREMUD_AUTH_SESSION_EXPIRATION_MS` is the independent logical active-session/continuity horizon and the 300,000 millisecond cap is part of this contract. It is not derived from JWT lifetime or changed by private player-delegation token rotation. Passing this anchor does not itself kick a continuously connected, currently authorized player. It means that after the next transport loss the old binding cannot be resumed.
 
 Each connected-to-disconnected transition starts one immutable disconnection episode. At that transition:
 
@@ -66,7 +66,7 @@ Each connected-to-disconnected transition starts one immutable disconnection epi
 - Fresh admission provides a player-friendly fallback after continuity expiry without pretending that old transient state resumed.
 - The runtime must persist and evaluate additional logical timestamps independently of Redis expiration.
 - Operations and tests must distinguish active-token refresh, continuity expiry, resume expiry, fresh-entry fallback, logout, and transcript cleanup.
-- The derived continuity horizon still changes with JWT configuration; it no longer changes uninterrupted active-session duration.
+- The independent continuity horizon is bounded separately from JWT configuration and no longer changes uninterrupted active-session duration.
 
 ## Alternatives Considered
 

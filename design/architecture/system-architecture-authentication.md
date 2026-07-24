@@ -386,7 +386,7 @@ Authorization: Bearer <bootstrapToken>
 -> [{
      realmSlug: "production",
      displayName: "Live Realm",
-     tenantId: "tenant-emberfall",
+     tenantId: "e14f2d0c-8b7a-4f26-9c51-6a3d7e8b2c40",
      gameInstanceId: "7b63923a-43bd-45ab-8b39-80d95d74e2ce",
      connectScopeId: "cs_emberfall_production_v1"
    }]
@@ -394,7 +394,7 @@ Authorization: Bearer <bootstrapToken>
 POST /auth/bootstrap/join
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_emberfall_production_v1", requestId: "req-join-1" }
--> { tenantId: "tenant-emberfall", membershipVersion: 1, joined: true }
+-> { tenantId: "e14f2d0c-8b7a-4f26-9c51-6a3d7e8b2c40", membershipVersion: 1, joined: true }
 
 GET /auth/bootstrap/worlds/emberfall/realms/production/characters?connectScopeId=cs_emberfall_production_v1
 Authorization: Bearer <bootstrapToken>
@@ -409,7 +409,7 @@ POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_emberfall_production_v1", requestId: "req-connect-1" }
 Set-Cookie: Firemud-Connect-Token=<connectToken>; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30
--> { accountId, tenantId: "tenant-emberfall", realmSlug: "production", gameInstanceId: "7b63923a-43bd-45ab-8b39-80d95d74e2ce", expiresAt, jti, issuedAt }
+-> { accountId, tenantId: "e14f2d0c-8b7a-4f26-9c51-6a3d7e8b2c40", realmSlug: "production", gameInstanceId: "7b63923a-43bd-45ab-8b39-80d95d74e2ce", expiresAt, jti, issuedAt }
 
 GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 LOGIN

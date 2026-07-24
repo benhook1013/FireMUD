@@ -18,14 +18,14 @@ This document defines target-state token and revocation behavior. The current ru
 
 ## Token Validity and Revocation
 
-Token validity semantics:
+For revocable JWT profiles, token validity semantics are:
 
-- A JWT must be cryptographically valid (signature, required claims `iss`, `sub`, `jti`, `accountId`, `aud`, `iat`, `nbf`, `exp`, `tokenGeneration`, and expected token profile audience) and must have one matching `session:auth:token:<tokenHash>` record in Coordination Redis whose account, profile, `jti`, `tokenGeneration`, and time fields agree with the verified claims.
+- A revocable JWT must be cryptographically valid (signature, required claims `iss`, `sub`, `jti`, `accountId`, `aud`, `iat`, `nbf`, `exp`, `tokenGeneration`, and expected token profile audience) and must have one matching `session:auth:token:<tokenHash>` record in Coordination Redis whose account, profile, `jti`, `tokenGeneration`, and time fields agree with the verified claims.
 - The matching registry snapshot must compare every applicable issuer/account/tenant/membership authority generation and private-realm `grantVersion` with current Account-owned state and fail closed on any mismatch. `iat` remains required for chronology, bounded clock-skew handling, and audit, but is not an authorization or revocation authority and cannot replace generation or grant-version comparison.
 - For tenant or cross-tenant operations, the requested operation must then be authorized from the validated `scopedRoles` or `globalRoles` claims plus the applicable Account-owned authority-generation/version state. The issued-token record does not grant scope independently.
 - Coordination Redis therefore acts as a server-side issued-token registry and immediate per-token revocation surface: deleting the one record revokes a still-unexpired JWT; coordination resets that drop `session:auth:*` force re-authentication.
 - The single-use connect token and Gateway signed connect context use their separate bounded replay/verification contracts and do not create Account issued-token records.
-- During Coordination Redis outages, token-gated internal calls fail closed (authorization cannot be established without the registry check). This is an explicit availability vs security tradeoff; gameplay clients do not transmit JWTs directly, but backend calls made on their behalf still require the server-side token record to be present.
+- During Coordination Redis outages, routes explicitly gated by a revocable JWT registry check fail closed (authorization cannot be established without that registry check). Ordinary gameplay RPCs are not registry-gated player-JWT calls: they use authenticated mTLS workload identity plus the typed `PlayerExecutionContext` and do not require a player JWT registry record. This is an explicit availability-versus-security boundary, not permission to invent local-only authority for routes that do require the registry.
 
 Bulk revocation (for example “logout all devices”, account bans, or tenant-wide billing suspensions) must not rely on wildcard deletes, key scans, or JWT timestamps. Instead, the platform uses **monotonic authority generations** in addition to per-token registry records:
 
@@ -57,7 +57,7 @@ Account Service issues the exact JWT profiles defined below for control-plane UI
 ### Gateway Token Forwarding Boundary
 
 - Gateway forwards a token profile only when the route contract declares that profile non-consumed; forwarding preserves the token for the named downstream validator and does not create gameplay authority.
-- A `gameplay-connect` token is validated at Gateway for signature, profile, scope, expiry, and replay, then atomically consumed and stripped before the WebSocket upgrade completes. Gateway forwards the resulting signed connect context, not the consumed JWT or its carrier, to Game Session.
+- A `gameplay-connect` token is validated at Gateway for signature, profile, scope, expiry, and replay, then atomically consumed and stripped before the WebSocket upgrade completes. Browser clients carry it only in the approved HttpOnly cookie. A dedicated handshake header is permitted only for an explicitly approved non-browser/server route; Gateway rejects an unapproved browser/header carrier or ambiguous simultaneous carriers. Gateway forwards the resulting signed connect context, not the consumed JWT or its carrier, to Game Session.
 
 ### Claims
 

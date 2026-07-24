@@ -6,7 +6,7 @@ This is a non-normative implementation tracker for realm routing and playable st
 
 ## Current Status
 
-The bounded realm catalog, admission-pointer, bootstrap/connect-scope, session-freshness, runtime-projection, and currently live playable-state boundaries are implemented. The complete routing boundary remains partial: persisted routes cannot represent explicit `CLOSED`, catalog and route revisions are combined, the key is not tenant-qualified, version checking is not an atomic database CAS, prepared-cutover execution is recorded after the pointer transaction, and active bindings are invalidated from current pointer state rather than ending through the target bounded drain. Public/grant policy is also partial because designed grant expiry and tenant-admin management are absent.
+The working realm-catalog projection, admission-pointer reads, bootstrap/connect-scope flow, session-freshness normalization, runtime projections, and currently live playable-state boundaries are implemented. This is not a claim that routing is fully implemented. The complete routing boundary remains partial: persisted routes cannot represent explicit `CLOSED`, catalog and route revisions are combined, the key is not tenant-qualified, version checking is not an atomic database CAS, prepared-cutover execution is recorded after the pointer transaction, and active bindings are invalidated from current pointer state rather than ending through the target bounded drain. Public/grant policy is also partial because designed grant expiry and tenant-admin management are absent.
 
 ## Capability Status
 

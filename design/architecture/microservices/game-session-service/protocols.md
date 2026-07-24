@@ -26,7 +26,7 @@ The player-facing protocol is also stage-aware:
 
 - **Connected, not logged in** – players can browse public worlds and get help, but they are not yet authenticated. The normal human flow is `WORLDS` then `LOGIN`.
 - **Logged in, not yet playing** – existing members can issue `PLAY` directly. A first-time public-production player must issue `JOIN` first; either player may use lobby helper commands such as `REALMS` and `CHARS` to disambiguate selection.
-- **In game** – gameplay commands such as `LOOK`, `SAY`, and movement are available.
+- **In-game** – gameplay commands such as `LOOK`, `SAY`, and movement are available.
 
 The normal happy path for a human player should therefore be:
 
