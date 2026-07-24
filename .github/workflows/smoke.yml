@@ -245,6 +245,18 @@ jobs:
             const sleepMs = 15000;
 
             while (Date.now() - started < timeoutMs) {
+              const { data: currentPullRequest } = await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: Number(prNumber),
+              });
+              if (currentPullRequest.state !== "open" || currentPullRequest.head.sha !== headSha) {
+                core.info(
+                  `Stopping obsolete smoke gate for head ${headSha}; current PR state/head is ${currentPullRequest.state}/${currentPullRequest.head.sha}`
+                );
+                return;
+              }
+
               const runs = await github.paginate(
                 github.rest.actions.listWorkflowRuns,
                 {

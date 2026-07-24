@@ -7,14 +7,57 @@ VALIDATOR="$ROOT_DIR/dev-tools/observability/validate-player-experience-smoke-ev
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-grep -q '"accountIdentifier": config.username' "$RUNNER"
-grep -q '"secret": config.password' "$RUNNER"
-if sed -n '/def issue_player_bootstrap/,/^$/p' "$RUNNER" \
-  | grep -Eq '"(tenantId|username|password|otp)"'; then
-  echo "player bootstrap smoke payload unexpectedly includes a legacy credential key" >&2
-  exit 1
-fi
-grep -q "urlencode({'connectScopeId': connect_scope_id})" "$RUNNER"
+python3 - "$RUNNER" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+from urllib.parse import urlencode
+
+runner_path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("player_experience_smoke", runner_path)
+assert spec is not None and spec.loader is not None
+runner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runner)
+
+config = runner.SmokeConfig.from_env("contract-test", "websocket", None)
+requests = []
+
+
+def stub_http_request_json(url, timeout_seconds, method="GET", payload=None, headers=None):
+    requests.append(
+        {
+            "url": url,
+            "timeout_seconds": timeout_seconds,
+            "method": method,
+            "payload": payload,
+            "headers": headers,
+        }
+    )
+    if url.endswith("/auth/player-bootstrap"):
+        return {"data": {"bootstrapToken": "bootstrap-token"}}
+    if "/characters?" in url:
+        return {"data": []}
+    raise AssertionError(f"unexpected stubbed request: {method} {url}")
+
+
+runner.http_request_json = stub_http_request_json
+bootstrap = runner.issue_player_bootstrap(config)
+bootstrap_request = requests.pop(0)
+assert bootstrap == {"bootstrapToken": "bootstrap-token"}
+assert bootstrap_request["method"] == "POST"
+assert bootstrap_request["payload"] == {
+    "accountIdentifier": config.username,
+    "secret": config.password,
+}
+assert not ({"tenantId", "username", "password", "otp"} & bootstrap_request["payload"].keys())
+
+connect_scope_id = "scope/with spaces?&"
+runner.resolve_character_name(config, bootstrap["bootstrapToken"], connect_scope_id)
+characters_request = requests.pop(0)
+expected_query = urlencode({"connectScopeId": connect_scope_id})
+assert characters_request["url"].endswith(f"/characters?{expected_query}")
+assert connect_scope_id not in characters_request["url"]
+PY
 
 SUCCESS_EVIDENCE="$TMP_DIR/success-evidence.json"
 SUCCESS_METRICS="$TMP_DIR/success-metrics.prom"
