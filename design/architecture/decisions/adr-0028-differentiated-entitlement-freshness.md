@@ -28,15 +28,15 @@ The runtime therefore needs operation-specific freshness rather than one uniform
 
 - Account remains the sole entitlement writer and authoritative refresh source.
 - Runtime snapshots carry committed `subscriptionStatus`, `gameplayAvailable`, `allowPublicJoin`, `allowNewGameplayBindings`, `allowNewInstanceStarts`, applicable quotas, `evaluatedAt`, monotonic `entitlementVersion`, and monotonic per-tenant `tenantBillingSequence`.
-- `evaluatedAt` represents when Account evaluated authoritative committed inputs. A caller must not make stale underlying data appear fresh by restamping it at read time.
+- `evaluatedAt` represents when Account evaluated authoritative committed inputs, stamped from its deployment-synchronized UTC clock. Runtime receipt time, Redis time, and caller restamping never make an older snapshot fresh. Consumers compare it with their own deployment-synchronized UTC clock; readiness fails when the deployment cannot prove its configured clock-skew bound, and no caller may widen a freshness window to compensate.
 - Absence of subscription/entitlement state is not implicit permission. Free, trial, or otherwise non-paid hosting is represented by an explicit entitlement state.
 - `trialing`, `active`, and `past_due` permit gameplay under ordinary quotas. `grace` remains available only for connected sessions and the same still-resumable binding; it denies public join, fresh gameplay bindings, new instances, scale-out, and quota growth. `suspended` and `canceled` are hard denials.
 
 ### Fresh And Last-Known-Good Windows
 
-- A runtime snapshot is fresh for 15 seconds from `evaluatedAt`.
+- Define `freshUntil = evaluatedAt + 15 seconds` and `continuityUntil = evaluatedAt + 5 minutes`. A snapshot is fresh only while `now < freshUntil`; at exactly 15 seconds it is stale. An eligible last-known-good snapshot may authorize continuity only while `now < continuityUntil`; at exactly five minutes it expires. Thus `age < 15 seconds` is fresh, `15 seconds <= age < 5 minutes` is continuity-only, and `age >= 5 minutes` is neither. A future `evaluatedAt` is invalid and fails closed.
 - Runtime services keep a bounded per-tenant cache, use single-flight refresh, immediately invalidate or advance it from sequenced billing events, and periodically reconcile with Account.
-- A previously observed positive snapshot may be used as last-known-good for continuity for no more than five minutes from `evaluatedAt`. Five minutes is a platform hard maximum; operators may shorten or disable it but cannot widen it without revisiting this decision.
+- A previously observed positive snapshot may be used as last-known-good for continuity only within `continuityUntil`. Five minutes is a platform hard maximum; operators may shorten or disable it but cannot widen it without revisiting this decision.
 - Last-known-good entitlement continuity also requires the separate revocation-authority reconciliation lease from ADR 0030 to remain fresh. Entitlement refresh may be unavailable for up to five minutes, but inability to re-establish revocation authority terminates the binding at the stricter 60-second bound.
 - Last-known-good is forbidden after an observed `suspended`/`canceled` state, tenant/account revocation, a newer locally observed billing sequence, a sequence gap, an explicit denial, or when no prior authoritative positive snapshot exists.
 
@@ -68,7 +68,7 @@ A fresh snapshot is necessary but not sufficient: its operation-specific flag mu
 ## Consequences
 
 - Account failure no longer prevents a recently admitted player from resuming the same session or blocks non-expanding recovery of recently entitled capacity.
-- A tenant whose hard cutoff has not reached runtime services may receive at most five additional minutes of bounded continuity on already-observed positive state. New commitments remain unavailable.
+- A tenant whose hard cutoff has not reached runtime services may receive at most five minutes of bounded continuity from the Account `evaluatedAt` of already-observed positive state. New commitments remain unavailable.
 - Login/admission load uses one short-lived cache per tenant rather than one Account/database call per player, while billing events and sequence reconciliation bound staleness.
 - The contract requires real entitlement versions, per-tenant billing sequences, event consumers, cache policy, operation classification, and proof for hard-denial propagation.
 
@@ -90,7 +90,7 @@ Durably replicating full entitlement projections into each runtime service could
 
 - Implement the complete runtime response, operation-specific billing flags, and explicit free/trial state; correct `past_due` handling and remove row-ID-derived versions.
 - Implement per-tenant cache, single-flight refresh, sequenced event invalidation, gap detection, periodic reconciliation, and the five-minute hard ceiling.
-- Prove strict new commitment denial, eligible reconnect/recovery continuity, expired/unsafe last-known-good denial, and immediate known hard-cutoff behavior.
+- Prove strict new commitment denial, eligible reconnect/recovery continuity, expired/unsafe last-known-good denial, exact 15-second and five-minute boundary behavior, and immediate known hard-cutoff behavior.
 - Prove no entitlement lookup occurs on routine actions for an uninterrupted session.
 - Add instance lifecycle, cutover, rollback, scale, public-join, new-`PLAY`, reconnect, and discovery tests for their distinct operation classes.
 - Prove `ENTITLEMENT_UNAVAILABLE` remains retriable and distinct from known `TENANT_BILLING_BLOCKED`.

@@ -208,7 +208,7 @@ routes:
     accepted_token_profile_audiences:
       control-ui: control-ui
       player-bootstrap: player-bootstrap
-    idempotent_retry_contract: absent_exact_token_record_noop_after_local_validation
+    idempotent_retry_contract: exact_token_noop_after_durable_committed_tombstone
   - service: account-service
     route: AuthLogoutAll
     scope: account
@@ -356,8 +356,6 @@ routes:
     route: GetTenantEntitlementsForRuntime
     scope: tenant
     classification: internal_workload
-    tenant_billing_authority_generation_applies: true
-    membership_authority_generation_applies: true
     response_profile: runtime_admission
     caller_policies:
       - caller: game-session-service
@@ -365,6 +363,8 @@ routes:
         issued_token_state: current_exact_private_delegation
         accepted_token_profiles: [game-session-account-delegation]
         token_audience: account-service
+        tenant_billing_authority_generation_applies: true
+        membership_authority_generation_applies: true
         mtls_identity: "spiffe://firemud/ns/{namespace}/sa/game-session-service"
         delegated_subject: typed_player_execution_context
       - caller: world-management-service
@@ -372,6 +372,8 @@ routes:
         issued_token_state: none
         accepted_token_profiles: []
         token_audience: none
+        tenant_billing_authority_generation_applies: false
+        membership_authority_generation_applies: false
         mtls_identity: "spiffe://firemud/ns/{namespace}/sa/world-management-service"
         caller_context: tenant_and_operation_bound_instance_lifecycle_context
         delegated_subject: instance_lifecycle_context

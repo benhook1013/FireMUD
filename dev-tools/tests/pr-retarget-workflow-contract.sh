@@ -131,6 +131,11 @@ done
 for job in changes smoke-summary smoke-gate; do
   assert_job_condition smoke.yml "$job" "$required_condition"
 done
+assert_job_contains smoke.yml smoke-gate 'pull-requests: read'
+assert_job_contains smoke.yml smoke-gate 'github.rest.pulls.get'
+assert_job_contains smoke.yml smoke-gate 'currentPullRequest.head.sha !== headSha'
+assert_job_contains smoke.yml smoke-gate 'currentPullRequest.base.ref !== baseRef'
+assert_job_contains smoke.yml smoke-gate 'currentPullRequest.base.sha !== baseSha'
 
 require_contains "$runtime_images_path" 'types: [opened, synchronize, reopened, edited]'
 require_contains "$runtime_images_path" "&& 'metadata' || 'required' }}"

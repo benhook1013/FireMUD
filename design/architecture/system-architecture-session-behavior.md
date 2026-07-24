@@ -120,6 +120,8 @@ On reconnect/resume (after the client re-`LOGIN`s and re-`PLAY`s), Game Session 
 - Current revocation state does not block the account or tenant for gameplay admission.
 - Current entitlement authority is fresh for a new binding. Resume of the same still-resumable binding may instead use an eligible positive last-known-good snapshot no older than five minutes when refresh is unavailable; hard denial, revocation, a newer billing sequence, or a sequence gap forbids this continuity path.
 
+When resume relies on grace-period continuity, Account issues an exact-binding, exact-resume-episode activation lease only after validating current lifecycle, billing, membership, grant, and security authority. Game Session may move the binding only to provisional `RESUME_PENDING` under the lease fence; Account must durably finalize the matching lease as `COMMITTED` before the binding becomes admissible. A concurrent Account cutoff fences the lease, and stale local CAS or late finalization fails closed. This is an ordered idempotent cross-service protocol, not a cross-store atomic transaction.
+
 Resume validation must not depend on the previous private player-delegation token remaining valid. After a fresh successful `LOGIN`, Game Session must mint or obtain a fresh `game-session-account-delegation` token, atomically replace stored `authTokenHash`, `authTokenIssuedAt`, and `authTokenExpiresAt`, update `membershipVersion`, consume the current disconnection episode, and then resume the gameplay binding. The new token's expiration must be persisted before resumed backend calls use it. Resume is rejected for any failed validation above, including subject mismatch, stale or lost gameplay membership, expired or non-resumable gameplay state, an expired resume window, a changed uniqueness key, or revoked account or tenant state. The fresh token's validity remains bounded by its own `exp`; obtaining it does not extend `continuityBindingExpiresAt` or the current episode's `resumeDeadline`.
 
 ### Active-Socket Auth Revocation
@@ -182,9 +184,9 @@ Control-plane logout for admin and creator UIs is implemented as explicit Accoun
 
 For per-token logout, clients call `POST /auth/logout` with the current JWT in the `Authorization` header. The Account Service:
 
-- Computes the `tokenHash` from the presented JWT and commits a durable `PENDING` operation record bound to the request ID and immutable request digest.
-- Idempotently deletes the corresponding single `session:auth:token:<tokenHash>` registry record, then commits the completed tombstone, per-token logout audit, and outbox state in one Account database transaction before returning success.
-- Publishes the account-security/audit message from the committed outbox and retries delivery independently; a crash between the Redis mutation and durable commit is recovered by the bounded Account operation reconciler, not treated as unexplained success.
+- Computes the `tokenHash` from the presented JWT and commits a durable `PENDING` operation record bound to the request ID, immutable request digest, and exact token identity before touching Redis.
+- Idempotently deletes the corresponding `session:auth:token:<tokenHash>` registry record, then advances the matching operation to `COMMITTED` with its completed tombstone, per-token logout audit, and outbox state in an Account database transaction before reporting success.
+- The bounded Account operation reconciler retries matching `PENDING` work. If a crash occurs after deletion but before the durable completion commit, that precommitted exact-token intent plus the established absent-record postcondition lets the reconciler commit the tombstone safely. Bare registry absence without matching `PENDING` or `COMMITTED` evidence remains denied. Only `COMMITTED` evidence satisfies an idempotent success response; the outbox publishes from that state and retries delivery independently.
 
 This flow performs a per-token logout: it invalidates the current browser or device session without affecting other devices or unrelated gameplay bindings for the same account. A first-party player UI separately stops reconnect, closes its socket through gameplay `LOGOUT`, and then revokes that device's `player-bootstrap` token; Account does not discover sockets from the per-token endpoint.
 

@@ -27,7 +27,7 @@ The previous flow created membership implicitly during first-party connect-token
 ### Open Enrollment With Explicit Intent
 
 - A realm explicitly marked as the tenant's public production realm is open enrollment for authenticated platform accounts. Joining does not require an invitation, creator approval, or an existing tenant role.
-- The player must explicitly invoke `JOIN <world>` or activate an equivalently clear `Join & Play` control before membership is created. Discovery may show the public game before membership exists.
+- The player must explicitly invoke the Account-owned public-production join operation, surfaced as `JOIN <world>` or an equivalently clear `Join & Play` control, before membership is created. Discovery may show the public game before membership exists.
 - The join action creates or returns the Account-owned tenant `player` membership. This is an intended durable product relationship, not temporary admission state.
 - Successful membership powers the player's “my games”/return discovery even if the first connection or later `PLAY` attempt fails. A failed join transaction creates nothing.
 - Connect-token issuance, character creation, and `PLAY` require the resulting membership and never create it implicitly. If it is missing, they return `JOIN_REQUIRED` with recovery guidance.
@@ -36,7 +36,7 @@ The previous flow created membership implicitly during first-party connect-token
 
 ### Membership Transaction
 
-Account Service is the sole join writer. The current proto RPC is named `EnsurePublicProductionPlayerMembership`; its target semantics are the explicit public-join operation, accepting caller-bound account identity plus `{tenantId, worldSlug, realmSlug, requestId}` and:
+Account Service is the sole join writer. The current proto RPC is named `EnsurePublicProductionPlayerMembership`; it remains an implementation seam whose target semantics are the explicit public-production join operation surfaced through text `JOIN` and the first-party `Join & Play` endpoint. The operation accepts caller-bound account identity plus `{tenantId, worldSlug, realmSlug, requestId}` and:
 
 - revalidates that the realm is still the explicit public production realm, publicly visible, entitlement-eligible, and backed by an unambiguous current admission pointer;
 - treats `requestId` as the idempotency identity and makes concurrent joins converge on one membership;
