@@ -7,8 +7,7 @@ on:
 
 run-name: Publish PR Runtime Images head-${{ github.event.workflow_run.head_sha }}
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: publish-pr-runtime-images-${{ github.event.workflow_run.head_sha }}
@@ -22,7 +21,6 @@ jobs:
     permissions:
       # This trusted default-branch workflow reads one successful run artifact and publishes fixed SHA tags.
       actions: read
-      contents: read
       packages: write
     env:
       IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}
@@ -66,5 +64,9 @@ jobs:
             world-management-service; do
             image="ghcr.io/benhook1013/${service}:${IMAGE_TAG}"
             docker image inspect "$image" >/dev/null
+            if docker manifest inspect "$image" >/dev/null 2>&1; then
+              echo "Fixed image tag already exists; preserving first publication: $image"
+              continue
+            fi
             docker push "$image"
           done
