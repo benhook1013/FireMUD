@@ -13,6 +13,11 @@ def require_contains(path, snippets):
     if missing:
         raise SystemExit(f"{path}: missing required snippets: {missing}")
 
+for path in (root / "design").rglob("*.md"):
+    text = path.read_text(encoding="utf-8")
+    if "<deployment-event-id>" in text:
+        raise SystemExit(f"{path}: use the canonical <deploymentEventId> path placeholder")
+
 canonical_world_dynamic = "world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>"
 for path in [
     "design/architecture/system-architecture-redis-cache.md",

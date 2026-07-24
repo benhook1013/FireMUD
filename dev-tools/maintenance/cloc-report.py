@@ -540,7 +540,8 @@ def module_bucket(path: str) -> str:
     if "/" not in path:
         return "repo-root"
     if path.startswith("services/"):
-        return "/".join(path.split("/", 2)[:2])
+        parts = path.split("/", 2)
+        return "/".join(parts[:2]) if len(parts) >= 3 else "services"
     return path.split("/", 1)[0]
 
 

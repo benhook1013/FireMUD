@@ -20,6 +20,15 @@ validator = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = validator
 spec.loader.exec_module(validator)
 
+expected_ampersand_anchor = "backup-verification--restoration-testing"
+actual_ampersand_anchor = validator._github_anchor_from_heading(
+    "Backup Verification & Restoration Testing"
+)
+if actual_ampersand_anchor != expected_ampersand_anchor:
+    raise AssertionError(
+        f"GitHub ampersand anchor mismatch: {actual_ampersand_anchor!r}"
+    )
+
 rules_path = root / "k8s/monitoring/prometheus-rules-firemud.yaml"
 valid_text = rules_path.read_text(encoding="utf-8")
 

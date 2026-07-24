@@ -46,6 +46,12 @@ public class RuntimeRegionStatusRepository {
         .fetchOptional(this::toEntity);
   }
 
+  /**
+   * Persists an existing row or ensures the natural-key baseline for a new entity.
+   *
+   * <p>When {@code id} is null and the natural key already exists, this returns the existing row;
+   * caller-supplied values do not overwrite that baseline.
+   */
   public RuntimeRegionStatus save(RuntimeRegionStatus entity) {
     if (entity.getId() == null) {
       return ensureBaseline(entity);

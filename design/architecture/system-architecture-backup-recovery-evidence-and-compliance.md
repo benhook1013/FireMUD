@@ -146,7 +146,7 @@ This is target-state behavior. The current production preflight has no durable c
 
 Canonical evidence path:
 
-- `design/operations/deployments/production/traffic-open/<first-live|reopen>-<deployment-ref>-<deployment-event-id>.json`
+- `design/operations/deployments/production/traffic-open/<first-live|reopen>-<deployment-ref>/<deploymentEventId>.json`
 
 Required fields:
 
@@ -220,7 +220,7 @@ An `incomplete` record is the canonical blocking representation while required r
 
 After the durable controller finalizes a `hobby-self-hosted` first-live or reopen event, the exporter records the retained traffic-open projection at:
 
-- `design/operations/deployments/hobby-self-hosted/traffic-open/<deployment-ref>/<deployment-event-id>.json`
+- `design/operations/deployments/hobby-self-hosted/traffic-open/<deployment-ref>/<deploymentEventId>.json`
 
 Required fields:
 

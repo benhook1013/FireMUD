@@ -215,6 +215,8 @@ sys.modules[spec.name] = cloc_report
 spec.loader.exec_module(cloc_report)
 assert cloc_report.source_classification("services/foo/README.md") is None
 assert cloc_report.source_classification("README.md") is None
+assert cloc_report.module_bucket("services/README.md") == "services"
+assert cloc_report.module_bucket("services/foo/README.md") == "services/foo"
 assert cloc_report.render_scope([], "tests", by_file=True) == (
     "path  language  blank  comments  lines"
 )

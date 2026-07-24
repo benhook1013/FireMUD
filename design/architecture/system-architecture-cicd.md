@@ -281,7 +281,7 @@ Every production promotion records a compact recovery-compatibility result again
 
 The canonical full-evidence path is `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`. The compact result uses `compatibilityStatus` (`compatible`, `drill_required`, or `incompatible`) as the outcome and `newDrillRequired` as the machine-readable drill gate. `incompatible` is a terminal failed result. `drill_required` requires `newDrillRequired=true` and is also non-promotable: after the drill and full evidence are complete, the compatibility classifier must produce a new `compatible` result bound to that evidence. Every `roll-forward-only` release also sets `newDrillRequired=true`, carries matching full evidence, and must have a compatible regenerated result. Production CI/preflight rejects stale `drill_required` results and full evidence that is missing, stale, or not bound to the source production database lineage, candidate recovery tooling, exact candidate digests, migration path, config, bindings, and promotion attestation. Compatible rollback releases keep only the compact result or immutable reference in promotion/deployment evidence rather than copying the full recovery record.
 
-Traffic-open readiness for production first-live or reopen events uses `design/operations/deployments/production/traffic-open/<first-live|reopen>-<deployment-ref>-<deployment-event-id>.json`, whose stored event identity matches the referenced preflight report, and references the canonical backup-readiness, recovery-controller, and confidentiality evidence. Routine online backups cover the environment-wide PostgreSQL database and do not use Game Session pause/resume as readiness proof.
+Traffic-open readiness for production first-live or reopen events uses `design/operations/deployments/production/traffic-open/<first-live|reopen>-<deployment-ref>/<deploymentEventId>.json`, whose stored event identity matches the referenced preflight report, and references the canonical backup-readiness, recovery-controller, and confidentiality evidence. Routine online backups cover the environment-wide PostgreSQL database and do not use Game Session pause/resume as readiness proof.
 
 Pre-apply policy checks for staging and production must run through the canonical preflight contract in `system-architecture-deploy-preflight-policy.md`. Static checks run in overlay PR CI, and resolved-manifest/runtime checks run in operator preflight execution. Both use the same policy IDs and evidence shape.
 
@@ -295,17 +295,18 @@ FireMUD uses one deployment-evidence chain per deployment event so promotion, ro
    - staging: `design/operations/deployments/staging/deployments/<overlayCommitSha>/<deploymentEventId>.json`
    - production: `design/operations/deployments/production/deployments/<overlayCommitSha>/<deploymentEventId>.json`
    - hobby-self-hosted: `design/operations/deployments/hobby-self-hosted/deployments/<deployment-ref>/<deploymentEventId>.json`
-4. Production promotion references exactly one staging attestation at `design/operations/deployments/production/attestations/<deployment-ref>.json`.
-5. Production release publication references one release digest manifest at `design/operations/deployments/production/release-manifests/<release-tag-or-deployment-ref>.json`.
-6. Every production release records its compact recovery-compatibility result; if that result requires a drill or the release is `roll-forward-only`, production also references `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`.
+4. After apply and live-state verification succeed, the operator updates the environment's one current-state index at `design/operations/deployments/<environment>/deployments/current.json`. The index identifies the exact immutable deployment record through `deploymentRef`, `deploymentEventId`, and `deploymentRecordRef`; it is the sole repository answer to what is currently deployed in that environment.
+5. Production promotion references exactly one staging attestation at `design/operations/deployments/production/attestations/<deployment-ref>.json`. The attestation binds one exact staging deployment event and remains immutable even after the staging current-state index advances.
+6. Production release publication references one release digest manifest at `design/operations/deployments/production/release-manifests/<release-tag-or-deployment-ref>.json`.
+7. Every production release records its compact recovery-compatibility result; if that result requires a drill or the release is `roll-forward-only`, production also references `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`.
 
 Lifecycle rules:
 
-- The latest successful event record selected by the environment's deployment index or promotion attestation is the canonical answer to “what is currently deployed and promotable for this environment.”
+- The environment's `deployments/current.json` index is the canonical answer to “what is currently deployed.” Promotion eligibility is a separate immutable claim: an attestation selects one exact successful deployment event and never performs a later “latest event” lookup.
 - Preflight artifacts, secret-compliance snapshots, smoke evidence, and live-state verification are supporting evidence linked from the deployment record rather than parallel sources of truth.
-- Current promotion trust is repository-reviewed evidence with immutable artifact references. CI treats the in-repo deployment record and production attestation as the deterministic promotion index, then verifies digest equality, live-state evidence shape, and immutable secret-compliance references. Detached signatures are not required in the current single-admin/operator model.
-- Re-applying the same overlay commit creates a new immutable event record and never overwrites prior preflight or apply evidence.
-- A promotion attestation is valid only if `stagingOverlayCommitSha` plus `stagingDeploymentEventId` selects the latest successful promotable apply event for that staging overlay commit.
+- Current promotion trust is repository-reviewed evidence with immutable artifact references. CI treats the production attestation as the deterministic selector for its exact in-repo deployment record, then verifies digest equality, live-state evidence shape, and immutable secret-compliance references. Detached signatures are not required in the current single-admin/operator model.
+- Re-applying the same overlay commit creates a new immutable event record and, after successful live-state verification, advances the current-state index. It never overwrites prior preflight, apply, or attestation evidence.
+- A promotion attestation is valid only if `stagingOverlayCommitSha` plus `stagingDeploymentEventId` selects the exact successful promotable apply event it attests. A later apply does not invalidate or retarget that historical attestation.
 - Rollback uses the deployment record and original attestation lineage for the digest set being restored.
 
 Terminology note:
@@ -331,7 +332,7 @@ Illustrative deployment record shape:
     "spring-cloud-gateway": "ghcr.io/example/spring-cloud-gateway@sha256:...",
     "game-session-service": "ghcr.io/example/game-session-service@sha256:..."
   },
-  "preflightReportPath": "design/operations/deployments/staging/preflight/<git-sha>/<deployment-event-id>.json",
+  "preflightReportPath": "design/operations/deployments/staging/preflight/<git-sha>/<deploymentEventId>.json",
   "liveStateEvidence": {
     "status": "pass",
     "observedOverlaySha": "<git-sha>",

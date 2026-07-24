@@ -2,9 +2,9 @@
 
 Store one record per `first-live` or `reopen` production traffic-open event as:
 
-- `design/operations/deployments/production/traffic-open/<event>-<deployment-ref>/<deployment-event-id>.json`
+- `design/operations/deployments/production/traffic-open/<event>-<deployment-ref>/<deploymentEventId>.json`
 
-For production, `<deployment-ref>` is the exact lowercase hexadecimal Git commit reference from the event's preflight `deploymentRef.overlayCommitSha`; copy it verbatim rather than deriving or sanitizing a display label. It therefore cannot introduce path separators. `<deployment-event-id>` is the canonical lowercase UUID from the same preflight report. The directory event is `first-live` or `reopen` and must equal the stored `eventType`; the stored `deploymentEventId` must equal the complete UUID filename.
+For production, `<deployment-ref>` is the exact lowercase hexadecimal Git commit reference from the event's preflight `deploymentRef.overlayCommitSha`; copy it verbatim rather than deriving or sanitizing a display label. It therefore cannot introduce path separators. `<deploymentEventId>` is the canonical lowercase UUID from the same preflight report. The directory event is `first-live` or `reopen` and must equal the stored `eventType`; the stored `deploymentEventId` must equal the complete UUID filename.
 
 In the target flow, preflight reads the durable actual-recovery controller while it holds quarantine at `ready_to_reopen`; it does not consume a transient traffic-open projection. After the controller reaches `finalized`, the exporter emits the immutable environment-wide traffic-open projection below, retaining the controller reference and exact player-facing target boundary. The current executable has no production controller read or production projection writer, so `PREFLIGHT-BACKUP-002` intentionally fails closed.
 
@@ -15,7 +15,7 @@ Required fields:
 - `eventType`
 - `trafficOpenStatus` (`finalized`)
 - `deploymentRef`
-- `deploymentEventId` (must equal the UUID in `preflightReportPath` and the final `<deployment-event-id>` filename component)
+- `deploymentEventId` (must equal the UUID in `preflightReportPath` and the final `<deploymentEventId>` filename component)
 - `assessedAt`
 - `assessedBy`
 - `preflightReportPath`

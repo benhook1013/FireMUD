@@ -2,12 +2,13 @@
 
 Store one immutable deployment record per staging overlay apply as:
 
-- `<stagingOverlayCommitSha>/<deploymentEventId>.json`
+- `<overlayCommitSha>/<deploymentEventId>.json`
 
 Required fields:
 
 - `environment` (`staging`)
 - `overlayCommitSha`
+  - must equal the directory name
 - `deploymentEventId` (canonical UUID matching the consumed preflight report)
 - `appliedAt`
 - `appliedBy`
