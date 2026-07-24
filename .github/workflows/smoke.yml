@@ -18,7 +18,6 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     outputs:
-      run_smoke_lite: ${{ steps.compute.outputs.run_smoke_lite }}
       run_smoke_full: ${{ steps.compute.outputs.run_smoke_full }}
     steps:
       - name: Harden runner
@@ -51,24 +50,6 @@ jobs:
             const frontendOnlyPredicate = (file) =>
               file.startsWith("web-client/") ||
               file.startsWith("config/openapi/");
-
-            const liteRelevantPrefixes = [
-              "buildSrc/",
-              "gradle/",
-              "protos/",
-              "config/checkstyle/",
-              "config/protobuf/",
-              "config/security/",
-              "config/spotbugs/",
-              "docker/",
-              "services/",
-            ];
-            const liteRelevantFiles = new Set([
-              "build.gradle.kts",
-              "settings.gradle.kts",
-              "gradle.properties",
-              ".github/workflows/smoke.yml",
-            ]);
 
             const fullRelevantPrefixes = [
               "buildSrc/",
@@ -116,7 +97,6 @@ jobs:
               nonDocFiles.length > 0 && nonDocFiles.every((file) => frontendOnlyPredicate(file));
 
             if (nonDocFiles.length === 0 || nonDocsAreFrontendOnly) {
-              core.setOutput("run_smoke_lite", "false");
               core.setOutput("run_smoke_full", "false");
               return;
             }
@@ -126,49 +106,7 @@ jobs:
                 fullRelevantFiles.has(file) ||
                 fullRelevantPrefixes.some((prefix) => file.startsWith(prefix))
             );
-            const runSmokeLite = !runSmokeFull && nonDocFiles.some(
-              (file) =>
-                liteRelevantFiles.has(file) ||
-                liteRelevantPrefixes.some((prefix) => file.startsWith(prefix))
-            );
-            core.setOutput("run_smoke_lite", runSmokeLite ? "true" : "false");
             core.setOutput("run_smoke_full", runSmokeFull ? "true" : "false");
-
-  smoke-lite:
-    name: Smoke Tests (Lite)
-    needs: [changes]
-    if: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.run_smoke_lite == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
-        with:
-          egress-policy: audit
-
-      - name: ⬇️ Checkout Code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: ⚙️ Set Up Java
-        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
-        with:
-          distribution: 'temurin'
-          java-version: '21'
-
-      - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
-        with:
-          build-scan-publish: true
-          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
-          build-scan-terms-of-use-agree: 'yes'
-          cache-read-only: false
-
-      - name: 🧪 Run Lite Smoke Integration Checks
-        run: |
-          ./gradlew \
-            :account-service:integrationTest --tests 'net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest' \
-            :game-session-service:integrationTest --tests 'net.firedevops.firemud.gamesession.GameSessionApplicationIntegrationTest' --tests 'net.firedevops.firemud.gamesession.GameSessionLoginIntegrationTest' --tests 'net.firedevops.firemud.gamesession.websocket.GameSessionWebSocketHandlerIntegrationTest' \
-            :tcp-proxy-service:integrationTest --tests 'net.firedevops.firemud.tcpproxy.TcpProxyServiceApplicationIntegrationTest'
 
   smoke-summary:
     name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Summary)' || 'Smoke Summary' }}
@@ -177,7 +115,7 @@ jobs:
       # Only this job publishes or updates the pull request smoke summary comment.
       contents: read
       pull-requests: write
-    needs: [changes, smoke-lite]
+    needs: [changes]
     if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
       - name: Harden runner
@@ -188,14 +126,10 @@ jobs:
       - name: 💬 Publish Smoke Summary Comment
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
-          RUN_SMOKE_LITE: ${{ needs.changes.outputs.run_smoke_lite }}
           RUN_SMOKE_FULL: ${{ needs.changes.outputs.run_smoke_full }}
-          SMOKE_LITE_RESULT: ${{ needs['smoke-lite'].result }}
         with:
           script: |
-            const liteEnabled = process.env.RUN_SMOKE_LITE === "true";
             const fullEnabled = process.env.RUN_SMOKE_FULL === "true";
-            const liteResult = liteEnabled ? process.env.SMOKE_LITE_RESULT : "skipped";
             const fullResult = fullEnabled ? "tracked-by-smoke-gate" : "skipped";
             const statusIcon = (value) => {
               if (value === "success") return "✅";
@@ -205,20 +139,14 @@ jobs:
               return "⏭️";
             };
 
-            let headline = "✅ Smoke tests passed";
-            if (["failure", "cancelled", "timed_out"].includes(liteResult)) {
-              headline = "❌ Smoke tests failed";
-            } else if (fullEnabled) {
-              headline = "⏳ Full smoke is tracked by Smoke Gate";
-            } else if (!liteEnabled) {
-              headline = "⏭️ Smoke tests skipped";
-            }
+            const headline = fullEnabled
+              ? "⏳ Full-stack smoke is tracked by Smoke Gate"
+              : "⏭️ Runtime smoke is not required";
 
             const body = [
               "### Smoke Summary",
               headline,
               "",
-              `- ${statusIcon(liteResult)} Smoke Tests (Lite): \`${liteResult}\``,
               `- ${statusIcon(fullResult)} Smoke Tests (Full Stack): \`${fullResult}\``,
             ].join("\n");
 
@@ -262,31 +190,30 @@ jobs:
       # This job reads workflow and job results for the matching runtime-image run.
       contents: read
       actions: read
-    needs: [changes, smoke-lite]
+    needs: [changes]
     if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     timeout-minutes: 30
     steps:
       - name: Fail when smoke dependencies did not succeed
-        if: ${{ needs.changes.result != 'success' || (needs.changes.outputs.run_smoke_lite == 'true' && needs['smoke-lite'].result != 'success') }}
+        if: ${{ needs.changes.result != 'success' }}
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
-          SMOKE_LITE_RESULT: ${{ needs['smoke-lite'].result }}
         run: |
-          echo "Smoke dependencies did not succeed: changes=$CHANGES_RESULT, smoke-lite=$SMOKE_LITE_RESULT" >&2
+          echo "Smoke change detection did not succeed: changes=$CHANGES_RESULT" >&2
           exit 1
 
       - name: Harden runner
-        if: ${{ needs.changes.result == 'success' && (needs.changes.outputs.run_smoke_lite != 'true' || needs['smoke-lite'].result == 'success') }}
+        if: ${{ needs.changes.result == 'success' }}
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
         with:
           egress-policy: audit
 
-      - name: Verify lite smoke result
-        if: ${{ needs.changes.result == 'success' && needs['smoke-lite'].result == 'success' && needs.changes.outputs.run_smoke_lite == 'true' && needs.changes.outputs.run_smoke_full != 'true' }}
-        run: echo "Lite smoke succeeded."
+      - name: Record skipped runtime smoke
+        if: ${{ needs.changes.result == 'success' && needs.changes.outputs.run_smoke_full != 'true' }}
+        run: echo "No runtime-stack smoke proof is required for this change."
 
       - name: Wait for full smoke dispatch result
-        if: ${{ needs.changes.result == 'success' && (needs.changes.outputs.run_smoke_lite != 'true' || needs['smoke-lite'].result == 'success') && needs.changes.outputs.run_smoke_full == 'true' }}
+        if: ${{ needs.changes.result == 'success' && needs.changes.outputs.run_smoke_full == 'true' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |

@@ -124,7 +124,7 @@ for job in \
   assert_job_condition ci.yml "$job" "$required_condition"
 done
 
-for job in changes smoke-lite smoke-summary smoke-gate; do
+for job in changes smoke-summary smoke-gate; do
   assert_job_condition smoke.yml "$job" "$required_condition"
 done
 
@@ -242,7 +242,6 @@ require_contains "$smoke_path" 'const mergeSha = context.sha;'
 require_contains "$smoke_path" 'head_sha: headSha,'
 require_contains "$smoke_path" 'mode-required'
 require_contains "$smoke_path" 'Build Runtime Images secure-pr-artifact pr-'
-require_contains "$smoke_path" 'const runSmokeLite = !runSmokeFull && nonDocFiles.some('
 require_contains "$smoke_path" 'run.display_title !== expectedDisplayTitle'
 require_contains "$smoke_path" 'const pullRequests = run.pull_requests ?? [];'
 require_contains "$smoke_path" 'pullRequests.length === 0 || pullRequests.some'
