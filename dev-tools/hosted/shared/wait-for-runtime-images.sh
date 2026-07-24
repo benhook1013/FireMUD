@@ -74,7 +74,8 @@ print(
 
 wait_for_pr_publisher() {
   local publisher_start_epoch="${SECONDS}"
-  while (( SECONDS < deadline )); do
+  local publisher_deadline=$((SECONDS + timeout_seconds))
+  while (( SECONDS < publisher_deadline )); do
     local publisher_state
     publisher_state="$(
       gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/publish-pr-runtime-images.yml/runs?event=workflow_run&per_page=100" \

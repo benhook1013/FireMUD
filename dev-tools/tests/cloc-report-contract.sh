@@ -223,6 +223,26 @@ assert cloc_report.table_lines(
     (("label", "label", "left"), ("count", "count", "right")),
 ) == ["label   count", "short       2", "longer    100"]
 
+original_require_tool = cloc_report.require_tool
+original_run_command = cloc_report.run_command
+cloc_report.require_tool = lambda _name: None
+cloc_report.run_command = lambda args, _cwd: subprocess.CompletedProcess(
+    args, 0, stdout=b"", stderr=b""
+)
+assert cloc_report.scan_cloc(repo, ["README.md"]) == []
+cloc_report.run_command = lambda args, _cwd: subprocess.CompletedProcess(
+    args, 0, stdout=b"not-json", stderr=b""
+)
+try:
+    cloc_report.scan_cloc(repo, ["README.md"])
+except cloc_report.ReportError as error:
+    assert "cloc returned invalid JSON" in str(error)
+else:
+    raise AssertionError("non-empty invalid cloc output must fail")
+finally:
+    cloc_report.require_tool = original_require_tool
+    cloc_report.run_command = original_run_command
+
 
 def run_json(*args: str, cwd: Path = repo) -> dict:
     output = subprocess.check_output(

@@ -296,7 +296,7 @@ jobs:
             const baseSha = context.payload.pull_request.base.sha;
             const mergeSha = context.sha;
             const prNumber = String(context.payload.pull_request.number);
-            const expectedDisplayTitle = `Build Runtime Images pr-${prNumber} base-${baseSha} head-${headSha} merge-${mergeSha} mode-required`;
+            const expectedDisplayTitle = `Build Runtime Images secure-pr-artifact pr-${prNumber} base-${baseSha} head-${headSha} merge-${mergeSha} mode-required`;
             const started = Date.now();
             const timeoutMs = 25 * 60 * 1000;
             const sleepMs = 15000;

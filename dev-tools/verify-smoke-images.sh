@@ -29,7 +29,7 @@ if [[ -z "${SMOKE_IMAGE_TAG:-}" ]]; then
 fi
 
 if [[ "${SMOKE_IMAGE_LOCAL_ONLY:-false}" == "true" ]]; then
-  COMPOSE_UP_ARGS+=(--pull never)
+  export SMOKE_IMAGE_PULL_POLICY=never
 fi
 
 cleanup() {
@@ -85,7 +85,7 @@ compose_up_with_retry() {
 
 echo "Smoke image proof: destroy local compose state, resolve smoke-image tags via docker/.env, start the stack, then run WebSocket and Telnet LOGIN -> PLAY -> item/container/equipment proofs."
 if [[ "${SMOKE_IMAGE_LOCAL_ONLY:-false}" == "true" ]]; then
-  echo "Local-only mode enabled: compose will reuse matching local images and skip remote pulls."
+  echo "Local-only mode enabled: compose will reuse matching local FireMUD images while pulling missing dependencies."
 fi
 
 if [[ -f "$ROOT_ENV_FILE" ]]; then

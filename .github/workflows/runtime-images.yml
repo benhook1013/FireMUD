@@ -45,7 +45,7 @@ on:
     branches: [main, develop]
   workflow_dispatch:
 
-run-name: Build Runtime Images ${{ github.event_name == 'pull_request' && format('pr-{0} base-{1} head-{2} merge-{3} mode-{4}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha, github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required') || github.ref_name }}
+run-name: Build Runtime Images ${{ github.event_name == 'pull_request' && format('secure-pr-artifact pr-{0} base-{1} head-{2} merge-{3} mode-{4}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha, github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required') || github.ref_name }}
 
 permissions:
   contents: read
@@ -360,10 +360,9 @@ jobs:
     needs: [image-meta, build-runtime-images]
     if: ${{ always() && github.event_name != 'pull_request' && needs.build-runtime-images.result == 'success' }}
     permissions:
-      # The reusable smoke workflow pulls GHCR images and updates its PR summary.
+      # The trusted branch smoke workflow only pulls fixed GHCR images.
       contents: read
       packages: read
-      pull-requests: write
     uses: ./.github/workflows/smoke-full.yml
     with:
       action: full

@@ -26,12 +26,15 @@ assert_job_contains() {
   local expected="$3"
   local path="$ROOT_DIR/.github/workflows/$workflow"
 
-  awk -v job="$job" -v expected="$expected" '
+  if ! awk -v job="$job" -v expected="$expected" '
     $0 == "  " job ":" { in_job = 1; found = 1; next }
     in_job && /^  [A-Za-z0-9_-]+:/ { exit }
     in_job && index($0, expected) { matched = 1 }
     END { exit !(found && matched) }
-  ' "$path"
+  ' "$path"; then
+    echo "$workflow job $job must contain: $expected" >&2
+    exit 1
+  fi
 }
 
 assert_job_excludes() {
@@ -107,6 +110,7 @@ grep -Fq 'types: [opened, synchronize, reopened, edited]' "$runtime_images_path"
 grep -Fq "&& 'metadata' || 'required' }}" "$runtime_images_path"
 grep -Fq '  cancel-in-progress: true' "$runtime_images_path"
 grep -Fq 'run-name: Build Runtime Images ' "$runtime_images_path"
+grep -Fq "format('secure-pr-artifact pr-{0}" "$runtime_images_path"
 grep -Fq 'github.event.pull_request.base.sha' "$runtime_images_path"
 grep -Fq 'github.event.pull_request.head.sha' "$runtime_images_path"
 grep -Fq 'github.sha' "$runtime_images_path"
@@ -128,12 +132,17 @@ for forbidden in 'packages: write' 'docker/login-action@' 'push: true' 'type=reg
 done
 
 grep -Fq 'workflow_run:' "$pr_image_publisher_path"
+# shellcheck disable=SC2016 # This assertion intentionally matches a literal GitHub expression.
+grep -Fq 'run-name: Publish PR Runtime Images head-${{ github.event.workflow_run.head_sha }}' "$pr_image_publisher_path"
 grep -Fq "github.event.workflow_run.event == 'pull_request'" "$pr_image_publisher_path"
 grep -Fq "github.event.workflow_run.conclusion == 'success'" "$pr_image_publisher_path"
 grep -Fq 'github.event.workflow_run.head_repository.full_name == github.repository' "$pr_image_publisher_path"
+grep -Fq "startsWith(github.event.workflow_run.display_title, 'Build Runtime Images secure-pr-artifact ')" "$pr_image_publisher_path"
 grep -Fq 'actions: read' "$pr_image_publisher_path"
 grep -Fq 'packages: write' "$pr_image_publisher_path"
+# shellcheck disable=SC2016 # These are literal GitHub expression and shell source contracts.
 grep -Fq 'pr-runtime-images-${{ github.event.workflow_run.head_sha }}' "$pr_image_publisher_path"
+# shellcheck disable=SC2016 # This assertion intentionally matches the unevaluated publisher script.
 grep -Fq 'docker push "$image"' "$pr_image_publisher_path"
 if grep -Fq 'actions/checkout@' "$pr_image_publisher_path"; then
   echo "trusted PR image publisher must not checkout or execute PR source" >&2
@@ -142,11 +151,16 @@ fi
 
 grep -Fq 'publish-pr-runtime-images.yml/runs?event=workflow_run' "$image_wait_path"
 grep -Fq 'wait_for_pr_publisher' "$image_wait_path"
+# shellcheck disable=SC2016 # This assertion intentionally matches unevaluated shell arithmetic.
+grep -Fq 'local publisher_deadline=$((SECONDS + timeout_seconds))' "$image_wait_path"
+
+assert_job_excludes runtime-images.yml smoke-full 'pull-requests: write'
 
 grep -Fq 'const baseSha = context.payload.pull_request.base.sha;' "$smoke_path"
 grep -Fq 'const mergeSha = context.sha;' "$smoke_path"
 grep -Fq 'head_sha: headSha,' "$smoke_path"
 grep -Fq 'mode-required' "$smoke_path"
+grep -Fq 'Build Runtime Images secure-pr-artifact pr-' "$smoke_path"
 grep -Fq 'run.display_title === expectedDisplayTitle' "$smoke_path"
 grep -Fq 'pullRequest.base?.sha === baseSha' "$smoke_path"
 grep -Fq 'pullRequest.head?.sha === headSha' "$smoke_path"

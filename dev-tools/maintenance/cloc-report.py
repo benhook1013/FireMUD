@@ -149,7 +149,8 @@ def scan_cloc(root: Path, inventory: Iterable[str]) -> list[FileStats]:
             ),
             root,
         )
-        payload = json.loads(result.stdout)
+        raw_payload = result.stdout.strip()
+        payload = {} if not raw_payload else json.loads(raw_payload)
     except json.JSONDecodeError as error:
         raise ReportError(f"cloc returned invalid JSON: {error}") from error
     finally:

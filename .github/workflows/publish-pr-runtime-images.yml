@@ -17,7 +17,7 @@ concurrency:
 jobs:
   publish:
     name: Publish Fixed PR Image Tags
-    if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository && startsWith(github.event.workflow_run.display_title, 'Build Runtime Images secure-pr-artifact ') }}
     runs-on: ubuntu-latest
     permissions:
       # This trusted default-branch workflow reads one successful run artifact and publishes fixed SHA tags.
