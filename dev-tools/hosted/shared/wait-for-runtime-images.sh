@@ -15,6 +15,7 @@ image_tag="$1"
 timeout_seconds="${HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS:-${PREVIEW_IMAGE_WAIT_TIMEOUT_SECONDS:-1800}}"
 sleep_seconds="${HOSTED_IMAGE_WAIT_SLEEP_SECONDS:-${PREVIEW_IMAGE_WAIT_SLEEP_SECONDS:-10}}"
 missing_workflow_timeout_seconds="${HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS:-${PREVIEW_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS:-180}}"
+publisher_timeout_seconds="${HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS:-${timeout_seconds}}"
 start_epoch="${SECONDS}"
 deadline=$((SECONDS + timeout_seconds))
 
@@ -98,7 +99,7 @@ print(
 
 wait_for_pr_publisher() {
   local publisher_start_epoch="${SECONDS}"
-  local publisher_deadline=$deadline
+  local publisher_deadline=$((SECONDS + publisher_timeout_seconds))
   while (( SECONDS < publisher_deadline )); do
     local publisher_state
     publisher_state="$(

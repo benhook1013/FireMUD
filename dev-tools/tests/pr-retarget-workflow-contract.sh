@@ -54,6 +54,26 @@ assert_job_excludes() {
   fi
 }
 
+require_contains() {
+  local path="$1"
+  local expected="$2"
+
+  if ! grep -Fq -- "$expected" "$path"; then
+    echo "$path must contain: $expected" >&2
+    exit 1
+  fi
+}
+
+require_exact_line() {
+  local path="$1"
+  local expected="$2"
+
+  if ! grep -Fxq -- "$expected" "$path"; then
+    echo "$path must contain the exact line: $expected" >&2
+    exit 1
+  fi
+}
+
 required_condition="github.event.action != 'edited' || github.event.changes.base.ref != null"
 ci_path="$ROOT_DIR/.github/workflows/ci.yml"
 runtime_images_path="$ROOT_DIR/.github/workflows/runtime-images.yml"
@@ -62,19 +82,19 @@ smoke_path="$ROOT_DIR/.github/workflows/smoke.yml"
 image_wait_path="$ROOT_DIR/dev-tools/hosted/shared/wait-for-runtime-images.sh"
 
 for path in "$ci_path" "$smoke_path"; do
-  grep -Fq 'types: [opened, synchronize, reopened, edited]' "$path"
-  grep -Fq "&& 'metadata' || 'required' }}" "$path"
-  grep -Fq '  cancel-in-progress: true' "$path"
+  require_contains "$path" 'types: [opened, synchronize, reopened, edited]'
+  require_contains "$path" "&& 'metadata' || 'required' }}"
+  require_contains "$path" '  cancel-in-progress: true'
 done
 
-grep -Fq 'PR Metadata Edit (Validation Summary)' "$ci_path"
-grep -Fq 'PR Metadata Edit (Validation Gate)' "$ci_path"
+require_contains "$ci_path" 'PR Metadata Edit (Validation Summary)'
+require_contains "$ci_path" 'PR Metadata Edit (Validation Gate)'
 if grep -Fq '    name: Validation Gate' "$ci_path"; then
   echo "metadata-only CI runs must not emit the branch-protected Validation Gate name" >&2
   exit 1
 fi
-grep -Fq 'PR Metadata Edit (Smoke Summary)' "$smoke_path"
-grep -Fq 'PR Metadata Edit (Smoke Gate)' "$smoke_path"
+require_contains "$smoke_path" 'PR Metadata Edit (Smoke Summary)'
+require_contains "$smoke_path" 'PR Metadata Edit (Smoke Gate)'
 if grep -Fq '    name: Smoke Gate' "$smoke_path"; then
   echo "metadata-only smoke runs must not emit the branch-protected Smoke Gate name" >&2
   exit 1
@@ -106,20 +126,20 @@ for job in changes smoke-lite smoke-summary smoke-gate; do
   assert_job_condition smoke.yml "$job" "$required_condition"
 done
 
-grep -Fq 'types: [opened, synchronize, reopened, edited]' "$runtime_images_path"
-grep -Fq "&& 'metadata' || 'required' }}" "$runtime_images_path"
-grep -Fq '  cancel-in-progress: true' "$runtime_images_path"
-grep -Fq 'run-name: Build Runtime Images ' "$runtime_images_path"
-grep -Fq "format('secure-pr-artifact pr-{0}" "$runtime_images_path"
-grep -Fq 'github.event.pull_request.base.sha' "$runtime_images_path"
-grep -Fq 'github.event.pull_request.head.sha' "$runtime_images_path"
-grep -Fq 'github.sha' "$runtime_images_path"
-grep -Fq "mode-{4}" "$runtime_images_path"
-grep -Fq 'display_title = run.get("display_title", "")' "$image_wait_path"
-grep -Fq 'display_title.startswith("Build Runtime Images secure-pr-artifact ")' "$image_wait_path"
-grep -Fq 'and f" head-{head_sha} " in display_title' "$image_wait_path"
-grep -Fq 'and display_title.endswith(" mode-required")' "$image_wait_path"
-grep -Fq 'gh api --paginate --slurp' "$image_wait_path"
+require_contains "$runtime_images_path" 'types: [opened, synchronize, reopened, edited]'
+require_contains "$runtime_images_path" "&& 'metadata' || 'required' }}"
+require_contains "$runtime_images_path" '  cancel-in-progress: true'
+require_contains "$runtime_images_path" 'run-name: Build Runtime Images '
+require_contains "$runtime_images_path" "format('secure-pr-artifact pr-{0}"
+require_contains "$runtime_images_path" 'github.event.pull_request.base.sha'
+require_contains "$runtime_images_path" 'github.event.pull_request.head.sha'
+require_contains "$runtime_images_path" 'github.sha'
+require_contains "$runtime_images_path" 'mode-{4}'
+require_contains "$image_wait_path" 'display_title = run.get("display_title", "")'
+require_contains "$image_wait_path" 'display_title.startswith("Build Runtime Images secure-pr-artifact ")'
+require_contains "$image_wait_path" 'and f" head-{head_sha} " in display_title'
+require_contains "$image_wait_path" 'and display_title.endswith(" mode-required")'
+require_contains "$image_wait_path" 'gh api --paginate --slurp'
 
 for job in image-meta pr-local-smoke; do
   assert_job_condition runtime-images.yml "$job" "$required_condition"
@@ -137,38 +157,40 @@ for forbidden in 'packages: write' 'docker/login-action@' 'push: true' 'type=reg
   assert_job_excludes runtime-images.yml pr-local-smoke "$forbidden"
 done
 
-grep -Fq 'workflow_run:' "$pr_image_publisher_path"
-grep -Fxq 'permissions: {}' "$pr_image_publisher_path"
+require_contains "$pr_image_publisher_path" 'workflow_run:'
+require_exact_line "$pr_image_publisher_path" 'permissions: {}'
 # shellcheck disable=SC2016 # This assertion intentionally matches a literal GitHub expression.
-grep -Fq 'run-name: Publish PR Runtime Images head-${{ github.event.workflow_run.head_sha }}' "$pr_image_publisher_path"
-grep -Fq "github.event.workflow_run.event == 'pull_request'" "$pr_image_publisher_path"
-grep -Fq "github.event.workflow_run.conclusion == 'success'" "$pr_image_publisher_path"
-grep -Fq 'github.event.workflow_run.head_repository.full_name == github.repository' "$pr_image_publisher_path"
-grep -Fq "startsWith(github.event.workflow_run.display_title, 'Build Runtime Images secure-pr-artifact ')" "$pr_image_publisher_path"
-grep -Fq 'actions: read' "$pr_image_publisher_path"
-grep -Fq 'packages: write' "$pr_image_publisher_path"
+require_contains "$pr_image_publisher_path" 'run-name: Publish PR Runtime Images head-${{ github.event.workflow_run.head_sha }}'
+require_contains "$pr_image_publisher_path" "github.event.workflow_run.event == 'pull_request'"
+require_contains "$pr_image_publisher_path" "github.event.workflow_run.conclusion == 'success'"
+require_contains "$pr_image_publisher_path" 'github.event.workflow_run.head_repository.full_name == github.repository'
+require_contains "$pr_image_publisher_path" "startsWith(github.event.workflow_run.display_title, 'Build Runtime Images secure-pr-artifact ')"
+require_contains "$pr_image_publisher_path" 'actions: read'
+require_contains "$pr_image_publisher_path" 'packages: write'
 assert_job_excludes publish-pr-runtime-images.yml publish 'contents: read'
 # shellcheck disable=SC2016 # These are literal GitHub expression and shell source contracts.
-grep -Fq 'pr-runtime-images-${{ github.event.workflow_run.head_sha }}' "$pr_image_publisher_path"
+require_contains "$pr_image_publisher_path" 'pr-runtime-images-${{ github.event.workflow_run.head_sha }}'
 # shellcheck disable=SC2016 # This assertion intentionally matches the unevaluated publisher script.
-grep -Fq 'docker push "$image"' "$pr_image_publisher_path"
+require_contains "$pr_image_publisher_path" 'docker push "$image"'
 # shellcheck disable=SC2016 # These assertions intentionally match unevaluated publisher shell.
-grep -Fq 'docker manifest inspect "$image"' "$pr_image_publisher_path"
-grep -Fq 'Fixed image tag already exists; preserving first publication' "$pr_image_publisher_path"
-grep -Fq 'max_push_attempts=3' "$pr_image_publisher_path"
+require_contains "$pr_image_publisher_path" 'docker manifest inspect "$image"'
+require_contains "$pr_image_publisher_path" 'Fixed image tag already exists; preserving first publication'
+require_contains "$pr_image_publisher_path" 'max_push_attempts=3'
 # shellcheck disable=SC2016 # These assertions intentionally match unevaluated publisher shell.
-grep -Fq 'backoff_seconds=$((5 * 2 ** (push_attempt - 1)))' "$pr_image_publisher_path"
+require_contains "$pr_image_publisher_path" 'backoff_seconds=$((5 * 2 ** (push_attempt - 1)))'
 # shellcheck disable=SC2016 # This assertion intentionally matches unevaluated publisher shell.
-grep -Fq 'sleep "$backoff_seconds"' "$pr_image_publisher_path"
+require_contains "$pr_image_publisher_path" 'sleep "$backoff_seconds"'
 if grep -Fq 'actions/checkout@' "$pr_image_publisher_path"; then
   echo "trusted PR image publisher must not checkout or execute PR source" >&2
   exit 1
 fi
 
-grep -Fq 'publish-pr-runtime-images.yml/runs?event=workflow_run' "$image_wait_path"
-grep -Fq 'wait_for_pr_publisher' "$image_wait_path"
-# shellcheck disable=SC2016 # This assertion intentionally matches the caller's shell deadline.
-grep -Fq 'local publisher_deadline=$deadline' "$image_wait_path"
+require_contains "$image_wait_path" 'publish-pr-runtime-images.yml/runs?event=workflow_run'
+require_contains "$image_wait_path" 'wait_for_pr_publisher'
+# shellcheck disable=SC2016 # This assertion intentionally matches a literal shell default expression.
+require_contains "$image_wait_path" 'publisher_timeout_seconds="${HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS:-${timeout_seconds}}"'
+# shellcheck disable=SC2016 # This assertion intentionally matches the unevaluated publisher deadline.
+require_contains "$image_wait_path" 'local publisher_deadline=$((SECONDS + publisher_timeout_seconds))'
 
 image_wait_fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$image_wait_fixture_dir"' EXIT
@@ -194,8 +216,8 @@ HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=5 \
 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
 bash "$image_wait_path" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
   >"$image_wait_fixture_dir/output"
-grep -Fq 'Matching runtime-images workflow 101 succeeded' "$image_wait_fixture_dir/output"
-grep -Fq 'Trusted PR image publisher 201 succeeded' "$image_wait_fixture_dir/output"
+require_contains "$image_wait_fixture_dir/output" 'Matching runtime-images workflow 101 succeeded'
+require_contains "$image_wait_fixture_dir/output" 'Trusted PR image publisher 201 succeeded'
 
 assert_job_excludes runtime-images.yml smoke-full 'pull-requests: write'
 if (assert_job_excludes runtime-images.yml missing-job 'pull-requests: write') 2>/dev/null; then
@@ -203,20 +225,20 @@ if (assert_job_excludes runtime-images.yml missing-job 'pull-requests: write') 2
   exit 1
 fi
 
-grep -Fq 'const baseSha = context.payload.pull_request.base.sha;' "$smoke_path"
-grep -Fq 'const mergeSha = context.sha;' "$smoke_path"
-grep -Fq 'head_sha: headSha,' "$smoke_path"
-grep -Fq 'mode-required' "$smoke_path"
-grep -Fq 'Build Runtime Images secure-pr-artifact pr-' "$smoke_path"
-grep -Fq 'run.display_title !== expectedDisplayTitle' "$smoke_path"
-grep -Fq 'const pullRequests = run.pull_requests ?? [];' "$smoke_path"
-grep -Fq 'pullRequests.length === 0 || pullRequests.some' "$smoke_path"
-grep -Fq 'pullRequest.base?.sha === baseSha' "$smoke_path"
-grep -Fq 'pullRequest.head?.sha === headSha' "$smoke_path"
-grep -Fq 'github.rest.actions.listJobsForWorkflowRun' "$smoke_path"
-grep -Fq 'job.name === "Smoke Tests (Full Stack) / Smoke Tests (Full Stack)"' "$smoke_path"
-grep -Fq 'fullSmokeJob.status !== "completed"' "$smoke_path"
-grep -Fq 'fullSmokeJob.conclusion !== "success"' "$smoke_path"
+require_contains "$smoke_path" 'const baseSha = context.payload.pull_request.base.sha;'
+require_contains "$smoke_path" 'const mergeSha = context.sha;'
+require_contains "$smoke_path" 'head_sha: headSha,'
+require_contains "$smoke_path" 'mode-required'
+require_contains "$smoke_path" 'Build Runtime Images secure-pr-artifact pr-'
+require_contains "$smoke_path" 'run.display_title !== expectedDisplayTitle'
+require_contains "$smoke_path" 'const pullRequests = run.pull_requests ?? [];'
+require_contains "$smoke_path" 'pullRequests.length === 0 || pullRequests.some'
+require_contains "$smoke_path" 'pullRequest.base?.sha === baseSha'
+require_contains "$smoke_path" 'pullRequest.head?.sha === headSha'
+require_contains "$smoke_path" 'github.rest.actions.listJobsForWorkflowRun'
+require_contains "$smoke_path" 'job.name === "Smoke Tests (Full Stack) / Smoke Tests (Full Stack)"'
+require_contains "$smoke_path" 'fullSmokeJob.status !== "completed"'
+require_contains "$smoke_path" 'fullSmokeJob.conclusion !== "success"'
 if grep -Fq 'const matching = runs.find((run) => run.head_sha === headSha);' "$smoke_path"; then
   echo "Smoke Gate must not accept a runtime-images run by head SHA alone" >&2
   exit 1
