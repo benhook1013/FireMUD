@@ -583,6 +583,10 @@ final class TickStagingService {
         entries.stream()
             .map(TickQueuedCommandEnvelope::commandId)
             .collect(java.util.stream.Collectors.toSet());
+    if (expectedCommandIds.size() != entries.size()) {
+      throw new IllegalStateException(
+          "Durable tick staging requires unique pending Redis command ids");
+    }
     Map<String, GameplayCommand> resolvedCommands =
         selections.stream()
             .map(CommandSelection::command)

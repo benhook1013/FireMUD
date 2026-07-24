@@ -610,18 +610,23 @@ final class TickBatchExecutionService {
           batch, effect, "REJECTED", "COMPLETED", "NOT_APPLIED", failure.code(), failure.message());
       return;
     }
-    durableGameplayCommandExecutionService
-        .execute(effect, command)
-        .ifPresent(
-            result ->
-                markEffectTerminal(
-                    batch,
-                    effect,
-                    result.effectStatus(),
-                    result.commandExecutionOutcome(),
-                    result.gameplayResult(),
-                    result.failureCode(),
-                    result.failureMessage()));
+    Optional<DurableGameplayCommandExecutionService.DurableGameplayCommandExecutionResult> result =
+        durableGameplayCommandExecutionService.execute(effect, command);
+    if (result.isEmpty()) {
+      // Synchronous text commands have already completed; only their durable ledger row remains.
+      markEffectTerminal(batch, effect, "APPLIED", "COMPLETED", "NOT_APPLIED", null, null);
+      return;
+    }
+    DurableGameplayCommandExecutionService.DurableGameplayCommandExecutionResult applied =
+        result.orElseThrow();
+    markEffectTerminal(
+        batch,
+        effect,
+        applied.effectStatus(),
+        applied.commandExecutionOutcome(),
+        applied.gameplayResult(),
+        applied.failureCode(),
+        applied.failureMessage());
   }
 
   private void markEffectTerminal(

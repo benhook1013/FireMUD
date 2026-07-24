@@ -2,7 +2,7 @@
 
 Store one record per `first-live` or `reopen` hobby traffic-open event as:
 
-- `<deployment-ref>/<deploymentEventId>.json`
+- `<deployment-ref>/<deployment-event-id>.json`
 
 ## Implementation Status
 
@@ -15,7 +15,7 @@ Required fields:
 - `eventType`
 - `trafficOpenStatus` (`finalized` in the checked-in projection; runtime authorization is held by the recovery controller)
 - `deploymentRef`
-- `deploymentEventId` (must equal the UUID in `preflightReportPath` and the `<deploymentEventId>` filename component)
+- `deploymentEventId` (must equal the UUID in `preflightReportPath` and the `<deployment-event-id>` filename component)
 - `assessedAt`
 - `assessedBy`
 - `backupComplianceRef`

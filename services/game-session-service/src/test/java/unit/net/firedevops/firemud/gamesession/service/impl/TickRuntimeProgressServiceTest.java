@@ -151,15 +151,17 @@ class TickRuntimeProgressServiceTest {
   }
 
   @Test
-  void advanceRuntimeTickProgressFailsClosedWhenPauseWinsBeforeCas() {
+  void advanceRuntimeTickProgressFailsClosedWhenOwnershipCasIsRejected() {
     RuntimeRegionStatus currentStatus = runtimeOwnership(1L, 2L, "region-a", 4L, "fence-a", false);
     currentStatus.setId(11L);
     currentStatus.setLastCommittedTickId(7L);
     when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-a"))
         .thenReturn(Optional.of(currentStatus));
+    ArgumentCaptor<RuntimeRegionStatus> expectedOwnership =
+        ArgumentCaptor.forClass(RuntimeRegionStatus.class);
     org.mockito.Mockito.doReturn(Optional.empty())
         .when(runtimeRegionStatusRepository)
-        .advanceLastCommittedTickId(any());
+        .advanceLastCommittedTickId(expectedOwnership.capture());
 
     Assertions.assertThrows(
         TickQueueControlService.StaleOwnershipException.class,
@@ -169,6 +171,15 @@ class TickRuntimeProgressServiceTest {
                 2L,
                 new TickQueueControlService.OwnershipSnapshot(
                     "region-a", 4L, "fence-a", false, 7L)));
+    RuntimeRegionStatus attempted = expectedOwnership.getValue();
+    Assertions.assertEquals(11L, attempted.getId());
+    Assertions.assertEquals(1L, attempted.getTenantId());
+    Assertions.assertEquals(2L, attempted.getGameInstanceId());
+    Assertions.assertEquals("region-a", attempted.getRegionId());
+    Assertions.assertEquals(4L, attempted.getRegionEpoch());
+    Assertions.assertEquals("fence-a", attempted.getExecutorFence());
+    Assertions.assertEquals(7L, attempted.getLastCommittedTickId());
+    Assertions.assertFalse(attempted.isPaused());
   }
 
   @Test

@@ -38,9 +38,10 @@ Prometheus should also publish derived breach indicators:
 - `backup_artifact_restore_unreadable{environment}`
 - `recovery_participant_convergence_blocked{environment,participant,state}`
 - `recovery_environment_convergence_blocked{environment}`
-- `recovery_participant_convergence_coverage_missing` – preserves `environment,participant` when a known participant is missing, `environment` for an incomplete environment projection, or no labels when the source families are globally absent
+- `recovery_participant_convergence_coverage_missing{environment,participant?}` – preserves the affected environment and participant when known; it never represents global source disappearance
+- `recovery_participant_convergence_source_missing{source_family}` – global monitoring-gap signal for total disappearance of a required inventory source family; it is not readiness state for any particular environment
 
-The controller publishes each environment's required-participant inventory as one all-or-nothing projection. It sets the completeness marker to `0` before changing participant series, exposes the entire authoritative set, and sets the marker to `1` only after that set is complete; a partial projection must never carry `complete=1`. Derived indicators and alerts must preserve these labels and group by `environment`; participant convergence alerts must not reduce an environment-wide failure to an unlabeled boolean or discard the failing `participant` or current `state`. The cumulative `recovery_participant_convergence_total` event counter is audit history only and must not drive an active blocked alert; the alert must clear when the current state converges. Global `absent(...)` alerts are fail-safe monitoring-gap indicators only: because a missing family has no remaining environment label, they cannot replace environment-specific source health or readiness proof.
+The controller publishes each environment's required-participant inventory as one all-or-nothing projection. It sets the completeness marker to `0` before changing participant series, exposes the entire authoritative set, and sets the marker to `1` only after that set is complete; a partial projection must never carry `complete=1`. Derived coverage indicators and alerts preserve these labels and group by `environment`; participant convergence alerts must not reduce an environment-wide failure to an unlabeled boolean or discard the failing `participant` or current `state`. The cumulative `recovery_participant_convergence_total` event counter is audit history only and must not drive an active blocked alert; the alert must clear when the current state converges. Global `absent(...)` conditions feed only the separate `recovery_participant_convergence_source_missing{source_family}` monitoring-gap recording. Because a missing family has no remaining environment label, that recording cannot replace environment-specific source health or readiness proof.
 
 Alerting policy:
 
@@ -84,6 +85,8 @@ Required fields:
 - `backupCoverage` (`environment-wide-postgresql`)
 - `backupArtifactRef`
 - `artifactErasureHighWater`
+- `initialCatchupHighWater`
+- `restoreHighWater`
 - `backupToolDigest`
 - `recoveryToolDigest`
 - `recoveryContractFingerprint`
@@ -135,7 +138,7 @@ The evaluator compares backup/restore tool compatibility, database and migration
 
 ## Production Traffic-Open Backup Evidence
 
-Before opening production to player traffic for the first time, or reopening it after restore into a fresh environment boundary, preflight must consume proof that the backup pipeline is already functioning for that environment. The exporter records the traffic-open projection only after the durable controller finalizes the release.
+Before opening production to player traffic for the first time, or reopening it after any PostgreSQL restore or rewind, preflight must consume proof that the backup pipeline is already functioning for that environment. A restore into a fresh environment boundary is subject to the same gate plus its new-boundary binding checks. The exporter records the traffic-open projection only after the durable controller finalizes the release.
 
 Traffic-open evidence is a separate event-bound projection around the canonical recovery and backup-readiness evidence. Preflight authorizes the event from the durable recovery controller; the writer exports the checked-in immutable projection only after the controller has observed/applied the release and reached `finalized`.
 
@@ -273,6 +276,7 @@ Required top-level fields:
 - `coordinationRecoveryMode` (`cold_start_restore`)
 - `backupArtifactRef`
 - `artifactErasureHighWater`
+- `initialCatchupHighWater`
 - `restoreHighWater`
 - `erasureReplay`
 - `backupArtifactLineage`
@@ -319,17 +323,17 @@ Nested control-group requirements:
 - `secretComplianceRefresh` references the refreshed `design/operations/secret-compliance/<environment>.yaml` record, the immutable evidence payload updated by restore hardening, the credential classes refreshed, and whether each class used `lastProvisionedAt` or `lastRotationAt`
 - `recoveryControllerLineage` identifies the durable controller state, environment-wide scope, linked artifact and participant lineage, pre-release `ready_to_reopen` approval, and post-release `finalized` state when this projection is exported
 - `backupConfidentialityEvidence` uses `status=pass`, `transport=encrypted`, and `storage=encrypted` and proves environment-scoped least-privilege access and audit plus retention/secure deletion. Whenever production-origin data is exercised outside production, it also proves quarantine, sanitization, validation, and deletion
-- `backupArtifactLineage` binds the environment-wide PostgreSQL artifact to its database identity, snapshot time, schema/migration lineage, service digests, and object-storage identity
-- `artifactErasureHighWater` is the immutable high-water captured in the source artifact lineage; `restoreHighWater` is captured immutably from the authoritative erasure ledger for this recovery operation, must be greater than or equal to `artifactErasureHighWater`, and must not be inferred from restored PostgreSQL
-- `erasureReplay` identifies the authoritative ledger, exclusive start (`artifactErasureHighWater`), inclusive end (`restoreHighWater`), replayed-through sequence, gap-free completion evidence, bounded final-cutover evidence, and the installed online-consumer cursor. The interval must contain every erasure event in order, without gaps or unknown entries, and the final cutover must prove atomic handoff to normal processing before the controller reaches `ready_to_reopen`
-- `coordinationRecoveryEvidence` uses `mode=cold_start_restore`, `coordinationRedis=empty-before-rebuild`, and `regionEpochFences=advanced-or-recreated` to prove an empty Coordination Redis keyspace before rebuild and environment-wide gameplay-region epoch/fence advancement or recreation
+- `backupArtifactLineage` binds the environment-wide PostgreSQL artifact to its database identity, snapshot time, schema/migration lineage, service digests, object-storage identity, and the same `artifactErasureHighWater`; it proves that the high-water was captured inside the same database snapshot and identifies the greatest authoritative erasure-ledger sequence already included
+- `artifactErasureHighWater` is the snapshot-bound source high-water, `initialCatchupHighWater` is captured immutably when recovery catch-up starts, and `restoreHighWater` is captured immutably by the bounded final cutover as the readiness boundary. All three come from the same authoritative ledger and must satisfy `restoreHighWater >= initialCatchupHighWater >= artifactErasureHighWater`; none may be inferred from restored PostgreSQL
+- `erasureReplay` identifies the authoritative ledger, exclusive start (`artifactErasureHighWater`), initial catch-up boundary (`initialCatchupHighWater`), inclusive final end (`restoreHighWater`), replayed-through sequence, gap-free completion evidence, bounded final-cutover evidence, and the installed online-consumer cursor. The interval must contain every erasure event in order, without gaps or unknown entries, and the final cutover must prove atomic handoff to normal processing before the controller reaches `ready_to_reopen`
+- `coordinationRecoveryEvidence` uses `mode=cold_start_restore`, `coordinationRedis=empty-before-rebuild`, `credentialBinding=rotated-or-rebound`, `targetEnvironmentBound=true`, `snapshotCredentialsRejected=true`, and `regionEpochFences=advanced-or-recreated` to prove an empty Coordination Redis keyspace and fresh target-environment credentials before rebuild plus environment-wide gameplay-region epoch/fence advancement or recreation
 - `recoveryParticipantInventoryRef` and `externalEffectInventoryRef` each point to authoritative, complete, reachable inventories. `durableParticipantConvergence` and `externalEffectReconciliation` must contain one safe disposition for every declared and enabled entry: `converged`, `terminalized`, `invalidated`, or `fenced_disabled_backlog_retained`; missing, unknown, unreachable, or unsafe entries fail the gate
 - `sessionRecovery` proves environment-wide gameplay and Account session invalidation and must use `gameSessionHandling=invalidated` and `authSessionHandling=invalidated`; fresh sessions may be issued only after the reopen gate
 
 Validation rules:
 
 - quarantine remains in place while the controller is `collecting`; once every required pre-release control group passes, the bounded final erasure cutover and online-consumer handoff succeed, and `reopenApprovedBy` is recorded, the controller records `readyToReopenAt` and advances its durable state to `ready_to_reopen`
-- a `continueRecovery(operationId, expectedPhase, evidenceRef)` call is idempotently reconciled from the supplied expected phase; for first-live or reopen it advances `ready_to_reopen` to the internal `releasing` phase while the controller repeatedly applies and observes the quarantine-routing release with traffic closed. Any failed or ambiguous apply remains fail-closed in `releasing` and cannot produce `finalized`
+- a `continueRecovery(operationId, expectedPhase, evidenceRef)` call validates its immutable evidence and uses one durable compare-and-set or transaction to serialize the transition from the supplied phase. Exactly one continuation result is stored per `operationId`; concurrent or retried calls return it rather than applying release twice. For first-live or reopen it advances `ready_to_reopen` to the internal `releasing` phase while the controller repeatedly applies and observes the quarantine-routing release with traffic closed. Any failed or ambiguous apply remains fail-closed in `releasing` and cannot produce `finalized`
 - after the controller applies and observes the release, it advances its durable state to `finalized`; only then may actual player traffic flow, and only then may the checked-in recovery and traffic-open projections be exported
 - a `production-equivalent-drill` uses `trafficExposure=isolated-drill`; its controlled reopen authorizes only the isolated test boundary and cannot authorize production traffic
 - an `actual-recovery` that will open player traffic uses event-matching `trafficExposure` (`player-facing-first-live` or `player-facing-reopen`) and is bound to that exact target boundary

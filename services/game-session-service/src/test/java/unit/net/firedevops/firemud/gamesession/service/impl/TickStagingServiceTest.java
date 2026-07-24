@@ -273,6 +273,36 @@ class TickStagingServiceTest {
   }
 
   @Test
+  void createBatchRejectsDuplicatePendingCommandIdsBeforeAnyDurableWrite() {
+    GameplayCommand command = gameplayCommand("cmd-duplicate");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-duplicate")))
+        .thenReturn(List.of(command));
+    List<TickQueuedCommandEnvelope> duplicateEntries =
+        List.of(
+            new TickQueuedCommandEnvelope(false, "cmd-duplicate", "look"),
+            new TickQueuedCommandEnvelope(false, "cmd-duplicate", "look"));
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.createBatch(
+                    "FRESH_STAGE",
+                    1L,
+                    2L,
+                    false,
+                    new TickQueueControlService.OwnershipSnapshot(
+                        "region-a", 1L, "fence-a", false, 0L),
+                    duplicateEntries));
+
+    assertEquals(
+        "Durable tick staging requires unique pending Redis command ids", exception.getMessage());
+    verify(tickBatchRepository, never()).save(any());
+    verify(tickEffectRepository, never()).saveAll(any());
+    verify(gameplayCommandRepository, never()).saveAll(any());
+  }
+
+  @Test
   void createBatchPersistsComparableOrderingAndCanonicalRoutingManifest() {
     GameplayCommand command = gameplayCommand("cmd-1");
     command.setSourceType("AUTOMATION");
@@ -739,7 +769,12 @@ class TickStagingServiceTest {
         .thenAnswer(
             invocation ->
                 savedEffects.stream()
-                    .filter(effect -> "DRAINED".equals(effect.getStatus()))
+                    .filter(
+                        effect ->
+                            invocation.getArgument(0, String.class).equals(effect.getTickBatchId()))
+                    .filter(
+                        effect ->
+                            invocation.getArgument(1, String.class).equals(effect.getStatus()))
                     .toList());
     when(durableRemoteFollowupExecutionService.execute(any()))
         .thenAnswer(

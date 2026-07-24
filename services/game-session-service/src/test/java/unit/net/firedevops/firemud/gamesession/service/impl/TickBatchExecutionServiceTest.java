@@ -386,6 +386,35 @@ class TickBatchExecutionServiceTest {
   }
 
   @Test
+  void executeDurableEffectsTerminalizesCommandsWithNoDurableExecutionRoute() {
+    TickBatch batch = drainedBatch("tb-no-durable-route", "fence-a");
+    TickEffect effect = drainedEffect("tb-no-durable-route", "cmd-look");
+    GameplayCommand command = gameplayCommand("cmd-look");
+    when(tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
+            1L, 2L, "DRAINED"))
+        .thenReturn(List.of(batch));
+    when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc(
+            "tb-no-durable-route", "DRAINED"))
+        .thenAnswer(
+            invocation -> "DRAINED".equals(effect.getStatus()) ? List.of(effect) : List.of());
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 2L, "cmd-look"))
+        .thenReturn(Optional.of(command));
+    when(durableGameplayCommandExecutionService.execute(effect, command))
+        .thenReturn(Optional.empty());
+
+    service.executeDurableEffects(1L, 2L);
+
+    assertEquals("APPLIED", effect.getStatus());
+    assertEquals("APPLIED", batch.getStatus());
+    assertEquals("COMPLETED", command.getExecutionOutcome());
+    assertEquals("NOT_APPLIED", command.getGameplayResult());
+    assertTrue(effect.getCompletedAt() != null);
+    assertTrue(command.getCompletedAt() != null);
+    verify(tickEffectRepository).save(effect);
+    verify(gameplayCommandRepository).save(command);
+  }
+
+  @Test
   void executeDurableEffectsRequeuesAfterMidBatchStaleFenceAndContinuesNextBatch() {
     TickBatch staleBatch = drainedBatch("tb-stale-mid-batch", "fence-a");
     TickBatch subsequentBatch = drainedBatch("tb-subsequent", "fence-a");

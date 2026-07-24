@@ -263,10 +263,10 @@ public class TickQueueControlService {
     if (gameInstanceId == null) {
       throw new IllegalArgumentException("gameInstanceId is required");
     }
-    pausedGameInstances.add(gameInstanceId);
     gameInstanceRepository
         .findById(gameInstanceId)
         .ifPresent(instance -> bumpOwnershipEpoch(instance.getTenantId(), gameInstanceId, true));
+    pausedGameInstances.add(gameInstanceId);
     logger.info("Tick pause requested for game instance {}: {}", gameInstanceId, reason);
   }
 
@@ -274,10 +274,10 @@ public class TickQueueControlService {
     if (gameInstanceId == null) {
       throw new IllegalArgumentException("gameInstanceId is required");
     }
-    pausedGameInstances.remove(gameInstanceId);
     gameInstanceRepository
         .findById(gameInstanceId)
         .ifPresent(instance -> bumpOwnershipEpoch(instance.getTenantId(), gameInstanceId, false));
+    pausedGameInstances.remove(gameInstanceId);
     logger.info("Tick resume requested for game instance {}: {}", gameInstanceId, reason);
   }
 
@@ -665,17 +665,21 @@ public class TickQueueControlService {
   private record PurgeCandidate(GameplayCommand command, boolean batchBound) {}
 
   private void bumpOwnershipEpoch(Long tenantId, Long gameInstanceId, boolean paused) {
-    Instant now = Instant.now();
-    RuntimeRegionStatus status = new RuntimeRegionStatus();
-    status.setTenantId(tenantId);
-    status.setGameInstanceId(gameInstanceId);
-    status.setRegionId(defaultCurrentBoundaryRegionId(gameInstanceId));
-    status.setExecutorFence("fence-" + UUID.randomUUID());
-    status.setOwnerService(runtimeIdentity.service());
-    status.setOwnerInstanceId(runtimeIdentity.serviceInstanceId());
-    status.setPaused(paused);
-    status.setUpdatedAt(now);
-    runtimeRegionStatusRepository.advanceOwnershipEpoch(status);
+    try (QueueMutationLease leases =
+        acquireQueueMutationLease(tenantId, gameInstanceId, paused ? "pause" : "resume")) {
+      leases.requireOwned();
+      RuntimeRegionStatus status = new RuntimeRegionStatus();
+      status.setTenantId(tenantId);
+      status.setGameInstanceId(gameInstanceId);
+      status.setRegionId(defaultCurrentBoundaryRegionId(gameInstanceId));
+      status.setExecutorFence(leases.tickLease().token());
+      status.setOwnerService(runtimeIdentity.service());
+      status.setOwnerInstanceId(runtimeIdentity.serviceInstanceId());
+      status.setPaused(paused);
+      status.setUpdatedAt(Instant.now());
+      runtimeRegionStatusRepository.advanceOwnershipEpoch(status);
+      leases.requireOwned();
+    }
   }
 
   private String defaultCurrentBoundaryRegionId(Long gameInstanceId) {

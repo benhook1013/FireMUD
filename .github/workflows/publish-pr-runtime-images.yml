@@ -7,8 +7,7 @@ on:
 
 run-name: Publish PR Runtime Images head-${{ github.event.workflow_run.head_sha }}
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: publish-pr-runtime-images-${{ github.event.workflow_run.head_sha }}
@@ -22,7 +21,6 @@ jobs:
     permissions:
       # This trusted default-branch workflow reads one successful run artifact and publishes fixed SHA tags.
       actions: read
-      contents: read
       packages: write
     env:
       IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}
@@ -66,5 +64,28 @@ jobs:
             world-management-service; do
             image="ghcr.io/benhook1013/${service}:${IMAGE_TAG}"
             docker image inspect "$image" >/dev/null
-            docker push "$image"
+            if docker manifest inspect "$image" >/dev/null 2>&1; then
+              echo "Fixed image tag already exists; preserving first publication: $image"
+              continue
+            fi
+
+            max_push_attempts=3
+            push_attempt=1
+            while true; do
+              if docker push "$image"; then
+                break
+              fi
+              if docker manifest inspect "$image" >/dev/null 2>&1; then
+                echo "Fixed image tag became available; preserving first publication: $image"
+                break
+              fi
+              if (( push_attempt >= max_push_attempts )); then
+                echo "Failed to publish $image after ${push_attempt} attempts." >&2
+                exit 1
+              fi
+              backoff_seconds=$((5 * 2 ** (push_attempt - 1)))
+              echo "Transient push failure for $image; retrying in ${backoff_seconds}s (attempt $((push_attempt + 1))/${max_push_attempts})."
+              sleep "$backoff_seconds"
+              push_attempt=$((push_attempt + 1))
+            done
           done

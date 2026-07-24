@@ -95,10 +95,17 @@ spec:
                 ) > 0
               )
             )
+        - record: recovery_participant_convergence_source_missing
+          expr: |
+            label_replace(
+              absent(recovery_required_participant_inventory_complete),
+              "source_family", "inventory_complete", "", ""
+            )
             or
-            absent(recovery_required_participant_inventory_complete)
-            or
-            absent(recovery_required_participant_inventory)
+            label_replace(
+              absent(recovery_required_participant_inventory),
+              "source_family", "participant_inventory", "", ""
+            )
 
     - name: firemud.recording.player_experience
       rules:
@@ -417,7 +424,7 @@ spec:
           annotations:
             summary: Recovery participant convergence is blocked
             description: One or more environment recovery participants have not reached a safe disposition. Keep the recovery quarantined and resolve the participant-specific blocker before reopening traffic.
-        - alert: RecoveryParticipantConvergenceMetricsAbsent
+        - alert: RecoveryParticipantConvergenceCoverageMissing
           expr: recovery_participant_convergence_coverage_missing > 0
           for: 5m
           labels:
@@ -426,8 +433,19 @@ spec:
             owner: infra
             runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
           annotations:
-            summary: Recovery participant convergence metrics are absent
-            description: At least one required participant in the authoritative recovery inventory has no current convergence-state series, or the inventory itself is unavailable. Keep recovery-readiness decisions blocked.
+            summary: Recovery participant convergence coverage is incomplete
+            description: At least one required participant has no current convergence-state series, or an environment inventory projection is incomplete. Keep that environment's recovery-readiness decisions blocked.
+        - alert: RecoveryParticipantConvergenceMetricsAbsent
+          expr: recovery_participant_convergence_source_missing > 0
+          for: 5m
+          labels:
+            service: postgres-backup
+            severity: P1
+            owner: infra
+            runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
+          annotations:
+            summary: Recovery participant convergence source metrics are absent
+            description: An entire required recovery inventory source family is absent globally. This is a monitoring gap; keep recovery-readiness decisions blocked until the source is restored.
         - alert: RecoveryReopenAttemptBlocked
           expr: increase(recovery_reopen_attempt_total{result="blocked",reason="incomplete_convergence"}[5m]) > 0
           for: 0m

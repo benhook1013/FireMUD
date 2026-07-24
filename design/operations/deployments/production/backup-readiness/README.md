@@ -27,6 +27,7 @@ Required fields:
 - `backupCoverage` (`environment-wide-postgresql`)
 - `backupArtifactRef`
 - `artifactErasureHighWater`
+- `initialCatchupHighWater`
 - `restoreHighWater`
 - `sourceServiceDigests`
 - `candidateServiceDigests`
@@ -36,7 +37,7 @@ Required fields:
 - `recoveryContractFingerprint`
 - `evidenceRefs`
 
-`promotionAttestationRef` must point to the production attestation record for the release, and `candidateServiceDigests` must match that attested digest set exactly. The source artifact must come from current production database lineage under representative writes; the drill must retain `artifactErasureHighWater`, capture immutable `restoreHighWater`, replay the gap-free erasure interval, restore with candidate recovery tooling, and prove the exact candidate migration path, config, bindings, environment-wide cold-start convergence, hardening, and controlled reopen through `continueRecovery(operationId, expectedPhase, evidenceRef)`. The referenced `restoreRecoveryRecordRef` must carry the same immutable `artifactErasureHighWater` and `restoreHighWater` values.
+`promotionAttestationRef` must point to the production attestation record for the release, and `candidateServiceDigests` must match that attested digest set exactly. The source artifact must come from current production database lineage under representative writes; the drill must retain snapshot-bound `artifactErasureHighWater`, capture immutable `initialCatchupHighWater` and final-cutover `restoreHighWater`, replay the gap-free erasure interval, restore with candidate recovery tooling, and prove the exact candidate migration path, config, bindings, environment-wide cold-start convergence, hardening, and controlled reopen through `continueRecovery(operationId, expectedPhase, evidenceRef)`. The referenced `restoreRecoveryRecordRef` must carry the same immutable `artifactErasureHighWater`, `initialCatchupHighWater`, and `restoreHighWater` values.
 
 `recoveryControllerLineage` must point to finalized environment-wide `cold_start_restore` controller state from the qualifying drill. `backupConfidentialityEvidence` must prove encrypted transport/storage, environment-scoped least-privilege access and audit, retention/secure deletion, and, whenever production-origin data is exercised outside production, quarantine, sanitization, validation, and deletion. A checked-in recovery JSON projection is post-finalization evidence and is not the authority for the release that finalized the controller.
 

@@ -325,9 +325,10 @@ public class TickServiceImpl implements TickService {
                   "Replaying {} executable pending commands for {}",
                   replayEntries.size(),
                   normalizedQueueTargetId);
-              tickBatchExecutionService.markBatchDrained(replayBatch, replayEntries);
               activeBatch = replayBatch;
               activeBatchEntries = replayEntries;
+              activeBatchDurablyDrained = false;
+              tickBatchExecutionService.markBatchDrained(replayBatch, replayEntries);
               activeBatchDurablyDrained = true;
               lease.requireOwned();
               commitPending(lease, normalizedTenantId, normalizedQueueTargetId);
@@ -382,6 +383,7 @@ public class TickServiceImpl implements TickService {
                     solo,
                     ownership,
                     activeBatchEntries);
+            activeBatchDurablyDrained = false;
           }
           if (activeBatch != null) {
             tickBatchExecutionService.requireCurrentOwnership(activeBatch, false);

@@ -35,6 +35,7 @@ REQUIRED_BACKUP_RECORDINGS = {
     "recovery_participant_convergence_blocked",
     "recovery_environment_convergence_blocked",
     "recovery_participant_convergence_coverage_missing",
+    "recovery_participant_convergence_source_missing",
 }
 CURRENT_BLOCKED_CONVERGENCE_EXPR = re.compile(
     r'recovery_participant_convergence_state\s*\{\s*state\s*=\s*["\']blocked["\']\s*\}'
@@ -81,14 +82,26 @@ PARTICIPANT_COVERAGE_EXPR = _compact_promql(
         ) > 0
       )
     )
-    or
-    absent(recovery_required_participant_inventory_complete)
-    or
-    absent(recovery_required_participant_inventory)
     """
 )
 PARTICIPANT_COVERAGE_ALERT_EXPR = _compact_promql(
     "recovery_participant_convergence_coverage_missing > 0"
+)
+PARTICIPANT_SOURCE_MISSING_EXPR = _compact_promql(
+    """
+    label_replace(
+      absent(recovery_required_participant_inventory_complete),
+      "source_family", "inventory_complete", "", ""
+    )
+    or
+    label_replace(
+      absent(recovery_required_participant_inventory),
+      "source_family", "participant_inventory", "", ""
+    )
+    """
+)
+PARTICIPANT_SOURCE_MISSING_ALERT_EXPR = _compact_promql(
+    "recovery_participant_convergence_source_missing > 0"
 )
 BLOCKED_REOPEN_ATTEMPT_EXPR = re.compile(
     r'increase\s*\(\s*recovery_reopen_attempt_total\s*\{'
@@ -117,16 +130,20 @@ class Finding:
 def _recovery_coverage_alert_finding(
     path: Path, alert_name: str | None, expr: str
 ) -> Finding | None:
-    if (
-        alert_name == "RecoveryParticipantConvergenceMetricsAbsent"
-        and _compact_promql(expr) != PARTICIPANT_COVERAGE_ALERT_EXPR
-    ):
+    expected = {
+        "RecoveryParticipantConvergenceCoverageMissing": (
+            PARTICIPANT_COVERAGE_ALERT_EXPR,
+            "recovery_participant_convergence_coverage_missing > 0",
+        ),
+        "RecoveryParticipantConvergenceMetricsAbsent": (
+            PARTICIPANT_SOURCE_MISSING_ALERT_EXPR,
+            "recovery_participant_convergence_source_missing > 0",
+        ),
+    }.get(alert_name)
+    if expected is not None and _compact_promql(expr) != expected[0]:
         return Finding(
             path=path,
-            message=(
-                "RecoveryParticipantConvergenceMetricsAbsent must use "
-                "recovery_participant_convergence_coverage_missing > 0"
-            ),
+            message=f"{alert_name} must use {expected[1]}",
         )
     return None
 
@@ -1123,6 +1140,7 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
         "BackupArtifactRestoreUnreadable",
         "BackupArtifactRestoreReadabilityMetricsAbsent",
         "RecoveryParticipantConvergenceBlocked",
+        "RecoveryParticipantConvergenceCoverageMissing",
         "RecoveryParticipantConvergenceMetricsAbsent",
         "RecoveryReopenAttemptBlocked",
         "LoginSuccessRatioLowGateway",
@@ -1267,8 +1285,18 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
                 path=path,
                 message=(
                     "participant coverage recording must compare authoritative required-participant inventory "
-                    "with current participant-state coverage and fail closed when inventory or its "
-                    "atomic-completeness marker is absent"
+                    "with current participant-state coverage while preserving environment scope"
+                ),
+            )
+        )
+    participant_source_missing_expr = recordings.get("recovery_participant_convergence_source_missing") or ""
+    if _compact_promql(participant_source_missing_expr) != PARTICIPANT_SOURCE_MISSING_EXPR:
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "participant source-missing recording must report globally absent inventory families "
+                    "with a stable source_family label"
                 ),
             )
         )

@@ -139,7 +139,7 @@ Example alerts for missed backups and verification runs:
     summary: Recovery participant convergence remains blocked
     description: A current recovery participant state has no safe disposition. The alert clears when the participant state converges; the cumulative convergence event counter is historical evidence only.
 
-- alert: RecoveryParticipantConvergenceMetricsAbsent
+- alert: RecoveryParticipantConvergenceCoverageMissing
   expr: recovery_participant_convergence_coverage_missing > 0
   for: 5m
   labels:
@@ -148,8 +148,20 @@ Example alerts for missed backups and verification runs:
     owner: infra
     runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
   annotations:
-    summary: Recovery participant convergence metrics are absent
-    description: At least one required participant in the authoritative recovery inventory has no current convergence-state series, or the inventory projection is incomplete or unavailable. Keep recovery-readiness decisions blocked.
+    summary: Recovery participant convergence coverage is incomplete
+    description: At least one required participant has no current convergence-state series, or an environment inventory projection is incomplete. Keep that environment's recovery-readiness decisions blocked.
+
+- alert: RecoveryParticipantConvergenceMetricsAbsent
+  expr: recovery_participant_convergence_source_missing > 0
+  for: 5m
+  labels:
+    service: postgres-backup
+    severity: P1
+    owner: infra
+    runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
+  annotations:
+    summary: Recovery participant convergence source metrics are absent
+    description: An entire required recovery inventory source family is absent globally. This is a monitoring gap; keep recovery-readiness decisions blocked until the source is restored.
 
 - alert: RecoveryReopenAttemptBlocked
   expr: increase(recovery_reopen_attempt_total{result="blocked",reason="incomplete_convergence"}[5m]) > 0
@@ -174,7 +186,8 @@ Routine backup alerts use these current artifact and recovery recordings:
 - `recovery_participant_convergence_blocked`
 - `recovery_environment_convergence_blocked`
 - `recovery_participant_convergence_coverage_missing`
+- `recovery_participant_convergence_source_missing`
 
-Recovery participant coverage is fail-closed: `recovery_required_participant_inventory{environment,participant}` is the controller projection of the authoritative required-participant inventory, and every required participant must have current `recovery_participant_convergence_state{environment,participant,state}` coverage. The controller publishes this inventory atomically per environment: `recovery_required_participant_inventory_complete{environment}` remains `0` during refresh and becomes `1` only after the complete authoritative set is visible. The coverage recording emits missing required participants, incomplete projections, and an unlabeled failure when either inventory family is unavailable. `RecoveryParticipantConvergenceMetricsAbsent` must block recovery readiness until this coverage is restored and the durable recovery controller proves readiness.
+Recovery participant coverage is fail-closed: `recovery_required_participant_inventory{environment,participant}` is the controller projection of the authoritative required-participant inventory, and every required participant must have current `recovery_participant_convergence_state{environment,participant,state}` coverage. The controller publishes this inventory atomically per environment: `recovery_required_participant_inventory_complete{environment}` remains `0` during refresh and becomes `1` only after the complete authoritative set is visible. `recovery_participant_convergence_coverage_missing` preserves the affected environment and participant labels. Total disappearance of either required inventory family emits the separate global `recovery_participant_convergence_source_missing{source_family}` monitoring-gap signal. Both alerts block recovery readiness until coverage is restored and the durable recovery controller proves readiness.
 
 Environment-specific rulesets may tune thresholds, severities, and label values, but should preserve the `owner` and `runbook` annotations so alerts always point back to the relevant documentation. Tick-pause metrics belong to maintenance/reset dashboards and must not be used as routine backup health or traffic-reopen proof.

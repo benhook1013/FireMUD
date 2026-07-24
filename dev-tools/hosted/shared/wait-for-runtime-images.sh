@@ -74,7 +74,7 @@ print(
 
 wait_for_pr_publisher() {
   local publisher_start_epoch="${SECONDS}"
-  local publisher_deadline=$((SECONDS + timeout_seconds))
+  local publisher_deadline=$deadline
   while (( SECONDS < publisher_deadline )); do
     local publisher_state
     publisher_state="$(

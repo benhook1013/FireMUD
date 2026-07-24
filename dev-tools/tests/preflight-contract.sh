@@ -316,6 +316,7 @@ if "durable environment-wide recovery-controller authority is not implemented" n
 PY
 
 python3 - <<'PY' "$ROOT_DIR" "$TMP_DIR"
+import ast
 import importlib.util
 import json
 import pathlib
@@ -323,18 +324,58 @@ import sys
 
 root = pathlib.Path(sys.argv[1])
 tmp = pathlib.Path(sys.argv[2])
+preflight_path = root / "dev-tools/deploy/preflight.py"
+preflight_source = preflight_path.read_text(encoding="utf-8")
+try:
+    preflight_tree = ast.parse(preflight_source, filename=str(preflight_path))
+except SyntaxError as exc:
+    raise SystemExit(f"could not parse preflight.py for main contract: {exc}") from exc
+
+main_nodes = [
+    node
+    for node in preflight_tree.body
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "main"
+]
+if len(main_nodes) != 1:
+    raise SystemExit(f"expected exactly one top-level main function in preflight.py, found {len(main_nodes)}")
+
+
+def called_name(node):
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+class MainContractVisitor(ast.NodeVisitor):
+    promotion_attestation_reload = False
+    recovery_compatibility_evaluations = 0
+
+    def visit_Call(self, node):
+        if called_name(node.func) == "load_json" and any(
+            isinstance(child, ast.Name) and child.id == "promotion_attestation"
+            for argument in node.args
+            for child in ast.walk(argument)
+        ):
+            self.promotion_attestation_reload = True
+        if called_name(node.func) == "recovery_compatibility_check":
+            self.recovery_compatibility_evaluations += 1
+        self.generic_visit(node)
+
+
+main_contract = MainContractVisitor()
+main_contract.visit(main_nodes[0])
+if main_contract.promotion_attestation_reload:
+    raise SystemExit("production preflight reloaded the promotion attestation inside main")
+if main_contract.recovery_compatibility_evaluations:
+    raise SystemExit("production preflight duplicated recovery compatibility evaluation inside main")
+
 spec = importlib.util.spec_from_file_location("preflight_hobby_contract", root / "dev-tools/deploy/preflight.py")
 module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
-
-main_source = (root / "dev-tools/deploy/preflight.py").read_text(encoding="utf-8")
-main_source = main_source[main_source.index("def main()") :]
-if "promotion_data = load_json(Path(promotion_attestation))" in main_source:
-    raise SystemExit("production preflight reloaded the promotion attestation")
-if "recovery_compatibility_check(" in main_source:
-    raise SystemExit("production preflight duplicated recovery compatibility evaluation")
 
 deployment_event_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 validation_now = module.dt.datetime(2026, 1, 1, 0, 5, tzinfo=module.dt.timezone.utc)
@@ -935,15 +976,22 @@ def canonical_recovery_record(finalized_at):
         "coordinationRecoveryMode": "cold_start_restore",
         "backupArtifactRef": "backups/artifact",
         "artifactErasureHighWater": {"stream": "erasures", "sequence": 10},
+        "initialCatchupHighWater": {"stream": "erasures", "sequence": 11},
         "restoreHighWater": {"stream": "erasures", "sequence": 12},
         "erasureReplay": {
             "ledgerRef": "erasures",
             "exclusiveStart": 10,
+            "initialCatchupThrough": 11,
             "inclusiveEnd": 12,
             "replayedThrough": 12,
             "gapFree": True,
         },
-        "backupArtifactLineage": {"databaseIdentity": "production", "snapshotAt": credential_validated_at},
+        "backupArtifactLineage": {
+            "databaseIdentity": "production",
+            "snapshotAt": credential_validated_at,
+            "artifactErasureHighWater": {"stream": "erasures", "sequence": 10},
+            "erasureHighWaterSnapshotBound": True,
+        },
         "backupToolDigest": "sha256:backup-tool",
         "recoveryToolDigest": "sha256:recovery-tool",
         "recoveryContractFingerprint": "sha256:recovery-contract",
@@ -965,6 +1013,9 @@ def canonical_recovery_record(finalized_at):
         "coordinationRecoveryEvidence": {
             "mode": "cold_start_restore",
             "coordinationRedis": "empty-before-rebuild",
+            "credentialBinding": "rotated-or-rebound",
+            "targetEnvironmentBound": True,
+            "snapshotCredentialsRejected": True,
             "regionEpochFences": "advanced-or-recreated",
         },
         "backupConfidentialityEvidence": {"status": "pass", "transport": "encrypted", "storage": "encrypted"},
@@ -1044,8 +1095,23 @@ baseline_status, baseline_message = module.validate_recovery_baseline(
     now,
     now,
 )
-if baseline_status != "fail" or "inventory membership and immutable evidence" not in baseline_message:
-    raise SystemExit(f"undereferenced recovery baseline did not remain fail-closed: {baseline_message}")
+if baseline_status != "pass":
+    raise SystemExit(f"valid recovery baseline did not pass: {baseline_message}")
+
+rollback_compatibility_status, rollback_compatibility_message = module.recovery_compatibility_check(
+    {
+        "generatedAt": past_timestamp,
+        "recoveryCompatibility": compatibility_result("compatible"),
+    },
+    "rollback-compatible",
+    tmp,
+    now,
+)
+if rollback_compatibility_status != "pass":
+    raise SystemExit(
+        "rollback-compatible unchanged recovery compatibility did not pass: "
+        + rollback_compatibility_message
+    )
 
 invalid_baseline_cases = {
     "controller": {"recoveryControllerLineage": {"recoveryStatus": "collecting", "scope": "environment-wide"}},
@@ -1348,11 +1414,10 @@ promotion_status, promotion_mode, promotion_message, _, _ = module.promotion_che
     expected_production_overlay_ref="contract-production",
 )
 if (
-    promotion_status != "fail"
+    promotion_status != "pass"
     or promotion_mode != "rollback-compatible"
-    or "inventory membership and immutable evidence" not in promotion_message
 ):
-    raise SystemExit(f"undereferenced promotion baseline did not remain fail-closed: {promotion_message}")
+    raise SystemExit(f"valid rollback-compatible promotion did not pass: {promotion_message}")
 
 # Exercise staging-lineage failures independently of the deliberately blocked
 # recovery-inventory dereference boundary above.
@@ -1588,6 +1653,7 @@ future_readiness = write_json(
         "backupCoverage": "environment-wide-postgresql",
         "backupArtifactRef": "backups/artifact",
         "artifactErasureHighWater": {"stream": "erasures", "sequence": 1},
+        "initialCatchupHighWater": {"stream": "erasures", "sequence": 2},
         "restoreHighWater": {"stream": "erasures", "sequence": 3},
         "sourceServiceDigests": {"account-service": "ghcr.io/firemud/account-service@sha256:source"},
         "candidateServiceDigests": {"account-service": "ghcr.io/firemud/account-service@sha256:candidate"},

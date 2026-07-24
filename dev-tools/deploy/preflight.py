@@ -126,6 +126,7 @@ CANONICAL_RECOVERY_REQUIRED_FIELDS = (
     "coordinationRecoveryMode",
     "backupArtifactRef",
     "artifactErasureHighWater",
+    "initialCatchupHighWater",
     "restoreHighWater",
     "erasureReplay",
     "backupArtifactLineage",
@@ -188,6 +189,7 @@ CANONICAL_RECOVERY_STRING_FIELDS = (
 CANONICAL_RECOVERY_OBJECT_FIELDS = (
     "restoreSafeMode",
     "artifactErasureHighWater",
+    "initialCatchupHighWater",
     "restoreHighWater",
     "erasureReplay",
     "backupArtifactLineage",
@@ -229,6 +231,7 @@ BACKUP_READINESS_REQUIRED_FIELDS = (
     "backupCoverage",
     "backupArtifactRef",
     "artifactErasureHighWater",
+    "initialCatchupHighWater",
     "restoreHighWater",
     "sourceServiceDigests",
     "candidateServiceDigests",
@@ -397,27 +400,58 @@ def validate_recovery_baseline(
         return ("fail", "Recovery compatibility baseline controller lineage missing finalized release identity")
 
     artifact_high_water = baseline.get("artifactErasureHighWater")
+    initial_catchup_high_water = baseline.get("initialCatchupHighWater")
     restore_high_water = baseline.get("restoreHighWater")
     erasure_replay = baseline.get("erasureReplay")
-    if not all(isinstance(value, dict) for value in (artifact_high_water, restore_high_water, erasure_replay)):
+    if not all(
+        isinstance(value, dict)
+        for value in (
+            artifact_high_water,
+            initial_catchup_high_water,
+            restore_high_water,
+            erasure_replay,
+        )
+    ):
         return ("fail", "Recovery compatibility baseline erasure high-water evidence must be objects")
     artifact_sequence = artifact_high_water.get("sequence")
+    initial_catchup_sequence = initial_catchup_high_water.get("sequence")
     restore_sequence = restore_high_water.get("sequence")
     if (
         not isinstance(artifact_sequence, int)
         or isinstance(artifact_sequence, bool)
+        or not isinstance(initial_catchup_sequence, int)
+        or isinstance(initial_catchup_sequence, bool)
         or not isinstance(restore_sequence, int)
         or isinstance(restore_sequence, bool)
-        or restore_sequence < artifact_sequence
+        or not artifact_sequence <= initial_catchup_sequence <= restore_sequence
     ):
         return ("fail", "Recovery compatibility baseline erasure high-water sequence is invalid")
+    high_water_stream = artifact_high_water.get("stream")
+    if (
+        not isinstance(high_water_stream, str)
+        or not high_water_stream.strip()
+        or initial_catchup_high_water.get("stream") != high_water_stream
+        or restore_high_water.get("stream") != high_water_stream
+    ):
+        return ("fail", "Recovery compatibility baseline erasure high-water streams must match")
     if (
         erasure_replay.get("gapFree") is not True
         or erasure_replay.get("exclusiveStart") != artifact_sequence
+        or erasure_replay.get("initialCatchupThrough") != initial_catchup_sequence
         or erasure_replay.get("inclusiveEnd") != restore_sequence
         or erasure_replay.get("replayedThrough") != restore_sequence
     ):
         return ("fail", "Recovery compatibility baseline erasure replay must be gap-free through restoreHighWater")
+    backup_artifact_lineage = baseline.get("backupArtifactLineage")
+    if (
+        not isinstance(backup_artifact_lineage, dict)
+        or backup_artifact_lineage.get("artifactErasureHighWater") != artifact_high_water
+        or backup_artifact_lineage.get("erasureHighWaterSnapshotBound") is not True
+    ):
+        return (
+            "fail",
+            "Recovery compatibility baseline artifact erasure high-water must be bound to the backup snapshot",
+        )
 
     coordination_evidence = baseline.get("coordinationRecoveryEvidence")
     if not isinstance(coordination_evidence, dict):
@@ -425,11 +459,14 @@ def validate_recovery_baseline(
     if (
         coordination_evidence.get("mode") != "cold_start_restore"
         or coordination_evidence.get("coordinationRedis") != "empty-before-rebuild"
+        or coordination_evidence.get("credentialBinding") != "rotated-or-rebound"
+        or coordination_evidence.get("targetEnvironmentBound") is not True
+        or coordination_evidence.get("snapshotCredentialsRejected") is not True
         or coordination_evidence.get("regionEpochFences") != "advanced-or-recreated"
     ):
         return (
             "fail",
-            "Recovery compatibility baseline coordination recovery must prove empty Redis and advanced region fences",
+            "Recovery compatibility baseline coordination recovery must prove empty Redis, target-environment credential rebinding, and advanced region fences",
         )
 
     for field, label in (
@@ -586,11 +623,7 @@ def validate_recovery_baseline(
         return ("fail", "Recovery compatibility baseline finalizedAt is future-dated")
     if (now_dt - finalized_at).total_seconds() > 30 * 24 * 60 * 60:
         return ("fail", "Recovery compatibility baseline finalized drill is older than 30 days")
-    return (
-        "fail",
-        "Recovery compatibility baseline remains blocked until complete participant, validator, "
-        "external-effect inventory membership and immutable evidence references are dereferenced and validated",
-    )
+    return ("pass", "Recovery compatibility baseline is valid")
 
 
 def load_yaml(path: Path) -> Any:

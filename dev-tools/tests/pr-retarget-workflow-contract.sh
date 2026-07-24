@@ -43,13 +43,13 @@ assert_job_excludes() {
   local forbidden="$3"
   local path="$ROOT_DIR/.github/workflows/$workflow"
 
-  if awk -v job="$job" -v forbidden="$forbidden" '
-    $0 == "  " job ":" { in_job = 1; next }
+  if ! awk -v job="$job" -v forbidden="$forbidden" '
+    $0 == "  " job ":" { in_job = 1; found = 1; next }
     in_job && /^  [A-Za-z0-9_-]+:/ { exit }
-    in_job && index($0, forbidden) { found = 1 }
-    END { exit !found }
+    in_job && index($0, forbidden) { forbidden_found = 1 }
+    END { exit !(found && !forbidden_found) }
   ' "$path"; then
-    echo "$workflow job $job must not contain: $forbidden" >&2
+    echo "$workflow job $job must exist and must not contain: $forbidden" >&2
     exit 1
   fi
 }
@@ -132,6 +132,7 @@ for forbidden in 'packages: write' 'docker/login-action@' 'push: true' 'type=reg
 done
 
 grep -Fq 'workflow_run:' "$pr_image_publisher_path"
+grep -Fxq 'permissions: {}' "$pr_image_publisher_path"
 # shellcheck disable=SC2016 # This assertion intentionally matches a literal GitHub expression.
 grep -Fq 'run-name: Publish PR Runtime Images head-${{ github.event.workflow_run.head_sha }}' "$pr_image_publisher_path"
 grep -Fq "github.event.workflow_run.event == 'pull_request'" "$pr_image_publisher_path"
@@ -140,10 +141,19 @@ grep -Fq 'github.event.workflow_run.head_repository.full_name == github.reposito
 grep -Fq "startsWith(github.event.workflow_run.display_title, 'Build Runtime Images secure-pr-artifact ')" "$pr_image_publisher_path"
 grep -Fq 'actions: read' "$pr_image_publisher_path"
 grep -Fq 'packages: write' "$pr_image_publisher_path"
+assert_job_excludes publish-pr-runtime-images.yml publish 'contents: read'
 # shellcheck disable=SC2016 # These are literal GitHub expression and shell source contracts.
 grep -Fq 'pr-runtime-images-${{ github.event.workflow_run.head_sha }}' "$pr_image_publisher_path"
 # shellcheck disable=SC2016 # This assertion intentionally matches the unevaluated publisher script.
 grep -Fq 'docker push "$image"' "$pr_image_publisher_path"
+# shellcheck disable=SC2016 # These assertions intentionally match unevaluated publisher shell.
+grep -Fq 'docker manifest inspect "$image"' "$pr_image_publisher_path"
+grep -Fq 'Fixed image tag already exists; preserving first publication' "$pr_image_publisher_path"
+grep -Fq 'max_push_attempts=3' "$pr_image_publisher_path"
+# shellcheck disable=SC2016 # These assertions intentionally match unevaluated publisher shell.
+grep -Fq 'backoff_seconds=$((5 * 2 ** (push_attempt - 1)))' "$pr_image_publisher_path"
+# shellcheck disable=SC2016 # This assertion intentionally matches unevaluated publisher shell.
+grep -Fq 'sleep "$backoff_seconds"' "$pr_image_publisher_path"
 if grep -Fq 'actions/checkout@' "$pr_image_publisher_path"; then
   echo "trusted PR image publisher must not checkout or execute PR source" >&2
   exit 1
@@ -151,10 +161,14 @@ fi
 
 grep -Fq 'publish-pr-runtime-images.yml/runs?event=workflow_run' "$image_wait_path"
 grep -Fq 'wait_for_pr_publisher' "$image_wait_path"
-# shellcheck disable=SC2016 # This assertion intentionally matches unevaluated shell arithmetic.
-grep -Fq 'local publisher_deadline=$((SECONDS + timeout_seconds))' "$image_wait_path"
+# shellcheck disable=SC2016 # This assertion intentionally matches the caller's shell deadline.
+grep -Fq 'local publisher_deadline=$deadline' "$image_wait_path"
 
 assert_job_excludes runtime-images.yml smoke-full 'pull-requests: write'
+if (assert_job_excludes runtime-images.yml missing-job 'pull-requests: write') 2>/dev/null; then
+  echo "assert_job_excludes must fail when the requested job is absent" >&2
+  exit 1
+fi
 
 grep -Fq 'const baseSha = context.payload.pull_request.base.sha;' "$smoke_path"
 grep -Fq 'const mergeSha = context.sha;' "$smoke_path"

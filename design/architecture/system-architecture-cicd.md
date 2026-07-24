@@ -57,7 +57,7 @@ The main [`ci.yml`](../../.github/workflows/ci.yml) workflow:
 - Runs docs and link linting in `ci.yml` and verifies links again in the `docs.yml` workflow before publishing to GitHub Pages.
 - Posts a summary comment on pull requests with test status and coverage, while Codecov publishes patch-coverage status separately.
 
-A separate `docker-images.yml` workflow builds and publishes Docker images for all services using Docker Buildx and the `docker/build-push-action`:
+The primary [`ci.yml`](../../.github/workflows/ci.yml) workflow builds and validates the repository:
 
 ```yaml
 name: CI — Build and Security

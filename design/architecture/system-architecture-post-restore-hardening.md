@@ -125,10 +125,11 @@ After PostgreSQL is restored, but before normal application startup and before q
 ### `cold_start_restore`
 
 - verify the entire Coordination Redis keyspace for the restored environment boundary is empty before rebuild; Cache Redis is a separate non-authoritative role and is not evidence for this check
+- rotate Coordination Redis credentials or rebind the restored workloads to fresh credentials and endpoints owned by the target environment; prove snapshot-era credentials are rejected and record immutable binding evidence before rebuilding any coordination state
 - invalidate all gameplay and Account sessions from the restored timeline
 - advance or recreate every gameplay-region epoch and fence before normal work can resume
 - rebuild coordination state only from restored durable authority after authoritative, complete, reachable participant and external-effect inventories have recorded a safe disposition for every declared and enabled entry, such as converged, terminalized, invalidated, or durably fenced/disabled with its backlog retained. Missing, unknown, unreachable, or unsafe entries keep quarantine closed.
-- record the backup artifact, `artifactErasureHighWater`, immutable `restoreHighWater`, gap-free erasure replay result, restore/recovery tool digests, recovery-contract fingerprint, participant inventory, convergence results, confidentiality proof, and controlled-reopen evidence in the durable recovery controller; emit checked-in projections only after finalization
+- record the backup artifact, snapshot-bound `artifactErasureHighWater`, immutable `initialCatchupHighWater`, immutable final-cutover `restoreHighWater`, gap-free erasure replay result, restore/recovery tool digests, recovery-contract fingerprint, participant inventory, convergence results, confidentiality proof, and controlled-reopen evidence in the durable recovery controller; emit checked-in projections only after finalization
 
 ### Deferred `scoped_reset_restore` (quarantined only)
 
@@ -142,16 +143,16 @@ Runbooks should treat `post-restore-secret-hardening` as a mandatory step in any
 
 1. Enter restore-safe quarantine by disabling external traffic paths to Gateway and TCP Proxy and by stopping or restore-safe-fencing background processors, outbound integrations, automation workers, and Game Session tick executors.
 2. Restore PostgreSQL and Kubernetes manifests with normal application workloads held at zero replicas or behind a restore-safe startup gate.
-3. Prove empty Coordination Redis, environment-wide gameplay and Account session invalidation, and every gameplay-region epoch/fence reset before any normal Game Session or automation startup can create fresh coordination state.
+3. Prove empty Coordination Redis, rotate or rebind its credentials and endpoint to the target environment, prove snapshot-era credentials are rejected, invalidate environment-wide gameplay and Account sessions, and reset every gameplay-region epoch/fence before any normal Game Session or automation startup can create fresh coordination state.
 4. Resolve authoritative, complete, reachable validator, durable-participant, and external-effect inventories and run the complete enabled reconciliation set; unknown, missing, unreachable, or unsafe outcomes keep quarantine closed, while a participant with a proved durable fenced/disabled disposition may retain backlog for later operator action.
 5. Run `post-restore-secret-hardening` in the target namespace and wait for success.
 6. Confirm workload, bridge, and operator leaf certificates have been reissued and peers converged.
 7. Run `dev-tools/restores/validate-external-credentials.sh <hobby-self-hosted|staging|production>` with environment-specific expected values.
 8. Refresh the environment secret-compliance record and immutable evidence payload, and link that refresh from the durable recovery-controller state.
 9. For staging restores from production-origin data, ensure sanitization and confidentiality evidence exists and is referenced.
-10. Start normal workloads in a controlled order and confirm application health checks, fresh login/session flows, gameplay smoke, JWT validation, and recovery-participant invariants while ingress remains quarantined.
-11. Complete every pre-release control group and record its immutable evidence in the durable controller. Verify that the controller has advanced to `ready_to_reopen` only after all gates, including gap-free erasure replay, pass.
-12. Call `continueRecovery(operationId, expectedPhase, evidenceRef)` for `expectedPhase=ready_to_reopen`. It reconciles the internal `ready_to_reopen -> releasing -> finalized` phases, applies and observes quarantine release before routing external or player traffic, and remains fail-closed on failure or ambiguity. Export the immutable checked-in recovery and traffic-open evidence projections only after `finalized`.
+10. Run only an explicitly fenced restore-safe smoke profile. It may check health, JWT validation, restored data, and recovery-participant invariants, but it cannot process queued work, create fresh Coordination Redis state, issue normal player sessions, run gameplay automation, publish assets, or produce outbound effects.
+11. Complete every pre-release control group and record its immutable evidence in the durable controller. Verify that the controller has advanced to `ready_to_reopen` only after all gates, including restore-safe smoke and gap-free erasure replay, pass.
+12. Call `continueRecovery(operationId, expectedPhase, evidenceRef)` for `expectedPhase=ready_to_reopen`. Its atomic transition reconciles the internal `ready_to_reopen -> releasing -> finalized` phases, starts normal workloads in controlled order, verifies their readiness while external traffic remains closed, and exposes player traffic only after the release is observed and finalized. Failure or ambiguity remains fail-closed. Export the immutable checked-in recovery and traffic-open evidence projections only after `finalized`.
 
 For hobby/self-hosted environments that do not use the Kubernetes Job template directly, operators must run equivalent one-shot restore-hardening automation that performs the same control groups and calls `continueRecovery(operationId, expectedPhase, evidenceRef)` on the durable recovery controller. Its immutable checked-in recovery projection is exported only after the controller reaches `finalized`.
 

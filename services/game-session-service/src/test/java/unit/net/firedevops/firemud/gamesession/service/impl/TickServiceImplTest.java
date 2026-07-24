@@ -1023,6 +1023,42 @@ class TickServiceImplTest {
   }
 
   @Test
+  void processTickAbandonsReplayBatchWhenDurableDrainFails() {
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.size("gamesession:tick:pending:1:2")).thenReturn(1L);
+    List<Object> replayEntries = List.of("N|cmd-1|look");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(replayEntries);
+    net.firedevops.firemud.gamesession.entity.TickBatch existingBatch =
+        new net.firedevops.firemud.gamesession.entity.TickBatch();
+    existingBatch.setTickBatchId("tb-replay-drain-failure");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("2");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+    when(tickEffectRepository.findByTickBatchId("tb-replay-drain-failure")).thenReturn(List.of());
+    when(gameplayCommandRepository.findByCommandIdIn(any()))
+        .thenReturn(List.of(gameplayCommand("cmd-1")));
+    existingBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest(tickStagingService, replayEntries));
+    org.mockito.Mockito.doThrow(new IllegalStateException("durable drain failed"))
+        .when(tickBatchExecutionService)
+        .markBatchDrained(eq(existingBatch), any());
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", existingBatch.getStatus());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "ROLLBACK_REQUEUED", existingBatch.getFailureCode());
+  }
+
+  @Test
   void processTickPreservesReplayBatchAfterPostDrainFailure() {
     when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);

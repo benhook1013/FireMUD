@@ -577,15 +577,24 @@ coverage_record = """        - record: recovery_participant_convergence_coverage
                   recovery_required_participant_inventory
                 ) > 0
               )
-            )
-            or
-            absent(recovery_required_participant_inventory_complete)
-            or
-            absent(recovery_required_participant_inventory)"""
+            )"""
 if coverage_record not in valid_text:
     raise AssertionError("canonical participant coverage recording was not found")
+source_missing_record = """        - record: recovery_participant_convergence_source_missing
+          expr: |
+            label_replace(
+              absent(recovery_required_participant_inventory_complete),
+              "source_family", "inventory_complete", "", ""
+            )
+            or
+            label_replace(
+              absent(recovery_required_participant_inventory),
+              "source_family", "participant_inventory", "", ""
+            )"""
+if source_missing_record not in valid_text:
+    raise AssertionError("canonical participant source-missing recording was not found")
 if validator._validate_reference_prometheus_recordings(rules_path):
-    raise AssertionError("canonical participant coverage recording was rejected")
+    raise AssertionError("canonical participant coverage recordings were rejected")
 
 invalid_coverage = valid_text.replace(
     coverage_record,
@@ -595,7 +604,7 @@ invalid_coverage = valid_text.replace(
 )
 require_message(
     findings_for(invalid_coverage, validator._validate_reference_prometheus_recordings),
-    "participant coverage recording must compare authoritative required-participant inventory with current participant-state coverage and fail closed when inventory or its atomic-completeness marker is absent",
+    "participant coverage recording must compare authoritative required-participant inventory with current participant-state coverage while preserving environment scope",
 )
 
 extra_coverage_branch = valid_text.replace(
@@ -605,27 +614,38 @@ extra_coverage_branch = valid_text.replace(
 )
 require_message(
     findings_for(extra_coverage_branch, validator._validate_reference_prometheus_recordings),
-    "participant coverage recording must compare authoritative required-participant inventory with current participant-state coverage and fail closed when inventory or its atomic-completeness marker is absent",
+    "participant coverage recording must compare authoritative required-participant inventory with current participant-state coverage while preserving environment scope",
 )
 
-family_only_alert = valid_text.replace(
+invalid_source_missing = valid_text.replace(
+    source_missing_record,
+    """        - record: recovery_participant_convergence_source_missing
+          expr: absent(recovery_required_participant_inventory)""",
+    1,
+)
+require_message(
+    findings_for(invalid_source_missing, validator._validate_reference_prometheus_recordings),
+    "participant source-missing recording must report globally absent inventory families with a stable source_family label",
+)
+
+invalid_coverage_alert = valid_text.replace(
     "expr: recovery_participant_convergence_coverage_missing > 0",
     "expr: absent(recovery_participant_convergence_state)",
     1,
 )
 require_message(
-    findings_for(family_only_alert, validator._validate_reference_prometheus_rules),
-    "RecoveryParticipantConvergenceMetricsAbsent must use recovery_participant_convergence_coverage_missing > 0",
+    findings_for(invalid_coverage_alert, validator._validate_reference_prometheus_rules),
+    "RecoveryParticipantConvergenceCoverageMissing must use recovery_participant_convergence_coverage_missing > 0",
 )
 
-extra_alert_branch = valid_text.replace(
-    "expr: recovery_participant_convergence_coverage_missing > 0",
-    "expr: recovery_participant_convergence_coverage_missing > 0 or vector(1)",
+invalid_source_alert = valid_text.replace(
+    "expr: recovery_participant_convergence_source_missing > 0",
+    "expr: absent(recovery_required_participant_inventory)",
     1,
 )
 require_message(
-    findings_for(extra_alert_branch, validator._validate_reference_prometheus_rules),
-    "RecoveryParticipantConvergenceMetricsAbsent must use recovery_participant_convergence_coverage_missing > 0",
+    findings_for(invalid_source_alert, validator._validate_reference_prometheus_rules),
+    "RecoveryParticipantConvergenceMetricsAbsent must use recovery_participant_convergence_source_missing > 0",
 )
 
 invalid_snippet_coverage = valid_snippet.replace(
@@ -635,7 +655,17 @@ invalid_snippet_coverage = valid_snippet.replace(
 )
 require_message(
     findings_for(invalid_snippet_coverage, validator._validate_alert_snippet),
-    "RecoveryParticipantConvergenceMetricsAbsent must use recovery_participant_convergence_coverage_missing > 0",
+    "RecoveryParticipantConvergenceCoverageMissing must use recovery_participant_convergence_coverage_missing > 0",
+)
+
+invalid_snippet_source = valid_snippet.replace(
+    "expr: recovery_participant_convergence_source_missing > 0",
+    "expr: absent(recovery_required_participant_inventory)",
+    1,
+)
+require_message(
+    findings_for(invalid_snippet_source, validator._validate_alert_snippet),
+    "RecoveryParticipantConvergenceMetricsAbsent must use recovery_participant_convergence_source_missing > 0",
 )
 
 lineage_rule = """        - record: backup_artifact_lineage_invalid

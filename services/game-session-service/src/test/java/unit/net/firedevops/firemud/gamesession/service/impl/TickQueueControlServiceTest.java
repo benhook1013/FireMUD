@@ -484,6 +484,11 @@ class TickQueueControlServiceTest {
     assertTrue(
         savedStatuses.stream()
             .allMatch(status -> "test-instance".equals(status.getOwnerInstanceId())));
+    verify(lockValueOps, org.mockito.Mockito.atLeast(2))
+        .setIfAbsent(
+            eq("gamesession:tick:mutation-lock:9:2"), any(String.class), any(Duration.class));
+    verify(lockValueOps, org.mockito.Mockito.atLeast(2))
+        .setIfAbsent(eq("gamesession:tick:lock:9:2"), any(String.class), any(Duration.class));
   }
 
   @Test
