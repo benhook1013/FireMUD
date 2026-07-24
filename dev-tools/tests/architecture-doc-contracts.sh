@@ -66,6 +66,22 @@ require_contains(
         "If any answer is no, leave the capability incomplete or complete only at its explicitly bounded current boundary.",
     ],
 )
+require_contains(
+    "design/architecture/system-architecture-cicd.md",
+    [
+        "built and smoke-tested locally without registry credentials",
+        "publish-pr-runtime-images.yml",
+        "never checks out or executes PR source",
+        "never writes shared cache or branch tags",
+    ],
+)
+require_contains(
+    "design/architecture/infrastructure/deployment-environments.md",
+    [
+        "builds and smoke-tests PR-tagged images without registry credentials",
+        "trusted default-branch workflow publishes only the successful fixed head-SHA tags",
+    ],
+)
 canonical_reset_anchor = "[Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence)"
 for path in [
     "design/architecture/system-architecture-redis-reset-and-recovery.md",

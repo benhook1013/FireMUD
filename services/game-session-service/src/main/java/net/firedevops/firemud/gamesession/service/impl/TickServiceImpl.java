@@ -330,18 +330,7 @@ public class TickServiceImpl implements TickService {
               activeBatchEntries = replayEntries;
               activeBatchDurablyDrained = true;
               lease.requireOwned();
-              tickTimer.record(
-                  () -> {
-                    luaTimer.record(
-                        () ->
-                            executeFencedScript(
-                                commitScript,
-                                lease,
-                                List.of(
-                                    tickQueueControlService.pendingKey(
-                                        normalizedTenantId, normalizedQueueTargetId)),
-                                "commit"));
-                  });
+              commitPending(lease, normalizedTenantId, normalizedQueueTargetId);
               tickBatchExecutionService.executeDurableEffects(
                   normalizedTenantId, normalizedQueueTargetId);
               lease.requireOwned();
@@ -402,34 +391,12 @@ public class TickServiceImpl implements TickService {
             tickBatchExecutionService.markBatchDrained(activeBatch, activeBatchEntries);
             activeBatchDurablyDrained = true;
             lease.requireOwned();
-            tickTimer.record(
-                () -> {
-                  luaTimer.record(
-                      () ->
-                          executeFencedScript(
-                              commitScript,
-                              lease,
-                              List.of(
-                                  tickQueueControlService.pendingKey(
-                                      normalizedTenantId, normalizedQueueTargetId)),
-                              "commit"));
-                });
+            commitPending(lease, normalizedTenantId, normalizedQueueTargetId);
             tickBatchExecutionService.executeDurableEffects(
                 normalizedTenantId, normalizedQueueTargetId);
             lease.requireOwned();
           } else {
-            tickTimer.record(
-                () -> {
-                  luaTimer.record(
-                      () ->
-                          executeFencedScript(
-                              commitScript,
-                              lease,
-                              List.of(
-                                  tickQueueControlService.pendingKey(
-                                      normalizedTenantId, normalizedQueueTargetId)),
-                              "commit"));
-                });
+            commitPending(lease, normalizedTenantId, normalizedQueueTargetId);
           }
           lease.requireOwned();
           tickProgressToPublish =
@@ -503,6 +470,19 @@ public class TickServiceImpl implements TickService {
         }
       }
     }
+  }
+
+  private void commitPending(
+      TickQueueControlService.QueueLockLease lease, Long tenantId, Long queueTargetId) {
+    tickTimer.record(
+        () ->
+            luaTimer.record(
+                () ->
+                    executeFencedScript(
+                        commitScript,
+                        lease,
+                        List.of(tickQueueControlService.pendingKey(tenantId, queueTargetId)),
+                        "commit")));
   }
 
   private String truncate(String value, int maxLength) {

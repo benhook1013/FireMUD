@@ -396,10 +396,10 @@ def table_lines(
         cells: list[str] = []
         for index, (key, _label, alignment) in enumerate(columns):
             value = str(values[key])
-            if index == len(columns) - 1:
-                cells.append(value)
-            elif alignment == "right":
+            if alignment == "right":
                 cells.append(value.rjust(widths[key]))
+            elif index == len(columns) - 1:
+                cells.append(value)
             else:
                 cells.append(value.ljust(widths[key]))
         return "  ".join(cells)
@@ -680,6 +680,16 @@ def print_json(payload: object) -> None:
     print(json.dumps(payload, indent=2))
 
 
+def emit_summary(files: list[FileStats], bar_width: int, as_json: bool) -> None:
+    report = build_summary_tree(files)
+    print_json(summary_json(report)) if as_json else print(render_summary(report, bar_width))
+
+
+def emit_modules(files: list[FileStats], as_json: bool) -> None:
+    report = module_report(files)
+    print_json(report) if as_json else print(render_modules(report))
+
+
 def main(argv: Sequence[str] = sys.argv[1:]) -> int:
     parser = build_parser()
     args = parser.parse_args(normalized_argv(argv))
@@ -715,23 +725,19 @@ def main(argv: Sequence[str] = sys.argv[1:]) -> int:
         files = scan_cloc(root, inventory)
 
         if args.command == "summary":
-            report = build_summary_tree(files)
-            print_json(summary_json(report)) if args.json else print(render_summary(report, args.bar_width))
+            emit_summary(files, args.bar_width, args.json)
         elif args.command == "scope":
             if args.json:
                 print_json(scope_json(files, args.scope, args.by_file))
             else:
                 print(render_scope(files, args.scope, args.by_file))
         elif args.command == "modules":
-            report = module_report(files)
-            print_json(report) if args.json else print(render_modules(report))
+            emit_modules(files, args.json)
         elif args.command == "diff":
             if args.modules:
-                report = module_report(files)
-                print_json(report) if args.json else print(render_modules(report))
+                emit_modules(files, args.json)
             else:
-                report = build_summary_tree(files)
-                print_json(summary_json(report)) if args.json else print(render_summary(report, args.bar_width))
+                emit_summary(files, args.bar_width, args.json)
         else:
             raise ReportError(f"Unhandled command: {args.command}")
         return 0

@@ -25,7 +25,8 @@ These scripts are shared because they manage infrastructure or validation behavi
   - creates or updates the hosted environment's gRPC TLS secret from the local development cert helper
 
 - `wait-for-runtime-images.sh`
-  - waits for the `runtime-images.yml` workflow to publish the requested image tag
+  - waits for the `runtime-images.yml` workflow to validate the requested image tag
+  - for pull-request runs, also waits for the trusted `publish-pr-runtime-images.yml` workflow to publish the fixed tag
 
 - `hosted-login-look-smoke.sh`
   - runs the canonical hosted TCP LOGIN -> PLAY -> LOOK smoke proof against the exposed environment

@@ -1,0 +1,70 @@
+name: Publish PR Runtime Images
+
+on:
+  workflow_run:
+    workflows: [Build Runtime Images]
+    types: [completed]
+
+run-name: Publish PR Runtime Images head-${{ github.event.workflow_run.head_sha }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-pr-runtime-images-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Publish Fixed PR Image Tags
+    if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    permissions:
+      # This trusted default-branch workflow reads one successful run artifact and publishes fixed SHA tags.
+      actions: read
+      contents: read
+      packages: write
+    env:
+      IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: Download successful PR image artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: pr-runtime-images-${{ github.event.workflow_run.head_sha }}
+          path: /tmp/pr-runtime-images
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Load fixed-tag images
+        run: gzip -dc /tmp/pr-runtime-images/pr-runtime-images.tar.gz | docker load
+
+      - name: Login to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish fixed PR image tags
+        run: |
+          for service in \
+            account-service \
+            automation-scripting-service \
+            entity-management-service \
+            game-design-service \
+            game-logic-service \
+            game-session-service \
+            logging-admin-service \
+            social-groups-service \
+            spring-cloud-gateway \
+            tcp-proxy-service \
+            world-management-service; do
+            image="ghcr.io/benhook1013/${service}:${IMAGE_TAG}"
+            docker image inspect "$image" >/dev/null
+            docker push "$image"
+          done

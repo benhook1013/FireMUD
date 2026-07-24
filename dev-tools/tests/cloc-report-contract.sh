@@ -218,6 +218,10 @@ assert cloc_report.source_classification("README.md") is None
 assert cloc_report.render_scope([], "tests", by_file=True) == (
     "path  language  blank  comments  lines"
 )
+assert cloc_report.table_lines(
+    [{"label": "short", "count": 2}, {"label": "longer", "count": 100}],
+    (("label", "label", "left"), ("count", "count", "right")),
+) == ["label   count", "short       2", "longer    100"]
 
 
 def run_json(*args: str, cwd: Path = repo) -> dict:

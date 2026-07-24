@@ -101,7 +101,9 @@ jobs:
               ".github/workflows/smoke.yml",
               ".github/workflows/smoke-full.yml",
               ".github/workflows/runtime-images.yml",
+              ".github/workflows/publish-pr-runtime-images.yml",
               "dev-tools/build-compose-service-jars.sh",
+              "dev-tools/build-local-smoke-images.sh",
               "dev-tools/certs/generate-dev-certs.sh",
               "dev-tools/verify-compose-health.sh",
               "dev-tools/verify-fresh-bootstrap.sh",
@@ -185,11 +187,15 @@ jobs:
 
       - name: 💬 Publish Smoke Summary Comment
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          RUN_SMOKE_LITE: ${{ needs.changes.outputs.run_smoke_lite }}
+          RUN_SMOKE_FULL: ${{ needs.changes.outputs.run_smoke_full }}
+          SMOKE_LITE_RESULT: ${{ needs['smoke-lite'].result }}
         with:
           script: |
-            const liteEnabled = "${{ needs.changes.outputs.run_smoke_lite }}" === "true";
-            const fullEnabled = "${{ needs.changes.outputs.run_smoke_full }}" === "true";
-            const liteResult = liteEnabled ? "${{ needs['smoke-lite'].result }}" : "skipped";
+            const liteEnabled = process.env.RUN_SMOKE_LITE === "true";
+            const fullEnabled = process.env.RUN_SMOKE_FULL === "true";
+            const liteResult = liteEnabled ? process.env.SMOKE_LITE_RESULT : "skipped";
             const fullResult = fullEnabled ? "tracked-by-smoke-gate" : "skipped";
             const statusIcon = (value) => {
               if (value === "success") return "✅";

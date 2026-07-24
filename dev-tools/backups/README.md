@@ -1,8 +1,9 @@
 # Backup Helpers
 
-This directory contains FireMUD backup tooling for two different lanes:
+This directory contains FireMUD backup tooling for three different lanes:
 
 - local ad hoc PostgreSQL dumps
+- scheduled rolling PostgreSQL dumps
 - Kubernetes backup setup and verification
 
 ## Script Map

@@ -7,7 +7,7 @@ This document describes the continuous integration strategy for FireMUD using **
 ## Goals
 
 - **Automate builds and tests** for all microservices whenever code changes are pushed by running the [`ci.yml`](../../.github/workflows/ci.yml) workflow.
-- **Build Docker images** and push them to GitHub Container Registry (GHCR).
+- **Build Docker images** without registry credentials for pull-request smoke, then publish only successful PR artifacts through a trusted workflow; trusted branch workflows push directly to GitHub Container Registry (GHCR).
 - **Deploy hosted Kubernetes development/demo environments** through the dedicated preview and dev-demo workflows. [`preview.yml`](../../.github/workflows/preview.yml) manages per-PR hosted preview releases, and [`dev-demo.yml`](../../.github/workflows/dev-demo.yml) manages the fixed `develop` dev-demo environment. Staging and production clusters use Kustomize overlays as described in the Deployment Runbook and are applied via `kubectl` from a secure admin environment rather than directly from CI.
 - Treat `dev-demo-cluster` as validation-only infrastructure that is excluded from production promotion evidence.
 - Keep the workflow configuration easy to maintain and extensible for additional security scans or nightly jobs.
@@ -111,6 +111,7 @@ Other workflows support additional automation:
 - [`weekly-security-scan.yml`](../../.github/workflows/weekly-security-scan.yml) runs the weekly Trivy image scan.
 - [`ort-advisory.yml`](../../.github/workflows/ort-advisory.yml) runs the **Weekly ORT Advisory Scan**.
 - [`publish-base-image.yml`](../../.github/workflows/publish-base-image.yml) runs the **Weekly FireMUD Base Image Refresh** and is also the branch-guarded publication path for explicit base-image rebuilds on `develop` / `main`.
+- [`runtime-images.yml`](../../.github/workflows/runtime-images.yml) builds pull-request images locally and runs full-stack smoke without a registry-write token. After that workflow succeeds, [`publish-pr-runtime-images.yml`](../../.github/workflows/publish-pr-runtime-images.yml) runs from the trusted default-branch workflow definition, downloads the fixed image artifact, and publishes only the exact PR head-SHA tags needed by hosted previews. It never checks out or executes PR source and never writes shared cache or branch tags. Push and manual runs on trusted branches continue to publish images and shared build caches directly.
 
 ---
 
@@ -143,7 +144,7 @@ After tests pass, each service is packaged into a Docker image:
             ghcr.io/benhook1013/${{ matrix.service }}:${{ github.ref_name }}
 ```
 
-Images are tagged with the commit SHA and pushed to **GitHub Container Registry (GHCR)**.
+Images are tagged with the commit SHA. Pull-request images are first built and smoke-tested locally without registry credentials; only the resulting successful artifact crosses into the trusted publisher that pushes those fixed SHA tags to **GitHub Container Registry (GHCR)**. Trusted `develop` and `main` publication runs push directly and may update shared build-cache tags.
 
 Deployable artifact lineage rule:
 
@@ -219,7 +220,7 @@ Release dependency-notice automation is a separate concern from repository scrip
 
 FireMUD's preview workflow is reserved for real reviewer-accessible PR environments, not CI-only stack boot validation. The [`.github/workflows/preview.yml`](../../.github/workflows/preview.yml) workflow targets a hosted single-node k3s cluster and follows this contract:
 
-- Build and push PR-tagged container images to private GHCR.
+- Build and smoke-test PR-tagged container images in a credential-free job, then publish the successful fixed-tag artifact to private GHCR from the trusted default-branch publisher.
 - Deploy or upgrade Helm release `pr-<PR_NUMBER>` into namespace `pr-<PR_NUMBER>`.
 - Expose the environment at `https://pr-<PR_NUMBER>.preview.<DOMAIN>` using cluster ingress/TLS.
 - Expose a reviewer-usable TCP/Telnet entry path for the preview stack so manual gameplay proof can happen through the normal MUD client surface.

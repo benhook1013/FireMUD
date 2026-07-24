@@ -20,10 +20,43 @@ assert_job_condition() {
   fi
 }
 
+assert_job_contains() {
+  local workflow="$1"
+  local job="$2"
+  local expected="$3"
+  local path="$ROOT_DIR/.github/workflows/$workflow"
+
+  awk -v job="$job" -v expected="$expected" '
+    $0 == "  " job ":" { in_job = 1; found = 1; next }
+    in_job && /^  [A-Za-z0-9_-]+:/ { exit }
+    in_job && index($0, expected) { matched = 1 }
+    END { exit !(found && matched) }
+  ' "$path"
+}
+
+assert_job_excludes() {
+  local workflow="$1"
+  local job="$2"
+  local forbidden="$3"
+  local path="$ROOT_DIR/.github/workflows/$workflow"
+
+  if awk -v job="$job" -v forbidden="$forbidden" '
+    $0 == "  " job ":" { in_job = 1; next }
+    in_job && /^  [A-Za-z0-9_-]+:/ { exit }
+    in_job && index($0, forbidden) { found = 1 }
+    END { exit !found }
+  ' "$path"; then
+    echo "$workflow job $job must not contain: $forbidden" >&2
+    exit 1
+  fi
+}
+
 required_condition="github.event.action != 'edited' || github.event.changes.base.ref != null"
 ci_path="$ROOT_DIR/.github/workflows/ci.yml"
 runtime_images_path="$ROOT_DIR/.github/workflows/runtime-images.yml"
+pr_image_publisher_path="$ROOT_DIR/.github/workflows/publish-pr-runtime-images.yml"
 smoke_path="$ROOT_DIR/.github/workflows/smoke.yml"
+image_wait_path="$ROOT_DIR/dev-tools/hosted/shared/wait-for-runtime-images.sh"
 
 for path in "$ci_path" "$smoke_path"; do
   grep -Fq 'types: [opened, synchronize, reopened, edited]' "$path"
@@ -79,9 +112,36 @@ grep -Fq 'github.event.pull_request.head.sha' "$runtime_images_path"
 grep -Fq 'github.sha' "$runtime_images_path"
 grep -Fq "mode-{4}" "$runtime_images_path"
 
-for job in image-meta build-base-image build-runtime-images smoke-full; do
+for job in image-meta pr-local-smoke; do
   assert_job_condition runtime-images.yml "$job" "$required_condition"
 done
+
+for job in build-base-image build-runtime-images smoke-full; do
+  assert_job_contains runtime-images.yml "$job" "github.event_name != 'pull_request'"
+done
+
+assert_job_contains runtime-images.yml pr-local-smoke 'SMOKE_IMAGE_LOCAL_ONLY:'
+assert_job_contains runtime-images.yml pr-local-smoke 'build-local-smoke-images.sh'
+assert_job_contains runtime-images.yml pr-local-smoke 'actions/upload-artifact@'
+for forbidden in 'packages: write' 'docker/login-action@' 'push: true' 'type=registry,ref='; do
+  assert_job_excludes runtime-images.yml pr-local-smoke "$forbidden"
+done
+
+grep -Fq 'workflow_run:' "$pr_image_publisher_path"
+grep -Fq "github.event.workflow_run.event == 'pull_request'" "$pr_image_publisher_path"
+grep -Fq "github.event.workflow_run.conclusion == 'success'" "$pr_image_publisher_path"
+grep -Fq 'github.event.workflow_run.head_repository.full_name == github.repository' "$pr_image_publisher_path"
+grep -Fq 'actions: read' "$pr_image_publisher_path"
+grep -Fq 'packages: write' "$pr_image_publisher_path"
+grep -Fq 'pr-runtime-images-${{ github.event.workflow_run.head_sha }}' "$pr_image_publisher_path"
+grep -Fq 'docker push "$image"' "$pr_image_publisher_path"
+if grep -Fq 'actions/checkout@' "$pr_image_publisher_path"; then
+  echo "trusted PR image publisher must not checkout or execute PR source" >&2
+  exit 1
+fi
+
+grep -Fq 'publish-pr-runtime-images.yml/runs?event=workflow_run' "$image_wait_path"
+grep -Fq 'wait_for_pr_publisher' "$image_wait_path"
 
 grep -Fq 'const baseSha = context.payload.pull_request.base.sha;' "$smoke_path"
 grep -Fq 'const mergeSha = context.sha;' "$smoke_path"
