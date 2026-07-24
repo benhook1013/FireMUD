@@ -177,6 +177,7 @@ The canonical player-facing flow is intentionally simple:
 ```text
 WORLDS
 LOGIN <username> <secret>
+[JOIN <world>]  # required only for a first-time public-production account
 PLAY <world> [character]
 ```
 
@@ -192,6 +193,7 @@ These modes are complementary: public browse remains available before authentica
 Normative semantic split:
 
 - `LOGIN` proves or restores account identity.
+- For a first-time public-production account, `JOIN <world>` explicitly creates membership after `LOGIN`; a returning member omits `JOIN` and continues to `PLAY`. First-party browser/mobile clients use the equivalent Account bootstrap join endpoint.
 - `PLAY` binds the gameplay session to `{tenantId, gameInstanceId, characterId}`.
 
 Transport state, connect-token state, and any future hidden Telnet smart-client metadata are inputs to this flow; they are not peers to the authoritative gameplay binding.
@@ -273,7 +275,9 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
   - Mobile and other non-browser first-party clients use a cookie jar for the same `Firemud-Connect-Token` cookie; no dedicated header carrier is supported.
   - Gateway must accept exactly one non-empty, single-valued `Firemud-Connect-Token` cookie for non-proxy gameplay handshakes. Duplicate values or a malformed carrier are rejected as `CONNECT_TOKEN_REJECTED` rather than choosing precedence.
   - Query-string carriage is not a supported connect-token carrier in player-facing environments.
-- Required claims: `accountId`, `tenantId`, `gameInstanceId`, `worldSlug`, `realmSlug`, `pointerVersion`, `connectScopeId`, `requestId`, `iat`, `exp`, `jti`.
+- Required claims: `iss`, `aud`, `accountId`, `tenantId`, `gameInstanceId`, `worldSlug`, `realmSlug`, `pointerVersion`, `connectScopeId`, `requestId`, `iat`, `exp`, `jti`.
+- `iss` is required and must exactly match the deployment's configured Account Service issuer identifier used by the Account JWKS trust configuration; callers cannot select or override it.
+- `aud` is required and must be exactly `gameplay-connect`; Gateway rejects a missing, multi-valued, or different audience before consuming `jti`.
 - Lifetime: a platform hard maximum of 30 seconds from signed `iat` to `exp`; issuers may shorten but not widen it, and Gateway independently rejects missing/future-skewed `iat`, invalid ordering, and lifetimes above the maximum.
 - Signing and verification: token is signed by the Account/authentication control-plane key set and verified only at Gateway for `/ws/game/**` policy decisions.
 - Replay defense: gateway validates `jti` against a bounded replay cache and rejects replays until token expiry.

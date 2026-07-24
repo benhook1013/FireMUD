@@ -17,6 +17,7 @@ runner_path = Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location("player_experience_smoke", runner_path)
 assert spec is not None and spec.loader is not None
 runner = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = runner
 spec.loader.exec_module(runner)
 
 config = runner.SmokeConfig.from_env("contract-test", "websocket", None)

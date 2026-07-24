@@ -12,6 +12,12 @@ formats over time. The Game Design Service is not queried during gameplay. Each
 record remains tied to a `tenantId` so icons, UI images, and audio files are
 isolated per game.
 
+## Identifier Implementation Status
+
+- **Target (ADR 0020):** `tenantId` is the canonical opaque UUID logical identity. `game_assets.tenant_id` and the version-asset mappings use that tenant scope; numeric database keys remain private implementation details and do not replace it.
+- **Current first slice:** `game_assets.tenant_id` is a `VARCHAR(36)` accepted through the REST `tenantId` string field without UUID-shape enforcement, while Account Service still exposes numeric `Long` tenant identifiers across current REST, gRPC, and persistence seams. No authoritative numeric-to-UUID tenant mapping exists. The asset row is separately keyed by `BIGSERIAL`, and `GameAssetDto.id` exposes that numeric asset-row key; neither number is the target tenant identity.
+- **Migration status:** Account and downstream public/cross-service tenant contracts must converge together on the UUID logical identity, after which Game Design validates and stores that value. Until then, current caller-supplied tenant strings are implementation drift, not a second canonical tenant identity, and implementations must not invent a reversible numeric-to-UUID encoding.
+
 Logical world and entity templates (regions, rooms, items, NPCs, loot tables, scripts, etc.) remain stored in PostgreSQL schemas owned by the corresponding domain services and are not persisted as blobs in the asset store. The asset store is strictly for binary design assets plus version-scoped manifests exported by the Game Design Service.
 
 Derived runtime-consumed artifacts produced by domain services follow the same writer rule:
@@ -214,8 +220,8 @@ Published asset delivery uses the canonical external `/assets/**` family:
 
 The `game_assets` table stores ordinary design-time upload records. In the current first implementation slice it also stores the uploaded bytes used as the exact-bytes repair source. Columns include:
 
-- `id` – primary key
-- `tenant_id` – identifies the owning game using the canonical UUID `tenantId`; a private numeric database key may coexist but must not replace the logical tenant identity
+- `id` – current `BIGSERIAL` row key; it is not the tenant identity and must not be treated as the target public logical identifier
+- `tenant_id` – **target:** identifies the owning game using the canonical UUID `tenantId`; **current:** stores an unconstrained `VARCHAR(36)` string while the UUID migration and validation remain incomplete
 - `file_name` – original file name
 - `content_type` – MIME type
 - `data` – immutable uploaded bytes for the ordinary binary asset in the current first slice; this is the canonical repair source for object-store republish/repair until a future metadata-only storage model introduces an equivalent retained immutable source
@@ -262,7 +268,7 @@ published assets are served from object storage.
 
 ## API
 
-Assets are uploaded via `POST /assets` using a `multipart/form-data` request. The service streams bytes directly to object storage, then persists the metadata row and returns a `GameAssetDto` containing metadata and stable download information rather than echoing raw bytes from PostgreSQL.
+In the current first slice, assets are uploaded via `POST /assets` using a `multipart/form-data` request, persisted with bytes in `game_assets.data`, and returned as a `GameAssetDto` with the numeric asset-row `id` and data fields described by the current OpenAPI schema. The target contract streams bytes to object storage and returns metadata plus stable download information instead; that storage and DTO convergence is not complete.
 See the [OpenAPI specification](../../../../services/game-design-service/src/main/resources/openapi.yaml) for request details.
 Endpoints for downloading or deleting assets are available.
 gRPC endpoints support asset management operations.

@@ -50,7 +50,7 @@ A simple failed-password threshold that durably locks an account lets an attacke
 ### Gameplay Fast Path
 
 - Normal per-session command-rate enforcement uses an in-process token bucket owned by the current session front end. It performs no network or datastore operation per command solely for rate limiting.
-- A replacement session front end initializes a conservative bounded burst budget; a process move cannot grant an unbounded fresh allowance.
+- A replacement session front end reads and consumes only the remaining portion of one externalized, bounded cumulative handoff budget for the active gameplay binding; each replacement consumes from that same budget rather than resetting it. A process move cannot grant an unbounded fresh allowance. Handoff-budget bookkeeping may use one shared operation per replacement, but ordinary commands remain on the local bucket and perform no per-command network or datastore work.
 - Coarser shared account, source, tenant, or reconnect-abuse windows may use Cache/Rate-Limit Redis outside the per-command fast path. They are defense in depth, reset-tolerant, and must not determine gameplay ordering or whether an already accepted command happened.
 - Limit outcomes use stable classes and bounded retry guidance. Tenant/game tuning follows the accepted settings model and cannot exceed platform hard bounds or operator caps.
 
@@ -88,7 +88,7 @@ This preserves a more consistent rate window across process movement, but adds a
 - Prove unknown-account, wrong-secret, throttled-candidate, and locked-account behavior does not provide a practical public enumeration oracle.
 - Prove ordinary failed attempts cannot enter durable `security_locked`; prove a real security-lock transition audits, revokes, and enters recovery correctly.
 - Fail new player-facing credential attempts closed when shared abuse enforcement is unavailable while leaving existing authenticated gameplay unaffected.
-- Replace Game Session's per-command Redis rate-limit increment with a bounded in-process token bucket and prove its initial, refill, exhaustion, retry, handoff, and conservative-reset behavior.
+- Replace Game Session's per-command Redis rate-limit increment with a bounded in-process token bucket and prove its initial, refill, exhaustion, retry, handoff, cumulative replacement-budget, and conservative-reset behavior.
 - Prove edge canonicalization occurs before rate-limit key derivation, including the authenticated TCP Proxy path and untrusted forwarded-header rejection.
 - Exercise shared-NAT behavior, multi-replica attempts, credential-counter reset/eviction, reconnect churn, and stable retry classifications.
 

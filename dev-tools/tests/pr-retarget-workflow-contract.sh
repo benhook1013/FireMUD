@@ -242,10 +242,13 @@ if (assert_job_excludes runtime-images.yml missing-job 'pull-requests: write') 2
 fi
 
 require_contains "$smoke_path" 'const baseSha = context.payload.pull_request.base.sha;'
+require_contains "$smoke_path" 'const baseRef = context.payload.pull_request.base.ref;'
 require_contains "$smoke_path" 'const mergeSha = context.sha;'
 require_contains "$smoke_path" 'github.rest.pulls.get({'
-require_contains "$smoke_path" 'currentPullRequest.state !== "open" || currentPullRequest.head.sha !== headSha'
-require_contains "$smoke_path" 'Stopping obsolete smoke gate for head'
+require_contains "$smoke_path" 'currentPullRequest.head.sha !== headSha ||'
+require_contains "$smoke_path" 'currentPullRequest.base.ref !== baseRef ||'
+require_contains "$smoke_path" 'currentPullRequest.base.sha !== baseSha'
+require_contains "$smoke_path" 'Stopping obsolete smoke gate for'
 require_contains "$smoke_path" 'head_sha: headSha,'
 require_contains "$smoke_path" 'mode-required'
 require_contains "$smoke_path" 'Build Runtime Images secure-pr-artifact pr-'

@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The decision is accepted; implementation and proof remain partial. Durable bounded transcript storage and Redis caching exist, but immutable continuity/resume anchors, deadline enforcement in `PLAY`, token-refresh independence, repeated-episode behavior, and explicit-logout replay suppression remain incomplete or unproved. Acceptance records the target decision, not completion; the obligations below define the remaining proof.
+The decision is accepted; implementation and proof remain partial. Durable bounded transcript storage and Redis caching exist, but immutable continuity/resume anchors, deadline enforcement in `PLAY`, token-refresh independence, repeated-episode behavior, and explicit-logout replay suppression remain incomplete or unproved. Current Game Session code still defaults `FIREMUD_AUTH_SESSION_EXPIRATION_MS` to one hour and does not enforce the five-minute continuity cap. Acceptance records the target decision, not completion; the obligations below define the remaining proof.
 
 ## Decision Record
 
@@ -31,9 +31,9 @@ JWT validity, active gameplay authorization, continuity-binding eligibility, dis
 - A continuously connected gameplay session may remain active while edge liveness is healthy and current account, membership, entitlement, revocation, fencing, and backend-token checks succeed.
 - Receiver-specific private player-delegation JWTs rotate on their bounded cadence. Each token remains valid only through its own `exp`; rotation neither revives an expired token nor forces a healthy player through fresh `PLAY` merely because the previous token aged out.
 - Game Session schedules refresh before `exp` and retries a transient refresh failure with bounded backoff while the current receiver token remains valid. A refresh failure does not move `continuityBindingExpiresAt`, `disconnectAt`, or `resumeDeadline`, and it does not grant a grace period beyond the current token's `exp`.
-- If no replacement receiver token is installed before `exp`, Game Session fails closed for backend-authenticated actions, transitions the active binding to auth-revoked/disconnected state, and closes the gameplay socket. The player-visible outcome is `AUTH_TOKEN_EXPIRED` when the token simply expires or refresh remains unavailable, and `AUTH_SESSION_REVOKED` when Account rejects refresh because authority was revoked or blocked; neither outcome is resolved by retrying the expired token.
-- Recovery is explicit: the client obtains a fresh bootstrap/connect token where the transport requires it, reconnects, sends fresh `LOGIN`, and completes fresh `PLAY`. If the old binding still has a valid continuity/disconnection episode and current authority checks pass, that fresh admission may consume the episode as a resume; otherwise it creates a new binding. A receiver-token refresh is never a client-visible reauthentication substitute and never permits token-only reentry.
-- Account or tenant revocation and loss of required authority remain immediate terminal conditions. This decision does not create an immortal authorization grant.
+- If no replacement receiver token is installed before `exp`, Game Session fails closed for backend-authenticated actions, transitions the active binding to token-expired/disconnected state, and closes the gameplay socket. The player-visible outcome is `AUTH_TOKEN_EXPIRED` when the token simply expires or refresh remains unavailable, and `AUTH_SESSION_REVOKED` when Account rejects refresh because authority was revoked or blocked; neither outcome is resolved by retrying the expired token.
+- Recovery after receiver-token expiry or refresh failure is explicit: the client obtains a fresh bootstrap/connect token where the transport requires it, reconnects, sends fresh `LOGIN`, and completes fresh `PLAY`. If the old binding still has a valid continuity/disconnection episode and current authority checks pass, that fresh admission may consume the episode as a resume; otherwise it creates a new binding. A receiver-token refresh is never a client-visible reauthentication substitute and never permits token-only reentry.
+- Account or tenant authority revocation and loss of required authority remain immediate terminal conditions for the old binding. Fresh `LOGIN`/`PLAY` cannot consume that binding's episode as a resume; only a later independent fresh admission after authority is restored may create a new binding. This decision does not create an immortal authorization grant.
 - If FireMUD later requires a maximum continuously active player-session lifetime, it must be an explicit security/product policy rather than an accidental consequence of private player-delegation token configuration.
 
 ### Continuity and Resume
@@ -55,7 +55,7 @@ Each connected-to-disconnected transition starts one immutable disconnection epi
 
 ### Storage, Transcript, and Logout
 
-- Redis TTL is physical cleanup metadata. Key presence never grants resume authority, and early key loss makes the binding non-resumable rather than reconstructing authority from other projections.
+- Redis TTL is physical cleanup metadata. Every gameplay-binding TTL refresh is capped at the remaining `continuityBindingExpiresAt` lifetime, for example `min(requestedTtlMs, max(0, continuityBindingExpiresAt - now))`, and must never create a sliding deadline. Key presence never grants resume authority, and early key loss makes the binding non-resumable rather than reconstructing authority from other projections.
 - Resume transcript retention is an independent bounded presentation policy. Transcript existence cannot prove identity or extend active or resume authority.
 - Explicit gameplay `LOGOUT` immediately terminates continuity/resume authority and makes the binding's private transcript non-replayable. Physical deletion of transcript rows or cache entries may complete asynchronously, but replay must honor the authoritative non-replayable state immediately. After a fresh non-logout `LOGIN` and `PLAY`, retained transcript context may replay subject to current identity, authorization, and gameplay scope; the terminated binding's logged-out context must not replay.
 
@@ -93,7 +93,7 @@ Fresh admission after every disconnect is simpler and more conservative but mate
 - Prove bounded retry while the receiver token remains valid, the `AUTH_TOKEN_EXPIRED` outcome when no replacement exists by `exp`, the `AUTH_SESSION_REVOKED` outcome for rejected authority, socket termination, and fresh `LOGIN`/`PLAY` reconnect or resume behavior.
 - Prove boundary behavior immediately before, at, and after both continuity and resume deadlines.
 - Prove repeated failed reconnects cannot extend one episode, successful resume closes it, and a later disconnect creates a new bounded episode without moving `continuityBindingExpiresAt`.
-- Prove Redis saves, TTL refresh, restart, failover, and stale-key recovery cannot move or bypass logical deadlines.
+- Prove Redis saves, TTL refresh capped at the remaining `continuityBindingExpiresAt`, restart, failover, and stale-key recovery cannot move or bypass logical deadlines.
 - Prove current subject, membership, entitlement, revocation, and uniqueness checks on every resume.
 - Prove stale bindings fall through to fresh admission only after full current authorization and receive a new identity and anchor.
 - Prove transcript bounds independently and prove explicit logout immediately prevents later private replay from the terminated binding, without requiring physical transcript deletion to complete synchronously.

@@ -2,26 +2,29 @@
 
 ## Cross-Path Connectivity Contract
 
-The following are canonical and active across Telnet and WebSocket paths:
+The following are canonical contracts across Telnet and WebSocket paths:
 
-- Telnet login-first without typed attach hints is the canonical flow (`LOGIN` then `PLAY`).
+- Telnet login-first without typed attach hints is the canonical flow (`LOGIN` -> optional `JOIN` -> `PLAY`): a first-time public-production account must join after login, while a returning member skips `JOIN`.
 - Proxy -> Gateway WebSocket hop is mTLS-authenticated in player-facing environments.
 - Proxy bridge-availability circuit breaker uses deterministic open/half-open/closed admission behavior during sustained upstream unreachability.
+
+The explicit `JOIN` step is target behavior; current connect-token and `PLAY` implementations may still create public-production membership implicitly. The target flow above must not be read as proof that explicit join is complete across all clients.
 
 ## Recommended Telnet Client Flows
 
 These flows describe how Telnet traffic is forwarded into the shared login/session pipeline; `LOGIN` / `LOGON` semantics and multi-client takeover behavior remain canonical in the [Authentication & Authorization](../../system-architecture-authentication.md) document.
 
-- **Canonical player flow**
+- **Target canonical player flow**
   - Connect to the TCP Proxy Service.
   - Optionally browse public worlds with `WORLDS`.
   - Send `LOGIN <email-or-username>` to start the neutral email challenge, or `LOGIN <email-or-username> <secret>` to authenticate immediately.
+  - For a first-time public-production account, send `JOIN <world>` to create the durable player membership. A returning member skips `JOIN`.
   - Enter gameplay with `PLAY <world> [realm] [character]`; use `REALMS <world>` or `CHARS <world> [realm]` only if the target is ambiguous and more selection help is needed.
   - Send gameplay commands (`LOOK`, `SAY`, movement, and so on) as normal.
   - The proxy forwards all lines verbatim to Spring Cloud Gateway; the Game Session Service creates or binds the gameplay session exactly as it does for native WebSocket clients.
 - **Future smart-client flow**
   - If advanced attach hints return, they should travel through hidden MCP metadata rather than a typed `SESSION` gameplay line.
-  - Those hints remain advisory only and must not replace the normal human-facing `WORLDS` -> `LOGIN` -> `PLAY` flow.
+  - Those hints remain advisory only and must not replace the normal human-facing `WORLDS` -> `LOGIN` -> optional `JOIN` -> `PLAY` flow.
 
 ## Advanced Multi-Connection Scenarios
 
@@ -45,7 +48,7 @@ Advanced Telnet tools may open more than one window or pane for the same account
 - During sustained Gateway gameplay unreachability, proxy admission uses a bridge-availability circuit-breaker model so new Telnet sockets are rejected quickly with `backend_unavailable`. Admission resumes only after `TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` consecutive successful probe bridge establishments.
 - If upstream backpressure causes the Telnet -> Gateway buffered-line ceiling to be exceeded while upstream is still reachable, the proxy closes the Telnet connection with `policy_violation`, emits `edge_backpressure` context in structured logs and metrics, and increments `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}`. If upstream is already unreachable, `backend_unavailable` takes precedence.
 - If the upstream bridge closes cleanly with `1000/logout` on the authenticated internal bridge, the proxy preserves the Telnet-side disconnect category as `logout` and carries through the bounded subreason. Planned Gateway drain remains the canonical `1000/logout;subreason=gateway_restart` case and should be logged as `bridge_shutdown_class=planned_drain`.
-- All gameplay commands, including `LOGIN` and `PLAY`, are forwarded verbatim over the WebSocket bridge so Spring Cloud Gateway and Game Session see the same protocol lines as native WebSocket clients.
+- All gameplay commands, including `LOGIN`, optional `JOIN`, and `PLAY`, are forwarded verbatim over the WebSocket bridge so Spring Cloud Gateway and Game Session see the same protocol lines as native WebSocket clients.
 
 ## Bridge State Machine (Established Telnet Sessions)
 
@@ -84,13 +87,13 @@ Typed `SESSION` gameplay lines are no longer part of the Telnet contract. If adv
 
 Current rules:
 
-- normal Telnet players use `WORLDS` (optional), `LOGIN`, and `PLAY`;
+- normal Telnet players use `WORLDS` (optional), `LOGIN`, optional `JOIN`, and `PLAY`;
 - the proxy bootstraps hidden default gameplay instance and tenant metadata for the connection;
 - typed attach hints do not exist on the player-facing wire contract;
-- future MCP-carried attach hints must remain advisory and must never bypass `LOGIN` + `PLAY`.
-- PROXY protocol trust follows the same principle: on the internal-only PROXY listener, malformed or truncated PROXY headers are a hard failure and the proxy must not silently fall back to the TCP peer IP. The canonical discard signal is `tcpproxy.telnet.discarded{reason="proxy_protocol"}`.
+- future MCP-carried attach hints must remain advisory and must never bypass `LOGIN` + optional `JOIN` + `PLAY`.
+- PROXY protocol trust follows the same principle: on the internal-only PROXY listener, the edge-to-TCP Proxy channel must be authenticated and cryptographically protected before the recovered address can drive per-IP connection caps, rate limits, abuse controls, or admission decisions. Without that protection, the recovered address is advisory only. Malformed or truncated PROXY headers are a hard failure and the proxy must not silently fall back to the TCP peer IP. The canonical discard signal is `tcpproxy.telnet.discarded{reason="proxy_protocol"}`.
 - PROXY parsing must never be enabled on the public Telnet listener. Accepting PROXY headers directly from the Internet would allow client-IP spoofing.
-- Public Telnet must use either edge TLS termination with this internal PROXY listener or direct TCP Proxy TLS without a PROXY header; the two modes are mutually exclusive. Both modes continue through the same Proxy -> Gateway WebSocket mTLS bridge and `LOGIN`/`PLAY` protocol.
+- Public Telnet must use either edge TLS termination with this authenticated, cryptographically protected internal PROXY listener or direct TCP Proxy TLS without a PROXY header; the two modes are mutually exclusive. Both modes continue through the same Proxy -> Gateway WebSocket mTLS bridge and `LOGIN`/optional `JOIN`/`PLAY` protocol.
 
 Metrics give observability into each Telnet connection while keeping Prometheus label cardinality bounded:
 
