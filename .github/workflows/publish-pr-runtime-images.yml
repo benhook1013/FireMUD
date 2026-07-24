@@ -39,7 +39,9 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
 
       - name: Load fixed-tag images
-        run: gzip -dc /tmp/pr-runtime-images/pr-runtime-images.tar.gz | docker load
+        run: |
+          set -o pipefail
+          gzip -dc /tmp/pr-runtime-images/pr-runtime-images.tar.gz | docker load
 
       - name: Login to GHCR
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
