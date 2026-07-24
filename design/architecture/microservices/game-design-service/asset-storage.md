@@ -363,9 +363,12 @@ Transition enforcement contract:
 - `PUBLISHED` is the only success state that may be treated as launchable. Object-store bytes in `STAGED` or `EXPORTED_UNATTESTED` are not publish-complete on their own.
 
 - For each `(tenantId, versionId)` the durable publish workflow runs an `ExportAssets` step that:
-  - Selects assets by joining `version_asset` to `game_assets` for the target
-    `(tenantId, versionId)`; assets not referenced via `version_asset` are **never**
-    exported for that version. In the current first slice, export selects all tenant `game_assets` rows until the normalized `version_asset` mapping table is fully enforced.
+  - **Current implementation:** selects every `game_assets` row for `tenantId`
+    through `GameAssetRepository.findByTenantId`, including assets with no
+    `version_asset` mapping, and reads the export bytes from `game_assets.data`.
+  - **Target convergence:** selects only assets obtained by joining
+    `version_asset` to `game_assets` for the target `(tenantId, versionId)`;
+    unmapped tenant assets are excluded from that version's export.
   - Copies the selected ordinary asset bytes from `game_assets.data` into a deterministic published prefix such as
     `<tenantId>/<versionId>/` in object storage. Future metadata-only storage may instead copy/promote from an immutable source referenced by asset metadata, but not from mutable draft keys.
   - Writes or overwrites the version-scoped `manifest.json` in the same prefix.

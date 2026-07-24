@@ -112,6 +112,8 @@ curl -X POST http://localhost:8086/sessions \
 
 ### gRPC examples
 
+The plaintext commands below are local-development examples only. Shared and player-facing environments must use the configured mTLS trust bundle and workload certificate, replacing `-plaintext` with `-cacert`, `-cert`, and `-key` arguments as shown in the [gRPC architecture](../../system-architecture-grpc.md).
+
 ```bash
 grpcurl -plaintext localhost:6565 game_session.v1.GameSessionService/Ping
 ```

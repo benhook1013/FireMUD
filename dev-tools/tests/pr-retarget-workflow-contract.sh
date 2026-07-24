@@ -133,6 +133,7 @@ for job in changes smoke-summary smoke-gate; do
 done
 assert_job_contains smoke.yml smoke-gate 'pull-requests: read'
 assert_job_contains smoke.yml smoke-gate 'github.rest.pulls.get'
+assert_job_contains smoke.yml smoke-gate 'currentPullRequest.state !== "open"'
 assert_job_contains smoke.yml smoke-gate 'currentPullRequest.head.sha !== headSha'
 assert_job_contains smoke.yml smoke-gate 'currentPullRequest.base.ref !== baseRef'
 assert_job_contains smoke.yml smoke-gate 'currentPullRequest.base.sha !== baseSha'
@@ -250,6 +251,7 @@ require_contains "$smoke_path" 'const baseSha = context.payload.pull_request.bas
 require_contains "$smoke_path" 'const baseRef = context.payload.pull_request.base.ref;'
 require_contains "$smoke_path" 'const mergeSha = context.sha;'
 require_contains "$smoke_path" 'github.rest.pulls.get({'
+require_contains "$smoke_path" 'currentPullRequest.state !== "open" ||'
 require_contains "$smoke_path" 'currentPullRequest.head.sha !== headSha ||'
 require_contains "$smoke_path" 'currentPullRequest.base.ref !== baseRef ||'
 require_contains "$smoke_path" 'currentPullRequest.base.sha !== baseSha'

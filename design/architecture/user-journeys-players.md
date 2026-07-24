@@ -87,8 +87,13 @@ For the target public-production flow, the explicit join action creates the play
 This onboarding flow is the only supported way to discover and enter a realm. First-party WebSocket connect tokens and any future hidden Telnet smart-client metadata may narrow the target realm, but they never replace the authenticated lobby contract.
 
 ```plaintext
-Player → WORLDS (optional public browse) → LOGIN → [REALMS if multiple] → [JOIN for first public entry]
-                                                        → CHARS / Create Character → PLAY
+Telnet:
+Player → TCP Proxy → WORLDS (optional public browse) → LOGIN → [REALMS if multiple]
+       → [JOIN for first public entry] → CHARS / Create Character → PLAY
+
+First-party web:
+Player → Account bootstrap/discovery → [JOIN for first public entry] → CHARS / Create Character
+       → connect-token issuance → Gateway WebSocket handshake → bare LOGIN → PLAY
 ```
 
 Example text-client transcript:
