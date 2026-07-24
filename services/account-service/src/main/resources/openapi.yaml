@@ -80,10 +80,12 @@ components:
           type: string
           minLength: 1
           maxLength: 254
+          pattern: '.*\S.*'
         secret:
           type: string
           minLength: 6
           maxLength: 100
+          pattern: '.*\S.*'
       required: [accountIdentifier, secret]
     AuthenticationResult:
       type: object
@@ -392,6 +394,13 @@ paths:
           required: true
           schema:
             type: string
+        - in: query
+          name: connectScopeId
+          required: true
+          description: Opaque signed target proof returned by realm discovery
+          schema:
+            type: string
+            minLength: 1
       responses:
         '200':
           description: Visible characters

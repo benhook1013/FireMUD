@@ -350,7 +350,7 @@ Authorization: Bearer <bootstrapToken>
      connectScopeId: "cs_demo_production_v17"
    }]
 
-GET /auth/bootstrap/worlds/demo/realms/production/characters
+GET /auth/bootstrap/worlds/demo/realms/production/characters?connectScopeId=cs_demo_production_v17
 Authorization: Bearer <bootstrapToken>
 -> [{ characterName: "Mara" }]
 
@@ -396,13 +396,13 @@ Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_emberfall_production_v1", requestId: "req-join-1" }
 -> { tenantId: "tenant-emberfall", membershipVersion: 1, joined: true }
 
-GET /auth/bootstrap/worlds/emberfall/realms/production/characters
+GET /auth/bootstrap/worlds/emberfall/realms/production/characters?connectScopeId=cs_emberfall_production_v1
 Authorization: Bearer <bootstrapToken>
 -> []
 
 POST /auth/bootstrap/worlds/emberfall/realms/production/characters
 Authorization: Bearer <bootstrapToken>
-{ name: "Mara", template: "human-fighter" }
+{ connectScopeId: "cs_emberfall_production_v1", name: "Mara", template: "human-fighter" }
 -> { characterName: "Mara", characterId: "c7f4b18b-6eb5-4fd8-a906-c9606d17d4dc" }
 
 POST /auth/connect-token
@@ -425,7 +425,7 @@ Required postconditions for the explicit public-production join:
 
 Canonical character-creation contract for this flow:
 
-- The player-facing control-plane surface is Account-owned `POST /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters`, using the current bootstrap-authenticated account identity and path-resolved target.
+- The player-facing control-plane surface is Account-owned `POST /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters`, using the current bootstrap-authenticated account identity and signed discovery `connectScopeId`; the route must match that signed target.
 - Account validates the admission prerequisites and delegates the authorized internal write to Entity Management, which owns `CreateCharacter` semantics and persistence. Entity Management remains internal-only and exposes no direct player REST route.
 - The Account facade is allowed only after the caller has explicitly joined the public production game or already has the required membership/grant, and before `POST /auth/connect-token` / gameplay `PLAY` succeed for that new character.
 - The route must reject requests for realms that are not currently visible/admissible to the bootstrap-authenticated account.
@@ -460,7 +460,7 @@ Authorization: Bearer <bootstrapToken>
      }
    ]
 
-GET /auth/bootstrap/worlds/demo/realms/playtest-docks/characters
+GET /auth/bootstrap/worlds/demo/realms/playtest-docks/characters?connectScopeId=cs_demo_playtest_docks_v4
 Authorization: Bearer <bootstrapToken>
 -> [{ characterName: "Mara" }]
 

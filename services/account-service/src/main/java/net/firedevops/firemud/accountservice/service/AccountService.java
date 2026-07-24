@@ -41,7 +41,7 @@ public interface AccountService {
   java.util.List<BootstrapRealmDto> listBootstrapRealms(String bootstrapToken, String worldSlug);
 
   java.util.List<BootstrapCharacterDto> listBootstrapCharacters(
-      String bootstrapToken, String worldSlug, String realmSlug);
+      String bootstrapToken, String worldSlug, String realmSlug, String connectScopeId);
 
   ConnectTokenResult issueConnectToken(String bootstrapToken, ConnectTokenRequest request);
 

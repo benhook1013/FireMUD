@@ -383,9 +383,12 @@ public class AccountServiceImpl implements AccountService {
   @Transactional(readOnly = true)
   @Timed(value = "account.bootstrap_characters")
   public List<BootstrapCharacterDto> listBootstrapCharacters(
-      String bootstrapToken, String worldSlug, String realmSlug) {
+      String bootstrapToken, String worldSlug, String realmSlug, String connectScopeId) {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
-    RuntimeRealmTarget realm = requireAdmissibleRealm(bootstrapContext, null, worldSlug, realmSlug);
+    ConnectScopeContext scopeContext = requireConnectScopeContext(connectScopeId);
+    validateConnectScopeAgainstBootstrap(bootstrapContext, scopeContext);
+    validateConnectScopeRoute(scopeContext, worldSlug, realmSlug);
+    RuntimeRealmTarget realm = requireCurrentConnectScopeTarget(bootstrapContext, scopeContext);
     return entityManagementClient
         .listCharactersByAccount(
             realm.tenantId(),
@@ -462,16 +465,7 @@ public class AccountServiceImpl implements AccountService {
       ConnectScopeContext scopeContext,
       ConnectTokenRequest request) {
     RuntimeRealmTarget currentRealm =
-        requireAdmissibleRealm(
-            bootstrapContext,
-            scopeContext.tenantId(),
-            scopeContext.worldSlug(),
-            scopeContext.realmSlug());
-    if (currentRealm.tenantId() != scopeContext.tenantId()
-        || currentRealm.gameInstanceId() != scopeContext.gameInstanceId()
-        || currentRealm.pointerVersion() != scopeContext.pointerVersion()) {
-      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
-    }
+        requireCurrentConnectScopeTarget(bootstrapContext, scopeContext);
 
     boolean nonPublicGrant =
         hasRealmAccessGrant(
@@ -1022,6 +1016,30 @@ public class AccountServiceImpl implements AccountService {
     if (scopeContext.accountId() != bootstrapContext.accountId()) {
       throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
     }
+  }
+
+  private void validateConnectScopeRoute(
+      ConnectScopeContext scopeContext, String worldSlug, String realmSlug) {
+    if (!java.util.Objects.equals(scopeContext.worldSlug(), worldSlug)
+        || !java.util.Objects.equals(scopeContext.realmSlug(), realmSlug)) {
+      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
+    }
+  }
+
+  private RuntimeRealmTarget requireCurrentConnectScopeTarget(
+      BootstrapContext bootstrapContext, ConnectScopeContext scopeContext) {
+    RuntimeRealmTarget currentRealm =
+        requireAdmissibleRealm(
+            bootstrapContext,
+            scopeContext.tenantId(),
+            scopeContext.worldSlug(),
+            scopeContext.realmSlug());
+    if (currentRealm.tenantId() != scopeContext.tenantId()
+        || currentRealm.gameInstanceId() != scopeContext.gameInstanceId()
+        || currentRealm.pointerVersion() != scopeContext.pointerVersion()) {
+      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
+    }
+    return currentRealm;
   }
 
   private long remainingConnectScopeReplayTtl(ConnectScopeContext scopeContext) {

@@ -102,9 +102,10 @@ routes:
     auth_path: player_bootstrap
     accepted_token_profiles: [player-bootstrap]
     subject_binding: caller_account_id
+    target_binding: signed_connect_scope_id_matches_route
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements]
+    required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
     delegates_to: entity-management-service/CreateCharacter
   - service: game-session-service
     route: StartSession

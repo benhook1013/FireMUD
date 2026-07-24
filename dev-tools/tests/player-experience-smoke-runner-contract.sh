@@ -9,10 +9,12 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 grep -q '"accountIdentifier": config.username' "$RUNNER"
 grep -q '"secret": config.password' "$RUNNER"
-if sed -n '/def issue_player_bootstrap/,/^$/p' "$RUNNER" | grep -q '"tenantId"'; then
-  echo "player bootstrap smoke payload unexpectedly includes tenantId" >&2
+if sed -n '/def issue_player_bootstrap/,/^$/p' "$RUNNER" \
+  | grep -Eq '"(tenantId|username|password|otp)"'; then
+  echo "player bootstrap smoke payload unexpectedly includes a legacy credential key" >&2
   exit 1
 fi
+grep -q "urlencode({'connectScopeId': connect_scope_id})" "$RUNNER"
 
 SUCCESS_EVIDENCE="$TMP_DIR/success-evidence.json"
 SUCCESS_METRICS="$TMP_DIR/success-metrics.prom"

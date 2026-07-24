@@ -188,13 +188,14 @@ class AuthControllerTest {
 
   @Test
   void listBootstrapCharactersReturnsCharacters() throws Exception {
-    when(accountService.listBootstrapCharacters("boot123", "demo", "production"))
+    when(accountService.listBootstrapCharacters("boot123", "demo", "production", "scope-1"))
         .thenReturn(
             List.of(new BootstrapCharacterDto("char-1", "Mara", 12, "SHARED", "ALLOW_NEW")));
 
     mockMvc
         .perform(
             get("/auth/bootstrap/worlds/demo/realms/production/characters")
+                .param("connectScopeId", "scope-1")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer boot123"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))

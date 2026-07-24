@@ -505,7 +505,7 @@ class AccountServiceImplTest {
     org.mockito.Mockito.verify(sessionService)
         .storeAccountSession(
             org.mockito.ArgumentMatchers.eq(7L),
-            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.eq(result.bootstrapToken()),
             org.mockito.ArgumentMatchers.eq(300000L));
     var claims = new JwtUtil(JWT_SECRET, 300000L).parseToken(result.bootstrapToken()).getPayload();
     assertEquals("player-bootstrap", claims.getAudience().iterator().next());
@@ -1553,9 +1553,12 @@ class AccountServiceImplTest {
 
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
     when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
 
     var characters =
-        service.listBootstrapCharacters(bootstrap.bootstrapToken(), "demo", "production");
+        service.listBootstrapCharacters(
+            bootstrap.bootstrapToken(), "demo", "production", connectScopeId);
 
     assertEquals(1, characters.size());
     assertEquals("char-1", characters.getFirst().characterId());
@@ -1688,9 +1691,12 @@ class AccountServiceImplTest {
 
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
     when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
 
     var characters =
-        service.listBootstrapCharacters(bootstrap.bootstrapToken(), "demo", "production");
+        service.listBootstrapCharacters(
+            bootstrap.bootstrapToken(), "demo", "production", connectScopeId);
 
     assertEquals(1, characters.size());
     assertEquals("char-iso-1", characters.getFirst().characterId());
@@ -1728,12 +1734,15 @@ class AccountServiceImplTest {
 
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
     when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
 
     AuthenticationException ex =
         assertThrows(
             AuthenticationException.class,
             () ->
-                service.listBootstrapCharacters(bootstrap.bootstrapToken(), "demo", "production"));
+                service.listBootstrapCharacters(
+                    bootstrap.bootstrapToken(), "demo", "production", connectScopeId));
 
     assertEquals("ADMISSION_POINTER_UNAVAILABLE", ex.getCode());
     org.mockito.Mockito.verifyNoInteractions(entityManagementClient);
@@ -1810,9 +1819,15 @@ class AccountServiceImplTest {
 
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
     when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service
+            .listBootstrapRealms(bootstrap.bootstrapToken(), "sandbox")
+            .getFirst()
+            .connectScopeId();
 
     var characters =
-        service.listBootstrapCharacters(bootstrap.bootstrapToken(), "sandbox", "production");
+        service.listBootstrapCharacters(
+            bootstrap.bootstrapToken(), "sandbox", "production", connectScopeId);
 
     assertEquals(1, characters.size());
     assertEquals("char-sandbox-1", characters.getFirst().characterId());
@@ -1822,12 +1837,13 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void listBootstrapCharactersRejectsTenantAmbiguousRealmIdentity() {
+  void listBootstrapCharactersUsesSignedScopeToDisambiguateTenantIdentity() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(
             org.mockito.ArgumentMatchers.eq(11L), org.mockito.ArgumentMatchers.anyLong()))
         .thenReturn(Optional.empty());
@@ -1858,22 +1874,53 @@ class AccountServiceImplTest {
                     .setStateScope("SHARED")
                     .setCharacterCreationPolicy("ALLOW_NEW")
                     .build()));
+    when(entityManagementClient.listCharactersByAccount(
+            7L, 11L, 44L, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+        .thenReturn(java.util.List.of());
 
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
     when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").stream()
+            .filter(realm -> realm.tenantId() == 7L)
+            .findFirst()
+            .orElseThrow()
+            .connectScopeId();
+
+    var characters =
+        service.listBootstrapCharacters(
+            bootstrap.bootstrapToken(), "demo", "production", connectScopeId);
+
+    assertTrue(characters.isEmpty());
+    org.mockito.Mockito.verify(gameSessionClient).getAdmissionPointer(7L, "demo", "production");
+    org.mockito.Mockito.verify(gameSessionClient, org.mockito.Mockito.never())
+        .getAdmissionPointer(8L, "demo", "production");
+  }
+
+  @Test
+  void listBootstrapCharactersRejectsPathThatDoesNotMatchSignedScope() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
 
     AuthenticationException ex =
         assertThrows(
             AuthenticationException.class,
             () ->
-                service.listBootstrapCharacters(bootstrap.bootstrapToken(), "demo", "production"));
+                service.listBootstrapCharacters(
+                    bootstrap.bootstrapToken(), "sandbox", "production", connectScopeId));
 
-    assertEquals("ADMISSION_POINTER_UNAVAILABLE", ex.getCode());
-    org.mockito.Mockito.verify(gameSessionClient, org.mockito.Mockito.never())
-        .getAdmissionPointer(
-            org.mockito.ArgumentMatchers.anyLong(),
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.anyString());
+    assertEquals("CONNECT_SCOPE_MISMATCH", ex.getCode());
     verifyNoInteractions(entityManagementClient);
   }
 

@@ -29,6 +29,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -80,11 +81,13 @@ public class AuthController {
   public ResponseEntity<ApiResponse<List<BootstrapCharacterDto>>> listBootstrapCharacters(
       @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
       @PathVariable String worldSlug,
-      @PathVariable String realmSlug) {
+      @PathVariable String realmSlug,
+      @RequestParam String connectScopeId) {
     String bootstrapToken = extractBearerToken(authorization);
     return ResponseEntity.ok(
         ApiResponse.success(
-            accountService.listBootstrapCharacters(bootstrapToken, worldSlug, realmSlug)));
+            accountService.listBootstrapCharacters(
+                bootstrapToken, worldSlug, realmSlug, connectScopeId)));
   }
 
   @PostMapping("/connect-token")

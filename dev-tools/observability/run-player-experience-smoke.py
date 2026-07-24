@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "dev-tools" / "smoke"))
@@ -654,7 +654,9 @@ def first_party_connect_context(config: SmokeConfig) -> dict[str, Any]:
     bootstrap = issue_player_bootstrap(config)
     require_visible_world(config, bootstrap["bootstrapToken"])
     connect_scope_id = resolve_connect_scope_id(config, bootstrap["bootstrapToken"])
-    character_name = resolve_character_name(config, bootstrap["bootstrapToken"])
+    character_name = resolve_character_name(
+        config, bootstrap["bootstrapToken"], connect_scope_id
+    )
     connect_token = issue_connect_token(config, bootstrap["bootstrapToken"], connect_scope_id)
     connect_token["characterName"] = character_name
     return connect_token
@@ -703,11 +705,17 @@ def require_visible_world(config: SmokeConfig, bootstrap_token: str) -> None:
     )
 
 
-def resolve_character_name(config: SmokeConfig, bootstrap_token: str) -> str | None:
+def resolve_character_name(
+    config: SmokeConfig, bootstrap_token: str, connect_scope_id: str
+) -> str | None:
     response = http_request_json(
         public_auth_url(
             config,
-            f"/auth/bootstrap/worlds/{quote_path(config.world)}/realms/{quote_path(config.realm_slug)}/characters",
+            (
+                f"/auth/bootstrap/worlds/{quote_path(config.world)}"
+                f"/realms/{quote_path(config.realm_slug)}/characters?"
+                f"{urlencode({'connectScopeId': connect_scope_id})}"
+            ),
         ),
         config.timeout_seconds,
         headers={"Authorization": f"Bearer {bootstrap_token}"},

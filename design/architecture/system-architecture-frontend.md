@@ -123,7 +123,7 @@ Authorization: Bearer <bootstrapToken>
      connectScopeId: "cs_demo_production_v17"
    }]
 
-GET /auth/bootstrap/worlds/demo/realms/production/characters
+GET /auth/bootstrap/worlds/demo/realms/production/characters?connectScopeId=cs_demo_production_v17
 Authorization: Bearer <bootstrapToken>
 -> [{ characterName: "Mara" }]
 
