@@ -84,7 +84,11 @@ class TickStagingServiceTest {
               @SuppressWarnings("unchecked")
               List<net.firedevops.firemud.gamesession.entity.TickEffect> effects =
                   invocation.getArgument(0);
-              savedEffects.addAll(effects);
+              for (TickEffect effect : effects) {
+                savedEffects.removeIf(
+                    existing -> existing.getEffectId().equals(effect.getEffectId()));
+                savedEffects.add(effect);
+              }
               return effects;
             })
         .when(tickEffectRepository)
@@ -736,28 +740,6 @@ class TickStagingServiceTest {
             })
         .when(tickBatchRepository)
         .save(any());
-    doAnswer(
-            invocation -> {
-              @SuppressWarnings("unchecked")
-              List<TickEffect> effects = invocation.getArgument(0);
-              for (TickEffect effect : effects) {
-                int existingIndex =
-                    java.util.stream.IntStream.range(0, savedEffects.size())
-                        .filter(
-                            index ->
-                                savedEffects.get(index).getEffectId().equals(effect.getEffectId()))
-                        .findFirst()
-                        .orElse(-1);
-                if (existingIndex >= 0) {
-                  savedEffects.set(existingIndex, effect);
-                } else {
-                  savedEffects.add(effect);
-                }
-              }
-              return effects;
-            })
-        .when(tickEffectRepository)
-        .saveAll(any());
     when(tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
             1L, 2L, "DRAINED"))
         .thenAnswer(

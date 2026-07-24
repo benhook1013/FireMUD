@@ -48,7 +48,7 @@ if grep -q 'variable is not set' "$ERR_FILE"; then
 fi
 
 if grep -q 'Defaulting to a blank string' "$ERR_FILE"; then
-  echo "verify-smoke-images allowed blank-string compose defaults:" >&2
+  echo "verify-smoke-images detected and rejected blank-string Compose defaults:" >&2
   cat "$ERR_FILE" >&2
   exit 1
 fi
@@ -59,7 +59,7 @@ SMOKE_COMPOSE_CONFIG_ONLY=true \
 bash "$ROOT_DIR/dev-tools/verify-smoke-images.sh" >"$OUT_FILE" 2>"$ERR_FILE"
 
 if grep -q 'Defaulting to a blank string' "$ERR_FILE"; then
-  echo "local-only smoke configuration allowed blank-string compose defaults:" >&2
+  echo "local-only smoke configuration detected and rejected blank-string Compose defaults:" >&2
   cat "$ERR_FILE" >&2
   exit 1
 fi

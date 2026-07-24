@@ -26,7 +26,7 @@ This document describes the continuous integration strategy for FireMUD using **
 
 ## Implementation Status
 
-The current executable blocks every player-facing production promotion class, including `rollback-compatible`, before incomplete production evidence can become promotion authority. Static CI still validates the checked-in evidence shape and available bindings, but production preflight does not yet execute the staging-lineage, expanded backup-readiness, or nested candidate recovery-controller validations behind that unconditional block. No rollback classification becomes current promotion authority until those diagnostics, recovery inventory membership, immutable evidence dereferencing, participant, confidentiality, hardening, and controlled-reopen validations are implemented.
+The current executable unconditionally blocks every player-facing production promotion class, including `rollback-compatible`, until all required production evidence and validations are complete; incomplete evidence can never become promotion authority. Static CI still validates the checked-in evidence shape and available bindings, but production preflight does not yet execute the staging-lineage, expanded backup-readiness, nested candidate recovery-controller, `PREFLIGHT-JWT-002`, or `PREFLIGHT-JWT-ROTATION-001` validations behind that block. No rollback classification becomes current promotion authority until those diagnostics, recovery inventory membership, immutable evidence dereferencing, participant, confidentiality, hardening, JWT/JWKS, and controlled-reopen validations are implemented.
 
 ---
 

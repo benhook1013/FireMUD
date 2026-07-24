@@ -59,28 +59,35 @@ PARTICIPANT_COVERAGE_EXPR = _compact_promql(
       )
     )
     or
-    (
-      recovery_required_participant_inventory_complete != bool 1
+    label_replace(
+      recovery_required_participant_inventory_complete != bool 1,
+      "participant", "__environment__", "", ""
     )
     or
-    (
-      count by (environment) (
-        recovery_required_participant_inventory
-      )
-      unless on (environment)
-      (
-        recovery_required_participant_inventory_complete == 1
-      )
-    )
-    or
-    (
-      recovery_required_participant_inventory_complete == 1
-      unless on (environment)
+    label_replace(
       (
         count by (environment) (
           recovery_required_participant_inventory
-        ) > 0
-      )
+        )
+        unless on (environment)
+        (
+          recovery_required_participant_inventory_complete == 1
+        )
+      ),
+      "participant", "__environment__", "", ""
+    )
+    or
+    label_replace(
+      (
+        recovery_required_participant_inventory_complete == 1
+        unless on (environment)
+        (
+          count by (environment) (
+            recovery_required_participant_inventory
+          ) > 0
+        )
+      ),
+      "participant", "__environment__", "", ""
     )
     """
 )
