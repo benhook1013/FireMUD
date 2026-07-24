@@ -188,6 +188,8 @@ Routine backup alerts directly use these source metrics and current artifact or 
 - `backup_artifact_lineage_invalid`
 - `backup_artifact_restore_readable`
 - `backup_artifact_restore_unreadable`
+- `recovery_required_participant_inventory`
+- `recovery_required_participant_inventory_complete`
 - `recovery_participant_convergence_blocked`
 - `recovery_participant_convergence_coverage_missing`
 - `recovery_participant_convergence_source_missing`
