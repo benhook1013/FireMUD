@@ -276,7 +276,7 @@ Session design assumes **reasonably synchronized clocks** on Game Session nodes 
 
 ### Operational Trade-Offs for Session and Resume Lifetimes
 
-`session_expiration_ms` is sized from configured JWT lifetime for initial continuity retention and cleanup, while active authorization, JWT validity, and disconnected resume remain separate policies:
+`session_expiration_ms` is an independent gameplay-continuity setting derived only from `FIREMUD_AUTH_SESSION_EXPIRATION_MS` and capped at five minutes. Active authorization, JWT validity, and disconnected resume remain separate policies:
 
 - Each JWT remains unusable after its own `exp`, regardless of the Redis TTL or gameplay binding anchor.
 - The immutable continuity anchor prevents token rotation from extending old-binding resume eligibility; it does not force a healthy connected player through fresh admission.
@@ -285,7 +285,7 @@ Session design assumes **reasonably synchronized clocks** on Game Session nodes 
 When changing authentication settings, keep these trade-offs in mind:
 
 - **Shorter JWT lifetime**
-  - Reducing `FIREMUD_AUTH_JWT_EXPIRATION_MS` changes the lifetime of newly issued `control-ui` and private player-delegation JWTs and the derived continuity-retention horizon for newly admitted gameplay bindings. It does not change an already issued token's signed `exp`, move an existing continuity anchor, or shorten a healthy uninterrupted session by itself.
+  - Reducing `FIREMUD_AUTH_JWT_EXPIRATION_MS` changes the lifetime of newly issued `control-ui` and private player-delegation JWTs. It does not change `session_expiration_ms`, an already issued token's signed `exp`, move an existing continuity anchor, or shorten a healthy uninterrupted session by itself.
 - **Different disconnected-resume policy**
   - Adjust `firemud.reconnection.policy.resume-window-ms` through the canonical effective-settings path. Increasing it never permits resume beyond the remaining logical gameplay binding lifetime.
 - **Unsupported combinations**

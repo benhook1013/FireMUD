@@ -41,7 +41,7 @@ A simple failed-password threshold that durably locks an account lets an attacke
 
 ### Trusted Source Context and Availability
 
-- Every credential-bearing call to Account carries server-derived source context, including canonical client address and connection/transport class where relevant. Gateway canonicalizes public HTTP/WebSocket addresses, and the authenticated TCP Proxy path supplies its trusted promoted address. Public clients cannot set this context directly.
+- Every credential-bearing call to Account carries server-derived source context, including canonical client address and connection/transport class where relevant. Gateway canonicalizes public HTTP/WebSocket addresses. It accepts a TCP Proxy promoted address only on the dedicated internal listener after authenticating the exact TCP Proxy workload identity, matching the configured certificate identity allowlist, validating the expected promoted-header schema/version, and verifying that the listener and network source are permitted to supply PROXY-derived context. Public listeners strip all promoted-address and proxy-context headers before classification. A missing, malformed, wrong-version, wrong-listener, or unauthenticated proxy context is rejected rather than trusted or silently downgraded to an internal source.
 - Source identifiers stored in rate-limit keys are normalized or hashed and never become metric labels. Security audit access and retention govern any raw address retained in logs.
 - Distributed credential counters use Cache/Rate-Limit Redis with bounded TTLs; they are not durable account authority and do not use Coordination Redis.
 - If shared credential-abuse enforcement is unavailable in a player-facing environment, new credential-bearing authentication fails closed with a retryable canonical outcome. Existing authenticated sessions continue under their existing authority and revocation contracts.
@@ -83,7 +83,7 @@ This preserves a more consistent rate window across process movement, but adds a
 
 ## Implementation and Proof Obligations
 
-- Extend every Account credential contract with trusted server-derived source context and prove spoofed public headers cannot influence it.
+- Extend every Account credential contract with trusted server-derived source context and prove spoofed public headers, unlisted workload identities, wrong listeners, malformed header versions, and untrusted PROXY sources cannot influence it.
 - Implement one Account-owned password and email-code abuse policy shared by REST and gRPC paths, with bounded TTL counters on Cache/Rate-Limit Redis.
 - Prove unknown-account, wrong-secret, throttled-candidate, and locked-account behavior does not provide a practical public enumeration oracle.
 - Prove ordinary failed attempts cannot enter durable `security_locked`; prove a real security-lock transition audits, revokes, and enters recovery correctly.

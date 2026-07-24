@@ -19,7 +19,7 @@ The UUID target applies only to UUID-governed logical identifiers; it is not a b
 - `accountId`, `tenantId`, `versionId`, `gameInstanceId`, and `characterId` are UUID-governed canonical UUID string logical identifiers. Authored template identifiers are also client-allocatable UUID strings in that logical-identifier family.
 - Services treat these identifiers as opaque values unless a contract specifically requires UUID-shape validation. Consumers must not derive authority, routing, or related identifiers from their contents.
 - Services may maintain numeric primary and join keys internally. Private database keys never replace or appear as reversible encodings of the canonical UUID identity in public or cross-service contracts.
-- Live `roomInstanceId`, `entityId`, and `itemInstanceId` are the deliberate typed scoped-numeric runtime exception: they may be stable numbers allocated within `(tenantId, gameInstanceId)` when the owning runtime guarantees concurrency safety and non-reuse for the required lifetime. They are not interchangeable with one another or with a UUID-governed logical identifier.
+- `regionInstanceId` and `zoneInstanceId` remain UUID-governed runtime identifiers. Live `roomInstanceId`, `entityId`, and `itemInstanceId` are the deliberate typed scoped-numeric runtime exception: they may be stable numbers allocated within `(tenantId, gameInstanceId)` when the owning runtime guarantees concurrency safety and non-reuse for the required lifetime. They are not interchangeable with one another or with a UUID-governed logical identifier. Extending that exception to region or zone instances requires a future accepted architecture decision.
 - `tenantSlug` is a stable human-readable selector used only in player-facing lobby flows and resolved server-side to `tenantId`; it is not durable tenant identity.
 - Identifier values are never authorization credentials. Every lookup validates the complete tenant/runtime scope and caller authority even when the ID is globally unique or difficult to guess.
 
@@ -34,7 +34,7 @@ World data uses two distinct identifier families. Template identifiers must not 
   - `RoomTemplateRef` = `(tenantId, versionId, roomTemplateId)`
   - template IDs are client-allocatable UUID logical identities, allowing independently created authored graph objects to reference one another before persistence
 - **Instance identifiers (runtime, instance-scoped)** – keyed by `(tenantId, gameInstanceId)`:
-  - `regionInstanceId`, `zoneInstanceId`, `roomInstanceId`
+  - `regionInstanceId`, `zoneInstanceId` (UUID-governed unless a future accepted decision extends the scoped numeric exception), `roomInstanceId`
   - `RoomInstanceRef` = `(tenantId, gameInstanceId, roomInstanceId)`
   - `roomInstanceId` is the canonical cross-service runtime room identity. It may be numeric, but callers use it only inside the complete typed scope and must not infer storage location or authorization from its value.
 

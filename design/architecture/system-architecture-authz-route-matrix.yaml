@@ -69,12 +69,18 @@ routes:
     route: REALMS
     scope: tenant
     classification: public_production_onboarding
+    auth_path: game_session_authenticated_context
+    accepted_token_profiles: []
+    delegated_subject: authenticated_session_account
     visibility_contract: membership_or_public_production_or_realm_access_grant
     required_live_checks: [realm_visibility, runtime_entitlements]
   - service: game-session-service
     route: CHARS
     scope: tenant
     classification: public_production_onboarding
+    auth_path: game_session_authenticated_context
+    accepted_token_profiles: []
+    delegated_subject: authenticated_session_account
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements]
@@ -82,6 +88,9 @@ routes:
     route: JOIN
     scope: tenant
     classification: public_production_onboarding
+    auth_path: game_session_authenticated_context
+    accepted_token_profiles: []
+    delegated_subject: authenticated_session_account
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
     required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
@@ -90,11 +99,19 @@ routes:
     route: PLAY
     scope: tenant
     classification: public_production_onboarding
+    auth_path: game_session_authenticated_context
+    accepted_token_profiles: []
+    delegated_subject: authenticated_session_account
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
     canonical_errors:
       any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE]
+    canonical_target:
+      membership: existing_caller_bound_membership_required
+      membership_creation: play_never_creates_membership
+    implementation_status:
+      known_drift: connect_token_and_play_may_still_invoke_ensure_public_production_player_membership
   - service: account-service
     route: POST /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters
     scope: tenant
@@ -184,6 +201,9 @@ routes:
     classification: account_scoped
     subject_binding: caller_account_id
     accepted_token_profiles: [control-ui, player-bootstrap]
+    accepted_token_profile_audiences:
+      control-ui: control-ui
+      player-bootstrap: player-bootstrap
     idempotent_retry_contract: absent_exact_token_record_noop_after_local_validation
   - service: account-service
     route: AuthLogoutAll
@@ -191,6 +211,9 @@ routes:
     classification: account_scoped
     subject_binding: caller_account_id
     accepted_token_profiles: [control-ui, player-bootstrap]
+    accepted_token_profile_audiences:
+      control-ui: control-ui
+      player-bootstrap: player-bootstrap
     idempotent_retry_contract: superseded_token_noop_after_durable_logout_all_proof
   - service: account-service
     route: GetProfile

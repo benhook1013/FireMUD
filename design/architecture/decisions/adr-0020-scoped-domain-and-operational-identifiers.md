@@ -30,7 +30,7 @@ Identifier safety comes from declared kind, complete scope, ownership, stability
 
 - `accountId`, `tenantId`, `versionId`, `gameInstanceId`, and `characterId` are opaque UUID logical identifiers. Authored template IDs are client-allocatable opaque UUID logical identifiers.
 - Human-readable version numbers, slugs, names, paths, and menu indices are selectors or presentation values, not substitutes for those durable identities.
-- A canonical cross-service reference carries an explicit object kind and complete scope. Template references use `(tenantId, versionId, templateId)`; runtime references use `(tenantId, gameInstanceId, instanceId)`.
+- A canonical cross-service reference carries an explicit object kind and complete scope. Template references use `(tenantId, versionId, templateId)`; runtime references use `(objectKind, tenantId, gameInstanceId, instanceId)`.
 - APIs use typed reference messages so an object kind is part of the wire type and cannot collide with another identifier family. A bare generic `id`, or a shared string/id pair whose kind is inferred by the consumer, is not a sufficient consequential cross-service contract.
 - Services may keep numeric primary and join keys for local persistence and query efficiency. Those keys remain private implementation details and may not replace or be reversibly exposed as the canonical UUID identity.
 - Template UUIDs may be allocated before persistence so independently created graph objects can refer to one another without a database round trip. Import/export preserves them when retaining object identity and explicitly remaps them when cloning or resolving a collision.
