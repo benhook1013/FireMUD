@@ -29,6 +29,15 @@ if actual_ampersand_anchor != expected_ampersand_anchor:
         f"GitHub ampersand anchor mismatch: {actual_ampersand_anchor!r}"
     )
 
+expected_slash_anchor = "jaeger--opentelemetry-collector-down"
+actual_slash_anchor = validator._github_anchor_from_heading(
+    "Jaeger / OpenTelemetry Collector Down"
+)
+if actual_slash_anchor != expected_slash_anchor:
+    raise AssertionError(
+        f"GitHub slash anchor mismatch: {actual_slash_anchor!r}"
+    )
+
 rules_path = root / "k8s/monitoring/prometheus-rules-firemud.yaml"
 valid_text = rules_path.read_text(encoding="utf-8")
 

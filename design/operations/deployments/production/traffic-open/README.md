@@ -33,7 +33,7 @@ Required fields:
 - `recoveryContractFingerprint`
 - `sourceEnvironmentBinding`
 - `drillTargetBoundary`
-- `trafficExposure` (`player-facing-first-live` or `player-facing-reopen`, matching `eventType`; the referenced baseline drill retains `isolated-drill` in its own recovery record)
+- `trafficExposure` (`player-facing-first-live` when `eventType=first-live`, or `player-facing-reopen` when `eventType=reopen`; the referenced baseline drill retains `isolated-drill` in its own recovery record)
 - `backupConfidentialityEvidence`
 - `trafficOpenedAt` when finalized
 - `evidenceRefs`

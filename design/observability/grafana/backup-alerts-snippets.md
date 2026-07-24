@@ -176,18 +176,23 @@ Example alerts for missed backups and verification runs:
     description: A controller-authoritative recovery release was attempted before cold-start convergence completed. Keep traffic quarantined and investigate immediately.
 ```
 
-Routine backup alerts use these current artifact and recovery recordings:
+Routine backup alerts directly use these source metrics and current artifact or recovery recordings:
 
+- `backup_last_success_timestamp_seconds`
+- `backup_verify_last_success_timestamp_seconds`
+- `backup_restore_drill_last_success_timestamp_seconds`
 - `backup_pipeline_recent_backup_slo_breached`
 - `backup_pipeline_recent_verification_slo_breached`
 - `backup_pipeline_recent_restore_drill_slo_breached`
+- `backup_artifact_lineage_valid`
 - `backup_artifact_lineage_invalid`
+- `backup_artifact_restore_readable`
 - `backup_artifact_restore_unreadable`
 - `recovery_participant_convergence_blocked`
-- `recovery_environment_convergence_blocked`
 - `recovery_participant_convergence_coverage_missing`
 - `recovery_participant_convergence_source_missing`
+- `recovery_reopen_attempt_total`
 
-Recovery participant coverage is fail-closed: `recovery_required_participant_inventory{environment,participant}` is the controller projection of the authoritative required-participant inventory, and every required participant must have current `recovery_participant_convergence_state{environment,participant,state}` coverage. The controller publishes this inventory atomically per environment: `recovery_required_participant_inventory_complete{environment}` remains `0` during refresh and becomes `1` only after the complete authoritative set is visible. `recovery_participant_convergence_coverage_missing` preserves the affected environment and participant labels, using the reserved `participant="__environment__"` sentinel for environment-level inventory-completeness failures, and blocks readiness for that environment. Total disappearance of either required inventory family emits the separate global `recovery_participant_convergence_source_missing{source_family}` monitoring-gap signal. That global signal prevents Prometheus from serving as readiness evidence until restored, but it does not replace or mutate durable controller state.
+Recovery participant coverage is fail-closed: `recovery_required_participant_inventory{environment,participant}` is the controller projection of the authoritative required-participant inventory, and every required participant must have current `recovery_participant_convergence_state{environment,participant,state}` coverage. The controller publishes this inventory atomically per environment: `recovery_required_participant_inventory_complete{environment}` remains `0` during refresh and becomes `1` only after the complete authoritative set is visible. `recovery_participant_convergence_coverage_missing` preserves the affected environment and participant labels, using the reserved `participant="__environment__"` sentinel for environment-level inventory-completeness failures, and blocks readiness for that environment. Total disappearance of either required inventory family emits the separate global `recovery_participant_convergence_source_missing{source_family}` monitoring-gap signal. That global signal prevents Prometheus from serving as readiness evidence until restored, but it does not replace or mutate durable controller state. The aggregate `recovery_environment_convergence_blocked` recording remains available to environment-level dashboards and incident triage; no alert in this snippet uses it directly.
 
 Environment-specific rulesets may tune thresholds, severities, and label values, but should preserve the `owner` and `runbook` annotations so alerts always point back to the relevant documentation. Tick-pause metrics belong to maintenance/reset dashboards and must not be used as routine backup health or traffic-reopen proof.
