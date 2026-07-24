@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The accepted cache and freshness policy is not implemented. Account currently restamps responses while deriving version fields from subscription row IDs, Game Session checks only `gameplayAvailable`, and no runtime cache, billing-event sequence consumer, source-freshness validation, instance-lifecycle enforcement, or hard-suspension consumer exists. Current behavior also blocks `past_due` contrary to the accepted lifecycle.
+
 ## Decision Record
 
 - Decision date: 2026-07-19
@@ -16,7 +20,7 @@ Accepted
 
 Account Service owns tenant subscription, quota, and hosting-entitlement truth. The previous target required every `PLAY`, reconnect, instance start/restart, and rollback to obtain a snapshot no older than 15 seconds and fail closed whenever Account was uncertain. That minimizes a short period of post-suspension usage, but it also makes Account availability part of reconnect and recovery for already-paid capacity. A brief Account outage following transport or runtime loss could therefore keep paid players out of an otherwise healthy game while uninterrupted players remained connected.
 
-The implementation does not yet enforce the previous freshness contract. Account stamps responses with the current time while deriving both version fields from subscription row IDs; Game Session checks only `gameplayAvailable`. No runtime cache, billing-event sequence tracking, source-freshness validation, instance-start enforcement, or hard-suspension consumer exists. Current implementation also blocks `past_due` even though the canonical lifecycle keeps it playable.
+The runtime therefore needs operation-specific freshness rather than one uniform availability rule.
 
 ## Decision
 

@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The machine-readable matrix and substantial static Gateway route/blocking tests exist, but the route inventory is incomplete and the matrix is not consumed by generated completeness checks or shared runtime middleware. Current JWT middleware does not yet enforce all documented route-class, token-profile, authority-generation, and cross-tenant distinctions.
+
 ## Decision Record
 
 - Decision date: 2026-07-18
@@ -16,7 +20,7 @@ Accepted
 
 FireMUD exposes HTTP, gRPC, WebSocket, text-protocol, and operator surfaces across many services. Service-local role checks or broad edge routing can silently diverge on token profile, tenant scope, revocation, cross-tenant access, and redaction. A newly added endpoint must not become reachable merely because it matches a Gateway prefix or inherits an approximate role check.
 
-The repository contains a machine-readable authorization matrix and substantial static Gateway route/blocking tests, but the matrix is not currently consumed by CI or shared middleware. Several Gateway routes remain broad families, and current JWT middleware does not implement the documented route-class, token-profile, authority-generation, and cross-tenant distinctions. The governance contract is therefore accepted target state, not completed proof.
+The repository needs one governance contract spanning broad route families and service-local checks. Acceptance of that target does not imply complete runtime proof.
 
 ## Decision
 

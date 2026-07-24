@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+Kubernetes Secret mounts, cert-manager examples, expected-binding preflight, and secret-compliance evidence exist, but the repository does not satisfy the complete target. Base manifests mount JWT signing material beyond Account, gRPC workloads commonly share one TLS Secret, and production Secret encryption-at-rest/audit proof plus automated rotation/convergence remain incomplete.
+
 ## Decision Record
 
 - Decision date: 2026-07-19
@@ -17,8 +21,6 @@ Accepted
 FireMUD must deliver database credentials, JWT signing keys, mTLS identities, operator credentials, object-store credentials, and recovery material without committing secrets to the repository or coupling every application to a secret vendor. The previous target described Kubernetes Secrets as one unified secret store and declared external systems out of scope. That is simple, but it conflates the workload delivery interface with the operator's possible upstream custody system and does not make the required Kubernetes hardening, per-workload identity, or multi-datacenter boundary precise.
 
 Mandating Vault now would add storage, TLS, authentication, unseal/recovery, backup, high-availability, rotation, and incident-response obligations to every deployment, including hobby/self-hosted environments. Running a Vault container beside the same Compose stack while storing its recovery material in that stack would add complexity without a meaningful independent trust boundary.
-
-The repository already has Kubernetes Secret mounts, cert-manager examples, expected-binding preflight, and secret-compliance evidence. It does not yet satisfy the complete target: base manifests mount JWT signing material beyond Account, gRPC workloads commonly share one TLS Secret, and production Secret encryption-at-rest/audit proof plus automated rotation/convergence remain incomplete.
 
 ## Decision
 

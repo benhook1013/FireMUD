@@ -101,6 +101,10 @@ if grep -Fq '    name: Smoke Gate' "$smoke_path"; then
   echo "metadata-only smoke runs must not emit the branch-protected Smoke Gate name" >&2
   exit 1
 fi
+if grep -Eq '^  smoke-lite:' "$smoke_path"; then
+  echo "smoke.yml must not restore the redundant smoke-lite job" >&2
+  exit 1
+fi
 
 for job in \
   changes \

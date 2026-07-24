@@ -16,6 +16,9 @@ token_profiles:
   - profile: player-bootstrap
     audience: player-bootstrap
     kind: gameplay_bootstrap_user
+  - profile: gameplay-connect
+    audience: gameplay-connect
+    kind: gameplay_handshake
   - profile: game-session-account-delegation
     audience: account-service
     kind: private_player_delegation
@@ -234,6 +237,8 @@ routes:
     classification: player_bootstrap_tenant
     auth_path: player_bootstrap
     accepted_token_profiles: [player-bootstrap]
+    issued_token_profile: gameplay-connect
+    issued_token_audience: gameplay-connect
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
     required_live_checks: [membership, membership_generation, runtime_entitlements, admission_pointer]

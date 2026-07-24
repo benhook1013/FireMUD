@@ -111,10 +111,10 @@ The implemented adopters are world creation/activation/termination, publish/rele
 
 | Owner | Live authority and capability | Contract boundary |
 | --- | --- | --- |
-| Common platform/security | Internal auth propagation, service identity parsing, gRPC app-error representation/observability, and proto time-field guard | Shared Java seams, gRPC helpers, Gradle/root verification |
+| Common platform/security | Internal auth propagation, service identity parsing, the current legacy gameplay-attestation implementation, gRPC app-error representation/observability, and proto time-field guard | Shared Java seams, legacy attestation helpers pending replacement, gRPC helpers, Gradle/root verification |
 | Owning domain services | Domain authority, tenant/access enforcement, local transaction boundary, durable local state, and app-error mapping | Service REST/gRPC APIs and service-local Flyway schema |
 | Logging & Admin | Non-destructive log-event ingress, moderation policy definition/evaluation, moderation/report persistence, and operator projections | Audit/log-event and moderation/control-plane REST/gRPC contracts |
-| Game Session | Player-session authority, the current legacy gameplay-attestation implementation, lifecycle finalization/compensation, tick runtime coordination, and gameplay control-plane delegation | Session/gameplay gRPC, legacy attestation fields pending replacement, Redis/runtime records, and durable SQL ledgers |
+| Game Session | Player-session authority, legacy gameplay-attestation consumption and forwarding, lifecycle finalization/compensation, tick runtime coordination, and gameplay control-plane delegation | Session/gameplay gRPC, attestation call sites pending replacement, Redis/runtime records, and durable SQL ledgers |
 | Common saga | Shared saga repository ownership and short synchronous saga persistence/runner contract | Schema-qualified jOOQ repositories and saga steps |
 | jOOQ/Flyway tooling | Generated relational access, migration history, service-schema conventions, and Postgres-backed proof support | Build/codegen tasks, Flyway resources, reset/bootstrap tooling |
 | Temporal | Durable control-plane workflow execution, identity/idempotency conventions, and canonical workflow operator read metadata | Workflow/activity contracts and operator projections |

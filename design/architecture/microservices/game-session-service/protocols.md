@@ -32,6 +32,7 @@ The normal happy path for a human player should therefore be:
 
 ```text
 LOGIN <username> <secret>
+JOIN <world> (first public-production entry only)
 PLAY <world> [realm] [character]
 ```
 
@@ -68,7 +69,7 @@ Telnet and WebSocket clients share the line-based syntax, but transport context 
 
 Prompt-based exchanges are planned but not implemented in this slice for Telnet and non-bootstrap clients. On those transports, bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <secret>.` First-party `/ws/game/**` sessions with a validated connect context are the exception: bare `LOGIN` consumes the bootstrap-backed context and must not ask the browser to resend credentials.
 
-After `LOGIN` succeeds, the normal player-facing expectation is `PLAY <world> [realm] [character]`. `REALMS` and `CHARS` remain available as lobby helper commands when the player's choice is ambiguous or when they want to browse. `PLAY` is the gameplay-admission and gameplay-binding step; it is not merely a continuation of authentication. This step binds the authenticated connection to a world-scoped gameplay session and enforces tenant authorization, realm routing, public-admission rules, and entitlements.
+After `LOGIN` succeeds, an existing member normally issues `PLAY <world> [realm] [character]`; a first-time public-production player must issue `JOIN <world>` once before `PLAY`. `REALMS` and `CHARS` remain available as lobby helper commands when the player's choice is ambiguous or when they want to browse. `PLAY` is the gameplay-admission and gameplay-binding step; it is not merely a continuation of authentication. This step binds the authenticated connection to a world-scoped gameplay session and enforces tenant authorization, realm routing, public-admission rules, and entitlements.
 
 Handshake failures such as HTTP `403` `CONNECT_TOKEN_REJECTED` or `POLICY_DENY` happen before the gameplay protocol is established and therefore are not emitted as text-protocol `ERROR <CODE>` frames. The command examples below begin only after a socket is already open and the line-based gameplay protocol is active.
 
@@ -95,6 +96,9 @@ OK WORLDS
 
 LOGIN demo@example.com swordfish
 OK LOGIN Logged in as demo@example.com
+
+JOIN demo
+OK JOIN Joined Demo World
 
 REALMS 1
 OK REALMS

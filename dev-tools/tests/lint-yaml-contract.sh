@@ -8,6 +8,7 @@ trap 'rm -rf "$TEMP_DIR"' EXIT
 
 BIN_DIR="$TEMP_DIR/bin"
 ARGS_FILE="$TEMP_DIR/yamllint-args"
+GIT_ARGS_FILE="$TEMP_DIR/git-ls-files-args"
 mkdir -p "$BIN_DIR"
 
 cat > "$BIN_DIR/git" <<'EOF'
@@ -19,14 +20,13 @@ if [[ "${1:-}" != "ls-files" ]]; then
   exit 1
 fi
 
-for pathspec in "${@:2}"; do
-  if [[ "$pathspec" == "design/architecture/*.yaml" ]]; then
-    printf '%s\n' 'design/architecture/system-architecture-authz-route-matrix.yaml'
-    exit 0
-  fi
-done
-
-exit 0
+printf '%s\n' "${@:2}" > "$GIT_LS_FILES_ARGS_FILE"
+printf '%s\n' \
+  '.github/workflows/ci.yml' \
+  'services/account-service/src/main/resources/application.yml' \
+  'services/account-service/src/main/resources/openapi.yaml' \
+  'design/architecture/system-architecture-authz-route-matrix.yaml' \
+  'design/operations/environments/production/expected-bindings.yaml'
 EOF
 
 cat > "$BIN_DIR/yamllint" <<'EOF'
@@ -42,8 +42,47 @@ printf '%s\n' "${@:3}" > "$YAMLLINT_ARGS_FILE"
 EOF
 
 chmod +x "$BIN_DIR/git" "$BIN_DIR/yamllint"
-PATH="$BIN_DIR:$PATH" YAMLLINT_ARGS_FILE="$ARGS_FILE" bash "$SCRIPT"
+PATH="$BIN_DIR:$PATH" \
+  GIT_LS_FILES_ARGS_FILE="$GIT_ARGS_FILE" \
+  YAMLLINT_ARGS_FILE="$ARGS_FILE" \
+  bash "$SCRIPT"
 
-grep -Fqx 'design/architecture/system-architecture-authz-route-matrix.yaml' "$ARGS_FILE"
+for expected_file in \
+  '.github/workflows/ci.yml' \
+  'services/account-service/src/main/resources/application.yml' \
+  'services/account-service/src/main/resources/openapi.yaml' \
+  'design/architecture/system-architecture-authz-route-matrix.yaml' \
+  'design/operations/environments/production/expected-bindings.yaml'; do
+  grep -Fqx "$expected_file" "$ARGS_FILE"
+done
+
+for expected_pathspec in \
+  '.github/workflows/*.yml' \
+  'docker/*.yml' \
+  'services/*/src/main/resources/*.yml' \
+  'services/*/src/main/resources/*.yaml' \
+  'services/*/src/test/resources/*.yml' \
+  'services/*/src/test/resources/*.yaml' \
+  'design/architecture/*.yml' \
+  'design/architecture/*.yaml' \
+  'design/architecture/**/*.yml' \
+  'design/architecture/**/*.yaml' \
+  'design/operations/**/*.yml' \
+  'design/operations/**/*.yaml' \
+  'k8s/**/*.yml' \
+  'k8s/**/*.yaml' \
+  ':!:k8s/base/**' \
+  ':!:k8s/minio/**' \
+  ':!:k8s/monitoring/**' \
+  ':!:k8s/network-policies/**' \
+  ':!:k8s/postgres/**' \
+  ':!:k8s/preview/cluster-issuers.yaml' \
+  ':!:k8s/preview/preview-deployer-rbac.yaml' \
+  ':!:k8s/velero/minio.yaml' \
+  ':!:k8s/velero/schedule.yaml' \
+  ':!:k8s/velero/verify-backups-cronjob.yaml' \
+  ':!:k8s/helm/**/templates/**'; do
+  grep -Fqx "$expected_pathspec" "$GIT_ARGS_FILE"
+done
 
 echo "lint YAML enumeration contract checks passed"

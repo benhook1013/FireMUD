@@ -77,7 +77,7 @@ Account Service issues the exact JWT profiles defined below for control-plane UI
   - `"tenant-abc"` -> `["tenantAdmin", "designer"]`
   - `"tenant-def"` -> `["moderator"]`
 
-Tokens are short-lived and internal only. Gameplay context (for example `characterId` and `tenantId`) is stored in Redis and sent through typed command envelopes or `PlayerExecutionContext` rather than embedded in end-user JWT contracts.
+First-party `control-ui` and `player-bootstrap` JWTs are short-lived bootstrap/control credentials and never become gameplay command authority. Gameplay context (for example `characterId` and `tenantId`) lives in Game Session bindings and is sent through typed command envelopes or `PlayerExecutionContext` rather than embedded in those end-user JWT contracts. The one-use `gameplay-connect` JWT ends at Gateway, and receiver-specific private delegation JWTs remain backend material for their named receiver.
 
 ### Token Profiles and Audiences
 
@@ -95,6 +95,11 @@ To keep trust boundaries clear, FireMUD has exactly these JWT profile categories
   - Carried only by first-party gameplay SPAs or mobile clients, stored in memory only, and used only for bootstrap discovery and `POST /auth/connect-token`.
   - Lifetime: intentionally short (target <= 5 minutes). Expiry or revocation requires the first-party gameplay client to obtain a fresh bootstrap token before continuing gameplay bootstrap.
   - Full-page reload or process restart is treated the same way as token loss: the client re-enters the bootstrap flow from `POST /auth/player-bootstrap` (or an equivalent future explicit bootstrap-restoration endpoint if one is added). The architecture does not currently define a hidden refresh token or silent bootstrap-restoration mechanism.
+
+- **Gameplay-connect JWTs**
+  - Issued by Account after bootstrap discovery and current membership, entitlement, and admission checks with profile and audience `gameplay-connect`.
+  - Carried exactly once to the Gateway gameplay WebSocket handshake through the approved header or HttpOnly cookie carrier and consumed under the replay contract in ADR 0029.
+  - Gateway validates and consumes this token, strips its carrier, and forwards only the signed connect context. Gameplay commands and backend services never accept it as authorization.
 
 - **Receiver-specific private player-delegation JWTs**
   - Issued by the Account Service only for a named receiver and delegated player-binding operation. The current profile is `game-session-account-delegation`.

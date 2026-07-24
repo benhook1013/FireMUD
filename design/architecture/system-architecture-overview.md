@@ -253,7 +253,7 @@ Within Redis, keys are further partitioned by responsibility and, in production,
   - Examples: gameplay sessions, tick-region leases, command queues, timers, and automation tick coordination.  
   - Canonical prefixes include (non-exhaustive):  
     - `session:game:*` – gameplay session bindings and takeover metadata (Game Session-owned).
-    - `session:auth:*` – issued-token registry and revocation/version prefixes (Account-owned).
+    - `session:auth:token:<tokenHash>` – exact issued-token registry records projected by Account; separate Account-owned authority generations provide bulk revocation/version authority.
     - `tick:*` – tick queues, region scheduling, and pacing-related state.  
     - `timer:*`, `retry:*`, `tick-executor-lease:*` – tick coordination helpers owned by Game Session.
     - `automation:*` – automation and scripting coordination keys owned by Automation & Scripting Service (other services interact via gRPC APIs rather than writing these keys directly).

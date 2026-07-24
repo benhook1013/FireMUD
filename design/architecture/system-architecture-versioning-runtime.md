@@ -555,7 +555,7 @@ Realm-routing contract (required):
   - the separately versioned catalog/policy reference used for visibility and public-production reads,
   - `updatedAt`,
   - `updatedBy` / change reason for audit.
-- `REALMS`, connect-token issuance, admission (`PLAY`), and runtime control-plane operations must read these records as the source of truth for realm selection and gameplay-admissible instance routing.
+- `WORLDS`, `REALMS`, `CHARS`, bootstrap discovery, connect-token issuance, admission (`PLAY`), reconnect validation, and runtime control-plane operations must consume the same catalog/policy plus routing-pointer authority for realm selection and gameplay-admissible instance routing.
 - Routing updates use an atomic database compare-and-set on the stable tenant-qualified `{tenantId, worldSlug, realmSlug}` identity, with the expected `pointerVersion` included in the update predicate and advanced in the stored value. Failed CAS must not admit or expose dual-admissible state for the same realm. The expected version is required for an existing record, and route state, audit, idempotent request outcome, and prepared-cutover execution commit atomically.
 - Ownership: Game Session Service is the sole writer and system of record for gameplay realm-routing state; other services consume via API/read models and must not write routing state directly.
 - API surface: Game Session exposes control-plane APIs for reading/updating realm-routing state. All launch, cutover, rollback, and fork lifecycle workflows must use these APIs rather than direct table writes.

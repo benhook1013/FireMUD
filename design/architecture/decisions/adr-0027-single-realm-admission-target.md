@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+Current routing has one required target and a read-then-write expected-version check, but cannot represent `CLOSED`, uses a non-tenant-qualified uniqueness constraint, lacks database-level CAS, records prepared-cutover execution after the pointer transaction, and does not implement the accepted bounded source-drain lifecycle. Focused sequential routing proof is not concurrent CAS or crash-boundary proof.
+
 ## Decision Record
 
 - Decision date: 2026-07-19
@@ -16,7 +20,7 @@ Accepted
 
 A player-facing realm such as `production` is a stable logical destination. A `gameInstanceId` identifies one concrete running world timeline, not a Game Session pod. FireMUD can run multiple pods and distribute fenced region execution inside one game instance without presenting players with separate copies of the world.
 
-The prior design correctly routed each realm to one Game Session-owned instance, but described every player-addressable realm as always having exactly one target. That cannot represent deliberate closure or maintenance cleanly. It also did not separate admission routing from display metadata or from the continuing authority of an already admitted session. The current implementation further provides only a read-then-write version check rather than an atomic database compare-and-set, uses a non-tenant-qualified uniqueness constraint, and records prepared-cutover execution after the pointer transaction.
+The prior design correctly routed each realm to one Game Session-owned instance, but described every player-addressable realm as always having exactly one target. That cannot represent deliberate closure or maintenance cleanly. It also did not separate admission routing from display metadata or from the continuing authority of an already admitted session.
 
 ## Decision
 

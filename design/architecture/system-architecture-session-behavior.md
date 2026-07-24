@@ -107,7 +107,7 @@ Each gameplay session binding must store the server-side auth token identity it 
 - `authTokenIssuedAt` (`iat`) – the issuance time of that JWT.
 - `authTokenExpiresAt` (`exp`) – the deadline used to schedule rotation before expiry.
 - `membershipVersion` – the latest authoritative tenant-membership version used when the session was admitted or last refreshed.
-- When roles are refreshed mid-session, Game Session must update the stored `authTokenHash` and `authTokenIssuedAt` in the gameplay session binding and persist the refreshed `membershipVersion` when tenant membership authority is consulted.
+- When roles or private delegation are refreshed mid-session, Game Session must atomically update `authTokenHash`, `authTokenIssuedAt`, and `authTokenExpiresAt` in the gameplay session binding and persist the refreshed `membershipVersion` when tenant membership authority is consulted.
 
 On reconnect/resume (after the client re-`LOGIN`s and re-`PLAY`s), Game Session must load the gameplay session binding and confirm:
 

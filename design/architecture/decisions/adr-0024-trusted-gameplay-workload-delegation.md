@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The target unsigned `PlayerExecutionContext`, concrete workload identity, and exact method allowlists are only partially implemented. Legacy `SessionAttestation` helpers, request fields, signing/verification, and call sites remain and require direct replacement; current focused scope-validation and caller checks do not yet prove complete workload/method coverage.
+
 ## Decision Record
 
 - Decision date: 2026-07-19

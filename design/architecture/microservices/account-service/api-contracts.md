@@ -4,9 +4,9 @@ This document defines the Account Service REST and gRPC contracts, authenticatio
 
 The authoritative REST schema source lives in [../../../../services/account-service/src/main/resources/openapi.yaml](../../../../services/account-service/src/main/resources/openapi.yaml). Proto definitions are the authoritative gRPC source.
 
-## Implementation Notes
+## Implementation Status
 
-The account lifecycle, full-account export, tenant-scoped export, and deletion precondition contracts below are implemented at the current Account Service boundary. `ExportAccount` and `DeleteAccount` are account-scoped and no longer accept a caller-selected `tenantId`; `ExportTenantData` is the separate tenant-scoped recovery/export surface. Password reset, username reminder, and email-verification tokens are account-scoped rather than tenant-keyed.
+The account lifecycle, full-account export, tenant-scoped export, and deletion precondition contracts below are implemented at the current Account Service boundary. `ExportAccount` and `DeleteAccount` are account-scoped and no longer accept a caller-selected `tenantId`; `ExportTenantData` is the separate tenant-scoped recovery/export surface. Password reset, username reminder, and email-verification tokens are account-scoped rather than tenant-keyed. Explicit `JOIN` / `Join & Play` is not implemented: current connect-token and `PLAY` paths may invoke `EnsurePublicProductionPlayerMembership` implicitly. That is recorded drift; the target contracts below require an explicit join and return `JOIN_REQUIRED` from later admission surfaces when membership is absent.
 
 ## gRPC APIs
 
@@ -33,7 +33,7 @@ The account lifecycle, full-account export, tenant-scoped export, and deletion p
 - `IssueConnectToken` – issue short-lived gameplay connect token for `/ws/game/**` handshake policy after resolving discovery `connectScopeId`, validating live membership and the current applicable membership authority generation, public admission, runtime entitlements, and the current admission pointer for the target `{tenantId, worldSlug, realmSlug, gameInstanceId}`.
   - Required behavior: `connectScopeId` is an opaque short-lived selector for one caller-visible realm target, must be revalidated against current visibility/grant state and current admission-pointer state at issuance time, and must fail closed with `CONNECT_SCOPE_MISMATCH` or `ADMISSION_POINTER_UNAVAILABLE` when the earlier discovery target is no longer admissible.
   - Required behavior: `requestId` is the idempotency key for issuance. Retrying the same `{accountId, connectScopeId, requestId}` must return the same token payload or the same deterministic application failure.
-- `EnsurePublicProductionPlayerMembership` – current proto RPC name for the public-production membership seam. Its target semantics are the caller's explicit open-enrollment join for the default public production realm, idempotently creating or returning the durable `player` membership and returning its monotonic `membershipVersion`; current implementation status is tracked separately and remains implicit at connect/`PLAY`.
+- `EnsurePublicProductionPlayerMembership` – current proto RPC name for the public-production membership seam. Its canonical semantics are the caller's explicit open-enrollment join for the default public production realm, idempotently creating or returning the durable `player` membership and returning its monotonic `membershipVersion`.
   - Required behavior: valid only for the tenant's current default public production realm, must fail closed for non-production realms, must treat `requestId` as the attempt idempotency key, and must emit one durable audit/event record on successful first-join creation.
   - Required failure codes at minimum: `PUBLIC_PRODUCTION_ADMISSION_DENIED`, `ADMISSION_POINTER_UNAVAILABLE`, `TENANT_BILLING_BLOCKED`.
 - `GetCallerTenantMembership` – return authoritative caller-bound account-tenant membership and roles for billing-safe mutation checks.

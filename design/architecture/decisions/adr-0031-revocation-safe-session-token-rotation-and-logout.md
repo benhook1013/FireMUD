@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+There is no complete periodic rotation or generation-bound refresh path. The role-refresh service is a placeholder, gameplay session state does not yet implement the complete token metadata and atomic replacement contract, and Account logout/logout-all authority-generation workflows are absent.
+
 ## Decision Record
 
 - Decision date: 2026-07-19
@@ -16,7 +20,7 @@ Accepted
 
 A gameplay connection may remain active longer than the private `game-session-account-delegation` JWT that Game Session uses for Account calls. Without planned rotation, healthy long-running sessions fail at token expiry. A refresh surface that trusts only Game Session's workload identity can create the opposite problem: logout-all, password reset, security lock, or membership revocation may invalidate the current token and then lose a race to a newly issued token with a later `iat`.
 
-The current target already requires periodic refresh, atomic binding replacement, idempotent per-token logout, and generation-based logout-all. The review retains those boundaries and makes refresh lineage, authority generations, expiry scheduling, overlap, and logout scope explicit. Current implementation has no complete periodic rotation or refresh-generation path; the role-refresh service is a placeholder, gameplay session state lacks the complete target token metadata, and Account logout/logout-all authority-generation workflows are absent.
+The current target already requires periodic refresh, atomic binding replacement, idempotent per-token logout, and generation-based logout-all. The review retains those boundaries and makes refresh lineage, authority generations, expiry scheduling, overlap, and logout scope explicit.
 
 ## Decision
 

@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+No complete producer/consumer, monotonic membership version, authority-generation workflow, bounded active-session index, or hard-cutoff proof exists. Current code principally rechecks membership and a limited entitlement response at `PLAY`; authority, grant, and billing changes do not revoke already-connected sessions.
+
 ## Decision Record
 
 - Decision date: 2026-07-19
@@ -16,7 +20,7 @@ Accepted
 
 Role, membership, private-realm access, account security, and tenant billing can all change while a player is connected, but they do not represent the same risk. Treating every change as an immediate kick disrupts harmless role refresh and temporary payment recovery. Waiting for reconnect or token expiry after authority or security loss permits a player to keep access they no longer possess.
 
-The previous target distinguished soft and hard billing states and required event-driven revocation, but it left new-admission behavior during `grace`, private-realm grant revocation, and the meaning of “immediate” propagation unclear. It also had no implemented producer/consumer, monotonic membership version, authority-generation workflow, bounded active-session indexes, or hard-cutoff proof. Current code principally rechecks membership and a limited entitlement response at `PLAY`; already-connected sessions are not revoked by these changes.
+The previous target distinguished soft and hard billing states and required event-driven revocation, but it left new-admission behavior during `grace`, private-realm grant revocation, and the meaning of “immediate” propagation unclear.
 
 ## Decision
 

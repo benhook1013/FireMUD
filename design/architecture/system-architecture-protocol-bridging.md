@@ -207,13 +207,14 @@ During severe load or partial outages, each layer in the TCP Proxy → Gateway �
 
 Operators should interpret spikes in each layer’s metrics in this order when diagnosing load incidents: check Game Session and Redis saturation first, then Gateway rate-limit and backend unavailable signals, and finally TCP Proxy connection limits. This layered strategy ensures that both WebSocket and Telnet entry points shed load in a way that keeps behaviour predictable for players and preserves the integrity of core gameplay services.
 
-### Telnet edge proxy and PROXY protocol
+### Telnet TLS modes and PROXY protocol
 
-In all shared and player-facing environments, public Telnet terminates on a dedicated **Telnet edge proxy** (for example HAProxy) that forwards to the TCP Proxy Service using **PROXY protocol** on an internal-only listener. In this topology:
+Shared and player-facing environments select exactly one public Telnet TLS mode per endpoint:
 
-- External clients connect to the Telnet edge proxy on the public `LoadBalancer` / ingress.
-- The edge proxy forwards to the TCP Proxy Service using PROXY protocol on the port configured by `TCP_PROXY_PROXY_PROTOCOL_PORT`; this listener is internal-only and must not be exposed directly to the Internet.
-- The raw Telnet listener on `TCP_PROXY_PORT` remains available for local development and tightly controlled hobby/self‑hosted deployments where PROXY protocol is unnecessary; it is not a valid public player ingress in shared or player-facing environments.
+- **Edge termination with internal PROXY forwarding** – external clients connect to a dedicated TLS edge proxy (for example HAProxy), which forwards plaintext Telnet plus PROXY protocol to the internal-only `TCP_PROXY_PROXY_PROTOCOL_PORT`. That listener must accept traffic only from the authenticated or network-allowlisted edge and must never be exposed directly to the Internet.
+- **Direct TCP Proxy TLS termination** – external clients connect to `TCP_PROXY_PORT` with `TCP_PROXY_TLS_ENABLED=true`. This public listener terminates TLS itself and does not accept a PROXY header.
+
+The plaintext raw listener on `TCP_PROXY_PORT` remains valid only for local development and explicitly private compatibility networks. It is not a public player ingress. A deployment must not combine edge termination and direct TCP Proxy TLS on the same endpoint.
 
 When PROXY protocol is enabled, the TCP Proxy Service derives the real client IP from the PROXY header; Spring Cloud Gateway in turn derives `X-Client-IP` for Telnet sessions from the trusted `X-Proxy-Client-IP` header, as described in the Gateway header trust model. When PROXY protocol is not in use (for example local dev or tightly controlled self-hosted deployments), `TCP_PROXY_MAX_CONNECTIONS_PER_IP` and other per-IP heuristics are best-effort only and should be backed by higher-layer limits in Spring Cloud Gateway and the Game Session Service.
 

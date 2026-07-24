@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The authority split and admission path are substantially present, but immediate revocation, token rotation, Account-owned authority generations, and monotonic membership-version proof remain incomplete. Accepted ownership is target authority; an implementation gap does not transfer authority to the component holding convenient local state.
+
 ## Decision Record
 
 - Decision date: 2026-07-18
@@ -16,7 +20,7 @@ Accepted
 
 FireMUD needs one unambiguous authority for durable account security state while allowing Game Session to own the short-lived gameplay state it alone can interpret. Gateway must protect the edge without becoming a second account, membership, or gameplay-policy authority.
 
-The architecture already describes this split and the admission path substantially follows it. Immediate revocation, token rotation, and membership-version proof remain incomplete in the implementation. Those gaps do not justify moving authority to whichever component currently has the most convenient local data.
+The architecture already describes this split. Its remaining gaps do not justify moving authority to whichever component currently has the most convenient local data.
 
 ## Decision
 

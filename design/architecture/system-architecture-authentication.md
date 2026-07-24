@@ -112,7 +112,7 @@ Any HTTP/gRPC route that depends on identity, roles, or tenant scoping must be p
    - The issuer authority generation applies to every protected route and must advance for Account signing-key compromise or player-facing post-restore trust reset; it does not replace rejection of the affected `kid`.
    - The account authority generation applies to account-wide security cutoffs.
    - For routes classified as tenant-scoped regular or gameplay-affecting, the tenant authority generation applies to the requested tenant.
-   - For routes classified as tenant-scoped regular or billing-safe tenant-scoped, the caller-bound membership authority generation applies to `{accountId, tenantId}`.
+   - The caller-bound membership authority generation applies to `{accountId, tenantId}` for tenant-scoped regular and billing-safe routes, caller-membership-scoped lifecycle routes, `player_bootstrap_tenant` routes where declared, and public-production onboarding after membership is created. The route-class table below is authoritative for each classification.
    - For routes classified as billing-safe or support-safe, tenant authority generation does not by itself revoke access when the route explicitly remains billing-safe; role checks, membership authority, and route classification still apply.
 4. **Apply route classification** – Every protected route is classified as one of the following, and the middleware must enforce the corresponding registry and role rules:
 

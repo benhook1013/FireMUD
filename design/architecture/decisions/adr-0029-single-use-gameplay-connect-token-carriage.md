@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+Gateway currently accepts one header or cookie, rejects simultaneous carriers, parses routing claims, performs Redis `SET IF ABSENT`, and has focused denial tests. Hard maximum lifetime and signed-`iat` enforcement, duplicate-value rejection, complete carrier stripping, exact consume ordering, reset/failover quarantine, dedicated connect-context key rotation, and end-to-end proof of the authenticated TCP Proxy exception remain incomplete.
+
 ## Decision Record
 
 - Decision date: 2026-07-19
@@ -17,8 +21,6 @@ Accepted
 The browser authentication sequence established by ADR 0021 uses a short-lived connect token to admit a gameplay WebSocket before Game Session performs bare `LOGIN` and `PLAY`. Browser WebSocket APIs cannot attach an arbitrary authentication header, while non-browser clients can. The edge therefore needs a narrowly defined carrier contract that does not expose bearer values in URLs, silently choose among conflicting credentials, or permit the same token to be replayed against another Gateway pod.
 
 The existing target already requires a dedicated header or HttpOnly cookie, shared replay state, verified routing scope, and a positively authenticated TCP Proxy exception. The review retains that design and makes the lifetime, ambiguity, consumption, and retry boundaries exact.
-
-The bounded path is partially implemented. Gateway accepts a header or cookie, rejects simultaneous carriers, parses routing claims, performs Redis `SET IF ABSENT`, and has focused denial tests. Remaining implementation and proof gaps include hard maximum lifetime validation, duplicate values, complete carrier stripping, exact consume ordering, dedicated connect-context signing and rotation, and end-to-end proof that only the authenticated internal proxy mode can bypass the token.
 
 ## Decision
 

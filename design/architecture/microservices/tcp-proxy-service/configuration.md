@@ -9,7 +9,7 @@ For any shared or player-facing environment, operators should ensure at least:
 - Public player-facing Telnet must select exactly one TLS mode per endpoint: edge termination with internal PROXY forwarding, or direct TLS termination at TCP Proxy. These modes must not be combined.
 - In edge termination plus internal PROXY mode, the edge forwards plaintext Telnet with PROXY protocol into `TCP_PROXY_PROXY_PROTOCOL_PORT`; that listener remains internal-only and TCP Proxy TLS is disabled for it.
 - In direct TCP Proxy TLS mode, the public listener uses `TCP_PROXY_TLS_ENABLED=true` and does not accept a PROXY header; raw and PROXY-protocol listeners remain local, test-only, or explicitly private.
-- Permitted plaintext Telnet connections should trigger the canonical landing-menu warning recommending Telnet-over-TLS or the web client instead.
+- Genuinely client-facing plaintext Telnet connections should trigger the canonical landing-menu warning recommending Telnet-over-TLS or the web client instead. The trusted internal plaintext hop after edge TLS termination is not itself a plaintext client connection and does not trigger that warning.
 
 ## TLS and Trust Surfaces
 
@@ -22,8 +22,7 @@ The TCP Proxy Service participates in three distinct TLS and trust boundaries:
 | WebSocket mTLS bridge | TCP Proxy Service <-> Spring Cloud Gateway | Internal WebSocket hop that normalizes Telnet traffic into the same `/ws/game/**` route used by web clients. | `GATEWAY_WS_URL`, `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH`, `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`, `FIREMUD_GATEWAY_WS_CA_CERT_PATH` |
 | Internal gRPC mTLS | Internal clients <-> TCP Proxy Service | Internal-only gRPC endpoints such as `Ping`. | `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH` |
 
-Telnet-over-TLS and WebSocket mTLS may reuse the same certificate files in very small deployments, but they represent different trust surfaces and should be managed as separate concerns in production.
-In production and other shared environments, operators should provision separate certificates and keys per surface and override defaults accordingly so a compromise in one trust surface does not automatically extend to the others.
+Plaintext local and throwaway test profiles may omit these identities. Whenever TLS or mTLS is enabled, Telnet server TLS, Proxy-to-Gateway WebSocket mTLS, and internal gRPC mTLS use separate private identities appropriate to their distinct trust surfaces; reusing certificate files is not promotion evidence for a shared or player-facing environment.
 
 ## Redis Role Guidance
 
