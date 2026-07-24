@@ -666,10 +666,8 @@ def issue_player_bootstrap(config: SmokeConfig) -> dict[str, Any]:
         config.timeout_seconds,
         method="POST",
         payload={
-            "tenantId": int(config.tenant_id),
-            "username": config.username,
-            "password": config.password,
-            "otp": "",
+            "accountIdentifier": config.username,
+            "secret": config.password,
         },
     )
     return response["data"]

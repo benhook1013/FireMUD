@@ -14,6 +14,7 @@ import net.firedevops.firemud.accountservice.dto.ConnectTokenResponse;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.LoginRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
+import net.firedevops.firemud.accountservice.dto.PlayerBootstrapRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
@@ -52,10 +53,9 @@ public class AuthController {
 
   @PostMapping("/player-bootstrap")
   public ResponseEntity<ApiResponse<PlayerBootstrapResult>> playerBootstrap(
-      @Valid @RequestBody LoginRequest request) {
+      @Valid @RequestBody PlayerBootstrapRequest request) {
     PlayerBootstrapResult bootstrap =
-        accountService.issuePlayerBootstrap(
-            request.tenantId(), request.username(), request.password());
+        accountService.issuePlayerBootstrap(request.accountIdentifier(), request.secret());
     return ResponseEntity.ok(ApiResponse.success(bootstrap));
   }
 

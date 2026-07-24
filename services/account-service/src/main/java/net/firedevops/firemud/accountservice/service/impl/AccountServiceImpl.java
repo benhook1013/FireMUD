@@ -315,11 +315,11 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
-  @Transactional(readOnly = true)
+  @Transactional
   @Timed(value = "account.player_bootstrap")
-  public PlayerBootstrapResult issuePlayerBootstrap(
-      Long tenantId, String username, String password) {
-    PrimaryAuthentication authentication = authenticateAccountIdentity(username, password, false);
+  public PlayerBootstrapResult issuePlayerBootstrap(String accountIdentifier, String secret) {
+    PrimaryAuthentication authentication =
+        authenticateAccountIdentity(accountIdentifier, secret, true);
     Account account = authentication.account();
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String jti = UUID.randomUUID().toString();
@@ -329,22 +329,10 @@ public class AccountServiceImpl implements AccountService {
         mintToken(
             String.valueOf(account.getId()),
             tokenProperties.getPlayerBootstrapExpirationMs(),
-            Map.of(
-                "aud",
-                "player-bootstrap",
-                "accountId",
-                account.getId(),
-                "tenantId",
-                tenantId,
-                "jti",
-                jti));
-    sessionService.storeSession(
-        tenantId,
-        account.getId(),
-        bootstrapToken,
-        tokenProperties.getPlayerBootstrapExpirationMs());
-    logger.info(
-        "Issued player bootstrap token for account {} tenant {}", account.getId(), tenantId);
+            Map.of("aud", "player-bootstrap", "accountId", account.getId(), "jti", jti));
+    sessionService.storeAccountSession(
+        account.getId(), bootstrapToken, tokenProperties.getPlayerBootstrapExpirationMs());
+    logger.info("Issued player bootstrap token for account {}", account.getId());
     return new PlayerBootstrapResult(
         account.getId(),
         bootstrapToken,
@@ -397,7 +385,7 @@ public class AccountServiceImpl implements AccountService {
   public List<BootstrapCharacterDto> listBootstrapCharacters(
       String bootstrapToken, String worldSlug, String realmSlug) {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
-    RuntimeRealmTarget realm = requireAdmissibleRealm(bootstrapContext, worldSlug, realmSlug);
+    RuntimeRealmTarget realm = requireAdmissibleRealm(bootstrapContext, null, worldSlug, realmSlug);
     return entityManagementClient
         .listCharactersByAccount(
             realm.tenantId(),
@@ -475,7 +463,10 @@ public class AccountServiceImpl implements AccountService {
       ConnectTokenRequest request) {
     RuntimeRealmTarget currentRealm =
         requireAdmissibleRealm(
-            bootstrapContext, scopeContext.worldSlug(), scopeContext.realmSlug());
+            bootstrapContext,
+            scopeContext.tenantId(),
+            scopeContext.worldSlug(),
+            scopeContext.realmSlug());
     if (currentRealm.tenantId() != scopeContext.tenantId()
         || currentRealm.gameInstanceId() != scopeContext.gameInstanceId()
         || currentRealm.pointerVersion() != scopeContext.pointerVersion()) {
@@ -852,25 +843,37 @@ public class AccountServiceImpl implements AccountService {
             "Invalid bootstrap token");
     try {
       long accountId = requireSignedActorAccountId(claims);
-      long tenantId = JwtClaims.requireLong(claims.get("tenantId"), "tenantId", false);
-      Long storedAccountId = sessionService.getAccountId(tenantId, bootstrapToken);
-      if (storedAccountId == null || !storedAccountId.equals(accountId)) {
+      if (!sessionService.isAccountSessionActive(accountId, bootstrapToken)) {
         throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Bootstrap token expired");
       }
-      return new BootstrapContext(accountId, tenantId);
+      return new BootstrapContext(accountId);
     } catch (IllegalArgumentException ex) {
       throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token", ex);
     }
   }
 
   private RuntimeRealmTarget requireAdmissibleRealm(
-      BootstrapContext bootstrapContext, String worldSlug, String realmSlug) {
+      BootstrapContext bootstrapContext,
+      Long expectedTenantId,
+      String worldSlug,
+      String realmSlug) {
     try {
+      List<RuntimeRealmTarget> candidates =
+          gameSessionClient.listGameplayRealms(worldSlug).stream()
+              .map(this::readRuntimeRealmTarget)
+              .filter(realm -> java.util.Objects.equals(worldSlug, realm.worldSlug()))
+              .filter(realm -> java.util.Objects.equals(realmSlug, realm.realmSlug()))
+              .filter(realm -> expectedTenantId == null || realm.tenantId() == expectedTenantId)
+              .filter(realm -> isRealmAdmissible(bootstrapContext, realm))
+              .toList();
+      if (candidates.size() != 1) {
+        throw new IllegalStateException("Selected gameplay realm is absent or ambiguous");
+      }
+      RuntimeRealmTarget candidate = candidates.getFirst();
       RuntimeRealmTarget realm =
           readRuntimeRealmTarget(
-              gameSessionClient.getAdmissionPointer(
-                  bootstrapContext.tenantId(), worldSlug, realmSlug));
-      if (realm.tenantId() != bootstrapContext.tenantId()
+              gameSessionClient.getAdmissionPointer(candidate.tenantId(), worldSlug, realmSlug));
+      if (realm.tenantId() != candidate.tenantId()
           || !java.util.Objects.equals(worldSlug, realm.worldSlug())
           || !java.util.Objects.equals(realmSlug, realm.realmSlug())
           || !isRealmAdmissible(bootstrapContext, realm)) {
@@ -1536,7 +1539,7 @@ public class AccountServiceImpl implements AccountService {
         });
   }
 
-  private record BootstrapContext(long accountId, long tenantId) {}
+  private record BootstrapContext(long accountId) {}
 
   private RuntimeMembershipDto toRuntimeMembership(PublicProductionMembershipResult result) {
     return new RuntimeMembershipDto(

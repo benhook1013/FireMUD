@@ -7,6 +7,13 @@ VALIDATOR="$ROOT_DIR/dev-tools/observability/validate-player-experience-smoke-ev
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+grep -q '"accountIdentifier": config.username' "$RUNNER"
+grep -q '"secret": config.password' "$RUNNER"
+if sed -n '/def issue_player_bootstrap/,/^$/p' "$RUNNER" | grep -q '"tenantId"'; then
+  echo "player bootstrap smoke payload unexpectedly includes tenantId" >&2
+  exit 1
+fi
+
 SUCCESS_EVIDENCE="$TMP_DIR/success-evidence.json"
 SUCCESS_METRICS="$TMP_DIR/success-metrics.prom"
 FAIL_EVIDENCE="$TMP_DIR/failure-evidence.json"

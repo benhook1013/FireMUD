@@ -45,10 +45,26 @@ public class SessionServiceImpl implements SessionService {
   }
 
   @Override
+  @Timed(value = "session.store_account")
+  public void storeAccountSession(Long accountId, String token, long expirationMs) {
+    redisTemplate
+        .opsForValue()
+        .set(accountKey(accountId, token), accountId, Duration.ofMillis(expirationMs));
+  }
+
+  @Override
   @Timed(value = "session.get")
   public Long getAccountId(Long tenantId, String token) {
     Object value = redisTemplate.opsForValue().get(tenantKey(tenantId, token));
     return parseRequiredLong(value).orElse(null);
+  }
+
+  @Override
+  @Timed(value = "session.account_active")
+  public boolean isAccountSessionActive(Long accountId, String token) {
+    return parseRequiredLong(redisTemplate.opsForValue().get(accountKey(accountId, token)))
+        .filter(accountId::equals)
+        .isPresent();
   }
 
   @Override

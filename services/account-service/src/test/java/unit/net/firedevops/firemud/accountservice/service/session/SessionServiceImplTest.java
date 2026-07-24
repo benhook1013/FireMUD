@@ -43,6 +43,21 @@ class SessionServiceImplTest {
   }
 
   @Test
+  void storeAccountSessionWritesOnlyTheAccountAllowlistKey() {
+    service.storeAccountSession(11L, "token-123", 5000L);
+
+    verify(valueOperations)
+        .set("session:auth:account:11:" + sha256("token-123"), 11L, Duration.ofMillis(5000L));
+  }
+
+  @Test
+  void accountSessionIsActiveChecksTheAccountAllowlistKey() {
+    when(valueOperations.get("session:auth:account:11:" + sha256("token-123"))).thenReturn("11");
+
+    assertThat(service.isAccountSessionActive(11L, "token-123")).isTrue();
+  }
+
+  @Test
   void getAccountIdReadsTenantScopedHashedKeyFirst() {
     when(valueOperations.get("session:auth:tenant:7:" + sha256("token-123"))).thenReturn("11");
 

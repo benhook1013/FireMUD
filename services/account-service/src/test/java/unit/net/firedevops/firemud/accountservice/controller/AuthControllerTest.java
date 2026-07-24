@@ -19,6 +19,7 @@ import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.LoginRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
+import net.firedevops.firemud.accountservice.dto.PlayerBootstrapRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
@@ -77,8 +78,8 @@ class AuthControllerTest {
 
   @Test
   void playerBootstrapReturnsShortLivedToken() throws Exception {
-    LoginRequest request = new LoginRequest(1L, "demo", "password");
-    when(accountService.issuePlayerBootstrap(1L, "demo", "password"))
+    PlayerBootstrapRequest request = new PlayerBootstrapRequest("demo", "password");
+    when(accountService.issuePlayerBootstrap("demo", "password"))
         .thenReturn(
             new PlayerBootstrapResult(
                 1L, "boot123", "2026-03-30T00:00:00Z", "2026-03-30T00:05:00Z"));

@@ -123,8 +123,8 @@ Billing-safe mutation authority contract:
 Runtime caller contract:
 
 - Current implementation note:
-  - `GetTenantMembershipForRuntime(accountId, tenantId)`, `GetTenantEntitlementsForRuntime(tenantId)`, `GetAdmissionPointer(tenantId, worldSlug, realmSlug)`, and the existing `EnsurePublicProductionPlayerMembership` seam are present, but current runtime admission still has the implicit membership path and does not prove the target tenantless account-first bootstrap.
-  - Explicit `JOIN`/`Join & Play`, membership-write removal from connect-token/`PLAY`, and the fuller account-first bootstrap/discovery contract remain target follow-through; broader reconnect/cutover consumption of admission-pointer truth and operator-facing pointer tooling are also incomplete.
+  - Account-first bootstrap now authenticates before tenant selection and accepts configured password or verified-email OTP modes. `GetTenantMembershipForRuntime(accountId, tenantId)`, `GetTenantEntitlementsForRuntime(tenantId)`, `GetAdmissionPointer(tenantId, worldSlug, realmSlug)`, and the existing `EnsurePublicProductionPlayerMembership` seam are present, but current runtime admission still has the implicit membership path.
+  - Explicit `JOIN`/`Join & Play` and membership-write removal from connect-token/`PLAY` remain target follow-through; broader reconnect/cutover consumption of admission-pointer truth and operator-facing pointer tooling are also incomplete.
 - `GetTenantMembershipForRuntime(accountId, tenantId)` is the authoritative internal membership surface for gameplay/runtime flows.
   - Minimum request fields: `accountId`, `tenantId`, `requestId`.
   - Minimum response fields: `accountId`, `tenantId`, `roles[]`, `gameplayAdmissionAllowed`, `membershipVersion`, `evaluatedAt`.

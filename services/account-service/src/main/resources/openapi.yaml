@@ -73,6 +73,18 @@ components:
         otp:
           type: string
       required: [tenantId, username, password]
+    PlayerBootstrapRequest:
+      type: object
+      properties:
+        accountIdentifier:
+          type: string
+          minLength: 1
+          maxLength: 254
+        secret:
+          type: string
+          minLength: 6
+          maxLength: 100
+      required: [accountIdentifier, secret]
     AuthenticationResult:
       type: object
       properties:
@@ -292,7 +304,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/LoginRequest'
+              $ref: '#/components/schemas/PlayerBootstrapRequest'
       responses:
         '200':
           description: Bootstrap result
