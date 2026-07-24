@@ -80,6 +80,8 @@ runtime_images_path="$ROOT_DIR/.github/workflows/runtime-images.yml"
 pr_image_publisher_path="$ROOT_DIR/.github/workflows/publish-pr-runtime-images.yml"
 smoke_path="$ROOT_DIR/.github/workflows/smoke.yml"
 image_wait_path="$ROOT_DIR/dev-tools/hosted/shared/wait-for-runtime-images.sh"
+preview_path="$ROOT_DIR/.github/workflows/preview.yml"
+preview_reconciler_path="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
 
 for path in "$ci_path" "$smoke_path"; do
   require_contains "$path" 'types: [opened, synchronize, reopened, edited]'
@@ -140,6 +142,16 @@ require_contains "$image_wait_path" 'display_title.startswith("Build Runtime Ima
 require_contains "$image_wait_path" 'and f" head-{head_sha} " in display_title'
 require_contains "$image_wait_path" 'and display_title.endswith(" mode-required")'
 require_contains "$image_wait_path" 'gh api --paginate --slurp'
+require_contains "$preview_path" "cancel-in-progress: \${{ github.event_name == 'pull_request' || inputs.action == 'destroy' }}"
+# shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
+require_contains "$preview_reconciler_path" '--workflow "${preview_workflow_name}"'
+# shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
+require_contains "$preview_reconciler_path" '--branch "${head_ref}"'
+require_contains "$preview_reconciler_path" "--jq '.[] | select(.status == \"queued\" or .status == \"in_progress\") | .databaseId'"
+if grep -Fq 'displayTitle == "PR Preview Environment"' "$preview_reconciler_path"; then
+  echo "Preview reconciler must not identify PR-triggered runs by display title" >&2
+  exit 1
+fi
 
 for job in image-meta pr-local-smoke; do
   assert_job_condition runtime-images.yml "$job" "$required_condition"
