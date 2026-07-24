@@ -16,7 +16,6 @@ internalBindings:
     workloadMtlsRef: cert-manager://firemud/staging-workload-mtls
     gatewayInternalWsListenerRef: cert-manager://firemud/staging-gateway-internal-ws
     tcpProxyBridgeClientRef: cert-manager://firemud/staging-tcp-proxy-bridge
-    backupControlPlaneClientRef: cert-manager://firemud/staging-backup-control-plane
   registry:
     imagePullSecretRef: secret://firemud/ghcr-pull-staging
 backupStorage:

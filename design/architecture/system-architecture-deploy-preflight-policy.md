@@ -10,9 +10,15 @@ This document defines the authoritative preflight policy gate for staging and pr
 
 ## Implementation Notes
 
-`./dev-tools/deploy/preflight.py` is the canonical executable preflight entrypoint for this contract. It currently emits the required policy ID set, consumes `design/operations/environments/<environment>/expected-bindings.yaml`, writes `expectedBindingsRef` into reports, validates the mounted JWT/JWKS contract, validates first-pass expected binding shape, enforces cross-environment uniqueness for external player-facing bindings unless the manifests explicitly mark them shared with a rationale, and enforces production and hobby/self-hosted traffic-open backup gates when the run declares `FIREMUD_TRAFFIC_OPEN_EVENT=first-live|reopen`. Production promotion validation now also checks that the referenced staging deployment record points to a readable staging preflight report with the expected bindings manifest reference and no failing required checks; hobby traffic-open evidence now proves the same link for its referenced preflight report.
+`./dev-tools/deploy/preflight.py` is the canonical executable preflight entrypoint for the checks it currently implements. It consumes `design/operations/environments/<environment>/expected-bindings.yaml`, writes `expectedBindingsRef` into reports, validates the mounted JWT/JWKS path and resource-type contract, validates expected binding shape, and enforces cross-environment uniqueness for external player-facing bindings unless the manifests explicitly mark them shared with a rationale. Routine online backup does not require `backupControlPlaneClientRef`; that identity is validated only when an expected-bindings manifest explicitly enables an exceptional maintenance pause workflow.
 
-The production first-live and reopen gate is intentionally fail-closed until a real durable environment-wide recovery-controller read is implemented. Checked-in recovery/traffic-open projections and caller-supplied tenant, region, or timestamp evidence cannot produce a passing `PREFLIGHT-BACKUP-002`; the controller must be the pre-release authority. Hobby traffic-open validation remains an evidence-file contract, while real first-live and reopen decisions still require current environment evidence produced by operators or automation. A successful static report without the applicable traffic-open authority is not enough to open player-facing traffic.
+The recovery controller's public continuation contract is `continueRecovery(operationId, expectedPhase, evidenceRef)`. Its internal pause/lock phase is not a standalone public recovery verb. No recovery-controller RPC currently exists in the checked-in `protos/` source, so this remains a target-state contract rather than an implemented gRPC surface.
+
+The production first-live and reopen gate is intentionally fail-closed until a real durable environment-wide recovery-controller read is implemented. Pre-release authorization consumes a fresh read of the live actual-recovery controller at `ready_to_reopen` together with immutable pre-release evidence; `readyToReopenAt` must not be future-dated or outside the applicable 30-minute event-evidence window. An operation in `releasing` is an in-flight continuation, not a fresh authorization: preflight must not treat it as `ready_to_reopen`, and a stale or ambiguous `releasing` state remains fail-closed until the controller reconciles it. Checked-in recovery/traffic-open projections and caller-supplied tenant, region, or timestamp evidence cannot produce a passing `PREFLIGHT-BACKUP-002`. A production-equivalent drill may use current production lineage in an isolated production-equivalent boundary with compatible contracts and tooling, but it cannot authorize production traffic. After controller finalization, an exporter may write canonical `traffic-open-record/v1` and recovery projections as retained evidence; those projections are never preflight inputs or transaction authority.
+
+The target controller and preflight integration must prove the required cold-start convergence, immutable erasure high-water capture and gap-free replay, session invalidation, durable-participant and external-effect dispositions, hardening, external-credential validation, secret-compliance refresh, smoke evidence, and lifecycle ordering before controlled reopen. Those controller reads, inventory dereferences, and lifecycle checks are not yet implemented, so production and hobby player-facing first-live and reopen remain blocked. The checked-in traffic-open records are post-finalization retained projections, not preflight authority.
+
+The current executable does not yet enforce `PREFLIGHT-JWT-002` or `PREFLIGHT-JWT-ROTATION-001`: it does not prove Account-only asymmetric signing, absence of private-key mounts from validators, validator `kid`/JWKS behavior, or planned and compromise rotation drills. In the canonical player-facing model, `FIREMUD_AUTH_JWT_SECRET_PATH` names the versioned asymmetric private signing bundle mounted from `jwt-signing-keys` into Account Service only; it is not an HMAC secret path and is never mounted into validators. Validators receive only `FIREMUD_AUTH_JWKS_PATH`, require the token `kid` to resolve through Account-published JWKS, and disable HMAC fallback. That is a missing security gate, not only evidence depth. Until it is implemented and passes with current environment evidence, player-facing JWT readiness remains blocked even if the older mounted-path checks pass. Other expected-binding checks still validate repository manifests and declared binding refs rather than complete live state; a successful static report without the applicable traffic-open authority is not enough to open player-facing traffic.
 
 ## Bootstrap Contract
 
@@ -20,7 +26,7 @@ For a brand-new player-facing environment (`hobby-self-hosted`, `staging`, or `p
 
 - registry pull credentials for workload image access,
 - PostgreSQL application credentials and admin rotation credentials when rotation Jobs are used,
-- JWT signing and validation resources (`jwt-signing-keys`, `jwt-jwks`),
+- an Account-only asymmetric JWT signing resource (`jwt-signing-keys`) and public validator resource (`jwt-jwks`),
 - cert-manager issuer or issuer reference for workload and bridge certificates,
 - backup/object-store credentials when the environment requires backups, including the binding identity that owns the bucket or object-store target,
 - asset-store and outbound-communications credentials when those integrations are enabled, including the binding identity that owns the asset bucket or object-store target,
@@ -42,9 +48,9 @@ Bootstrap resources must be unique to the environment boundary. Reusing staging 
 
 ## Enforcement Boundaries
 
-- Overlay PR CI (`validate-kustomize-overlays.yml`) enforces static checks: digest pinning, image existence, attestation schema/digest matching, repository policy markers, and production backup-readiness binding when required.
-- Operator pre-apply execution (`preflight.py`) enforces resolved-manifest and target-environment checks: required secret/key contracts, JWT/JWKS contracts, Redis role split, bridge alignment, bootstrap completeness, and external integration isolation.
-- Deployment apply is blocked unless required checks for the target class pass (or an explicit break-glass waiver is recorded).
+- Overlay PR CI (`validate-kustomize-overlays.yml`) always enforces the staging backup marker and production evidence-file selection rules. When no production attestation context applies, it also renders both overlays and checks image existence. For production-applicable changes, the current preflight stops at the fail-closed recovery-baseline authority check before attestation digest matching, expanded backup-readiness validation, or the later image-existence steps; those remain target-state enforcement gaps rather than completed checks.
+- Operator pre-apply execution (`preflight.py`) currently enforces resolved-manifest and target-environment checks for required secret/key bindings, JWKS resource type, Redis role split, bridge alignment, bootstrap completeness, and external integration isolation. Account-only private-key distribution, validator `kid`/JWKS convergence, and traffic-open JWT rotation evidence remain target-state gates; `PREFLIGHT-JWT-002` and `PREFLIGHT-JWT-ROTATION-001` are not yet emitted by the executable.
+- Deployment apply is blocked unless every required check for the target class passes. The target-state waiver path is event-scoped; the current executable rejects waiver input and does not provide a waiver bypass.
 
 ## Environment Applicability
 
@@ -56,33 +62,36 @@ Bootstrap resources must be unique to the environment boundary. Reusing staging 
 
 ## Required Policy Checks
 
-Every run must emit one result per policy ID below, with status `pass`, `fail`, or `not_applicable` (with reason):
+Every run must emit one result per implemented policy ID below, with status `pass`, `fail`, or `not_applicable` (with reason). Entries marked target-state-only are not emitted until their executable checks and contract proof land:
 
 - `PREFLIGHT-DIGEST-001` – all staging/production workload images are immutable digests (`image@sha256:...`).
 - `PREFLIGHT-DIGEST-002` – hobby/self-hosted workload manifests are digest-pinned where the operator packaging format supports digest references.
 - `PREFLIGHT-SECRETS-001` – required Secrets and keys exist for the target environment.
 - `PREFLIGHT-SECRETS-002` – player-facing environments validate internal state/trust bindings (PostgreSQL endpoint and credential binding, Redis role endpoints, JWT/JWKS resource bindings, certificate issuer binding, registry pull credentials) against the target environment boundary and fail on cross-environment reuse.
-- `PREFLIGHT-JWT-001` – player-facing environments use `FIREMUD_AUTH_JWT_SECRET_PATH` and do not rely on inline-only JWT secrets.
+- `PREFLIGHT-JWT-001` – Account Service in player-facing environments uses `FIREMUD_AUTH_JWT_SECRET_PATH` as the path to its versioned asymmetric private signing bundle and does not rely on inline or HMAC JWT secrets; no validator receives this path or bundle.
 - `PREFLIGHT-JWKS-001` – JWKS resource type matches environment policy (`jwt-jwks` Secret for player-facing environments; ConfigMap only for explicitly non-player-facing/test environments).
+- `PREFLIGHT-JWT-002` (target-state-only; not currently emitted) – player-facing resolved manifests give the Account JWT private signing bundle only to Account Service; every validator uses asymmetric Account `kid`/JWKS verification with HMAC fallback disabled and receives no Account private key.
+- `PREFLIGHT-JWT-ROTATION-001` (target-state-only; not currently emitted) – player-facing first-live, reopen, and promotion evidence references successful planned-rotation and compromise-cutover drills using the production rotation artifact, including validator inventory/convergence, old/new `kid` acceptance and rejection, pruning, and immutable evidence identity.
 - `PREFLIGHT-BRIDGE-001` – `GATEWAY_WS_URL` matches the expected internal Gateway listener for the target environment.
 - `PREFLIGHT-REDIS-001` – player-facing environments resolve distinct Coordination vs Cache Redis endpoints.
 - `PREFLIGHT-BOOTSTRAP-001` – player-facing environments confirm the minimum bootstrap secret and trust resources exist before apply.
 - `PREFLIGHT-EXTERNAL-001` – player-facing environments validate that backup storage, asset storage, outbound communications, and operator credential bindings match the target environment and do not cross environment boundaries. For backup and asset storage, the proof must include the credential-binding identity that owns the object-store target.
 - `PREFLIGHT-SERVICES-001` – player-facing environments either run with default in-environment service discovery or declare explicit `FIREMUD_SERVICES_*` overrides that are allowlisted for the target environment and do not resolve across environment boundaries.
 - `PREFLIGHT-PROMOTION-001` – production promotions reference a valid staging attestation with matching digests.
-- `PREFLIGHT-BACKUP-001` – production `roll-forward-only` promotions include fresh backup-readiness evidence, including finalized environment-wide recovery-controller lineage from a `cold_start_restore` drill and the required confidentiality evidence.
-- `PREFLIGHT-BACKUP-002` – production first-live or traffic-reopen events verify at least one successful logical backup upload, one successful backup verification result, one successful restore drill within the required restore-proof freshness window, and the current environment-wide recovery-controller sequence: `ready_to_reopen`, followed by the gated transition to `finalized`, with current finalized evidence associated with that controller release before traffic is opened. The checked-in recovery/traffic-open JSON projection is emitted after controller finalization and is not a pre-release authority.
+- `PREFLIGHT-BACKUP-001` – every production promotion includes the compact recovery-compatibility result; `compatibilityStatus=incompatible` is an unconditional failed result, compatible rollback releases may reuse the current baseline, and `compatibilityStatus=drill_required` remains non-promotable until a fresh drill produces a regenerated compatible result. `roll-forward-only` releases set `newDrillRequired=true` and require that compatible result plus a full release-candidate recovery drill bound to exact candidate lineage, finalized controller lineage, and backup-confidentiality proof.
+- `PREFLIGHT-BACKUP-002` – production first-live or traffic-reopen events verify a readable environment-wide PostgreSQL backup, a successful production-equivalent `cold_start_restore` drill within the required freshness window, backup-confidentiality evidence, and the current environment-specific actual-recovery controller at `ready_to_reopen` before traffic is opened. Checked-in recovery/traffic-open JSON is emitted only after finalization and is not pre-release authority.
 - `PREFLIGHT-BACKUP-003` – hobby/self-hosted first-live or traffic-reopen events verify current backup-baseline compliance evidence before player traffic is opened.
 
 Policy applicability:
 
 - `PREFLIGHT-PROMOTION-001` is required for `production` and `not_applicable` for `staging` and `hobby-self-hosted`.
-- `PREFLIGHT-BACKUP-001` is required for `production` when the referenced attestation classifies the release as `roll-forward-only`, and `not_applicable` otherwise. This check fails when backup evidence does not dereference finalized environment-wide recovery-controller lineage from a `cold_start_restore` drill or lacks the required confidentiality proof.
-- `PREFLIGHT-BACKUP-002` is required for `production` on first-live opens and reopen-after-restore events, and `not_applicable` for routine steady-state rollouts that do not change traffic-open status. This check fails when the durable recovery-controller sequence has not reached `ready_to_reopen` and then `finalized` with current finalized evidence, the restore drill is older than 30 days for the same production environment class/binding, or the confidentiality evidence is missing. Tenant/region backup-pause scope is neither required nor sufficient.
-- `PREFLIGHT-BACKUP-003` is required for `hobby-self-hosted` on first-live opens and reopen-after-restore events, and `not_applicable` otherwise. This check validates both `design/operations/deployments/hobby-self-hosted/backup-compliance.yaml` and `design/operations/deployments/hobby-self-hosted/traffic-open/<deployment-ref>.json` for the current event.
+- `PREFLIGHT-BACKUP-001` is required for every `production` promotion. An `incompatible` result fails unconditionally and cannot be made promotable by attaching drill evidence. A `rollback-compatible` release may reuse only a fresh finalized baseline whose recovery-contract fingerprint is unchanged and whose changed dimensions contain no invalidating or unknown contract change; the compact result does not create another full recovery record. A `drill_required` result fails until a new production-equivalent drill passes and the classifier replaces it with a compatible result bound to that drill. A `roll-forward-only` release requires that regenerated compatible result and a drill that restores a current-production-lineage artifact under candidate recovery tooling and proves the exact candidate service digests, migration path, config, and bindings through controlled reopen.
+- `PREFLIGHT-BACKUP-002` is required for `production` on first-live opens and reopen-after-restore events, and `not_applicable` for routine steady-state rollouts that do not change traffic-open status. Its target implementation reads the current environment-specific actual-recovery controller at `ready_to_reopen`, verifies event-matching traffic exposure and target boundary plus a fresh controller state and a drill completed within 30 days, then authorizes `continueRecovery(...)`; `releasing` is never a passing preflight state. The controller must idempotently reconcile `ready_to_reopen -> releasing -> finalized`, apply and observe quarantine release, and keep traffic closed on failure. The current executable fails this check closed because that controller read is not implemented. Tenant/region backup-pause scope and checked-in projections are neither required nor sufficient authority.
+- `PREFLIGHT-BACKUP-003` is required for `hobby-self-hosted` on first-live opens and reopen-after-restore events, and `not_applicable` otherwise. Pre-release authorization consumes current backup-baseline compliance, the general preflight report, immutable pre-release evidence, and a fresh live actual-recovery controller at `ready_to_reopen`; `releasing` is never a passing preflight state. The checked-in traffic-open projection under `design/operations/deployments/hobby-self-hosted/traffic-open/<deployment-ref>/<deploymentEventId>.json` is exported only after finalization and is not a preflight input. The current executable fails closed because controller-backed authorization and post-finalization projection export are not implemented.
 - `PREFLIGHT-DIGEST-001` is required for any flow using Kustomize overlays (`staging`, `production`) and `not_applicable` for `hobby-self-hosted`.
 - `PREFLIGHT-DIGEST-002` is recommended/advisory for `hobby-self-hosted` and `not_applicable` for `staging`/`production`.
 - `PREFLIGHT-SECRETS-002`, `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-EXTERNAL-001`, and `PREFLIGHT-SERVICES-001` are required for all player-facing environments.
+- Target-state `PREFLIGHT-JWT-002` is required for all player-facing environments once implemented; `PREFLIGHT-JWT-ROTATION-001` is event-scoped to first-live, reopen, and production promotion evidence.
 
 ## Canonical Expected-Binding Inputs
 
@@ -154,7 +163,7 @@ Compact schema appendix for `expected-bindings.yaml`:
   - `internalBindings.certificates.workloadMtlsRef`
   - `internalBindings.certificates.gatewayInternalWsListenerRef` when the environment exposes the Gateway internal mTLS WebSocket listener
   - `internalBindings.certificates.tcpProxyBridgeClientRef` when the TCP Proxy bridge uses mTLS
-  - `internalBindings.certificates.backupControlPlaneClientRef` when backup automation invokes `PauseTicks` / `ResumeTicks`
+  - `internalBindings.certificates.backupControlPlaneClientRef` only when `backupMaintenancePause.enabled: true` explicitly enables an exceptional backup-related maintenance workflow that invokes `PauseTicks` / `ResumeTicks`; routine online backup does not require this identity
   - `internalBindings.registry.imagePullSecretRef`
 - Required external binding keys:
   - `backupStorage.bucket`
@@ -193,7 +202,6 @@ internalBindings:
     workloadMtlsRef: cert-manager://firemud/staging-workload-mtls
     gatewayInternalWsListenerRef: cert-manager://firemud/staging-gateway-internal-ws
     tcpProxyBridgeClientRef: cert-manager://firemud/staging-tcp-proxy-bridge
-    backupControlPlaneClientRef: cert-manager://firemud/staging-backup-control-plane
   registry:
     imagePullSecretRef: secret://firemud/ghcr-pull-staging
 backupStorage:
@@ -224,6 +232,18 @@ observability:
     sharedRationale: shared collector endpoint; credentials and tenant separation remain environment-specific
 ```
 
+An exceptional backup maintenance pause workflow must opt in explicitly before its client identity is required or validated:
+
+```yaml
+backupMaintenancePause:
+  enabled: true
+internalBindings:
+  certificates:
+    backupControlPlaneClientRef: cert-manager://firemud/staging-backup-control-plane
+```
+
+This opt-in is not part of the routine online-backup contract.
+
 Validation contract:
 
 - Preflight fails if the manifest is missing for a player-facing environment.
@@ -250,12 +270,15 @@ The report artifact must include:
 - `deploymentRef` object with one of:
   - `overlayCommitSha` for overlay-driven deployments (`staging`, `production`), or
   - `manifestRef` / `chartVersion` for hobby/self-hosted deployments.
-- `checkResults[]` with `policyId`, `status`, `message`
+- `deploymentEventId`, a canonical UUID generated by preflight and unique to the current preflight/apply event; retries or later re-applies must use a new value
+- `trafficOpenEvent` (`first-live`, `reopen`, or `null` for a general pre-apply report)
+- `checkResults[]` with `policyId`, boolean `required`, `status`, and `message`
 - `expectedBindingsRef` for player-facing environments
 - `startedAt` and `completedAt` timestamps
 - `toolVersion`
+- `context` (`operator` or `ci-static`)
 
-For `ci-static` runs, `expectedBindingsRef` should point to the same repository path that operator preflight would use for the target environment, even when CI validates only static contracts and not live cluster bindings.
+For `ci-static` runs, `expectedBindingsRef` should point to the same repository path that operator preflight would use for the target environment, even when CI validates only static contracts and not live cluster bindings. A consumed deployment or traffic-open report must have `context=operator`, the canonical `preflight.py-v1` tool version, ordered non-future execution timestamps, exact environment/event applicability, and every required policy result at `pass`; a `ci-static` report cannot authorize promotion or player traffic. A deployment record may consume only the canonical event-scoped report path whose `deploymentEventId` matches both the path and that record, whose `completedAt` is not later than `appliedAt`, and whose completion is no more than 30 minutes before apply. A consumer without an apply timestamp, including traffic-open evidence creation, must consume the report within 30 minutes of completion.
 
 Illustrative `ci-static` report shape:
 
@@ -265,9 +288,12 @@ Illustrative `ci-static` report shape:
   "deploymentRef": {
     "overlayCommitSha": "abc123def456"
   },
+  "deploymentEventId": "9db17a4b-8271-4e81-82f4-b8b1c724b06a",
+  "trafficOpenEvent": null,
   "checkResults": [
     {
       "policyId": "PREFLIGHT-DIGEST-001",
+      "required": true,
       "status": "pass",
       "message": "all images are digest pinned"
     }
@@ -275,7 +301,8 @@ Illustrative `ci-static` report shape:
   "expectedBindingsRef": "design/operations/environments/staging/expected-bindings.yaml",
   "startedAt": "2026-03-13T08:00:00Z",
   "completedAt": "2026-03-13T08:00:03Z",
-  "toolVersion": "preflight/v1"
+  "toolVersion": "preflight.py-v1",
+  "context": "ci-static"
 }
 ```
 
@@ -284,21 +311,23 @@ CI and manual operator runs must produce the same report shape so audit tooling 
 ### Evidence Storage and Retention
 
 - Preflight report artifacts are stored in-repo under:
-  - `design/operations/deployments/<environment>/preflight/<deployment-ref>.json`
+  - `design/operations/deployments/<environment>/preflight/<deployment-ref>/<deploymentEventId>.json`
 - Break-glass waivers are stored beside the report artifact as:
-  - `design/operations/deployments/<environment>/preflight/<deployment-ref>.waiver.json`
+  - `design/operations/deployments/<environment>/preflight/<deployment-ref>/<deploymentEventId>.waiver.json`
 - `deployment-ref` is:
   - `<overlayCommitSha>` for overlay-driven staging/production deployments, or
   - a normalized manifest/chart reference token for hobby/self-hosted deployments.
-- Naming rule: `<deployment-ref>` and similar artifact tokens must use lowercase ASCII plus digits and `-`, and should be stable across re-runs of the same deployment event so evidence does not fork accidentally.
+- Naming rule: `<deployment-ref>` and similar artifact tokens must use lowercase ASCII plus digits and `-`. `deploymentEventId` uses canonical UUID text and changes for every retry or re-apply so immutable event evidence is never overwritten.
 - Retention requirement: keep preflight reports and waivers for at least as long as release/rollback audit history is retained.
-- Waiver records must include: approver identity, incident/change ticket, scope (policy IDs waived), expiration (deployment event only), and timestamp.
+- Waiver records must include: `deploymentEventId` matching the current report, approver identity, incident/change ticket, scope (policy IDs waived), expiration (deployment event only), and timestamp.
+- Current implementation status: `preflight.py` rejects `FIREMUD_PREFLIGHT_WAIVER` before generating a deployment event or report, and rejects consumed reports containing `waiverPath`, until a trusted authority can issue and atomically consume each waiver exactly once. Event-ID equality alone is not replay protection.
 
 ## Failure Handling
 
 - Any failed required check blocks deployment.
-- Waivers are break-glass only, must be explicit, and must include approver + incident/change ticket in the report.
-- Waivers expire after the specific deployment event and must not silently carry forward.
+- Waivers are a target-state break-glass mechanism only, must be explicit, and must include approver + incident/change ticket in the report. They are not currently executable.
+- Waivers expire after the specific deployment event and must not silently carry forward. A retry or re-apply uses a new `deploymentEventId`, so a prior waiver fails binding validation even when the same `deploymentRef` is reused.
+- `PREFLIGHT-BACKUP-001`, `PREFLIGHT-BACKUP-002`, and `PREFLIGHT-BACKUP-003` are non-waivable readiness gates. A waiver may authorize an isolated drill or salvage action, but not the player-facing promotion/open transition those gates protect.
 
 ## Related Documentation
 

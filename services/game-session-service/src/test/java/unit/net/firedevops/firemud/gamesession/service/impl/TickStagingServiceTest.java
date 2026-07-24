@@ -1,11 +1,15 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -19,6 +23,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.entity.TickBatch;
+import net.firedevops.firemud.gamesession.entity.TickEffect;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
@@ -33,6 +38,9 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionOperations;
 
 class TickStagingServiceTest {
   private RedisTemplate<String, Object> redisTemplate;
@@ -42,7 +50,12 @@ class TickStagingServiceTest {
   private TickBatchRepository tickBatchRepository;
   private TickEffectRepository tickEffectRepository;
   private RemoteFollowupDrainService remoteFollowupDrainService;
+  private DurableRemoteFollowupExecutionService durableRemoteFollowupExecutionService;
+  private TickQueueControlService tickQueueControlService;
+  private RuntimeRegionStatusRepository runtimeRegionStatusRepository;
+  private TickBatchExecutionService tickBatchExecutionService;
   private TickStagingService service;
+  private List<TickEffect> savedEffects;
 
   @BeforeEach
   @SuppressWarnings("unchecked")
@@ -65,14 +78,28 @@ class TickStagingServiceTest {
     tickBatchRepository = mock(TickBatchRepository.class);
     when(tickBatchRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     tickEffectRepository = mock(TickEffectRepository.class);
-    when(tickEffectRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    savedEffects = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              @SuppressWarnings("unchecked")
+              List<net.firedevops.firemud.gamesession.entity.TickEffect> effects =
+                  invocation.getArgument(0);
+              for (TickEffect effect : effects) {
+                savedEffects.removeIf(
+                    existing -> existing.getEffectId().equals(effect.getEffectId()));
+                savedEffects.add(effect);
+              }
+              return effects;
+            })
+        .when(tickEffectRepository)
+        .saveAll(any());
     remoteFollowupDrainService = mock(RemoteFollowupDrainService.class);
+    durableRemoteFollowupExecutionService = mock(DurableRemoteFollowupExecutionService.class);
     GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService =
         mock(GameplayCommandExecutionFenceService.class);
     when(gameplayCommandExecutionFenceService.validate(any(), any())).thenReturn(Optional.empty());
-    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
-        mock(RuntimeRegionStatusRepository.class);
-    TickQueueControlService tickQueueControlService =
+    runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
+    tickQueueControlService =
         new TickQueueControlService(
             redisTemplate,
             mock(StringRedisTemplate.class),
@@ -89,7 +116,7 @@ class TickStagingServiceTest {
                 null),
             mock(net.firedevops.firemud.gamesession.service.SessionAuthenticationService.class),
             mock(java.util.concurrent.ScheduledExecutorService.class));
-    TickBatchExecutionService tickBatchExecutionService =
+    tickBatchExecutionService =
         new TickBatchExecutionService(
             new SimpleMeterRegistry(),
             redisTemplate,
@@ -97,10 +124,11 @@ class TickStagingServiceTest {
             tickBatchRepository,
             tickEffectRepository,
             mock(DurableGameplayCommandExecutionService.class),
-            mock(DurableRemoteFollowupExecutionService.class),
+            durableRemoteFollowupExecutionService,
             remoteFollowupDrainService,
             tickQueueControlService,
-            gameplayCommandExecutionFenceService);
+            gameplayCommandExecutionFenceService,
+            new ImmediateTransactionOperations());
     service =
         new TickStagingService(
             redisTemplate,
@@ -110,13 +138,30 @@ class TickStagingServiceTest {
             tickEffectRepository,
             remoteFollowupDrainService,
             tickQueueControlService,
-            tickBatchExecutionService);
+            tickBatchExecutionService,
+            new ImmediateTransactionOperations());
     setField(service, "maxRemoteFollowupsPerTick", 16);
+    RuntimeRegionStatus currentOwnership =
+        runtimeOwnership(1L, 2L, "region-a", 1L, "fence-a", false);
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(Optional.of(currentOwnership));
     when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-a"))
-        .thenReturn(Optional.of(runtimeOwnership(1L, 2L, "region-a", 1L, "fence-a", false)));
+        .thenReturn(Optional.of(currentOwnership));
     when(runtimeRegionStatusRepository.save(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    when(tickEffectRepository.findByTickBatchId(anyString())).thenReturn(List.of());
+    when(runtimeRegionStatusRepository.commitDrainedBatch(any(), any()))
+        .thenAnswer(
+            invocation -> {
+              RuntimeRegionStatus expected = invocation.getArgument(0);
+              expected.setLastCommittedTickBatchId(invocation.getArgument(1));
+              return Optional.of(expected);
+            });
+    when(tickEffectRepository.findByTickBatchId(anyString()))
+        .thenAnswer(
+            invocation ->
+                savedEffects.stream()
+                    .filter(effect -> invocation.getArgument(0).equals(effect.getTickBatchId()))
+                    .toList());
   }
 
   @Test
@@ -146,6 +191,122 @@ class TickStagingServiceTest {
   }
 
   @Test
+  void readExecutablePendingEntriesDropsCrossTenantResidue() {
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-cross-tenant|look"));
+    GameplayCommand command = gameplayCommand("cmd-cross-tenant");
+    command.setTenantId(99L);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-cross-tenant")))
+        .thenReturn(List.of(command));
+
+    assertTrue(service.readExecutablePendingEntries(1L, 2L).isEmpty());
+  }
+
+  @Test
+  void readExecutablePendingEntriesDropsCrossGameInstanceResidue() {
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-cross-game|look"));
+    GameplayCommand command = gameplayCommand("cmd-cross-game");
+    command.setGameInstanceId(99L);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-cross-game")))
+        .thenReturn(List.of(command));
+
+    assertTrue(service.readExecutablePendingEntries(1L, 2L).isEmpty());
+  }
+
+  @Test
+  void readExecutablePendingEntriesDropsStaleRegionAndEpochResidue() {
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-stale-region|look", "N|cmd-stale-epoch|look"));
+    GameplayCommand staleRegion = gameplayCommand("cmd-stale-region");
+    staleRegion.setRegionId("region-old");
+    GameplayCommand staleEpoch = gameplayCommand("cmd-stale-epoch");
+    staleEpoch.setRegionEpoch(2L);
+    when(gameplayCommandRepository.findByCommandIdIn(
+            List.of("cmd-stale-region", "cmd-stale-epoch")))
+        .thenReturn(List.of(staleRegion, staleEpoch));
+
+    assertTrue(service.readExecutablePendingEntries(1L, 2L).isEmpty());
+  }
+
+  @Test
+  void createBatchRejectsStaleExecutorFenceBeforeAnyDurableWrite() {
+    GameplayCommand command = gameplayCommand("cmd-stale-fence");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-stale-fence")))
+        .thenReturn(List.of(command));
+
+    assertThrows(
+        TickQueueControlService.StaleOwnershipException.class,
+        () ->
+            service.createBatch(
+                "FRESH_STAGE",
+                1L,
+                2L,
+                false,
+                new TickQueueControlService.OwnershipSnapshot(
+                    "region-a", 1L, "fence-stale", false, 0L),
+                List.of(new TickQueuedCommandEnvelope(false, "cmd-stale-fence", "look"))));
+
+    verify(tickBatchRepository, never()).save(any());
+    verify(tickEffectRepository, never()).saveAll(any());
+    verify(gameplayCommandRepository, never()).saveAll(any());
+  }
+
+  @Test
+  void createBatchRejectsCommandScopeDriftInsideTransactionBeforeAnyDurableWrite() {
+    GameplayCommand initial = gameplayCommand("cmd-scope-drift");
+    GameplayCommand drifted = gameplayCommand("cmd-scope-drift");
+    drifted.setRegionEpoch(2L);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-scope-drift")))
+        .thenReturn(List.of(initial), List.of(drifted));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.createBatch(
+                "FRESH_STAGE",
+                1L,
+                2L,
+                false,
+                new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+                List.of(new TickQueuedCommandEnvelope(false, "cmd-scope-drift", "look"))));
+
+    verify(tickBatchRepository, never()).save(any());
+    verify(tickEffectRepository, never()).saveAll(any());
+    verify(gameplayCommandRepository, never()).saveAll(any());
+  }
+
+  @Test
+  void createBatchRejectsDuplicatePendingCommandIdsBeforeAnyDurableWrite() {
+    GameplayCommand command = gameplayCommand("cmd-duplicate");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-duplicate")))
+        .thenReturn(List.of(command));
+    List<TickQueuedCommandEnvelope> duplicateEntries =
+        List.of(
+            new TickQueuedCommandEnvelope(false, "cmd-duplicate", "look"),
+            new TickQueuedCommandEnvelope(false, "cmd-duplicate", "look"));
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.createBatch(
+                    "FRESH_STAGE",
+                    1L,
+                    2L,
+                    false,
+                    new TickQueueControlService.OwnershipSnapshot(
+                        "region-a", 1L, "fence-a", false, 0L),
+                    duplicateEntries));
+
+    assertEquals(
+        "Durable tick staging requires unique pending Redis command ids", exception.getMessage());
+    verify(tickBatchRepository, never()).save(any());
+    verify(tickEffectRepository, never()).saveAll(any());
+    verify(gameplayCommandRepository, never()).saveAll(any());
+  }
+
+  @Test
   void createBatchPersistsComparableOrderingAndCanonicalRoutingManifest() {
     GameplayCommand command = gameplayCommand("cmd-1");
     command.setSourceType("AUTOMATION");
@@ -156,8 +317,8 @@ class TickStagingServiceTest {
     command.setPluginId("plugin-1");
     command.setPluginVersionId("plugin-v1");
     command.setTargetEntityId("entity-1");
-    command.setRegionId("region-1");
-    command.setRegionEpoch(4L);
+    command.setRegionId("region-a");
+    command.setRegionEpoch(1L);
     command.setPlayableStateScope("SHARED");
     command.setWorldSlug("demo");
     command.setRealmSlug("production");
@@ -284,6 +445,122 @@ class TickStagingServiceTest {
         batch.getSelectedWorkManifestJson().contains("\"realmSlug\""));
     org.junit.jupiter.api.Assertions.assertFalse(
         batch.getSelectedWorkManifestJson().contains("\"pointerVersion\""));
+  }
+
+  @Test
+  void createBatchKeepsDurableWritesInsideOneTransactionBoundary() {
+    List<String> events = new ArrayList<>();
+    service =
+        newStagingService(
+            new TransactionOperations() {
+              @Override
+              public <T> T execute(TransactionCallback<T> action) {
+                events.add("transaction-begin");
+                T result = action.doInTransaction(new SimpleTransactionStatus());
+                events.add("transaction-commit");
+                return result;
+              }
+            });
+    GameplayCommand command = gameplayCommand("cmd-atomic");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-atomic")))
+        .thenReturn(List.of(command));
+    doAnswer(
+            invocation -> {
+              events.add("batch");
+              return invocation.getArgument(0);
+            })
+        .when(tickBatchRepository)
+        .save(any());
+    doAnswer(
+            invocation -> {
+              events.add("effects");
+              return invocation.getArgument(0);
+            })
+        .when(tickEffectRepository)
+        .saveAll(any());
+    doAnswer(
+            invocation -> {
+              events.add("commands");
+              return invocation.getArgument(0);
+            })
+        .when(gameplayCommandRepository)
+        .saveAll(any());
+
+    service.createBatch(
+        "FRESH_STAGE",
+        1L,
+        2L,
+        false,
+        new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+        List.of(new TickQueuedCommandEnvelope(false, "cmd-atomic", "look")));
+
+    assertEquals(
+        List.of("transaction-begin", "batch", "effects", "commands", "transaction-commit"), events);
+  }
+
+  @Test
+  void createBatchPropagatesCommandAttemptWriteFailure() {
+    GameplayCommand command = gameplayCommand("cmd-rollback");
+    Instant originalLastAttemptAt = Instant.parse("2026-04-19T00:00:00Z");
+    command.setAttemptCount(7);
+    command.setLastAttemptAt(originalLastAttemptAt);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-rollback")))
+        .thenReturn(List.of(command));
+    doThrow(new IllegalStateException("command attempt write failed"))
+        .when(gameplayCommandRepository)
+        .saveAll(any());
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.createBatch(
+                "FRESH_STAGE",
+                1L,
+                2L,
+                false,
+                new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+                List.of(new TickQueuedCommandEnvelope(false, "cmd-rollback", "look"))));
+
+    verify(gameplayCommandRepository).saveAll(any());
+  }
+
+  @Test
+  void resolveReplayBatchRejectsPartialDurableEffectSet() {
+    GameplayCommand command = gameplayCommand("cmd-partial");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-partial")))
+        .thenReturn(List.of(command));
+    TickBatch existingBatch = new TickBatch();
+    existingBatch.setTickBatchId("tb-partial");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setExpectedEffectCount(2);
+    existingBatch.setSelectedWorkManifestJson(
+        replayManifestJson(service, List.of("N|cmd-partial|look")));
+    existingBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest(service, List.of("N|cmd-partial|look")));
+    TickEffect partialEffect = new TickEffect();
+    partialEffect.setTickBatchId("tb-partial");
+    when(tickEffectRepository.findByTickBatchId("tb-partial")).thenReturn(List.of(partialEffect));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.resolveReplayBatch(
+                    1L,
+                    2L,
+                    List.of(new TickQueuedCommandEnvelope(false, "cmd-partial", "look")),
+                    new TickQueueControlService.OwnershipSnapshot(
+                        "region-a", 1L, "fence-a", false, 0L)));
+
+    assertTrue(failure.getMessage().contains("expected=2 actual=1"));
+    verify(tickBatchRepository, never()).save(any());
   }
 
   @Test
@@ -442,14 +719,111 @@ class TickStagingServiceTest {
         stagedBatch.getSelectedWorkManifestJson().contains("\"pointerVersion\""));
   }
 
+  @Test
+  void postDrainRemoteEffectFailurePreservesTerminalEffectsAndReleasesRemainingClaims() {
+    net.firedevops.firemud.gamesession.entity.RemoteFollowup first =
+        remoteFollowup("followup-1", "entity-1");
+    net.firedevops.firemud.gamesession.entity.RemoteFollowup second =
+        remoteFollowup("followup-2", "entity-2");
+    when(remoteFollowupDrainService.claimDueFollowups(
+            eq(1L), eq("region-a"), eq(1L), anyString(), eq(16)))
+        .thenReturn(
+            new RemoteFollowupDrainService.ClaimOutcome(List.of("followup-1", "followup-2"), 2));
+    when(remoteFollowupRepository.findByClaimedTickBatchIdOrderByIdAsc(anyString()))
+        .thenReturn(List.of(first, second));
+    List<TickBatch> savedBatches = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              TickBatch batch = invocation.getArgument(0);
+              savedBatches.add(batch);
+              return batch;
+            })
+        .when(tickBatchRepository)
+        .save(any());
+    when(tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
+            1L, 2L, "DRAINED"))
+        .thenAnswer(
+            invocation ->
+                savedBatches.isEmpty()
+                    ? List.of()
+                    : List.of(savedBatches.get(savedBatches.size() - 1)));
+    when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc(anyString(), eq("DRAINED")))
+        .thenAnswer(
+            invocation ->
+                savedEffects.stream()
+                    .filter(
+                        effect ->
+                            invocation.getArgument(0, String.class).equals(effect.getTickBatchId()))
+                    .filter(
+                        effect ->
+                            invocation.getArgument(1, String.class).equals(effect.getStatus()))
+                    .toList());
+    when(durableRemoteFollowupExecutionService.execute(any()))
+        .thenAnswer(
+            invocation -> {
+              TickEffect effect = invocation.getArgument(0);
+              if ("followup-1".equals(effect.getEffectKey())) {
+                return new DurableRemoteFollowupExecutionService
+                    .DurableRemoteFollowupExecutionResult("APPLIED", null, null);
+              }
+              throw new IllegalStateException("remote effect failed");
+            });
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.drainRemoteFollowups(
+                1L,
+                2L,
+                new TickQueueControlService.OwnershipSnapshot(
+                    "region-a", 1L, "fence-a", false, 0L)));
+
+    verify(remoteFollowupDrainService)
+        .releaseClaimedFollowups(anyString(), eq("ROLLBACK_REQUEUED"), eq("remote effect failed"));
+    assertEquals("ABANDONED", savedBatches.get(savedBatches.size() - 1).getStatus());
+    assertEquals("APPLIED", savedEffects.get(0).getStatus());
+    assertEquals("ABANDONED", savedEffects.get(1).getStatus());
+  }
+
+  private static net.firedevops.firemud.gamesession.entity.RemoteFollowup remoteFollowup(
+      String followupId, String targetEntityId) {
+    var followup = new net.firedevops.firemud.gamesession.entity.RemoteFollowup();
+    followup.setTenantId(1L);
+    followup.setFollowupId(followupId);
+    followup.setTargetGameInstanceId(2L);
+    followup.setTargetRegionId("region-a");
+    followup.setTargetRegionEpoch(1L);
+    followup.setDueTickId(1L);
+    followup.setTargetEntityId(targetEntityId);
+    followup.setClaimTargetAggregate("entity:" + targetEntityId);
+    return followup;
+  }
+
+  private TickStagingService newStagingService(TransactionOperations transactionOperations) {
+    return new TickStagingService(
+        redisTemplate,
+        gameplayCommandRepository,
+        remoteFollowupRepository,
+        tickBatchRepository,
+        tickEffectRepository,
+        remoteFollowupDrainService,
+        tickQueueControlService,
+        tickBatchExecutionService,
+        transactionOperations);
+  }
+
   private static GameplayCommand gameplayCommand(String commandId) {
     var command = new GameplayCommand();
     command.setCommandId(commandId);
+    command.setTenantId(1L);
+    command.setGameInstanceId(2L);
     command.setCommandText("look");
     command.setSanitizedCommandText("look");
     command.setAttemptCount(1);
     command.setExecutionOutcome("STAGED");
     command.setGameplayResult("PENDING");
+    command.setRegionId("region-a");
+    command.setRegionEpoch(1L);
     return command;
   }
 

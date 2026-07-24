@@ -5,9 +5,11 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import static net.firedevops.firemud.gamesession.jooq.tables.RuntimeRegionStatus.RUNTIME_REGION_STATUS;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.time.Instant;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.jooq.tables.records.RuntimeRegionStatusRecord;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
@@ -44,12 +46,15 @@ public class RuntimeRegionStatusRepository {
         .fetchOptional(this::toEntity);
   }
 
+  /**
+   * Persists an existing row or ensures the natural-key baseline for a new entity.
+   *
+   * <p>When {@code id} is null and the natural key already exists, this returns the existing row;
+   * caller-supplied values do not overwrite that baseline.
+   */
   public RuntimeRegionStatus save(RuntimeRegionStatus entity) {
     if (entity.getId() == null) {
-      RuntimeRegionStatusRecord record = dsl.newRecord(RUNTIME_REGION_STATUS);
-      populate(record, entity);
-      record.store();
-      return findById(record.getId()).orElseThrow();
+      return ensureBaseline(entity);
     }
     int updated =
         dsl.update(RUNTIME_REGION_STATUS)
@@ -75,10 +80,117 @@ public class RuntimeRegionStatusRepository {
     return findById(entity.getId()).orElseThrow();
   }
 
+  public RuntimeRegionStatus ensureBaseline(RuntimeRegionStatus entity) {
+    RuntimeRegionStatusRecord record = dsl.newRecord(RUNTIME_REGION_STATUS);
+    populate(record, entity);
+    Optional<RuntimeRegionStatus> inserted =
+        dsl.insertInto(RUNTIME_REGION_STATUS)
+            .set(record)
+            .onConflict(RUNTIME_REGION_STATUS.TENANT_ID, RUNTIME_REGION_STATUS.GAME_INSTANCE_ID)
+            .doNothing()
+            .returning()
+            .fetchOptional(this::toEntity);
+    return inserted.orElseGet(
+        () ->
+            findByTenantIdAndGameInstanceId(entity.getTenantId(), entity.getGameInstanceId())
+                .orElseThrow(
+                    () ->
+                        new IllegalStateException(
+                            ("Natural-key conflict did not yield runtime_region_status for "
+                                    + "tenantId=%d gameInstanceId=%d")
+                                .formatted(entity.getTenantId(), entity.getGameInstanceId()))));
+  }
+
+  public Optional<RuntimeRegionStatus> claimObservedOwnership(
+      RuntimeRegionStatus expectedOwnership,
+      String ownerService,
+      String ownerInstanceId,
+      String executorFence,
+      Instant updatedAt) {
+    return dsl.update(RUNTIME_REGION_STATUS)
+        .set(RUNTIME_REGION_STATUS.OWNER_SERVICE, ownerService)
+        .set(RUNTIME_REGION_STATUS.OWNER_INSTANCE_ID, ownerInstanceId)
+        .set(RUNTIME_REGION_STATUS.EXECUTOR_FENCE, executorFence)
+        .set(RUNTIME_REGION_STATUS.UPDATED_AT, toLocalDateTime(updatedAt))
+        .where(
+            ownershipGuard(expectedOwnership)
+                .and(RUNTIME_REGION_STATUS.OWNER_SERVICE.eq(expectedOwnership.getOwnerService()))
+                .and(
+                    RUNTIME_REGION_STATUS.OWNER_INSTANCE_ID.eq(
+                        expectedOwnership.getOwnerInstanceId())))
+        .returning()
+        .fetchOptional(this::toEntity);
+  }
+
+  public Optional<RuntimeRegionStatus> advanceLastCommittedTickId(
+      RuntimeRegionStatus expectedOwnership) {
+    return dsl.update(RUNTIME_REGION_STATUS)
+        .set(
+            RUNTIME_REGION_STATUS.LAST_COMMITTED_TICK_ID,
+            expectedOwnership.getLastCommittedTickId() + 1L)
+        .set(RUNTIME_REGION_STATUS.UPDATED_AT, toLocalDateTime(expectedOwnership.getUpdatedAt()))
+        .where(
+            ownershipGuard(expectedOwnership)
+                .and(
+                    RUNTIME_REGION_STATUS.LAST_COMMITTED_TICK_ID.eq(
+                        expectedOwnership.getLastCommittedTickId())))
+        .returning()
+        .fetchOptional(this::toEntity);
+  }
+
+  public Optional<RuntimeRegionStatus> commitDrainedBatch(
+      RuntimeRegionStatus expectedOwnership, String tickBatchId) {
+    return dsl.update(RUNTIME_REGION_STATUS)
+        .set(RUNTIME_REGION_STATUS.LAST_COMMITTED_TICK_BATCH_ID, tickBatchId)
+        .set(RUNTIME_REGION_STATUS.UPDATED_AT, toLocalDateTime(expectedOwnership.getUpdatedAt()))
+        .where(
+            ownershipGuard(expectedOwnership)
+                .and(lastCommittedBatchGuard(expectedOwnership.getLastCommittedTickBatchId())))
+        .returning()
+        .fetchOptional(this::toEntity);
+  }
+
+  public RuntimeRegionStatus advanceOwnershipEpoch(RuntimeRegionStatus entity) {
+    RuntimeRegionStatusRecord record = dsl.newRecord(RUNTIME_REGION_STATUS);
+    populate(record, entity);
+    record.setRegionEpoch(1L);
+    return dsl.insertInto(RUNTIME_REGION_STATUS)
+        .set(record)
+        .onConflict(RUNTIME_REGION_STATUS.TENANT_ID, RUNTIME_REGION_STATUS.GAME_INSTANCE_ID)
+        .doUpdate()
+        .set(RUNTIME_REGION_STATUS.REGION_EPOCH, RUNTIME_REGION_STATUS.REGION_EPOCH.plus(1L))
+        .set(RUNTIME_REGION_STATUS.EXECUTOR_FENCE, entity.getExecutorFence())
+        .set(RUNTIME_REGION_STATUS.OWNER_SERVICE, entity.getOwnerService())
+        .set(RUNTIME_REGION_STATUS.OWNER_INSTANCE_ID, entity.getOwnerInstanceId())
+        .set(RUNTIME_REGION_STATUS.PAUSED, entity.isPaused())
+        .set(RUNTIME_REGION_STATUS.UPDATED_AT, toLocalDateTime(entity.getUpdatedAt()))
+        .returning()
+        .fetchOptional(this::toEntity)
+        .orElseThrow(
+            () ->
+                new IllegalStateException(
+                    "Runtime ownership mutation did not return a committed row"));
+  }
+
   private Optional<RuntimeRegionStatus> findById(Long id) {
     return dsl.selectFrom(RUNTIME_REGION_STATUS)
         .where(RUNTIME_REGION_STATUS.ID.eq(id))
         .fetchOptional(this::toEntity);
+  }
+
+  private Condition ownershipGuard(RuntimeRegionStatus expectedOwnership) {
+    return RUNTIME_REGION_STATUS
+        .ID
+        .eq(expectedOwnership.getId())
+        .and(RUNTIME_REGION_STATUS.REGION_EPOCH.eq(expectedOwnership.getRegionEpoch()))
+        .and(RUNTIME_REGION_STATUS.EXECUTOR_FENCE.eq(expectedOwnership.getExecutorFence()))
+        .and(RUNTIME_REGION_STATUS.PAUSED.eq(expectedOwnership.isPaused()));
+  }
+
+  private Condition lastCommittedBatchGuard(String expectedTickBatchId) {
+    return expectedTickBatchId == null
+        ? RUNTIME_REGION_STATUS.LAST_COMMITTED_TICK_BATCH_ID.isNull()
+        : RUNTIME_REGION_STATUS.LAST_COMMITTED_TICK_BATCH_ID.eq(expectedTickBatchId);
   }
 
   private void populate(RuntimeRegionStatusRecord record, RuntimeRegionStatus entity) {

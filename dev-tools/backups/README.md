@@ -3,7 +3,7 @@
 This directory contains FireMUD backup tooling for three different lanes:
 
 - local ad hoc PostgreSQL dumps
-- coordinated gameplay-aware backups
+- scheduled rolling PostgreSQL dumps
 - Kubernetes backup setup and verification
 
 ## Script Map
@@ -12,11 +12,6 @@ This directory contains FireMUD backup tooling for three different lanes:
   - Creates a local PostgreSQL logical dump with `pg_dump`.
   - Uses `FIREMUD_POSTGRES_HOST`, `FIREMUD_POSTGRES_USER`, and `FIREMUD_POSTGRES_DB`.
   - Accepts an optional output directory argument and defaults to a local `backups/` folder.
-
-- `firemud-backup.sh`
-  - Pauses gameplay ticks through Game Session, waits for pause confirmation, runs `pg_dump`, then resumes ticks.
-  - Intended for coordinated backup workflows where gameplay consistency matters.
-  - Uses `grpcurl` plus the same PostgreSQL environment variables as `backup-db.sh`.
 
 - `pg-dump-rotate.sh`
   - Creates rolling PostgreSQL dumps for the scheduled `pg-dump-cron` lane.
@@ -29,13 +24,14 @@ This directory contains FireMUD backup tooling for three different lanes:
   - Intended for local cluster/operator workflows, not the normal Docker Compose lane.
 
 - `verify-backups.sh`
-  - Verifies that Velero backups exist and that optional pg-dump object storage is reachable.
-  - Used by the manual backup/restore workflow and operational verification lanes.
+  - Checks that Velero backups exist and that optional pg-dump object storage is reachable.
+  - It does not prove immutable lineage, artifact readability, restore-tool compatibility, or player-facing readiness.
+  - Used by the manual backup/restore workflow as existence/reachability evidence only.
 
 ## Choosing The Right Script
 
 - Use `backup-db.sh` for a quick local PostgreSQL snapshot before a restore or experiment.
-- Use `firemud-backup.sh` when you need a coordinated dump that pauses gameplay ticks first.
+- The scheduled `pg-dump-rotate.sh` lane is the routine online-backup direction; it does not pause or resume gameplay and still needs separate immutable lineage, artifact-readability, restore-tool, erasure-replay, and controlled-reopen proof before player-facing readiness.
 - Use `setup-local-backup.sh` and `verify-backups.sh` for Kubernetes backup drills and backup verification.
 - Do not run `pg-dump-rotate.sh` manually unless you are intentionally testing the scheduled dump lane.
 

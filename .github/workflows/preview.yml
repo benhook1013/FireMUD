@@ -45,7 +45,8 @@ permissions:
 
 concurrency:
   group: preview-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_number || github.ref }}
-  cancel-in-progress: true
+  # Reconciler deploys must not cancel the PR check they are meant to repair.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || inputs.action == 'destroy' }}
 
 jobs:
   preview-plan:

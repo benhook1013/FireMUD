@@ -23,7 +23,7 @@ service GameSessionService {
   rpc ToggleFeatureFlag(ToggleFeatureFlagRequest) returns (ToggleFeatureFlagResponse);
   // Pause tick execution for an authorized maintenance workflow.
   rpc PauseTicks(PauseTicksRequest) returns (PauseTicksResponse);
-  // Resume tick execution after the maintenance workflow completes.
+  // Resume tick execution after the authorized maintenance workflow completes.
   rpc ResumeTicks(ResumeTicksRequest) returns (ResumeTicksResponse);
   // Report whether ticks are currently paused.
   rpc GetTickStatus(GetTickStatusRequest) returns (GetTickStatusResponse);

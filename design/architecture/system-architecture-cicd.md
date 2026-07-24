@@ -7,12 +7,12 @@ This document describes the continuous integration strategy for FireMUD using **
 ## Goals
 
 - **Automate builds and tests** for all microservices whenever code changes are pushed by running the [`ci.yml`](../../.github/workflows/ci.yml) workflow.
-- **Build Docker images** and push them to GitHub Container Registry (GHCR).
+- **Build Docker images** without registry credentials for pull-request smoke, then publish only successful PR artifacts through a trusted workflow; trusted branch workflows push directly to GitHub Container Registry (GHCR).
 - **Deploy hosted Kubernetes development/demo environments** through the dedicated preview and dev-demo workflows. [`preview.yml`](../../.github/workflows/preview.yml) manages per-PR hosted preview releases, and [`dev-demo.yml`](../../.github/workflows/dev-demo.yml) manages the fixed `develop` dev-demo environment. Staging and production clusters use Kustomize overlays as described in the Deployment Runbook and are applied via `kubectl` from a secure admin environment rather than directly from CI.
 - Treat `dev-demo-cluster` as validation-only infrastructure that is excluded from production promotion evidence.
 - Keep the workflow configuration easy to maintain and extensible for additional security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
-- **Perform deep static code scanning** with CodeQL on pull requests targeting `develop` and `main`, require the dedicated CodeQL gate only for `main` pull requests, and continue running the full analysis on `main` pushes, scheduled runs, and manual dispatches.
+- **Perform deep static code scanning** with CodeQL on pull requests targeting `develop` and `main`, require the dedicated CodeQL gate for both protected bases, and continue running the full analysis on `main` pushes, scheduled runs, and manual dispatches.
 - **Run AI-assisted pull request review** with CodeRabbit on `develop` and `main` pull requests using repository-local review guidance plus inherited organization defaults.
 - **Benchmark repository hardening** with OSSF Scorecard on `develop` and `main` pushes plus the weekly scorecard schedule.
 - **Scan for vulnerabilities** with Trivy during CI runs and scheduled security scans.
@@ -23,6 +23,10 @@ This document describes the continuous integration strategy for FireMUD using **
 - **Propose dependency updates automatically** with Renovate against the `develop` branch across the supported dependency managers.
 - **Generate database ERD diagrams** as build artifacts after each run. The [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) script writes them to `design/erd/`, and the workflow uploads this directory as artifacts.
 - **Cancel previous runs for the same branch** using a concurrency group so CI resources are conserved and deployment jobs do not race each other for the same environment.
+
+## Implementation Status
+
+The current executable unconditionally blocks every player-facing production promotion class, including `rollback-compatible`, until all required production evidence and validations are complete; incomplete evidence can never become promotion authority. Static CI still validates the checked-in evidence shape and available bindings, but production preflight does not yet execute the staging-lineage, expanded backup-readiness, nested candidate recovery-controller, `PREFLIGHT-JWT-002`, or `PREFLIGHT-JWT-ROTATION-001` validations behind that block. No rollback classification becomes current promotion authority until those diagnostics, recovery inventory membership, immutable evidence dereferencing, participant, confidentiality, hardening, JWT/JWKS, and controlled-reopen validations are implemented.
 
 ---
 
@@ -53,7 +57,7 @@ The main [`ci.yml`](../../.github/workflows/ci.yml) workflow:
 - Runs docs and link linting in `ci.yml` and verifies links again in the `docs.yml` workflow before publishing to GitHub Pages.
 - Posts a summary comment on pull requests with test status and coverage, while Codecov publishes patch-coverage status separately.
 
-A separate `docker-images.yml` workflow builds and publishes Docker images for all services using Docker Buildx and the `docker/build-push-action`:
+The primary [`ci.yml`](../../.github/workflows/ci.yml) workflow builds and validates the repository:
 
 ```yaml
 name: CI — Build and Security
@@ -94,7 +98,7 @@ The example above checks out the repository, sets up Java 21, and runs a Gradle 
 Other workflows support additional automation:
 
 - [`docs.yml`](../../.github/workflows/docs.yml) uses the **lychee** link checker (configured via `.lycheeignore`) before building and publishing the MkDocs-rendered architecture site to GitHub Pages. Publication is allowed only from `develop` and `main`; manual runs from other branches may validate the build but must not publish Pages.
-- [`codeql.yml`](../../.github/workflows/codeql.yml) performs static code analysis on pull requests targeting `develop` and `main`, on pushes to `main`, and on the weekly CodeQL schedule plus manual workflow dispatches. The dedicated `CodeQL Gate` is enforced only for pull requests targeting `main`, so `develop` pull requests still receive CodeQL findings without carrying the merge gate.
+- [`codeql.yml`](../../.github/workflows/codeql.yml) performs static code analysis on pull requests targeting `develop` and `main`, on pushes to `main`, and on the weekly CodeQL schedule plus manual workflow dispatches. The dedicated `CodeQL Gate` is enforced for pull requests targeting either protected base and succeeds without analysis only when change detection proves the diff is CodeQL-irrelevant.
 - [`.coderabbit.yaml`](../../.coderabbit.yaml) configures CodeRabbit pull request review behavior for the repository. CodeRabbit inherits organization-level defaults, uses the repository-local path instructions and summary guidance, auto-reviews newly opened non-draft pull requests targeting `develop` and `main`, leaves later commits for an explicit full-review request at a meaningful checkpoint, and is currently configured as advisory rather than a merge-blocking "request changes" reviewer.
 - [`scorecards.yml`](../../.github/workflows/scorecards.yml) runs OSSF Scorecard on `develop` and `main` pushes plus a weekly schedule, uploads the SARIF artifact, and publishes the findings into GitHub code scanning.
 - [`license-scan.yml`](../../.github/workflows/license-scan.yml) checks open source dependencies for license compliance across the currently supported release dependency ecosystems (`Gradle` and `NPM`).
@@ -107,6 +111,7 @@ Other workflows support additional automation:
 - [`weekly-security-scan.yml`](../../.github/workflows/weekly-security-scan.yml) runs the weekly Trivy image scan.
 - [`ort-advisory.yml`](../../.github/workflows/ort-advisory.yml) runs the **Weekly ORT Advisory Scan**.
 - [`publish-base-image.yml`](../../.github/workflows/publish-base-image.yml) runs the **Weekly FireMUD Base Image Refresh** and is also the branch-guarded publication path for explicit base-image rebuilds on `develop` / `main`.
+- [`runtime-images.yml`](../../.github/workflows/runtime-images.yml) builds pull-request images locally and runs full-stack smoke without a registry-write token. After that workflow succeeds, [`publish-pr-runtime-images.yml`](../../.github/workflows/publish-pr-runtime-images.yml) runs from the trusted default-branch workflow definition, downloads the fixed image artifact, and publishes only the exact PR head-SHA tags needed by hosted previews. It never checks out or executes PR source and never writes shared cache or branch tags. Push and manual runs on trusted branches continue to publish images and shared build caches directly.
 
 ---
 
@@ -139,7 +144,7 @@ After tests pass, each service is packaged into a Docker image:
             ghcr.io/benhook1013/${{ matrix.service }}:${{ github.ref_name }}
 ```
 
-Images are tagged with the commit SHA and pushed to **GitHub Container Registry (GHCR)**.
+Images are tagged with the commit SHA. Pull-request images are first built and smoke-tested locally without registry credentials; only the resulting successful artifact crosses into the trusted publisher that pushes those fixed SHA tags to **GitHub Container Registry (GHCR)**. Trusted `develop` and `main` publication runs push directly and may update shared build-cache tags.
 
 Deployable artifact lineage rule:
 
@@ -215,7 +220,7 @@ Release dependency-notice automation is a separate concern from repository scrip
 
 FireMUD's preview workflow is reserved for real reviewer-accessible PR environments, not CI-only stack boot validation. The [`.github/workflows/preview.yml`](../../.github/workflows/preview.yml) workflow targets a hosted single-node k3s cluster and follows this contract:
 
-- Build and push PR-tagged container images to private GHCR.
+- Build and smoke-test PR-tagged container images in a credential-free job, then publish the successful fixed-tag artifact to private GHCR from the trusted default-branch publisher.
 - Deploy or upgrade Helm release `pr-<PR_NUMBER>` into namespace `pr-<PR_NUMBER>`.
 - Expose the environment at `https://pr-<PR_NUMBER>.preview.<DOMAIN>` using cluster ingress/TLS.
 - Expose a reviewer-usable TCP/Telnet entry path for the preview stack so manual gameplay proof can happen through the normal MUD client surface.
@@ -255,8 +260,8 @@ FireMUD uses a simple promotion flow from pull requests through staging to produ
 - Overlay PRs are validated by [`.github/workflows/validate-kustomize-overlays.yml`](../../.github/workflows/validate-kustomize-overlays.yml), which checks that referenced images exist in GHCR, enforces digest pinning for staging/production overlays, and blocks staging backup schedules unless the explicit marker `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
 - Overlay PRs run the canonical preflight entrypoint (`dev-tools/deploy/preflight.py`) in `ci-static` context so policy IDs and report shape match operator pre-apply validation. CI-static mode may mark production attestation policy as `not_applicable` when no production promotion is being executed.
 - Production overlay PRs must include exactly one in-repo staging promotion attestation under `design/operations/deployments/production/attestations/<deployment-ref>.json` that follows `system-architecture-promotion-attestation.md`. Production PRs are rejected if they reference digests that cannot be tied to that attestation, a successful staging deployment record with live-state verification, and a staging deployment record whose `secretComplianceStatus` is `pass`.
-- Production overlay PR CI must evaluate the attestation and, when the attestation classifies the release as `roll-forward-only`, the matching backup-readiness evidence before merge. Deferring those checks to operator-only preflight is non-compliant.
-- Staging apply evidence must include the in-repo deployment record `design/operations/deployments/staging/deployments/<stagingOverlayCommitSha>.json`; production promotion validation fails when this record is missing, digest-mismatched, lacks live-state verification, or lacks passing secret-compliance evidence.
+- Production overlay PR CI must evaluate the attestation and compact recovery-compatibility result for every promotion. `compatibilityStatus=incompatible` is unconditionally non-promotable. `compatibilityStatus=drill_required` remains non-promotable until the fresh drill is complete and the compatibility result is regenerated as `compatible`; attached backup-readiness evidence cannot make the stale result promotable. A `roll-forward-only` release requires matching full backup-readiness evidence in addition to a regenerated compatible result. Deferring those checks to operator-only preflight is non-compliant.
+- Staging apply evidence must include the immutable in-repo deployment record `design/operations/deployments/staging/deployments/<stagingOverlayCommitSha>/<stagingDeploymentEventId>.json`; production promotion validation fails when the attestation does not select the exact event record or that record is missing, digest-mismatched, lacks live-state verification, or lacks passing secret-compliance evidence.
 - Player-facing preflight and operator validation must also verify environment bootstrap completeness and external integration isolation before apply; these checks are not limited to restore events.
 - `manual-backup-restore.yml` is limited to throwaway recovery drills. It may target only explicit non-player-facing restore namespaces or isolated drill clusters using dedicated low-privilege credentials and GitHub Environment approvals. It must not restore into live staging or production namespaces and must not hold credentials capable of modifying the currently player-facing cluster boundary.
 
@@ -268,16 +273,15 @@ Before approving a production promotion, deployment evidence must classify rollb
 
 Production promotions lacking this explicit rollback-mode classification are non-compliant.
 
-For production releases classified as `roll-forward-only`, promotion evidence must also include fresh backup-readiness evidence proving:
+Every production promotion records a compact recovery-compatibility result against the current production-equivalent cold-start drill. A `drill_required` result blocks promotion until the required fresh drill is complete and a new `compatible` result replaces it. For releases classified as `roll-forward-only`, promotion evidence must also include fresh full backup-readiness evidence proving:
 
 - a recent successful logical backup,
 - recent backup-verification success, and
-- a current restore-plan or restore-drill reference suitable for the release.
+- a current environment-wide `cold_start_restore` record suitable for the release, including empty Redis, safe recovery-participant dispositions, hardening, and controlled reopen.
 
-The canonical evidence path is `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`, and production CI/preflight must reject `roll-forward-only` promotions when that evidence is missing, stale, or not bound to the attestation/digest set being promoted.
-Traffic-open readiness for production first-live or reopen events uses the same `design/operations/deployments/production/backup-readiness/` artifact family with the specialized naming pattern `first-live-<deployment-ref>.json` defined in `system-architecture-backup-recovery.md`; this is distinct by purpose, not by schema lineage.
-For player-facing production promotions, the referenced backup-readiness evidence must dereference finalized environment-wide recovery-controller lineage from a `cold_start_restore` drill and include backup-confidentiality proof. Tenant/region pause scope is a maintenance/reset signal and is not a production recovery prerequisite.
-Current implementation note: because `system-architecture-backup-recovery.md` still marks player-facing environment-wide recovery-controller and confidentiality readiness as incomplete, player-facing production `roll-forward-only` promotion is currently non-compliant in practice. CI/preflight must reject such promotions until that implementation note is removed.
+The canonical full-evidence path is `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`. The compact result uses `compatibilityStatus` (`compatible`, `drill_required`, or `incompatible`) as the outcome and `newDrillRequired` as the machine-readable drill gate. `incompatible` is a terminal failed result. `drill_required` requires `newDrillRequired=true` and is also non-promotable: after the drill and full evidence are complete, the compatibility classifier must produce a new `compatible` result bound to that evidence. Every `roll-forward-only` release also sets `newDrillRequired=true`, carries matching full evidence, and must have a compatible regenerated result. Production CI/preflight rejects stale `drill_required` results and full evidence that is missing, stale, or not bound to the source production database lineage, candidate recovery tooling, exact candidate digests, migration path, config, bindings, and promotion attestation. Compatible rollback releases keep only the compact result or immutable reference in promotion/deployment evidence rather than copying the full recovery record.
+
+Traffic-open readiness for production first-live or reopen events uses `design/operations/deployments/production/traffic-open/<first-live|reopen>-<deployment-ref>/<deploymentEventId>.json`, whose stored event identity matches the referenced preflight report, and references the canonical backup-readiness, recovery-controller, and confidentiality evidence. Routine online backups cover the environment-wide PostgreSQL database and do not use Game Session pause/resume as readiness proof.
 
 Pre-apply policy checks for staging and production must run through the canonical preflight contract in `system-architecture-deploy-preflight-policy.md`. Static checks run in overlay PR CI, and resolved-manifest/runtime checks run in operator preflight execution. Both use the same policy IDs and evidence shape.
 
@@ -285,23 +289,24 @@ Pre-apply policy checks for staging and production must run through the canonica
 
 FireMUD uses one deployment-evidence chain per deployment event so promotion, rollback, and incident review all answer from the same record set:
 
-1. Preflight produces `design/operations/deployments/<environment>/preflight/<deployment-ref>.json`.
+1. Preflight produces `design/operations/deployments/<environment>/preflight/<deployment-ref>/<deploymentEventId>.json`.
 2. Secret-compliance validation produces or references `design/operations/secret-compliance/<environment>.yaml` plus immutable supporting evidence.
-3. Operator apply produces or updates the environment deployment record:
-   - staging: `design/operations/deployments/staging/deployments/<overlayCommitSha>.json`
-   - production: `design/operations/deployments/production/deployments/<overlayCommitSha>.json`
-   - hobby-self-hosted: `design/operations/deployments/hobby-self-hosted/deployments/<deployment-ref>.json`
-4. Production promotion references exactly one staging attestation at `design/operations/deployments/production/attestations/<deployment-ref>.json`.
-5. Production release publication references one release digest manifest at `design/operations/deployments/production/release-manifests/<release-tag-or-deployment-ref>.json`.
-6. If the release is `roll-forward-only`, production also references `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`.
+3. Operator apply produces one immutable environment deployment record:
+   - staging: `design/operations/deployments/staging/deployments/<overlayCommitSha>/<deploymentEventId>.json`
+   - production: `design/operations/deployments/production/deployments/<overlayCommitSha>/<deploymentEventId>.json`
+   - hobby-self-hosted: `design/operations/deployments/hobby-self-hosted/deployments/<deployment-ref>/<deploymentEventId>.json`
+4. After apply and live-state verification succeed, the operator updates the environment's one current-state index at `design/operations/deployments/<environment>/deployments/current.json`. The index identifies the exact immutable deployment record through `deploymentRef`, `deploymentEventId`, and `deploymentRecordRef`; it is the sole repository answer to what is currently deployed in that environment.
+5. Production promotion references exactly one staging attestation at `design/operations/deployments/production/attestations/<deployment-ref>.json`. The attestation binds one exact staging deployment event and remains immutable even after the staging current-state index advances.
+6. Production release publication references one release digest manifest at `design/operations/deployments/production/release-manifests/<release-tag-or-deployment-ref>.json`.
+7. Every production release records its compact recovery-compatibility result; if that result requires a drill or the release is `roll-forward-only`, production also references `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`.
 
 Lifecycle rules:
 
-- The deployment record is the canonical answer to “what is currently deployed and promotable for this environment.”
+- The environment's `deployments/current.json` index is the canonical answer to “what is currently deployed.” Promotion eligibility is a separate immutable claim: an attestation selects one exact successful deployment event and never performs a later “latest event” lookup.
 - Preflight artifacts, secret-compliance snapshots, smoke evidence, and live-state verification are supporting evidence linked from the deployment record rather than parallel sources of truth.
-- Current promotion trust is repository-reviewed evidence with immutable artifact references. CI treats the in-repo deployment record and production attestation as the deterministic promotion index, then verifies digest equality, live-state evidence shape, and immutable secret-compliance references. Detached signatures are not required in the current single-admin/operator model.
-- Re-applying the same overlay commit does not create a second competing promotion record; operators update the same deployment record with a new apply event timestamp, new live-state evidence, and the outcome of the latest smoke checks.
-- A promotion attestation is valid only if its referenced staging deployment record remains the latest successful apply record for that staging overlay commit.
+- Current promotion trust is repository-reviewed evidence with immutable artifact references. CI treats the production attestation as the deterministic selector for its exact in-repo deployment record, then verifies digest equality, live-state evidence shape, and immutable secret-compliance references. Detached signatures are not required in the current single-admin/operator model.
+- Re-applying the same overlay commit creates a new immutable event record and, after successful live-state verification, advances the current-state index. It never overwrites prior preflight, apply, or attestation evidence.
+- A promotion attestation is valid only if `stagingOverlayCommitSha` plus `stagingDeploymentEventId` selects the exact successful promotable apply event it attests. A later apply does not invalidate or retarget that historical attestation.
 - Rollback uses the deployment record and original attestation lineage for the digest set being restored.
 
 Terminology note:
@@ -310,7 +315,7 @@ Terminology note:
 - `promotion evidence` is the subset of evidence used to prove a staging deployment is eligible to be promoted into production, primarily the attestation plus its referenced deployment and compliance records.
 - `traffic-open evidence` is the evidence family used to prove an environment may be opened or reopened to player traffic, for example the production traffic-open backup-readiness artifact or hobby traffic-open records.
 - `promotion candidate` means a staging deployment record that is eligible to produce production promotion evidence; quarantined or detached staging drills can remain valid deployment evidence without becoming promotion candidates.
-- `deployment-ref` is the canonical environment-agnostic identity for one deployment event and is used by preflight, attestation, and backup-readiness artifacts. For Git-managed staging/production overlays, the canonical `deployment-ref` is the same Git SHA recorded as `overlayCommitSha`; the docs use `overlayCommitSha` only where the Git-derived source of the deployment-ref matters.
+- `deployment-ref` is the canonical environment-agnostic identity for the reviewed deployment input lineage and is used by preflight, attestation, and backup-readiness artifacts. For Git-managed staging/production overlays, it is the same Git SHA recorded as `overlayCommitSha`. `deploymentEventId` is the distinct UUID for one concrete preflight/apply event, including a retry or later re-apply of the same deployment ref.
 
 Illustrative deployment record shape:
 
@@ -318,6 +323,7 @@ Illustrative deployment record shape:
 {
   "environment": "staging",
   "overlayCommitSha": "<git-sha>",
+  "deploymentEventId": "<uuid>",
   "appliedAt": "2026-03-13T10:15:00Z",
   "appliedBy": "operator@example",
   "deployStatus": "pass",
@@ -326,7 +332,7 @@ Illustrative deployment record shape:
     "spring-cloud-gateway": "ghcr.io/example/spring-cloud-gateway@sha256:...",
     "game-session-service": "ghcr.io/example/game-session-service@sha256:..."
   },
-  "preflightReportPath": "design/operations/deployments/staging/preflight/<git-sha>.json",
+  "preflightReportPath": "design/operations/deployments/staging/preflight/<git-sha>/<deploymentEventId>.json",
   "liveStateEvidence": {
     "status": "pass",
     "observedOverlaySha": "<git-sha>",
@@ -377,6 +383,8 @@ Enforcement workflow contract:
   - `postgres-application-credentials`
   - `backup-object-store-credentials`
   - `operator-credentials`
+
+The `jwt-signing-keys-jwks` age record is necessary but not sufficient for JWT readiness. Any staging deployment used for production attestation, production promotion, or player-facing first-live/reopen evidence must also carry `PREFLIGHT-JWT-002=pass` and current `PREFLIGHT-JWT-ROTATION-001=pass` evidence proving Account-only asymmetric signing, validator convergence, planned rotation through pruning, and compromise hard cutover. The current executable preflight does not yet implement those checks, so mounted JWT/JWKS resources and a fresh credential-age record cannot be used to claim the player-facing JWT gate is satisfied.
 
 ---
 

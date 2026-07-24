@@ -275,10 +275,14 @@ jobs:
           bash ./dev-tools/tests/coderabbit-review-contract.sh
           bash ./dev-tools/tests/pr-retarget-workflow-contract.sh
           bash ./dev-tools/tests/static-analysis-summary-contract.sh
+          bash ./dev-tools/tests/pr-required-gate-context-contract.sh
           bash ./dev-tools/tests/reset-service-db-contract.sh
           bash ./dev-tools/tests/preview-eligibility-contract.sh
           bash ./dev-tools/tests/worktree-topology-contract.sh
           bash ./dev-tools/tests/preflight-contract.sh
+          bash ./dev-tools/tests/overlay-preflight-contract.sh
+          bash ./dev-tools/tests/validate-external-credentials-contract.sh
+          bash ./dev-tools/tests/observability-validator-contract.sh
           bash ./dev-tools/tests/secret-compliance-contract.sh
           bash ./dev-tools/tests/ensure-local-compose-env-contract.sh
           bash ./dev-tools/tests/smoke-image-env-contract.sh

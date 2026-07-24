@@ -16,7 +16,6 @@ internalBindings:
     workloadMtlsRef: cert-manager://firemud/production-workload-mtls
     gatewayInternalWsListenerRef: cert-manager://firemud/production-gateway-internal-ws
     tcpProxyBridgeClientRef: cert-manager://firemud/production-tcp-proxy-bridge
-    backupControlPlaneClientRef: cert-manager://firemud/production-backup-control-plane
   registry:
     imagePullSecretRef: secret://firemud/ghcr-pull-production
 backupStorage:

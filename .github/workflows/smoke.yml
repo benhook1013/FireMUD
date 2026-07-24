@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: smoke-${{ github.workflow }}-${{ format('pr-{0}-controller', github.event.pull_request.number) }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
@@ -102,7 +101,9 @@ jobs:
               ".github/workflows/smoke.yml",
               ".github/workflows/smoke-full.yml",
               ".github/workflows/runtime-images.yml",
+              ".github/workflows/publish-pr-runtime-images.yml",
               "dev-tools/build-compose-service-jars.sh",
+              "dev-tools/build-local-smoke-images.sh",
               "dev-tools/certs/generate-dev-certs.sh",
               "dev-tools/verify-compose-health.sh",
               "dev-tools/verify-fresh-bootstrap.sh",
@@ -172,6 +173,10 @@ jobs:
   smoke-summary:
     name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Summary)' || 'Smoke Summary' }}
     runs-on: ubuntu-latest
+    permissions:
+      # Only this job publishes or updates the pull request smoke summary comment.
+      contents: read
+      pull-requests: write
     needs: [changes, smoke-lite]
     if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
@@ -182,11 +187,15 @@ jobs:
 
       - name: 💬 Publish Smoke Summary Comment
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          RUN_SMOKE_LITE: ${{ needs.changes.outputs.run_smoke_lite }}
+          RUN_SMOKE_FULL: ${{ needs.changes.outputs.run_smoke_full }}
+          SMOKE_LITE_RESULT: ${{ needs['smoke-lite'].result }}
         with:
           script: |
-            const liteEnabled = "${{ needs.changes.outputs.run_smoke_lite }}" === "true";
-            const fullEnabled = "${{ needs.changes.outputs.run_smoke_full }}" === "true";
-            const liteResult = liteEnabled ? "${{ needs.smoke-lite.result }}" : "skipped";
+            const liteEnabled = process.env.RUN_SMOKE_LITE === "true";
+            const fullEnabled = process.env.RUN_SMOKE_FULL === "true";
+            const liteResult = liteEnabled ? process.env.SMOKE_LITE_RESULT : "skipped";
             const fullResult = fullEnabled ? "tracked-by-smoke-gate" : "skipped";
             const statusIcon = (value) => {
               if (value === "success") return "✅";
@@ -249,32 +258,45 @@ jobs:
   smoke-gate:
     name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Gate)' || 'Smoke Gate' }}
     runs-on: ubuntu-latest
+    permissions:
+      # This job reads workflow and job results for the matching runtime-image run.
+      contents: read
+      actions: read
     needs: [changes, smoke-lite]
     if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     timeout-minutes: 30
     steps:
+      - name: Fail when smoke dependencies did not succeed
+        if: ${{ needs.changes.result != 'success' || (needs.changes.outputs.run_smoke_lite == 'true' && needs['smoke-lite'].result != 'success') }}
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SMOKE_LITE_RESULT: ${{ needs['smoke-lite'].result }}
+        run: |
+          echo "Smoke dependencies did not succeed: changes=$CHANGES_RESULT, smoke-lite=$SMOKE_LITE_RESULT" >&2
+          exit 1
+
       - name: Harden runner
+        if: ${{ needs.changes.result == 'success' && (needs.changes.outputs.run_smoke_lite != 'true' || needs['smoke-lite'].result == 'success') }}
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
         with:
           egress-policy: audit
 
       - name: Verify lite smoke result
-        if: ${{ needs.changes.outputs.run_smoke_lite == 'true' && needs.changes.outputs.run_smoke_full != 'true' }}
-        run: |
-          if [ "${{ needs.smoke-lite.result }}" != "success" ]; then
-            echo "Lite smoke did not succeed: ${{ needs.smoke-lite.result }}" >&2
-            exit 1
-          fi
+        if: ${{ needs.changes.result == 'success' && needs['smoke-lite'].result == 'success' && needs.changes.outputs.run_smoke_lite == 'true' && needs.changes.outputs.run_smoke_full != 'true' }}
+        run: echo "Lite smoke succeeded."
 
       - name: Wait for full smoke dispatch result
-        if: ${{ needs.changes.outputs.run_smoke_full == 'true' }}
+        if: ${{ needs.changes.result == 'success' && (needs.changes.outputs.run_smoke_lite != 'true' || needs['smoke-lite'].result == 'success') && needs.changes.outputs.run_smoke_full == 'true' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const headSha = context.payload.pull_request.head.sha;
+            const baseSha = context.payload.pull_request.base.sha;
+            const mergeSha = context.sha;
             const prNumber = String(context.payload.pull_request.number);
+            const expectedDisplayTitle = `Build Runtime Images secure-pr-artifact pr-${prNumber} base-${baseSha} head-${headSha} merge-${mergeSha} mode-required`;
             const started = Date.now();
             const timeoutMs = 25 * 60 * 1000;
             const sleepMs = 15000;
@@ -287,11 +309,26 @@ jobs:
                   repo,
                   workflow_id: "runtime-images.yml",
                   event: "pull_request",
+                  head_sha: headSha,
                   per_page: 100,
                 }
               );
 
-              const matching = runs.find((run) => run.head_sha === headSha);
+              const matching = runs.find((run) => {
+                if (
+                  run.event !== "pull_request" ||
+                  run.head_sha !== headSha ||
+                  run.display_title !== expectedDisplayTitle
+                ) {
+                  return false;
+                }
+                const pullRequests = run.pull_requests ?? [];
+                return pullRequests.length === 0 || pullRequests.some((pullRequest) =>
+                  String(pullRequest.number) === prNumber &&
+                  pullRequest.base?.sha === baseSha &&
+                  pullRequest.head?.sha === headSha
+                );
+              });
               if (matching) {
                 core.info(`Found runtime-images run ${matching.id} with status=${matching.status} conclusion=${matching.conclusion}`);
                 if (matching.status !== "completed") {
@@ -299,14 +336,33 @@ jobs:
                   continue;
                 }
 
-                if (matching.conclusion !== "success") {
-                  core.setFailed(`Runtime images/full smoke run ${matching.id} finished with ${matching.conclusion}`);
+                const jobs = await github.paginate(
+                  github.rest.actions.listJobsForWorkflowRun,
+                  {
+                    owner,
+                    repo,
+                    run_id: matching.id,
+                    per_page: 100,
+                  }
+                );
+                const fullSmokeJob = jobs.find(
+                  (job) => job.name === "Smoke Tests (Full Stack) / Smoke Tests (Full Stack)"
+                );
+                if (!fullSmokeJob) {
+                  core.setFailed(`Runtime images run ${matching.id} did not expose the required Smoke Tests (Full Stack) job`);
+                  return;
+                }
+
+                if (matching.conclusion !== "success" || fullSmokeJob.status !== "completed" || fullSmokeJob.conclusion !== "success") {
+                  core.setFailed(
+                    `Runtime images/full smoke run ${matching.id} did not complete successfully: run=${matching.conclusion}, full-smoke=${fullSmokeJob.status}/${fullSmokeJob.conclusion}`
+                  );
                 }
                 return;
               }
 
-              core.info(`No runtime-images/full-smoke run found yet for PR #${prNumber} sha ${headSha}; waiting...`);
+              core.info(`No runtime-images/full-smoke run found yet for PR #${prNumber} base ${baseSha} head ${headSha} merge ${mergeSha}; waiting...`);
               await new Promise((resolve) => setTimeout(resolve, sleepMs));
             }
 
-            core.setFailed(`Timed out waiting for runtime-images/full-smoke run for PR #${prNumber} sha ${headSha}`);
+            core.setFailed(`Timed out waiting for runtime-images/full-smoke run for PR #${prNumber} base ${baseSha} head ${headSha} merge ${mergeSha}`);

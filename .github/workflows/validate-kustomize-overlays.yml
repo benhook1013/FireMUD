@@ -2,6 +2,7 @@ name: Validate Kustomize Overlays
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
     paths:
       - "k8s/**"
       - "design/operations/deployments/production/attestations/**"
@@ -16,13 +17,14 @@ permissions:
   packages: read
 
 concurrency:
-  group: validate-kustomize-overlays-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  group: validate-kustomize-overlays-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
   cancel-in-progress: true
 
 jobs:
   validate-overlays:
+    name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (validate-overlays)' || 'validate-overlays' }}
     runs-on: ubuntu-latest
-    if: ${{ github.actor != 'dependabot[bot]' }}
+    if: ${{ github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     steps:

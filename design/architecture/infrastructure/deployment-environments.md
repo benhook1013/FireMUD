@@ -279,7 +279,7 @@ FireMUD's preview environment is a hosted single-node k3s cluster intended for r
 
 - Same-repo pull requests may deploy one Helm release into namespace `pr-<PR_NUMBER>` with matching hostname `https://pr-<PR_NUMBER>.preview.<DOMAIN>`.
 - The preview deployment uses the full application stack, including the gateway, TCP proxy, backend microservices, and stateful supporting services required for normal gameplay flows.
-- GitHub Actions builds PR-tagged images, pushes them to private GHCR, and deploys or upgrades the preview release via Helm. The cluster authenticates to GHCR using image pull credentials.
+- GitHub Actions builds and smoke-tests PR-tagged images without registry credentials. A separate trusted default-branch workflow publishes only the successful fixed head-SHA tags to private GHCR, after which the preview workflow deploys or upgrades the Helm release. The cluster authenticates to GHCR using image pull credentials.
 - Each preview namespace must use PR-unique JWT signing material and JWKS data, even when that material is stored as low-sensitivity test-only ConfigMap or Secret content. Preview auth tokens must not validate across PR namespaces.
 - The first reviewer-usable proof target for preview is manual `LOGIN -> PLAY -> LOOK` over the TCP/Telnet path. A browser-first preview experience is useful later, but it is not the first hosted proof milestone.
 - Long-term first-party browser hosting should live in a dedicated first-party web application service, not in Spring Cloud Gateway. If temporary preview-only browser helpers exist before that service lands, they must not redefine the long-term architecture.

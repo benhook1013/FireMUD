@@ -2,54 +2,54 @@ services:
   account-service:
     build: null
     image: ghcr.io/benhook1013/account-service:${SMOKE_IMAGE_TAG}
-    pull_policy: always
+    pull_policy: ${SMOKE_IMAGE_PULL_POLICY:-always}
 
   automation-scripting-service:
     build: null
     image: ghcr.io/benhook1013/automation-scripting-service:${SMOKE_IMAGE_TAG}
-    pull_policy: always
+    pull_policy: ${SMOKE_IMAGE_PULL_POLICY:-always}
 
   entity-management-service:
     build: null
     image: ghcr.io/benhook1013/entity-management-service:${SMOKE_IMAGE_TAG}
-    pull_policy: always
+    pull_policy: ${SMOKE_IMAGE_PULL_POLICY:-always}
 
   game-design-service:
     build: null
     image: ghcr.io/benhook1013/game-design-service:${SMOKE_IMAGE_TAG}
-    pull_policy: always
+    pull_policy: ${SMOKE_IMAGE_PULL_POLICY:-always}
 
   game-logic-service:
     build: null
     image: ghcr.io/benhook1013/game-logic-service:${SMOKE_IMAGE_TAG}
-    pull_policy: always
+    pull_policy: ${SMOKE_IMAGE_PULL_POLICY:-always}
 
   game-session-service:
     build: null
     image: ghcr.io/benhook1013/game-session-service:${SMOKE_IMAGE_TAG}
-    pull_policy: always
+    pull_policy: ${SMOKE_IMAGE_PULL_POLICY:-always}
 
   logging-admin-service:
     build: null
     image: ghcr.io/benhook1013/logging-admin-service:${SMOKE_IMAGE_TAG}
-    pull_policy: always
+    pull_policy: ${SMOKE_IMAGE_PULL_POLICY:-always}
 
   social-groups-service:
     build: null
     image: ghcr.io/benhook1013/social-groups-service:${SMOKE_IMAGE_TAG}
-    pull_policy: always
+    pull_policy: ${SMOKE_IMAGE_PULL_POLICY:-always}
 
   gateway:
     build: null
     image: ghcr.io/benhook1013/spring-cloud-gateway:${SMOKE_IMAGE_TAG}
-    pull_policy: always
+    pull_policy: ${SMOKE_IMAGE_PULL_POLICY:-always}
 
   tcp-proxy-service:
     build: null
     image: ghcr.io/benhook1013/tcp-proxy-service:${SMOKE_IMAGE_TAG}
-    pull_policy: always
+    pull_policy: ${SMOKE_IMAGE_PULL_POLICY:-always}
 
   world-management-service:
     build: null
     image: ghcr.io/benhook1013/world-management-service:${SMOKE_IMAGE_TAG}
-    pull_policy: always
+    pull_policy: ${SMOKE_IMAGE_PULL_POLICY:-always}

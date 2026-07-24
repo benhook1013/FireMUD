@@ -2959,7 +2959,7 @@ Administrative request to pause tick execution.
 <a name="game_session-v1-ResumeTicksRequest"></a>
 
 ### ResumeTicksRequest
-Resume ticks after a backup has started.
+Resume ticks after the authorized maintenance workflow completes.
 
 
 | Field | Type | Label | Description |
@@ -3212,8 +3212,8 @@ plus scoped tick pause/resume used for rollback safety.
 | EnqueueCommand | [EnqueueCommandRequest](#game_session-v1-EnqueueCommandRequest) | [EnqueueCommandResponse](#game_session-v1-EnqueueCommandResponse) |  |
 | QueryState | [QueryStateRequest](#game_session-v1-QueryStateRequest) | [QueryStateResponse](#game_session-v1-QueryStateResponse) |  |
 | ToggleFeatureFlag | [ToggleFeatureFlagRequest](#game_session-v1-ToggleFeatureFlagRequest) | [ToggleFeatureFlagResponse](#game_session-v1-ToggleFeatureFlagResponse) |  |
-| PauseTicks | [PauseTicksRequest](#game_session-v1-PauseTicksRequest) | [PauseTicksResponse](#game_session-v1-PauseTicksResponse) | Pause tick execution so a consistent pg_dump can be taken. |
-| ResumeTicks | [ResumeTicksRequest](#game_session-v1-ResumeTicksRequest) | [ResumeTicksResponse](#game_session-v1-ResumeTicksResponse) | Resume tick execution after a backup. |
+| PauseTicks | [PauseTicksRequest](#game_session-v1-PauseTicksRequest) | [PauseTicksResponse](#game_session-v1-PauseTicksResponse) | Pause tick execution for an authorized maintenance workflow. |
+| ResumeTicks | [ResumeTicksRequest](#game_session-v1-ResumeTicksRequest) | [ResumeTicksResponse](#game_session-v1-ResumeTicksResponse) | Resume tick execution after the authorized maintenance workflow completes. |
 | GetTickStatus | [GetTickStatusRequest](#game_session-v1-GetTickStatusRequest) | [GetTickStatusResponse](#game_session-v1-GetTickStatusResponse) | Report whether ticks are currently paused. |
 
  

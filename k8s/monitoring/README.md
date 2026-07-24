@@ -10,7 +10,7 @@ These manifests are intentionally minimal and are meant to be adapted into your 
 - `jaeger.yaml` – Minimal Jaeger deployment for trace visualization.
 - `redis-exporter.yaml` – Redis exporter deployment for Redis core metrics.
 - `alertmanager.yaml` – Example Alertmanager configuration.
-- `prometheus-rules-firemud.yaml` – Sample `PrometheusRule` resource containing recording rules and alerts aligned with the target-state observability contract. Some player-experience and external-signal rules depend on producers or mirrors that are not yet implemented in the current services.
+- `prometheus-rules-firemud.yaml` – Sample `PrometheusRule` resource containing recording rules and alerts aligned with the target-state observability contract. Some player-experience, external-signal, and recovery-convergence rules depend on producers or mirrors that are not yet implemented or proven in the current services; the recovery missing-source alert is not readiness evidence.
 
 ## Contract Links
 

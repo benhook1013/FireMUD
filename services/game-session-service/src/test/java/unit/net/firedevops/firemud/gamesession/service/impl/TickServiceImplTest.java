@@ -48,6 +48,7 @@ class TickServiceImplTest {
       remoteFollowupRepository;
   private net.firedevops.firemud.gamesession.repository.TickBatchRepository tickBatchRepository;
   private net.firedevops.firemud.gamesession.repository.TickEffectRepository tickEffectRepository;
+  private TickBatchExecutionService tickBatchExecutionService;
   private SessionAuthenticationService sessionAuthenticationService;
   private net.firedevops.firemud.gamesession.service.DurableGameplayCommandExecutionService
       durableGameplayCommandExecutionService;
@@ -133,18 +134,20 @@ class TickServiceImplTest {
             runtimeIdentity,
             sessionAuthenticationService,
             mock(java.util.concurrent.ScheduledExecutorService.class));
-    TickBatchExecutionService tickBatchExecutionService =
-        new TickBatchExecutionService(
-            meterRegistry,
-            redisTemplate,
-            gameplayCommandRepository,
-            tickBatchRepository,
-            tickEffectRepository,
-            durableGameplayCommandExecutionService,
-            durableRemoteFollowupExecutionService,
-            remoteFollowupDrainService,
-            tickQueueControlService,
-            mock(GameplayCommandExecutionFenceService.class));
+    tickBatchExecutionService =
+        org.mockito.Mockito.spy(
+            new TickBatchExecutionService(
+                meterRegistry,
+                redisTemplate,
+                gameplayCommandRepository,
+                tickBatchRepository,
+                tickEffectRepository,
+                durableGameplayCommandExecutionService,
+                durableRemoteFollowupExecutionService,
+                remoteFollowupDrainService,
+                tickQueueControlService,
+                mock(GameplayCommandExecutionFenceService.class),
+                new ImmediateTransactionOperations()));
     tickStagingService =
         new TickStagingService(
             redisTemplate,
@@ -154,7 +157,8 @@ class TickServiceImplTest {
             tickEffectRepository,
             remoteFollowupDrainService,
             tickQueueControlService,
-            tickBatchExecutionService);
+            tickBatchExecutionService,
+            new ImmediateTransactionOperations());
     TickRuntimeProgressService tickRuntimeProgressService =
         new TickRuntimeProgressService(
             meterRegistry,
@@ -184,6 +188,37 @@ class TickServiceImplTest {
     when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of());
     when(runtimeRegionStatusRepository.save(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    when(runtimeRegionStatusRepository.ensureBaseline(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(runtimeRegionStatusRepository.claimObservedOwnership(
+            any(), any(String.class), any(String.class), any(String.class), any(Instant.class)))
+        .thenAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus status =
+                  invocation.getArgument(0);
+              status.setOwnerService(invocation.getArgument(1));
+              status.setOwnerInstanceId(invocation.getArgument(2));
+              status.setUpdatedAt(invocation.getArgument(4));
+              return Optional.of(status);
+            });
+    when(runtimeRegionStatusRepository.advanceOwnershipEpoch(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(runtimeRegionStatusRepository.advanceLastCommittedTickId(any()))
+        .thenAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus expected =
+                  invocation.getArgument(0);
+              expected.setLastCommittedTickId(expected.getLastCommittedTickId() + 1L);
+              return Optional.of(expected);
+            });
+    when(runtimeRegionStatusRepository.commitDrainedBatch(any(), any()))
+        .thenAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus expected =
+                  invocation.getArgument(0);
+              expected.setLastCommittedTickBatchId(invocation.getArgument(1));
+              return Optional.of(expected);
+            });
     when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(anyLong(), anyLong()))
         .thenAnswer(
             invocation ->
@@ -233,6 +268,215 @@ class TickServiceImplTest {
         .setIfAbsent(eq("gamesession:tick:lock:1:2"), any(String.class), any(Duration.class));
     verify(listOps).size("gamesession:tick:pending:1:2");
     verify(listOps).index("gamesession:tick:queue:1:2", 0);
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1L, meterRegistry.get("game_session_tick_duration_ms").timer().count());
+  }
+
+  @Test
+  void processTickPassesExactLeaseFenceToCommitScript() {
+    List<String> leaseTokens = new ArrayList<>();
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenAnswer(
+            invocation -> {
+              leaseTokens.add(invocation.getArgument(1));
+              return true;
+            });
+    RedisScript<Long> commitMarker = mock(RedisScript.class);
+    setField(service, "commitScript", commitMarker);
+    List<List<String>> commitKeys = new ArrayList<>();
+    List<Object[]> commitArguments = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              if (invocation.getArgument(0) == commitMarker) {
+                @SuppressWarnings("unchecked")
+                List<String> keys = invocation.getArgument(1);
+                commitKeys.add(keys);
+                commitArguments.add(
+                    java.util.Arrays.copyOfRange(
+                        invocation.getArguments(), 2, invocation.getArguments().length));
+              }
+              return 1L;
+            })
+        .when(redisTemplate)
+        .execute(
+            any(RedisScript.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals(1, leaseTokens.size());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        List.of("gamesession:tick:pending:1:2", "gamesession:tick:lock:1:2"), commitKeys.get(0));
+    org.junit.jupiter.api.Assertions.assertArrayEquals(
+        new Object[] {leaseTokens.get(0)}, commitArguments.get(0));
+  }
+
+  @Test
+  void processTickPassesExactLeaseFenceToStageScript() {
+    List<String> leaseTokens = new ArrayList<>();
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenAnswer(
+            invocation -> {
+              leaseTokens.add(invocation.getArgument(1));
+              return true;
+            });
+    RedisScript<Long> stageMarker = mock(RedisScript.class);
+    setField(service, "stageScript", stageMarker);
+    setField(service, "tickMaxCommands", 50);
+    List<List<String>> stageKeys = new ArrayList<>();
+    List<Object[]> stageArguments = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              if (invocation.getArgument(0) == stageMarker) {
+                @SuppressWarnings("unchecked")
+                List<String> keys = invocation.getArgument(1);
+                stageKeys.add(keys);
+                stageArguments.add(
+                    java.util.Arrays.copyOfRange(
+                        invocation.getArguments(), 2, invocation.getArguments().length));
+                return 0L;
+              }
+              return 1L;
+            })
+        .when(redisTemplate)
+        .execute(
+            any(RedisScript.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals(1, leaseTokens.size());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        List.of(
+            "gamesession:tick:queue:1:2",
+            "gamesession:tick:pending:1:2",
+            "gamesession:tick:lock:1:2"),
+        stageKeys.get(0));
+    org.junit.jupiter.api.Assertions.assertArrayEquals(
+        new Object[] {leaseTokens.get(0), "50"}, stageArguments.get(0));
+  }
+
+  @Test
+  void processTickStopsAfterLeaseReplacementInsideStageScript() {
+    RedisScript<Long> stageMarker = mock(RedisScript.class);
+    RedisScript<Long> commitMarker = mock(RedisScript.class);
+    RedisScript<Long> rollbackMarker = mock(RedisScript.class);
+    setField(service, "stageScript", stageMarker);
+    setField(service, "commitScript", commitMarker);
+    setField(service, "rollbackScript", rollbackMarker);
+    List<RedisScript<?>> invokedScripts = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              RedisScript<?> script = invocation.getArgument(0);
+              invokedScripts.add(script);
+              return script == stageMarker ? -1L : 1L;
+            })
+        .when(redisTemplate)
+        .execute(
+            any(RedisScript.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertTrue(invokedScripts.contains(stageMarker));
+    org.junit.jupiter.api.Assertions.assertFalse(invokedScripts.contains(commitMarker));
+    org.junit.jupiter.api.Assertions.assertFalse(invokedScripts.contains(rollbackMarker));
+    verify(runtimeRegionStatusRepository, never()).advanceLastCommittedTickId(any());
+  }
+
+  @Test
+  void processTickStopsAfterLeaseReplacementBeforeCommitScript() {
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenReturn(true);
+    RedisScript<Long> commitMarker = mock(RedisScript.class);
+    RedisScript<Long> rollbackMarker = mock(RedisScript.class);
+    setField(service, "commitScript", commitMarker);
+    setField(service, "rollbackScript", rollbackMarker);
+    List<RedisScript<?>> invokedScripts = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              RedisScript<?> script = invocation.getArgument(0);
+              invokedScripts.add(script);
+              return script == commitMarker ? -1L : 1L;
+            })
+        .when(redisTemplate)
+        .execute(
+            any(RedisScript.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertTrue(invokedScripts.contains(commitMarker));
+    org.junit.jupiter.api.Assertions.assertFalse(invokedScripts.contains(rollbackMarker));
+    verify(runtimeRegionStatusRepository, never()).advanceLastCommittedTickId(any());
+  }
+
+  @Test
+  void processTickDoesNotAbandonBatchAfterStaleRollbackResult() {
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-stale-rollback|look");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-stale-rollback|look"));
+    when(gameplayCommandRepository.findByCommandIdIn(any()))
+        .thenReturn(List.of(gameplayCommand("cmd-stale-rollback")));
+    org.mockito.Mockito.doReturn(Optional.empty())
+        .when(runtimeRegionStatusRepository)
+        .commitDrainedBatch(any(), any());
+    RedisScript<Long> rollbackMarker = mock(RedisScript.class);
+    setField(service, "rollbackScript", rollbackMarker);
+    List<List<String>> rollbackKeys = new ArrayList<>();
+    List<Object[]> rollbackArguments = new ArrayList<>();
+    List<String> leaseTokens = new ArrayList<>();
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenAnswer(
+            invocation -> {
+              leaseTokens.add(invocation.getArgument(1));
+              return true;
+            });
+    List<String> savedBatchStatuses = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.TickBatch batch = invocation.getArgument(0);
+              savedBatchStatuses.add(batch.getStatus());
+              return batch;
+            })
+        .when(tickBatchRepository)
+        .save(any());
+    doAnswer(
+            invocation -> {
+              if (invocation.getArgument(0) == rollbackMarker) {
+                @SuppressWarnings("unchecked")
+                List<String> keys = invocation.getArgument(1);
+                rollbackKeys.add(keys);
+                rollbackArguments.add(
+                    java.util.Arrays.copyOfRange(
+                        invocation.getArguments(), 2, invocation.getArguments().length));
+                return -1L;
+              }
+              return 1L;
+            })
+        .when(redisTemplate)
+        .execute(
+            any(RedisScript.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals(1, leaseTokens.size());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        List.of(
+            "gamesession:tick:pending:1:2",
+            "gamesession:tick:queue:1:2",
+            "gamesession:tick:lock:1:2"),
+        rollbackKeys.get(0));
+    org.junit.jupiter.api.Assertions.assertArrayEquals(
+        new Object[] {leaseTokens.get(0)}, rollbackArguments.get(0));
+    org.junit.jupiter.api.Assertions.assertFalse(savedBatchStatuses.contains("ABANDONED"));
+    verify(listOps, never()).leftPush(any(), any());
   }
 
   @Test
@@ -431,7 +675,23 @@ class TickServiceImplTest {
 
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0, meterRegistry.get("game_session_lock_contention_total").counter().count(), 0.001);
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1L, meterRegistry.get("game_session_tick_duration_ms").timer().count());
     verify(conflictTracker).recordConflict("session:1:2");
+    verify(runtimeRegionStatusRepository, never())
+        .claimObservedOwnership(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void durableOwnershipClaimFailureStopsBeforeTickWork() {
+    when(runtimeRegionStatusRepository.claimObservedOwnership(any(), any(), any(), any(), any()))
+        .thenReturn(Optional.empty());
+
+    service.processTick(1L, 2L);
+
+    verify(conflictTracker).recordConflict("session:1:2");
+    verify(listOps, never()).size(any(String.class));
+    verify(listOps, never()).index(any(String.class), anyLong());
   }
 
   @Test
@@ -485,6 +745,195 @@ class TickServiceImplTest {
         .save(any(net.firedevops.firemud.gamesession.entity.TickBatch.class));
     verify(tickEffectRepository).saveAll(any());
     verify(gameplayCommandRepository, org.mockito.Mockito.atLeastOnce()).saveAll(any());
+  }
+
+  @Test
+  void processTickAcknowledgesRedisPendingAfterDurableDrainWrites() {
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|look");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
+    when(gameplayCommandRepository.findByCommandIdIn(any()))
+        .thenReturn(List.of(gameplayCommand("cmd-1")));
+
+    List<String> events = new ArrayList<>();
+    RedisScript<Long> commitMarker = mock(RedisScript.class);
+    setField(service, "commitScript", commitMarker);
+    doAnswer(
+            invocation -> {
+              RedisScript<?> script = invocation.getArgument(0);
+              if (script == commitMarker) {
+                events.add("redis-commit");
+              }
+              return 1L;
+            })
+        .when(redisTemplate)
+        .execute(
+            any(RedisScript.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
+    doAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.TickBatch batch = invocation.getArgument(0);
+              if ("DRAINED".equals(batch.getStatus())) {
+                events.add("batch-drained");
+              }
+              return batch;
+            })
+        .when(tickBatchRepository)
+        .save(any());
+    doAnswer(
+            invocation -> {
+              @SuppressWarnings("unchecked")
+              List<net.firedevops.firemud.gamesession.entity.GameplayCommand> commands =
+                  invocation.getArgument(0);
+              if (commands.stream()
+                  .anyMatch(command -> "DRAINED".equals(command.getExecutionOutcome()))) {
+                events.add("commands-drained");
+              }
+              return commands;
+            })
+        .when(gameplayCommandRepository)
+        .saveAll(any());
+    doAnswer(
+            invocation -> {
+              events.add("ownership-cas");
+              net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus ownership =
+                  invocation.getArgument(0);
+              ownership.setLastCommittedTickBatchId(invocation.getArgument(1));
+              return Optional.of(ownership);
+            })
+        .when(runtimeRegionStatusRepository)
+        .commitDrainedBatch(any(), any());
+
+    service.processTick(1L, 2L);
+
+    int redisCommitIndex = events.indexOf("redis-commit");
+    org.junit.jupiter.api.Assertions.assertTrue(redisCommitIndex >= 0, events.toString());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        events.indexOf("batch-drained") < redisCommitIndex, events.toString());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        events.indexOf("commands-drained") < redisCommitIndex, events.toString());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        events.indexOf("ownership-cas") < redisCommitIndex, events.toString());
+  }
+
+  @Test
+  void processTickStillAcknowledgesPendingWhenNoExecutableBatchWasCreated() {
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-stale|look");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-stale|look"));
+    net.firedevops.firemud.gamesession.entity.GameplayCommand staleCommand =
+        gameplayCommand("cmd-stale");
+    staleCommand.setExecutionOutcome("DRAINED");
+    when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of(staleCommand));
+
+    RedisScript<Long> commitMarker = mock(RedisScript.class);
+    setField(service, "commitScript", commitMarker);
+    List<String> commits = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              if (invocation.getArgument(0) == commitMarker) {
+                commits.add("commit");
+              }
+              return 1L;
+            })
+        .when(redisTemplate)
+        .execute(
+            any(RedisScript.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals(List.of("commit"), commits);
+    verify(tickBatchRepository, never()).save(any());
+  }
+
+  @Test
+  void redisCommitFailureAfterDurableDrainDoesNotDuplicateOnRetry() {
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.size("gamesession:tick:pending:1:2")).thenReturn(0L, 0L);
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-retry|look");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-retry|look"), List.of("N|cmd-retry|look"));
+    net.firedevops.firemud.gamesession.entity.GameplayCommand command =
+        gameplayCommand("cmd-retry");
+    when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of(command));
+    List<String> savedBatchStatuses = new ArrayList<>();
+    List<String> savedEffectStatuses = new ArrayList<>();
+    List<String> savedCommandOutcomes = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.TickBatch batch = invocation.getArgument(0);
+              savedBatchStatuses.add(batch.getStatus());
+              return batch;
+            })
+        .when(tickBatchRepository)
+        .save(any());
+    net.firedevops.firemud.gamesession.entity.TickEffect effect =
+        new net.firedevops.firemud.gamesession.entity.TickEffect();
+    effect.setCommandId("cmd-retry");
+    effect.setStatus("STAGED");
+    when(tickEffectRepository.findByTickBatchId(any())).thenReturn(List.of(effect));
+    doAnswer(
+            invocation -> {
+              @SuppressWarnings("unchecked")
+              List<net.firedevops.firemud.gamesession.entity.TickEffect> effects =
+                  invocation.getArgument(0);
+              if (!effects.isEmpty()) {
+                savedEffectStatuses.add(effects.get(0).getStatus());
+              }
+              return effects;
+            })
+        .when(tickEffectRepository)
+        .saveAll(any());
+    doAnswer(
+            invocation -> {
+              @SuppressWarnings("unchecked")
+              List<net.firedevops.firemud.gamesession.entity.GameplayCommand> commands =
+                  invocation.getArgument(0);
+              if (!commands.isEmpty()) {
+                savedCommandOutcomes.add(commands.get(0).getExecutionOutcome());
+              }
+              return commands;
+            })
+        .when(gameplayCommandRepository)
+        .saveAll(any());
+
+    RedisScript<Long> commitMarker = mock(RedisScript.class);
+    RedisScript<Long> rollbackMarker = mock(RedisScript.class);
+    setField(service, "commitScript", commitMarker);
+    setField(service, "rollbackScript", rollbackMarker);
+    AtomicLong commitAttempts = new AtomicLong();
+    doAnswer(
+            invocation -> {
+              RedisScript<?> script = invocation.getArgument(0);
+              if (script == commitMarker && commitAttempts.incrementAndGet() <= 3) {
+                throw new IllegalStateException("Redis commit unavailable");
+              }
+              return 1L;
+            })
+        .when(redisTemplate)
+        .execute(
+            any(RedisScript.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
+
+    service.processTick(1L, 2L);
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1L, savedBatchStatuses.stream().filter("DRAINED"::equals).count());
+    org.junit.jupiter.api.Assertions.assertFalse(savedBatchStatuses.contains("ABANDONED"));
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1L, savedEffectStatuses.stream().filter("DRAINED"::equals).count());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1L, savedCommandOutcomes.stream().filter("DRAINED"::equals).count());
+    org.junit.jupiter.api.Assertions.assertEquals("DRAINED", command.getExecutionOutcome());
   }
 
   @Test
@@ -554,6 +1003,7 @@ class TickServiceImplTest {
     existingBatch.setTickBatchId("tb-existing");
     existingBatch.setTenantId(1L);
     existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("2");
     existingBatch.setRegionEpoch(1L);
     existingBatch.setExecutorFence("fence-a");
     existingBatch.setStatus("STAGED");
@@ -577,6 +1027,148 @@ class TickServiceImplTest {
   }
 
   @Test
+  void processTickAbandonsReplayBatchWhenDurableDrainFails() {
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.size("gamesession:tick:pending:1:2")).thenReturn(1L);
+    List<Object> replayEntries = List.of("N|cmd-1|look");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(replayEntries);
+    net.firedevops.firemud.gamesession.entity.TickBatch existingBatch =
+        new net.firedevops.firemud.gamesession.entity.TickBatch();
+    existingBatch.setTickBatchId("tb-replay-drain-failure");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("2");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+    when(tickEffectRepository.findByTickBatchId("tb-replay-drain-failure")).thenReturn(List.of());
+    when(gameplayCommandRepository.findByCommandIdIn(any()))
+        .thenReturn(List.of(gameplayCommand("cmd-1")));
+    existingBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest(tickStagingService, replayEntries));
+    org.mockito.Mockito.doThrow(new IllegalStateException("durable drain failed"))
+        .when(tickBatchExecutionService)
+        .markBatchDrained(eq(existingBatch), any());
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", existingBatch.getStatus());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "ROLLBACK_REQUEUED", existingBatch.getFailureCode());
+  }
+
+  @Test
+  void processTickPreservesReplayBatchAfterPostDrainFailure() {
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.size("gamesession:tick:pending:1:2")).thenReturn(1L);
+    List<Object> replayEntries = List.of("N|cmd-1|look");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(replayEntries);
+    net.firedevops.firemud.gamesession.entity.TickBatch existingBatch =
+        new net.firedevops.firemud.gamesession.entity.TickBatch();
+    existingBatch.setTickBatchId("tb-replay-failure");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("2");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(Optional.of(runtimeOwnership(1L, 2L, 1L, "fence-a", false)));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+    when(tickEffectRepository.findByTickBatchId("tb-replay-failure")).thenReturn(List.of());
+    when(gameplayCommandRepository.findByCommandIdIn(any()))
+        .thenReturn(List.of(gameplayCommand("cmd-1")));
+    existingBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest(tickStagingService, replayEntries));
+    AtomicLong durableEffectExecutions = new AtomicLong();
+    doAnswer(
+            invocation -> {
+              if (durableEffectExecutions.incrementAndGet() == 2L) {
+                throw new IllegalStateException("post-drain effect execution failed");
+              }
+              return null;
+            })
+        .when(tickBatchExecutionService)
+        .executeDurableEffects(1L, 2L);
+    List<String> savedBatchStatuses = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.TickBatch batch = invocation.getArgument(0);
+              savedBatchStatuses.add(batch.getStatus());
+              return batch;
+            })
+        .when(tickBatchRepository)
+        .save(any());
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals("DRAINED", existingBatch.getStatus());
+    org.junit.jupiter.api.Assertions.assertFalse(savedBatchStatuses.contains("ABANDONED"));
+  }
+
+  @Test
+  void processTickPreservesReplayBatchWhenCommitFailsAfterDurableDrain() {
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.size("gamesession:tick:pending:1:2")).thenReturn(1L);
+    List<Object> replayEntries = List.of("N|cmd-1|look");
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(replayEntries);
+    net.firedevops.firemud.gamesession.entity.TickBatch existingBatch =
+        new net.firedevops.firemud.gamesession.entity.TickBatch();
+    existingBatch.setTickBatchId("tb-replay-commit-failure");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("2");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(Optional.of(runtimeOwnership(1L, 2L, 1L, "fence-a", false)));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+    when(tickEffectRepository.findByTickBatchId("tb-replay-commit-failure")).thenReturn(List.of());
+    when(gameplayCommandRepository.findByCommandIdIn(any()))
+        .thenReturn(List.of(gameplayCommand("cmd-1")));
+    existingBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest(tickStagingService, replayEntries));
+
+    RedisScript<Long> commitMarker = mock(RedisScript.class);
+    RedisScript<Long> rollbackMarker = mock(RedisScript.class);
+    setField(service, "commitScript", commitMarker);
+    setField(service, "rollbackScript", rollbackMarker);
+    doAnswer(
+            invocation -> {
+              RedisScript<?> script = invocation.getArgument(0);
+              if (script == commitMarker) {
+                throw new IllegalStateException("Redis commit unavailable");
+              }
+              return 1L;
+            })
+        .when(redisTemplate)
+        .execute(
+            any(RedisScript.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(Object[].class));
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals("DRAINED", existingBatch.getStatus());
+    verify(tickBatchExecutionService, never())
+        .markBatchAbandoned(any(), any(), any(String.class), any(String.class));
+  }
+
+  @Test
   void processTickRejectsStaleOwnershipBeforeDrainCommit() {
     when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
@@ -591,7 +1183,7 @@ class TickServiceImplTest {
     when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "2"))
         .thenReturn(Optional.of(initialStatus), Optional.of(staleStatus));
     when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
-        .thenReturn(Optional.of(initialStatus), Optional.of(staleStatus));
+        .thenReturn(Optional.of(initialStatus), Optional.of(initialStatus));
 
     service.processTick(1L, 2L);
 
@@ -621,6 +1213,7 @@ class TickServiceImplTest {
     drainedBatch.setTickBatchId("tb-drained");
     drainedBatch.setTenantId(1L);
     drainedBatch.setGameInstanceId(2L);
+    drainedBatch.setRegionId("2");
     drainedBatch.setRegionEpoch(1L);
     drainedBatch.setExecutorFence("fence-a");
     drainedBatch.setStatus("DRAINED");
@@ -653,7 +1246,7 @@ class TickServiceImplTest {
         .thenReturn(List.of(drainedEffect));
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
         .thenReturn(List.of(command));
-    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "2"))
         .thenReturn(Optional.of(runtimeOwnership(1L, 2L, 2L, "fence-b", false)));
 
     service.processTick(1L, 2L);
@@ -698,15 +1291,14 @@ class TickServiceImplTest {
     ArgumentCaptor<net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus> statusCaptor =
         ArgumentCaptor.forClass(
             net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus.class);
+    ArgumentCaptor<String> batchIdCaptor = ArgumentCaptor.forClass(String.class);
     verify(runtimeRegionStatusRepository, org.mockito.Mockito.atLeastOnce())
-        .save(statusCaptor.capture());
+        .commitDrainedBatch(statusCaptor.capture(), batchIdCaptor.capture());
     org.junit.jupiter.api.Assertions.assertTrue(
         statusCaptor.getAllValues().stream()
-            .anyMatch(
-                status ->
-                    "test-instance".equals(status.getOwnerInstanceId())
-                        && status.getLastCommittedTickBatchId() != null
-                        && !status.getLastCommittedTickBatchId().isBlank()));
+            .anyMatch(status -> "test-instance".equals(status.getOwnerInstanceId())));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        batchIdCaptor.getAllValues().stream().anyMatch(batchId -> !batchId.isBlank()));
   }
 
   @Test
@@ -715,8 +1307,10 @@ class TickServiceImplTest {
         .thenReturn(true);
     when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-1|look");
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1)).thenReturn(List.of("N|cmd-1|look"));
-    when(gameplayCommandRepository.findByCommandIdIn(any()))
-        .thenReturn(List.of(gameplayCommand("cmd-1")));
+    net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
+    command.setRegionId("region-alpha");
+    command.setRegionEpoch(4L);
+    when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of(command));
     net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus currentStatus =
         runtimeOwnershipByRegionId(1L, 2L, "region-alpha", 4L, "fence-a", false);
     when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-alpha"))
@@ -810,8 +1404,14 @@ class TickServiceImplTest {
     verify(remoteFollowupRuntimeService).reconcileResults(1L, "2", 4L);
     verify(remoteFollowupRuntimeService, never())
         .reconcileTimeouts(anyLong(), any(), anyLong(), anyLong());
-    verify(lockValueOps, never())
-        .setIfAbsent(any(String.class), any(String.class), any(Duration.class));
+    verify(lockValueOps).setIfAbsent(any(String.class), any(String.class), any(Duration.class));
+    verify(runtimeRegionStatusRepository)
+        .claimObservedOwnership(
+            eq(currentStatus),
+            eq("game-session-service"),
+            eq("test-instance"),
+            any(String.class),
+            any(Instant.class));
   }
 
   @Test
@@ -830,8 +1430,8 @@ class TickServiceImplTest {
     command.setPluginId("plugin-1");
     command.setPluginVersionId("plugin-v1");
     command.setTargetEntityId("entity-1");
-    command.setRegionId("region-1");
-    command.setRegionEpoch(4L);
+    command.setRegionId("2");
+    command.setRegionEpoch(1L);
     command.setPlayableStateScope("SHARED");
     command.setWorldSlug("demo");
     command.setRealmSlug("production");
@@ -879,9 +1479,9 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"targetEntityId\":\"entity-1\""));
     org.junit.jupiter.api.Assertions.assertTrue(
-        stagedBatch.getSelectedWorkManifestJson().contains("\"regionId\":\"region-1\""));
+        stagedBatch.getSelectedWorkManifestJson().contains("\"regionId\":\"2\""));
     org.junit.jupiter.api.Assertions.assertTrue(
-        stagedBatch.getSelectedWorkManifestJson().contains("\"regionEpoch\":4"));
+        stagedBatch.getSelectedWorkManifestJson().contains("\"regionEpoch\":1"));
     org.junit.jupiter.api.Assertions.assertTrue(
         stagedBatch.getSelectedWorkManifestJson().contains("\"dueTickId\":14"));
     org.junit.jupiter.api.Assertions.assertTrue(
@@ -1068,6 +1668,7 @@ class TickServiceImplTest {
     existingBatch.setTickBatchId("tb-existing");
     existingBatch.setTenantId(1L);
     existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("2");
     existingBatch.setRegionEpoch(1L);
     existingBatch.setExecutorFence("fence-a");
     existingBatch.setStatus("STAGED");
@@ -1110,6 +1711,7 @@ class TickServiceImplTest {
     existingBatch.setTickBatchId("tb-existing");
     existingBatch.setTenantId(1L);
     existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("2");
     existingBatch.setRegionEpoch(1L);
     existingBatch.setExecutorFence("fence-a");
     existingBatch.setStatus("STAGED");
@@ -1242,6 +1844,10 @@ class TickServiceImplTest {
       String commandId) {
     var command = new net.firedevops.firemud.gamesession.entity.GameplayCommand();
     command.setCommandId(commandId);
+    command.setTenantId(1L);
+    command.setGameInstanceId(2L);
+    command.setRegionId("2");
+    command.setRegionEpoch(1L);
     command.setCommandText("look");
     command.setSanitizedCommandText("look");
     command.setAttemptCount(1);

@@ -9,6 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def _compact_promql(expr: str) -> str:
+    return re.sub(r"\s+", "", expr)
+
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 ALLOWED_SEVERITIES = {"P0", "P1", "P2"}
@@ -22,6 +26,106 @@ CORE_ALERT_SNIPPET_PATHS = [
     GRAFANA_DIR / "player-experience-alerts-snippets.md",
     GRAFANA_DIR / "observability-stack-alerts-snippets.md",
 ]
+REQUIRED_BACKUP_RECORDINGS = {
+    "backup_pipeline_recent_backup_slo_breached",
+    "backup_pipeline_recent_verification_slo_breached",
+    "backup_pipeline_recent_restore_drill_slo_breached",
+    "backup_artifact_lineage_invalid",
+    "backup_artifact_restore_unreadable",
+    "recovery_participant_convergence_blocked",
+    "recovery_environment_convergence_blocked",
+    "recovery_participant_convergence_coverage_missing",
+    "recovery_participant_convergence_source_missing",
+}
+CURRENT_BLOCKED_CONVERGENCE_EXPR = re.compile(
+    r'recovery_participant_convergence_state\s*\{\s*state\s*=\s*["\']blocked["\']\s*\}'
+)
+REQUIRED_ABSENT_ALERT_METRICS = {
+    "BackupLastSuccessMetricsAbsent": "backup_last_success_timestamp_seconds",
+    "BackupVerificationLastSuccessMetricsAbsent": "backup_verify_last_success_timestamp_seconds",
+    "BackupRestoreDrillLastSuccessMetricsAbsent": "backup_restore_drill_last_success_timestamp_seconds",
+    "BackupArtifactLineageMetricsAbsent": "backup_artifact_lineage_valid",
+    "BackupArtifactRestoreReadabilityMetricsAbsent": "backup_artifact_restore_readable",
+}
+PARTICIPANT_COVERAGE_EXPR = _compact_promql(
+    """
+    (
+      recovery_required_participant_inventory == 1
+      unless on (environment, participant)
+      (
+        count by (environment, participant) (
+          recovery_participant_convergence_state
+        ) > 0
+      )
+    )
+    or
+    label_replace(
+      recovery_required_participant_inventory_complete != bool 1,
+      "participant", "__environment__", "", ""
+    )
+    or
+    label_replace(
+      (
+        count by (environment) (
+          recovery_required_participant_inventory
+        )
+        unless on (environment)
+        (
+          recovery_required_participant_inventory_complete == 1
+        )
+      ),
+      "participant", "__environment__", "", ""
+    )
+    or
+    label_replace(
+      (
+        recovery_required_participant_inventory_complete == 1
+        unless on (environment)
+        (
+          count by (environment) (
+            recovery_required_participant_inventory
+          ) > 0
+        )
+      ),
+      "participant", "__environment__", "", ""
+    )
+    """
+)
+PARTICIPANT_COVERAGE_ALERT_EXPR = _compact_promql(
+    "recovery_participant_convergence_coverage_missing > 0"
+)
+PARTICIPANT_SOURCE_MISSING_EXPR = _compact_promql(
+    """
+    label_replace(
+      absent(recovery_required_participant_inventory_complete),
+      "source_family", "inventory_complete", "", ""
+    )
+    or
+    label_replace(
+      absent(recovery_required_participant_inventory),
+      "source_family", "participant_inventory", "", ""
+    )
+    """
+)
+PARTICIPANT_SOURCE_MISSING_ALERT_EXPR = _compact_promql(
+    "recovery_participant_convergence_source_missing > 0"
+)
+BLOCKED_REOPEN_ATTEMPT_EXPR = re.compile(
+    r'increase\s*\(\s*recovery_reopen_attempt_total\s*\{'
+    r'(?=[^}]*result\s*=\s*["\']blocked["\'])'
+    r'(?=[^}]*reason\s*=\s*["\']incomplete_convergence["\'])[^}]*\}'
+    r'\s*\[\s*[0-9]+(?:\.[0-9]+)?(?:ms|s|m|h|d|w|y)'
+    r'(?:[0-9]+(?:\.[0-9]+)?(?:ms|s|m|h|d|w|y))*\s*\]\s*\)\s*>\s*0'
+)
+ENVIRONMENT_BLOCKED_CONVERGENCE_EXPR = re.compile(
+    r"max\s+by\s*\(\s*environment\s*\)\s*\(\s*recovery_participant_convergence_blocked\s*\)"
+)
+STALE_BLOCKED_CONVERGENCE_EXPR = re.compile(
+    r'recovery_participant_convergence_total\s*\{[^}]*result\s*=\s*["\']blocked["\']'
+)
+RESTORE_DRILL_30_DAY_EXPR = re.compile(
+    r"backup_restore_drill_last_success_timestamp_seconds\s*>\s*30\s*\*\s*24\s*\*\s*60\s*\*\s*60"
+)
 
 
 @dataclass(frozen=True)
@@ -30,20 +134,73 @@ class Finding:
     message: str
 
 
+def _recovery_coverage_alert_finding(
+    path: Path, alert_name: str | None, expr: str
+) -> Finding | None:
+    expected = {
+        "RecoveryParticipantConvergenceCoverageMissing": (
+            PARTICIPANT_COVERAGE_ALERT_EXPR,
+            "recovery_participant_convergence_coverage_missing > 0",
+        ),
+        "RecoveryParticipantConvergenceMetricsAbsent": (
+            PARTICIPANT_SOURCE_MISSING_ALERT_EXPR,
+            "recovery_participant_convergence_source_missing > 0",
+        ),
+    }.get(alert_name)
+    if expected is not None and _compact_promql(expr) != expected[0]:
+        return Finding(
+            path=path,
+            message=f"{alert_name} must use {expected[1]}",
+        )
+    return None
+
+
+@dataclass(frozen=True)
+class _RuleEntry:
+    lines: list[str]
+    key: str | None
+    name: str | None
+    issue: str | None = None
+
+
 def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
 def _extract_fenced_blocks(markdown: str, language: str) -> list[str]:
-    pattern = re.compile(rf"```{re.escape(language)}\n(.*?)\n```", re.DOTALL)
-    return [match.group(1) for match in pattern.finditer(markdown)]
+    lines = markdown.splitlines()
+    blocks: list[str] = []
+    index = 0
+    while index < len(lines):
+        opening = re.match(
+            r"^ {0,3}(?P<fence>`{3,}|~{3,})[ \t]*(?P<info>.*)$",
+            lines[index],
+        )
+        if not opening:
+            index += 1
+            continue
+        info = opening.group("info").strip()
+        if not info or info.split(maxsplit=1)[0].lower() != language.lower():
+            index += 1
+            continue
+        fence = opening.group("fence")
+        closing = re.compile(
+            rf"^ {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*$"
+        )
+        body_start = index + 1
+        index = body_start
+        while index < len(lines) and not closing.match(lines[index]):
+            index += 1
+        if index < len(lines):
+            blocks.append("\n".join(lines[body_start:index]))
+        index += 1
+    return blocks
 
 def _github_anchor_from_heading(heading: str) -> str:
     base = heading.strip().lower()
     base = re.sub(r"[`*_~]", "", base)
     base = re.sub(r"[^a-z0-9\s-]", "", base)
-    base = re.sub(r"\s+", "-", base)
-    base = re.sub(r"-+", "-", base)
+    base = re.sub(r"\s", "-", base)
     base = base.strip("-")
     return base
 
@@ -68,17 +225,425 @@ def _github_anchors_for_markdown(path: Path) -> set[str]:
     return anchors
 
 
-def _split_alert_rules(yaml_text: str) -> list[list[str]]:
-    lines = yaml_text.splitlines()
-    rule_starts: list[int] = []
+def _split_alert_rules(yaml_text: str) -> list[_RuleEntry]:
+    return _split_rule_entries(yaml_text, "alert")
+
+
+def _split_recording_rules(yaml_text: str) -> list[_RuleEntry]:
+    return _split_rule_entries(yaml_text, "record")
+
+
+def _strip_yaml_comment(value: str) -> str:
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    for index, character in enumerate(value):
+        if in_double_quote:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_double_quote = False
+            continue
+        if in_single_quote:
+            if character == "'":
+                in_single_quote = False
+            continue
+        if character == '"':
+            in_double_quote = True
+        elif character == "'":
+            in_single_quote = True
+        elif character == "#" and (index == 0 or value[index - 1].isspace()):
+            return value[:index]
+    return value
+
+
+def _leading_space_count(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def _meaningful_yaml_line(line: str) -> bool:
+    return bool(_strip_yaml_comment(line).strip())
+
+
+def _is_sequence_item(line: str, indent: int | None = None) -> bool:
+    if indent is not None and _leading_space_count(line) != indent:
+        return False
+    return re.match(r"^\s*-(?:\s|$)", _strip_yaml_comment(line)) is not None
+
+
+def _parse_mapping_header(text: str) -> tuple[str, str] | None:
+    match = re.match(
+        r"^(?P<key>[A-Za-z_][A-Za-z0-9_-]*|\"[^\"]+\"|'[^']+')\s*:\s*(?P<value>.*)$",
+        _strip_yaml_comment(text).strip(),
+    )
+    if not match:
+        return None
+    key = match.group("key").strip("\"'")
+    return key, match.group("value").strip()
+
+
+def _parse_rule_name(value: str) -> tuple[str | None, bool]:
+    value = _strip_yaml_comment(value).strip()
+    if not value:
+        return None, False
+    if value.startswith(("\"", "'")):
+        quote = value[0]
+        if len(value) < 2 or value[-1] != quote:
+            return None, True
+        name = value[1:-1]
+        if quote == "'":
+            name = name.replace("''", "'")
+    else:
+        if value.startswith(("&", "*", "!", "{", "[", "|", ">")):
+            return None, True
+        if re.match(r"^(?:\?|-(?:\s|$))", value) or re.search(r":(?:\s|$)", value):
+            return None, True
+        if value.lower() in {"null", "~"}:
+            return None, False
+        name = value
+
+    if not name.strip():
+        return None, False
+    return name, False
+
+
+def _parse_rule_entry_header(line: str) -> tuple[str | None, str | None]:
+    content = _strip_yaml_comment(line).lstrip()
+    if not content.startswith("-"):
+        return None, None
+    header = content[1:].strip()
+    parsed = _parse_mapping_header(header)
+    if not parsed:
+        return None, None
+    key, name = parsed
+    if key not in {"alert", "record"}:
+        return None, None
+    normalized_name, unsupported_name = _parse_rule_name(name)
+    if unsupported_name:
+        return None, None
+    return key, normalized_name
+
+
+def _flow_collection_delta(value: str) -> int:
+    delta = 0
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+    for character in value:
+        if in_double_quote:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_double_quote = False
+            continue
+        if in_single_quote:
+            if character == "'":
+                in_single_quote = False
+            continue
+        if character == '"':
+            in_double_quote = True
+        elif character == "'":
+            in_single_quote = True
+        elif character in "[{":
+            delta += 1
+        elif character in "]}":
+            delta -= 1
+    return delta
+
+
+def _unsupported_rules_key_shapes(lines: list[str]) -> list[_RuleEntry]:
+    findings: list[_RuleEntry] = []
+    flow_depth = 0
+    block_scalar_indent: int | None = None
+    flow_rules_key = re.compile(r"(?:^|[,{])\s*(?:rules|\"rules\"|'rules')\s*:")
+    explicit_rules_key = re.compile(r"^(?:-\s+)?\?\s*(?:rules|\"rules\"|'rules')(?:\s|$)")
+    for line in lines:
+        content = _strip_yaml_comment(line).strip()
+        if not content:
+            continue
+        indent = _leading_space_count(line)
+        if block_scalar_indent is not None:
+            if indent <= block_scalar_indent:
+                block_scalar_indent = None
+            else:
+                continue
+        if explicit_rules_key.match(content):
+            findings.append(
+                _RuleEntry(
+                    lines=[line],
+                    key=None,
+                    name=None,
+                    issue="unsupported explicit rules key shape",
+                )
+            )
+        rules_header = re.match(r"^(?:rules|\"rules\"|'rules')\s*:", content)
+        starts_flow_collection = (
+            rules_header is None
+            and re.search(r"(?:^|-\s+|:\s*)[\[{]", content) is not None
+        )
+        if (flow_depth > 0 or starts_flow_collection) and flow_rules_key.search(content):
+            findings.append(
+                _RuleEntry(
+                    lines=[line],
+                    key=None,
+                    name=None,
+                    issue="unsupported flow rules key shape",
+                )
+            )
+        if flow_depth > 0 or starts_flow_collection:
+            flow_depth = max(0, flow_depth + _flow_collection_delta(content))
+        if re.search(r":\s*[|>](?:[+-][1-9]?|[1-9][+-]?)?(?:\s+#.*)?$", content):
+            block_scalar_indent = indent
+    return findings
+
+
+def _rule_sequence_ranges(lines: list[str]) -> list[tuple[int, int, int]]:
+    ranges: list[tuple[int, int, int]] = []
     for index, line in enumerate(lines):
-        if re.match(r"^\s*-\s*alert:\s*\S+", line):
-            rule_starts.append(index)
-    rule_starts.append(len(lines))
-    rules: list[list[str]] = []
-    for start_index, end_index in zip(rule_starts, rule_starts[1:]):
-        rules.append(lines[start_index:end_index])
-    return rules
+        if not _meaningful_yaml_line(line):
+            continue
+        parsed = _parse_mapping_header(line)
+        if not parsed or parsed[0] != "rules" or parsed[1]:
+            continue
+
+        rules_indent = _leading_space_count(line)
+        first_item = None
+        for candidate in range(index + 1, len(lines)):
+            if not _meaningful_yaml_line(lines[candidate]):
+                continue
+            candidate_indent = _leading_space_count(lines[candidate])
+            if candidate_indent < rules_indent:
+                break
+            if _is_sequence_item(lines[candidate]) and candidate_indent >= rules_indent:
+                first_item = candidate
+            break
+        if first_item is None:
+            continue
+
+        sequence_indent = _leading_space_count(lines[first_item])
+        end = first_item
+        while end < len(lines):
+            if not _meaningful_yaml_line(lines[end]):
+                end += 1
+                continue
+            current_indent = _leading_space_count(lines[end])
+            if current_indent < rules_indent:
+                break
+            if current_indent == sequence_indent and not _is_sequence_item(lines[end]):
+                break
+            if current_indent < sequence_indent and current_indent >= rules_indent:
+                break
+            end += 1
+        ranges.append((first_item, end, sequence_indent))
+    return ranges
+
+
+def _standalone_rule_sequence_range(lines: list[str]) -> tuple[int, int, int] | None:
+    first_item = next(
+        (index for index, line in enumerate(lines) if _meaningful_yaml_line(line)),
+        None,
+    )
+    if first_item is None or not _is_sequence_item(lines[first_item]):
+        return None
+    sequence_indent = _leading_space_count(lines[first_item])
+    end = first_item
+    while end < len(lines):
+        if not _meaningful_yaml_line(lines[end]):
+            end += 1
+            continue
+        if _leading_space_count(lines[end]) < sequence_indent:
+            break
+        end += 1
+    return first_item, end, sequence_indent
+
+
+def _standalone_rule_mapping_entry(lines: list[str]) -> _RuleEntry | None:
+    first_line = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if _meaningful_yaml_line(line)
+            and _strip_yaml_comment(line).strip() not in {"---", "..."}
+        ),
+        None,
+    )
+    if first_line is None:
+        return None
+
+    first_content = _strip_yaml_comment(lines[first_line]).strip()
+    if _is_sequence_item(lines[first_line]):
+        return None
+    malformed_or_unsupported_root = re.match(
+        r"^(?:alert|record|\"(?:alert|record)\"|'(?:alert|record)')(?:\s|$)|^[?&*!{\[]",
+        first_content,
+    )
+    if malformed_or_unsupported_root:
+        return _RuleEntry(lines=[lines[first_line]], key=None, name=None)
+
+    root_indent = _leading_space_count(lines[first_line])
+    supported_root_fields = {
+        "alert",
+        "record",
+        "expr",
+        "for",
+        "keep_firing_for",
+        "query_offset",
+        "labels",
+        "annotations",
+    }
+    root_rule_fields = supported_root_fields | {"name"}
+    root_rule_mappings: list[tuple[int, str, str]] = []
+    root_rule_like = False
+    malformed_root_shape = False
+    unsupported_root_mapping = False
+    extra_document = False
+    document_started = False
+    document_closed = False
+    for index, line in enumerate(lines):
+        if not _meaningful_yaml_line(line):
+            continue
+        content = _strip_yaml_comment(line).strip()
+        indent = _leading_space_count(line)
+        if indent <= root_indent and content == "---":
+            if document_started:
+                extra_document = True
+            document_started = True
+            document_closed = False
+            continue
+        if indent <= root_indent and content == "...":
+            document_closed = True
+            continue
+
+        if document_closed:
+            extra_document = True
+        document_started = True
+        if indent != root_indent:
+            continue
+
+        if _is_sequence_item(line, root_indent):
+            malformed_root_shape = True
+            continue
+        parsed = _parse_mapping_header(line)
+        if not parsed:
+            malformed_root_shape = True
+            continue
+        if parsed and parsed[0] in {"alert", "record"}:
+            root_rule_mappings.append((index, parsed[0], parsed[1]))
+        if parsed and parsed[0] not in supported_root_fields:
+            unsupported_root_mapping = True
+        if parsed and parsed[0] in root_rule_fields:
+            root_rule_like = True
+
+    if not root_rule_mappings:
+        if root_rule_like:
+            return _RuleEntry(lines=[lines[first_line]], key=None, name=None)
+        return None
+
+    if (
+        extra_document
+        or malformed_root_shape
+        or unsupported_root_mapping
+        or len(root_rule_mappings) != 1
+    ):
+        return _RuleEntry(
+            lines=[lines[first_line]],
+            key=None,
+            name=None,
+            issue="standalone YAML rule form must contain exactly one supported document/root rule",
+        )
+
+    rule_index, key, raw_name = root_rule_mappings[0]
+    name, unsupported_name = _parse_rule_name(raw_name)
+    if unsupported_name:
+        return _RuleEntry(lines=[lines[rule_index]], key=None, name=None)
+    return _RuleEntry(
+        lines=lines[first_line:],
+        key=key,
+        name=name,
+    )
+
+
+def _scan_rule_entries(yaml_text: str) -> list[_RuleEntry]:
+    lines = yaml_text.splitlines()
+    entries: list[_RuleEntry] = _unsupported_rules_key_shapes(lines)
+    standalone_mapping = _standalone_rule_mapping_entry(lines)
+    if standalone_mapping is not None:
+        entries.append(standalone_mapping)
+    for index, line in enumerate(lines):
+        parsed = _parse_mapping_header(line)
+        if not parsed or parsed[0] != "rules":
+            continue
+        if parsed[1]:
+            entries.append(_RuleEntry(lines=[line], key=None, name=None))
+            continue
+
+        rules_indent = _leading_space_count(line)
+        child = next(
+            (
+                candidate
+                for candidate in range(index + 1, len(lines))
+                if _meaningful_yaml_line(lines[candidate])
+            ),
+            None,
+        )
+        if (
+            child is None
+            or _leading_space_count(lines[child]) <= rules_indent
+            or not _is_sequence_item(lines[child])
+        ):
+            entries.append(_RuleEntry(lines=[line], key=None, name=None))
+
+    ranges = _rule_sequence_ranges(lines)
+    if not ranges:
+        standalone_range = _standalone_rule_sequence_range(lines)
+        if standalone_range is not None:
+            ranges.append(standalone_range)
+
+    for start, end, sequence_indent in ranges:
+        starts = [
+            index
+            for index in range(start, end)
+            if _is_sequence_item(lines[index], sequence_indent)
+        ]
+        for entry_start, entry_end in zip(starts, [*starts[1:], end], strict=True):
+            key, name = _parse_rule_entry_header(lines[entry_start])
+            entries.append(
+                _RuleEntry(
+                    lines=lines[entry_start:entry_end],
+                    key=key,
+                    name=name,
+                )
+            )
+    return entries
+
+
+def _split_rule_entries(yaml_text: str, entry_key: str) -> list[_RuleEntry]:
+    return [
+        entry
+        for entry in _scan_rule_entries(yaml_text)
+        if entry.key in {entry_key, None}
+    ]
+
+
+def _unrecognized_rule_entry_finding(path: Path, entry_key: str, entry: _RuleEntry) -> Finding:
+    if entry.issue:
+        return Finding(
+            path=path,
+            message=(
+                f"{entry.issue}; the dependency-free validator cannot safely inspect this YAML shape"
+            ),
+        )
+    return Finding(
+        path=path,
+        message=(
+            f"unrecognized {entry_key} rule sequence entry; "
+            "the dependency-free validator cannot safely inspect this YAML shape"
+        ),
+    )
 
 
 def _parse_labels(rule_lines: list[str]) -> dict[str, str]:
@@ -110,18 +675,47 @@ def _parse_expr(rule_lines: list[str]) -> str | None:
         if not match:
             continue
         expr_indent = len(match.group("indent"))
-        expr_lines = [match.group("rest").rstrip()]
+        scalar = match.group("rest").strip()
+        is_block_scalar = (
+            re.fullmatch(
+                r"[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?(?:\s+#.*)?",
+                scalar,
+            )
+            is not None
+        )
+        expr_lines = [] if is_block_scalar or not scalar else [scalar]
         for next_line in rule_lines[index + 1 :]:
             next_indent = len(next_line) - len(next_line.lstrip(" "))
             if next_line.strip() == "":
                 expr_lines.append("")
                 continue
-            if next_indent <= expr_indent and re.match(r"^\s*(for|labels|annotations):\s*", next_line):
-                break
-            if next_indent <= expr_indent and re.match(r"^\s*-\s*alert:\s*", next_line):
+            if next_indent <= expr_indent:
                 break
             expr_lines.append(next_line.rstrip())
-        return "\n".join(expr_lines).strip()
+        expression = "\n".join(expr_lines).strip()
+        if not is_block_scalar:
+            first_value_line = next(
+                (value.strip() for value in expr_lines if value.strip()),
+                "",
+            )
+            empty_scalar = re.fullmatch(
+                r"(?:null|~|''|\"\")(?:\s+#.*)?",
+                first_value_line,
+                re.IGNORECASE,
+            )
+            unsupported_indirection = first_value_line.startswith(("#", "!", "&", "*"))
+            collection_node = first_value_line.startswith(("{", "[")) or (
+                not scalar
+                and (
+                    re.match(r"^-(?:\s|$)", first_value_line) is not None
+                    or re.match(r"^\?(?:\s|$)", first_value_line) is not None
+                    or re.match(r"^(?:[^'\"]+|'[^']+'|\"[^\"]+\"):\s", first_value_line)
+                    is not None
+                )
+            )
+            if empty_scalar or unsupported_indirection or collection_node:
+                return ""
+        return expression
     return None
 
 
@@ -166,7 +760,14 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
     markdown = _read_text(path)
     yaml_blocks = _extract_fenced_blocks(markdown, "yaml")
     for yaml_block in yaml_blocks:
-        for rule_lines in _split_alert_rules(yaml_block):
+        for entry in _split_alert_rules(yaml_block):
+            if entry.key is None:
+                findings.append(_unrecognized_rule_entry_finding(path, "alert", entry))
+                continue
+            if not entry.name:
+                findings.append(Finding(path=path, message="alert rule is missing name"))
+                continue
+            rule_lines = entry.lines
             labels = _parse_labels(rule_lines)
             missing = sorted(REQUIRED_ALERT_LABELS - labels.keys())
             if missing:
@@ -207,7 +808,7 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
                 findings.append(Finding(path=path, message="test alerts must use severity=P2 and alert_class=test (never severity=test)"))
 
             expr = _parse_expr(rule_lines)
-            if expr is None:
+            if not expr:
                 findings.append(Finding(path=path, message="alert rule is missing expr"))
                 continue
 
@@ -223,13 +824,10 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
             if dotted_metric_issue:
                 findings.append(Finding(path=path, message=dotted_metric_issue))
 
-            if 'backup_tick_pause_duration_seconds{scope="all"}' in expr.replace(" ", ""):
-                findings.append(
-                    Finding(
-                        path=path,
-                        message="backup pause alerts must support scoped pauses; avoid hardcoding backup_tick_pause_duration_seconds{scope=\"all\"}",
-                    )
-                )
+            recovery_coverage_issue = _recovery_coverage_alert_finding(path, entry.name, expr)
+            if recovery_coverage_issue:
+                findings.append(recovery_coverage_issue)
+
     return findings
 
 
@@ -322,14 +920,15 @@ def _validate_doc_semantics() -> list[Finding]:
     for core_alerts in CORE_ALERT_SNIPPET_PATHS:
         core_text = _read_text(core_alerts)
         for yaml_block in _extract_fenced_blocks(core_text, "yaml"):
-            for rule_lines in _split_alert_rules(yaml_block):
-                alert_name = None
-                first_line = rule_lines[0] if rule_lines else ""
-                match = re.match(r"^\s*-\s*alert:\s*(\S+)", first_line)
-                if match:
-                    alert_name = match.group(1).strip()
-                if not alert_name:
+            for entry in _split_alert_rules(yaml_block):
+                if entry.key is None:
+                    findings.append(_unrecognized_rule_entry_finding(core_alerts, "alert", entry))
                     continue
+                alert_name = entry.name
+                if not alert_name:
+                    findings.append(Finding(path=core_alerts, message="alert rule is missing name"))
+                    continue
+                rule_lines = entry.lines
                 labels = _parse_labels(rule_lines)
                 expr = _parse_expr(rule_lines) or ""
                 compact_expr = re.sub(r"\s+", "", expr)
@@ -354,6 +953,11 @@ def _validate_doc_semantics() -> list[Finding]:
                         findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighTcpProxy must use labels.service=tcp-proxy-service"))
                     if 'command_end_to_end_latency_ms_bucket{service="tcp-proxy-service"' not in compact_expr:
                         findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighTcpProxy must scope expr to service=\"tcp-proxy-service\""))
+                recovery_coverage_issue = _recovery_coverage_alert_finding(
+                    core_alerts, alert_name, expr
+                )
+                if recovery_coverage_issue:
+                    findings.append(recovery_coverage_issue)
 
     player_runbook = REPO_ROOT / "design" / "architecture" / "system-architecture-player-experience-incident-runbook.md"
     player_runbook_text = _read_text(player_runbook)
@@ -442,12 +1046,19 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
     text = _read_text(path)
     alerts_seen: set[str] = set()
 
-    for rule_lines in _split_alert_rules(text):
-        first_line = rule_lines[0] if rule_lines else ""
-        match = re.match(r"^\s*-\s*alert:\s*(\S+)", first_line)
-        if not match:
+    for entry in _split_alert_rules(text):
+        if entry.key is None:
+            findings.append(_unrecognized_rule_entry_finding(path, "alert", entry))
             continue
-        alert_name = match.group(1).strip()
+        alert_name = entry.name
+        if not alert_name:
+            findings.append(Finding(path=path, message="alert rule is missing name"))
+            continue
+        rule_lines = entry.lines
+        expr = _parse_expr(rule_lines)
+        if not expr:
+            findings.append(Finding(path=path, message=f"{alert_name} is missing expr"))
+            continue
         alerts_seen.add(alert_name)
 
         labels = _parse_labels(rule_lines)
@@ -472,24 +1083,46 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
                 )
             )
 
-        expr = _parse_expr(rule_lines)
-        if expr:
-            ms_issue = _check_ms_thresholds(expr)
-            if ms_issue:
-                findings.append(Finding(path=path, message=f"{alert_name}: {ms_issue}"))
+        ms_issue = _check_ms_thresholds(expr)
+        if ms_issue:
+            findings.append(Finding(path=path, message=f"{alert_name}: {ms_issue}"))
 
-            grpc_scope_issue = _check_grpc_app_error_scoping(expr)
-            if grpc_scope_issue:
-                findings.append(Finding(path=path, message=f"{alert_name}: {grpc_scope_issue}"))
+        grpc_scope_issue = _check_grpc_app_error_scoping(expr)
+        if grpc_scope_issue:
+            findings.append(Finding(path=path, message=f"{alert_name}: {grpc_scope_issue}"))
 
-            dotted_metric_issue = _check_dotted_metric_tokens(expr)
-            if dotted_metric_issue:
-                findings.append(Finding(path=path, message=f"{alert_name}: {dotted_metric_issue}"))
+        dotted_metric_issue = _check_dotted_metric_tokens(expr)
+        if dotted_metric_issue:
+            findings.append(Finding(path=path, message=f"{alert_name}: {dotted_metric_issue}"))
+
+        recovery_coverage_issue = _recovery_coverage_alert_finding(path, alert_name, expr)
+        if recovery_coverage_issue:
+            findings.append(recovery_coverage_issue)
 
         if alert_name.startswith("Redis") and labels.get("owner") != "infra":
             findings.append(Finding(path=path, message=f"{alert_name} must use owner=infra for Redis/coordination incidents"))
         if alert_name.startswith("Backup") and labels.get("owner") != "infra":
             findings.append(Finding(path=path, message=f"{alert_name} must use owner=infra for backup incidents"))
+        if alert_name.startswith("Recovery") and labels.get("owner") != "infra":
+            findings.append(Finding(path=path, message=f"{alert_name} must use owner=infra for recovery incidents"))
+        absent_metric = REQUIRED_ABSENT_ALERT_METRICS.get(alert_name)
+        if absent_metric:
+            absent_expr = re.compile(rf"absent\s*\(\s*{re.escape(absent_metric)}\s*\)")
+            if not absent_expr.search(expr or ""):
+                findings.append(Finding(path=path, message=f"{alert_name} must use absent({absent_metric})"))
+        if alert_name == "RecoveryReopenAttemptBlocked":
+            if not BLOCKED_REOPEN_ATTEMPT_EXPR.search(expr or ""):
+                findings.append(
+                    Finding(
+                        path=path,
+                        message=(
+                            "RecoveryReopenAttemptBlocked must query blocked recovery reopen attempts "
+                            "with reason=incomplete_convergence"
+                        ),
+                    )
+                )
+            if severity != "P0":
+                findings.append(Finding(path=path, message="RecoveryReopenAttemptBlocked must use severity=P0"))
         if alert_name.startswith("Tick") and alert_name not in {
             "TickExecutionUnsafeRatio",
             "TickEffectLedgerBacklog",
@@ -503,12 +1136,19 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
         "RedisCoordinationTailLossSLOBreached",
         "TickExecutionUnsafeRatio",
         "BackupPipelineNoRecentBackup",
+        "BackupLastSuccessMetricsAbsent",
         "BackupPipelineNoRecentVerification",
+        "BackupVerificationLastSuccessMetricsAbsent",
         "BackupPipelineNoRecentRestoreDrill",
-        "BackupTickPauseTooLongScoped",
-        "BackupTickPauseWaitTooLongScoped",
-        "BackupTicksPausedTooLong",
-        "BackupPauseAliasScopeStillUsed",
+        "BackupRestoreDrillLastSuccessMetricsAbsent",
+        "BackupArtifactLineageInvalid",
+        "BackupArtifactLineageMetricsAbsent",
+        "BackupArtifactRestoreUnreadable",
+        "BackupArtifactRestoreReadabilityMetricsAbsent",
+        "RecoveryParticipantConvergenceBlocked",
+        "RecoveryParticipantConvergenceCoverageMissing",
+        "RecoveryParticipantConvergenceMetricsAbsent",
+        "RecoveryReopenAttemptBlocked",
         "LoginSuccessRatioLowGateway",
         "LoginSuccessRatioLowTcpProxy",
         "CommandLatencyP99HighGateway",
@@ -556,6 +1196,128 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
     return findings
 
 
+def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
+    text = _read_text(path)
+    findings: list[Finding] = []
+    recording_occurrences: dict[str, list[str | None]] = {}
+    for entry in _split_recording_rules(text):
+        if entry.key is None:
+            findings.append(_unrecognized_rule_entry_finding(path, "record", entry))
+            continue
+        recording = entry.name
+        if not recording:
+            findings.append(Finding(path=path, message="recording rule is missing name"))
+            continue
+        recording_occurrences.setdefault(recording, []).append(_parse_expr(entry.lines))
+
+    missing_required = sorted(REQUIRED_BACKUP_RECORDINGS - recording_occurrences.keys())
+    if missing_required:
+        findings.append(
+            Finding(
+                path=path,
+                message=f"reference rules are missing required backup recordings: {', '.join(missing_required)}",
+            )
+        )
+
+    duplicate_required = sorted(
+        recording
+        for recording in REQUIRED_BACKUP_RECORDINGS & recording_occurrences.keys()
+        if len(recording_occurrences[recording]) != 1
+    )
+    if duplicate_required:
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "required backup recordings must be declared exactly once: "
+                    + ", ".join(duplicate_required)
+                ),
+            )
+        )
+
+    missing_expressions = sorted(
+        recording
+        for recording in REQUIRED_BACKUP_RECORDINGS & recording_occurrences.keys()
+        if any(not expression for expression in recording_occurrences[recording])
+    )
+    if missing_expressions:
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "required backup recordings are missing expr: "
+                    + ", ".join(missing_expressions)
+                ),
+            )
+        )
+
+    recordings = {
+        recording: expressions[0]
+        for recording, expressions in recording_occurrences.items()
+        if len(expressions) == 1
+    }
+    blocked_convergence_expr = recordings.get("recovery_participant_convergence_blocked") or ""
+    if not CURRENT_BLOCKED_CONVERGENCE_EXPR.search(blocked_convergence_expr):
+        findings.append(
+            Finding(
+                path=path,
+                message="blocked convergence recording must use the current participant state gauge",
+            )
+        )
+
+    environment_blocked_convergence_expr = recordings.get("recovery_environment_convergence_blocked") or ""
+    if not ENVIRONMENT_BLOCKED_CONVERGENCE_EXPR.search(environment_blocked_convergence_expr):
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "environment blocked-convergence recording must aggregate "
+                    "recovery_participant_convergence_blocked with max by (environment)"
+                ),
+            )
+        )
+    if STALE_BLOCKED_CONVERGENCE_EXPR.search(blocked_convergence_expr):
+        findings.append(
+            Finding(
+                path=path,
+                message="blocked convergence recording must not use the cumulative convergence counter",
+            )
+        )
+
+    participant_coverage_expr = recordings.get("recovery_participant_convergence_coverage_missing") or ""
+    if _compact_promql(participant_coverage_expr) != PARTICIPANT_COVERAGE_EXPR:
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "participant coverage recording must compare authoritative required-participant inventory "
+                    "with current participant-state coverage while preserving environment scope"
+                ),
+            )
+        )
+    participant_source_missing_expr = recordings.get("recovery_participant_convergence_source_missing") or ""
+    if _compact_promql(participant_source_missing_expr) != PARTICIPANT_SOURCE_MISSING_EXPR:
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "participant source-missing recording must report globally absent inventory families "
+                    "with a stable source_family label"
+                ),
+            )
+        )
+
+    restore_drill_expr = recordings.get("backup_pipeline_recent_restore_drill_slo_breached") or ""
+    if not RESTORE_DRILL_30_DAY_EXPR.search(restore_drill_expr):
+        findings.append(
+            Finding(
+                path=path,
+                message="restore-drill freshness must use the accepted 30-day baseline",
+            )
+        )
+    return findings
+
+
 def main() -> int:
     findings: list[Finding] = []
 
@@ -569,7 +1331,9 @@ def main() -> int:
     findings.extend(_validate_grafana_dashboards(grafana_dir))
     findings.extend(_validate_kibana_saved_objects(REPO_ROOT / "design" / "observability" / "kibana"))
     findings.extend(_validate_doc_semantics())
-    findings.extend(_validate_reference_prometheus_rules(REPO_ROOT / "k8s" / "monitoring" / "prometheus-rules-firemud.yaml"))
+    prometheus_rules = REPO_ROOT / "k8s" / "monitoring" / "prometheus-rules-firemud.yaml"
+    findings.extend(_validate_reference_prometheus_recordings(prometheus_rules))
+    findings.extend(_validate_reference_prometheus_rules(prometheus_rules))
 
     if not findings:
         print("Observability contract validation: OK")

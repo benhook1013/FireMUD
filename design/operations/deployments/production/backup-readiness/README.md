@@ -1,8 +1,12 @@
 # Production Backup Readiness Evidence
 
-Store one record per `roll-forward-only` production promotion as:
+Store one full record per `roll-forward-only` production promotion, or when the compact recovery-compatibility result requires a new drill, as:
 
 - `<deployment-ref>.json`
+
+## Implementation Status
+
+The field list below is the target-state contract. The target `PREFLIGHT-BACKUP-001` integration validates the richer backup lineage for production promotion; `PREFLIGHT-BACKUP-002` separately reads the durable recovery controller before production first-live or reopen. The current executable intentionally fails the traffic-open gate closed because that controller read is not implemented. Production promotion currently blocks at the incomplete finalized-baseline authority check before `PREFLIGHT-BACKUP-001` reaches the expanded envelope, freshness, digest, attestation, inventory, or nested evidence validation described below. Operators must not treat checked-in field shape or that fail-closed result as proof that the complete target contract was evaluated.
 
 Required fields:
 
@@ -11,23 +15,32 @@ Required fields:
 - `promotionAttestationRef`
 - `assessedAt`
 - `assessedBy`
-- `rollbackMode` (`roll-forward-only`)
+- `rollbackMode` (`rollback-compatible` or `roll-forward-only`)
 - `backupLastSuccessAt`
 - `backupVerifyLastSuccessAt`
 - `restoreDrillLastSuccessAt`
 - `restorePlanRef`
 - `restoreRecoveryRecordRef`
+- `baselineRecoveryRecordRef`
 - `recoveryControllerLineage`
 - `backupConfidentialityEvidence`
-- `serviceDigests`
+- `backupCoverage` (`environment-wide-postgresql`)
+- `backupArtifactRef`
+- `artifactErasureHighWater`
+- `initialCatchupHighWater`
+- `restoreHighWater`
+- `sourceServiceDigests`
+- `candidateServiceDigests`
+- `candidateMigrationPathRef`
+- `backupToolDigest`
+- `recoveryToolDigest`
+- `recoveryContractFingerprint`
 - `evidenceRefs`
 
-## Implementation Status
+`promotionAttestationRef` must point to the production attestation record for the release, and `candidateServiceDigests` must match that attested digest set exactly. The source artifact must come from current production database lineage under representative writes; the drill must retain snapshot-bound `artifactErasureHighWater`, capture immutable `initialCatchupHighWater` and final-cutover `restoreHighWater`, replay the gap-free erasure interval, restore with candidate recovery tooling, and prove the exact candidate migration path, config, bindings, environment-wide cold-start convergence, hardening, and controlled reopen through `continueRecovery(operationId, expectedPhase, evidenceRef)`. The referenced `restoreRecoveryRecordRef` must carry the same immutable `artifactErasureHighWater`, `initialCatchupHighWater`, and `restoreHighWater` values.
 
-The field list above is the target-state contract. Current `PREFLIGHT-BACKUP-001` enforcement validates production scope, `roll-forward-only`, the current `deploymentRef`, a readable `promotionAttestationRef`, `restorePlanRef`, `evidenceRefs`, the three freshness timestamps, and `serviceDigests` equality with the attestation. It does not yet enforce `assessedAt`, `assessedBy`, `restoreRecoveryRecordRef`, `recoveryControllerLineage`, `backupConfidentialityEvidence`, or the richer environment-wide artifact and recovery-tool lineage. Those fields are target-state/partial and must not be treated as currently enforced readiness proof.
+`recoveryControllerLineage` must point to finalized environment-wide `cold_start_restore` controller state from the qualifying drill. `backupConfidentialityEvidence` must prove encrypted transport/storage, environment-scoped least-privilege access and audit, retention/secure deletion, and, whenever production-origin data is exercised outside production, quarantine, sanitization, validation, and deletion. A checked-in recovery JSON projection is post-finalization evidence and is not the authority for the release that finalized the controller.
 
-`promotionAttestationRef` must point to the production attestation record for the release, and `serviceDigests` must match that attested digest set exactly.
+Target production preflight rejects `compatibilityStatus=incompatible` unconditionally. A `drill_required` result is not an alternate promotion path: the required fresh drill and full evidence must be completed, the compatibility result must be regenerated as `compatible`, and only that updated compatible attestation can pass `recovery_compatibility_check()`. A `roll-forward-only` promotion also rejects evidence that is missing, stale, or not bound to the promoted attestation and digest set. Current production promotion preflight blocks every class before this validator executes; expanded envelope, bindings, complete inventory membership, immutable evidence, nested recovery-controller, confidentiality, hardening, and controlled-reopen validation remain executable gaps.
 
-`recoveryControllerLineage` must point to finalized environment-wide `cold_start_restore` controller state from the qualifying drill. `backupConfidentialityEvidence` must prove encrypted transport/storage, environment-scoped least-privilege access and audit, retention/secure deletion, and production-origin non-production quarantine, sanitization, validation, and deletion when applicable. A checked-in recovery JSON projection is post-finalization evidence and is not the authority for the release that finalized the controller.
-
-Production preflight rejects `roll-forward-only` promotions when this evidence is missing, stale, or not bound to the promoted attestation and digest set.
+Compatible rollback releases do not duplicate this full record. Their promotion/deployment evidence contains the compact `recoveryCompatibility` result defined by the backup recovery evidence contract.

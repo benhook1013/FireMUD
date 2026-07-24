@@ -3,6 +3,7 @@ name: Build Runtime Images
 on:
   pull_request:
     branches: [main, develop]
+    types: [opened, synchronize, reopened, edited]
     paths:
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
@@ -12,6 +13,7 @@ on:
       - 'protos/**'
       - 'docker/**'
       - '.github/workflows/runtime-images.yml'
+      - '.github/workflows/publish-pr-runtime-images.yml'
       - '.github/workflows/smoke.yml'
       - '.github/workflows/smoke-full.yml'
       - 'services/common-library/**'
@@ -32,22 +34,30 @@ on:
       - 'services/spring-cloud-gateway/**'
       - 'services/tcp-proxy-service/**'
       - 'services/world-management-service/**'
+      - 'dev-tools/build-compose-service-jars.sh'
+      - 'dev-tools/build-local-smoke-images.sh'
+      - 'dev-tools/certs/generate-dev-certs.sh'
+      - 'dev-tools/verify-compose-health.sh'
+      - 'dev-tools/verify-fresh-bootstrap.sh'
+      - 'dev-tools/verify-restart-state.sh'
+      - 'dev-tools/verify-smoke-images.sh'
   push:
     branches: [main, develop]
   workflow_dispatch:
 
+run-name: Build Runtime Images ${{ github.event_name == 'pull_request' && format('secure-pr-artifact pr-{0} base-{1} head-{2} merge-{3} mode-{4}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha, github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required') || github.ref_name }}
+
 permissions:
   contents: read
-  packages: write
-  pull-requests: write
 
 concurrency:
-  group: runtime-images-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  group: runtime-images-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
   cancel-in-progress: true
 
 jobs:
   image-meta:
     name: Derive Runtime Image Metadata
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
     runs-on: ubuntu-latest
     outputs:
       head_sha: ${{ steps.meta.outputs.head_sha }}
@@ -84,7 +94,12 @@ jobs:
   build-base-image:
     name: Build Runtime Base Image
     needs: [image-meta]
+    if: ${{ github.event_name != 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     runs-on: ubuntu-latest
+    permissions:
+      # This job publishes the shared runtime base image to GHCR.
+      contents: read
+      packages: write
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -143,7 +158,12 @@ jobs:
   build-runtime-images:
     name: Build Runtime Images (${{ matrix.service }})
     needs: [image-meta, build-base-image]
+    if: ${{ github.event_name != 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     runs-on: ubuntu-latest
+    permissions:
+      # This job publishes service runtime images to GHCR.
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -239,15 +259,114 @@ jobs:
             type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache,mode=max
             type=gha,mode=max
 
+  pr-local-smoke:
+    name: Smoke Tests (Full Stack) / Smoke Tests (Full Stack)
+    needs: [image-meta]
+    if: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      # PR-controlled source receives no registry or repository write credential.
+      contents: read
+    env:
+      COMPOSE_PROJECT_NAME: smoke-full-${{ github.run_id }}-${{ github.run_attempt }}
+      SMOKE_TIMEOUT_SECONDS: 20
+      SMOKE_IMAGE_TAG: ${{ needs.image-meta.outputs.image_tag }}
+      SMOKE_IMAGE_LOCAL_ONLY: 'true'
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: Checkout PR merge
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ needs.image-meta.outputs.checkout_ref }}
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@50e97c2cd7a37755bbfafc9c5b7cafaece252f6e
+        with:
+          build-scan-publish: true
+          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
+          build-scan-terms-of-use-agree: 'yes'
+          cache-read-only: true
+
+      - name: Build local PR runtime images
+        run: bash ./dev-tools/build-local-smoke-images.sh "${SMOKE_IMAGE_TAG}"
+
+      - name: Install WebSocket smoke dependency
+        run: python3 -m pip install --disable-pip-version-check websocket-client
+
+      - name: Run credential-free full-stack smoke
+        run: bash ./dev-tools/verify-smoke-images.sh
+
+      - name: Export fixed-tag preview image artifact
+        run: |
+          images=()
+          for service in \
+            account-service \
+            automation-scripting-service \
+            entity-management-service \
+            game-design-service \
+            game-logic-service \
+            game-session-service \
+            logging-admin-service \
+            social-groups-service \
+            spring-cloud-gateway \
+            tcp-proxy-service \
+            world-management-service; do
+            images+=("ghcr.io/benhook1013/${service}:${SMOKE_IMAGE_TAG}")
+          done
+          docker save "${images[@]}" | gzip -1 > /tmp/pr-runtime-images.tar.gz
+
+      - name: Upload preview image artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pr-runtime-images-${{ needs.image-meta.outputs.image_tag }}
+          path: /tmp/pr-runtime-images.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Dump Docker Compose logs on failure
+        if: failure()
+        run: |
+          docker compose \
+            -f docker/docker-compose.yml \
+            -f docker/docker-compose.override.yml \
+            -f docker/docker-compose.smoke-images.override.yml \
+            logs || true
+
+      - name: Stop smoke stack
+        if: always()
+        run: |
+          docker compose \
+            -f docker/docker-compose.yml \
+            -f docker/docker-compose.override.yml \
+            -f docker/docker-compose.smoke-images.override.yml \
+            down \
+            -v \
+            --remove-orphans
+
   smoke-full:
     name: Smoke Tests (Full Stack)
     needs: [image-meta, build-runtime-images]
-    if: ${{ always() && needs.build-runtime-images.result == 'success' }}
+    if: ${{ always() && github.event_name != 'pull_request' && needs.build-runtime-images.result == 'success' }}
+    permissions:
+      # The trusted branch smoke workflow only pulls fixed GHCR images.
+      contents: read
+      packages: read
     uses: ./.github/workflows/smoke-full.yml
     with:
       action: full
       head_sha: ${{ needs.image-meta.outputs.head_sha }}
       checkout_ref: ${{ needs.image-meta.outputs.checkout_ref }}
       image_tag: ${{ needs.image-meta.outputs.image_tag }}
-      pr_number: ${{ github.event_name == 'pull_request' && format('{0}', github.event.pull_request.number) || '' }}
     secrets: inherit

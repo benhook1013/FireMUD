@@ -12,4 +12,5 @@ Use this guide when the main thread is considering subagents or independent veri
 ## Independent Review Evidence
 
 - For an exhaustive audit, require a per-item coverage ledger, named source and design documents read, and an incomplete-review gate. An unsupported "No findings" statement is not exhaustive evidence.
-- Use a fresh-context reviewer at the required delegation tier when independent verification materially reduces risk. The main thread remains responsible for checking the evidence and deciding whether the review is complete.
+- Use hosted or CLI CodeRabbit as the default iterative PR defect-discovery and fix-verification path. Spend model-backed independent review only for a consequential initial check before CodeRabbit is available, a risk CodeRabbit cannot cover, or an explicitly requested audit.
+- When model-backed review is justified, use a fresh-context reviewer at the required delegation tier. The main thread remains responsible for checking the evidence and deciding whether the review is complete.

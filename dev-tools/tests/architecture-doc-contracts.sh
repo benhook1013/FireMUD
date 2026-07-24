@@ -13,6 +13,11 @@ def require_contains(path, snippets):
     if missing:
         raise SystemExit(f"{path}: missing required snippets: {missing}")
 
+for path in (root / "design").rglob("*.md"):
+    text = path.read_text(encoding="utf-8")
+    if "<deployment-event-id>" in text:
+        raise SystemExit(f"{path}: use the canonical <deploymentEventId> path placeholder")
+
 canonical_world_dynamic = "world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>"
 for path in [
     "design/architecture/system-architecture-redis-cache.md",
@@ -64,6 +69,22 @@ require_contains(
         "Confirm that the named canonical owner in the tracker is the owner in code and that no local fallback or competing authority is silently carrying the behavior.",
         "Prefer narrow unit/integration/cross-service proof over interpreting an unrelated broad test pass as evidence.",
         "If any answer is no, leave the capability incomplete or complete only at its explicitly bounded current boundary.",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-cicd.md",
+    [
+        "built and smoke-tested locally without registry credentials",
+        "publish-pr-runtime-images.yml",
+        "never checks out or executes PR source",
+        "never writes shared cache or branch tags",
+    ],
+)
+require_contains(
+    "design/architecture/infrastructure/deployment-environments.md",
+    [
+        "builds and smoke-tests PR-tagged images without registry credentials",
+        "trusted default-branch workflow publishes only the successful fixed head-SHA tags",
     ],
 )
 canonical_reset_anchor = "[Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence)"

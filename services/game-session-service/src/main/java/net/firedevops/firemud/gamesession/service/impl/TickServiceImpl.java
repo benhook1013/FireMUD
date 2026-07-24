@@ -7,8 +7,10 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
@@ -23,6 +25,7 @@ import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.data.redis.serializer.GenericToStringSerializer;
+import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 import org.springframework.scripting.support.ResourceScriptSource;
 import org.springframework.stereotype.Service;
@@ -69,6 +72,7 @@ public class TickServiceImpl implements TickService {
   private RedisScript<Long> stageScript;
   private RedisScript<Long> commitScript;
   private RedisScript<Long> rollbackScript;
+  private RedisTemplate<String, Object> fencedScriptRedisTemplate;
   private final StringRedisSerializer scriptArgsSerializer = new StringRedisSerializer();
   private final GenericToStringSerializer<Long> scriptResultSerializer =
       new GenericToStringSerializer<>(Long.class);
@@ -77,7 +81,11 @@ public class TickServiceImpl implements TickService {
     int attempts = 0;
     while (true) {
       try {
-        return redisTemplate.execute(script, keys, args);
+        if (fencedScriptRedisTemplate == null) {
+          return redisTemplate.execute(script, keys, args);
+        }
+        return fencedScriptRedisTemplate.execute(
+            script, scriptArgsSerializer, scriptResultSerializer, keys, args);
       } catch (Exception ex) {
         attempts++;
         redisErrorCounter.increment();
@@ -94,6 +102,65 @@ public class TickServiceImpl implements TickService {
           throw new RuntimeException("Retry interrupted", ie);
         }
       }
+    }
+  }
+
+  private long executeFencedScript(
+      RedisScript<Long> script,
+      TickQueueControlService.QueueLockLease lease,
+      List<String> dataKeys,
+      String operation,
+      Object... operationArguments) {
+    List<String> keys = new ArrayList<>(dataKeys);
+    keys.add(lease.key());
+    List<Object> arguments = new ArrayList<>(operationArguments.length + 1);
+    arguments.add(lease.token());
+    arguments.addAll(List.of(operationArguments));
+    Long result = executeScriptWithRetry(script, keys, arguments.toArray());
+    if (result == null || result < 0L || ("rollback".equals(operation) && result != 1L)) {
+      lease.markLost();
+      throw new TickQueueControlService.QueueUnavailableException(
+          "Lost tick lock " + lease.key() + " during Redis " + operation);
+    }
+    return result;
+  }
+
+  private RedisTemplate<String, Object> createFencedScriptRedisTemplate() {
+    if (redisTemplate.getConnectionFactory() == null || redisTemplate.getKeySerializer() == null) {
+      return null;
+    }
+    RedisTemplate<String, Object> template = new RedisTemplate<>();
+    template.setConnectionFactory(redisTemplate.getConnectionFactory());
+    template.setKeySerializer(new FencedScriptKeySerializer(redisTemplate.getKeySerializer()));
+    if (redisTemplate.getValueSerializer() != null) {
+      template.setValueSerializer(redisTemplate.getValueSerializer());
+    }
+    template.afterPropertiesSet();
+    return template;
+  }
+
+  private static final class FencedScriptKeySerializer implements RedisSerializer<Object> {
+    private static final String TICK_LOCK_PREFIX = "gamesession:tick:lock:";
+    private static final StringRedisSerializer RAW_STRING_SERIALIZER = new StringRedisSerializer();
+
+    @SuppressWarnings("unchecked")
+    private FencedScriptKeySerializer(RedisSerializer<?> queueKeySerializer) {
+      this.queueKeySerializer = (RedisSerializer<Object>) queueKeySerializer;
+    }
+
+    private final RedisSerializer<Object> queueKeySerializer;
+
+    @Override
+    public byte[] serialize(Object value) {
+      if (value instanceof String key && key.startsWith(TICK_LOCK_PREFIX)) {
+        return RAW_STRING_SERIALIZER.serialize(key);
+      }
+      return queueKeySerializer.serialize(value);
+    }
+
+    @Override
+    public Object deserialize(byte[] bytes) {
+      return queueKeySerializer.deserialize(bytes);
     }
   }
 
@@ -115,6 +182,7 @@ public class TickServiceImpl implements TickService {
     this.stageScript = RedisScript.of(stageSrc.getResource(), Long.class);
     this.commitScript = RedisScript.of(commitSrc.getResource(), Long.class);
     this.rollbackScript = RedisScript.of(rollbackSrc.getResource(), Long.class);
+    this.fencedScriptRedisTemplate = createFencedScriptRedisTemplate();
   }
 
   private void awaitReplication() {
@@ -186,18 +254,9 @@ public class TickServiceImpl implements TickService {
   public void processTick(Long tenantId, Long queueTargetId) {
     Long normalizedTenantId = tenantId != null ? tenantId : 0L;
     Long normalizedQueueTargetId = queueTargetId != null ? queueTargetId : 0L;
+    long start = System.nanoTime();
     try (GameplayLoggingContext ignored =
         GameplayLoggingContext.open(Long.toString(normalizedTenantId), null, null, null)) {
-      TickQueueControlService.OwnershipSnapshot ownership =
-          tickQueueControlService.observeOwnership(normalizedTenantId, normalizedQueueTargetId);
-      tickRuntimeProgressService.observeRemoteFollowupBacklog(normalizedTenantId, ownership);
-      if (tickQueueControlService.isPaused(normalizedQueueTargetId, ownership.paused())) {
-        tickRuntimeProgressService.reconcilePausedRemoteFollowupResults(
-            normalizedTenantId, ownership);
-        logger.debug("Tick processing skipped while paused");
-        return;
-      }
-      long start = System.nanoTime();
       Optional<TickQueueControlService.QueueLockLease> maybeLease =
           tickQueueControlService.tryAcquireTickLease(
               normalizedTenantId, normalizedQueueTargetId, "process tick", logger);
@@ -208,14 +267,37 @@ public class TickServiceImpl implements TickService {
         return;
       }
       try (TickQueueControlService.QueueLockLease lease = maybeLease.orElseThrow()) {
+        TickQueueControlService.OwnershipSnapshot ownership;
+        try {
+          ownership =
+              tickQueueControlService.claimOwnership(
+                  normalizedTenantId, normalizedQueueTargetId, lease);
+        } catch (RuntimeException ownershipFailure) {
+          logger.error(
+              "Failed to claim durable tick ownership tenantId={} gameInstanceId={}",
+              normalizedTenantId,
+              normalizedQueueTargetId,
+              ownershipFailure);
+          conflictTracker.recordConflict(
+              "session:" + normalizedTenantId + ":" + normalizedQueueTargetId);
+          return;
+        }
         tickQueueControlService.markTickStarted();
         String head = null;
         boolean solo = false;
         TickBatch activeBatch = null;
         List<TickQueuedCommandEnvelope> activeBatchEntries = List.of();
+        boolean activeBatchDurablyDrained = false;
         boolean tickSucceeded = false;
         RuntimeRegionStatus tickProgressToPublish = null;
         try {
+          tickRuntimeProgressService.observeRemoteFollowupBacklog(normalizedTenantId, ownership);
+          if (tickQueueControlService.isPaused(normalizedQueueTargetId, ownership.paused())) {
+            tickRuntimeProgressService.reconcilePausedRemoteFollowupResults(
+                normalizedTenantId, ownership);
+            logger.debug("Tick processing skipped while paused");
+            return;
+          }
           tickBatchExecutionService.executeDurableEffects(
               normalizedTenantId, normalizedQueueTargetId);
           tickStagingService.drainRemoteFollowups(
@@ -244,27 +326,18 @@ public class TickServiceImpl implements TickService {
                   "Replaying {} executable pending commands for {}",
                   replayEntries.size(),
                   normalizedQueueTargetId);
-              tickTimer.record(
-                  () -> {
-                    luaTimer.record(
-                        () ->
-                            executeScriptWithRetry(
-                                commitScript,
-                                List.of(
-                                    tickQueueControlService.pendingKey(
-                                        normalizedTenantId, normalizedQueueTargetId))));
-                  });
-              lease.requireOwned();
+              activeBatch = replayBatch;
+              activeBatchEntries = replayEntries;
+              activeBatchDurablyDrained = false;
               tickBatchExecutionService.markBatchDrained(replayBatch, replayEntries);
+              activeBatchDurablyDrained = true;
+              lease.requireOwned();
+              commitPending(lease, normalizedTenantId, normalizedQueueTargetId);
               tickBatchExecutionService.executeDurableEffects(
                   normalizedTenantId, normalizedQueueTargetId);
               lease.requireOwned();
             } else {
-              executeScriptWithRetry(
-                  commitScript,
-                  List.of(
-                      tickQueueControlService.pendingKey(
-                          normalizedTenantId, normalizedQueueTargetId)));
+              commitPending(lease, normalizedTenantId, normalizedQueueTargetId);
             }
             awaitReplication();
           }
@@ -278,21 +351,18 @@ public class TickServiceImpl implements TickService {
           solo = head != null && head.startsWith("S|");
           int max = solo ? 1 : tickMaxCommands;
           lease.requireOwned();
-          tickTimer.record(
-              () -> {
-                luaTimer.record(
-                    () ->
-                        redisTemplate.execute(
-                            stageScript,
-                            scriptArgsSerializer,
-                            scriptResultSerializer,
-                            List.of(
-                                tickQueueControlService.queueKey(
-                                    normalizedTenantId, normalizedQueueTargetId),
-                                tickQueueControlService.pendingKey(
-                                    normalizedTenantId, normalizedQueueTargetId)),
-                            String.valueOf(max)));
-              });
+          luaTimer.record(
+              () ->
+                  executeFencedScript(
+                      stageScript,
+                      lease,
+                      List.of(
+                          tickQueueControlService.queueKey(
+                              normalizedTenantId, normalizedQueueTargetId),
+                          tickQueueControlService.pendingKey(
+                              normalizedTenantId, normalizedQueueTargetId)),
+                      "stage",
+                      String.valueOf(max)));
           activeBatchEntries =
               tickStagingService.readExecutablePendingEntries(
                   normalizedTenantId, normalizedQueueTargetId);
@@ -305,28 +375,24 @@ public class TickServiceImpl implements TickService {
                     solo,
                     ownership,
                     activeBatchEntries);
+            activeBatchDurablyDrained = false;
           }
           if (activeBatch != null) {
             tickBatchExecutionService.requireCurrentOwnership(activeBatch, false);
           }
           lease.requireOwned();
-          tickTimer.record(
-              () -> {
-                luaTimer.record(
-                    () ->
-                        executeScriptWithRetry(
-                            commitScript,
-                            List.of(
-                                tickQueueControlService.pendingKey(
-                                    normalizedTenantId, normalizedQueueTargetId))));
-              });
-          lease.requireOwned();
           if (activeBatch != null) {
             tickBatchExecutionService.markBatchDrained(activeBatch, activeBatchEntries);
+            activeBatchDurablyDrained = true;
+            lease.requireOwned();
+            commitPending(lease, normalizedTenantId, normalizedQueueTargetId);
             tickBatchExecutionService.executeDurableEffects(
                 normalizedTenantId, normalizedQueueTargetId);
             lease.requireOwned();
+          } else {
+            commitPending(lease, normalizedTenantId, normalizedQueueTargetId);
           }
+          lease.requireOwned();
           tickProgressToPublish =
               tickRuntimeProgressService.advanceRuntimeTickProgress(
                   normalizedTenantId, normalizedQueueTargetId, ownership);
@@ -339,20 +405,41 @@ public class TickServiceImpl implements TickService {
           conflictTracker.recordConflict(
               "session:" + normalizedTenantId + ":" + normalizedQueueTargetId);
           if (lease.isOwned()) {
-            luaTimer.record(
-                () ->
-                    executeScriptWithRetry(
-                        rollbackScript,
-                        List.of(
-                            tickQueueControlService.pendingKey(
-                                normalizedTenantId, normalizedQueueTargetId),
-                            tickQueueControlService.queueKey(
-                                normalizedTenantId, normalizedQueueTargetId))));
-            if (activeBatch != null) {
+            boolean rollbackSucceeded = false;
+            try {
+              luaTimer.record(
+                  () ->
+                      executeFencedScript(
+                          rollbackScript,
+                          lease,
+                          List.of(
+                              tickQueueControlService.pendingKey(
+                                  normalizedTenantId, normalizedQueueTargetId),
+                              tickQueueControlService.queueKey(
+                                  normalizedTenantId, normalizedQueueTargetId)),
+                          "rollback"));
+              rollbackSucceeded = true;
+            } catch (RuntimeException rollbackFailure) {
+              logger.error(
+                  "Skipped Redis rollback after queue lease loss or rollback failure "
+                      + "tenantId={} gameInstanceId={}",
+                  normalizedTenantId,
+                  normalizedQueueTargetId,
+                  rollbackFailure);
+            }
+            if (rollbackSucceeded && activeBatch != null && !activeBatchDurablyDrained) {
               tickBatchExecutionService.markBatchAbandoned(
                   activeBatch, activeBatchEntries, failureCode(ex), ex.getMessage());
+            } else if (rollbackSucceeded && activeBatchDurablyDrained) {
+              logger.warn(
+                  "Durable tick drain committed before post-commit failure; preserving batch state "
+                      + "for tenantId={} gameInstanceId={}",
+                  normalizedTenantId,
+                  normalizedQueueTargetId);
             }
-            awaitReplication();
+            if (rollbackSucceeded) {
+              awaitReplication();
+            }
           } else {
             logger.error(
                 "Skipped Redis rollback after queue lease loss tenantId={} gameInstanceId={}",
@@ -376,7 +463,20 @@ public class TickServiceImpl implements TickService {
           }
         }
       }
+    } finally {
+      tickTimer.record(System.nanoTime() - start, TimeUnit.NANOSECONDS);
     }
+  }
+
+  private void commitPending(
+      TickQueueControlService.QueueLockLease lease, Long tenantId, Long queueTargetId) {
+    luaTimer.record(
+        () ->
+            executeFencedScript(
+                commitScript,
+                lease,
+                List.of(tickQueueControlService.pendingKey(tenantId, queueTargetId)),
+                "commit"));
   }
 
   private String truncate(String value, int maxLength) {

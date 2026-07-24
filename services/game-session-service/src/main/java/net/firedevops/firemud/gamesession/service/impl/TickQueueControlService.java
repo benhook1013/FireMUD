@@ -175,7 +175,8 @@ public class TickQueueControlService {
         logger);
   }
 
-  OwnershipSnapshot observeOwnership(Long tenantId, Long gameInstanceId) {
+  OwnershipSnapshot claimOwnership(Long tenantId, Long gameInstanceId, QueueLockLease tickLease) {
+    tickLease.requireOwned();
     Instant now = Instant.now();
     RuntimeRegionStatus status =
         runtimeRegionStatusRepository
@@ -187,14 +188,32 @@ public class TickQueueControlService {
                   created.setGameInstanceId(gameInstanceId);
                   created.setRegionId(defaultCurrentBoundaryRegionId(gameInstanceId));
                   created.setRegionEpoch(1L);
-                  created.setExecutorFence("fence-" + UUID.randomUUID());
+                  created.setExecutorFence(tickLease.token());
                   created.setPaused(false);
                   return created;
                 });
-    status.setOwnerService(runtimeIdentity.service());
-    status.setOwnerInstanceId(runtimeIdentity.serviceInstanceId());
-    status.setUpdatedAt(now);
-    RuntimeRegionStatus saved = runtimeRegionStatusRepository.save(status);
+    RuntimeRegionStatus baseline;
+    if (status.getId() == null) {
+      status.setOwnerService(runtimeIdentity.service());
+      status.setOwnerInstanceId(runtimeIdentity.serviceInstanceId());
+      status.setUpdatedAt(now);
+      baseline = runtimeRegionStatusRepository.ensureBaseline(status);
+    } else {
+      baseline = status;
+    }
+    RuntimeRegionStatus saved =
+        runtimeRegionStatusRepository
+            .claimObservedOwnership(
+                baseline,
+                runtimeIdentity.service(),
+                runtimeIdentity.serviceInstanceId(),
+                tickLease.token(),
+                now)
+            .orElseThrow(
+                () ->
+                    new StaleOwnershipException(
+                        "Runtime ownership changed during lease-backed claim"));
+    tickLease.requireOwned();
     return new OwnershipSnapshot(
         saved.getRegionId(),
         saved.getRegionEpoch(),
@@ -244,10 +263,10 @@ public class TickQueueControlService {
     if (gameInstanceId == null) {
       throw new IllegalArgumentException("gameInstanceId is required");
     }
-    pausedGameInstances.add(gameInstanceId);
     gameInstanceRepository
         .findById(gameInstanceId)
         .ifPresent(instance -> bumpOwnershipEpoch(instance.getTenantId(), gameInstanceId, true));
+    pausedGameInstances.add(gameInstanceId);
     logger.info("Tick pause requested for game instance {}: {}", gameInstanceId, reason);
   }
 
@@ -255,10 +274,10 @@ public class TickQueueControlService {
     if (gameInstanceId == null) {
       throw new IllegalArgumentException("gameInstanceId is required");
     }
-    pausedGameInstances.remove(gameInstanceId);
     gameInstanceRepository
         .findById(gameInstanceId)
         .ifPresent(instance -> bumpOwnershipEpoch(instance.getTenantId(), gameInstanceId, false));
+    pausedGameInstances.remove(gameInstanceId);
     logger.info("Tick resume requested for game instance {}: {}", gameInstanceId, reason);
   }
 
@@ -290,8 +309,23 @@ public class TickQueueControlService {
                         .formatted(tenantId, gameInstanceId, regionId)));
   }
 
-  RuntimeRegionStatus saveRuntimeOwnership(RuntimeRegionStatus status) {
-    return runtimeRegionStatusRepository.save(status);
+  RuntimeRegionStatus advanceLastCommittedTickId(RuntimeRegionStatus expectedOwnership) {
+    return runtimeRegionStatusRepository
+        .advanceLastCommittedTickId(expectedOwnership)
+        .orElseThrow(
+            () ->
+                new StaleOwnershipException(
+                    "Runtime ownership changed before tick progress could be committed"));
+  }
+
+  RuntimeRegionStatus commitDrainedBatch(
+      RuntimeRegionStatus expectedOwnership, String tickBatchId) {
+    return runtimeRegionStatusRepository
+        .commitDrainedBatch(expectedOwnership, tickBatchId)
+        .orElseThrow(
+            () ->
+                new StaleOwnershipException(
+                    "Runtime ownership changed before drained batch could be committed"));
   }
 
   String queueKey(Long tenantId, Long sessionId) {
@@ -526,6 +560,7 @@ public class TickQueueControlService {
     private final String purpose;
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final AtomicBoolean lost = new AtomicBoolean(false);
+    private final AtomicBoolean renewalCancelled = new AtomicBoolean(false);
     private final ScheduledFuture<?> renewal;
 
     private QueueLockLease(String key, String token, String purpose) {
@@ -548,12 +583,25 @@ public class TickQueueControlService {
       return !lost.get() && !closed.get();
     }
 
+    String key() {
+      return key;
+    }
+
+    String token() {
+      return token;
+    }
+
+    void markLost() {
+      lost.set(true);
+      cancelRenewal();
+    }
+
     private void renew() {
       renewOwnership();
     }
 
     private boolean renewOwnership() {
-      if (closed.get()) {
+      if (closed.get() || lost.get()) {
         return false;
       }
       try {
@@ -564,13 +612,13 @@ public class TickQueueControlService {
                 token,
                 String.valueOf(QUEUE_LOCK_TTL.toMillis()));
         if (renewed == null || renewed != 1L) {
-          lost.set(true);
+          markLost();
           classLogger.error("Lost {} lock {} during renewal", purpose, key);
           return false;
         }
         return true;
       } catch (RuntimeException renewalFailure) {
-        lost.set(true);
+        markLost();
         classLogger.error("Failed to renew {} lock {}", purpose, key, renewalFailure);
         return false;
       }
@@ -581,10 +629,14 @@ public class TickQueueControlService {
       if (!closed.compareAndSet(false, true)) {
         return;
       }
-      if (renewal != null) {
+      cancelRenewal();
+      releaseLease(key, token, purpose);
+    }
+
+    private void cancelRenewal() {
+      if (renewal != null && renewalCancelled.compareAndSet(false, true)) {
         renewal.cancel(false);
       }
-      releaseLease(key, token, purpose);
     }
   }
 
@@ -613,26 +665,21 @@ public class TickQueueControlService {
   private record PurgeCandidate(GameplayCommand command, boolean batchBound) {}
 
   private void bumpOwnershipEpoch(Long tenantId, Long gameInstanceId, boolean paused) {
-    Instant now = Instant.now();
-    RuntimeRegionStatus status =
-        runtimeRegionStatusRepository
-            .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-            .orElseGet(
-                () -> {
-                  RuntimeRegionStatus created = new RuntimeRegionStatus();
-                  created.setTenantId(tenantId);
-                  created.setGameInstanceId(gameInstanceId);
-                  created.setRegionId(defaultCurrentBoundaryRegionId(gameInstanceId));
-                  created.setRegionEpoch(0L);
-                  return created;
-                });
-    status.setRegionEpoch(status.getRegionEpoch() + 1L);
-    status.setExecutorFence("fence-" + UUID.randomUUID());
-    status.setOwnerService(runtimeIdentity.service());
-    status.setOwnerInstanceId(runtimeIdentity.serviceInstanceId());
-    status.setPaused(paused);
-    status.setUpdatedAt(now);
-    runtimeRegionStatusRepository.save(status);
+    try (QueueMutationLease leases =
+        acquireQueueMutationLease(tenantId, gameInstanceId, paused ? "pause" : "resume")) {
+      leases.requireOwned();
+      RuntimeRegionStatus status = new RuntimeRegionStatus();
+      status.setTenantId(tenantId);
+      status.setGameInstanceId(gameInstanceId);
+      status.setRegionId(defaultCurrentBoundaryRegionId(gameInstanceId));
+      status.setExecutorFence(leases.tickLease().token());
+      status.setOwnerService(runtimeIdentity.service());
+      status.setOwnerInstanceId(runtimeIdentity.serviceInstanceId());
+      status.setPaused(paused);
+      status.setUpdatedAt(Instant.now());
+      runtimeRegionStatusRepository.advanceOwnershipEpoch(status);
+      leases.requireOwned();
+    }
   }
 
   private String defaultCurrentBoundaryRegionId(Long gameInstanceId) {

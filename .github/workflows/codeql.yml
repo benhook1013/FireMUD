@@ -5,6 +5,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main, develop ]
+    types: [opened, synchronize, reopened, edited]
   schedule:
     - cron: '0 0 * * 0'
   workflow_dispatch:
@@ -17,13 +18,14 @@ env:
   CODEQL_ACTION_FILE_COVERAGE_ON_PRS: "true"
 
 concurrency:
-  group: codeql-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  group: codeql-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
   cancel-in-progress: true
 
 jobs:
   changes:
     name: Detect CodeQL-Relevant Changes
     runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
     outputs:
       matrix: ${{ steps.compute.outputs.matrix }}
       should_run: ${{ steps.compute.outputs.should_run }}
@@ -111,7 +113,7 @@ jobs:
   analyze:
     name: CodeQL Analysis (${{ matrix.language }})
     needs: [changes]
-    if: needs.changes.outputs.should_run == 'true'
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.should_run == 'true' }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -172,10 +174,10 @@ jobs:
         uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4
 
   codeql-gate:
-    name: CodeQL Gate
+    name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (CodeQL Gate)' || 'CodeQL Gate' }}
     runs-on: ubuntu-latest
-    needs: [analyze]
-    if: always() && github.event_name == 'pull_request' && github.base_ref == 'main'
+    needs: [changes, analyze]
+    if: ${{ always() && github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main') && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -183,8 +185,20 @@ jobs:
           egress-policy: audit
 
       - name: Enforce successful CodeQL analysis
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SHOULD_RUN: ${{ needs.changes.outputs.should_run }}
+          ANALYZE_RESULT: ${{ needs.analyze.result }}
         run: |
-          if [ "${{ needs.analyze.result }}" != "success" ] && [ "${{ needs.analyze.result }}" != "skipped" ]; then
-            echo "CodeQL analysis did not complete successfully: ${{ needs.analyze.result }}"
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "CodeQL change detection did not complete successfully: $CHANGES_RESULT" >&2
+            exit 1
+          fi
+          if [ "$SHOULD_RUN" = "true" ] && [ "$ANALYZE_RESULT" != "success" ]; then
+            echo "Required CodeQL analysis did not complete successfully: $ANALYZE_RESULT" >&2
+            exit 1
+          fi
+          if [ "$SHOULD_RUN" != "true" ] && [ "$SHOULD_RUN" != "false" ]; then
+            echo "CodeQL change detection returned an invalid should_run value: $SHOULD_RUN" >&2
             exit 1
           fi

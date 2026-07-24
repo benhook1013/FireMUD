@@ -20,6 +20,7 @@ import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -70,8 +71,13 @@ class TickRuntimeProgressServiceTest {
     service.init();
     setField(service, "tickDurationMs", 1000L);
     setField(service, "maxRemoteFollowupsPerTick", 16);
-    when(runtimeRegionStatusRepository.save(any()))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(runtimeRegionStatusRepository.advanceLastCommittedTickId(any()))
+        .thenAnswer(
+            invocation -> {
+              RuntimeRegionStatus expected = invocation.getArgument(0);
+              expected.setLastCommittedTickId(expected.getLastCommittedTickId() + 1L);
+              return Optional.of(expected);
+            });
   }
 
   @Test
@@ -120,6 +126,7 @@ class TickRuntimeProgressServiceTest {
   @Test
   void advancePublishAndReconcileRuntimeTickProgressUsesCanonicalOwnership() {
     RuntimeRegionStatus currentStatus = runtimeOwnership(1L, 2L, "region-a", 4L, "fence-a", false);
+    currentStatus.setId(11L);
     currentStatus.setLastCommittedTickId(7L);
     when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-a"))
         .thenReturn(Optional.of(currentStatus));
@@ -141,6 +148,38 @@ class TickRuntimeProgressServiceTest {
     org.junit.jupiter.api.Assertions.assertEquals(
         "region-a", requestCaptor.getValue().getRegionId());
     org.junit.jupiter.api.Assertions.assertEquals(8L, requestCaptor.getValue().getTickId());
+  }
+
+  @Test
+  void advanceRuntimeTickProgressFailsClosedWhenOwnershipCasIsRejected() {
+    RuntimeRegionStatus currentStatus = runtimeOwnership(1L, 2L, "region-a", 4L, "fence-a", false);
+    currentStatus.setId(11L);
+    currentStatus.setLastCommittedTickId(7L);
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-a"))
+        .thenReturn(Optional.of(currentStatus));
+    ArgumentCaptor<RuntimeRegionStatus> expectedOwnership =
+        ArgumentCaptor.forClass(RuntimeRegionStatus.class);
+    org.mockito.Mockito.doReturn(Optional.empty())
+        .when(runtimeRegionStatusRepository)
+        .advanceLastCommittedTickId(expectedOwnership.capture());
+
+    Assertions.assertThrows(
+        TickQueueControlService.StaleOwnershipException.class,
+        () ->
+            service.advanceRuntimeTickProgress(
+                1L,
+                2L,
+                new TickQueueControlService.OwnershipSnapshot(
+                    "region-a", 4L, "fence-a", false, 7L)));
+    RuntimeRegionStatus attempted = expectedOwnership.getValue();
+    Assertions.assertEquals(11L, attempted.getId());
+    Assertions.assertEquals(1L, attempted.getTenantId());
+    Assertions.assertEquals(2L, attempted.getGameInstanceId());
+    Assertions.assertEquals("region-a", attempted.getRegionId());
+    Assertions.assertEquals(4L, attempted.getRegionEpoch());
+    Assertions.assertEquals("fence-a", attempted.getExecutorFence());
+    Assertions.assertEquals(7L, attempted.getLastCommittedTickId());
+    Assertions.assertFalse(attempted.isPaused());
   }
 
   @Test

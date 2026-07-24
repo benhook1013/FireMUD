@@ -78,7 +78,7 @@ Example alerts for the observability stack itself:
     service: otel-collector
     severity: P1
     owner: platform
-    runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger-opentelemetry-collector-down
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger--opentelemetry-collector-down
   annotations:
     summary: OpenTelemetry Collector is failing to export spans
     description: Distributed tracing data is being dropped before it reaches Jaeger or the configured backend.
@@ -90,7 +90,7 @@ Example alerts for the observability stack itself:
     service: otel-collector
     severity: P1
     owner: platform
-    runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger-opentelemetry-collector-down
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger--opentelemetry-collector-down
   annotations:
     summary: OpenTelemetry Collector unavailable
     description: The collector is unreachable, so new traces cannot be received even before downstream export or storage is considered.
@@ -138,7 +138,7 @@ Example alerts for the observability stack itself:
     service: jaeger
     severity: P1
     owner: platform
-    runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger-opentelemetry-collector-down
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger--opentelemetry-collector-down
   annotations:
     summary: Jaeger query service unavailable
     description: Jaeger query is unavailable, so operators cannot search or inspect traces even if spans are still being ingested.
@@ -150,7 +150,7 @@ Example alerts for the observability stack itself:
     service: jaeger
     severity: P1
     owner: platform
-    runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger-opentelemetry-collector-down
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger--opentelemetry-collector-down
   annotations:
     summary: Jaeger is dropping spans
     description: Jaeger storage or collector paths are dropping spans, so trace data is incomplete even when services still export successfully.

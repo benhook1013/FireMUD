@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -20,6 +21,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -52,6 +56,8 @@ class TickQueueControlServiceTest {
   private GameplayCommandRepository gameplayCommandRepository;
   private RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private SessionAuthenticationService sessionAuthenticationService;
+  private ScheduledExecutorService queueLockRenewalExecutor;
+  private ScheduledFuture<?> renewalFuture;
   private TickQueueControlService service;
   private Logger logger;
 
@@ -83,9 +89,27 @@ class TickQueueControlServiceTest {
             });
     when(gameplayCommandRepository.markAcceptedCommandStaged(any(), any())).thenReturn(true);
     runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
-    when(runtimeRegionStatusRepository.save(any()))
+    when(runtimeRegionStatusRepository.ensureBaseline(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(runtimeRegionStatusRepository.claimObservedOwnership(
+            any(), any(String.class), any(String.class), any(String.class), any(Instant.class)))
+        .thenAnswer(
+            invocation -> {
+              RuntimeRegionStatus status = invocation.getArgument(0);
+              status.setOwnerService(invocation.getArgument(1));
+              status.setOwnerInstanceId(invocation.getArgument(2));
+              status.setExecutorFence(invocation.getArgument(3));
+              status.setUpdatedAt(invocation.getArgument(4));
+              return Optional.of(status);
+            });
+    when(runtimeRegionStatusRepository.advanceOwnershipEpoch(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
     sessionAuthenticationService = mock(SessionAuthenticationService.class);
+    queueLockRenewalExecutor = mock(ScheduledExecutorService.class);
+    renewalFuture = mock(ScheduledFuture.class);
+    when(queueLockRenewalExecutor.scheduleAtFixedRate(
+            any(Runnable.class), anyLong(), anyLong(), any(TimeUnit.class)))
+        .thenAnswer(invocation -> renewalFuture);
     RuntimeIdentity runtimeIdentity =
         new RuntimeIdentity(
             "game-session-service",
@@ -104,7 +128,7 @@ class TickQueueControlServiceTest {
             runtimeRegionStatusRepository,
             runtimeIdentity,
             sessionAuthenticationService,
-            mock(java.util.concurrent.ScheduledExecutorService.class));
+            queueLockRenewalExecutor);
     logger = mock(Logger.class);
   }
 
@@ -126,6 +150,18 @@ class TickQueueControlServiceTest {
     assertTrue(
         arguments.getAllValues().stream()
             .anyMatch(values -> values.length == 2 && "30000".equals(values[1])));
+  }
+
+  @Test
+  void markLostCancelsScheduledRenewalAndMakesLeaseUnavailable() {
+    try (TickQueueControlService.QueueLockLease lease =
+        service.tryAcquireTickLease(1L, 2L, "test lease loss", logger).orElseThrow()) {
+      lease.markLost();
+
+      assertFalse(lease.isOwned());
+      assertThrows(TickQueueControlService.QueueUnavailableException.class, lease::requireOwned);
+      verify(renewalFuture).cancel(false);
+    }
   }
 
   @Test
@@ -429,8 +465,8 @@ class TickQueueControlServiceTest {
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
     RuntimeRegionStatus existingForPause = runtimeOwnership(9L, 2L, 4L, "fence-a", false);
     RuntimeRegionStatus existingForResume = runtimeOwnership(9L, 2L, 5L, "fence-b", true);
-    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(9L, 2L))
-        .thenReturn(Optional.of(existingForPause), Optional.of(existingForResume));
+    when(runtimeRegionStatusRepository.advanceOwnershipEpoch(any()))
+        .thenReturn(existingForPause, existingForResume);
 
     service.pauseTicksForGameInstance(2L, "maintenance", logger);
     assertTrue(service.isPaused(2L, false));
@@ -441,17 +477,18 @@ class TickQueueControlServiceTest {
     ArgumentCaptor<RuntimeRegionStatus> statusCaptor =
         ArgumentCaptor.forClass(RuntimeRegionStatus.class);
     verify(runtimeRegionStatusRepository, org.mockito.Mockito.atLeast(2))
-        .save(statusCaptor.capture());
+        .advanceOwnershipEpoch(statusCaptor.capture());
     List<RuntimeRegionStatus> savedStatuses = statusCaptor.getAllValues();
-    assertTrue(
-        savedStatuses.stream()
-            .anyMatch(status -> status.getRegionEpoch() == 5L && status.isPaused()));
-    assertTrue(
-        savedStatuses.stream()
-            .anyMatch(status -> status.getRegionEpoch() == 6L && !status.isPaused()));
+    assertTrue(savedStatuses.stream().anyMatch(RuntimeRegionStatus::isPaused));
+    assertTrue(savedStatuses.stream().anyMatch(status -> !status.isPaused()));
     assertTrue(
         savedStatuses.stream()
             .allMatch(status -> "test-instance".equals(status.getOwnerInstanceId())));
+    verify(lockValueOps, org.mockito.Mockito.atLeast(2))
+        .setIfAbsent(
+            eq("gamesession:tick:mutation-lock:9:2"), any(String.class), any(Duration.class));
+    verify(lockValueOps, org.mockito.Mockito.atLeast(2))
+        .setIfAbsent(eq("gamesession:tick:lock:9:2"), any(String.class), any(Duration.class));
   }
 
   @Test
@@ -488,20 +525,79 @@ class TickQueueControlServiceTest {
   }
 
   @Test
-  void observeOwnershipCreatesDefaultRuntimeRowWithRuntimeIdentity() {
+  void claimOwnershipCreatesDefaultRuntimeRowWithRuntimeIdentityAfterLeaseAcquisition() {
     when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
         .thenReturn(Optional.empty());
 
-    TickQueueControlService.OwnershipSnapshot snapshot = service.observeOwnership(1L, 2L);
+    TickQueueControlService.OwnershipSnapshot snapshot;
+    String leaseToken;
+    try (TickQueueControlService.QueueLockLease lease =
+        service.tryAcquireTickLease(1L, 2L, "test ownership claim", logger).orElseThrow()) {
+      leaseToken = lease.token();
+      snapshot = service.claimOwnership(1L, 2L, lease);
+    }
 
     assertEquals("2", snapshot.regionId());
     assertEquals(1L, snapshot.regionEpoch());
-    assertTrue(snapshot.executorFence().startsWith("fence-"));
+    assertEquals(leaseToken, snapshot.executorFence());
     ArgumentCaptor<RuntimeRegionStatus> statusCaptor =
         ArgumentCaptor.forClass(RuntimeRegionStatus.class);
-    verify(runtimeRegionStatusRepository).save(statusCaptor.capture());
+    verify(runtimeRegionStatusRepository).ensureBaseline(statusCaptor.capture());
+    verify(runtimeRegionStatusRepository)
+        .claimObservedOwnership(
+            statusCaptor.getValue(),
+            "game-session-service",
+            "test-instance",
+            statusCaptor.getValue().getExecutorFence(),
+            statusCaptor.getValue().getUpdatedAt());
     assertEquals("game-session-service", statusCaptor.getValue().getOwnerService());
     assertEquals("test-instance", statusCaptor.getValue().getOwnerInstanceId());
+  }
+
+  @Test
+  void claimOwnershipRotatesExecutorFenceForEveryNewLeaseGeneration() {
+    RuntimeRegionStatus previous = runtimeOwnership(1L, 2L, 3L, "fence-previous", false);
+    previous.setOwnerService("game-session-service");
+    previous.setOwnerInstanceId("test-instance");
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(Optional.of(previous));
+
+    TickQueueControlService.OwnershipSnapshot snapshot;
+    try (TickQueueControlService.QueueLockLease lease =
+        service.tryAcquireTickLease(1L, 2L, "test ownership takeover", logger).orElseThrow()) {
+      snapshot = service.claimOwnership(1L, 2L, lease);
+    }
+
+    assertNotEquals("fence-previous", snapshot.executorFence());
+    verify(runtimeRegionStatusRepository)
+        .claimObservedOwnership(
+            previous,
+            "game-session-service",
+            "test-instance",
+            snapshot.executorFence(),
+            previous.getUpdatedAt());
+  }
+
+  @Test
+  void claimOwnershipTranslatesEmptyObservedClaimToStaleOwnership() {
+    RuntimeRegionStatus previous = runtimeOwnership(1L, 2L, 3L, "fence-previous", false);
+    previous.setOwnerService("game-session-service");
+    previous.setOwnerInstanceId("test-instance");
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(Optional.of(previous));
+    when(runtimeRegionStatusRepository.claimObservedOwnership(
+            any(), any(String.class), any(String.class), any(String.class), any(Instant.class)))
+        .thenReturn(Optional.empty());
+
+    try (TickQueueControlService.QueueLockLease lease =
+        service.tryAcquireTickLease(1L, 2L, "test stale ownership claim", logger).orElseThrow()) {
+      TickQueueControlService.StaleOwnershipException exception =
+          assertThrows(
+              TickQueueControlService.StaleOwnershipException.class,
+              () -> service.claimOwnership(1L, 2L, lease));
+
+      assertEquals("Runtime ownership changed during lease-backed claim", exception.getMessage());
+    }
   }
 
   @Test

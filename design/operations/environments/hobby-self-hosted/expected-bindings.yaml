@@ -16,7 +16,6 @@ internalBindings:
     workloadMtlsRef: cert-manager://firemud/hobby-workload-mtls
     gatewayInternalWsListenerRef: cert-manager://firemud/hobby-gateway-internal-ws
     tcpProxyBridgeClientRef: cert-manager://firemud/hobby-tcp-proxy-bridge
-    backupControlPlaneClientRef: cert-manager://firemud/hobby-backup-control-plane
   registry:
     imagePullSecretRef: secret://firemud/ghcr-pull-hobby
 backupStorage:

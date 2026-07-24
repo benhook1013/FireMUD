@@ -97,8 +97,8 @@ jobs:
                 --workflow "${preview_workflow_name}" \
                 --branch "${head_ref}" \
                 --limit 20 \
-                --json databaseId,status,displayTitle \
-                --jq '.[] | select(.displayTitle == "PR Preview Environment" and (.status == "queued" or .status == "in_progress")) | .databaseId' \
+                --json databaseId,status \
+                --jq '.[] | select(.status == "queued" or .status == "in_progress") | .databaseId' \
                 | head -n 1
             )"
 

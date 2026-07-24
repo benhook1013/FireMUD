@@ -13,16 +13,27 @@ require_cmd() {
   }
 }
 
-require_cmd kubectl
-require_cmd docker
-require_cmd python3
-
 changed_files_between_base_and_head() {
   local base_ref="$1"
   git fetch origin "$base_ref" --quiet
   local merge_base
   merge_base="$(git merge-base "origin/$base_ref" HEAD)"
   git diff --name-only "$merge_base"...HEAD
+}
+
+production_policy_applies_to_changes() {
+  local changed_files="$1"
+  local changed_file
+
+  while IFS= read -r changed_file; do
+    case "$changed_file" in
+      k8s/overlays/prod|k8s/overlays/prod/*|k8s/base|k8s/base/*|k8s/postgres|k8s/postgres/*|k8s/velero|k8s/velero/*)
+        return 0
+        ;;
+    esac
+  done <<<"$changed_files"
+
+  return 1
 }
 
 render_overlay() {
@@ -104,12 +115,10 @@ run_preflight_policy_checks() {
     local changed_files
     changed_files="$(changed_files_between_base_and_head "$GITHUB_BASE_REF")"
 
-    if printf '%s\n' "$changed_files" | grep -q '^k8s/overlays/prod/'; then
+    if production_policy_applies_to_changes "$changed_files"; then
       mapfile -t attestation_files < <(printf '%s\n' "$changed_files" | grep '^design/operations/deployments/production/attestations/.*\.json$' || true)
-      if [[ "${#attestation_files[@]}" -eq 0 ]]; then
-        echo "Skipping production promotion preflight because no attestation artifact is present in this PR."
-      elif [[ "${#attestation_files[@]}" -ne 1 ]]; then
-        echo "Production overlay PRs must include exactly one attestation file under design/operations/deployments/production/attestations/." >&2
+      if [[ "${#attestation_files[@]}" -ne 1 ]]; then
+        echo "Production-applicable Kubernetes PRs must include exactly one attestation file under design/operations/deployments/production/attestations/." >&2
         exit 1
       else
         production_pr_validation="true"
@@ -154,9 +163,19 @@ PY
   echo "::endgroup::"
 }
 
-check_stage_has_no_backup_schedules_unless_enabled
-run_preflight_policy_checks
-check_images_exist "stage" "$STAGE_OVERLAY"
-check_images_exist "prod" "$PROD_OVERLAY"
+main() {
+  require_cmd kubectl
+  require_cmd docker
+  require_cmd python3
 
-echo "Kustomize overlay validation passed."
+  check_stage_has_no_backup_schedules_unless_enabled
+  run_preflight_policy_checks
+  check_images_exist "stage" "$STAGE_OVERLAY"
+  check_images_exist "prod" "$PROD_OVERLAY"
+
+  echo "Kustomize overlay validation passed."
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

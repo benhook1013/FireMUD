@@ -6,14 +6,14 @@ These JSON files can be imported into a Grafana instance connected to the projec
 
 ## Dashboards
 
-- [backups.json](./backups.json) – Backup pipeline dashboard with “time since last backup/verification”, restore-drill freshness, and maintenance/reset pause, alias-scope, and queue-growth signals.
+- [backups.json](./backups.json) – Backup pipeline dashboard with backup/verification/restore-drill freshness, artifact lineage/readability, and current recovery-participant state. Tick-pause views belong to maintenance/reset dashboards.
 - [service-overview.json](./service-overview.json) – High-level service overview with status panels and charts for request rates, error rates, and latency broken down by microservice.
 - [tcp-proxy-alerts-snippets.md](./tcp-proxy-alerts-snippets.md) – Reference PromQL and Alertmanager rule snippets for TCP Proxy ingress metrics (Telnet connection limits, discarded input, TLS/mTLS and WebSocket reconnect behaviour). Import these into your environment-specific dashboards and rulesets as needed.
 - [tcp-proxy.json](./tcp-proxy.json) – TCP Proxy service dashboard (Telnet connection limits, discarded Telnet input, WebSocket reconnects, and NotifyDisconnect transport/app errors).
 - [core-alerts-snippets.md](./core-alerts-snippets.md) – Index for the core alert snippet split. See the sibling files below for Redis, tick, backup, player-experience, and observability-stack alert families.
 - [redis-alerts-snippets.md](./redis-alerts-snippets.md) – Redis tail-loss and coordination health alerts.
 - [tick-alerts-snippets.md](./tick-alerts-snippets.md) – Tick execution and ledger backlog alerts.
-- [backup-alerts-snippets.md](./backup-alerts-snippets.md) – Backup pipeline and restore-drill alerts.
+- [backup-alerts-snippets.md](./backup-alerts-snippets.md) – Backup pipeline, restore-drill, artifact-lineage/readability, recovery-participant convergence, and blocked-reopen alerts.
 - [player-experience-alerts-snippets.md](./player-experience-alerts-snippets.md) – Player-centric SLO alerts for login, command latency, chat delivery, and entry-path availability.
 - [observability-stack-alerts-snippets.md](./observability-stack-alerts-snippets.md) – Alertmanager, Prometheus, tracing, logging, and Grafana health alerts plus the smoke test rule.
 - [player-experience.json](./player-experience.json) – Reference player experience SLO dashboard for the target-state live-traffic SLI surface. The current checked-in JSON focuses on login success ratio, command end-to-end latency, Telnet/WebSocket path availability from in-service attempts counters, and chat delivery latency. Mirrored synthetic canary, external blackbox, and deadman panels remain follow-up dashboard work once those signals are implemented or mapped for a prod-like environment.

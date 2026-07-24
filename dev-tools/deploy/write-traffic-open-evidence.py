@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import importlib.util
 import json
 import subprocess
 import sys
@@ -70,36 +71,34 @@ def parse_args() -> argparse.Namespace:
 
 
 def validate_preflight_report(
-    report: dict[str, Any], environment: str, deployment_ref: str
+    report: dict[str, Any], environment: str, deployment_ref: str, root_dir: Path
 ) -> None:
-    if report.get("environment") != environment:
-        fail(f"Preflight report must target {environment}")
-    expected_bindings_ref = (
-        f"design/operations/environments/{environment}/expected-bindings.yaml"
+    preflight_path = root_dir / "dev-tools/deploy/preflight.py"
+    spec = importlib.util.spec_from_file_location("firemud_preflight", preflight_path)
+    if spec is None or spec.loader is None:
+        fail(f"Unable to load canonical preflight validator: {preflight_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    expected_bindings_ref = f"design/operations/environments/{environment}/expected-bindings.yaml"
+    status, message = module.validate_preflight_report(
+        report,
+        environment,
+        expected_bindings_ref,
+        deployment_ref,
     )
-    if report.get("expectedBindingsRef") != expected_bindings_ref:
-        fail("Preflight report expectedBindingsRef mismatch")
-    deployment_ref_obj = report.get("deploymentRef", {})
-    if not isinstance(deployment_ref_obj, dict):
-        fail("Preflight report deploymentRef must be an object")
-    report_ref = str(deployment_ref_obj.get("manifestRef", ""))
-    if report_ref != deployment_ref:
-        fail("Preflight report deploymentRef mismatch")
-    check_results = report.get("checkResults")
-    if not isinstance(check_results, list) or not check_results:
-        fail("Preflight report missing checkResults")
-    required_failures = [
-        str(check.get("policyId"))
-        for check in check_results
-        if isinstance(check, dict)
-        and check.get("status") == "fail"
-        and check.get("policyId") != "PREFLIGHT-DIGEST-002"
-    ]
-    if required_failures:
-        fail("Preflight report contains failing required checks: " + ", ".join(required_failures))
+    if status != "pass":
+        fail(message)
+    if report.get("trafficOpenEvent") is not None:
+        fail("Preflight report used to create traffic-open evidence must be the general pre-apply report")
 
 
-def hobby_record(args: argparse.Namespace, root_dir: Path, preflight_ref: str) -> dict[str, Any]:
+def hobby_record(
+    args: argparse.Namespace,
+    root_dir: Path,
+    preflight_ref: str,
+    deployment_event_id: str,
+) -> dict[str, Any]:
     compliance_path = resolve_path(root_dir, args.backup_compliance_ref)
     if not compliance_path.exists():
         fail(f"Hobby backup-compliance record not found: {args.backup_compliance_ref}")
@@ -108,6 +107,7 @@ def hobby_record(args: argparse.Namespace, root_dir: Path, preflight_ref: str) -
         "environment": "hobby-self-hosted",
         "eventType": args.event_type,
         "deploymentRef": args.deployment_ref,
+        "deploymentEventId": deployment_event_id,
         "assessedAt": utc_now(),
         "assessedBy": args.assessed_by,
         "backupComplianceRef": normalize_repo_ref(root_dir, compliance_path),
@@ -116,13 +116,16 @@ def hobby_record(args: argparse.Namespace, root_dir: Path, preflight_ref: str) -
     }
 
 
-def default_output(root_dir: Path, args: argparse.Namespace) -> Path:
+def default_output(
+    root_dir: Path, args: argparse.Namespace, deployment_event_id: str
+) -> Path:
     if args.output:
         return resolve_path(root_dir, args.output)
     return (
         root_dir
         / "design/operations/deployments/hobby-self-hosted/traffic-open"
-        / f"{args.deployment_ref}.json"
+        / args.deployment_ref
+        / f"{deployment_event_id}.json"
     )
 
 
@@ -136,13 +139,14 @@ def main() -> None:
         preflight_report = load_json(preflight_path)
     except Exception as exc:
         fail(f"Preflight report unreadable: {exc}")
-    validate_preflight_report(preflight_report, args.environment, args.deployment_ref)
+    validate_preflight_report(preflight_report, args.environment, args.deployment_ref, root_dir)
     preflight_ref = normalize_repo_ref(root_dir, preflight_path)
     if not args.evidence_ref:
         fail("At least one --evidence-ref is required")
 
-    record = hobby_record(args, root_dir, preflight_ref)
-    output_path = default_output(root_dir, args)
+    deployment_event_id = str(preflight_report["deploymentEventId"])
+    record = hobby_record(args, root_dir, preflight_ref, deployment_event_id)
+    output_path = default_output(root_dir, args, deployment_event_id)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     print(normalize_repo_ref(root_dir, output_path))
