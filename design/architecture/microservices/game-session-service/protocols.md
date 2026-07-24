@@ -25,7 +25,7 @@ At the protocol level, commands are split into two groups:
 The player-facing protocol is also stage-aware:
 
 - **Connected, not logged in** – players can browse public worlds and get help, but they are not yet authenticated. The normal human flow is `WORLDS` then `LOGIN`.
-- **Logged in, not yet playing** – players can issue `PLAY` directly or use lobby helper commands such as `REALMS` and `CHARS` if they need to disambiguate selection.
+- **Logged in, not yet playing** – existing members can issue `PLAY` directly. A first-time public-production player must issue `JOIN` first; either player may use lobby helper commands such as `REALMS` and `CHARS` to disambiguate selection.
 - **In game** – gameplay commands such as `LOOK`, `SAY`, and movement are available.
 
 The normal happy path for a human player should therefore be:
@@ -148,6 +148,9 @@ WORLDS
 OK WORLDS
 1) Demo World (demo)
 
+JOIN demo
+OK JOIN Joined Demo World
+
 PLAY demo
 OK PLAY Entered world: Demo World / Live Realm
 ```
@@ -164,11 +167,14 @@ OK WORLDS
 LOGIN demo@example.com swordfish
 OK LOGIN Logged in as demo@example.com
 
+JOIN demo
+OK JOIN Joined Demo World
+
 PLAY demo
 OK PLAY Entered world: Demo World
 ```
 
-First-party `/ws/game/**` successful bootstrap-backed login and world entry:
+First-party `/ws/game/**` successful bootstrap-backed login and world entry for a returning member whose explicit join already exists:
 
 ```text
 LOGIN

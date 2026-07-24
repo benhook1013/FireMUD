@@ -43,7 +43,7 @@ The previous target distinguished soft and hard billing states and required even
 
 ### Delivery And Bounded Enforcement
 
-- Account is the sole authority-generation writer. It commits the durable state/version change and monotonic outbox event atomically in its database, then idempotently advances the applicable account, tenant, or membership authority generation. A cutoff workflow does not report enforcement complete until the authority-generation projection succeeds.
+- Account is the sole authority-generation writer. It commits the authority state/version change, the applicable durable account, tenant, or membership authority-generation advance or realm-grant version advance, and the monotonic outbox event atomically in one database transaction. Redis and other downstream projections then idempotently reflect that committed authority state. A cutoff workflow does not report enforcement complete until the required projection and consumer convergence succeeds.
 - Game Session consumes revocation events durably and idempotently. Events carry a stable ID and monotonic authority version; duplicates and older versions are no-ops, while gaps trigger authoritative reconciliation.
 - Game Session maintains bounded active-binding indexes by account, tenant, and private-realm grant scope. Revocation must not rely on Redis wildcard scans.
 - The event is the fast path. Batched authority-generation/version reconciliation must ensure a missed event cannot preserve revoked gameplay authority for more than 60 seconds.
@@ -79,8 +79,8 @@ Checking Account or Redis before every command gives a tighter revocation observ
 
 ## Implementation and Proof Obligations
 
-- Implement monotonic membership, grant, account-security, and tenant-billing versions with durable outbox producers and idempotent consumers.
-- Implement Account-owned account, tenant, and membership authority-generation projection with retry and cutoff-completion semantics.
+- Implement monotonic membership, grant, account-security, and tenant-billing versions with transactional durable authority-generation advances, durable outbox producers, and idempotent consumers.
+- Implement Account-owned account, tenant, and membership authority-generation plus realm-grant-version projections with retry and cutoff-completion semantics.
 - Persist the authority versions required by active gameplay bindings and implement bounded account, tenant, and private-realm indexes for targeted termination.
 - Add batched reconciliation, the 60-second freshness lease, event-gap repair, and bounded telemetry for event lag, projection failures, reconciliation age, and termination outcome.
 - Extend the runtime entitlement response with explicit public-join, new-gameplay-binding, and instance/scale flags; correct `past_due` and `grace` handling.

@@ -107,7 +107,7 @@ To keep trust boundaries clear, FireMUD has exactly these JWT profile categories
   - Carried only over mTLS-protected service-to-service links.
   - Lifetime: short-lived and backed by one `session:auth:token:<tokenHash>` registry record; services must not cache them beyond their expiry or ignore registry revocation.
   - An active gameplay binding rotates its private `game-session-account-delegation` JWT through the Account-owned refresh contract in ADR 0031. Refresh authority includes the still-valid per-lineage `tokenGeneration` and cannot be derived from Game Session mTLS identity plus an account ID alone.
-  - Account rejects rotation when the current lineage or applicable authority generation is blocked by account, tenant, or membership revocation. A replacement with a newer `iat` must not cross a logout-all, password-reset, security-lock, or membership-loss authority-generation advance.
+  - Account rejects rotation when the current lineage, applicable authority generation, or private-realm `grantVersion` is blocked by account, tenant, membership, or grant revocation. A replacement with a newer `iat` must not cross a logout-all, password-reset, security-lock, membership-loss, or realm-grant cutoff.
 
 There is no generic backend JWT profile, and the `internal` audience is forbidden. Services must validate both the signature and the exact expected audience/profile for incoming tokens and reject an unexpected `aud` (for example, a `control-ui` JWT presented to a player-bootstrap surface or a `player-bootstrap` JWT presented to an admin API). A privileged-control window is a route/session authorization condition, not a JWT profile or audience.
 
@@ -131,7 +131,7 @@ Services must enforce this claim contract before role/tenant authorization:
 
 Tokens that omit required claims, have malformed claim types, or present an unexpected `aud` for the endpoint profile must be rejected before route classification.
 
-`tokenGeneration` is distinct from Account-owned issuer/account/tenant/membership authority generations. It binds refresh/replacement ordering for one token lineage; it does not grant scope or replace current authority-generation checks.
+`tokenGeneration` is distinct from Account-owned issuer/account/tenant/membership authority generations and private-realm `grantVersion` state. It binds refresh/replacement ordering for one token lineage; it does not grant scope or replace current authority checks.
 
 The only registry-absence exceptions are no-op retry classifications on the two logout endpoints. `AuthLogout` may return idempotent success after full local signature/profile/time/subject validation when the exact presented token record is already absent; it must create no authorization context or additional mutation. `AuthLogoutAll` may return idempotent success without normal registry authorization only when durable Account authority proves a prior logout-all already superseded the presented token. A current or ambiguous token without matching registry state remains denied. These exceptions cannot be reused by any other route.
 

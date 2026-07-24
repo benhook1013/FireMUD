@@ -47,42 +47,43 @@ PATH="$BIN_DIR:$PATH" \
   YAMLLINT_ARGS_FILE="$ARGS_FILE" \
   bash "$SCRIPT"
 
-for expected_file in \
-  '.github/workflows/ci.yml' \
-  'services/account-service/src/main/resources/application.yml' \
-  'services/account-service/src/main/resources/openapi.yaml' \
-  'design/architecture/system-architecture-authz-route-matrix.yaml' \
-  'design/operations/environments/production/expected-bindings.yaml'; do
-  grep -Fqx "$expected_file" "$ARGS_FILE"
-done
+cat > "$TEMP_DIR/expected-yamllint-args" <<'EOF'
+.github/workflows/ci.yml
+services/account-service/src/main/resources/application.yml
+services/account-service/src/main/resources/openapi.yaml
+design/architecture/system-architecture-authz-route-matrix.yaml
+design/operations/environments/production/expected-bindings.yaml
+EOF
 
-for expected_pathspec in \
-  '.github/workflows/*.yml' \
-  'docker/*.yml' \
-  'services/*/src/main/resources/*.yml' \
-  'services/*/src/main/resources/*.yaml' \
-  'services/*/src/test/resources/*.yml' \
-  'services/*/src/test/resources/*.yaml' \
-  'design/architecture/*.yml' \
-  'design/architecture/*.yaml' \
-  'design/architecture/**/*.yml' \
-  'design/architecture/**/*.yaml' \
-  'design/operations/**/*.yml' \
-  'design/operations/**/*.yaml' \
-  'k8s/**/*.yml' \
-  'k8s/**/*.yaml' \
-  ':!:k8s/base/**' \
-  ':!:k8s/minio/**' \
-  ':!:k8s/monitoring/**' \
-  ':!:k8s/network-policies/**' \
-  ':!:k8s/postgres/**' \
-  ':!:k8s/preview/cluster-issuers.yaml' \
-  ':!:k8s/preview/preview-deployer-rbac.yaml' \
-  ':!:k8s/velero/minio.yaml' \
-  ':!:k8s/velero/schedule.yaml' \
-  ':!:k8s/velero/verify-backups-cronjob.yaml' \
-  ':!:k8s/helm/**/templates/**'; do
-  grep -Fqx "$expected_pathspec" "$GIT_ARGS_FILE"
-done
+cat > "$TEMP_DIR/expected-git-ls-files-args" <<'EOF'
+.github/workflows/*.yml
+docker/*.yml
+services/*/src/main/resources/*.yml
+services/*/src/main/resources/*.yaml
+services/*/src/test/resources/*.yml
+services/*/src/test/resources/*.yaml
+design/architecture/*.yml
+design/architecture/*.yaml
+design/architecture/**/*.yml
+design/architecture/**/*.yaml
+design/operations/**/*.yml
+design/operations/**/*.yaml
+k8s/**/*.yml
+k8s/**/*.yaml
+:!:k8s/base/**
+:!:k8s/minio/**
+:!:k8s/monitoring/**
+:!:k8s/network-policies/**
+:!:k8s/postgres/**
+:!:k8s/preview/cluster-issuers.yaml
+:!:k8s/preview/preview-deployer-rbac.yaml
+:!:k8s/velero/minio.yaml
+:!:k8s/velero/schedule.yaml
+:!:k8s/velero/verify-backups-cronjob.yaml
+:!:k8s/helm/**/templates/**
+EOF
+
+diff -u "$TEMP_DIR/expected-yamllint-args" "$ARGS_FILE"
+diff -u "$TEMP_DIR/expected-git-ls-files-args" "$GIT_ARGS_FILE"
 
 echo "lint YAML enumeration contract checks passed"

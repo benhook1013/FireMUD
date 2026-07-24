@@ -7,7 +7,7 @@ For any shared or player-facing environment, operators should ensure at least:
 - `GATEWAY_WS_URL` points at the Spring Cloud Gateway WebSocket mTLS listener (`wss://.../ws/game`), with `FIREMUD_GATEWAY_WS_*` variables configured so the proxy both authenticates the gateway and presents its own client certificate.
 - `TCP_PROXY_MAX_CONNECTIONS` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP` are set to non-zero values sized for expected load and NAT patterns; the `0` defaults are reserved for local/dev and CI.
 - Public player-facing Telnet must select exactly one TLS mode per endpoint: edge termination with internal PROXY forwarding, or direct TLS termination at TCP Proxy. These modes must not be combined.
-- In edge termination plus internal PROXY mode, the edge forwards plaintext Telnet with PROXY protocol into `TCP_PROXY_PROXY_PROTOCOL_PORT`; that listener remains internal-only and TCP Proxy TLS is disabled for it.
+- In edge termination plus internal PROXY mode, the edge forwards plaintext Telnet with PROXY protocol into `TCP_PROXY_PROXY_PROTOCOL_PORT`; that listener remains internal-only, TCP Proxy TLS is disabled for it, and the raw `TCP_PROXY_PORT` listener is unbound or explicitly private and unreachable by players.
 - In direct TCP Proxy TLS mode, the public listener uses `TCP_PROXY_TLS_ENABLED=true` and does not accept a PROXY header; raw and PROXY-protocol listeners remain local, test-only, or explicitly private.
 - Genuinely client-facing plaintext Telnet connections should trigger the canonical landing-menu warning recommending Telnet-over-TLS or the web client instead. The trusted internal plaintext hop after edge TLS termination is not itself a plaintext client connection and does not trigger that warning.
 
