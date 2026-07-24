@@ -25,3 +25,8 @@ Entry format:
   - Context: a PR reported zero unresolved review threads, but the latest CodeRabbit review summary still contained an `Outside diff range comments` finding that was not surfaced by thread-only review checks.
   - Observation: treating `reviewThreads` as the entire CodeRabbit truth is insufficient. Actionable `Outside diff range comments` and `Duplicate comments` can exist in the latest top-level CodeRabbit summary comment even when unresolved inline-thread counts are zero, which makes a PR look review-clean when it is not.
   - Expected pattern: PR review gating should inspect both unresolved review-thread counts and the latest top-level CodeRabbit actionable summary sections before calling a PR review-clean or retriggering review.
+
+- `2026-07-25`: Extract independent validated files when a review cap blocks a coherent PR
+  - Context: an identity and admission ADR PR crossed CodeRabbit's current file cap after a required runtime fix, while a small smoke and validation subset in the same branch was already independently coherent and validated.
+  - Observation: removing the review fix, repeatedly reshaping the large branch, or accepting an unreviewable PR would all lose useful review signal. The independent subset could instead land directly on `develop`, after which rebasing removed those files from the larger PR's diff.
+  - Expected pattern: when a PR crosses a review file cap, first look for a small, already-validated, independently mergeable subset. Extract that subset to a short `develop`-based PR, merge it, and rebase the original PR; do not force this strategy when the files are coupled or the extraction would weaken the original review boundary.
