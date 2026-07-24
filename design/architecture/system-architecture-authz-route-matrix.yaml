@@ -88,7 +88,7 @@ routes:
     membership_authority_generation_applies: true
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE]
+      any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE]
   - service: account-service
     route: POST /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters
     scope: tenant
@@ -271,7 +271,7 @@ routes:
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
     delegated_subject: gameplay_binding_subject
-    required_live_checks: [current_token_generation, account_generation, membership_generation, membership, runtime_entitlements]
+    required_live_checks: [current_token_generation, account_generation, tenant_generation, membership_generation, membership, runtime_entitlements]
   - service: account-service
     route: GetTenantMembershipForRuntime
     scope: tenant

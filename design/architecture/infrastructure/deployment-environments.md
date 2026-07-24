@@ -7,7 +7,7 @@ This document outlines how FireMUD is deployed across environments including loc
 - [Canonical Environment Classes](#canonical-environment-classes)
 - [Local Development: Docker Compose](#local-development-docker-compose)
 - [Production: Kubernetes](#production-kubernetes)
-- [Telnet Edge Deployment](#telnet-edge-deployment)
+- [Telnet TLS Deployment](#telnet-tls-deployment)
 - [Monitoring & Logging](#monitoring--logging)
 - [Spring Profile Configuration](#spring-profile-configuration)
 - [Staging Environment for Playtesting](#staging-environment-for-playtesting)
@@ -147,7 +147,7 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
   profile of `application.yml`.
 - Internal microservices communicate directly over gRPC, bypassing the Spring Cloud Gateway.
 - Kubernetes-backed environments use mTLS for internal gRPC via Spring Boot SSL bundles and Spring gRPC server SSL bundle binding, including the hosted preview/dev-demo Helm path.
-- The **TCP Proxy Service** and **Spring Cloud Gateway** are typically exposed using Kubernetes `LoadBalancer` Services so external clients can connect directly. See [Telnet Edge Deployment](#telnet-edge-deployment) for details on client IP preservation and PROXY protocol.
+- The **TCP Proxy Service** and **Spring Cloud Gateway** are typically exposed using Kubernetes `LoadBalancer` Services so external clients can connect directly. See [Telnet TLS Deployment](#telnet-tls-deployment) for the accepted direct and edge-terminated modes.
 - See [Security Architecture](../system-architecture-security.md#tls-termination-for-gateway) and [Gateway Architecture](../system-architecture-gateway.md#tls-termination-for-gateway) for the full TLS termination chain (browser/Telnet clients → load balancer → Spring Cloud Gateway → backend services) and DMZ boundary details; this document avoids duplicating those rules.
 - Canonical baseline `NetworkPolicy` manifests for the staged player-facing Kustomize path live in
   [`k8s/base`](../../../k8s/base) and are included by the staging and production
@@ -202,18 +202,14 @@ A sample Terraform module for a local Kind cluster is provided in [k8s/terraform
 
 ---
 
-## Telnet Edge Deployment
+## Telnet TLS Deployment
 
-Kubernetes load balancing commonly SNATs raw TCP traffic, so the TCP Proxy Service may not see the true client address on the TCP socket. To preserve client IPs and keep the DMZ boundary explicit:
+Player-facing deployments select exactly one public Telnet TLS mode per endpoint:
 
-- Expose a small **Telnet edge proxy** (for example, HAProxy) as the public TLS-terminating `LoadBalancer` for port `2323`. Player-facing environments accept Telnet-over-TLS only and reject a plaintext handshake; raw Telnet remains local/test/private.
-- Issue and rotate the public Telnet certificate through the environment's cert-manager-owned certificate lifecycle, and make expiry/rotation readiness part of edge proof.
-- Forward the decrypted Telnet stream from the authenticated edge proxy to the TCP Proxy Service using **PROXY protocol** on a dedicated, internal-only TCP Proxy listener/port (see `TCP_PROXY_PROXY_PROTOCOL_PORT` in the TCP Proxy design).
-- Restrict that PROXY-enabled listener so it is reachable only from the edge proxy (separate `Service` + `NetworkPolicy`).
-- Do not expose the TCP Proxy Service's raw or PROXY-protocol listeners publicly; only the TLS edge may reach the PROXY-enabled listener.
-- Have the TCP Proxy Service parse the PROXY header, forward the recovered client IP to Spring Cloud Gateway as `X-Proxy-Client-IP`, and let the gateway standardize it as `X-Client-IP` for downstream services.
+- **Edge termination plus internal PROXY mode** – Expose a small Telnet edge proxy (for example, HAProxy) as the public TLS-terminating `LoadBalancer`. Forward the decrypted stream with PROXY protocol to the dedicated internal-only `TCP_PROXY_PROXY_PROTOCOL_PORT`. A separate `Service` plus source allowlist and `NetworkPolicy` must make that listener reachable only from the authenticated edge path; PROXY framing alone does not authenticate its sender. TCP Proxy parses the header, forwards the recovered address as `X-Proxy-Client-IP`, and Gateway standardizes it as `X-Client-IP`.
+- **Direct TCP Proxy TLS mode** – Expose only the TCP Proxy TLS listener with `TCP_PROXY_TLS_ENABLED=true`. TCP Proxy owns the public certificate and derives the client address from the direct TCP peer. No preceding TLS-terminating edge or PROXY header is used on this path.
 
-If PROXY protocol is not enabled (or source IP is not preserved), treat per-IP limits as best-effort and size them conservatively. See [Security Architecture](../system-architecture-security.md#tls-termination-for-gateway) and [Gateway Architecture](../system-architecture-gateway.md#tls-termination-for-gateway) for the full TLS termination chain.
+Both modes use the environment's certificate lifecycle and include expiry/rotation readiness in deployment proof. Raw and PROXY-protocol listeners remain private, plaintext handshakes are rejected at public endpoints, and no endpoint enables both modes. When the direct mode cannot preserve the original client address through infrastructure load balancing, per-IP limits are best-effort and must be sized conservatively. See [Protocol Bridging](../system-architecture-protocol-bridging.md#public-telnet-tls-modes) and [Security Architecture](../system-architecture-security.md#tls-termination-for-gateway) for the complete boundary.
 
 ---
 

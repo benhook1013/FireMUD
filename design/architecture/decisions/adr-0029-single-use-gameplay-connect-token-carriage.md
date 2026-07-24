@@ -32,7 +32,7 @@ The bounded path is partially implemented. Gateway accepts a header or cookie, r
 
 ### Lifetime, Validation, And Atomic Consumption
 
-- Connect-token lifetime has a platform hard maximum of 30 seconds from issuance to `exp`. An issuer may shorten but not widen it, and Gateway independently rejects a declared lifetime above the maximum.
+- Connect-token lifetime has a platform hard maximum of 30 seconds from signed `iat` to `exp`. An issuer may shorten but not widen it, and Gateway independently rejects missing or future-skewed `iat`, invalid `iat`/`exp` ordering, and a declared lifetime above the maximum.
 - Gateway validates signature and key identity, issuer and audience, lifetime and expiry, required claims, and request routing scope before consuming the token.
 - Gateway atomically consumes `jti` in shared Coordination Redis before attempting the upstream WebSocket connection. The security-critical marker uses a non-evicting prefix, remains until `exp` plus the bounded clock-skew allowance, and must receive the configured replication/persistence acknowledgement before Gateway treats consumption as successful.
 - Consumption is final. If the backend connection or protocol upgrade subsequently fails, the client obtains a new connect token rather than retrying the spent token.
@@ -73,7 +73,7 @@ Failing open improves connection availability during Redis incidents but turns a
 
 ## Implementation and Proof Obligations
 
-- Enforce the 30-second issuance and acceptance hard maximum, full required-claim profile, clock-skew bound, and `exp`-based replay-marker retention.
+- Enforce the signed `iat` claim, 30-second `iat`-to-`exp` issuance and acceptance hard maximum, full required-claim profile, clock-skew bound, and `exp`-based replay-marker retention.
 - Reject multiple values within either carrier as well as dual carriers and query-only presentation.
 - Prove validation and scope comparison occur before atomic consumption, consumption occurs before upstream connection, and retries after post-consumption failure require a new token.
 - Prove Redis replay decisions are atomic across Gateway instances, receive the required durability acknowledgement, and remain unavailable through the full reset/failover quarantine whenever marker continuity is uncertain.

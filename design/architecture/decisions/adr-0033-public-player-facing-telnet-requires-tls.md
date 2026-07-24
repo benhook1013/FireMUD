@@ -70,7 +70,7 @@ This avoids sending a durable password and can preserve more TLS-incapable clien
 
 - Ensure player-facing manifests expose only a TLS-protected public Telnet port and keep raw/PROXY-protocol listeners internal-only.
 - Select and record one public TLS mode per endpoint; reject configurations that enable both edge termination and TCP Proxy TLS for the same path.
-- For edge termination plus internal PROXY, prove the edge forwards the expected PROXY version/header to the restricted listener and that malformed, missing, or untrusted headers fail closed. For direct TCP Proxy TLS, prove the TCP Proxy certificate/handshake and peer-address behavior without a PROXY header.
+- For edge termination plus internal PROXY, prove a source allowlist and Kubernetes `NetworkPolicy` (or an equivalent authenticated edge channel) restrict the listener to the expected edge, prove that edge forwards the expected PROXY version/header, and prove malformed, missing, or untrusted headers fail closed. PROXY framing is not sender authentication. For direct TCP Proxy TLS, prove the TCP Proxy certificate/handshake and peer-address behavior without a PROXY header.
 - In either mode, prove TCP Proxy establishes the internal Proxy -> Gateway WebSocket mTLS bridge and preserves the same `LOGIN -> PLAY -> LOOK` protocol flow as browser gameplay.
 - Prove the public endpoint completes a valid TLS handshake, presents the expected certificate chain, rejects plaintext, and reaches `LOGIN -> PLAY -> LOOK` through the canonical bridge.
 - Keep local and private raw-Telnet tests distinct from player-facing transport evidence.

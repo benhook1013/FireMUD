@@ -261,8 +261,8 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
   - Server-side and non-browser clients may use the dedicated `X-Firemud-Connect-Token` handshake header.
   - Gateway must accept exactly one non-empty, single-valued connect-token carrier for non-proxy gameplay handshakes. Duplicate values, both carrier types, or a malformed carrier are rejected as `CONNECT_TOKEN_REJECTED` rather than choosing precedence.
   - Query-string carriage is not a supported connect-token carrier in player-facing environments.
-- Required claims: `accountId`, `tenantId`, `gameInstanceId`, `worldSlug`, `realmSlug`, `pointerVersion`, `connectScopeId`, `requestId`, `exp`, `jti`.
-- Lifetime: a platform hard maximum of 30 seconds from issuance to `exp`; issuers may shorten but not widen it, and Gateway independently enforces the maximum.
+- Required claims: `accountId`, `tenantId`, `gameInstanceId`, `worldSlug`, `realmSlug`, `pointerVersion`, `connectScopeId`, `requestId`, `iat`, `exp`, `jti`.
+- Lifetime: a platform hard maximum of 30 seconds from signed `iat` to `exp`; issuers may shorten but not widen it, and Gateway independently rejects missing/future-skewed `iat`, invalid ordering, and lifetimes above the maximum.
 - Signing and verification: token is signed by the Account/authentication control-plane key set and verified only at Gateway for `/ws/game/**` policy decisions.
 - Replay defense: gateway validates `jti` against a bounded replay cache and rejects replays until token expiry.
   - Replay cache owner: Gateway.

@@ -31,7 +31,7 @@ The current target already requires periodic refresh, atomic binding replacement
 - Game Session mTLS identity authorizes calling the refresh API but is not authority to mint for an arbitrary player or to cross a current authority generation.
 - An auth-expired response may trigger immediate refresh while the current lineage and authority generations remain refresh-eligible. An auth-revoked response triggers authoritative reconciliation; logout-all, password reset, security lock, membership loss, or another blocking authority-generation advance cannot be bypassed by giving the replacement a newer `iat`.
 - Account creates the replacement token registry record before returning it. Game Session atomically replaces `authTokenHash`, `authTokenIssuedAt`, `authTokenExpiresAt`, and refreshed membership metadata before new calls use the token.
-- The old token may overlap only through the shorter of its original expiry or the maximum deadline of internal RPCs already started before the binding swap. Its single registry record is then removed idempotently.
+- The old token may overlap only through the shorter of its original expiry or the maximum deadline of internal RPCs already started before the binding swap. Game Session then sends Account an idempotent retirement acknowledgement carrying the old token identity, refresh lineage, and retirement request ID. Account owns the registry deletion, rejects mismatched identity, and returns the stored success for a replay of the same request; an absent record without matching completed-request evidence is not sufficient authority.
 - Rotation never changes `continuityBindingExpiresAt` or `resumeDeadline`. If refresh cannot establish authority before expiry, backend-authenticated actions fail closed and the player must complete fresh login.
 
 ### Per-Token Logout
@@ -87,7 +87,7 @@ This has one simpler logout meaning but unexpectedly terminates other devices an
 
 - Define and implement `RefreshGameplayServiceToken` with current-lineage subject binding, idempotency, live membership/account validation, and applicable authority-generation comparison.
 - Persist `authTokenHash`, `authTokenIssuedAt`, `authTokenExpiresAt`, refreshed membership metadata, and rotation CAS generation in the authenticated gameplay binding.
-- Implement half-life scheduling, jitter, single-flight, expiry safety margin, bounded retry, atomic swap, old-entry cleanup, and failure-to-fresh-login behavior.
+- Implement half-life scheduling, jitter, single-flight, expiry safety margin, bounded retry, atomic swap, the Account-owned idempotent old-entry retirement acknowledgement, and failure-to-fresh-login behavior.
 - Prove refresh cannot cross issuer, account, tenant, or membership authority-generation advances, including races with logout-all, password reset, security lock, and membership removal.
 - Implement idempotent `/auth/logout` for `control-ui` and `player-bootstrap` profiles with bounded scoped-key lookup and distinct audit events.
 - Implement logout-all durable event/audit, Account-owned account-authority-generation advancement, active-gameplay termination, idempotency, and background token cleanup.

@@ -2,6 +2,10 @@
 
 This document defines Game Session transport framing and service-level protocol behavior. The canonical standard command catalog, command stages, capability policy, and game-authored command extension rules live in [Player Command Model](../../system-architecture-player-command-model.md).
 
+## Implementation Status
+
+Unless explicitly described as current behavior, this document defines the target protocol. `JOIN` and first-party `Join & Play` are not yet implemented as explicit commands/actions: current connect-token and `PLAY` paths may call Account's `EnsurePublicProductionPlayerMembership` implicitly. That drift must be removed before claiming the target `JOIN_REQUIRED` boundary.
+
 ## Minimal Text Command Protocol
 
 Telnet and WebSocket clients share a minimal line-based command protocol that powers the initial MVP gameplay set. Clients send ASCII lines terminated by `\n`; the first token is the command name, case-insensitive, and the rest of the line is command-specific arguments. Empty lines are ignored.

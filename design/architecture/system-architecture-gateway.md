@@ -9,6 +9,7 @@ Unless otherwise noted, this document describes target-state gateway behavior. C
 - The target-state declarative `routes.yml` catalog has not yet converged as the implemented route authority. The current authority is the Java `CanonicalGatewayRoutesConfiguration`, with route-specific environment overrides `FIREMUD_GATEWAY_ROUTE_SESSION_URI`, `FIREMUD_GATEWAY_ROUTE_ADMIN_URI`, `FIREMUD_GATEWAY_ROUTE_DESIGN_URI`, `FIREMUD_GATEWAY_ROUTE_ACCOUNT_URI`, `FIREMUD_GATEWAY_ROUTE_SOCIAL_URI`, and `FIREMUD_GATEWAY_ROUTE_ASSET_STORE_URI`. These are distinct from the `FIREMUD_SERVICES_*` service-discovery variables used by other microservices. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery).
 - URI SAN is the canonical production identity for the TCP Proxy → Gateway mTLS hop. DNS SAN allowlisting remains an explicitly enabled migration-only fallback while URI SANs are not consistently issued, and leaf certificate fingerprint pinning is break-glass only. Until mTLS is fully deployed, any non-mTLS acceptance of `X-Proxy-*` headers remains a temporary dev-only stopgap protected by strict internal-only network exposure and NetworkPolicies; it is not suitable for player-facing environments.
 - Dynamic REST and gRPC route-management APIs remain local/dev/test-only ephemeral capabilities. The current implementation does not yet enforce the target profile, endpoint isolation, validation, or startup boundary, so these APIs must not be treated as production-safe merely because they exist.
+- Connect-token header/cookie parsing, required routing claims, expiry, and Redis replay checks are partially implemented. Gateway does not yet enforce the target 30-second `iat`-to-`exp` hard maximum or the full durability/quarantine contract described below.
 
 ## Gateway Pattern
 
@@ -318,10 +319,11 @@ This section is the canonical source of truth for connect-token enforcement and 
   - `pointerVersion`
   - `connectScopeId`
   - `requestId`
+  - `iat` (absolute issuance time)
   - `exp` (absolute expiration)
   - `jti` (single-use nonce for replay defense)
 - **Lifetime and replay**
-  - Token lifetime has a platform hard maximum of 30 seconds from issuance to `exp`. Issuers may choose a shorter lifetime; Gateway rejects a token whose declared lifetime exceeds the hard maximum even if its signature and current expiry are otherwise valid.
+  - Token lifetime has a platform hard maximum of 30 seconds from signed `iat` to `exp`. Issuers may choose a shorter lifetime; Gateway rejects a missing or future-skewed `iat`, an `exp` that does not follow `iat`, or a declared lifetime above the hard maximum even if the signature and current expiry are otherwise valid.
   - Gateway must reject expired tokens and tokens whose `jti` has already been observed within the replay window.
   - After signature, issuer/audience, lifetime, required-claim, and request-scope validation succeeds, Gateway atomically consumes `jti` before opening the upstream WebSocket. The token is spent even if the subsequent upgrade or backend connection fails; a retry obtains a newly issued token.
   - Replay cache entries must expire automatically at `exp + small_skew`. The replay marker covers the complete token acceptance window and must not be shortened to a fixed 30 seconds from consumption.

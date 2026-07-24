@@ -28,13 +28,13 @@ The repository already has Kubernetes Secret mounts, cert-manager examples, expe
 - Local development may use ignored `.env` values and generated credentials. When Docker mounts real private material, it uses read-only host files outside the repository with restrictive permissions.
 - FireMUD application code, Compose, Helm, and Kubernetes manifests do not deploy or call Vault, cloud secret-manager, or provider-specific secret APIs.
 - An operator may populate the canonical Kubernetes Secret names or mounted paths from external infrastructure. That provisioning is transparent to FireMUD and is not a second product/runtime mode.
-- Synchronization from an upstream provider should materialize the secret so an upstream outage does not immediately remove already-delivered credentials from healthy workloads.
+- Synchronization from an upstream provider must preserve the last valid materialized Kubernetes Secret during an upstream outage; it must not replace or delete healthy credentials merely because refresh is unavailable. Workloads may continue only while that retained secret remains within its configured validity/age policy. Expiry, invalid material, or inability to prove acceptable age makes the affected readiness gate fail closed while leaving the existing Secret intact for diagnosis and controlled recovery.
 
 ### Classification And Least Privilege
 
 - Secret values never appear in Git, images, ConfigMaps, rendered Helm values, logs, traces, or compliance evidence. Evidence records contain bounded identifiers, ages, digests, and outcomes only.
 - Account Service is the only application workload that receives the Account JWT private signing bundle.
-- JWKS is public verification configuration, not a private secret. It is delivered as an immutable ConfigMap or equivalent integrity-controlled public artifact and remains generation-coupled to signing-key rotation.
+- JWKS is public verification configuration, not a private secret. It is delivered through one fixed-name ConfigMap whose contents are mutable only through Account-owned resource-version compare-and-set, or an equivalent integrity-controlled public artifact, and remains generation-coupled to signing-key rotation.
 - cert-manager issues a distinct leaf private key and certificate for each workload identity into a dedicated Secret. Workloads may share a CA trust bundle but not one leaf private identity.
 - Operator client certificates use a separate issuer/profile and dedicated Secret and are not mounted into normal application workloads.
 - Re-creatable leaf certificates and routine credentials are reissued after loss. Irreplaceable recovery material, including backup-decryption keys or an intentionally retained offline CA root, has encrypted out-of-cluster custody and never relies on the live cluster as its sole copy.

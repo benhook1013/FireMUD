@@ -60,7 +60,7 @@ Do not configure both modes on one public path, and do not treat an edge-termina
 
 - Select one mode and record the public listener, certificate owner, and internal target in deployment evidence.
 - Prove a valid TLS handshake, expected certificate chain, and plaintext rejection at the public endpoint.
-- In edge termination plus internal PROXY mode, prove the restricted listener accepts only the expected PROXY contract, preserves the forwarded client address, and fails closed for missing, malformed, or untrusted headers.
+- In edge termination plus internal PROXY mode, prove the restricted listener is reachable only from the authenticated edge path through a source allowlist and Kubernetes `NetworkPolicy` (or an equivalent authenticated edge channel), accepts only the expected PROXY contract, preserves the forwarded client address, and fails closed for missing, malformed, or untrusted headers. PROXY framing carries address metadata; it does not authenticate the sender.
 - In direct TCP Proxy TLS mode, prove the TCP Proxy TLS handshake and direct peer-address behavior, without sending a PROXY header.
 - In both modes, prove Proxy -> Gateway uses the internal `wss://` mTLS listener and that the bridged client reaches the same `LOGIN -> PLAY -> LOOK` flow as a WebSocket client.
 
@@ -309,8 +309,8 @@ The exact Telnet configuration varies by environment, but recommended defaults a
 | Environment type | Public Telnet transport | Telnet edge proxy | Plaintext Telnet login policy |
 | --- | --- | --- | --- |
 | Local dev / CI | Plaintext to `TCP_PROXY_PORT` | Optional; often omitted | Allowed for protocol iteration; do not represent it as an account-factor-protected path. |
-| Hobby / self‑hosted (single operator) | Telnet-over-TLS for any public player-facing endpoint; plaintext only on an explicitly private network | Required for public Telnet ingress; optional for private/local use | Public raw Telnet does not qualify as a supported player-facing deployment. |
-| Player-facing staging / production | Telnet-over-TLS via edge proxy or web client | Required for public Telnet ingress | Do not expose public plaintext Telnet. |
+| Hobby / self‑hosted (single operator) | Telnet-over-TLS through either edge termination plus restricted internal PROXY forwarding or direct TCP Proxy TLS; plaintext only on an explicitly private network | Required only when edge termination mode is selected | Public raw Telnet does not qualify as a supported player-facing deployment. |
+| Player-facing staging / production | Telnet-over-TLS through either edge termination plus restricted internal PROXY forwarding or direct TCP Proxy TLS | Required only when edge termination mode is selected | Select exactly one public TLS mode per endpoint; do not expose public plaintext, raw, or PROXY-protocol listeners. |
 
 These recommendations complement the detailed Telnet controls in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls) and the authentication flows in [Authentication & Authorization](./system-architecture-authentication.md). When in doubt, treat the Security Architecture and TCP Proxy Service design as canonical sources for Telnet hardening and update the bridge configuration here to match.
 
