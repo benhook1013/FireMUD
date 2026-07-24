@@ -30,6 +30,9 @@ JWT validity, active gameplay authorization, continuity-binding eligibility, dis
 
 - A continuously connected gameplay session may remain active while edge liveness is healthy and current account, membership, entitlement, revocation, fencing, and backend-token checks succeed.
 - Receiver-specific private player-delegation JWTs rotate on their bounded cadence. Each token remains valid only through its own `exp`; rotation neither revives an expired token nor forces a healthy player through fresh `PLAY` merely because the previous token aged out.
+- Game Session schedules refresh before `exp` and retries a transient refresh failure with bounded backoff while the current receiver token remains valid. A refresh failure does not move `continuityBindingExpiresAt`, `disconnectAt`, or `resumeDeadline`, and it does not grant a grace period beyond the current token's `exp`.
+- If no replacement receiver token is installed before `exp`, Game Session fails closed for backend-authenticated actions, transitions the active binding to auth-revoked/disconnected state, and closes the gameplay socket. The player-visible outcome is `AUTH_TOKEN_EXPIRED` when the token simply expires or refresh remains unavailable, and `AUTH_SESSION_REVOKED` when Account rejects refresh because authority was revoked or blocked; neither outcome is resolved by retrying the expired token.
+- Recovery is explicit: the client obtains a fresh bootstrap/connect token where the transport requires it, reconnects, sends fresh `LOGIN`, and completes fresh `PLAY`. If the old binding still has a valid continuity/disconnection episode and current authority checks pass, that fresh admission may consume the episode as a resume; otherwise it creates a new binding. A receiver-token refresh is never a client-visible reauthentication substitute and never permits token-only reentry.
 - Account or tenant revocation and loss of required authority remain immediate terminal conditions. This decision does not create an immortal authorization grant.
 - If FireMUD later requires a maximum continuously active player-session lifetime, it must be an explicit security/product policy rather than an accidental consequence of private player-delegation token configuration.
 
@@ -87,6 +90,7 @@ Fresh admission after every disconnect is simpler and more conservative but mate
 
 - Persist immutable `continuityBindingExpiresAt` plus one immutable `disconnectAt`/`resumeDeadline` pair per disconnection episode, consume that episode on successful resume, and enforce the current pair in `PLAY` admission.
 - Prove token refresh and healthy uninterrupted play independently of the continuity anchor.
+- Prove bounded retry while the receiver token remains valid, the `AUTH_TOKEN_EXPIRED` outcome when no replacement exists by `exp`, the `AUTH_SESSION_REVOKED` outcome for rejected authority, socket termination, and fresh `LOGIN`/`PLAY` reconnect or resume behavior.
 - Prove boundary behavior immediately before, at, and after both continuity and resume deadlines.
 - Prove repeated failed reconnects cannot extend one episode, successful resume closes it, and a later disconnect creates a new bounded episode without moving `continuityBindingExpiresAt`.
 - Prove Redis saves, TTL refresh, restart, failover, and stale-key recovery cannot move or bypass logical deadlines.

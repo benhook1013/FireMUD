@@ -2,14 +2,14 @@
 
 This document describes how FireMUD authenticates clients, issues the exact JWT profiles defined by the token contract, manages session state, and enforces role-based access across services.
 
-Authentication is performed via plaintext `LOGIN` commands for gameplay protocol clients and via `/auth/login` or equivalent flows for first-party web UIs. Clients are stateless; server-side “sessions” are split between gameplay bindings in Redis and short-lived issued-token registry records in Coordination Redis. The Game Session Service restores gameplay session state from Redis, while the Account Service validates the supplied login secret and issues the exact `control-ui`, `player-bootstrap`, or receiver-specific private player-delegation JWT profile required by the destination. Gameplay protocol clients (Telnet and WebSocket) never see these JWTs directly; first-party admin/creator web UIs and backend services use them for their permitted meta/control calls. First-party gameplay WebSocket clients also carry a short-lived edge connect token at handshake time as described below. Accounts may also authenticate using linked external providers such as Google, Discord, or Steam.
+Authentication is performed via plaintext `LOGIN` commands for raw gameplay protocol clients and via `/auth/login` or equivalent flows for first-party web UIs. Clients are stateless; server-side “sessions” are split between gameplay bindings in Redis and short-lived issued-token registry records in Coordination Redis. The Game Session Service restores gameplay session state from Redis, while the Account Service validates the supplied login secret and issues the exact `control-ui`, `player-bootstrap`, or receiver-specific private player-delegation JWT profile required by the destination. Raw Telnet and generic gameplay command streams never carry JWT authorization. First-party browser/mobile gameplay clients temporarily use a `player-bootstrap` JWT for HTTPS bootstrap calls and a cookie-carried one-use connect token for the `/ws/game/**` handshake; first-party admin/creator UIs and backend services use their own permitted token profiles. Accounts may also authenticate using linked external providers such as Google, Discord, or Steam.
 
 ## Implemented Status
 
 - Prompt-based `LOGIN` flows (username then password prompts) are part of the target protocol design; until they are fully implemented across transports, clients should use `LOGIN <username> <secret>` / `LOGON ...`. The secret is a password or an active verified-email login code according to the account's selected mode.
 - Character selection and gameplay takeover semantics are canonicalized on `{tenantId, gameInstanceId, characterId}`.
 - First-party `/ws/game/**` now uses the concrete transport path documented below: `POST /auth/player-bootstrap`, bootstrap-backed `POST /auth/connect-token`, gateway connect-token enforcement plus signed connect-context, then bare first-party `LOGIN` followed by `PLAY`. This current path does not prove the target tenantless account-first bootstrap or explicit `JOIN`/`Join & Play`; current connect-token/`PLAY` membership creation remains a tracked gap.
-- The browser-safe `Firemud-Connect-Token` HttpOnly cookie carrier is now implemented for first-party browser gameplay. Non-browser clients may still use the dedicated `X-Firemud-Connect-Token` header carrier, but Gateway rejects handshakes that try to present both carriers at once.
+- First-party browser and mobile gameplay use the short-lived `player-bootstrap` JWT for HTTPS bootstrap calls and carry the resulting gameplay-connect token only in the `Firemud-Connect-Token` HttpOnly cookie, including mobile/server-side cookie jars. Telnet and generic WebSocket clients use credential-bearing `LOGIN` and do not carry public JWTs or connect-token headers.
 - `/sessions/{sessionId}/refresh-roles` exists as an operational hook, but current role-refresh token regeneration and periodic active-session `game-session-account-delegation` rotation remain implementation gaps; the placeholder response is not proof of refresh.
 - Account's JWKS endpoint and conditional secret watcher are implemented, but Account-only asymmetric validation, non-exportable signer delegation, rotation/convergence, issued-token registry enforcement, and Account-owned authority generations remain target-state. No authority-generation issuance, advancement, propagation, or validation proof is currently claimed.
 
@@ -35,6 +35,12 @@ The following contract decisions are mandatory and resolve cross-document ambigu
 - **Spring Cloud Gateway** – Pass-through for gameplay login and admin/meta flows; enforces auth header presence on protected control-plane routes but does not validate control-plane JWTs. The deliberate exception is `/ws/game/**` edge admission: Gateway validates short-lived gameplay connect tokens, performs replay checks, and emits a signed connect context for Game Session as specified in [Gateway Architecture](./system-architecture-gateway.md#tenant-aware-edge-connect-token-gameplay-handshake).
 
 [ADR 0022](./decisions/adr-0022-account-authority-and-gameplay-session-ownership.md) is the authority for this ownership split. Current implementation gaps in authority-generation enforcement, monotonic membership versions, or gameplay token storage do not transfer authority to another service.
+
+### Client Classes and Token Carriage
+
+- Telnet and generic WebSocket clients authenticate with credential-bearing `LOGIN <username> <secret>` (or the target prompt flow). They do not receive or transmit `control-ui`, `player-bootstrap`, private delegation, or gameplay-connect JWTs.
+- First-party browser and mobile clients authenticate to `/auth/player-bootstrap`, keep that short-lived JWT in memory for bootstrap/discovery HTTP calls, and receive the gameplay-connect credential only as the HttpOnly `Firemud-Connect-Token` cookie. The cookie may be maintained by a mobile or server-side cookie jar; no header or response-body fallback exists.
+- After Gateway validates and consumes the gameplay-connect credential, first-party WebSocket clients use bare `LOGIN` followed by `PLAY`; neither transport class sends an end-user JWT as gameplay command authorization.
 
 The implemented account login modes are `PASSWORD` and verified-email `EMAIL_OTP`. Authenticator-app TOTP enrollment remains future account-security work; the REST and gRPC authentication contracts do not carry a separate `otp` field. Public player-facing text clients use Telnet-over-TLS, while plaintext Telnet is limited to local, test, and explicitly private-network compatibility. TOTP is not a transport gate or a substitute for channel protection; [ADR 0033](./decisions/adr-0033-public-player-facing-telnet-requires-tls.md) owns that boundary.
 
@@ -176,6 +182,13 @@ PLAY <world> [character]
 
 `WORLDS` must be available before login as a public browse/discovery command so prospective players can explore the platform before deciding to authenticate. `REALMS` and `CHARS` remain available as helper commands when a world choice is ambiguous or when a player wants to browse more deeply, but they are not intended to be mandatory ceremony in the ordinary happy path.
 
+`WORLDS` deliberately has two canonical modes rather than one replacing the other:
+
+- Before `LOGIN`, `WORLDS_PUBLIC` is public browse-only discovery. It may expose only the bounded public-production catalog and availability metadata; it has no account identity, membership filtering, hidden-tenant disclosure, or gameplay authority.
+- After `LOGIN`, `WORLDS_AUTHENTICATED` is authenticated pre-tenant discovery. Game Session derives the account from its authenticated gameplay context and combines current Account-owned membership/grant visibility with public-production visibility and entitlement filtering before any single tenant is selected. It may return more than the public catalog for that account, but it does not itself bind a tenant, create membership, mint a connect token, or authorize `PLAY`.
+
+These modes are complementary: public browse remains available before authentication, while authenticated discovery remains membership-aware after authentication.
+
 Normative semantic split:
 
 - `LOGIN` proves or restores account identity.
@@ -216,7 +229,7 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
 - `POST /auth/player-bootstrap` is the canonical first-party browser/mobile player-login endpoint. It is not derived from an existing admin/creator control UI session and must not require or return a `control-ui` JWT.
 - On success, the endpoint returns one short-lived, memory-only **player bootstrap token** plus expiry metadata.
 - This bootstrap token is not a control-plane `control-ui` JWT and must not be accepted on admin/creator APIs.
-- It is still an Account Service-issued JWT profile and must carry at least `iss`, `sub`, `accountId`, `aud=player-bootstrap`, `jti`, `iat`, `nbf`, and `exp`, backed by one `session:auth:token:<tokenHash>` record so account-level revocation and logout semantics apply.
+- It is still an Account Service-issued JWT profile and must carry at least `iss`, `sub`, `accountId`, `aud=player-bootstrap`, `jti`, `iat`, `nbf`, `exp`, and positive monotonic `tokenGeneration`, backed by one `session:auth:token:<tokenHash>` record so account-level revocation and logout semantics apply.
 - Audience/scope is limited to first-party gameplay bootstrap functions such as discovery and `POST /auth/connect-token`.
 - Lifetime is intentionally short (target <= 5 minutes), stored in memory only, and cleared on tab reload/logout.
 - `POST /auth/connect-token` must derive caller identity from this bootstrap token; clients must not supply an arbitrary `accountId`.
@@ -246,8 +259,7 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
     - if grant authority is unavailable, non-public realm discovery and admission fail closed rather than falling back to stale local cache state
 - Connect-token issuance API: control-plane endpoint (for example `POST /auth/connect-token`) that mints exactly one short-lived token per request and logs `accountId`, `tenantId`, `gameInstanceId`, `jti`, and issuance timestamp.
   - Minimum request fields: `connectScopeId`, `requestId`.
-  - Minimum response fields for non-browser clients: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `gameInstanceId`, `realmSlug`, `jti`, `issuedAt`.
-  - Browser response mode: first-party browser clients receive the connect token as an HttpOnly cookie rather than as JavaScript-readable response data. The response still returns non-secret metadata (`expiresAt`, `accountId`, `tenantId`, `gameInstanceId`, `realmSlug`, `jti`, `issuedAt`) so the client can drive retry UX without reading the token.
+  - Response fields for all clients are non-secret metadata only: `expiresAt`, `accountId`, `tenantId`, `gameInstanceId`, `realmSlug`, `jti`, and `issuedAt`. The connect token is set only as the `Firemud-Connect-Token` HttpOnly cookie and is never returned in the response body.
   - Before issuance, Account Service must resolve `connectScopeId` to the canonical `{tenantId, worldSlug, realmSlug, gameInstanceId, pointerVersion}` tuple, perform a live membership/public-admission check for `{accountId, tenantId, worldSlug, realmSlug}`, validate the current membership authority generation for that caller and tenant, perform a live runtime entitlement check for `tenantId`, and perform a live realm-routing read for the selected realm target via the Game Session control-plane API.
   - The resolved tuple used for issuance must be treated as immutable for that request. Issuance may succeed only if `connectScopeId`, current realm visibility/grant state, and current admission-pointer state still converge on the same target at evaluation time.
   - `requestId` is the idempotency key for connect-token issuance. Retrying the same `(accountId, connectScopeId, requestId)` must return the same token payload or the same deterministic application failure; callers must use a new `requestId` when intentionally starting a new issuance attempt after rediscovery.
@@ -258,8 +270,8 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
   - Missing required request/response fields are contract violations and must fail closed rather than being defaulted by callers.
 - Transport: connect-token carriage on `/ws/game/**` handshake.
   - First-party browser clients use the cookie `Firemud-Connect-Token` set by `POST /auth/connect-token` with `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/ws/game`, and `Max-Age` no longer than the connect-token TTL. The cookie value is the connect token; browser JavaScript must not read or persist it.
-  - Server-side and non-browser clients may use the dedicated `X-Firemud-Connect-Token` handshake header.
-  - Gateway must accept exactly one non-empty, single-valued connect-token carrier for non-proxy gameplay handshakes. Duplicate values, both carrier types, or a malformed carrier are rejected as `CONNECT_TOKEN_REJECTED` rather than choosing precedence.
+  - Mobile and other non-browser first-party clients use a cookie jar for the same `Firemud-Connect-Token` cookie; no dedicated header carrier is supported.
+  - Gateway must accept exactly one non-empty, single-valued `Firemud-Connect-Token` cookie for non-proxy gameplay handshakes. Duplicate values or a malformed carrier are rejected as `CONNECT_TOKEN_REJECTED` rather than choosing precedence.
   - Query-string carriage is not a supported connect-token carrier in player-facing environments.
 - Required claims: `accountId`, `tenantId`, `gameInstanceId`, `worldSlug`, `realmSlug`, `pointerVersion`, `connectScopeId`, `requestId`, `iat`, `exp`, `jti`.
 - Lifetime: a platform hard maximum of 30 seconds from signed `iat` to `exp`; issuers may shorten but not widen it, and Gateway independently rejects missing/future-skewed `iat`, invalid ordering, and lifetimes above the maximum.
@@ -279,7 +291,7 @@ The connect token is not a gameplay authorization grant and does not replace the
 
 #### Gateway-to-Game Session connect context (normative)
 
-Gateway verification of the presented connect token, whether from `Firemud-Connect-Token` cookie or `X-Firemud-Connect-Token` header, must not be translated into trust of raw forwarded headers. For first-party `/ws/game/**` handshakes, Gateway must attach a short-lived signed connect context that Game Session verifies before applying connect-token scope checks.
+Gateway verification of the presented `Firemud-Connect-Token` cookie must not be translated into trust of raw forwarded headers. For first-party `/ws/game/**` handshakes, Gateway must validate and consume the cookie, strip it before the upgrade completes, and attach a short-lived signed connect context that Game Session verifies before applying connect-token scope checks.
 
 - Gateway-issued context fields (minimum): `accountId`, `tenantId`, `gameInstanceId`, `connectTokenJti`, `verifiedAt`, `expiresAt`, `gatewayRequestId`.
 - Transport: single signed compact payload header (for example `X-Firemud-Connect-Context`) plus `kid` metadata if not embedded in payload.
@@ -304,7 +316,7 @@ To remove ambiguity between connect-token admission and `LOGIN`, first-party web
 3. If the public-production target is visible but the account is not already a member, explicitly call `POST /auth/bootstrap/join`. Character discovery and creation require the resulting membership; a returning member skips this step.
 4. Select or create a caller-visible character, then request a short-lived gameplay connect token for the target selected by `connectScopeId`. This call performs live membership, current membership authority-generation, applicable realm-grant, and runtime entitlement checks.
    - The issuance path must also validate the target against the authoritative realm-routing record. If the target is no longer admissible for the selected realm, the request fails before socket open rather than issuing a stale token.
-5. Open gameplay WebSocket on `/ws/game/**` with connect-token carriage appropriate to the client. Browser clients use the `Firemud-Connect-Token` HttpOnly cookie set by `POST /auth/connect-token`; server-side and non-browser clients may use `X-Firemud-Connect-Token`.
+5. Open gameplay WebSocket on `/ws/game/**` with the `Firemud-Connect-Token` HttpOnly cookie set by `POST /auth/connect-token`; mobile and other non-browser first-party clients use a cookie jar rather than a header fallback.
 6. Complete gameplay authentication in-band using `LOGIN` (or `LOGON`) and then lobby binding with `PLAY`.
 
 Normative constraints:
@@ -521,7 +533,7 @@ Lobby discovery source-of-truth contract:
 
 Lobby command classification contract:
 
-- `WORLDS` is an authenticated **pre-tenant discovery** operation, not a normal tenant-scoped route. It runs after account authentication but before a single `tenantId` has been selected.
+- `WORLDS_PUBLIC` is the public browse-only mode before authentication. `WORLDS_AUTHENTICATED` is the authenticated **pre-tenant discovery** mode, not a normal tenant-scoped route; it runs after account authentication but before a single `tenantId` has been selected.
 - `REALMS <world>` and explicit `JOIN <world>` participate in `public_production_onboarding` when the selected realm is the default public production realm. Brand-new authenticated accounts may discover that realm without a membership, but `CHARS`, character creation, connect-token issuance, and `PLAY` require the explicit join result or another applicable membership/grant.
 - `REALMS <world>` remains a tenant-scoped discovery operation after `<world>` resolves to a canonical `tenantId`, but before the client is bound to one `gameInstanceId`.
 - `CHARS <world> [realm]` and `PLAY <world> [realm] [character]` become tenant/realm-scoped only after `<world>` and optional `[realm]` are resolved server-side to canonical `{tenantId, gameInstanceId}`.
@@ -671,14 +683,14 @@ Gameplay takeover, reconnect, token refresh, membership-version handling, and co
 | Topic | Description |
 | --- | --- |
 | Auth Command | `LOGIN` (or `LOGON`) — supports prompt or argument input |
-| JWT Usage | Issued to backend services and first-party admin/creator web UIs; gameplay protocol clients never see or send tokens |
-| Claims | `iss`, `sub`, `jti`, `accountId`, `aud`, `iat`, `nbf`, `exp`, `globalRoles[]`, `scopedRoles{}` |
+| JWT Usage | Raw Telnet and generic gameplay command streams do not carry JWTs; first-party browser/mobile gameplay uses a short-lived `player-bootstrap` JWT for HTTPS bootstrap and an HttpOnly-cookie connect token for `/ws/game/**`; admin/creator UIs and backend services use their exact permitted profiles |
+| Claims | `iss`, `sub`, `jti`, `accountId`, `aud`, `iat`, `nbf`, `exp`, `tokenGeneration`, `globalRoles[]`, `scopedRoles{}` |
 | Session State | Stored in Redis; bound to socket by Game Session Service |
-| Gameplay Continuity TTL | Derived from `FIREMUD_AUTH_JWT_EXPIRATION_MS` + `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` for the initial continuity-retention horizon |
+| Gameplay Continuity TTL | Separate `session_expiration_ms` policy with an independent effective maximum of five minutes; the configurable JWT cleanup margin applies only to issued-token registry retention |
 | Issued-Token Registry TTL | Each token record is retained through its actual JWT `exp` plus `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`; activity does not extend it |
 | Gameplay Reauthentication | Required after disconnect; client re-issues `LOGIN`, and Game Session resumes via Redis if the underlying gameplay and auth session state are still valid |
 | Role Enforcement | Meta/control services validate JWTs directly; gameplay services enforce concrete mTLS workload identity, method caller allowlists, and validated `PlayerExecutionContext` scope |
-| Role Updates | Refreshed in-session; no client interaction needed |
+| Role Updates | Target: Account-owned role/token refresh is intended to be invisible in-session; current role-refresh regeneration and end-to-end proof remain a documented implementation gap |
 | Multi-Client Behavior | One session per character; new login replaces old session |
 | Login Modes | `PASSWORD` and verified-email `EMAIL_OTP` are the current account-level modes; authenticator-app factors remain future work |
 

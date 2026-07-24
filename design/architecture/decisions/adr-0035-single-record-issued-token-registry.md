@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+Basic JWT/JWKS and account/tenant token-state foundations exist, but the accepted single-record contract is not implemented end to end. Current issuance still writes scope-duplicated account/tenant keys, downstream validators do not consistently enforce `session:auth:token:<tokenHash>`, and complete authority-generation checks, per-token `/auth/logout`, `/auth/logout-all`, durable operation evidence, retry classification, cleanup, and revocation proof remain incomplete.
+
 ## Decision Record
 
 - Decision date: 2026-07-19
@@ -54,10 +58,11 @@ The current implementation writes account and tenant keys but does not consisten
 
 ADR 0031's idempotent retirement, per-token logout, and logout-all rules require durable Account-owned evidence in addition to the Redis registry record. Redis absence is not, by itself, proof that one of those operations completed.
 
-- Every retirement acknowledgement, per-token logout, and logout-all request carries a high-entropy operation ID. Account binds the ID to the operation kind and an immutable request digest containing the relevant token hash/lineage or account authority scope. Reusing an operation ID with different meaning or scope is rejected.
+- The canonical public logout API uses `POST /auth/logout` for one presented `control-ui` or `player-bootstrap` token and `POST /auth/logout-all` for the authenticated account-wide cutoff. The caller-supplied high-entropy `requestId` is the operation ID for both endpoints; no second public operation-ID field is introduced. Account computes and stores a versioned `requestDigest` from the normalized operation tuple: `TOKEN_LOGOUT`, subject account, exact token profile, and token hash for `/auth/logout`; `ACCOUNT_LOGOUT_ALL`, subject account, exact token profile, and presented token hash for `/auth/logout-all`. Retirement acknowledgements use the same evidence model with operation kind `TOKEN_RETIREMENT`, predecessor token hash, and refresh lineage. Raw JWTs never enter the digest or evidence.
+- Every retirement acknowledgement, per-token logout, and logout-all request binds its operation ID to that immutable request digest. Reusing an operation ID with different meaning, token, profile, account, or scope is rejected as an idempotency conflict.
 - Account stores a bounded durable operation record outside Coordination Redis. A completed token retirement or per-token logout records the operation ID, exact token identity/lineage, and a completed tombstone proving that the registry mutation succeeded. A completed logout-all records the operation ID, durable logout event identity, and the account authority generation that superseded the presented token. The evidence is not an authorization grant and contains no raw JWT.
-- A retry with the same operation ID and matching request returns the stored success after full local token/profile/subject validation required by ADR 0031; it does not mint, reauthorize, or repeat unrelated mutations. An incomplete operation record is resumed or reconciled, not reported as success. A missing registry record without matching completed/tombstone evidence remains denied for per-token logout and retirement.
-- A logout-all retry may return no-op success when the presented token is already superseded only if durable Account evidence proves the prior logout-all event and generation that caused the supersession. That retry does not advance the generation or mutate state. Current, ambiguous, or differently scoped requests remain denied.
+- A retry with the same `requestId` and matching `requestDigest` returns the stored success after the full local signature, profile, time, and subject validation required by ADR 0031; it does not mint, reauthorize, or repeat unrelated mutations. An incomplete operation record is resumed or reconciled, not reported as success. A different request ID for `/auth/logout` may return no-op success only when a token-specific completed tombstone proves that exact token was previously revoked; a missing registry record without that evidence remains denied.
+- A `/auth/logout-all` retry may return no-op success when the presented token is already superseded only if durable Account evidence proves the prior logout-all event and generation that caused the supersession. That retry does not advance the generation or mutate state. A current token is handled as a new normally authorized operation, while an ambiguous or differently scoped request is denied rather than classified as a retry.
 - Durable evidence has an explicit bounded retention horizon: no shorter than the maximum supported retry/idempotency window plus the required audit/outbox delivery window, and for token-specific tombstones no shorter than the token's `exp` plus validation skew. Logout-all supersession proof is retained through the configured authority-event/retry horizon needed to classify later retries. Background cleanup physically removes evidence only after its horizon and must not remove the only proof still required for a stored-success or supersession response. Cleanup is itself idempotent and does not change revocation authority.
 
 ## Consequences

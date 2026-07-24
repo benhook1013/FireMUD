@@ -13,12 +13,14 @@ Every protected route in a validated inventory must be listed here with:
 - required live authority checks for the route class,
 - any response-profile or mutation-contract requirements needed for CI/security enforcement.
 
-Services must enforce these classifications through shared middleware annotations/interceptors and CI policy checks once the inventory gate is complete. A protected route missing from the current matrix is recorded as authorization drift/gap; it must not be treated as evidence that the incomplete matrix is a complete canonical registry.
+Before that inventory is validated, an unclassified protected or external route must remain conservatively denied or unreachable; this safeguard is not generated policy from the incomplete YAML.
+
+Services must enforce these classifications through shared middleware annotations/interceptors and CI policy checks once the inventory gate is complete. A protected route missing from the current matrix is recorded as authorization drift/gap; before the gate completes it must be denied or unreachable rather than forwarded, and it must not be treated as evidence that the incomplete matrix is a complete canonical registry.
 
 ## Implementation Status
 
 - The static Gateway route catalog and bounded internal/actuator blockers provide partial edge-exposure enforcement.
-- The YAML is normative for declared entries, but the current route inventory is incomplete. CI inventory generation, source-stable OpenAPI/protobuf coverage, YAML completeness comparison, matrix-aware shared middleware, strict token-profile enforcement, and exact proof for remaining broad Gateway route families are not implemented. Missing coverage is a recorded drift/gap, and the YAML must not drive generated default-deny rules until source-stable coverage is complete and validated.
+- The YAML is normative for declared entries, but the current route inventory is incomplete. CI inventory generation, source-stable OpenAPI/protobuf coverage, YAML completeness comparison, matrix-aware shared middleware, strict token-profile enforcement, and exact proof for remaining broad Gateway route families are not implemented. Missing coverage is a recorded drift/gap; before source-stable coverage is complete and validated, unclassified protected/external routes remain denied or unreachable, and the incomplete YAML must not generate their policy.
 
 ## Token Profile Vocabulary
 
@@ -35,7 +37,7 @@ The current JWT profile names are `control-ui`, `player-bootstrap`, the one-use 
   - Fail if generated route inventory (OpenAPI/proto) differs from the YAML matrix for auth/session and billing/subscription domains.
 - **Default-deny behavior**:
   - The declared-entry `default_action: deny` is normative only for entries in the YAML. It does not generate policy for routes absent from this incomplete inventory.
-  - Before the inventory gate passes, any discovered but unlisted protected route is `drift/gap` and requires explicit review and matrix entry; no generated default-deny policy is produced from the incomplete inventory.
+  - Before the inventory gate passes, any discovered but unlisted protected or external route is `drift/gap` and requires explicit review and matrix entry; it remains denied or unreachable. No generated default-deny policy is produced from the incomplete inventory; the conservative deny/unreachable safeguard is an ingress boundary, not an incomplete-YAML policy artifact.
   - After the inventory gate passes, any protected route that cannot be classified deterministically must be rejected until explicitly reviewed and added to the matrix.
   - No route may default to `tenant_regular`, billing-safe, support-safe, or another executable class.
 - **Change control**:
@@ -49,7 +51,7 @@ The following domains become full-fail in CI only after source-stable OpenAPI/pr
 - Billing-safe and support-safe routes.
 - Subscription mutation and entitlement routes.
 
-Before that gate passes, protected routes missing from the YAML matrix are recorded as drift/gap, including pre-existing routes; the incomplete matrix must not generate default-deny behavior for them.
+Before that gate passes, protected routes missing from the YAML matrix are recorded as drift/gap, including pre-existing routes; they remain denied or unreachable, but the incomplete matrix must not generate default-deny behavior for them.
 
 CI should generate candidate inventories from OpenAPI/proto definitions and compare them against the YAML matrix so protected-route drift is detected automatically.
 
@@ -68,7 +70,7 @@ Critical-domain inventory artifacts (required):
 | `caller_membership_scoped` | One matching token record for the exact profile declared by the route | No tenant authority generation; membership authority generation: Yes | Caller-bound lifecycle operations on the caller's own account-to-tenant membership. Any current membership role may act on itself; the route must perform a live subject-bound membership check and must not accept an arbitrary account target or global-role override |
 | `player_bootstrap_tenant` | One matching `player-bootstrap` token record | No tenant authority generation; membership authority generation is route-specific and must be declared explicitly | Player-bootstrap-authenticated routes targeting a tenant before gameplay socket auth is complete. `IssueConnectToken` requires the current membership authority generation plus live membership, entitlement, and admission-pointer checks |
 | `pre_tenant_discovery` | One matching token record | No | Authenticated discovery surfaces that run before a single `tenantId` is selected (for example `WORLDS`) |
-| `public_production_onboarding` | No JWT for in-band gameplay commands; otherwise the exact route-declared profile (currently `player-bootstrap` for Account bootstrap writes) | No tenant authority generation before join; membership authority generation applies after join | Discovery and explicit open-enrollment join for the default public production realm. Brand-new authenticated accounts may discover it before membership exists, but `JOIN`/`Join & Play` creates the durable Account-owned membership before character creation, connect-token issuance, or `PLAY`; non-public realms require Account-owned grants |
+| `public_production_onboarding` | No JWT for in-band gameplay commands; otherwise the exact route-declared profile (currently `player-bootstrap` for Account bootstrap writes) | No tenant authority generation before join; membership authority generation applies after join | **Target:** discovery and explicit open-enrollment join for the default public production realm. Brand-new authenticated accounts may discover it before membership exists, but `JOIN`/`Join & Play` creates the durable Account-owned membership before character creation, connect-token issuance, or `PLAY`. **Current drift:** connect-token issuance and text `PLAY` can still create public-production membership implicitly and must converge on `JOIN_REQUIRED`. Grant-backed private/playtest realms validate their grant and any separately required existing membership, skip `JOIN`, and never use this class to create membership. |
 | `tenant_regular` | One matching token record for the exact profile declared by the route | Tenant authority generation: Yes; membership authority generation: Yes | Gameplay-affecting and regular tenant control-plane operations |
 | `billing_safe_tenant` | One matching token record for the exact profile declared by the route | Tenant authority generation: No; membership authority generation: Yes | Must remain reachable during `suspended`/`canceled`, but must fail immediately after caller-bound membership/role revocation |
 | `cross_tenant_support_safe` | One matching token record for the exact profile declared by the route | No | High-level troubleshooting only |
@@ -137,7 +139,7 @@ Route authorization never becomes in-game elevation. If a global-role account pa
 | Account Service | invoice/payment method APIs tenant-scoped variant | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped); shared-instrument acknowledgement contract required when mutation affects account-wide payment instrument |
 | Account Service | invoice/payment method APIs cross-tenant variant | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |
 
-### Public Production Onboarding Example
+### Target Public Production Onboarding Example
 
 1. A brand-new authenticated account completes `LOGIN` and issues `WORLDS`.
 2. `WORLDS` may list the world's default public production realm even though no tenant membership exists yet.
@@ -145,5 +147,7 @@ Route authorization never becomes in-game elevation. If a global-role account pa
 4. The player explicitly uses `JOIN <world>` or `Join & Play`; Account atomically creates membership and durable audit/outbox.
 5. `CHARS`, character creation, connect-token issuance, and `PLAY` require that membership and never create it implicitly.
 6. Global roles alone never bypass this flow or grant gameplay admission/connect-token issuance without the same live checks.
+
+Current implementation drift is that connect-token issuance and text `PLAY` can still call the membership writer implicitly. That is not target onboarding behavior; until the explicit join boundary is implemented, the route remains a recorded membership drift and must not be described as complete.
 
 The matrix should be expanded as service API surfaces evolve. Service docs may include local excerpts, but this file is the canonical policy for declared entries; current omissions remain an explicit inventory drift/gap until source-stable coverage and validation complete the registry.

@@ -99,7 +99,7 @@ components:
         requestId:
           type: string
       required: [connectScopeId, requestId]
-    ConnectTokenResult:
+    ConnectTokenResponse:
       type: object
       properties:
         accountId:
@@ -112,14 +112,16 @@ components:
           type: string
         connectScopeId:
           type: string
-        connectToken:
-          type: string
         jti:
+          type: string
+        requestId:
           type: string
         issuedAt:
           type: string
         expiresAt:
           type: string
+        replayed:
+          type: boolean
     BootstrapWorldDto:
       type: object
       properties:
@@ -410,7 +412,7 @@ paths:
               $ref: '#/components/schemas/ConnectTokenRequest'
       responses:
         '200':
-          description: Connect token result
+          description: Connect token metadata; the token is carried only by the HttpOnly cookie
           content:
             application/json:
               schema:
@@ -419,7 +421,7 @@ paths:
                   status:
                     $ref: '#/components/schemas/ResultStatus'
                   data:
-                    $ref: '#/components/schemas/ConnectTokenResult'
+                    $ref: '#/components/schemas/ConnectTokenResponse'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
         '401':

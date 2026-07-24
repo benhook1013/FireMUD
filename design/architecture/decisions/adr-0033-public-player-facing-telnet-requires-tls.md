@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+Core Telnet/TCP Proxy bridging, Proxy-to-Gateway mTLS, PROXY protocol, connection hardening, and focused TLS-misconfiguration proof exist. Public player-facing mode selection and listener isolation are not complete: current manifests expose port `2323` without proving one accepted TLS mode, while public plaintext rejection, certificate issuance/rotation/lifecycle, and higher-volume edge proof remain unproven. Local and private plaintext paths remain test-only and do not establish player-facing readiness.
+
 ## Decision Record
 
 - Decision date: 2026-07-19

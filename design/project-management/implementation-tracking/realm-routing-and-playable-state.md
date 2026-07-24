@@ -109,8 +109,8 @@ No competing implementation is recorded for visible realm addressing, world-qual
 
 | Owner | Current responsibility | Primary contract boundary |
 | --- | --- | --- |
-| Game Session | Persisted realm catalog and admission pointers; current audit/read-then-write version check/cutover plus target atomic CAS; catalog projection; session normalization; runtime, tick, command, remote, and operator projections | World-qualified admission-pointer gRPC/control-plane APIs; persisted pointer authority; normalized session helpers |
-| Account Service | Tenant membership/grants; bootstrap worlds/realms/characters; current implicit public-production membership seam and membership exit; target explicit public-production join/leave; connect-token issuance | Bootstrap/auth REST and gRPC APIs; current `EnsurePublicProductionPlayerMembership` seam and target explicit-join behavior |
+| Game Session | Persisted realm catalog and admission pointers; current audit/read-then-write version check/cutover; catalog projection; session normalization; runtime, tick, command, remote, and operator projections | World-qualified admission-pointer gRPC/control-plane APIs; persisted pointer authority; normalized session helpers |
+| Account Service | Tenant membership/grants; bootstrap worlds/realms/characters; current implicit public-production membership seam and membership exit; connect-token issuance | Bootstrap/auth REST and gRPC APIs; current `EnsurePublicProductionPlayerMembership` seam and target explicit-join behavior |
 | Gateway and TCP Proxy | Trusted first-party/Telnet routing propagation; explicit disconnect runtime metadata; authenticated callbacks | Connect context; all-or-none routing headers; `gameInstanceId` disconnect envelope |
 | Entity Management | Scoped character, roster, item, friend, progression, resource, condition, and playable-state persistence | `{tenantId, gameInstanceId, playableStateScope}` APIs and attested gameplay calls |
 | Automation Scripting | Scope- and routing-aware ingress, scheduling, durable work, handoff, dead-letter, and control-plane reads | Gameplay trigger/handoff contracts; normalized routing metadata |

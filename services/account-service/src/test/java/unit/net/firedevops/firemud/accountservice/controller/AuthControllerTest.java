@@ -120,7 +120,7 @@ class AuthControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.connectToken").doesNotExist())
+        .andExpect(jsonPath("$.data.connectToken").doesNotHaveJsonPath())
         .andExpect(jsonPath("$.data.accountId").value(1))
         .andExpect(jsonPath("$.data.tenantId").value(1))
         .andExpect(jsonPath("$.data.gameInstanceId").value(42))

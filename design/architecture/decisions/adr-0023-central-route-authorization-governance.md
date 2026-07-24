@@ -39,12 +39,12 @@ The repository needs one governance contract spanning broad route families and s
 
 The Markdown matrix is its human-readable companion. Generated inventories, middleware mappings, annotations, and tests are derived from or mechanically checked against the YAML source rather than becoming independent policy authorities.
 
-Until source-stable OpenAPI/protobuf coverage is complete and the generated comparison is validated, missing route coverage is recorded as authorization drift/gap. The incomplete YAML must not drive generated default-deny policy for unlisted routes. Once that inventory gate passes, the declared default-deny policy and full-fail checks apply to the complete validated source inventory.
+Until source-stable OpenAPI/protobuf coverage is complete and the generated comparison is validated, missing route coverage is recorded as authorization drift/gap. The incomplete YAML must not drive generated default-deny policy for unlisted routes. Independently of that generated-policy limitation, any protected or externally reachable route that is not covered by a validated allowlist must remain conservatively denied at the edge or unreachable; it must not be forwarded by a broad prefix. Once that inventory gate passes, the declared default-deny policy and full-fail checks apply to the complete validated source inventory.
 
 ### Enforcement
 
 - CI will derive candidate route inventories from OpenAPI, protobuf, protocol-command, and explicitly registered operator surfaces and fail if a protected or externally reachable route is missing, stale, or inconsistently classified after the inventory gate passes.
-- Runtime middleware will reject an unclassified protected route once complete inventory coverage is available. It must not approximate the route as `tenant_regular` or another permissive class; current unlisted-route findings remain drift/gap rather than generated policy.
+- Before complete inventory coverage is available, edge and service safeguards must deny or leave unreachable any unclassified protected or external route; this conservative guard is not generated policy from the incomplete YAML. After the inventory gate passes, runtime middleware rejects every unclassified protected route. It must not approximate the route as `tenant_regular` or another permissive class; current unlisted-route findings remain drift/gap until then.
 - Shared middleware enforces route-level token profile, allowlist/authority-generation, scope, and role rules. The owning service additionally enforces live domain facts such as resource ownership, current membership, entitlement, visibility, and mutation preconditions.
 - Cross-tenant support-safe, billing-safe, and data-bearing behavior uses separate classified APIs and response profiles rather than optional flags on one ambiguous endpoint.
 - Gateway routes only reviewed external surfaces. Prefix routing may be a transport convenience only when the exact reachable endpoint inventory is generated and unclassified/internal endpoints are denied; a broad wildcard is not itself an exposure policy.
@@ -80,7 +80,7 @@ Enforcing everything at Gateway misses internal service calls and cannot safely 
 
 ## Implementation and Proof Obligations
 
-- Build source-stable candidate inventories from authoritative OpenAPI, protobuf, protocol, and operator registrations and compare them with the YAML matrix in CI before enabling generated default-deny/full-fail enforcement.
+- Build source-stable candidate inventories from authoritative OpenAPI, protobuf, protocol, and operator registrations and compare them with the YAML matrix in CI before enabling generated default-deny/full-fail enforcement; until then, prove unclassified protected/external routes are denied or unreachable without deriving that safeguard from incomplete YAML.
 - Compile or validate shared HTTP/gRPC middleware metadata from the matrix and reject unknown route identities at runtime.
 - Enforce strict token profile/audience, allowlist, authority-generation, tenant, role, and cross-tenant response-profile rules.
 - Replace or constrain broad Gateway wildcards so exact externally reachable endpoints are known and internal/unclassified additions remain unreachable.

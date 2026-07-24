@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+Gateway and TCP Proxy transport controls plus focused gameplay and credential-path foundations exist, but the accepted abuse-control boundary is not complete. Trusted source propagation into every credential-bearing Account call, one Account-owned graduated throttling policy, fail-closed behavior for player-facing Cache/Rate-Limit Redis outages, and migration of Game Session from the current per-command Redis increment to the bounded in-process token bucket remain unimplemented or unproved. Multi-replica, shared-NAT, reset/eviction, and stable retry proof therefore remains incomplete.
+
 ## Decision Record
 
 - Decision date: 2026-07-19

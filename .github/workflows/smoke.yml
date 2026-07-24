@@ -126,27 +126,43 @@ jobs:
       - name: 💬 Publish Smoke Summary Comment
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
           RUN_SMOKE_FULL: ${{ needs.changes.outputs.run_smoke_full }}
         with:
           script: |
+            const rawChangesResult = process.env.CHANGES_RESULT || "";
+            const changesStatus = ["success", "failure", "cancelled"].includes(rawChangesResult)
+              ? rawChangesResult
+              : "unavailable";
+            const changesHealthy = changesStatus === "success";
             const fullEnabled = process.env.RUN_SMOKE_FULL === "true";
-            const fullResult = fullEnabled ? "tracked-by-smoke-gate" : "skipped";
+            const fullResult = !changesHealthy
+              ? `not-evaluated (${changesStatus} changes detection)`
+              : fullEnabled
+                ? "tracked-by-smoke-gate"
+                : "skipped (run_smoke_full=false)";
             const statusIcon = (value) => {
               if (value === "success") return "✅";
               if (value === "failure") return "❌";
               if (value === "cancelled") return "⚪";
               if (value === "tracked-by-smoke-gate") return "⏳";
+              if (value === "unavailable") return "⚠️";
+              if (value.startsWith("not-evaluated")) return "⚠️";
               return "⏭️";
             };
 
-            const headline = fullEnabled
-              ? "⏳ Full-stack smoke is tracked by Smoke Gate"
-              : "⏭️ Runtime smoke is not required";
+            let headline = "⏭️ Runtime smoke is not required";
+            if (!changesHealthy) {
+              headline = `⚠️ Smoke scope detection ${changesStatus}; Smoke Gate remains authoritative`;
+            } else if (fullEnabled) {
+              headline = "⏳ Full-stack smoke is tracked by Smoke Gate";
+            }
 
             const body = [
               "### Smoke Summary",
               headline,
               "",
+              `- ${statusIcon(changesStatus)} Changes detection: \`${changesStatus}\``,
               `- ${statusIcon(fullResult)} Smoke Tests (Full Stack): \`${fullResult}\``,
             ].join("\n");
 

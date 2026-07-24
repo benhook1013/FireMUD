@@ -16,6 +16,8 @@ Target-state JWT signing uses `FIREMUD_AUTH_JWT_SECRET` only for local/dev compa
 
 In the target player-facing configuration, `FIREMUD_AUTH_JWKS_PATH` resolves to the mounted `/var/run/secrets/firemud/jwks/jwks.json` file. Account startup fails closed when the path or file is missing or unreadable, the JWKS is malformed, or its public JWK does not match the Account signing key and `kid`; Account does not fall back to a classpath JWKS resource. The classpath fallback is limited to local/test configurations.
 
+The configurable cleanup margin controls issued-token registry retention only. Gameplay continuity is a separate Game Session policy documented in [Reconnection](../../system-architecture-reconnection.md); Account configuration does not derive or widen that lifetime.
+
 ## Implementation Status
 
 The current runtime still uses shared-HMAC issuance and validation, has no non-exportable signer delegation, permits the classpath fallback when the configured JWKS file is absent, and the current preflight/manifests still treat signing paths and `jwt-signing-keys` mounts as shared workload configuration rather than enforcing Account-only access. These target-state requirements are not proof of current startup, custody, or mount enforcement; runtime, preflight, and manifest alignment is outside this documentation slice.
@@ -39,9 +41,9 @@ Additional variables configure outbound email delivery and payment behavior:
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Account-only path to a versioned asymmetric signing bundle (required for player-facing environments; mounted read-only from `jwt-signing-keys`) | *(none)* |
 | `FIREMUD_AUTH_JWKS_PATH` | Account-only path to the published `jwks.json` file (required for player-facing environments; mounted read-only from `jwt-jwks`, normally `/var/run/secrets/firemud/jwks/jwks.json`) | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
-| `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Cleanup margin added to each token's remaining lifetime for issued-token registry TTL and to the initial gameplay continuity-retention horizon | `300000` |
+| `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Cleanup margin added to each token's remaining lifetime for issued-token registry TTL only | `300000` |
 
-Changing `FIREMUD_AUTH_JWT_EXPIRATION_MS` changes the `exp` claim only for newly issued JWTs; already issued JWTs retain their existing `exp`. The cleanup margin is applied when new registry records and gameplay bindings are admitted; it does not change the expiration of existing JWTs or the immutable anchor of an existing gameplay binding.
+Changing `FIREMUD_AUTH_JWT_EXPIRATION_MS` changes the `exp` claim only for newly issued JWTs; already issued JWTs retain their existing `exp`. The cleanup margin is applied when new registry records are admitted; it does not change the expiration of existing JWTs or the immutable anchor of an existing gameplay binding. A larger cleanup margin therefore cannot raise the independent gameplay-continuity cap.
 
 ## Proto Files
 

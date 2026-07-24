@@ -14,7 +14,7 @@ FireMUD has one application-facing contract for exportable secrets: Kubernetes w
 
 ## Token Issuance & Secret Storage
 
-- The **Account Service** signs JWTs for both `control-ui` control-plane sessions (`/auth/login` profile) and receiver-specific private player-delegation profiles, currently `game-session-account-delegation` for Account calls.
+- The **Account Service** signs JWTs for `control-ui` control-plane sessions (`/auth/login` profile), first-party `player-bootstrap` gameplay bootstrap (`/auth/player-bootstrap` profile), and receiver-specific private player-delegation profiles, currently `game-session-account-delegation` for Account calls.
 - The Account JWT key ring is asymmetric and per environment. Only Account Service may access its private signing keys; validators use public JWKS and must never receive a private Account JWT key.
 - Target-state signing keys remain in **non-exportable signer custody** under the phased protocol in [ADR 0014](./decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md). Account Service owns key-generation requests, validation, promotion, JWKS publication, and public/private pruning; the signer performs only private-key operations Account delegates. Until signer delegation is implemented, `jwt-signing-keys` is an Account-only Kubernetes Secret fallback that rotation automation may neither read nor update.
 - In player-facing environments, inline-only JWT secret configuration and HMAC-only signing or verification are forbidden. `FIREMUD_AUTH_JWT_SECRET_PATH` is the controlled Account-only file-mount fallback, not the target non-exportable signer interface.
@@ -282,7 +282,7 @@ See `design/architecture/system-architecture-operator-credentials-runbook.md` fo
 | Topic | Strategy |
 | --- | --- |
 | Secret Delivery | One Kubernetes Secret/mounted-file workload contract; no bundled or mandatory Vault; transparent external provisioning allowed |
-| JWT Secret Storage | Account-only asymmetric private keys in Kubernetes Secrets; validators receive only Account-published JWKS; filesystem hot reload is optional and must atomically validate a complete signing generation |
+| JWT Signer Custody | Target: Account delegates private-key operations to non-exportable signer custody; interim fallback: only Account receives the `jwt-signing-keys` Kubernetes Secret, while validators receive Account-published JWKS and rotation Jobs receive no private material |
 | Key & Cert Rotation | TLS certificates auto-rotated by cert-manager with hot reload via `TlsCertificateWatcher`; planned JWT rotation prepublishes, proves convergence, promotes, overlaps through token expiry, and prunes, while compromise/restore uses quarantined hard cutover |
 | TLS Termination | Load balancer |
 | Internal Encryption | Per-workload mTLS identities delivered via dedicated Kubernetes Secrets; shared CA trust and server certificate hot reload enabled |

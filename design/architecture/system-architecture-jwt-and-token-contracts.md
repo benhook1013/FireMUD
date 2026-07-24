@@ -4,7 +4,7 @@ This document defines the JWT profiles, claim requirements, issued-token registr
 
 Each revocable `control-ui`, `player-bootstrap`, or receiver-specific private player-delegation JWT has exactly one Account-owned Coordination Redis record: `session:auth:token:<tokenHash>`.
 
-`tokenHash` is a fixed-length SHA-256 digest of the complete compact JWT. The bounded versioned record contains `accountId`, exact token profile/audience, `jti`, `iat`, `exp`, the JWT's `tokenGeneration`, and active state. It proves that Account issued this exact still-active token but does not duplicate tenant/global roles from its signed claims. Account creates the record before returning the token; registration failure means issuance failure.
+`tokenHash` is a fixed-length SHA-256 digest of the complete compact JWT. The bounded versioned record contains `accountId`, exact token profile/audience, `jti`, `iat`, `exp`, the JWT's `tokenGeneration`, active state, and the applicable Account-owned `issuerGeneration`, `accountAuthorityGeneration`, `tenantAuthorityGeneration`, `{accountId, tenantId}` `membershipAuthorityGeneration`, and grant-gated private-realm `grantVersion` snapshot. Non-applicable scope generations and grant versions are absent rather than wildcard values. It proves that Account issued this exact still-active token but does not duplicate tenant/global roles from its signed claims. Account creates the record before returning the token; registration failure means issuance failure.
 
 The record's absolute cleanup deadline is derived from that token's own JWT `exp` claim plus the cleanup margin; it is not derived from a global session lifetime:
 
@@ -21,6 +21,7 @@ This document defines target-state token and revocation behavior. The current ru
 Token validity semantics:
 
 - A JWT must be cryptographically valid (signature, required claims `iss`, `sub`, `jti`, `accountId`, `aud`, `iat`, `nbf`, `exp`, `tokenGeneration`, and expected token profile audience) and must have one matching `session:auth:token:<tokenHash>` record in Coordination Redis whose account, profile, `jti`, `tokenGeneration`, and time fields agree with the verified claims.
+- The matching registry snapshot must compare every applicable issuer/account/tenant/membership authority generation and private-realm `grantVersion` with current Account-owned state and fail closed on any mismatch. `iat` remains required for chronology, bounded clock-skew handling, and audit, but is not an authorization or revocation authority and cannot replace generation or grant-version comparison.
 - For tenant or cross-tenant operations, the requested operation must then be authorized from the validated `scopedRoles` or `globalRoles` claims plus the applicable Account-owned authority-generation/version state. The issued-token record does not grant scope independently.
 - Coordination Redis therefore acts as a server-side issued-token registry and immediate per-token revocation surface: deleting the one record revokes a still-unexpired JWT; coordination resets that drop `session:auth:*` force re-authentication.
 - The single-use connect token and Gateway signed connect context use their separate bounded replay/verification contracts and do not create Account issued-token records.
@@ -51,7 +52,12 @@ Coordination Redis outage behavior must be deterministic:
 
 ## JWT Format and Role Claims
 
-Account Service issues the exact JWT profiles defined below for control-plane UI calls, first-party player bootstrap, and receiver-specific private player delegation. Raw gameplay protocol clients (for example Telnet clients and gameplay WebSocket command streams after the socket is open) never carry gameplay authorization JWTs. First-party gameplay web/mobile clients may temporarily hold the short-lived `player-bootstrap` token defined in [Authentication & Authorization](./system-architecture-authentication.md) for bootstrap calls such as `POST /auth/connect-token`, but that token is not sent as gameplay command auth and is not accepted by gameplay services. Control UIs may supply `control-ui` JWTs, which are validated by the consuming control-plane service. The Gateway forwards tokens without validating them. Game Session may hold the private `game-session-account-delegation` JWT for Account calls, but gameplay-domain requests use concrete mTLS workload identity plus typed `PlayerExecutionContext`, not forwarded per-player JWT claims.
+Account Service issues the exact JWT profiles defined below for control-plane UI calls, first-party player bootstrap, and receiver-specific private player delegation. Raw gameplay protocol clients (for example Telnet clients and gameplay WebSocket command streams after the socket is open) never carry gameplay authorization JWTs. First-party gameplay web/mobile clients may temporarily hold the short-lived `player-bootstrap` token defined in [Authentication & Authorization](./system-architecture-authentication.md) for bootstrap calls such as `POST /auth/connect-token`, but that token is not sent as gameplay command auth and is not accepted by gameplay services. Control UIs may supply `control-ui` JWTs, which are validated by the consuming control-plane service. The Gateway forwards only non-consumed profiles; it does not consume or forward a profile whose route contract makes it an edge admission credential. Game Session may hold the private `game-session-account-delegation` JWT for Account calls, but gameplay-domain requests use concrete mTLS workload identity plus typed `PlayerExecutionContext`, not forwarded per-player JWT claims.
+
+### Gateway Token Forwarding Boundary
+
+- Gateway forwards a token profile only when the route contract declares that profile non-consumed; forwarding preserves the token for the named downstream validator and does not create gameplay authority.
+- A `gameplay-connect` token is validated at Gateway for signature, profile, scope, expiry, and replay, then atomically consumed and stripped before the WebSocket upgrade completes. Gateway forwards the resulting signed connect context, not the consumed JWT or its carrier, to Game Session.
 
 ### Claims
 

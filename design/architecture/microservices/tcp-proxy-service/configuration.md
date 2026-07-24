@@ -5,6 +5,7 @@
 For any shared or player-facing environment, operators should ensure at least:
 
 - `GATEWAY_WS_URL` points at the Spring Cloud Gateway WebSocket mTLS listener (`wss://.../ws/game`), with `FIREMUD_GATEWAY_WS_*` variables configured so the proxy both authenticates the gateway and presents its own client certificate.
+- The `certs/client.*` values shown below for Proxy -> Gateway and internal gRPC are local/dev convenience defaults only. Shared and player-facing startup/admission must load the effective private-key identities and fail closed when their public-key fingerprints are equal, including when the paths differ through symlinks or aliases.
 - `TCP_PROXY_MAX_CONNECTIONS` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP` are set to non-zero values sized for expected load and NAT patterns; the `0` defaults are reserved for local/dev and CI.
 - Public player-facing Telnet must select exactly one TLS mode per endpoint: edge termination with internal PROXY forwarding, or direct TLS termination at TCP Proxy. These modes must not be combined.
 - In edge termination plus internal PROXY mode, the edge forwards plaintext Telnet with PROXY protocol into `TCP_PROXY_PROXY_PROTOCOL_PORT`; that listener remains internal-only, TCP Proxy TLS is disabled for it, and the raw `TCP_PROXY_PORT` listener is unbound or explicitly private and unreachable by players.
@@ -64,11 +65,11 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 | `TCP_PROXY_MCP_MAX_ACTIVE_CORDS` | Maximum concurrent MCP cords per connection | `16` |
 | `TCP_PROXY_MCP_MAX_ACTIVE_DATA_TAGS` | Maximum concurrent MCP multiline `_data-tag` continuations per connection | `16` |
 | `TCP_PROXY_MCP_MAX_CONTROL_LINES_PER_SEC` | Maximum MCP control-line processing rate per connection | `50` |
-| `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH` | Client certificate chain path for Proxy -> Gateway WebSocket mTLS | `certs/client.crt` |
-| `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH` | Client private key path for Proxy -> Gateway WebSocket mTLS | `certs/client.key` |
+| `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH` | Client certificate chain path for Proxy -> Gateway WebSocket mTLS | `certs/client.crt` (local/dev only) |
+| `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH` | Client private key path for Proxy -> Gateway WebSocket mTLS | `certs/client.key` (local/dev only) |
 | `FIREMUD_GATEWAY_WS_CA_CERT_PATH` | CA bundle path for verifying the gateway certificate | `certs/ca.crt` |
-| `FIREMUD_GRPC_CERT_CHAIN_PATH` | Certificate chain path for the proxy’s internal gRPC server mTLS | `certs/client.crt` |
-| `FIREMUD_GRPC_PRIVATE_KEY_PATH` | Private key path for the proxy’s internal gRPC server mTLS | `certs/client.key` |
+| `FIREMUD_GRPC_CERT_CHAIN_PATH` | Certificate chain path for the proxy’s internal gRPC server mTLS | `certs/client.crt` (local/dev only) |
+| `FIREMUD_GRPC_PRIVATE_KEY_PATH` | Private key path for the proxy’s internal gRPC server mTLS | `certs/client.key` (local/dev only) |
 | `FIREMUD_GRPC_CA_CERT_PATH` | CA bundle path for verifying gRPC peers | `certs/ca.crt` |
 | `OTEL_ENDPOINT` | OpenTelemetry collector endpoint | `http://otel-collector:4317` |
 
@@ -85,6 +86,8 @@ In production, the TCP Proxy Service connects to Spring Cloud Gateway over `wss:
 The WebSocket client certificate must include the `clientAuth` extended key usage. This is intentionally decoupled from the proxy’s internal gRPC server certificate profile, which must include `serverAuth`.
 
 TLS handshake failures are fail-closed. The proxy does not fall back to plaintext.
+
+Shared and player-facing startup must validate both effective private keys, and the same validation must run before player-facing admission and after certificate reload. If the identities converge or either identity cannot be verified, player admission is disabled and the proxy fails closed. The separate certificate chains must also satisfy their respective `clientAuth` and `serverAuth` profiles.
 
 When overriding `GATEWAY_WS_URL` in a `wss://` configuration, the host portion of the URL is used for both SNI and hostname verification. If you point `GATEWAY_WS_URL` at an IP address or a hostname that is not present in the Gateway certificate SANs, the TLS handshake fails with `reason="cert_validation"` and no insecure fallback occurs. In cluster-internal deployments, prefer the Kubernetes DNS name for the Gateway service.
 

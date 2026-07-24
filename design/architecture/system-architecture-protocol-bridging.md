@@ -211,12 +211,12 @@ Operators should interpret spikes in each layer’s metrics in this order when d
 
 Shared and player-facing environments select exactly one public Telnet TLS mode per endpoint:
 
-- **Edge termination with internal PROXY forwarding** – external clients connect to a dedicated TLS edge proxy (for example HAProxy), which forwards plaintext Telnet plus PROXY protocol to the internal-only `TCP_PROXY_PROXY_PROTOCOL_PORT`. That listener must accept traffic only from the authenticated or network-allowlisted edge and must never be exposed directly to the Internet.
+- **Edge termination with internal PROXY forwarding** – external clients connect to a dedicated TLS edge proxy (for example HAProxy), which forwards plaintext Telnet plus PROXY protocol to the internal-only `TCP_PROXY_PROXY_PROTOCOL_PORT`. That listener must accept traffic only from the network-restricted edge and must never be exposed directly to the Internet; the restriction is not cryptographic authentication unless the edge-to-proxy channel uses mTLS or equivalent.
 - **Direct TCP Proxy TLS termination** – external clients connect to `TCP_PROXY_PORT` with `TCP_PROXY_TLS_ENABLED=true`. This public listener terminates TLS itself and does not accept a PROXY header.
 
 The plaintext raw listener on `TCP_PROXY_PORT` remains valid only for local development and explicitly private compatibility networks. It is not a public player ingress. A deployment must not combine edge termination and direct TCP Proxy TLS on the same endpoint.
 
-When PROXY protocol is enabled, the TCP Proxy Service derives the real client IP from the PROXY header; Spring Cloud Gateway in turn derives `X-Client-IP` for Telnet sessions from the trusted `X-Proxy-Client-IP` header, as described in the Gateway header trust model. When PROXY protocol is not in use (for example local dev or tightly controlled self-hosted deployments), `TCP_PROXY_MAX_CONNECTIONS_PER_IP` and other per-IP heuristics are best-effort only and should be backed by higher-layer limits in Spring Cloud Gateway and the Game Session Service.
+When PROXY protocol is enabled, the TCP Proxy Service derives the real client IP from the PROXY header; Spring Cloud Gateway in turn derives `X-Client-IP` for Telnet sessions from the trusted `X-Proxy-Client-IP` header, as described in the Gateway header trust model. The PROXY listener is network-restricted to the edge by source policy; that restriction is not cryptographic authentication unless the edge-to-proxy channel also uses mTLS or equivalent. When PROXY protocol is not in use (for example local dev or tightly controlled self-hosted deployments), `TCP_PROXY_MAX_CONNECTIONS_PER_IP` and other per-IP heuristics are best-effort only and should be backed by higher-layer limits in Spring Cloud Gateway and the Game Session Service.
 
 ### Protocol handling and security
 
@@ -224,7 +224,7 @@ When PROXY protocol is enabled, the TCP Proxy Service derives the real client IP
 - Sanitizes incoming data and allows only a safe subset of **Telnet protocol commands** as outlined in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls).
 - Runs alongside Spring Cloud Gateway in the network **DMZ** so no client ever reaches internal services directly. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design).
 - Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set; certificates are provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`. Plaintext Telnet is limited to local, automated-test, and explicitly private-network compatibility; player-facing deployments require TLS Telnet or the web client as defined in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls).
-- Telnet-over-TLS certificates (client ↔ proxy) are independent from the Proxy → Gateway WebSocket mutual TLS certificates (proxy ↔ Spring Cloud Gateway); they may reuse the same files in small deployments, but they are different trust surfaces.
+- Telnet-over-TLS certificates (client ↔ proxy) are independent from the Proxy → Gateway WebSocket mutual TLS certificates (proxy ↔ Spring Cloud Gateway). Every player-facing deployment, including hobby/self-hosted, must use dedicated separately managed certificate and key material for these trust surfaces; reusing certificate files is permitted only for local development, automated tests, or throwaway environments and never qualifies as player-facing evidence.
 
 ### Bridging to the backend
 

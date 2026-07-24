@@ -546,8 +546,10 @@ Version cutover contract for a player-addressable realm:
 Realm-routing contract (required):
 
 - Each player-addressable realm must have exactly one authoritative routing record managed by Game Session. Its state is `OPEN(admissibleGameInstanceId)` or `CLOSED`; only an open realm has an admission target.
+- The authoritative routing record includes `worldSlug`, and the routing identity plus every routing read, write, and CAS operation are exactly `{tenantId, worldSlug, realmSlug}`. `worldSlug` must not be inferred from `realmSlug`, display metadata, or the target `gameInstanceId`.
 - Each routing record must contain at minimum:
   - `tenantId`,
+  - `worldSlug`,
   - `realmSlug` (or equivalent stable player-facing realm selector),
   - `admissionState`,
   - `admissibleGameInstanceId` only when `OPEN`,

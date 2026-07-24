@@ -4,7 +4,7 @@ This document defines canonical identifier names and scopes used across FireMUD 
 
 ## Implementation Status
 
-The canonical UUID identifiers below are an accepted target that has not fully converged. Several current REST DTOs, OpenAPI schemas, database-facing service contracts, and persisted rows still expose numeric account, tenant, version, game-instance, character, or template IDs. Existing gRPC strings and architecture examples must carry canonical UUID values rather than decimal strings or mnemonic placeholders, but that does not make the remaining schema and persistence migration complete. Runtime room/entity/item numeric exceptions remain valid only inside their complete typed scope.
+The UUID target applies only to UUID-governed logical identifiers; it is not a blanket requirement that every runtime or operational identifier be a UUID. That target has not fully converged: several current REST DTOs, OpenAPI schemas, database-facing service contracts, and persisted rows still expose numeric account, tenant, version, game-instance, character, or template IDs. Existing gRPC strings and architecture examples must carry canonical UUID values for UUID-governed logical identifiers rather than decimal strings or mnemonic placeholders, but that does not make the remaining schema and persistence migration complete. Typed scoped-numeric runtime room, entity, and item-instance identifiers remain valid inside their complete scope.
 
 ## Core Identifiers
 
@@ -16,10 +16,10 @@ The canonical UUID identifiers below are an accepted target that has not fully c
 
 ## Identifier Format Conventions
 
-- `accountId`, `tenantId`, `versionId`, `gameInstanceId`, and `characterId` are canonical UUID string logical identifiers. Authored template identifiers are also client-allocatable UUID strings.
+- `accountId`, `tenantId`, `versionId`, `gameInstanceId`, and `characterId` are UUID-governed canonical UUID string logical identifiers. Authored template identifiers are also client-allocatable UUID strings in that logical-identifier family.
 - Services treat these identifiers as opaque values unless a contract specifically requires UUID-shape validation. Consumers must not derive authority, routing, or related identifiers from their contents.
 - Services may maintain numeric primary and join keys internally. Private database keys never replace or appear as reversible encodings of the canonical UUID identity in public or cross-service contracts.
-- Live room, entity, and item instance identifiers are the deliberate exception: they may be stable numbers allocated within `(tenantId, gameInstanceId)` when the owning runtime guarantees concurrency safety and non-reuse for the required lifetime.
+- Live `roomInstanceId`, `entityId`, and `itemInstanceId` are the deliberate typed scoped-numeric runtime exception: they may be stable numbers allocated within `(tenantId, gameInstanceId)` when the owning runtime guarantees concurrency safety and non-reuse for the required lifetime. They are not interchangeable with one another or with a UUID-governed logical identifier.
 - `tenantSlug` is a stable human-readable selector used only in player-facing lobby flows and resolved server-side to `tenantId`; it is not durable tenant identity.
 - Identifier values are never authorization credentials. Every lookup validates the complete tenant/runtime scope and caller authority even when the ID is globally unique or difficult to guess.
 

@@ -30,6 +30,16 @@ This document defines the Logging & Admin Service REST and gRPC surfaces, authen
 - `POST /tick-remediation/resume` – operator-facing scoped tick resume request that forwards to Game Session control-plane with the same audit requirements.
 - `POST /tick-remediation/remediate` – reserved future operator-facing scoped remediation request for coordination/tick recovery. This remains deferred until Game Session exposes a canonical owner-side remediation RPC; Logging & Admin must not invent direct Redis mutation or a fake remediation contract in the meantime.
 
+### Canonical Admission Open Operation
+
+The canonical initial admission operation is `OpenAdmissionPointer`, represented by `POST /admission-pointers` and the Game Session control-plane route mutation. It performs exactly one `CLOSED -> OPEN(target)` transition for the routing identity `{tenantId, worldSlug, realmSlug}`:
+
+- `CLOSED` means that no `gameInstanceId` is gameplay-admissible for the identity; `OPEN(target)` means that exactly the requested target is admissible. A generic open operation must not replace an already open target.
+- The target must exist, belong to `tenantId`, and be the prepared/active runtime for the same `worldSlug` and `realmSlug`. It must pass current runtime lifecycle and entitlement/admission checks; display names, slugs, or a caller-supplied instance id are not proof of that relationship. If validation is unavailable or ambiguous, the operation fails closed.
+- The request and response carry the complete routing identity, target `gameInstanceId`, expected route version (`expectedPointerVersion`), resulting monotonic `pointerVersion`, `controlPlaneRequestId`, actor, and reason. `pointerVersion` is the route version and CAS token for exactly `{tenantId, worldSlug, realmSlug}`. The write succeeds only when the stored version equals the expected version, otherwise it returns a conflict and leaves the route unchanged. An absent route record uses `expectedPointerVersion=0` for the first open rather than an unscoped blind write.
+- Replacing or rolling back `OPEN(old)` to `OPEN(new)` is a prepared cutover, not a generic open. It must use `/admission-pointers/cutover` / `ExecutePreparedVersionCutover` with one durable `preparedVersionUpgradeId`; that operation revalidates the preparation, source and target identities, and CAS version before atomically swapping the route. Preparation is proof for cutover, not a substitute for route-version concurrency control.
+- Game Session remains the sole routing-state writer and audits the transition under the same identity and CAS result. Logging & Admin authenticates and records operator intent but must not maintain a competing pointer or infer `tenantId` from `worldSlug` or `realmSlug`.
+
 ```bash
 curl http://localhost:8080/ping
 ```

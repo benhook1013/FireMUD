@@ -60,6 +60,9 @@ routes:
     transport_command: WORLDS
     scope: account
     classification: pre_tenant_discovery
+    auth_path: game_session_authenticated_context
+    accepted_token_profiles: []
+    delegated_subject: authenticated_session_account
     visibility_contract: membership_or_public_production_visibility
     required_live_checks: [runtime_entitlements]
   - service: game-session-service
@@ -277,7 +280,9 @@ routes:
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
     delegated_subject: gameplay_binding_subject
-    required_live_checks: [current_token_generation, account_generation, tenant_generation, membership_generation, membership, runtime_entitlements]
+    required_live_checks: [issuer_generation, current_token_generation, account_generation, tenant_generation, membership_generation, membership, runtime_entitlements, conditional_realm_grant, grant_version]
+    realm_grant_authority: conditional_account_owned
+    realm_grant_version: required_when_grant_gated
   - service: account-service
     route: GetTenantMembershipForRuntime
     scope: tenant
