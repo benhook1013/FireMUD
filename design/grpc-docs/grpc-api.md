@@ -3213,7 +3213,7 @@ plus scoped tick pause/resume used for rollback safety.
 | QueryState | [QueryStateRequest](#game_session-v1-QueryStateRequest) | [QueryStateResponse](#game_session-v1-QueryStateResponse) |  |
 | ToggleFeatureFlag | [ToggleFeatureFlagRequest](#game_session-v1-ToggleFeatureFlagRequest) | [ToggleFeatureFlagResponse](#game_session-v1-ToggleFeatureFlagResponse) |  |
 | PauseTicks | [PauseTicksRequest](#game_session-v1-PauseTicksRequest) | [PauseTicksResponse](#game_session-v1-PauseTicksResponse) | Pause tick execution for an authorized maintenance workflow. |
-| ResumeTicks | [ResumeTicksRequest](#game_session-v1-ResumeTicksRequest) | [ResumeTicksResponse](#game_session-v1-ResumeTicksResponse) | Resume tick execution after the maintenance workflow completes. |
+| ResumeTicks | [ResumeTicksRequest](#game_session-v1-ResumeTicksRequest) | [ResumeTicksResponse](#game_session-v1-ResumeTicksResponse) | Resume tick execution after the authorized maintenance workflow completes. |
 | GetTickStatus | [GetTickStatusRequest](#game_session-v1-GetTickStatusRequest) | [GetTickStatusResponse](#game_session-v1-GetTickStatusResponse) | Report whether ticks are currently paused. |
 
  

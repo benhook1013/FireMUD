@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
@@ -253,9 +254,9 @@ public class TickServiceImpl implements TickService {
   public void processTick(Long tenantId, Long queueTargetId) {
     Long normalizedTenantId = tenantId != null ? tenantId : 0L;
     Long normalizedQueueTargetId = queueTargetId != null ? queueTargetId : 0L;
+    long start = System.nanoTime();
     try (GameplayLoggingContext ignored =
         GameplayLoggingContext.open(Long.toString(normalizedTenantId), null, null, null)) {
-      long start = System.nanoTime();
       Optional<TickQueueControlService.QueueLockLease> maybeLease =
           tickQueueControlService.tryAcquireTickLease(
               normalizedTenantId, normalizedQueueTargetId, "process tick", logger);
@@ -350,21 +351,18 @@ public class TickServiceImpl implements TickService {
           solo = head != null && head.startsWith("S|");
           int max = solo ? 1 : tickMaxCommands;
           lease.requireOwned();
-          tickTimer.record(
-              () -> {
-                luaTimer.record(
-                    () ->
-                        executeFencedScript(
-                            stageScript,
-                            lease,
-                            List.of(
-                                tickQueueControlService.queueKey(
-                                    normalizedTenantId, normalizedQueueTargetId),
-                                tickQueueControlService.pendingKey(
-                                    normalizedTenantId, normalizedQueueTargetId)),
-                            "stage",
-                            String.valueOf(max)));
-              });
+          luaTimer.record(
+              () ->
+                  executeFencedScript(
+                      stageScript,
+                      lease,
+                      List.of(
+                          tickQueueControlService.queueKey(
+                              normalizedTenantId, normalizedQueueTargetId),
+                          tickQueueControlService.pendingKey(
+                              normalizedTenantId, normalizedQueueTargetId)),
+                      "stage",
+                      String.valueOf(max)));
           activeBatchEntries =
               tickStagingService.readExecutablePendingEntries(
                   normalizedTenantId, normalizedQueueTargetId);
@@ -465,20 +463,20 @@ public class TickServiceImpl implements TickService {
           }
         }
       }
+    } finally {
+      tickTimer.record(System.nanoTime() - start, TimeUnit.NANOSECONDS);
     }
   }
 
   private void commitPending(
       TickQueueControlService.QueueLockLease lease, Long tenantId, Long queueTargetId) {
-    tickTimer.record(
+    luaTimer.record(
         () ->
-            luaTimer.record(
-                () ->
-                    executeFencedScript(
-                        commitScript,
-                        lease,
-                        List.of(tickQueueControlService.pendingKey(tenantId, queueTargetId)),
-                        "commit")));
+            executeFencedScript(
+                commitScript,
+                lease,
+                List.of(tickQueueControlService.pendingKey(tenantId, queueTargetId)),
+                "commit"));
   }
 
   private String truncate(String value, int maxLength) {

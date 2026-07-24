@@ -317,7 +317,7 @@ spec:
             service: postgres-backup
             severity: P1
             owner: infra
-            runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+            runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification--restoration-testing
           annotations:
             summary: PostgreSQL backups have not succeeded recently
             description: No successful pg_dump backup has been recorded in the last 90 minutes. Investigate backup Jobs and storage endpoints.
@@ -339,7 +339,7 @@ spec:
             service: postgres-backup
             severity: P1
             owner: infra
-            runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+            runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification--restoration-testing
           annotations:
             summary: Backup verification has not succeeded recently
             description: No successful backup verification run has been recorded in the last 36 hours. Investigate the verify-backups CronJob and storage configuration.
@@ -361,7 +361,7 @@ spec:
             service: postgres-backup
             severity: P1
             owner: infra
-            runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+            runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification--restoration-testing
           annotations:
             summary: Restore drill proof is stale
             description: No successful restore drill has been recorded within the required restore-proof freshness window. Investigate drill cadence and recovery evidence before traffic reopen decisions.
@@ -383,7 +383,7 @@ spec:
             service: postgres-backup
             severity: P1
             owner: infra
-            runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+            runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification--restoration-testing
           annotations:
             summary: Backup artifact lineage is invalid
             description: The latest backup artifact does not match the expected environment, database, schema, service, tool, or object-storage lineage. Block recovery-readiness decisions until lineage is repaired.
@@ -405,7 +405,7 @@ spec:
             service: postgres-backup
             severity: P1
             owner: infra
-            runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+            runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification--restoration-testing
           annotations:
             summary: Backup artifact cannot be restored or read
             description: The latest backup artifact failed restore-readability validation. Block recovery-readiness decisions until a readable artifact is verified.
@@ -452,7 +452,7 @@ spec:
             runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
           annotations:
             summary: Recovery participant convergence source metrics are absent
-            description: An entire required recovery inventory source family is absent globally. This is a monitoring gap; keep recovery-readiness decisions blocked until the source is restored.
+            description: An entire required recovery inventory source family is absent globally. This is a monitoring gap, not environment controller state; do not use the affected telemetry as readiness evidence until the source is restored.
         - alert: RecoveryReopenAttemptBlocked
           expr: increase(recovery_reopen_attempt_total{result="blocked",reason="incomplete_convergence"}[5m]) > 0
           for: 0m

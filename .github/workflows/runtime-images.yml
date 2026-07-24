@@ -264,7 +264,7 @@ jobs:
     needs: [image-meta]
     if: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 25
     permissions:
       # PR-controlled source receives no registry or repository write credential.
       contents: read

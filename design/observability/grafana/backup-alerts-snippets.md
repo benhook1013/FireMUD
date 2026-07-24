@@ -14,7 +14,7 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P1
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#postgresql-logical-backups
+    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification--restoration-testing
   annotations:
     summary: PostgreSQL backups have not succeeded recently
     description: No successful pg_dump backup has been recorded in the last 90 minutes. Investigate backup Jobs and storage endpoints.
@@ -38,7 +38,7 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P1
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary
+    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification--restoration-testing
   annotations:
     summary: Backup verification has not succeeded recently
     description: No successful backup verification run has been recorded in the last 36 hours. Investigate the verify-backups CronJob and storage configuration.
@@ -62,7 +62,7 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P1
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary
+    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification--restoration-testing
   annotations:
     summary: Restore drill proof is stale
     description: No successful restore drill has been recorded within the required restore-proof freshness window. Investigate drill cadence and recovery evidence before traffic reopen decisions.
@@ -86,7 +86,7 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P1
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary
+    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification--restoration-testing
   annotations:
     summary: Backup artifact lineage is invalid
     description: The latest backup artifact cannot prove the expected environment, database, schema, service, tool, or object-storage lineage. Keep recovery quarantined and inspect the authoritative artifact record.
@@ -110,7 +110,7 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P1
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary
+    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification--restoration-testing
   annotations:
     summary: Backup artifact failed restore-readability validation
     description: The latest backup artifact exists but could not be read through the restore validation path. Keep recovery quarantined until a readable artifact is proven.
@@ -134,7 +134,7 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P1
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary
+    runbook: design/architecture/system-architecture-backup-recovery.md#recovery-controller-continuation
   annotations:
     summary: Recovery participant convergence remains blocked
     description: A current recovery participant state has no safe disposition. The alert clears when the participant state converges; the cumulative convergence event counter is historical evidence only.
@@ -161,7 +161,7 @@ Example alerts for missed backups and verification runs:
     runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
   annotations:
     summary: Recovery participant convergence source metrics are absent
-    description: An entire required recovery inventory source family is absent globally. This is a monitoring gap; keep recovery-readiness decisions blocked until the source is restored.
+    description: An entire required recovery inventory source family is absent globally. This is a monitoring gap, not environment controller state; do not use the affected telemetry as readiness evidence until the source is restored.
 
 - alert: RecoveryReopenAttemptBlocked
   expr: increase(recovery_reopen_attempt_total{result="blocked",reason="incomplete_convergence"}[5m]) > 0
@@ -188,6 +188,6 @@ Routine backup alerts use these current artifact and recovery recordings:
 - `recovery_participant_convergence_coverage_missing`
 - `recovery_participant_convergence_source_missing`
 
-Recovery participant coverage is fail-closed: `recovery_required_participant_inventory{environment,participant}` is the controller projection of the authoritative required-participant inventory, and every required participant must have current `recovery_participant_convergence_state{environment,participant,state}` coverage. The controller publishes this inventory atomically per environment: `recovery_required_participant_inventory_complete{environment}` remains `0` during refresh and becomes `1` only after the complete authoritative set is visible. `recovery_participant_convergence_coverage_missing` preserves the affected environment and participant labels, using the reserved `participant="__environment__"` sentinel for environment-level inventory-completeness failures. Total disappearance of either required inventory family emits the separate global `recovery_participant_convergence_source_missing{source_family}` monitoring-gap signal. Both alerts block recovery readiness until coverage is restored and the durable recovery controller proves readiness.
+Recovery participant coverage is fail-closed: `recovery_required_participant_inventory{environment,participant}` is the controller projection of the authoritative required-participant inventory, and every required participant must have current `recovery_participant_convergence_state{environment,participant,state}` coverage. The controller publishes this inventory atomically per environment: `recovery_required_participant_inventory_complete{environment}` remains `0` during refresh and becomes `1` only after the complete authoritative set is visible. `recovery_participant_convergence_coverage_missing` preserves the affected environment and participant labels, using the reserved `participant="__environment__"` sentinel for environment-level inventory-completeness failures, and blocks readiness for that environment. Total disappearance of either required inventory family emits the separate global `recovery_participant_convergence_source_missing{source_family}` monitoring-gap signal. That global signal prevents Prometheus from serving as readiness evidence until restored, but it does not replace or mutate durable controller state.
 
 Environment-specific rulesets may tune thresholds, severities, and label values, but should preserve the `owner` and `runbook` annotations so alerts always point back to the relevant documentation. Tick-pause metrics belong to maintenance/reset dashboards and must not be used as routine backup health or traffic-reopen proof.

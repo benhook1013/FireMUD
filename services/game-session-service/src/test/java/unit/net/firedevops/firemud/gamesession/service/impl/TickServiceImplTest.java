@@ -268,6 +268,8 @@ class TickServiceImplTest {
         .setIfAbsent(eq("gamesession:tick:lock:1:2"), any(String.class), any(Duration.class));
     verify(listOps).size("gamesession:tick:pending:1:2");
     verify(listOps).index("gamesession:tick:queue:1:2", 0);
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1L, meterRegistry.get("game_session_tick_duration_ms").timer().count());
   }
 
   @Test
@@ -673,6 +675,8 @@ class TickServiceImplTest {
 
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0, meterRegistry.get("game_session_lock_contention_total").counter().count(), 0.001);
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1L, meterRegistry.get("game_session_tick_duration_ms").timer().count());
     verify(conflictTracker).recordConflict("session:1:2");
     verify(runtimeRegionStatusRepository, never())
         .claimObservedOwnership(any(), any(), any(), any(), any());

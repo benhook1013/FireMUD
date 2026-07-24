@@ -115,10 +115,16 @@ grep -Fq 'github.event.pull_request.base.sha' "$runtime_images_path"
 grep -Fq 'github.event.pull_request.head.sha' "$runtime_images_path"
 grep -Fq 'github.sha' "$runtime_images_path"
 grep -Fq "mode-{4}" "$runtime_images_path"
+grep -Fq 'display_title = run.get("display_title", "")' "$image_wait_path"
+grep -Fq 'display_title.startswith("Build Runtime Images secure-pr-artifact ")' "$image_wait_path"
+grep -Fq 'and f" head-{head_sha} " in display_title' "$image_wait_path"
+grep -Fq 'and display_title.endswith(" mode-required")' "$image_wait_path"
+grep -Fq 'gh api --paginate --slurp' "$image_wait_path"
 
 for job in image-meta pr-local-smoke; do
   assert_job_condition runtime-images.yml "$job" "$required_condition"
 done
+assert_job_contains runtime-images.yml pr-local-smoke 'timeout-minutes: 25'
 
 for job in build-base-image build-runtime-images smoke-full; do
   assert_job_contains runtime-images.yml "$job" "github.event_name != 'pull_request'"
@@ -163,6 +169,33 @@ grep -Fq 'publish-pr-runtime-images.yml/runs?event=workflow_run' "$image_wait_pa
 grep -Fq 'wait_for_pr_publisher' "$image_wait_path"
 # shellcheck disable=SC2016 # This assertion intentionally matches the caller's shell deadline.
 grep -Fq 'local publisher_deadline=$deadline' "$image_wait_path"
+
+image_wait_fixture_dir="$(mktemp -d)"
+trap 'rm -rf "$image_wait_fixture_dir"' EXIT
+cat >"$image_wait_fixture_dir/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$*" == *"publish-pr-runtime-images.yml"* ]]; then
+  cat <<'JSON'
+[{"workflow_runs":[{"id":201,"status":"completed","conclusion":"success","html_url":"https://example.test/publisher/201","display_title":"Publish PR Runtime Images head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","created_at":"2026-07-24T00:03:00Z"}]}]
+JSON
+else
+  cat <<'JSON'
+[{"workflow_runs":[{"id":102,"status":"completed","conclusion":"skipped","html_url":"https://example.test/runtime/102","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-metadata","created_at":"2026-07-24T00:02:00Z"}]},{"workflow_runs":[{"id":101,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}]}]
+JSON
+fi
+EOF
+chmod +x "$image_wait_fixture_dir/gh"
+PATH="$image_wait_fixture_dir:$PATH" \
+GH_TOKEN=contract-token \
+GITHUB_REPOSITORY=example/FireMUD \
+HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=5 \
+HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+bash "$image_wait_path" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+  >"$image_wait_fixture_dir/output"
+grep -Fq 'Matching runtime-images workflow 101 succeeded' "$image_wait_fixture_dir/output"
+grep -Fq 'Trusted PR image publisher 201 succeeded' "$image_wait_fixture_dir/output"
 
 assert_job_excludes runtime-images.yml smoke-full 'pull-requests: write'
 if (assert_job_excludes runtime-images.yml missing-job 'pull-requests: write') 2>/dev/null; then

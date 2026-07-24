@@ -25,8 +25,27 @@ import sys
 
 head_sha = sys.argv[1]
 payload = json.load(sys.stdin)
-workflow_runs = payload.get("workflow_runs", [])
-matching_runs = [run for run in workflow_runs if run.get("head_sha") == head_sha]
+pages = payload if isinstance(payload, list) else [payload]
+workflow_runs = [
+    run
+    for page in pages
+    for run in page.get("workflow_runs", [])
+]
+
+def is_matching_run(run):
+    if run.get("head_sha") != head_sha:
+        return False
+    if run.get("event") != "pull_request":
+        return True
+
+    display_title = run.get("display_title", "")
+    return (
+        display_title.startswith("Build Runtime Images secure-pr-artifact ")
+        and f" head-{head_sha} " in display_title
+        and display_title.endswith(" mode-required")
+    )
+
+matching_runs = [run for run in workflow_runs if is_matching_run(run)]
 if not matching_runs:
     print("missing")
     raise SystemExit(0)
@@ -52,7 +71,12 @@ import sys
 head_sha = sys.argv[1]
 expected_title = f"Publish PR Runtime Images head-{head_sha}"
 payload = json.load(sys.stdin)
-workflow_runs = payload.get("workflow_runs", [])
+pages = payload if isinstance(payload, list) else [payload]
+workflow_runs = [
+    run
+    for page in pages
+    for run in page.get("workflow_runs", [])
+]
 matching_runs = [
     run for run in workflow_runs if run.get("display_title") == expected_title
 ]
@@ -78,7 +102,8 @@ wait_for_pr_publisher() {
   while (( SECONDS < publisher_deadline )); do
     local publisher_state
     publisher_state="$(
-      gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/publish-pr-runtime-images.yml/runs?event=workflow_run&per_page=100" \
+      gh api --paginate --slurp \
+        "repos/${GITHUB_REPOSITORY}/actions/workflows/publish-pr-runtime-images.yml/runs?event=workflow_run&per_page=100" \
         | read_publisher_state
     )"
 
@@ -120,7 +145,8 @@ wait_for_pr_publisher() {
 
 while (( SECONDS < deadline )); do
   run_state="$(
-    gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml/runs?per_page=100" \
+    gh api --paginate --slurp \
+      "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml/runs?per_page=100" \
       | read_run_state
   )"
 

@@ -691,7 +691,9 @@ def emit_modules(files: list[FileStats], as_json: bool) -> None:
     print_json(report) if as_json else print(render_modules(report))
 
 
-def main(argv: Sequence[str] = sys.argv[1:]) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
     parser = build_parser()
     args = parser.parse_args(normalized_argv(argv))
     if args.command is None:
