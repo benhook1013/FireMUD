@@ -551,6 +551,8 @@ class AccountServiceImplTest {
             AuthenticationException.class, () -> service.listBootstrapWorlds(bootstrapToken));
 
     assertEquals("CONNECT_CONTEXT_INVALID", ex.getCode());
+    assertEquals("Bootstrap token expired", ex.getMessage());
+    org.mockito.Mockito.verify(sessionService).isAccountSessionActive(11L, bootstrapToken);
   }
 
   @Test
@@ -1565,6 +1567,102 @@ class AccountServiceImplTest {
     assertEquals("Mara", characters.getFirst().characterName());
     assertEquals("SHARED", characters.getFirst().stateScope());
     assertEquals("ALLOW_NEW", characters.getFirst().characterCreationPolicy());
+  }
+
+  @Test
+  void listBootstrapCharactersRejectsAmbiguousRealmBeforeAdmissionFiltering() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    var visibleRealm =
+        net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .setDisplayName("Live Realm")
+            .setTenantId("7")
+            .setGameInstanceId("44")
+            .setPointerVersion(17L)
+            .setVisible(true)
+            .setPublicProductionRealm(true)
+            .setRequiresCharacterSelection(false)
+            .setStateScope("SHARED")
+            .setCharacterCreationPolicy("ALLOW_NEW")
+            .build();
+    var hiddenDuplicate =
+        visibleRealm.toBuilder().setVisible(false).setPublicProductionRealm(false).build();
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(java.util.List.of(visibleRealm, hiddenDuplicate));
+
+    AuthenticationException ex =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.listBootstrapCharacters(
+                    bootstrap.bootstrapToken(), "demo", "production", connectScopeId));
+
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", ex.getCode());
+    verifyNoInteractions(entityManagementClient);
+  }
+
+  @Test
+  void listBootstrapCharactersSkipsMalformedUnrelatedRealm() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    var visibleRealm =
+        net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .setDisplayName("Live Realm")
+            .setTenantId("7")
+            .setGameInstanceId("44")
+            .setPointerVersion(17L)
+            .setVisible(true)
+            .setPublicProductionRealm(true)
+            .setRequiresCharacterSelection(false)
+            .setStateScope("SHARED")
+            .setCharacterCreationPolicy("ALLOW_NEW")
+            .build();
+    var malformedUnrelatedRealm =
+        visibleRealm.toBuilder().setRealmSlug("broken").setTenantId("bad").build();
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(java.util.List.of(malformedUnrelatedRealm, visibleRealm));
+
+    var characters =
+        service.listBootstrapCharacters(
+            bootstrap.bootstrapToken(), "demo", "production", connectScopeId);
+
+    assertTrue(characters.isEmpty());
   }
 
   @Test
