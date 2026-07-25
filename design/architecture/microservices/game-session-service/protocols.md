@@ -121,7 +121,7 @@ OK PLAY Entered world: Demo World / Live Realm as Sora
 
 The same resolution rules apply to `PLAY demo production 2` or `PLAY 1 1 Sora`: menu indices and stable world/realm slugs are equivalent player-facing selectors. Game Session resolves the current admissible runtime target and binds the internal `{tenantId, gameInstanceId, characterId}` identity; the player never selects `gameInstanceId` directly.
 
-The Account Service returns canonical `AUTH_*` error codes such as `AUTH_INVALID_CREDENTIALS`, `AUTH_ACCOUNT_LOCKED`, and `AUTH_UPSTREAM_FAILURE`. Game Session translates them into protocol-level responses such as `ERROR INVALID_CREDENTIALS` so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible.
+The Account Service returns canonical `AUTH_*` error codes such as `AUTH_INVALID_CREDENTIALS`, `AUTH_RETRY_LATER`, `AUTH_ACCOUNT_LOCKED`, and `AUTH_UPSTREAM_FAILURE`. Game Session translates them into protocol-level responses such as `ERROR INVALID_CREDENTIALS` and `ERROR RETRY_LATER` so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible. `AUTH_ACCOUNT_LOCKED` is reserved for verified compromise or an explicit account-security policy after sufficient identity proof; ordinary failed-login throttling uses `AUTH_RETRY_LATER`.
 
 Additional Game Session-specific login failures cover parsing and session-state issues before the Account Service call:
 
@@ -200,7 +200,7 @@ ERROR INVALID_CREDENTIALS Invalid username or password
 
 ```text
 LOGIN demo@example.com swordfish
-ERROR ACCOUNT_LOCKED Account locked after repeated failures
+ERROR RETRY_LATER Too many failed attempts; try again later
 ```
 
 ### Plaintext Telnet pre-login warning

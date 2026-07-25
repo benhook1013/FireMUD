@@ -556,10 +556,10 @@ Realm-routing contract (required):
   - `admissionState`,
   - `admissibleGameInstanceId` only when `OPEN`,
   - `pointerVersion` (monotonic CAS version),
-  - the separately versioned catalog/policy reference used for visibility and public-production reads,
+  - `catalogRevision`, the one canonical monotonic reference to the separately versioned catalog/policy snapshot used for visibility and public-production reads,
   - `updatedAt`,
   - `updatedBy` / change reason for audit.
-- The separately versioned catalog/policy reference is the sole authority for the realm's visibility, access policy, and public-production designation. The routing record stores that reference and the admission pointer; it must not duplicate the `publicProduction` policy value or derive public-production behavior from `realmSlug`, display metadata, or `admissibleGameInstanceId`.
+- `catalogRevision` identifies the separately versioned catalog/policy snapshot and is the sole authority for the realm's visibility, access policy, and public-production designation. It is the only catalog-only monotonic field; there is no separate `policyRevision`. The routing record stores `catalogRevision` and the admission pointer; it must not duplicate the `publicProduction` policy value or derive public-production behavior from `realmSlug`, display metadata, or `admissibleGameInstanceId`.
 - All player and control-plane flows must resolve the referenced catalog/policy revision together with the routing pointer, and must fail closed on a missing, stale, mismatched, or ambiguous pair:
   - `WORLDS` uses the catalog/policy public-production designation and visibility policy when building world discovery.
   - `REALMS` uses the same policy revision for public-production visibility versus explicit realm grants.

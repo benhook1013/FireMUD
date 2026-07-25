@@ -38,7 +38,7 @@ Accounts span multiple hosted games. The [Multi-Tenancy](./system-architecture-m
 
 ## Implementation Status
 
-The target journey below requires an explicit `JOIN` / `Join & Play` before character creation, connect-token issuance, or `PLAY`; `PLAY` never creates membership. Current implementation still allows the connect-token issuance and text `PLAY` paths to invoke `EnsurePublicProductionPlayerMembership` implicitly, so the explicit join boundary and `JOIN_REQUIRED` behavior are not yet implemented across all clients. That is tracked implementation drift, not target behavior.
+The target journey below requires an explicit `JOIN` / `Join & Play` before character creation, connect-token issuance, or `PLAY` for first-time public-production entry; `PLAY` never creates membership. Returning members and grant-backed non-public players preserve their existing membership/grant-backed discovery flow and skip only the public-production join action. Current implementation still allows the connect-token issuance and text `PLAY` paths to invoke `EnsurePublicProductionPlayerMembership` implicitly, so the explicit join boundary and `JOIN_REQUIRED` behavior are not yet implemented across all clients. That is tracked implementation drift, not target behavior.
 
 Realm-aware character discovery and the current creation-policy decision are implemented at the backend boundary, but the richer character-creation descriptor remains a gap. The current flow does not yet provide first-party clients with the published-version-specific template, race, class, and option descriptor needed to render the complete creation choices.
 
@@ -75,7 +75,7 @@ Player → Account Service
 The first successful session for a new player follows a single canonical onboarding flow regardless of client type:
 
 1. **Authenticate the Platform Account**
-   - **First-party web client** – Obtains a short-lived player bootstrap token through the [Account Service](./microservices/account-service/README.md), uses bootstrap-backed discovery endpoints to choose a world/realm/character target, then requests a connect token and opens the gameplay WebSocket through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md). Browser clients receive the connect token as the short-lived `Firemud-Connect-Token` HttpOnly cookie, so they do not depend on custom WebSocket headers.
+   - **First-party web client** – Obtains a short-lived player bootstrap token through the [Account Service](./microservices/account-service/README.md), then uses bootstrap-backed discovery endpoints to choose a world/realm target. For first-time public-production entry, the player completes `Join & Play` before character selection/creation and before `POST /auth/connect-token`; returning members skip that action, while grant-backed non-public players use their existing membership plus grant and also skip it. Eligible players then select or create a character, request a connect token, and open the gameplay WebSocket through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md). Browser clients receive the connect token as the short-lived `Firemud-Connect-Token` HttpOnly cookie, so they do not depend on custom WebSocket headers.
    - **Telnet / MCP client** – Connects through the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) and authenticates in-band with `LOGIN`.
 2. **Browse or Discover Joinable Worlds** – The player may use `WORLDS` before login to browse the platform publicly, then use the same command again after login to see the authenticated discovery set they can actually enter. Existing memberships always qualify. In v1, a live default production realm may also be publicly discoverable even before the player has joined that tenant, so brand-new accounts can still discover where they would enter through the public-production onboarding path. Responses use world slugs and friendly names rather than raw IDs, as defined in [Authentication & Authorization](./system-architecture-authentication.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md).
 3. **Choose a Realm When Needed, Then Join** – If the selected world exposes more than one visible realm, the player uses `REALMS <world>` to understand the available targets. Public discovery and open enrollment apply only to the world's single configured default production realm in v1, so `JOIN <world>` always resolves that unambiguous public-production target and does not accept a realm argument. A first-time public player explicitly selects `Join & Play` or issues `JOIN <world>`; Account then creates the durable tenant `player` membership that powers the player's game library and future return discovery. Grant-backed private or playtest realms validate the current grant and any separately required existing membership, skip `JOIN`, and never create membership through this flow. Hidden or unauthorized realms are never disclosed.
@@ -114,13 +114,12 @@ PLAY emberfall production Mara
 OK PLAY Entered Emberfall / Live Realm as Mara
 ```
 
-Example first-party web flow:
+Example first-party web flow for a returning member or grant-backed target:
 
 ```text
 POST /auth/player-bootstrap
 GET /auth/bootstrap/worlds
 GET /auth/bootstrap/worlds/{world}/realms
-POST /auth/bootstrap/join { connectScopeId=cs_demo_production_v17, requestId=req-join-1 }
 GET /auth/bootstrap/worlds/{world}/realms/{realm}/characters?connectScopeId={scope}
 POST /auth/connect-token { connectScopeId=cs_demo_production_v17 }
 GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response

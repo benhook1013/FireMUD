@@ -1,5 +1,9 @@
 # TCP Proxy Service Protocols
 
+## Implementation Status
+
+The explicit `JOIN` step is target behavior; current connect-token and `PLAY` implementations may still create public-production membership implicitly. The target flow below must not be read as proof that explicit join is complete across all clients.
+
 ## Cross-Path Connectivity Contract
 
 The following are canonical contracts across Telnet and WebSocket paths:
@@ -7,8 +11,6 @@ The following are canonical contracts across Telnet and WebSocket paths:
 - Telnet login-first without typed attach hints is the canonical player flow (`LOGIN` -> `JOIN` -> `PLAY`): a first-time public-production account must join after login, while a returning member skips `JOIN`.
 - Proxy -> Gateway WebSocket hop is mTLS-authenticated in player-facing environments.
 - Proxy bridge-availability circuit breaker uses deterministic open/half-open/closed admission behavior during sustained upstream unreachability.
-
-The explicit `JOIN` step is target behavior; current connect-token and `PLAY` implementations may still create public-production membership implicitly. The target flow above must not be read as proof that explicit join is complete across all clients.
 
 ## Recommended Telnet Client Flows
 

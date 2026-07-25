@@ -281,10 +281,10 @@ See `design/architecture/system-architecture-operator-credentials-runbook.md` fo
 
 | Topic | Strategy |
 | --- | --- |
-| Secret Delivery | One Kubernetes Secret/mounted-file workload contract; no bundled or mandatory Vault; transparent external provisioning allowed |
+| Secret Delivery | One Kubernetes Secret/mounted-file workload contract; no bundled or mandatory Vault; transparent external provisioning allowed except the reserved `jwt-signing-keys` materialization-controller writer and `jwt-jwks` Account-owned CAS writer contracts |
 | JWT Signer Custody | Target: Account delegates private-key operations to non-exportable signer custody; interim fallback: the materialization controller generates/CAS-writes `jwt-signing-keys`, Account is the only application workload that mounts or uses it, validators receive Account-published JWKS, and rotation Jobs receive no private material |
 | Key & Cert Rotation | TLS certificates auto-rotated by cert-manager with hot reload via `TlsCertificateWatcher`; planned JWT rotation prepublishes, proves convergence, promotes, overlaps through token expiry, and prunes, while compromise/restore uses quarantined hard cutover |
-| TLS Termination | Load balancer |
+| TLS Termination | Browser `https://`/`wss://` terminates at the Internet-facing load balancer; player-facing Telnet TLS terminates at the dedicated Telnet edge proxy or TCP Proxy Service |
 | Internal Encryption | Per-workload mTLS identities delivered via dedicated Kubernetes Secrets; shared CA trust and server certificate hot reload enabled |
 | Trust Enforcement | JWT + mTLS + Kubernetes NetworkPolicies |
 | Brute-Force Defense | Layered model: Gateway/TCP Proxy enforce edge transport throttles; Account Service enforces graduated credential/login throttles and high-confidence security locks; Game Session enforces local fast-path post-auth gameplay command limits |

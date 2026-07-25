@@ -96,6 +96,7 @@ Minimum realm-catalog facts for one visible realm are:
 - whether the realm is visible
 - `publicProduction` policy value distinguishing the explicit public-production realm from explicit-grant-only realms
 - whether the realm uses shared-state or isolated-state gameplay policy
+- `catalogRevision`, the monotonic identifier of the versioned catalog/policy snapshot for this realm
 
 Minimum admission-pointer facts for one resolved realm are:
 
@@ -105,9 +106,10 @@ Minimum admission-pointer facts for one resolved realm are:
 - `admissionState` (`OPEN` or `CLOSED`)
 - `admissibleGameInstanceId` when and only when `OPEN`
 - `pointerVersion`
+- `catalogRevision`, referencing the same versioned catalog/policy snapshot
 - `updatedAt`
 
-Catalog-only facts have a separate monotonic `catalogRevision`. Display metadata and other catalog-only edits must not advance the runtime `pointerVersion` or invalidate an existing gameplay binding. Admission-policy reads still revalidate current visibility, public-production, grant, and entitlement facts before creating or renewing authority.
+`catalogRevision` is the one canonical catalog-only monotonic field. It identifies the separately versioned catalog/policy snapshot for the stable `{tenantId, worldSlug, realmSlug}` identity; the snapshot contains visibility, access-policy, and `publicProduction` facts. The routing record stores that revision as its catalog/policy reference. There is no separate `policyRevision` or second policy counter. Display metadata and other catalog-only edits advance `catalogRevision`, not the runtime `pointerVersion`, and therefore do not invalidate an existing gameplay binding. Admission-policy reads still revalidate current visibility, public-production, grant, and entitlement facts before creating or renewing authority.
 
 Contract rules:
 

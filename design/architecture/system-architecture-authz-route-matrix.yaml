@@ -116,7 +116,7 @@ routes:
     membership_authority_generation_applies: true
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE]
+      any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE]
     canonical_target:
       membership: existing_caller_bound_membership_required
       membership_creation: play_never_creates_membership
@@ -336,6 +336,11 @@ routes:
     canonical_errors:
       any_of: [JOIN_REQUIRED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, ENTITLEMENT_UNAVAILABLE]
     subject_binding: caller_account_id
+    canonical_target:
+      membership: existing_caller_bound_membership_required
+      membership_creation: issue_connect_token_never_creates_membership
+    implementation_status:
+      known_drift: issue_connect_token_may_still_invoke_ensure_public_production_player_membership
   - service: account-service
     route: Authenticate
     scope: account

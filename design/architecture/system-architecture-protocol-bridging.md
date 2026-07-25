@@ -60,7 +60,7 @@ Do not configure both modes on one public path, and do not treat an edge-termina
 
 - Select one mode and record the public listener, certificate owner, and internal target in deployment evidence.
 - Prove a valid TLS handshake, expected certificate chain, and plaintext rejection at the public endpoint.
-- In edge termination plus internal PROXY mode, prove the restricted listener is reachable only from the edge path through an authenticated, cryptographically protected channel (mTLS or equivalent); a source allowlist and Kubernetes `NetworkPolicy` are defense in depth, not substitutes. Accept only the expected PROXY contract and promote its address for security controls only after the channel identity is authenticated. PROXY framing carries address metadata; it does not authenticate the sender.
+- In edge termination plus internal PROXY mode, prove the restricted listener is reachable only from the edge path through an authenticated, cryptographically protected channel (mTLS or equivalent); a source allowlist and Kubernetes `NetworkPolicy` are defense in depth, not substitutes. Accept only the expected PROXY contract and promote its address for security controls only after the channel identity is authenticated. The TCP Proxy may provide `X-Proxy-Client-IP` only on that authenticated path; otherwise it must use the direct peer address for security controls and keep any PROXY address advisory, never authoritative for Account source context. Spring Cloud Gateway may produce `X-Client-IP` only after authenticating the TCP Proxy identity. PROXY framing carries address metadata; it does not authenticate the sender.
 - In direct TCP Proxy TLS mode, prove the TCP Proxy TLS handshake and direct peer-address behavior, without sending a PROXY header.
 - In both modes, prove Proxy -> Gateway uses the internal `wss://` mTLS listener and that the bridged client reaches the same `LOGIN -> PLAY -> LOOK` flow as a WebSocket client.
 
@@ -192,6 +192,8 @@ Backpressure and slow-client handling are split across layers so that the platfo
 
 This model favors **clear closures over silent drops** when a client cannot keep up and provides enough metrics at each layer for operators to identify whether the TCP Proxy, Gateway, or Game Session is enforcing backpressure in a given incident.
 
+Telnet TLS termination, PROXY trust, and client-address promotion remain governed by [Public Telnet TLS Modes](#public-telnet-tls-modes); backpressure handling does not create a second transport trust policy.
+
 ### Global Load Shedding Strategy
 
 During severe load or partial outages, each layer in the TCP Proxy → Gateway → Game Session path participates in protecting the platform, but responsibilities are ordered so that core gameplay services are preserved and client signals remain clear:
@@ -206,17 +208,6 @@ During severe load or partial outages, each layer in the TCP Proxy → Gateway �
   - In healthy but busy conditions, these limits are tuned so that normal player behaviour is primarily shaped by Gateway and Game Session policies rather than frequent proxy disconnects. Under clear Telnet-specific abuse (for example, a small set of IPs consuming most connections), operators first adjust proxy-side caps or block misbehaving sources rather than relaxing gateway or Game Session limits.
 
 Operators should interpret spikes in each layer’s metrics in this order when diagnosing load incidents: check Game Session and Redis saturation first, then Gateway rate-limit and backend unavailable signals, and finally TCP Proxy connection limits. This layered strategy ensures that both WebSocket and Telnet entry points shed load in a way that keeps behaviour predictable for players and preserves the integrity of core gameplay services.
-
-### Telnet TLS modes and PROXY protocol
-
-Shared and player-facing environments select exactly one public Telnet TLS mode per endpoint:
-
-- **Edge termination with internal PROXY forwarding** – external clients connect to a dedicated TLS edge proxy (for example HAProxy), which forwards plaintext Telnet plus PROXY protocol to the internal-only `TCP_PROXY_PROXY_PROTOCOL_PORT` over an authenticated, cryptographically protected channel such as mTLS. That listener accepts traffic only from the network-restricted edge and is never exposed directly to the Internet; source restriction remains defense in depth rather than sender authentication.
-- **Direct TCP Proxy TLS termination** – external clients connect to `TCP_PROXY_PORT` with `TCP_PROXY_TLS_ENABLED=true`. This public listener terminates TLS itself and does not accept a PROXY header.
-
-The plaintext TCP/Telnet listener on `TCP_PROXY_PORT` remains valid only for local development and explicitly private compatibility networks. It is not a public player ingress. A deployment must not combine edge termination and direct TCP Proxy TLS on the same endpoint.
-
-When PROXY protocol is enabled, the TCP Proxy Service may derive the client IP from the PROXY header for security controls only after authenticating the edge-to-proxy channel with cryptographic protection such as mTLS; source restrictions alone are insufficient. Without that authenticated channel, it must use the direct TCP peer address for security controls and may retain the PROXY address only as untrusted advisory/observability metadata, never as authoritative `X-Proxy-Client-IP` or Account source context. Spring Cloud Gateway may derive `X-Client-IP` for Telnet sessions only from the authenticated proxy identity and trusted address input. When PROXY protocol is not in use (for example local dev or tightly controlled self-hosted deployments), `TCP_PROXY_MAX_CONNECTIONS_PER_IP` and other per-IP heuristics use the direct peer address and remain best-effort; they should be backed by higher-layer limits in Spring Cloud Gateway and the Game Session Service.
 
 ### Protocol handling and security
 
