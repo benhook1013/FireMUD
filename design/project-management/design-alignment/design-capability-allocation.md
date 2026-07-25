@@ -34,7 +34,7 @@ This ledger maps canonical design sources to the stable capabilities in the [Fir
 
 | Design source | Primary capability | Secondary handoffs | Status or classification |
 | --- | --- | --- | --- |
-| `design/architecture/decisions/README.md` | Exempt | All capabilities represented by indexed ADRs | Decision registry/index |
+| `design/architecture/decisions/README.md` | Exempt | — | Decision registry/index |
 | `design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md` | `AS-1` | `SF-1`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0002-automation-handoff-reliability-and-success-semantics.md` | `AS-1` | `GR-1`, `SF-2`, `PO-4` | Accepted |
 | `design/architecture/decisions/adr-0003-reload-backpressure-and-retry-contract.md` | `AS-1` | `AR-3`, `GR-1`, `PO-4` | Accepted |

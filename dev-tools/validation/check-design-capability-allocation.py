@@ -929,15 +929,19 @@ def validate_top_allocation_ledger(
         primary = "Exempt" if primary_cell == "Exempt" else primary_from_cell(document, row[primary_index], groups, root)
         classification = row[classification_index].strip()
         expected = ADR_ALLOCATION_EXPECTATIONS.get(source_path)
-        secondary = (
-            capability_set_from_cell(
+        if expected is not None and len(expected) == 3:
+            secondary = capability_set_from_cell(
                 row[secondary_index],
                 f"{document.relative_to(root)}:{source_path}: secondary handoffs",
                 groups,
             )
-            if expected is not None and len(expected) == 3
-            else None
-        )
+        else:
+            if clean_cell(row[secondary_index]) != "—":
+                fail(
+                    f"{document.relative_to(root)}:{source_path}: exempt secondary handoffs "
+                    f"must be '—', got {row[secondary_index]!r}"
+                )
+            secondary = None
         validate_expected_allocation(
             root,
             document,

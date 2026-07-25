@@ -245,6 +245,38 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
                 "unexpected primary capability",
             )
 
+    def test_adr_secondary_allocation_drift(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.TOP_ALLOCATION
+            replace_in_line(
+                path,
+                "adr-0001-scripting-event-ingress-idempotency-identity.md",
+                "| `SF-1`, `SF-2` |",
+                "| `SF-1`, `PO-1` |",
+            )
+            expect_call_failure(
+                "ADR secondary allocation drift",
+                lambda: self.validator.validate(root),
+                "unexpected secondary capabilities",
+            )
+
+    def test_exempt_adr_secondary_handoff_drift(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.TOP_ALLOCATION
+            replace_in_line(
+                path,
+                "`design/architecture/decisions/README.md`",
+                "| — |",
+                "| `AA-1` |",
+            )
+            expect_call_failure(
+                "exempt ADR secondary handoff drift",
+                lambda: self.validator.validate(root),
+                "exempt secondary handoffs must be '—'",
+            )
+
     def test_adr_classification_drift(self) -> None:
         with fixture_root() as directory:
             root = Path(directory)

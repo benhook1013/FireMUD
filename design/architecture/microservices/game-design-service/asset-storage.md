@@ -61,13 +61,13 @@ Illustrative `GetPublishableDerivedArtifact` fragments:
 
 ```json
 {
-  "tenantId": "t1",
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
   "versionId": "v42",
   "artifactKind": "NAVMESH",
   "status": "NOT_READY",
   "error": {
     "code": "DERIVED_ARTIFACT_NOT_FINALIZED",
-    "message": "Navmesh generation has not produced finalized bytes for tenantId=t1 versionId=v42."
+    "message": "Navmesh generation has not produced finalized bytes for tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120 versionId=v42."
   }
 }
 ```
@@ -76,7 +76,7 @@ Illustrative `GetPublishableDerivedArtifact` fragments:
 
 ```json
 {
-  "tenantId": "t1",
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
   "versionId": "v42",
   "artifactKind": "NAVMESH",
   "status": "FAILED",
@@ -111,7 +111,7 @@ Illustrative `GetPublishedReleaseBundle` fragment:
 
 ```json
 {
-  "tenantId": "t1",
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
   "versionId": "v42",
   "manifestHash": "sha256:2d4b2e...",
   "artifactDigests": [
@@ -229,8 +229,7 @@ The `game_assets` table stores ordinary design-time upload records. In the curre
 
 Future metadata-only storage may replace `data` with fields such as `storage_key`, `content_hash`, and `size_bytes`, but only if the new schema preserves the same repair invariant: Published/Active releases must be exactly reproducible for as long as their assets remain non-Retired or design-history reachable.
 
-To associate assets with specific published versions while still allowing reuse across
-versions, the Game Design Service maintains a separate mapping table:
+To associate assets with specific published versions while still allowing reuse across versions, the target Game Design contract requires a separate mapping table. The current implementation has neither this table nor a Draft-version authoring path for its mappings; the following shape and constraints are target-state until both exist:
 
 - `version_asset`:
   - `tenant_id` – owning game
@@ -239,12 +238,7 @@ versions, the Game Design Service maintains a separate mapping table:
   - `usage_type` – optional classifier such as `logo`, `icon`, or `audio`
   - `created_at` – mapping creation timestamp
 
-The combination `(tenant_id, version_id, asset_id)` is unique so the same asset can be
-referenced by multiple versions without duplicating the binary row. Once a mapping
-exists for a version in the Published or Active state described in
-[Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md),
-the referenced asset must be treated as immutable; replacing the binary requires
-creating a new `game_assets` row and a new `version_asset` mapping.
+The target combination `(tenant_id, version_id, asset_id)` is unique so the same asset can be referenced by multiple versions without duplicating the binary row. Once the target authoring path exists and a mapping belongs to a version in the Published or Active state described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md), the referenced asset must be treated as immutable; replacing the binary requires creating a new `game_assets` row and a new `version_asset` mapping.
 
 Artifact lifecycle state for each exported prefix must be persisted in a dedicated state table:
 

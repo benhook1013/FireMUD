@@ -16,7 +16,7 @@ Redis coordination behavior and reset flows are defined in:
 
 ## Implementation Notes
 
-This runbook is written for the target tick/region model (`tenantId` + `gameInstanceId` + `regionId`). Incident queries must use the canonical fields `tenantId`, `gameInstanceId`, `regionId`, and `region_epoch` (or their exact storage projections) together; do not substitute `game_instance_id` for the canonical `gameInstanceId` spelling in operator-facing queries. If your current deployment only exposes coarser tick pause controls, follow the same decision logic at the closest available scope and record the scope mismatch in the incident timeline for follow-up.
+This runbook is written for the target tick/region model (`tenantId` + `gameInstanceId` + `regionId`). Incident queries must carry `tenantId`, `gameInstanceId`, `regionId`, and `regionEpoch` together, using exact storage projections such as `game_instance_id` and `region_epoch` where applicable. If your current deployment only exposes coarser tick pause controls, follow the same decision logic at the closest available scope and record the scope mismatch in the incident timeline for follow-up.
 
 When applying scope substitution, use a deterministic mapping source (control-plane lookup or game-instance registry), record the resolved region set, and include the mapping evidence in the incident notes so post-incident reconciliation is auditable.
 
