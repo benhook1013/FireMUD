@@ -128,19 +128,26 @@ There is no generic backend JWT profile, and the `internal` audience is forbidde
 
 Services must enforce this claim contract before role/tenant authorization:
 
-| Claim | `control-ui` JWT | `player-bootstrap` JWT | `game-session-account-delegation` JWT | Notes |
-| --- | --- | --- | --- | --- |
-| `iss` | Required | Required | Required | Must match Account Service issuer value |
-| `sub` | Required | Required | Required | Must identify the account subject |
-| `jti` | Required | Required | Required | Unique per issued token |
-| `accountId` | Required | Required | Required | Must be consistent with `sub` mapping |
-| `aud` | Required (`control-ui`) | Required (`player-bootstrap`) | Required (`account-service`) | Exact allowed values are centrally configured |
-| `iat` | Required | Required | Required | UTC epoch seconds |
-| `nbf` | Required | Required | Required | Token not usable before this time |
-| `exp` | Required | Required | Required | Token unusable after this time |
-| `tokenGeneration` | Required | Required | Required | Positive integer for this token's issuance/refresh lineage; the registry value must match exactly. Initial issuance starts a lineage at `1`, and replacement within that lineage increments it |
-| `globalRoles` | Optional | Optional | Optional | Empty list when none |
-| `scopedRoles` | Optional | Optional | Optional | Empty map when none |
+| Claim | `control-ui` JWT | `player-bootstrap` JWT | `gameplay-connect` JWT | `game-session-account-delegation` JWT | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `iss` | Required | Required | Required | Required | Must match Account Service issuer value |
+| `sub` | Required | Required | Not required | Required | Must identify the account subject where required |
+| `jti` | Required | Required | Required | Required | Unique per issued token; the gameplay-connect value is the single-use replay nonce |
+| `accountId` | Required | Required | Required | Required | Must be consistent with `sub` mapping where `sub` is required |
+| `aud` | Required (`control-ui`) | Required (`player-bootstrap`) | Required (`gameplay-connect`) | Required (`account-service`) | Exact allowed values are centrally configured |
+| `iat` | Required | Required | Required | Required | UTC epoch seconds |
+| `nbf` | Required | Required | Not required | Required | Token not usable before this time when present |
+| `exp` | Required | Required | Required | Required | Token unusable after this time |
+| `tokenGeneration` | Required | Required | Not used | Required | Positive integer for issued-token-registry lineage; gameplay-connect instead uses its dedicated single-use replay contract |
+| `tenantId` | Not required | Not required | Required | Not required | Gameplay-connect admission scope |
+| `gameInstanceId` | Not required | Not required | Required | Not required | Server-resolved gameplay-connect runtime target |
+| `worldSlug` | Not required | Not required | Required | Not required | Stable gameplay-connect world selector |
+| `realmSlug` | Not required | Not required | Required | Not required | Stable gameplay-connect realm selector |
+| `pointerVersion` | Not required | Not required | Required | Not required | Gameplay-connect routing-freshness fence |
+| `connectScopeId` | Not required | Not required | Required | Not required | Opaque discovery scope used for issuance |
+| `requestId` | Not required | Not required | Required | Not required | Connect-token issuance idempotency identity |
+| `globalRoles` | Optional | Optional | Not used | Optional | Empty list when none; gameplay-connect admission never authorizes from role claims |
+| `scopedRoles` | Optional | Optional | Not used | Optional | Empty map when none; gameplay-connect admission never authorizes from role claims |
 
 Tokens that omit required claims, have malformed claim types, or present an unexpected `aud` for the endpoint profile must be rejected before route classification.
 
@@ -155,7 +162,7 @@ JWT verification model (normative):
 - Player-facing environments must fail startup if asymmetric JWKS verification is not configured or if HMAC-only verification is enabled.
 - HMAC verification mode is allowed only for local/dev and explicitly ephemeral CI environments.
 - Account Service remains authoritative for signing-generation validation, token-validation semantics, signer promotion, JWKS publication, and public/private pruning. A non-exportable signer may perform only private-key operations explicitly delegated by Account and may not validate tokens, promote a signer, publish JWKS, or prune key material.
-- Target-state private-key custody delegates private-key operations to a non-exportable signer in every environment. Until that capability is implemented, the controlled fallback is the Account-only Kubernetes Secret baseline described in [ADR 0014](./decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md): only Account Service may receive private material, validators receive only public JWKS, and rotation automation cannot access signing material. Shared HMAC remains limited to local/dev or explicitly ephemeral CI compatibility and is not a player-facing fallback. Every issued JWT carries a stable `kid`.
+- Target-state private-key custody delegates private-key operations to a non-exportable signer in every environment. Until that capability is implemented, the controlled fallback is the materialization-controller-written, Account-consumed Kubernetes Secret baseline described in [ADR 0014](./decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md): Account is the only application workload that mounts or uses private material, the controller is a narrowly scoped infrastructure custodian for generation and Secret CAS only, validators receive only public JWKS, and rotation automation cannot access signing material. Shared HMAC remains limited to local/dev or explicitly ephemeral CI compatibility and is not a player-facing fallback. Every issued JWT carries a stable `kid`.
 - Validators cache known keys for a configured bounded maximum age and refresh proactively. An unknown `kid` triggers one forced JWKS refresh and one validation retry, then fails closed.
 - A temporary JWKS outage may not invalidate a known key whose bounded cache entry remains fresh. Validators must not extend cache age or accept an unknown key to preserve availability.
 

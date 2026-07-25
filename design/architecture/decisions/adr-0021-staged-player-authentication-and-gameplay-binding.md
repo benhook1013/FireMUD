@@ -34,7 +34,7 @@ The staged sequence is partially implemented and tested. It adds an explicit bro
 6. Browser clients receive that token only in a `Secure`, `HttpOnly`, appropriately scoped cookie. Browser JavaScript receives non-secret connection metadata, not the token value.
 7. Gateway validates expiry, signature, audience, scope, and one-time use before admitting `/ws/game/**`, then attaches a signed internal connect context. This is transport admission, not general Gateway-owned account authentication.
 8. The browser sends bare `LOGIN`. Game Session validates and consumes the signed connect context, establishes the authenticated account state, and does not request credentials again.
-9. `PLAY` remains mandatory and separately binds the selected `{tenantId, gameInstanceId, characterId}` after current admission checks.
+9. `PLAY` remains mandatory and receives the selected stable world, realm, and character context. Game Session revalidates that context and resolves the current admissible `gameInstanceId` server-side; only the internal gameplay binding carries `{tenantId, resolvedGameInstanceId, characterId}` after current admission checks.
 
 Public-production membership and grant-backed realm access are different authorities. The public-production `JOIN` operation may create the durable `player` membership for that public realm only. A valid private/playtest grant is checked as grant authority, and any membership required by that realm or tenant policy is checked independently; neither `JOIN` nor grant validation creates that membership as a side effect.
 

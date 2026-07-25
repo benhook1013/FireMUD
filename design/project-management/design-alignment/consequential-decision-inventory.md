@@ -137,7 +137,7 @@ No implementation-blocking override is active. Record an override here with the 
 
 ### Packet 2: Identity, Authority, And Security
 
-Packet 2 checklist dispositions record the human review outcome, not an inventory status. For every checked Packet 2 entry, `accepted` maps to the canonical inventory status `accepted-explicit`; `revised` maps to the same status after the revised target was accepted. Unchecked entries have no recorded disposition or implied inventory status. The `AUTH-02` and `AUTH-06` targets retain explicit `JOIN`/`Join & Play`, but `POST /auth/bootstrap/join` is target-state and not implemented; current implicit membership creation remains implementation drift.
+Packet 2 checklist dispositions record the human review outcome, not an inventory status. For every checked Packet 2 entry, `accepted` maps to the canonical inventory status `accepted-explicit`; `revised` maps to the same status after the revised target was accepted. Unchecked entries have no Packet 2 disposition; their canonical inventory status remains whatever the inventory records and is not inferred from this checklist. The `AUTH-02` and `AUTH-06` targets retain explicit `JOIN`/`Join & Play`, but `POST /auth/bootstrap/join` is target-state and not implemented; current implicit membership creation remains implementation drift.
 
 #### Packet 2 P0
 

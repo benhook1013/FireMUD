@@ -48,10 +48,12 @@ Each connected-to-disconnected transition starts one immutable disconnection epi
 
 `resumeDeadline = min(continuityBindingExpiresAt, disconnectAt + effective resume-window-ms)`
 
-- Resume requires the current time to be before both limits and requires fresh identity, membership, entitlement, revocation, and uniqueness checks.
+- Resume requires the current time to be before both limits and requires current, fail-closed identity, membership, revocation, and uniqueness checks. Entitlement freshness is governed by ADR 0028: an eligible positive last-known-good entitlement may supply the entitlement input only for the exact same still-resumable binding and only when the recovery is non-expanding; fresh entitlement remains required for new commitments, fresh admission, changed realm/target bindings, or any other operation covered by ADR 0028's strict class.
 - `disconnectAt` and `resumeDeadline` are immutable within that episode. Failed reconnect attempts, token rotation, takeover attempts, Redis TTL refresh, and transcript retention cannot move them.
 - A successful resume consumes the current disconnection episode and returns the binding to connected state. A later genuine transport loss starts a new episode with a new `disconnectAt` and `resumeDeadline`, still capped by the binding's original immutable `continuityBindingExpiresAt`.
 - After either limit, the old binding is non-resumable even if data remains. A successful current `LOGIN` and `PLAY` may perform fresh admission and create a new binding; that is not continuation of the expired binding.
+
+ADR 0028 is authoritative when this decision's resume rules and entitlement-freshness policy intersect. That precedence changes only the entitlement input permitted for bounded same-binding continuity; it does not relax the current identity, membership, revocation, uniqueness, lease, or gameplay-scope checks required to resume.
 
 ### Storage, Transcript, and Logout
 
@@ -94,7 +96,7 @@ Fresh admission after every disconnect is simpler and more conservative but mate
 - Prove boundary behavior immediately before, at, and after both continuity and resume deadlines.
 - Prove repeated failed reconnects cannot extend one episode, successful resume closes it, and a later disconnect creates a new bounded episode without moving `continuityBindingExpiresAt`.
 - Prove Redis saves, TTL refresh capped at the remaining `continuityBindingExpiresAt`, restart, failover, and stale-key recovery cannot move or bypass logical deadlines.
-- Prove current subject, membership, entitlement, revocation, and uniqueness checks on every resume.
+- Prove current subject, membership, revocation, uniqueness, lease, and gameplay-scope checks on every resume, and prove that entitlement input follows ADR 0028: eligible positive last-known-good state is accepted only for exact same-binding non-expanding continuity, while fresh entitlement is required for new commitments, fresh admission, changed bindings, and unsafe or expired continuity.
 - Prove stale bindings fall through to fresh admission only after full current authorization and receive a new identity and anchor.
 - Prove transcript bounds independently and prove explicit logout immediately prevents later private replay from the terminated binding, without requiring physical transcript deletion to complete synchronously.
 

@@ -307,21 +307,6 @@ jobs:
                     per_page: 100,
                   }
                 );
-                const fullSmokeJob = jobs.find(
-                  (job) => job.name === "Smoke Tests (Full Stack) / Smoke Tests (Full Stack)"
-                );
-                if (!fullSmokeJob) {
-                  core.setFailed(`Runtime images run ${matching.id} did not expose the required Smoke Tests (Full Stack) job`);
-                  return;
-                }
-
-                if (matching.conclusion !== "success" || fullSmokeJob.status !== "completed" || fullSmokeJob.conclusion !== "success") {
-                  core.setFailed(
-                    `Runtime images/full smoke run ${matching.id} did not complete successfully: run=${matching.conclusion}, full-smoke=${fullSmokeJob.status}/${fullSmokeJob.conclusion}`
-                  );
-                  return;
-                }
-
                 const { data: completedPullRequest } = await github.rest.pulls.get({
                   owner,
                   repo,
@@ -335,6 +320,20 @@ jobs:
                 ) {
                   core.info(
                     `Stopping obsolete completed smoke gate for ${baseRef}@${baseSha}...${headSha}; current PR state/base/head is ${completedPullRequest.state}/${completedPullRequest.base.ref}@${completedPullRequest.base.sha}/${completedPullRequest.head.sha}`
+                  );
+                  return;
+                }
+                const fullSmokeJob = jobs.find(
+                  (job) => job.name === "Smoke Tests (Full Stack) / Smoke Tests (Full Stack)"
+                );
+                if (!fullSmokeJob) {
+                  core.setFailed(`Runtime images run ${matching.id} did not expose the required Smoke Tests (Full Stack) job`);
+                  return;
+                }
+
+                if (matching.conclusion !== "success" || fullSmokeJob.status !== "completed" || fullSmokeJob.conclusion !== "success") {
+                  core.setFailed(
+                    `Runtime images/full smoke run ${matching.id} did not complete successfully: run=${matching.conclusion}, full-smoke=${fullSmokeJob.status}/${fullSmokeJob.conclusion}`
                   );
                   return;
                 }

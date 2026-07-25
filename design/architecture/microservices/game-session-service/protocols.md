@@ -73,12 +73,12 @@ After `LOGIN` succeeds, an existing member normally issues `PLAY <world> [realm]
 
 Handshake failures such as HTTP `403` `CONNECT_TOKEN_REJECTED` or `POLICY_DENY` happen before the gameplay protocol is established and therefore are not emitted as text-protocol `ERROR <CODE>` frames. The command examples below begin only after a socket is already open and the line-based gameplay protocol is active.
 
-For first-party `/ws/game/**` sessions, `PLAY` scope checks, including `tenantId` and `gameInstanceId`, must use the gateway-signed connect context carried in `X-Firemud-Connect-Context` and validated by Game Session rather than raw forwarded headers. Missing, invalid, expired, or replayed context where connect-token validation was required must fail admission with `CONNECT_CONTEXT_INVALID`. Mismatched validated scope fails with `CONNECT_SCOPE_MISMATCH`.
+For first-party `/ws/game/**` sessions, the player supplies only the stable world/realm/character `PLAY` selector. Game Session resolves the current admissible `tenantId` and `gameInstanceId` server-side, then requires that resolved scope to match the gateway-signed connect context carried in `X-Firemud-Connect-Context`; raw forwarded headers or client-selected runtime IDs are never routing authority. Missing, invalid, expired, or replayed context where connect-token validation was required must fail admission with `CONNECT_CONTEXT_INVALID`. Mismatched validated scope fails with `CONNECT_SCOPE_MISMATCH`.
 
 Canonical first-party `PLAY` scope errors on `/ws/game/**`:
 
 - `CONNECT_CONTEXT_INVALID` – required gateway-signed connect context is missing or failed validation because of signature, expiry, replay, or key-verification failure.
-- `CONNECT_SCOPE_MISMATCH` – validated connect context does not match the requested `{tenantId, gameInstanceId}` scope.
+- `CONNECT_SCOPE_MISMATCH` – validated connect context does not match the server-resolved runtime scope for the requested stable world/realm selector.
 
 If a gameplay session already exists for the selected `{tenantId, gameInstanceId, characterId}` and is still resumable, meaning its TTL, current membership authority, and current revocation state are all valid, `PLAY` resumes it and rebinds the new socket to the existing session. On successful resume, Game Session also rebinds the session to a fresh backend token for subsequent internal calls rather than depending on the previous token to remain valid. If no resumable session exists but ordinary admission is still allowed, `PLAY` should fall back automatically to a fresh gameplay entry rather than returning a player-chore error that just asks the user to repeat the same command. Even after reconnect, the client must still send an explicit `PLAY` so the platform never guesses which tenant or character to resume.
 
@@ -119,7 +119,7 @@ PLAY 1 production 2
 OK PLAY Entered world: Demo World / Live Realm as Sora
 ```
 
-The same resolution rules apply to `PLAY demo production 2` or `PLAY 1 1 Sora`: menu indices and stable world/realm slugs are equivalent player-facing selectors for the same canonical `{tenantId, gameInstanceId, characterId}` target.
+The same resolution rules apply to `PLAY demo production 2` or `PLAY 1 1 Sora`: menu indices and stable world/realm slugs are equivalent player-facing selectors. Game Session resolves the current admissible runtime target and binds the internal `{tenantId, gameInstanceId, characterId}` identity; the player never selects `gameInstanceId` directly.
 
 The Account Service returns canonical `AUTH_*` error codes such as `AUTH_INVALID_CREDENTIALS`, `AUTH_ACCOUNT_LOCKED`, and `AUTH_UPSTREAM_FAILURE`. Game Session translates them into protocol-level responses such as `ERROR INVALID_CREDENTIALS` so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible.
 

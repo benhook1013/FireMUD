@@ -58,6 +58,7 @@ A fresh snapshot is necessary but not sufficient: its operation-specific flag mu
 - Reconnecting the same still-resumable gameplay session may use eligible last-known-good entitlement state when fresh entitlement evaluation is unavailable but Account can still validate the other current authorities and commit the ADR 0030 `resumeActivationLease`.
 - Restart, rollback, or recovery of already-entitled capacity may use eligible last-known-good state only when it does not increase the tenant's admitted capacity or quota consumption.
 - A reconnect that resolves to a different realm target or creates a fresh gameplay binding is new admission and remains strict.
+- For the interaction with ADR 0019, this decision is authoritative on entitlement freshness: its last-known-good exception is limited to the exact same still-resumable binding and non-expanding recovery described here. It does not replace ADR 0019's current, fail-closed identity, membership, revocation, uniqueness, lease, or gameplay-scope checks.
 - Existing uninterrupted sessions do not check entitlement authority per action. An observed hard suspension/cancellation still revokes them through the billing event and tenant authority-generation path, while periodic batched reconciliation bounds a missed event to 60 seconds under ADR 0030.
 - Use of last-known-good is logged and metered by operation class and snapshot age without unbounded tenant labels in public metrics.
 
@@ -90,7 +91,7 @@ Durably replicating full entitlement projections into each runtime service could
 
 - Implement the complete runtime response, operation-specific billing flags, and explicit free/trial state; correct `past_due` handling and remove row-ID-derived versions.
 - Implement per-tenant cache, single-flight refresh, sequenced event invalidation, gap detection, periodic reconciliation, and the five-minute hard ceiling.
-- Prove strict new commitment denial, eligible reconnect/recovery continuity, expired/unsafe last-known-good denial, exact 15-second and five-minute boundary behavior, and immediate known hard-cutoff behavior.
+- Prove strict new commitment denial, eligible exact-same-binding/non-expanding reconnect and recovery continuity, fresh-entitlement enforcement for fresh admission or changed bindings, expired/unsafe last-known-good denial, exact 15-second and five-minute boundary behavior, and immediate known hard-cutoff behavior.
 - Prove no entitlement lookup occurs on routine actions for an uninterrupted session.
 - Add instance lifecycle, cutover, rollback, scale, public-join, new-`PLAY`, reconnect, and discovery tests for their distinct operation classes.
 - Prove `ENTITLEMENT_UNAVAILABLE` remains retriable and distinct from known `TENANT_BILLING_BLOCKED`.

@@ -96,16 +96,38 @@ require_branch_return() {
   local predicate="$2"
 
   if ! awk -v predicate="$predicate" '
+    function brace_delta(line, opens, closes) {
+      opens = line
+      closes = line
+      gsub(/[^{]/, "", opens)
+      gsub(/[^}]/, "", closes)
+      return length(opens) - length(closes)
+    }
+
     !found_predicate && index($0, predicate) {
       found_predicate = 1
       in_branch = 1
-      next
+      brace_depth = 0
+      awaiting_scope = 1
     }
-    in_branch && /^[[:space:]]*return;[[:space:]]*$/ { found_return = 1 }
-    in_branch && /^[[:space:]]*}[[:space:]]*$/ {
-      found_close = 1
-      in_branch = 0
+
+    in_branch {
+      brace_depth += brace_delta($0)
+      if (awaiting_scope) {
+        if (brace_depth > 0) {
+          awaiting_scope = 0
+        }
+        next
+      }
+      if (brace_depth == 1 && /^[[:space:]]*return;[[:space:]]*$/) {
+        found_return = 1
+      }
+      if (brace_depth == 0) {
+        found_close = 1
+        in_branch = 0
+      }
     }
+
     END { exit !(found_predicate && found_return && found_close) }
   ' "$path"; then
     echo "$path must return within the branch containing: $predicate" >&2
