@@ -124,7 +124,7 @@ Illustrative responses:
 `GetRoomSnapshot` is the canonical endpoint feeding Game Logic's `ResolveLook`. It returns:
 
 - `tenantId`, `gameInstanceId`, and `roomInstanceId`, together forming the `RoomInstanceRef`;
-- a stable `worldSnapshotId` for LOOK-relevant world data. The live proto uses this as the room-read fence; future tick-ledger work may add an `asOfTickId` only through a coordinated proto and architecture update;
+- a `worldSnapshotId` for LOOK-relevant world data. In the current adapter it is a deterministic room-scope marker. The target contract maps this field to the committed `roomSnapshotVersion` authority: one opaque or epoch-bearing fence that advances after every durable mutation included in the room view. The live proto uses this field for transport; future tick-ledger work may add an `asOfTickId` only through a coordinated proto and architecture update;
 - `roomName` and optional slug;
 - `shortDescription` and `longDescription`, with truncation rules governed by `LOOK_MAX_DESCRIPTION_CHARS`;
 - `exits`, including label, `targetRoomInstanceId`, and human-friendly direction text;
@@ -133,12 +133,12 @@ Illustrative responses:
 
 Room snapshots deliberately exclude live entities, items, and inventory contents. Those are fetched from Entity Management using room- and instance-scoped queries.
 
-Game Logic may memoize snapshots for the duration of a tick but must refresh them after movement. World Management publishes room-mutation change events so any future validated room-view read model can use explicit `worldSnapshotId` invalidation rather than time-based guesswork. FireMUD must not treat stale rendered `LOOK` output as authoritative room truth.
+Game Logic may memoize snapshots for the duration of a tick but must refresh them after movement. World Management publishes room-mutation change events so the target committed `roomSnapshotVersion` can advance after every relevant durable mutation rather than relying on time-based guesswork. The current scope-derived adapter value does not prove that freshness rule, and FireMUD must not treat it as authoritative mutation versioning or treat stale rendered `LOOK` output as room truth.
 
 Cross-service LOOK read consistency is fence-based:
 
-- Game Logic must compare the `worldSnapshotId` fence token from `GetRoomSnapshot` with the `entitySnapshotId` returned by Entity Management `ListRoomEntities` for the same room scope.
-- Entity Management must either answer with a matching same-scope fence token or return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`.
+- Game Logic must compare the logical `roomSnapshotVersion` carried as `worldSnapshotId` from `GetRoomSnapshot` with the identical `entitySnapshotId` returned by Entity Management `ListRoomEntities` for the same room scope.
+- Entity Management must either answer with that exact committed same-scope fence token after satisfying it, or return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`; it must not mint a competing entity-local fence.
 - If fences do not match, Game Logic retries composition instead of returning mixed-state output.
 
 Current World Management runtime room identity notes:
@@ -153,7 +153,7 @@ Illustrative `GetRoomSnapshot` fragments:
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
   "gameInstanceId": "9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78",
   "roomInstanceId": "R-1021",
-  "worldSnapshotId": "7b3b074e-d597-4e9b-b96f-4f5946d26120:9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78:R-1021",
+  "worldSnapshotId": "room-snapshot-epoch-17",
   "roomName": "Candle-lit Antechamber"
 }
 ```
@@ -167,7 +167,7 @@ Illustrative `GetRoomSnapshot` fragments:
 }
 ```
 
-`worldSnapshotId` is the canonical cache key for LOOK-relevant world data for a specific `RoomInstanceRef` at a specific fence. Game Logic combines `worldSnapshotId` from `GetRoomSnapshot` with `entitySnapshotId` from Entity Management `ListRoomEntities` to produce the final `lookSnapshotId` returned to Game Session.
+`worldSnapshotId` carries the canonical committed `roomSnapshotVersion` for LOOK-relevant world data for a specific `RoomInstanceRef`. The target value is opaque or epoch-bearing, changes after every relevant durable mutation, and is emitted by World Management as the single logical fence. Entity Management must return the identical satisfied value as `entitySnapshotId`; it must not derive an independent entity-only version. Game Logic combines the equal transport fields to produce the final `lookSnapshotId` returned to Game Session. The current scope-derived adapter value is documented as incomplete until the committed version is implemented.
 
 ## Instance Termination Contract
 
