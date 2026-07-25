@@ -34,14 +34,14 @@ public interface AccountService {
   net.firedevops.firemud.accountservice.dto.AuthenticationResult verifyEmailLoginOtp(
       Long tenantId, String email, String code);
 
-  PlayerBootstrapResult issuePlayerBootstrap(Long tenantId, String username, String password);
+  PlayerBootstrapResult issuePlayerBootstrap(String accountIdentifier, String secret);
 
   java.util.List<BootstrapWorldDto> listBootstrapWorlds(String bootstrapToken);
 
   java.util.List<BootstrapRealmDto> listBootstrapRealms(String bootstrapToken, String worldSlug);
 
   java.util.List<BootstrapCharacterDto> listBootstrapCharacters(
-      String bootstrapToken, String worldSlug, String realmSlug);
+      String bootstrapToken, String worldSlug, String realmSlug, String connectScopeId);
 
   ConnectTokenResult issueConnectToken(String bootstrapToken, ConnectTokenRequest request);
 

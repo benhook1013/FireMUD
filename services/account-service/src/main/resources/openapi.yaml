@@ -73,6 +73,20 @@ components:
         otp:
           type: string
       required: [tenantId, username, password]
+    PlayerBootstrapRequest:
+      type: object
+      properties:
+        accountIdentifier:
+          type: string
+          minLength: 1
+          maxLength: 254
+          pattern: '.*\S.*'
+        secret:
+          type: string
+          minLength: 6
+          maxLength: 100
+          pattern: '.*\S.*'
+      required: [accountIdentifier, secret]
     AuthenticationResult:
       type: object
       properties:
@@ -99,7 +113,7 @@ components:
         requestId:
           type: string
       required: [connectScopeId, requestId]
-    ConnectTokenResult:
+    ConnectTokenResponse:
       type: object
       properties:
         accountId:
@@ -112,14 +126,16 @@ components:
           type: string
         connectScopeId:
           type: string
-        connectToken:
-          type: string
         jti:
+          type: string
+        requestId:
           type: string
         issuedAt:
           type: string
         expiresAt:
           type: string
+        replayed:
+          type: boolean
     BootstrapWorldDto:
       type: object
       properties:
@@ -290,7 +306,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/LoginRequest'
+              $ref: '#/components/schemas/PlayerBootstrapRequest'
       responses:
         '200':
           description: Bootstrap result
@@ -378,6 +394,13 @@ paths:
           required: true
           schema:
             type: string
+        - in: query
+          name: connectScopeId
+          required: true
+          description: Opaque signed target proof returned by realm discovery
+          schema:
+            type: string
+            minLength: 1
       responses:
         '200':
           description: Visible characters
@@ -410,7 +433,7 @@ paths:
               $ref: '#/components/schemas/ConnectTokenRequest'
       responses:
         '200':
-          description: Connect token result
+          description: Connect token metadata; the token is carried only by the HttpOnly cookie
           content:
             application/json:
               schema:
@@ -419,7 +442,7 @@ paths:
                   status:
                     $ref: '#/components/schemas/ResultStatus'
                   data:
-                    $ref: '#/components/schemas/ConnectTokenResult'
+                    $ref: '#/components/schemas/ConnectTokenResponse'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
         '401':

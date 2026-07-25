@@ -1,10 +1,13 @@
 package net.firedevops.firemud.accountservice.controller;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.matchesPattern;
+import static org.hamcrest.Matchers.not;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -18,6 +21,7 @@ import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.LoginRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
+import net.firedevops.firemud.accountservice.dto.PlayerBootstrapRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
@@ -76,8 +80,8 @@ class AuthControllerTest {
 
   @Test
   void playerBootstrapReturnsShortLivedToken() throws Exception {
-    LoginRequest request = new LoginRequest(1L, "demo", "password");
-    when(accountService.issuePlayerBootstrap(1L, "demo", "password"))
+    PlayerBootstrapRequest request = new PlayerBootstrapRequest("demo", "password");
+    when(accountService.issuePlayerBootstrap("demo", "password"))
         .thenReturn(
             new PlayerBootstrapResult(
                 1L, "boot123", "2026-03-30T00:00:00Z", "2026-03-30T00:05:00Z"));
@@ -94,7 +98,7 @@ class AuthControllerTest {
   }
 
   @Test
-  void connectTokenReturnsMintedToken() throws Exception {
+  void connectTokenSetsCookieAndReturnsMetadataOnly() throws Exception {
     ConnectTokenRequest request = new ConnectTokenRequest("scope-1", "req-7");
     when(accountService.issueConnectToken("boot123", new ConnectTokenRequest("scope-1", "req-7")))
         .thenReturn(
@@ -119,7 +123,18 @@ class AuthControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.connectToken").value("conn123"))
+        .andExpect(jsonPath("$.data.connectToken").doesNotHaveJsonPath())
+        .andExpect(content().string(not(containsString("conn123"))))
+        .andExpect(jsonPath("$.data.accountId").value(1))
+        .andExpect(jsonPath("$.data.tenantId").value(1))
+        .andExpect(jsonPath("$.data.gameInstanceId").value(42))
+        .andExpect(jsonPath("$.data.realmSlug").value("production"))
+        .andExpect(jsonPath("$.data.connectScopeId").value("scope-1"))
+        .andExpect(jsonPath("$.data.jti").value("jti-1"))
+        .andExpect(jsonPath("$.data.requestId").value("req-7"))
+        .andExpect(jsonPath("$.data.issuedAt").value("2026-03-30T00:00:00Z"))
+        .andExpect(jsonPath("$.data.expiresAt").value("2026-03-30T00:00:30Z"))
+        .andExpect(jsonPath("$.data.replayed").value(false))
         .andExpect(
             header()
                 .string(HttpHeaders.SET_COOKIE, containsString("Firemud-Connect-Token=conn123")))
@@ -127,9 +142,10 @@ class AuthControllerTest {
         .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Secure")))
         .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("SameSite=Strict")))
         .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Path=/ws/game")))
-        .andExpect(jsonPath("$.data.connectScopeId").value("scope-1"))
-        .andExpect(jsonPath("$.data.requestId").value("req-7"))
-        .andExpect(jsonPath("$.data.replayed").value(false));
+        .andExpect(
+            header()
+                .string(
+                    HttpHeaders.SET_COOKIE, matchesPattern(".*(?:^|;\\s*)Max-Age=30(?:;|$).*")));
   }
 
   @Test
@@ -175,18 +191,30 @@ class AuthControllerTest {
 
   @Test
   void listBootstrapCharactersReturnsCharacters() throws Exception {
-    when(accountService.listBootstrapCharacters("boot123", "demo", "production"))
+    when(accountService.listBootstrapCharacters("boot123", "demo", "production", "scope-1"))
         .thenReturn(
             List.of(new BootstrapCharacterDto("char-1", "Mara", 12, "SHARED", "ALLOW_NEW")));
 
     mockMvc
         .perform(
             get("/auth/bootstrap/worlds/demo/realms/production/characters")
+                .param("connectScopeId", "scope-1")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer boot123"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data[0].characterId").value("char-1"))
         .andExpect(jsonPath("$.data[0].characterName").value("Mara"));
+  }
+
+  @Test
+  void listBootstrapCharactersRejectsMissingConnectScopeIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            get("/auth/bootstrap/worlds/demo/realms/production/characters")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer boot123"))
+        .andExpect(status().isBadRequest());
+
+    verifyNoInteractions(accountService);
   }
 
   @Test

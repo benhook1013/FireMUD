@@ -493,53 +493,73 @@ class AccountServiceImplTest {
     account.setId(7L);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
+    account.setLoginAuthModes("PASSWORD");
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
 
-    PlayerBootstrapResult result = service.issuePlayerBootstrap(1L, "demo", "password");
+    PlayerBootstrapResult result = service.issuePlayerBootstrap("demo", "password");
 
     assertEquals(7L, result.accountId());
     assertNotNull(result.bootstrapToken());
     assertNotNull(result.issuedAt());
     assertNotNull(result.expiresAt());
     org.mockito.Mockito.verify(sessionService)
-        .storeSession(
-            org.mockito.ArgumentMatchers.eq(1L),
+        .storeAccountSession(
             org.mockito.ArgumentMatchers.eq(7L),
-            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.eq(result.bootstrapToken()),
             org.mockito.ArgumentMatchers.eq(300000L));
-    assertEquals(
-        "player-bootstrap",
-        new JwtUtil(JWT_SECRET, 300000L)
-            .parseToken(result.bootstrapToken())
-            .getPayload()
-            .getAudience()
-            .iterator()
-            .next());
+    var claims = new JwtUtil(JWT_SECRET, 300000L).parseToken(result.bootstrapToken()).getPayload();
+    assertEquals("player-bootstrap", claims.getAudience().iterator().next());
+    assertFalse(claims.containsKey("tenantId"));
     verifyNoInteractions(accountEmailLoginChallengeRepository);
   }
 
   @Test
-  void listBootstrapWorldsRejectsMalformedBootstrapTokenClaims() {
-    String malformedBootstrapToken =
+  void issuePlayerBootstrapAcceptsAndConsumesEmailLoginOtp() {
+    Account account = new Account();
+    account.setId(7L);
+    account.setUsername("demo");
+    account.setEmail("demo@example.com");
+    account.setLoginAuthModes("EMAIL_OTP");
+    net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
+        new net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge();
+    challenge.setAccountId(7L);
+    challenge.setCodeHash(hash("123456"));
+    challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(5));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountEmailLoginChallengeRepository.findByAccountId(7L))
+        .thenReturn(Optional.of(challenge));
+
+    PlayerBootstrapResult result = service.issuePlayerBootstrap("demo", "123456");
+
+    assertEquals(7L, result.accountId());
+    org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(accountEmailLoginChallengeRepository);
+    inOrder.verify(accountEmailLoginChallengeRepository).lockAccountChallenge(7L);
+    inOrder.verify(accountEmailLoginChallengeRepository).findByAccountId(7L);
+    inOrder.verify(accountEmailLoginChallengeRepository).delete(challenge);
+    org.mockito.Mockito.verify(sessionService)
+        .storeAccountSession(7L, result.bootstrapToken(), 300000L);
+  }
+
+  @Test
+  void listBootstrapWorldsRejectsInactiveAccountBootstrapToken() {
+    String bootstrapToken =
         new JwtUtil(JWT_SECRET, 300000L)
-            .generateToken(
-                "11",
-                Map.of("aud", "player-bootstrap", "accountId", "11", "tenantId", "not-a-number"));
+            .generateToken("11", Map.of("aud", "player-bootstrap", "accountId", "11"));
 
     AuthenticationException ex =
         assertThrows(
-            AuthenticationException.class,
-            () -> service.listBootstrapWorlds(malformedBootstrapToken));
+            AuthenticationException.class, () -> service.listBootstrapWorlds(bootstrapToken));
 
     assertEquals("CONNECT_CONTEXT_INVALID", ex.getCode());
+    assertEquals("Bootstrap token expired", ex.getMessage());
+    org.mockito.Mockito.verify(sessionService).isAccountSessionActive(11L, bootstrapToken);
   }
 
   @Test
   void listBootstrapWorldsRejectsMalformedBootstrapTokenAccountClaim() {
     String malformedBootstrapToken =
         new JwtUtil(JWT_SECRET, 300000L)
-            .generateToken(
-                "11", Map.of("aud", "player-bootstrap", "accountId", "abc", "tenantId", "7"));
+            .generateToken("11", Map.of("aud", "player-bootstrap", "accountId", "abc"));
 
     AuthenticationException ex =
         assertThrows(
@@ -553,8 +573,7 @@ class AccountServiceImplTest {
   void listBootstrapWorldsRejectsBootstrapTokenAccountSubjectMismatch() {
     String malformedBootstrapToken =
         new JwtUtil(JWT_SECRET, 300000L)
-            .generateToken(
-                "12", Map.of("aud", "player-bootstrap", "accountId", "11", "tenantId", "7"));
+            .generateToken("12", Map.of("aud", "player-bootstrap", "accountId", "11"));
 
     AuthenticationException ex =
         assertThrows(
@@ -568,23 +587,7 @@ class AccountServiceImplTest {
   void listBootstrapWorldsRejectsNonPositiveBootstrapTokenClaims() {
     String malformedBootstrapToken =
         new JwtUtil(JWT_SECRET, 300000L)
-            .generateToken(
-                "11", Map.of("aud", "player-bootstrap", "accountId", "0", "tenantId", "7"));
-
-    AuthenticationException ex =
-        assertThrows(
-            AuthenticationException.class,
-            () -> service.listBootstrapWorlds(malformedBootstrapToken));
-
-    assertEquals("CONNECT_CONTEXT_INVALID", ex.getCode());
-  }
-
-  @Test
-  void listBootstrapWorldsRejectsZeroTenantBootstrapTokenClaims() {
-    String malformedBootstrapToken =
-        new JwtUtil(JWT_SECRET, 300000L)
-            .generateToken(
-                "11", Map.of("aud", "player-bootstrap", "accountId", "11", "tenantId", "0"));
+            .generateToken("11", Map.of("aud", "player-bootstrap", "accountId", "0"));
 
     AuthenticationException ex =
         assertThrows(
@@ -597,8 +600,7 @@ class AccountServiceImplTest {
   @Test
   void listBootstrapWorldsRejectsBootstrapTokenWithoutAudience() {
     String malformedBootstrapToken =
-        new JwtUtil(JWT_SECRET, 300000L)
-            .generateToken("11", Map.of("accountId", "11", "tenantId", "7"));
+        new JwtUtil(JWT_SECRET, 300000L).generateToken("11", Map.of("accountId", "11"));
 
     AuthenticationException ex =
         assertThrows(
@@ -668,8 +670,8 @@ class AccountServiceImplTest {
                     .setCharacterCreationPolicy("ALLOW_NEW")
                     .build()));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
 
     assertThrows(
         IllegalArgumentException.class,
@@ -692,8 +694,8 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
 
     AuthenticationException ex =
         assertThrows(
@@ -721,8 +723,8 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
 
     AuthenticationException ex =
         assertThrows(
@@ -750,8 +752,8 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
             .generateToken(
@@ -803,8 +805,8 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
             .generateToken(
@@ -856,8 +858,8 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
             .generateToken(
@@ -909,8 +911,8 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
             .generateToken(
@@ -962,8 +964,8 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
             .generateToken(
@@ -1135,8 +1137,8 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
 
@@ -1184,8 +1186,8 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
     when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
@@ -1234,8 +1236,8 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
     when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
@@ -1282,8 +1284,8 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
 
@@ -1426,8 +1428,8 @@ class AccountServiceImplTest {
               return membership;
             });
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
 
@@ -1459,8 +1461,8 @@ class AccountServiceImplTest {
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
     when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
@@ -1551,17 +1553,116 @@ class AccountServiceImplTest {
             7L, 11L, 44L, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(java.util.List.of(character));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
 
     var characters =
-        service.listBootstrapCharacters(bootstrap.bootstrapToken(), "demo", "production");
+        service.listBootstrapCharacters(
+            bootstrap.bootstrapToken(), "demo", "production", connectScopeId);
 
     assertEquals(1, characters.size());
     assertEquals("char-1", characters.getFirst().characterId());
     assertEquals("Mara", characters.getFirst().characterName());
     assertEquals("SHARED", characters.getFirst().stateScope());
     assertEquals("ALLOW_NEW", characters.getFirst().characterCreationPolicy());
+  }
+
+  @Test
+  void listBootstrapCharactersRejectsAmbiguousRealmBeforeAdmissionFiltering() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    var visibleRealm =
+        net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .setDisplayName("Live Realm")
+            .setTenantId("7")
+            .setGameInstanceId("44")
+            .setPointerVersion(17L)
+            .setVisible(true)
+            .setPublicProductionRealm(true)
+            .setRequiresCharacterSelection(false)
+            .setStateScope("SHARED")
+            .setCharacterCreationPolicy("ALLOW_NEW")
+            .build();
+    var hiddenDuplicate =
+        visibleRealm.toBuilder().setVisible(false).setPublicProductionRealm(false).build();
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(java.util.List.of(visibleRealm, hiddenDuplicate));
+
+    AuthenticationException ex =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.listBootstrapCharacters(
+                    bootstrap.bootstrapToken(), "demo", "production", connectScopeId));
+
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", ex.getCode());
+    verifyNoInteractions(entityManagementClient);
+  }
+
+  @Test
+  void listBootstrapCharactersSkipsMalformedUnrelatedRealm() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    var visibleRealm =
+        net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .setDisplayName("Live Realm")
+            .setTenantId("7")
+            .setGameInstanceId("44")
+            .setPointerVersion(17L)
+            .setVisible(true)
+            .setPublicProductionRealm(true)
+            .setRequiresCharacterSelection(false)
+            .setStateScope("SHARED")
+            .setCharacterCreationPolicy("ALLOW_NEW")
+            .build();
+    var malformedUnrelatedRealm =
+        visibleRealm.toBuilder().setRealmSlug("broken").setTenantId("bad").build();
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(java.util.List.of(malformedUnrelatedRealm, visibleRealm));
+
+    var characters =
+        service.listBootstrapCharacters(
+            bootstrap.bootstrapToken(), "demo", "production", connectScopeId);
+
+    assertTrue(characters.isEmpty());
   }
 
   @Test
@@ -1575,8 +1676,8 @@ class AccountServiceImplTest {
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
         .thenReturn(Optional.of(membership(account, 7L)));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
 
     var realms = service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo");
 
@@ -1625,8 +1726,8 @@ class AccountServiceImplTest {
                     .setCharacterCreationPolicy("ALLOW_NEW")
                     .build()));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
 
     assertThrows(
         IllegalArgumentException.class,
@@ -1686,11 +1787,14 @@ class AccountServiceImplTest {
             7L, 11L, 91L, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
         .thenReturn(java.util.List.of(character));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
 
     var characters =
-        service.listBootstrapCharacters(bootstrap.bootstrapToken(), "demo", "production");
+        service.listBootstrapCharacters(
+            bootstrap.bootstrapToken(), "demo", "production", connectScopeId);
 
     assertEquals(1, characters.size());
     assertEquals("char-iso-1", characters.getFirst().characterId());
@@ -1726,14 +1830,17 @@ class AccountServiceImplTest {
                 .setCharacterCreationPolicy("ALLOW_NEW")
                 .build());
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
 
     AuthenticationException ex =
         assertThrows(
             AuthenticationException.class,
             () ->
-                service.listBootstrapCharacters(bootstrap.bootstrapToken(), "demo", "production"));
+                service.listBootstrapCharacters(
+                    bootstrap.bootstrapToken(), "demo", "production", connectScopeId));
 
     assertEquals("ADMISSION_POINTER_UNAVAILABLE", ex.getCode());
     org.mockito.Mockito.verifyNoInteractions(entityManagementClient);
@@ -1750,6 +1857,22 @@ class AccountServiceImplTest {
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
         .thenReturn(Optional.of(membership(account, 7L)));
 
+    when(gameSessionClient.listGameplayRealms("sandbox"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("sandbox")
+                    .setRealmSlug("production")
+                    .setDisplayName("Live Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("91")
+                    .setPointerVersion(17L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(true)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("ISOLATED")
+                    .setCharacterCreationPolicy("COPIED_ONLY")
+                    .build()));
     when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
         .thenReturn(
             net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
@@ -1792,17 +1915,111 @@ class AccountServiceImplTest {
             7L, 11L, 91L, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
         .thenReturn(java.util.List.of(character));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service
+            .listBootstrapRealms(bootstrap.bootstrapToken(), "sandbox")
+            .getFirst()
+            .connectScopeId();
 
     var characters =
-        service.listBootstrapCharacters(bootstrap.bootstrapToken(), "sandbox", "production");
+        service.listBootstrapCharacters(
+            bootstrap.bootstrapToken(), "sandbox", "production", connectScopeId);
 
     assertEquals(1, characters.size());
     assertEquals("char-sandbox-1", characters.getFirst().characterId());
     assertEquals("BuilderMara", characters.getFirst().characterName());
     assertEquals("ISOLATED", characters.getFirst().stateScope());
     org.mockito.Mockito.verify(gameSessionClient).getAdmissionPointer(7L, "sandbox", "production");
+  }
+
+  @Test
+  void listBootstrapCharactersUsesSignedScopeToDisambiguateTenantIdentity() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(
+            org.mockito.ArgumentMatchers.eq(11L), org.mockito.ArgumentMatchers.anyLong()))
+        .thenReturn(Optional.empty());
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("production")
+                    .setDisplayName("Tenant Seven")
+                    .setTenantId("7")
+                    .setGameInstanceId("44")
+                    .setPointerVersion(17L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(true)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build(),
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("production")
+                    .setDisplayName("Tenant Eight")
+                    .setTenantId("8")
+                    .setGameInstanceId("45")
+                    .setPointerVersion(18L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(true)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+    when(entityManagementClient.listCharactersByAccount(
+            7L, 11L, 44L, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+        .thenReturn(java.util.List.of());
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").stream()
+            .filter(realm -> realm.tenantId() == 7L)
+            .findFirst()
+            .orElseThrow()
+            .connectScopeId();
+
+    var characters =
+        service.listBootstrapCharacters(
+            bootstrap.bootstrapToken(), "demo", "production", connectScopeId);
+
+    assertTrue(characters.isEmpty());
+    org.mockito.Mockito.verify(gameSessionClient).getAdmissionPointer(7L, "demo", "production");
+    org.mockito.Mockito.verify(gameSessionClient, org.mockito.Mockito.never())
+        .getAdmissionPointer(8L, "demo", "production");
+  }
+
+  @Test
+  void listBootstrapCharactersRejectsPathThatDoesNotMatchSignedScope() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+
+    AuthenticationException ex =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.listBootstrapCharacters(
+                    bootstrap.bootstrapToken(), "sandbox", "production", connectScopeId));
+
+    assertEquals("CONNECT_SCOPE_MISMATCH", ex.getCode());
+    verifyNoInteractions(entityManagementClient);
   }
 
   @Test
@@ -1836,8 +2053,8 @@ class AccountServiceImplTest {
                     .setCharacterCreationPolicy("ALLOW_NEW")
                     .build()));
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
 
     var realms = service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo");
 
@@ -1893,8 +2110,8 @@ class AccountServiceImplTest {
             11L, 7L, "demo", "preview"))
         .thenReturn(true);
 
-    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password");
-    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
 

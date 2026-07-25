@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
@@ -40,6 +41,42 @@ class SessionServiceImplTest {
         .set("session:auth:account:11:" + tokenHash, 11L, Duration.ofMillis(5000L));
     verify(valueOperations)
         .set("session:auth:tenant:7:" + tokenHash, 11L, Duration.ofMillis(5000L));
+  }
+
+  @Test
+  void storeAccountSessionWritesOnlyTheAccountAllowlistKey() {
+    service.storeAccountSession(11L, "token-123", 5000L);
+
+    verify(valueOperations)
+        .set("session:auth:account:11:" + sha256("token-123"), 11L, Duration.ofMillis(5000L));
+    verifyNoMoreInteractions(valueOperations);
+  }
+
+  @Test
+  void accountSessionIsActiveChecksTheAccountAllowlistKey() {
+    when(valueOperations.get("session:auth:account:11:" + sha256("token-123"))).thenReturn("11");
+
+    assertThat(service.isAccountSessionActive(11L, "token-123")).isTrue();
+  }
+
+  @Test
+  void accountSessionIsInactiveForAnotherStoredAccount() {
+    when(valueOperations.get("session:auth:account:11:" + sha256("token-123"))).thenReturn("12");
+
+    assertThat(service.isAccountSessionActive(11L, "token-123")).isFalse();
+  }
+
+  @Test
+  void accountSessionIsInactiveForMalformedStoredAccount() {
+    when(valueOperations.get("session:auth:account:11:" + sha256("token-123")))
+        .thenReturn("not-a-number");
+
+    assertThat(service.isAccountSessionActive(11L, "token-123")).isFalse();
+  }
+
+  @Test
+  void accountSessionIsInactiveWhenTheAllowlistEntryIsAbsent() {
+    assertThat(service.isAccountSessionActive(11L, "token-123")).isFalse();
   }
 
   @Test
