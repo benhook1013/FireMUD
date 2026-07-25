@@ -263,7 +263,7 @@ For most deployments, region topology changes (splits, merges, or reassignments 
 
 World Management owns region topology (layout and `<regionId>` assignments within each `gameInstanceId`) and may, over time, support “drain and split” or “merge” flows:
 
-- Split flows mark a region for split, allow existing ticks to complete, and then move entities plus queues under new `<tenantId, gameInstanceId, regionId>` prefixes before ticks resume.
+- Split flows mark a region for split, allow existing ticks to complete, and then move entities under the new `<tenantId, gameInstanceId, regionId>` mapping before ticks resume. Moving live Redis queues is a future migration option only; the first implementation uses the reset/rebuild protocol below and does not move live Redis keys.
 - Merge flows consolidate lightly used regions into a single region to reduce overhead.
 
 ### Topology Changes (Split/Merge) Protocol (Required Invariants)

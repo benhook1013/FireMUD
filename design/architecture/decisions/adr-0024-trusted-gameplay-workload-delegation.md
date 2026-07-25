@@ -104,8 +104,11 @@ This decision supersedes only the legacy `SessionAttestation` and per-RPC delega
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-authentication.md`
-- `design/architecture/system-architecture-security.md`
-- `design/architecture/system-architecture-jwt-and-token-contracts.md`
-- `design/architecture/system-architecture-session-behavior.md`
-- gameplay service API and implementation-tracking documentation
+- [Authentication and authorization](../system-architecture-authentication.md)
+- [Security architecture](../system-architecture-security.md)
+- [JWT and token contracts](../system-architecture-jwt-and-token-contracts.md)
+- [gRPC architecture](../system-architecture-grpc.md)
+- [Session behavior](../system-architecture-session-behavior.md)
+- [Account Service API contracts](../microservices/account-service/api-contracts.md)
+- [Game Session Service API contracts](../microservices/game-session-service/api-contracts.md)
+- [Player access and session implementation tracker](../../project-management/implementation-tracking/player-access-and-session.md)

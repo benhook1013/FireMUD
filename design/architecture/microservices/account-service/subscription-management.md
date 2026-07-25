@@ -149,13 +149,15 @@ The internal runtime entitlement surface returns a snapshot of:
 - Freshness and sequencing metadata:
   - `evaluatedAt` (UTC timestamp when entitlements were evaluated),
   - `entitlementVersion` (monotonic entitlement snapshot/version identifier), and
-  - `tenantBillingSequence` (latest applied billing-event sequence for the tenant).
+  - `tenantBillingSequence` (latest applied billing-event sequence for the tenant), and
+  - `tenantAuthorityGeneration` (opaque Account-owned tenant-authority fence).
 
 Runtime services such as the Game Session Service and world-management components use this internal runtime contract as follows:
 
 - On game instance start, restart, rollback that changes the active version, or significant scaling operations, they call `GetTenantEntitlementsForRuntime(tenantId)` and enforce both availability and quotas before admitting new load.  
 - When admitting new player sessions for a tenant, they consult entitlements (either via a fresh call or a cached snapshot) to confirm that the tenant is still available for new bindings; general gameplay availability is not sufficient when `grace` has closed new admission.
 - They cache entitlements per tenant, coalesce concurrent refreshes, and invalidate or advance cached state immediately when `SubscriptionStatusChanged` or `TenantBillingStateChanged` events arrive rather than checking entitlements on every tick or issuing one Account call per player.
+- A strict commitment captures `tenantAuthorityGeneration`, `tenantBillingSequence`, and `entitlementVersion` from the fresh snapshot and conditionally commits only while that tuple remains current in Account authority. A billing or tenant-authority advance between evaluation and commit causes a retry or fail-closed rejection; cache invalidation alone is not a commitment fence.
 - A snapshot is fresh for 15 seconds. Explicit join, first/new session admission, new instance/scale, quota increase, paid-feature activation, and capacity-creating cutover require fresh authority and fail closed with `ENTITLEMENT_UNAVAILABLE` when refresh cannot complete.
 - Reconnecting the same resumable session and non-expanding restart/rollback/recovery may use a previously authoritative positive snapshot for at most five minutes from `evaluatedAt`. A different realm target or fresh binding is new admission. The five-minute maximum may be shortened or disabled but not widened by operator configuration.
 - This outage fallback is valid only for the same existing binding, target, authority tuple, and still-valid resume episode with a positive authoritative snapshot. New joins, fresh bindings, expansion, target changes, and uncertain, missing, stale, negative, revoked, or gapped authority fail closed.

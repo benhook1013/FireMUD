@@ -216,6 +216,8 @@ Game Session uses Redis for two related but distinct session concerns:
 - **Bootstrap/pre-auth transport context** is created when a socket connects and before gameplay authentication completes. Current Game Session implementations store this context under the `sessionctx:*` key family, such as `sessionctx:session:<sessionId>:context` and `sessionctx:<tenantId>:<sessionId>:context`, with unauthenticated fields such as `accountId = 0`, no `authTokenHash`, no `membershipVersion`, and only bootstrap scope such as tenant, locale, or initial game-instance hints. Gameplay commands must treat these entries as unauthenticated until `LOGIN` succeeds.
 - **Authenticated gameplay session state** is created or promoted after successful `LOGIN` and `PLAY`. The canonical target key family for this state is `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`.
 
+The authenticated gameplay key family is a target-state contract; the current runtime still uses the implementation-local `sessionctx:*` family described above. When the target family is introduced, its payload must use the migration rules below.
+
 Authenticated gameplay session keys capture:
 
 - Socket binding metadata and transport details.
@@ -224,6 +226,8 @@ Authenticated gameplay session keys capture:
 - Authoritative tenant membership freshness metadata (for example `membershipVersion`) so reconnect/resume can verify that gameplay admission authority still exists before rebinding.
 - Tick-region participation metadata (for example active region bindings and reconnect context). Per-entity command queues remain under `tick:{tenantRegionTag}:queue:<entityId>` and are reset-tolerant coordination state, not durable session payload.
 - Session-local coordination metadata (for example reconnect state, transport-level pacing, and other per-connection ephemeral fields).
+
+Adding `authTokenExpiresAt` is a target payload-schema change, not an unversioned optional field. Existing or missing-version payloads are treated as `schemaVersion=1`; the target payload carrying the expiry field is `schemaVersion=2`. Readers and CAS scripts that understand both versions must be deployed before writers begin emitting version 2. A version-1 record without `authTokenExpiresAt` is never treated as having an unbounded token lifetime and is not eligible for token refresh or resumable admission; it must be re-established through fresh `LOGIN`/`PLAY` (or an explicitly audited migration that obtains the exact Account-issued expiry). Unknown versions fail closed. This is a target rollout rule; the current `sessionctx:*` implementation has no such canonical `session:game:*` schema migration yet.
 
 The pre-auth `sessionctx:*` family is a bootstrap/session-context implementation surface, not region-local gameplay authority. It must not be used to admit commands, route tick participation, or bypass the authenticated `session:game:*` / `tick:{tenantRegionTag}:session-binding:<entityId>` contract. When the implementation converges key names, the same semantic split remains: pre-auth transport context may exist before `LOGIN`, but authenticated gameplay binding semantics begin only after successful authentication and gameplay admission.
 
@@ -304,7 +308,7 @@ Session revocation actions (for example “kick all sessions for tenant X” on 
 - Publishing a tenant-scoped billing/security event that Game Session consumes promptly, and
 - Closing affected sockets and removing the corresponding per-session keys using in-memory registries and/or purpose-built, bounded indexes.
 
-Issued-token registry records (`session:auth:token:<tokenHash>`) use each record's actual JWT `exp` plus the cleanup margin rather than gameplay's global `session_expiration_ms` derivation. Their reset policy is independent of gameplay-session preservation: region- and tenant-scoped coordination resets preserve these Account-owned records, while a cluster-scoped reset drops them and forces reauthentication/reissuance. The `--preserve-sessions` option applies only to gameplay session and bootstrap-context records; it never preserves or deletes issued-token registry records. They are documented in detail in `system-architecture-jwt-and-token-contracts.md` and the Account Service design, and live on Coordination Redis so a cluster reset can force re-authentication in a controlled way.
+Issued-token registry records (`session:auth:token:<tokenHash>`) use each record's actual JWT `exp` plus the cleanup margin rather than gameplay's global `session_expiration_ms` derivation. Their reset policy is independent of gameplay-session preservation: region- and tenant-scoped coordination resets preserve these Account-owned records, while a cluster reset closes protected admission, completes the Account repair/reset cutover, and then drops them as physical cleanup, forcing reauthentication/reissuance. The `--preserve-sessions` option applies only to gameplay session and bootstrap-context records; it never preserves or deletes issued-token registry records. They are documented in detail in `system-architecture-jwt-and-token-contracts.md` and the Account Service design, and live on Coordination Redis so a cluster reset can force re-authentication in a controlled way.
 
 ### Gateway Connect-Token Replay Markers
 

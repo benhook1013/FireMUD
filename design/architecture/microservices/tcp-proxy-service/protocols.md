@@ -19,9 +19,9 @@ These flows describe how Telnet traffic is forwarded into the shared login/sessi
 - **Target canonical player flow**
   - Connect to the TCP Proxy Service.
   - Optionally browse public worlds with `WORLDS`.
-  - Send `LOGIN <email-or-username>` to start the neutral email challenge, or `LOGIN <email-or-username> <secret>` to authenticate immediately.
+  - Send `LOGIN <email-or-username>` to start the neutral email challenge, or `LOGIN <email-or-username> <secret>` to authenticate immediately. When the one-argument form starts a challenge, complete the applicable password or verified-email-code response before continuing; `JOIN` is accepted only after authentication succeeds.
   - For a first-time public-production account, send `JOIN <world>` to create the durable player membership. A returning member skips `JOIN`.
-  - Enter gameplay with `PLAY <world> [realm] [character]`; use `REALMS <world>` or `CHARS <world> [realm]` only if the target is ambiguous and more selection help is needed.
+  - After membership, use `CHARS <world> [realm]` or the character-creation flow to select or create the required character, then enter gameplay with `PLAY <world> [realm] [character]`; use `REALMS <world>` when the target is ambiguous.
   - Send gameplay commands (`LOOK`, `SAY`, movement, and so on) as normal.
   - The proxy forwards all lines verbatim to Spring Cloud Gateway; the Game Session Service creates or binds the gameplay session exactly as it does for native WebSocket clients.
 - **Future smart-client flow**

@@ -96,14 +96,14 @@ Checking Account or Redis before every command gives a tighter revocation observ
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-session-behavior.md`
-- `design/architecture/system-architecture-authentication.md`
-- `design/architecture/microservices/account-service/subscription-management.md`
-- `design/architecture/microservices/account-service/runtime-and-data.md`
-- `design/architecture/microservices/game-session-service/runtime-and-data.md`
-- `design/architecture/user-journeys-operators.md`
-- `design/architecture/decisions/adr-0028-differentiated-entitlement-freshness.md`
-- `design/project-management/implementation-tracking/player-access-and-session.md`
+- [Session behavior](../system-architecture-session-behavior.md)
+- [Authentication and authorization](../system-architecture-authentication.md)
+- [Account subscription management](../microservices/account-service/subscription-management.md)
+- [Account Service runtime and data](../microservices/account-service/runtime-and-data.md)
+- [Game Session runtime and data](../microservices/game-session-service/runtime-and-data.md)
+- [Operator journeys](../user-journeys-operators.md)
+- [ADR 0028: Differentiated Entitlement Freshness](./adr-0028-differentiated-entitlement-freshness.md)
+- [Player access and session tracking](../../project-management/implementation-tracking/player-access-and-session.md)
 
 ## Reversibility and Revisit Triggers
 

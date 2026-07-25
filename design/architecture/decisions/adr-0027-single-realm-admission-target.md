@@ -43,6 +43,7 @@ The prior design correctly routed each realm to one Game Session-owned instance,
 - Creating a route uses the equivalent of expected version `0`; every change to an existing route requires its current positive `pointerVersion`.
 - The database mutation performs a real conditional write against `{tenantId, worldSlug, realmSlug, pointerVersion}`. A prior read followed by an unconditional row update is not compare-and-set.
 - Pointer state, the append-only audit event, and the idempotent control-plane request outcome are one transaction boundary when they share the Game Session database. A replacement cutover that changes `gameInstanceId` additionally commits the applicable prepared-cutover execution state in that same transaction; ordinary `OPEN` or `CLOSED` pointer updates do not require a `prepared_version_upgrade`. The current target requires every applicable record to commit or roll back together. If a later deployment separates those stores, this ADR does not silently substitute an “equivalent” protocol: a new accepted architecture decision must first define and prove the replacement recovery, retry, and visibility semantics.
+- A closure or replacement cutover that leaves source sessions draining also creates a durable drain-enforcement work item in that transaction. The work item records the source drain identity, source instance, absolute deadline, and desired lifecycle actions. A Game Session reconciler and startup-recovery path claim those items idempotently, retry notice delivery, socket closure, command fencing, and `InstanceTermination` after crashes, and retain the item until the persisted source lifecycle reaches its terminal state. A committed pointer or drain record is not evidence that those runtime effects already occurred.
 - A replacement instance remains non-admissible until preparation and compatibility checks pass. Cutover atomically moves `OPEN(source)` to `OPEN(target)`; failure leaves the source as the sole target. Stopping a realm without a replacement first moves it to `CLOSED` and persists the same source drain identity, source instance, absolute deadline, and lifecycle state before the old runtime drains; it does not use an untracked shutdown path. A zero-duration policy sets the persisted deadline at that closure/cutover commit and immediately applies the same notice, socket-closure, command-fence, and idempotent `STOPPING` transition as any other expired drain.
 
 ### Existing Sessions And Scaling
@@ -80,7 +81,7 @@ Exposing raw instance IDs makes routing explicit to the client but leaks replace
 
 - Add explicit `OPEN`/`CLOSED` routing state and a tenant-qualified uniqueness constraint.
 - Implement database-level CAS with required expected versions and prove concurrent writers yield one winner and strictly increasing committed versions.
-- Atomically persist pointer state, audit, and request replay in one transaction, plus prepared-cutover execution for a replacement cutover that changes `gameInstanceId`, including crash/retry proof at every applicable boundary. If those records cannot share a transaction in a future topology, stop and obtain a new accepted decision before implementing or claiming the split-store cutover contract.
+- Atomically persist pointer state, audit, request replay, and the applicable drain-enforcement work item in one transaction, plus prepared-cutover execution for a replacement cutover that changes `gameInstanceId`, including crash/retry proof at every applicable boundary. Prove reconciler and startup recovery idempotency through notice delivery, socket closure, command fencing, and terminal `InstanceTermination`. If those records cannot share a transaction in a future topology, stop and obtain a new accepted decision before implementing or claiming the split-store cutover contract.
 - Separate catalog revisioning from admission routing and prove display-only edits do not invalidate connect or active gameplay state unnecessarily.
 - Remove pointer-currentness checks from routine action authority for an already admitted binding; prove cutover admits new/reconnecting players only to the target while source sessions end through the bounded drain.
 - Persist and prove the resolved drain policy, unique drain identity, absolute deadline, early-empty completion, deadline enforcement, socket closure, command rejection, and idempotent source termination.
@@ -88,12 +89,12 @@ Exposing raw instance IDs makes routing explicit to the client but leaks replace
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-multi-tenancy.md`
-- `design/architecture/system-architecture-versioning-runtime.md`
-- `design/architecture/system-architecture-session-behavior.md`
-- `design/architecture/user-journeys-creators.md`
-- `design/architecture/microservices/game-session-service/api-contracts.md`
-- `design/project-management/implementation-tracking/realm-routing-and-playable-state.md`
+- [Multi-tenancy](../system-architecture-multi-tenancy.md)
+- [Runtime versioning](../system-architecture-versioning-runtime.md)
+- [Session behavior](../system-architecture-session-behavior.md)
+- [Creator journeys](../user-journeys-creators.md)
+- [Game Session API contracts](../microservices/game-session-service/api-contracts.md)
+- [Realm routing and playable state tracker](../../project-management/implementation-tracking/realm-routing-and-playable-state.md)
 
 ## Reversibility and Revisit Triggers
 

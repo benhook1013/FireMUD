@@ -131,10 +131,10 @@ Pointer freshness and cutover rules:
 - `pointerVersion` is monotonic per `{tenantId, worldSlug, realmSlug}`.
 - Any `OPEN`/`CLOSED` transition, target-instance change, or execution-namespace change that materially changes the admitted runtime must advance `pointerVersion`. Catalog-only changes advance `catalogRevision` instead.
 - The current admissible pointer is persisted in Game Session-owned control-plane state together with append-only pointer audit events; gameplay clients and bootstrap flows consume the read surface derived from that state rather than local config snapshots.
-- Connect-token issuance and other admission-critical flows must fail closed if the selected realm target no longer resolves to the same admissible pointer version they were issued against.
+- Connect-token issuance and other admission-critical flows must fail closed if the selected realm target no longer resolves to the same admissible `pointerVersion` and `catalogRevision` they were issued against. Bootstrap bundles and connect tokens carry both references; a catalog/policy revision change cannot be hidden behind an unchanged runtime pointer version.
 - Realm cutover must therefore look like a control-plane pointer move, not a client-side reinterpretation of slugs or instance names.
 - The persistence key and uniqueness constraint are `{tenantId, worldSlug, realmSlug}`. Existing-route mutations require an expected positive version and use one atomic database conditional write; checking a version in memory before an unconditional update is not compare-and-set.
-- The pointer, append-only audit event, idempotent request outcome, and prepared-cutover execution state commit atomically when held in the Game Session database.
+- The pointer, append-only audit event, and idempotent request outcome commit atomically when held in the Game Session database. A replacement cutover that changes `gameInstanceId` additionally commits its prepared-cutover execution state in that transaction; ordinary `OPEN` or `CLOSED` updates do not require a prepared upgrade.
 - The pointer governs new or renewed bindings. An already connected player remains authorized by the bound game instance and its runtime fences until the explicit bounded source drain ends; ordinary actions do not re-read pointer authority or eject the player merely because the pointer advanced.
 
 ## Account-to-Game Relationships

@@ -27,11 +27,13 @@ Mandating Vault now would add storage, TLS, authentication, unseal/recovery, bac
 ### One FireMUD Consumption Contract
 
 - Kubernetes workloads consume sensitive values through fixed read-only mounted-file paths or bounded Kubernetes `secretKeyRef` interfaces. Private keys and certificate material use mounted files.
+- The canonical JWT fallback interface is fixed and namespace-local: the `jwt-signing-keys` Secret exposes `current.key` as the active private key and may expose `pending.key` or `rollback.key` only for the explicitly recorded rotation phase; Account mounts it read-only at `/var/run/secrets/firemud/jwt` and reads the active file through `FIREMUD_AUTH_JWT_SECRET_PATH=/var/run/secrets/firemud/jwt/current.key`. The `jwt-jwks` ConfigMap exposes exactly `jwks.json`; Account mounts it read-only at `/var/run/secrets/firemud/jwks`, serves it through the JWKS endpoint, and uses `FIREMUD_AUTH_JWKS_PATH=/var/run/secrets/firemud/jwks/jwks.json`. No workload may invent alternate names or paths for these player-facing resources.
 - Local development may use ignored `.env` values and generated credentials. When Docker mounts real private material, it uses read-only host files outside the repository with restrictive permissions.
 - FireMUD application code, Compose, Helm, and Kubernetes manifests do not deploy or call Vault, cloud secret-manager, or provider-specific secret APIs.
 - Operators may configure or feed an approved upstream source through deployment-specific infrastructure, but the upstream Secret-materialization controller must consume those inputs and materialize the canonical Kubernetes Secret and its freshness metadata. Operators must not directly create, replace, refresh, or delete canonical Secret bytes or freshness metadata as a parallel path. That upstream provisioning is transparent to FireMUD and is not a second product/runtime mode.
 - Synchronization from an upstream provider must preserve the last valid materialized Kubernetes Secret during an upstream outage; it must not replace or delete healthy credentials merely because refresh is unavailable. Workloads may continue only while that retained secret remains within its configured validity/age policy. Expiry, invalid material, or inability to prove acceptable age makes the affected readiness gate fail closed while leaving the existing Secret intact for diagnosis and controlled recovery.
 - Every shared or player-facing materialized Secret carries non-secret metadata for `materializedAt`, `expiresAt`, and the upstream `sourceGeneration` (for example as fixed `firemud.io/*` annotations). `materializedAt` and `expiresAt` describe the retained bytes that are mounted, with `expiresAt` no later than `materializedAt +` the class max-age policy or the material's cryptographic not-after time, whichever is earlier. Retaining a Secret during an upstream outage does not refresh either timestamp, and an invalid or missing metadata value fails closed.
+- The required Secret annotations are `firemud.io/materialized-at`, `firemud.io/expires-at`, and `firemud.io/source-generation`. Timestamp values use RFC 3339 UTC with a `Z` suffix; `source-generation` is a non-empty opaque upstream version that must remain unchanged while the mounted bytes remain unchanged and must advance for a replacement. A readiness actor rejects missing, malformed, regressing, or mismatched metadata rather than treating the Secret as fresh.
 - The upstream Secret-materialization controller is the sole writer of the Secret and its freshness metadata. The FireMUD workload-readiness actor (the controller/readiness gate evaluating the mounted Secret for that workload) is the enforcing authority: it verifies metadata age/expiry and material validity before reporting ready, and application liveness or an operator-supplied all-clear cannot override a failed freshness check.
 - When freshness or validity fails, the readiness actor immediately removes the workload from new traffic and keeps the existing Secret untouched. Removal from readiness is not proof that already-open connections or in-process consumers stopped using stale material. The workload must stop new work, drain existing connections only within the credential class's bounded drain deadline, and then terminate or reload every affected in-process consumer. Hot reload is acceptable only when the process atomically installs and verifies the replacement generation and proves no new operation can use the old material; connections whose authenticated lifetime is bound to the expired credential are closed and re-established. If the workload cannot prove bounded drain and complete replacement, its controller terminates and replaces the pod. Liveness does not keep a pod serving with invalid material. Readiness may return only after the materialization controller writes a valid replacement with a new generation and metadata, the workload observes and verifies it, and the reload or replacement proof completes.
 
@@ -39,7 +41,7 @@ Mandating Vault now would add storage, TLS, authentication, unseal/recovery, bac
 
 - Secret values never appear in Git, images, ConfigMaps, rendered Helm values, logs, traces, or compliance evidence. Evidence records contain bounded identifiers, ages, digests, and outcomes only.
 - Account Service is the only application workload that receives the Account JWT private signing bundle.
-- JWKS is public verification configuration, not a private secret. It is delivered through one fixed-name ConfigMap whose contents are mutable only through Account-owned resource-version compare-and-set, or an equivalent integrity-controlled public artifact, and remains generation-coupled to signing-key rotation.
+- JWKS is public verification configuration, not a private secret. It is delivered through one fixed-name ConfigMap whose `jwks.json` contents are mutable only through the Account Service service account's name-scoped `get`, `update`, and `patch` authority using resource-version compare-and-set, or an equivalent integrity-controlled public artifact, and remains generation-coupled to signing-key rotation. The Account workload and readiness validators reject a public set whose key generation, active `kid`, or resource identity does not match authenticated Account transition evidence; no other service account may write it, and no actor may list, create, or delete the pre-created resource.
 - cert-manager issues a distinct leaf private key and certificate for each workload identity into a dedicated Secret. Workloads may share a CA trust bundle but not one leaf private identity.
 - Operator client certificates use a separate issuer/profile and dedicated Secret and are not mounted into normal application workloads.
 - Re-creatable leaf certificates and routine credentials are reissued after loss. Irreplaceable recovery material, including backup-decryption keys or an intentionally retained offline CA root, has encrypted out-of-cluster custody and never relies on the live cluster as its sole copy.
@@ -98,12 +100,12 @@ A companion Vault container in the same trust and recovery domain provides littl
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-security.md`
-- `design/architecture/system-architecture-grpc.md`
-- `design/architecture/infrastructure/environment-and-secrets-overview.md`
-- `design/architecture/infrastructure/environment-and-secrets-catalog.md`
-- `design/architecture/system-architecture-operator-credentials-runbook.md`
-- `design/project-management/implementation-tracking/platform-operations-and-delivery.md`
+- [Security](../system-architecture-security.md)
+- [gRPC](../system-architecture-grpc.md)
+- [Environment and secrets overview](../infrastructure/environment-and-secrets-overview.md)
+- [Environment and secrets catalog](../infrastructure/environment-and-secrets-catalog.md)
+- [Operator credentials runbook](../system-architecture-operator-credentials-runbook.md)
+- [Platform operations and delivery tracker](../../project-management/implementation-tracking/platform-operations-and-delivery.md)
 
 ## Reversibility and Revisit Triggers
 

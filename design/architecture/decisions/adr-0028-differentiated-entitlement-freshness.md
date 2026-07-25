@@ -27,8 +27,8 @@ The runtime therefore needs operation-specific freshness rather than one uniform
 ### Account Authority And Snapshot Contract
 
 - Account remains the sole entitlement writer and authoritative refresh source.
-- Runtime snapshots carry committed `subscriptionStatus`, `gameplayAvailable`, `allowPublicJoin`, `allowNewGameplayBindings`, `allowNewInstanceStarts`, applicable quotas, `evaluatedAt`, monotonic `entitlementVersion`, and monotonic per-tenant `tenantBillingSequence`.
-- `evaluatedAt` represents when Account evaluated authoritative committed inputs, stamped from its deployment-synchronized UTC clock. Runtime receipt time, Redis time, and caller restamping never make an older snapshot fresh. Consumers compare it with their own deployment-synchronized UTC clock; readiness fails when the deployment cannot prove its configured clock-skew bound, and no caller may widen a freshness window to compensate.
+- Runtime snapshots carry committed `subscriptionStatus`, `gameplayAvailable`, `allowPublicJoin`, `allowNewGameplayBindings`, `allowNewInstanceStarts`, applicable quotas, `evaluatedAt`, monotonic `entitlementVersion`, monotonic per-tenant `tenantBillingSequence`, and the opaque Account-owned `tenantAuthorityGeneration` needed to fence tenant-authority changes at commitment.
+- `evaluatedAt` represents when Account evaluated authoritative committed inputs, stamped from its deployment-synchronized UTC clock. Runtime receipt time, Redis time, and caller restamping never make an older snapshot fresh. Consumers compare it with their own deployment-synchronized UTC clock using a configured maximum skew: reject a future timestamp beyond that bound, and accept a window only when `localNow - evaluatedAt + maxClockSkew` is strictly below the applicable limit. Exact boundaries remain expired; no caller may widen a freshness window to compensate for clock uncertainty.
 - Absence of subscription/entitlement state is not implicit permission. Free, trial, or otherwise non-paid hosting is represented by an explicit entitlement state.
 - `trialing`, `active`, and `past_due` permit gameplay under ordinary quotas. `grace` remains available only for connected sessions and the same still-resumable binding; it denies public join, fresh gameplay bindings, new instances, scale-out, and quota growth. `suspended` and `canceled` are hard denials.
 
@@ -52,6 +52,8 @@ The following require a fresh snapshot and fail closed with `ENTITLEMENT_UNAVAIL
 Known denial returns `TENANT_BILLING_BLOCKED`, not `ENTITLEMENT_UNAVAILABLE`.
 
 A fresh snapshot is necessary but not sufficient: its operation-specific flag must also allow the requested commitment. In particular, fresh `grace` state still denies the new commitments listed above.
+
+Every strict commitment captures `tenantAuthorityGeneration`, `tenantBillingSequence`, and the entitlement version from the fresh snapshot at its admission gate. The owning Account transaction or authoritative commit surface must conditionally commit only while that authority tuple remains unchanged; a generation or sequence advance between evaluation and commit causes a retry or fail-closed rejection rather than relying on cache invalidation alone.
 
 ### Bounded Continuity And Recovery
 
@@ -98,12 +100,12 @@ Durably replicating full entitlement projections into each runtime service could
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-authentication.md`
-- `design/architecture/system-architecture-versioning-runtime.md`
-- `design/architecture/system-architecture-session-behavior.md`
-- `design/architecture/microservices/account-service/subscription-management.md`
-- `design/architecture/microservices/account-service/runtime-and-data.md`
-- `design/project-management/implementation-tracking/player-access-and-session.md`
+- [Authentication](../system-architecture-authentication.md)
+- [Runtime versioning](../system-architecture-versioning-runtime.md)
+- [Session behavior](../system-architecture-session-behavior.md)
+- [Account subscription management](../microservices/account-service/subscription-management.md)
+- [Account runtime and data](../microservices/account-service/runtime-and-data.md)
+- [Player access and session tracker](../../project-management/implementation-tracking/player-access-and-session.md)
 
 ## Reversibility and Revisit Triggers
 

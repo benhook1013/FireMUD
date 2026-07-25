@@ -2,7 +2,7 @@
 
 This document explains how configuration values and sensitive secrets are supplied to FireMUD services across FireMUD environment classes. It is the conceptual overview and operator starting point for environment variables and secrets.
 
-For the full catalog of environment variables (including defaults and detailed rotation notes), see `environment-and-secrets-catalog.md`. For a minimal entry point and links, see `environment-and-secrets.md`.
+For the full catalog of environment variables (including defaults and detailed rotation notes), see [environment-and-secrets-catalog.md](./environment-and-secrets-catalog.md). For a minimal entry point and links, see [environment-and-secrets.md](./environment-and-secrets.md).
 
 ## Table of Contents
 
@@ -34,7 +34,7 @@ This document describes the canonical environment and secret target state. The f
 
 The current checked-in runtime and `preflight.py` still use the legacy resource mode: `jwt-jwks` is a Kubernetes `Secret`, `PREFLIGHT-JWKS-001` checks that Secret/reference, and the executable rejects a `ConfigMap` named `jwt-jwks`. The current runtime also still has shared-HMAC and classpath-fallback drift described above. A passing legacy preflight is therefore current wiring evidence only; it is not player-facing JWT readiness.
 
-The target resource mode is different: `jwt-signing-keys` remains a fixed pre-created private `Secret` written only by the materialization controller under an authenticated Account operation, while `jwt-jwks` becomes a fixed pre-created public `ConfigMap` published by Account through name-scoped CAS. Account may read the private Secret and consumes the public projection; validators consume the same public JWKS and never receive private material. Target-mode preflight is not implemented until it proves these boundaries and must fail closed rather than treating legacy Secret mode as equivalent.
+The target resource mode is different: `jwt-signing-keys` remains a fixed pre-created private `Secret` read and written through the Kubernetes API only by the materialization controller under an authenticated Account operation, while `jwt-jwks` becomes a fixed pre-created public `ConfigMap` published by Account through name-scoped CAS. Account has no signing-Secret API authority, consumes the private bundle only through a read-only projected mount, and consumes the public projection; validators consume the same public JWKS and never receive private material. Target-mode preflight is not implemented until it proves these boundaries and must fail closed rather than treating legacy Secret mode as equivalent.
 
 Remaining deployment work includes the JWT authority and rotation boundary above as well as deeper live evidence: the traffic-open backup gates validate the first evidence shape, but real environment evidence files still need to be produced by operators or automation before first live traffic; expected-binding validation should also become stricter as richer Kubernetes live-state checks become available. Do not interpret those gaps as alternative supported behavior for staging, production, or hobby/self-hosted traffic.
 
@@ -63,12 +63,12 @@ Key rules:
 
 - **Never** point Coordination Redis and Cache/Rate‑Limit Redis at the same instance in any non-ephemeral environment (including local development, staging, and production).
 - Player‑facing environments must use **distinct logical Redis deployments** for coordination and cache/rate‑limit roles.
-- Truly ephemeral CI/preview stacks may collapse roles into a single Redis instance only when explicitly documented as ephemeral and not used to validate coordination SLOs; see `system-architecture-redis-usage-and-profiles.md#environment-mappings`.
+- Truly ephemeral CI/preview stacks may collapse roles into a single Redis instance only when explicitly documented as ephemeral and not used to validate coordination SLOs; see [Redis usage and profiles](../system-architecture-redis-usage-and-profiles.md#environment-mappings).
 - `pr-preview` keeps the normal Redis role split and preview-unique trust material, but it uses a preview-scoped expected-bindings/preflight posture rather than the full player-facing backup/admission binding contract used for staging and production traffic-open decisions.
 
 Operational notes:
 
-- Coordination Redis hosts both gameplay session bindings (`session:game:*`) and Account-owned issued-token registry and revocation/version state (`session:auth:*`) as described in `system-architecture-jwt-and-token-contracts.md`.
+- Coordination Redis hosts both gameplay session bindings (`session:game:*`) and Account-owned issued-token registry and revocation/version state (`session:auth:*`) as described in [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md).
 
 ### Authentication & JWT
 
@@ -89,8 +89,8 @@ In all player-facing classes (`hobby-self-hosted`, staging, production), this al
 
 ### Secrets & Certificates
 
-- Kubernetes workloads consume sensitive values through narrowly scoped Kubernetes `Secret` objects or fixed read-only mounted paths. This is the one FireMUD runtime contract; secret origin is an operator provisioning concern.
-- TLS certificates are rotated automatically by **cert-manager**. JWT rotation is coordinated by Account-owned transitions through the single Account JWT rotation control/status interface. Dedicated Kubernetes Jobs (for example `jwt-rotation`) observe Account status, publication, and validator convergence and record evidence; in production this Job is treated as an operator-run template rather than an unattended cadence (see `system-architecture-security.md#jwt-key--jwks-rotation-workflow`). The Job/CronJob must never read or update the private `jwt-signing-keys` Secret or write `jwt-jwks`.
+- In shared or player-facing Kubernetes environments, workloads consume sensitive values through narrowly scoped Kubernetes `Secret` objects or fixed read-only mounted paths. This is the one FireMUD Kubernetes runtime contract; secret origin is an operator provisioning concern. Local development intentionally uses ignored `.env` values and generated throwaway credentials instead.
+- TLS certificates are rotated automatically by **cert-manager**. JWT rotation is coordinated by Account-owned transitions through the single Account JWT rotation control/status interface. Dedicated Kubernetes Jobs (for example `jwt-rotation`) observe Account status, publication, and validator convergence and record evidence; in production this Job is treated as an operator-run template rather than an unattended cadence (see [Security Architecture](../system-architecture-security.md#jwt-key--jwks-rotation-workflow)). The Job/CronJob must never read or update the private `jwt-signing-keys` Secret or write `jwt-jwks`.
 - Services reload TLS material via shared utilities, and Account Service may use the JWT watcher as one implementation of atomic signing-generation promotion:
   - `TlsCertificateWatcher`
   - `JwtSecretWatcher`
@@ -102,7 +102,7 @@ Operator actions:
   - Pods reload configuration (via watcher) or are restarted according to the runbook.
   - gRPC clients/servers establish new mTLS sessions without errors.
 
-For full descriptions of the variables and their defaults, open `environment-and-secrets-catalog.md`.
+For full descriptions of the variables and their defaults, open [environment-and-secrets-catalog.md](./environment-and-secrets-catalog.md).
 
 ---
 
@@ -123,7 +123,7 @@ This section describes the Kubernetes-backed environments that use the canonical
 - Kubernetes `ConfigMap` objects store non‑secret configuration values like host names or feature flags.
 - Sensitive values (database passwords, JWT signing keys, TLS private keys) are delivered through Kubernetes `Secret` objects.
 - TLS certificates are issued by **cert-manager** and rotated automatically; each workload receives a distinct certificate/private-key Secret and services reload updated certificates using `TlsCertificateWatcher` / `GrpcServerTlsReloader`.
-- Target JWT signing keys are stored in a fixed Secret and public JWKS in a fixed ConfigMap. Account Service owns lifecycle requests, validation, promotion, JWKS publication, and the decision to prune public/private material. In the controlled Secret fallback, the materialization controller is the sole signing-Secret writer through authenticated, operation-bound `resourceVersion` CAS and returns non-secret CAS/pruning evidence; Account reads that Secret, reconciles the evidence, and alone updates public JWKS. Dedicated Kubernetes Jobs observe Account-owned transitions, prove validator visibility, observe the Account-published key set, and record evidence; they never read or update `jwt-signing-keys` or write `jwt-jwks`. See `system-architecture-security.md#jwt-key--jwks-rotation-workflow` for details.
+- Target JWT signing keys are stored in a fixed Secret and public JWKS in a fixed ConfigMap. Account Service owns lifecycle requests, validation, promotion, JWKS publication, and the decision to prune public/private material. In the controlled Secret fallback, the materialization controller is the sole signing-Secret writer through authenticated, operation-bound `resourceVersion` CAS and returns non-secret CAS/pruning evidence; Account reads that Secret, reconciles the evidence, and alone updates public JWKS. Dedicated Kubernetes Jobs observe Account-owned transitions, prove validator visibility, observe the Account-published key set, and record evidence; they never read or update `jwt-signing-keys` or write `jwt-jwks`. See [Security Architecture](../system-architecture-security.md#jwt-key--jwks-rotation-workflow) for details.
 - In player-facing environments (`hobby-self-hosted`, staging, production), only Account Service may consume JWT private signing material from a mounted file via `FIREMUD_AUTH_JWT_SECRET_PATH`. Validators must use asymmetric Account JWKS; inline-only or HMAC-only JWT configuration and private-key mounts in validators are non-compliant.
 - Database credentials are stored in Secrets and rotated via explicit operational Jobs and runbooks (for example `db-credential-rotation` in `system-architecture-backup-recovery.md#post-restore-secret-hardening`); there is no fully automatic cadence today.
 - The manifests in `k8s/base/` demonstrate loading Secrets and ConfigMaps via `envFrom` so that services receive the same variables as in development.
@@ -156,9 +156,9 @@ JWT signing key and JWKS behavior differs slightly by environment to balance saf
   - Account startup must fail when the configured JWKS path or file is missing or unreadable, the JWKS is malformed, or its public JWK does not match the Account signing key and `kid`; classpath fallback is not permitted.
   - The target `jwt-rotation` artifact is an operator-triggered Job template, or an equivalent CronJob kept at `spec.suspend: true`; no such manifest is checked in yet.
   - The Job/CronJob only observes Account-owned public-key transitions, public JWKS metadata, and validator convergence, and records evidence. It must never read or update `jwt-signing-keys` or write `jwt-jwks`; private operations delegated to a non-exportable signer and all public/private pruning remain under Account Service authority.
-  - Mounted resources alone do not establish readiness. Promotion and traffic-open evidence must prove Account-only asymmetric signing, validator `kid`/JWKS convergence, planned rotation through pruning, and compromise hard cutover as defined in `system-architecture-security.md#player-facing-jwt-readiness`.
+  - Mounted resources alone do not establish readiness. Promotion and traffic-open evidence must prove Account-only asymmetric signing, validator `kid`/JWKS convergence, planned rotation through pruning, and compromise hard cutover as defined in [Security Architecture](../system-architecture-security.md#player-facing-jwt-readiness).
 
-For guidance on how to respond to a suspected JWT signing key compromise (as opposed to planned rotation), see the “JWT Key Compromise Response” section in `system-architecture-security.md`.
+For guidance on how to respond to a suspected JWT signing key compromise (as opposed to planned rotation), see the [JWT Key Compromise Response](../system-architecture-security.md#jwt-key-compromise-response) section.
 
 ---
 

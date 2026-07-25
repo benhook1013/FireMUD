@@ -6,6 +6,12 @@ This document explains how game data is versioned and activated at runtime. It a
 
 ---
 
+## Implementation Status
+
+The versioned publish and replacement-cutover substrate is partially implemented, including durable cutover preparation and execution records. The target bounded source-drain contract below is not yet implemented: current cutover clears active bindings rather than preserving them through a persisted deadline, notice, socket closure, command fence, and terminal `InstanceTermination` workflow. The target sections that follow are normative design, not proof that the current runtime already satisfies those effects.
+
+---
+
 ## Game Version Publishing
 
 The **Game Design Service** manages version metadata and publish workflows for game configuration (world layouts, scripts, item templates, etc.). Domain services (World Management, Entity Management, Game Logic, and others) store the actual versioned domain data for each `tenantId`.

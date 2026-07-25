@@ -44,7 +44,7 @@ Before reopening player-facing traffic, incident records must include:
 - Compromised key identifiers (`kid`) and replacement key identifiers.
 - Quarantine start and end timestamps plus the protected surfaces covered.
 - Timestamped proof that Account Service authorized the private-material operation, reconciled the authenticated signer/controller result and resource-version CAS, validated and promoted the signing generation, published JWKS, and reconciled the required public/private pruning evidence, including any delegated private-key operation performed by a non-exportable signer, plus proof that rotation automation only observed the Account-owned `jwt-jwks` update through the control/status interface.
-- Issuer authority-generation and session invalidation completion evidence.
+- Issuer authority-generation and logical session-invalidation evidence. Physical deletion of old token records and cleanup of gameplay/control sessions is bounded best-effort work and must be recorded separately; it is not required as cleanup completion before the authority-generation gate can be judged satisfied.
 - Exact validator inventory, last observed JWKS generation, and convergence proof that each validator rejects the compromised `kid` and accepts the replacement.
 - Reopen decision timestamp and approver.
 

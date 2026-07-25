@@ -89,9 +89,13 @@ Enforcing everything at Gateway misses internal service calls and cannot safely 
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-authentication.md`
-- `design/architecture/system-architecture-authz-route-matrix.md`
-- `design/architecture/system-architecture-authz-route-matrix.yaml`
-- `design/architecture/system-architecture-gateway.md`
-- `design/architecture/system-architecture-overview.md`
-- owning service API contracts and implementation trackers
+- [Authentication architecture](../system-architecture-authentication.md)
+- [Authorization route matrix](../system-architecture-authz-route-matrix.md)
+- [Authorization route matrix YAML](../system-architecture-authz-route-matrix.yaml)
+- [Gateway architecture](../system-architecture-gateway.md)
+- [Overview architecture](../system-architecture-overview.md)
+- [Account Service API contract](../microservices/account-service/api-contracts.md)
+- [Game Session Service API contract](../microservices/game-session-service/api-contracts.md)
+- [Spring Cloud Gateway API contract](../microservices/spring-cloud-gateway/api-contracts.md)
+- [TCP Proxy Service API contract](../microservices/tcp-proxy-service/api-contracts.md)
+- [Player access and session implementation tracker](../../project-management/implementation-tracking/player-access-and-session.md)

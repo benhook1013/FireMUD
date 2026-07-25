@@ -52,7 +52,7 @@ Redis may accelerate replay responses but is not the join transaction or audit a
 ### Lifecycle and Abuse Controls
 
 - Closing public enrollment blocks new joins but does not revoke existing memberships. Existing members remain in the player's game library and retain access subject to current membership, moderation, realm, and entitlement policy.
-- Account provides a clear caller-bound leave-game surface. Leaving removes future membership-based admission and discovery; character, audit, purchase, and legally required retained data follow their owning retention decisions rather than being silently deleted.
+- Account provides a clear caller-bound leave-game surface. `LeaveTenantMembership` is an idempotent Account transaction keyed by the caller-bound account/tenant and an operation request ID plus digest. It conditionally removes membership-based admission and discovery, advances both `membershipVersion` and `membershipAuthorityGeneration`, and commits the operation outcome plus one durable audit/outbox event atomically. A matching retry or already-left membership returns the stored/no-op outcome; a conflicting request digest fails without changing the existing evidence. Consumers fence existing admission artifacts from the committed authority generation, while character, audit, purchase, and legally required retained data follow their owning retention decisions rather than being silently deleted.
 - Join creation is rate-limited and observable by account, source, and tenant using bounded abuse controls. Creators receive meaningful member counts that distinguish durable joined members from current online presence.
 
 ## Consequences
@@ -90,10 +90,10 @@ This avoids durable rows for casual visits but creates a second class of gamepla
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-authentication.md`
-- `design/architecture/system-architecture-frontend.md`
-- `design/architecture/system-architecture-authz-route-matrix.md`
-- `design/architecture/user-journeys-players.md`
-- `design/architecture/microservices/account-service/api-contracts.md`
-- `design/architecture/microservices/account-service/runtime-and-data.md`
-- `design/architecture/microservices/game-session-service/protocols.md`
+- [Authentication and authorization](../system-architecture-authentication.md)
+- [Frontend architecture](../system-architecture-frontend.md)
+- [Authorization route matrix](../system-architecture-authz-route-matrix.md)
+- [Player journeys](../user-journeys-players.md)
+- [Account Service API contracts](../microservices/account-service/api-contracts.md)
+- [Account Service runtime and data](../microservices/account-service/runtime-and-data.md)
+- [Game Session protocols](../microservices/game-session-service/protocols.md)

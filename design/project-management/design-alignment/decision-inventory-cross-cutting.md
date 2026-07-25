@@ -182,7 +182,7 @@ The main inventory remains the compact control crosswalk. These aliases preserve
 | `TICK-01`, `TICK-03`, `TICK-07` | One action/entity/tick, no global ACID, bounded timer catch-up, and timer skipping. | Which gameplay fairness and recovery requirements make these semantics correct? |
 | `TENANT-02`, `TENANT-03` | Shared infrastructure and no playtest merge-back. | What isolation, cost, creator workflow, and player-data tradeoffs were accepted? |
 | `CMD-04`, `CMD-05`, `CONTENT-04` | Durable transcript bounds, no live translation, and editable starter DML. | What UX, localization, and creator-product requirements set the defaults? |
-| `SEC-03`, `OPS-02`, `OPS-03` | Current implementation retains plaintext Telnet compatibility, no canary/auto-rollback, and a 15-minute online dump; ADR 0015 accepts the online environment-wide snapshot and non-restored Redis/cold-start recovery boundary as the target, while complete proof and the remaining RPO/operational choice are still open. | What security, deployment, RPO, and operational burdens remain for human acceptance? |
+| `OPS-02`, `OPS-03` | Current implementation has no canary/auto-rollback and performs a 15-minute online dump; ADR 0015 accepts the online environment-wide snapshot and non-restored Redis/cold-start recovery boundary as the target, while complete proof and the remaining RPO/operational choice are still open. | What deployment, RPO, and operational burdens remain for human acceptance? |
 
 ### Choices Likely Requiring Product Consultation
 
@@ -191,7 +191,7 @@ No source proves who made these choices; the flag means that product/security/op
 | Priority | Decision keys | Consultation topic |
 | --- | --- | --- |
 | `P1` | `SESSION-02`, `SESSION-03`, `SESSION-04`, `TENANT-03` | Takeover, reconnect loss, restart visibility, playtest isolation, and merge-back expectations. |
-| `P1` | `SEC-03`, `OPS-02`, `OPS-03` | Plaintext transport, deployment blast radius, RPO, and production readiness. |
+| `P1` | `OPS-02`, `OPS-03` | Deployment blast radius, RPO, and production readiness. |
 | `P2` | `CMD-05`, `CONTENT-04`, `TICK-01`, `TICK-07` | Localization, starter profiles, action fairness, and missed-timer gameplay semantics. |
 
 ## Coverage By Exact Capability

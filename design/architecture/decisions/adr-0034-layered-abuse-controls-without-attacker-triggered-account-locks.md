@@ -50,7 +50,7 @@ A simple failed-password threshold that durably locks an account lets an attacke
 ### Gameplay Fast Path
 
 - Normal per-session command-rate enforcement uses an in-process token bucket owned by the current session front end. It performs no network or datastore operation per command solely for rate limiting.
-- A replacement session front end reads and consumes only the remaining portion of one externalized, bounded cumulative handoff budget for the active gameplay binding; each replacement consumes from that same budget rather than resetting it. A process move cannot grant an unbounded fresh allowance. Handoff-budget bookkeeping may use one shared operation per replacement, but ordinary commands remain on the local bucket and perform no per-command network or datastore work.
+- A replacement session front end reads and consumes only the remaining portion of one externalized, bounded cumulative handoff budget for the active gameplay binding; each replacement consumes from that same budget rather than resetting it. A process move cannot grant an unbounded fresh allowance. Each handoff uses one session-bound atomic reserve/consume operation keyed by an idempotent handoff request identity: a retry returns the prior reservation outcome, while concurrent replacements cannot consume the same allowance. Handoff-budget bookkeeping may use one shared operation per replacement, but ordinary commands remain on the local bucket and perform no per-command network or datastore work.
 - Coarser shared account, source, tenant, or reconnect-abuse windows may use Cache/Rate-Limit Redis outside the per-command fast path. They are defense in depth, reset-tolerant, and must not determine gameplay ordering or whether an already accepted command happened.
 - Limit outcomes use stable classes and bounded retry guidance. Tenant/game tuning follows the accepted settings model and cannot exceed platform hard bounds or operator caps.
 
@@ -94,12 +94,12 @@ This preserves a more consistent rate window across process movement, but adds a
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-security.md`
-- `design/architecture/system-architecture-gateway.md`
-- `design/architecture/microservices/account-service/runtime-and-data.md`
-- `design/architecture/microservices/account-service/api-contracts.md`
-- `design/architecture/microservices/game-session-service/runtime-and-data.md`
-- `design/project-management/implementation-tracking/player-access-and-session.md`
+- [Security architecture](../system-architecture-security.md)
+- [Gateway architecture](../system-architecture-gateway.md)
+- [Account Service runtime and data](../microservices/account-service/runtime-and-data.md)
+- [Account Service API contracts](../microservices/account-service/api-contracts.md)
+- [Game Session runtime and data](../microservices/game-session-service/runtime-and-data.md)
+- [Player access and session tracking](../../project-management/implementation-tracking/player-access-and-session.md)
 
 ## Reversibility and Revisit Triggers
 

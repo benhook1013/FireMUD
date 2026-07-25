@@ -148,7 +148,7 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
   profile of `application.yml`.
 - Internal microservices communicate directly over gRPC, bypassing the Spring Cloud Gateway.
 - Kubernetes-backed environments use mTLS for internal gRPC via Spring Boot SSL bundles and Spring gRPC server SSL bundle binding, including the hosted preview/dev-demo Helm path.
-- The **TCP Proxy Service** and **Spring Cloud Gateway** are typically exposed using Kubernetes `LoadBalancer` Services so external clients can connect directly. See [Telnet TLS Deployment](#telnet-tls-deployment) for the accepted direct and edge-terminated modes.
+- The **Spring Cloud Gateway** and, only for direct TCP Proxy TLS mode, the selected public TCP Proxy TLS listener are typically exposed using Kubernetes `LoadBalancer` Services so external clients can connect to the chosen public listeners. Raw Telnet and PROXY-protocol listeners remain internal-only; edge-terminated Telnet uses an external TLS edge proxy rather than exposing those listeners. See [Telnet TLS Deployment](#telnet-tls-deployment) for the accepted direct and edge-terminated modes.
 - See [Security Architecture](../system-architecture-security.md#tls-termination-for-gateway) and [Gateway Architecture](../system-architecture-gateway.md#tls-termination-for-gateway) for the full TLS termination chain (browser/Telnet clients → load balancer → Spring Cloud Gateway → backend services) and DMZ boundary details; this document avoids duplicating those rules.
 - Canonical baseline `NetworkPolicy` manifests for the staged player-facing Kustomize path live in
   [`k8s/base`](../../../k8s/base) and are included by the staging and production

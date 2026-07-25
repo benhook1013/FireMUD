@@ -295,7 +295,7 @@ Conceptually, tick commit proceeds through these phases:
      - Winner rule:
        - The winner is the transaction that successfully creates the unique `(tenantId, gameInstanceId, regionId, region_epoch, tickId)` row while holding the currently valid Redis lease and the latest durable `executorFence`.
        - If a competing executor finds the existing row carries the same current `executorFence`, it must reuse that row as authoritative state for replay/continuation.
-       - If a competing executor finds the existing row carries an older or newer `executorFence`, it must not continue that batch on the hot path. The first implementation abandons stale-owner unfinished batches and requeues still-unapplied commands for a fresh fenced batch; any future in-place adoption of an old-fence batch requires a dedicated reconcile transaction that explicitly transfers ownership before work continues.
+       - If a competing executor finds the existing row carries an older or newer `executorFence`, it must not continue that batch on the hot path. The first implementation uses a dedicated reconcile transaction to transfer an unfinished batch to the current fence in place, preserving its unique tick coordinate, manifest, effect identities, and command bindings. If transfer preconditions fail, reconciliation abandons the stale batch and terminalizes its effects/commands under the canonical mapping; any separately retryable source work is eligible only for a later tick coordinate with new batch/effect identity. It must never create a second batch for the same unique coordinate or requeue work into that same coordinate.
    - The tick-batch record stores at minimum:
      - `tick_batch_id`
      - `executor_fence`
@@ -343,7 +343,7 @@ Conceptually, tick commit proceeds through these phases:
      - `E1` successfully inserts the unique batch row while holding Redis lease token `L9001` and durable `executorFence=27`; that row becomes the only valid durable batch for `(T1, G1, R7, 13, 42)`.
      - `E2` then reads the existing row.
        - If `E2` is acting under the same current `executorFence=27`, it may continue/replay from that row.
-       - If `E2` now holds a later lease acquisition with `executorFence=28`, it must stop and treat the existing row as belonging to an older ownership generation. First implementation recovery abandons stale-owner unfinished work and requeues unapplied commands rather than continuing that batch in place.
+       - If `E2` now holds a later lease acquisition with `executorFence=28`, it must stop the hot path and run the fenced reconcile transaction. If the unfinished batch is transferable, that transaction changes ownership to fence `28` in place while preserving tick `42`'s row, manifest, ledger identities, and bound command state; if not transferable, it converges the old batch to terminal outcomes and only schedules explicitly retryable source work for a later tick.
      - `E2` must not overwrite the manifest, create a second batch row, or select different work for tick `42`.
      - If storage ever reveals two durable rows for `(T1, G1, R7, 13, 42)`, the region pauses immediately and reconcile tooling chooses the survivor before any later tick runs.
    - Canonical fence/write sequence (normative):

@@ -42,6 +42,8 @@ Authority-generation contract requirements:
 - Per-token logout is a single-key delete of the token record. Bulk revocation uses authority generations; bounded background cleanup may remove older registry records but is not required for correctness.
 - Issuer-generation compromise handling still requires removing the compromised `kid`, forcing validator convergence, and proving rejection before protected traffic reopens. A fresh or future `iat` cannot bypass an issuer authority-generation advance.
 
+Issuance and refresh use an explicit generation linearization boundary. Account reads the applicable authority-generation snapshot and creates the matching issued-token registry record under the same Account-owned transaction or compare-and-set fence that protects generation advancement; the record stores the exact snapshot used for the token. Account does not return a token until that record has been accepted with the matching generation. If a generation advance wins the race, the candidate issuance or refresh is rejected or retried from a fresh snapshot, and no stale registry record is exposed as usable. The same fence applies when registering a refreshed token and when advancing account, tenant, membership, or issuer authority; downstream projections may lag, but they cannot authorize a snapshot that the Account authority fence rejected.
+
 The exact shared authority-generation record and propagation shape is a dependency of a follow-on identity decision. This document defines the semantic boundary without treating any timestamp watermark as authority.
 
 Coordination Redis outage behavior must be deterministic:

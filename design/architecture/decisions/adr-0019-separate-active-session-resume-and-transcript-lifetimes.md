@@ -62,6 +62,7 @@ ADR 0028 is authoritative when this decision's resume rules and entitlement-fres
 - Redis TTL is physical cleanup metadata. Every gameplay-binding refresh must set an absolute expiry no later than `continuityBindingExpiresAt` using `PEXPIREAT` (or an atomic server-side equivalent that compares the current deadline and cannot write a later one); a relative `PEXPIRE`/TTL refresh alone is insufficient. The effective physical deadline may be earlier, but no retry, concurrent update, or failover replay may set it after `continuityBindingExpiresAt` or create a sliding deadline. Key presence never grants resume authority, and early key loss makes the binding non-resumable rather than reconstructing authority from other projections.
 - Resume transcript retention is an independent bounded presentation policy. Transcript existence cannot prove identity or extend active or resume authority.
 - Explicit gameplay `LOGOUT` immediately terminates continuity/resume authority and must durably commit a binding-scoped replay-revocation marker, including a monotonic termination fence, in Game Session's authoritative durable session/transcript store before acknowledging logout. Replay/restore must check that marker before using any Redis binding or transcript cache, including after Redis loss or restart; marker retention must cover the maximum replay/transcript horizon. A missing or ambiguous marker for a binding claiming logout fails closed. Physical deletion of transcript rows or cache entries may complete asynchronously. After a fresh non-logout `LOGIN` and `PLAY`, retained transcript context may replay only when it belongs to a different, currently authorized continuity episode; the terminated binding's logged-out context must never replay, even when its rows or cache entries remain and even when the new admission uses the same account, character, or realm.
+- The logout transition is one authoritative compare-and-set/transaction: binding state moves out of `connected`, the termination fence advances, and the replay-revocation marker is committed together before success is acknowledged. In-flight authorization, refresh, resume, and replay operations carry the expected binding/fence identity and lose the race when logout advances it; an unavailable or ambiguous authoritative store fails logout and all dependent operations closed rather than allowing a post-logout action.
 
 ## Consequences
 
@@ -101,6 +102,7 @@ Fresh admission after every disconnect is simpler and more conservative but mate
 - Prove current subject, membership, revocation, uniqueness, lease, and gameplay-scope checks on every resume, and prove that entitlement input follows ADR 0028: eligible positive last-known-good state is accepted only for exact same-binding non-expanding continuity, while fresh entitlement is required for new commitments, fresh admission, changed bindings, and unsafe or expired continuity.
 - Prove stale bindings fall through to fresh admission only after full current authorization and receive a new identity and anchor.
 - Prove transcript bounds independently and prove the durable explicit-logout replay-revocation marker survives Redis loss/restart and is checked before later private replay from the terminated binding, without requiring physical transcript deletion to complete synchronously. Prove that audit/diagnostic evidence distinguishes active-binding authority, continuity-cache state, and termination fences without treating transcript contents as authority.
+- Prove concurrent `LOGOUT` versus `PLAY`, token refresh, resume, and replay: once the termination fence wins, no in-flight operation can authorize or recreate the binding, and authoritative-store loss fails closed.
 
 ## Reversibility and Revisit Triggers
 
@@ -108,8 +110,8 @@ The independent policy boundaries can gain explicit active-session maximum or id
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-reconnection.md`
-- `design/architecture/system-architecture-session-behavior.md`
-- `design/architecture/system-architecture-redis.md`
-- `design/architecture/system-architecture-input-output-and-presentation.md`
-- `design/architecture/infrastructure/environment-and-secrets-catalog.md`
+- [Reconnection](../system-architecture-reconnection.md)
+- [Session behavior](../system-architecture-session-behavior.md)
+- [Redis](../system-architecture-redis.md)
+- [Input, output, and presentation](../system-architecture-input-output-and-presentation.md)
+- [Environment and secrets catalog](../infrastructure/environment-and-secrets-catalog.md)
