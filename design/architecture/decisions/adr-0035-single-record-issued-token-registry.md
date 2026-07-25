@@ -37,7 +37,7 @@ The current implementation writes account and tenant keys but does not consisten
 ### Validation And Authorization
 
 - A consumer first validates signature and `kid`, issuer, exact audience/profile, required claims, time bounds, and claim types locally.
-- A protected control-plane or admission operation then performs one issued-token registry lookup and verifies that the record matches the token hash, account, profile, `jti`, `tokenGeneration`, and time claims. Missing or mismatched state denies the token, except for the bounded no-op logout retry classifications defined by ADR 0031.
+- A protected control-plane or admission operation then performs one issued-token registry lookup and verifies that the record uses a supported `schemaVersion`, is active, and matches the token hash, account, profile, `jti`, `tokenGeneration`, and time claims. Missing, inactive, unsupported-version, or mismatched state denies the token, except for the bounded no-op logout retry classifications defined by ADR 0031.
 - The registry proves that Account issued this exact still-active token; it does not independently grant tenant or global authority. Consumers authorize the requested scope from the validated token profile/claims and the separate Account-owned revocation/version contract reviewed under JWT-02.
 - Registry lookup is not part of ordinary gameplay-command processing. Gameplay-domain delegation retains the mTLS workload and typed execution-context boundary from ADR 0024.
 
@@ -99,7 +99,7 @@ Opaque tokens can provide the same server-side revocation but require the state 
 - Define one versioned bounded record schema and validate every field against the cryptographically verified token.
 - Make issuance return contingent on record creation; prove store failure never leaks a usable unregistered token.
 - Update shared validators so every applicable protected route performs local token-profile validation and exactly one registry lookup before scope authorization.
-- Prove missing, expired, malformed, wrong-profile, wrong-account, wrong-generation, deleted, and unavailable registry state fails closed with stable errors.
+- Prove missing, expired, malformed, unsupported-version, inactive, wrong-profile, wrong-account, wrong-generation, deleted, and unavailable registry state fails closed with stable errors.
 - Prove per-token logout deletes one record and leaves other tokens active; prove rotation establishes the replacement before exposure and removes the predecessor after bounded overlap.
 - Prove crashes before and after each cross-store mutation converge through the durable `PENDING`/`COMMITTED`/`FAILED` operation state machine without treating unexplained Redis absence as success.
 - Prove connect-token replay and Gateway connect-context paths do not create or consult the Account issued-token registry.

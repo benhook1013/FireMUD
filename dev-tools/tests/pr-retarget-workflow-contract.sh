@@ -74,6 +74,45 @@ require_exact_line() {
   fi
 }
 
+require_ordered_sequence() {
+  local path="$1"
+  shift
+
+  if ! awk -v sequence="$(printf '%s\034' "$@")" '
+    BEGIN {
+      count = split(sequence, expected, "\034") - 1
+      current = 1
+    }
+    current <= count && index($0, expected[current]) { current++ }
+    END { exit !(current > count) }
+  ' "$path"; then
+    echo "$path must contain the required sequence in order: $*" >&2
+    exit 1
+  fi
+}
+
+require_branch_return() {
+  local path="$1"
+  local predicate="$2"
+
+  if ! awk -v predicate="$predicate" '
+    !found_predicate && index($0, predicate) {
+      found_predicate = 1
+      in_branch = 1
+      next
+    }
+    in_branch && /^[[:space:]]*return;[[:space:]]*$/ { found_return = 1 }
+    in_branch && /^[[:space:]]*}[[:space:]]*$/ {
+      found_close = 1
+      in_branch = 0
+    }
+    END { exit !(found_predicate && found_return && found_close) }
+  ' "$path"; then
+    echo "$path must return within the branch containing: $predicate" >&2
+    exit 1
+  fi
+}
+
 required_condition="github.event.action != 'edited' || github.event.changes.base.ref != null"
 ci_path="$ROOT_DIR/.github/workflows/ci.yml"
 runtime_images_path="$ROOT_DIR/.github/workflows/runtime-images.yml"
@@ -256,6 +295,11 @@ require_contains "$smoke_path" 'currentPullRequest.head.sha !== headSha ||'
 require_contains "$smoke_path" 'currentPullRequest.base.ref !== baseRef ||'
 require_contains "$smoke_path" 'currentPullRequest.base.sha !== baseSha'
 require_contains "$smoke_path" 'Stopping obsolete smoke gate for'
+require_ordered_sequence \
+  "$smoke_path" \
+  'currentPullRequest.state !== "open" ||' \
+  'return;' \
+  'github.rest.actions.listWorkflowRuns,'
 require_contains "$smoke_path" 'head_sha: headSha,'
 require_contains "$smoke_path" 'mode-required'
 require_contains "$smoke_path" 'Build Runtime Images secure-pr-artifact pr-'
@@ -268,6 +312,18 @@ require_contains "$smoke_path" 'github.rest.actions.listJobsForWorkflowRun'
 require_contains "$smoke_path" 'job.name === "Smoke Tests (Full Stack) / Smoke Tests (Full Stack)"'
 require_contains "$smoke_path" 'fullSmokeJob.status !== "completed"'
 require_contains "$smoke_path" 'fullSmokeJob.conclusion !== "success"'
+require_contains "$smoke_path" 'const { data: completedPullRequest } = await github.rest.pulls.get({'
+require_contains "$smoke_path" 'completedPullRequest.state !== "open" ||'
+require_contains "$smoke_path" 'completedPullRequest.head.sha !== headSha ||'
+require_contains "$smoke_path" 'completedPullRequest.base.ref !== baseRef ||'
+require_contains "$smoke_path" 'completedPullRequest.base.sha !== baseSha'
+require_contains "$smoke_path" 'Stopping obsolete completed smoke gate for'
+require_ordered_sequence \
+  "$smoke_path" \
+  'github.rest.actions.listJobsForWorkflowRun,' \
+  'const { data: completedPullRequest } = await github.rest.pulls.get({' \
+  'completedPullRequest.state !== "open" ||'
+require_branch_return "$smoke_path" 'completedPullRequest.state !== "open" ||'
 if grep -Fq 'const matching = runs.find((run) => run.head_sha === headSha);' "$smoke_path"; then
   echo "Smoke Gate must not accept a runtime-images run by head SHA alone" >&2
   exit 1

@@ -117,6 +117,37 @@ routes:
     implementation_status:
       known_drift: connect_token_and_play_may_still_invoke_ensure_public_production_player_membership
   - service: account-service
+    route: GET /auth/bootstrap/worlds
+    scope: account
+    classification: pre_tenant_discovery
+    auth_path: player_bootstrap
+    accepted_token_profiles: [player-bootstrap]
+    subject_binding: caller_account_id
+    visibility_contract: membership_or_public_production_visibility
+    required_live_checks: [runtime_entitlements]
+  - service: account-service
+    route: GET /auth/bootstrap/worlds/{worldSlug}/realms
+    scope: tenant
+    classification: public_production_onboarding
+    auth_path: player_bootstrap
+    accepted_token_profiles: [player-bootstrap]
+    subject_binding: caller_account_id
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
+    visibility_contract: membership_or_public_production_or_realm_access_grant
+    required_live_checks: [realm_visibility, runtime_entitlements]
+  - service: account-service
+    route: GET /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters
+    scope: tenant
+    classification: public_production_onboarding
+    auth_path: player_bootstrap
+    accepted_token_profiles: [player-bootstrap]
+    subject_binding: caller_account_id
+    target_binding: signed_connect_scope_id_matches_route
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: true
+    required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
+  - service: account-service
     route: POST /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters
     scope: tenant
     classification: public_production_onboarding

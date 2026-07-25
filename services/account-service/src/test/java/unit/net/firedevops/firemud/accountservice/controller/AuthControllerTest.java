@@ -207,6 +207,17 @@ class AuthControllerTest {
   }
 
   @Test
+  void listBootstrapCharactersRejectsMissingConnectScopeIdBeforeDispatch() throws Exception {
+    mockMvc
+        .perform(
+            get("/auth/bootstrap/worlds/demo/realms/production/characters")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer boot123"))
+        .andExpect(status().isBadRequest());
+
+    verifyNoInteractions(accountService);
+  }
+
+  @Test
   void requestPasswordResetReturnsSuccess() throws Exception {
     PasswordResetRequest req = new PasswordResetRequest("demo@example.com");
 

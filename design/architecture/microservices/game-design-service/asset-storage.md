@@ -295,13 +295,7 @@ Implementation notes:
 A basic repository (`GameAssetRepository`) and service implementation
 (`GameAssetServiceImpl`) persist uploads using Spring Data JPA.
 
-At publish time, assets are exported from Game Design metadata plus the
-referenced object-store draft keys into version-scoped published prefixes in
-object storage and
-referenced in the generated `manifest.json`. Runtime clients load branding and
-theme resources directly from the CDN using this manifest; the Game Design
-Service is not involved. See [Game Design Service Architecture](README.md) for
-how these assets fit into published versions.
+At publish time, the current implementation reads asset bytes from `game_assets.data`, exports them into version-scoped published prefixes in object storage, and references them in the generated `manifest.json`. Runtime clients load branding and theme resources directly from the CDN using this manifest; the Game Design Service is not involved. A future metadata-only storage model may use retained immutable object-store draft keys, but those keys are target-only and are not the current upload or repair source. See [Game Design Service Architecture](README.md) for how these assets fit into published versions.
 
 The `published_release_bundle` attestation must reference the final asset state
 for the version by including `manifestHash` (and optionally per-asset
@@ -456,16 +450,14 @@ Race-safe purge workflow:
 To prevent persistence and performance failures in asset workflows:
 
 - Maximum single asset size is 25 MiB; oversized uploads must fail with `ASSET_TOO_LARGE`.
-- Per-tenant draft asset quota is 2 GiB of referenced draft object bytes; writes beyond quota must fail with `ASSET_QUOTA_EXCEEDED`.
+- Per-tenant draft asset quota is 2 GiB of stored `game_assets.data` bytes in the current first slice; writes beyond quota must fail with `ASSET_QUOTA_EXCEEDED`. A future metadata-only storage model may measure referenced draft object bytes instead.
 - Upload/download APIs must support streaming/chunked transfer at the transport layer; services must not require buffering full payloads in memory before persistence.
 - Publish/export workers must process assets in bounded batches (configurable), with backpressure metrics to avoid starving version publish orchestration.
 - Quota and size limits must be configurable per environment but default to the values above when unset.
 
-The database is optimized for design-time metadata rather than bulk binary
-storage. Implementations should treat `game_assets` as:
+In the current first slice, `game_assets` is the canonical design-time store for asset metadata and bytes, and its immutable `data` values remain the repair source for Published/Active releases. A future metadata-only storage model may treat the table as metadata and use retained immutable object-store draft keys, but that is target-only.
 
-- The canonical metadata store for **draft** and in-progress assets.
-- A metadata index for published assets needed for design history and branch workflows.
+Published assets still retain their `game_assets` rows for design history and exact-bytes repair.
 
 A background maintenance job (or admin workflow) may mark unused asset rows as
 `obsolete` once no open revisions, branches, or published versions reference
@@ -481,9 +473,7 @@ them. In practice this means:
 - Assets referenced by non-Retired versions must never be deleted, and their
   binary contents must not be modified in place.
 
-Once these conditions are met, a maintenance process can purge the asset metadata row and corresponding unreferenced draft object bytes. The exact retention
-policy (for example “keep assets referenced by the last N versions per tenant”)
-is configurable but should be documented alongside operational runbooks.
+Once these conditions are met, a maintenance process can purge the asset row and its corresponding unreferenced `game_assets.data` bytes. A future metadata-only storage model may also purge unreferenced draft object bytes. The exact retention policy (for example “keep assets referenced by the last N versions per tenant”) is configurable but should be documented alongside operational runbooks.
 
 The export location is configured with `ASSET_STORE_ENDPOINT`,
 `ASSET_STORE_BUCKET`, `ASSET_STORE_REGION`, `ASSET_STORE_ACCESS_KEY`, and

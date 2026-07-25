@@ -29,7 +29,7 @@ Run this flow when any of the following is true:
    - Treat compromise of the per-environment Account key as global for that issuer. Tenant-selective cleanup is not sufficient.
    - Do not treat the authority-generation advance as a substitute for key rejection; an attacker holding the old private key can mint fresh claims.
 4. Force validator convergence.
-   - Refresh or restart every validator in the declared validator inventory.
+   - Refresh or restart every validator in the declared validator inventory. Install a fail-closed block for the compromised `kid` that overrides any still-fresh cached JWK, and atomically evict or replace that cached key before validation resumes. A validator that cannot prove this state remains quarantined.
 5. Verify convergence.
    - Confirm every validator rejects the compromised `kid` and accepts the replacement `kid`.
 6. Stabilize, monitor, and reopen.

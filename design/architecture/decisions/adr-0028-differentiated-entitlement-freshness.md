@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The accepted cache and freshness policy is not implemented. Account currently restamps responses while deriving version fields from subscription row IDs, Game Session checks only `gameplayAvailable`, and no runtime cache, billing-event sequence consumer, source-freshness validation, instance-lifecycle enforcement, or hard-suspension consumer exists. Current behavior also blocks `past_due` contrary to the accepted lifecycle.
+The accepted cache and freshness policy is not implemented. Account currently restamps responses while deriving version fields from subscription row IDs. In the current runtime `PLAY` path, `AccountClient` emits `ENTITLEMENT_UNAVAILABLE` when entitlement authority is unavailable, while `PlayCommandHandler` checks only `gameplayAvailable` after a successful authority response and emits `TENANT_BILLING_BLOCKED` when that flag is false. This current implementation status does not change the target contract: unavailable authority remains retryable as `ENTITLEMENT_UNAVAILABLE`, while known denial remains `TENANT_BILLING_BLOCKED`. No runtime cache, billing-event sequence consumer, source-freshness validation, instance-lifecycle enforcement, or hard-suspension consumer exists. Current behavior also blocks `past_due` contrary to the accepted lifecycle.
 
 ## Decision Record
 
@@ -37,7 +37,7 @@ The runtime therefore needs operation-specific freshness rather than one uniform
 - Define `freshUntil = evaluatedAt + 15 seconds` and `continuityUntil = evaluatedAt + 5 minutes`. A snapshot is fresh only while `now < freshUntil`; at exactly 15 seconds it is stale. An eligible last-known-good snapshot may authorize continuity only while `now < continuityUntil`; at exactly five minutes it expires. Thus `age < 15 seconds` is fresh, `15 seconds <= age < 5 minutes` is continuity-only, and `age >= 5 minutes` is neither. A future `evaluatedAt` is invalid and fails closed.
 - Runtime services keep a bounded per-tenant cache, use single-flight refresh, immediately invalidate or advance it from sequenced billing events, and periodically reconcile with Account.
 - A previously observed positive snapshot may be used as last-known-good for continuity only within `continuityUntil`. Five minutes is a platform hard maximum; operators may shorten or disable it but cannot widen it without revisiting this decision.
-- Last-known-good entitlement continuity also requires the separate revocation-authority reconciliation lease from ADR 0030 to remain fresh. Entitlement refresh may be unavailable for up to five minutes, but inability to re-establish revocation authority terminates the binding at the stricter 60-second bound.
+- Last-known-good entitlement continuity supplies only the entitlement input to ADR 0030's Account-owned resume decision. Account must still be reachable to validate current lifecycle, security, membership, grant, and revocation authority and to commit the exact-binding `resumeActivationLease`; inability to establish that lease fails closed. Entitlement evaluation itself may remain unavailable for up to five minutes, while inability to re-establish revocation authority terminates the binding at the stricter 60-second bound.
 - Last-known-good is forbidden after an observed `suspended`/`canceled` state, tenant/account revocation, a newer locally observed billing sequence, a sequence gap, an explicit denial, or when no prior authoritative positive snapshot exists.
 
 ### Strict New Commitments
@@ -55,7 +55,7 @@ A fresh snapshot is necessary but not sufficient: its operation-specific flag mu
 
 ### Bounded Continuity And Recovery
 
-- Reconnecting the same still-resumable gameplay session may use eligible last-known-good state when Account refresh is unavailable.
+- Reconnecting the same still-resumable gameplay session may use eligible last-known-good entitlement state when fresh entitlement evaluation is unavailable but Account can still validate the other current authorities and commit the ADR 0030 `resumeActivationLease`.
 - Restart, rollback, or recovery of already-entitled capacity may use eligible last-known-good state only when it does not increase the tenant's admitted capacity or quota consumption.
 - A reconnect that resolves to a different realm target or creates a fresh gameplay binding is new admission and remains strict.
 - Existing uninterrupted sessions do not check entitlement authority per action. An observed hard suspension/cancellation still revokes them through the billing event and tenant authority-generation path, while periodic batched reconciliation bounds a missed event to 60 seconds under ADR 0030.

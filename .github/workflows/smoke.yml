@@ -319,6 +319,24 @@ jobs:
                   core.setFailed(
                     `Runtime images/full smoke run ${matching.id} did not complete successfully: run=${matching.conclusion}, full-smoke=${fullSmokeJob.status}/${fullSmokeJob.conclusion}`
                   );
+                  return;
+                }
+
+                const { data: completedPullRequest } = await github.rest.pulls.get({
+                  owner,
+                  repo,
+                  pull_number: Number(prNumber),
+                });
+                if (
+                  completedPullRequest.state !== "open" ||
+                  completedPullRequest.head.sha !== headSha ||
+                  completedPullRequest.base.ref !== baseRef ||
+                  completedPullRequest.base.sha !== baseSha
+                ) {
+                  core.info(
+                    `Stopping obsolete completed smoke gate for ${baseRef}@${baseSha}...${headSha}; current PR state/base/head is ${completedPullRequest.state}/${completedPullRequest.base.ref}@${completedPullRequest.base.sha}/${completedPullRequest.head.sha}`
+                  );
+                  return;
                 }
                 return;
               }

@@ -66,7 +66,7 @@ Suspected compromise and player-facing post-restore hardening use a hard cutover
 2. Generate and publish a replacement key generation.
 3. Remove the compromised or restored public key from authoritative JWKS immediately; do not retain it for overlap or rollback.
 4. Advance the environment-wide issuer authority generation so validators reject issued-token registry snapshots from the prior generation across every account, tenant, and token profile. Enqueue bounded physical cleanup of superseded `session:auth:token:<tokenHash>` records and affected control/gameplay sessions; wildcard registry scans are not revocation authority. Generation invalidation immediately rejects existing issued records, while key removal and validator convergence remain mandatory because an attacker holding the old private key can choose fresh claims.
-5. Force refresh or restart every validator, prove the compromised `kid` is rejected and the replacement `kid` is accepted, and record the exact validator inventory and results.
+5. Force refresh or restart every validator and install a fail-closed block for the compromised `kid` that overrides any still-unexpired cached JWK. Refresh must atomically replace or evict the compromised cached key before validation resumes; a validator that cannot prove eviction or equivalent pre-validation rejection remains quarantined. Prove the compromised `kid` is rejected and the replacement `kid` is accepted, and record the exact validator inventory and results.
 6. Reopen protected traffic only after the hard-cutover, invalidation, convergence, and evidence gates pass.
 
 Hard cutover intentionally causes reauthentication and may create a bounded authentication outage. That disruption is accepted for containment; it is not the normal planned-rotation behavior.
@@ -76,6 +76,7 @@ Hard cutover intentionally causes reauthentication and may create a bounded auth
 - Validators cache known JWKS keys for a configured bounded maximum age and refresh proactively before expiry.
 - An unknown `kid` triggers one forced refresh and one retry, then fails closed.
 - While Account JWKS is temporarily unavailable, a validator may continue validating a known key only within its unexpired bounded cache entry. It must not extend cache age or accept an unknown key to preserve availability.
+- Compromise and restore hard cutovers override ordinary cache availability: the quarantined `kid` must be evicted or rejected before cached-key signature acceptance, and protected traffic cannot reopen until every validator proves that behavior.
 - Validator inventory, maximum cache age, refresh outcome, last observed JWKS generation, and active/retired key acceptance are observable and form part of rotation evidence.
 - Filesystem hot reload is an implementation option, not the contract. If used, projected-volume symlink replacement, partial writes, malformed data, key/JWKS mismatch, and atomic signer swap must be tested explicitly.
 

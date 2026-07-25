@@ -48,7 +48,7 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `TCP_PROXY_TELNET_MODE` | Select exactly one player-facing Telnet ingress mode: `EDGE_PROXY` or `DIRECT_TLS`; required in shared and player-facing environments, unset only in local/dev and tests | *(none)* |
-| `TCP_PROXY_PORT` | TCP port the proxy listens on | `2323` |
+| `TCP_PROXY_PORT` | TCP port the proxy listens on; this is the public TLS listener in `DIRECT_TLS` mode and must remain unbound or private in `EDGE_PROXY` mode | `2323` |
 | `TCP_PROXY_PROXY_PROTOCOL_PORT` | TCP port for the edge-termination mode's PROXY-protocol Telnet listener; internal-only and reachable only from the Telnet edge proxy | `2325` |
 | `GATEWAY_WS_URL` | WebSocket URL for forwarding to the gateway; local Docker and test environments may use a plaintext `ws://` endpoint, but player-facing environments must set an explicit `wss://.../ws/game` target | *(none)* |
 | `TCP_PROXY_DEFAULT_WORLD_SLUG` | Explicit local/bootstrap world slug forwarded when the proxy is configured to seed hidden gameplay bridge metadata instead of waiting for first-party connect-token admission | *(empty)* |

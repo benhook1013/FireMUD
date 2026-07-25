@@ -36,7 +36,7 @@ The previous flow created membership implicitly during first-party connect-token
 
 ### Membership Transaction
 
-Account Service is the sole join writer. The current proto RPC is named `EnsurePublicProductionPlayerMembership`; it remains an implementation seam whose target semantics are the explicit public-production join operation surfaced through text `JOIN` and the first-party `Join & Play` endpoint. The operation accepts caller-bound account identity plus `{tenantId, worldSlug, realmSlug, requestId}` and:
+Account Service is the sole join writer. The canonical operation is `JoinPublicProductionMembership`, surfaced through text `JOIN`, first-party `POST /auth/bootstrap/join` / `Join & Play`, and the internal Account join boundary. It accepts caller-bound account identity plus `{tenantId, worldSlug, realmSlug, requestId}` and:
 
 - revalidates that the realm is still the explicit public production realm, publicly visible, entitlement-eligible, and backed by an unambiguous current admission pointer;
 - treats `requestId` as the idempotency identity and makes concurrent joins converge on one membership;

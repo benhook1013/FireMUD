@@ -72,16 +72,16 @@ Account Service issues the exact JWT profiles defined below for control-plane UI
 | `nbf` | Not-before timestamp |
 | `exp` | Expiration timestamp |
 | `globalRoles` | Cross-tenant privileges (for example `platformAdmin`, `billingAdmin`, `support`) |
-| `scopedRoles` | Map of `tenantId` -> roles (for example `"tenant-abc": ["tenantAdmin", "designer"]`) |
+| `scopedRoles` | Map of `tenantId` -> roles (for example `"018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": ["tenantAdmin", "designer"]`) |
 
 ### Example JWT Payload
 
-- `accountId`: `"user-123"`
+- `accountId`: `"018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a"`
 - `iat`: `1735689600`
 - `globalRoles`: `["billingAdmin"]`
 - `scopedRoles`:
-  - `"tenant-abc"` -> `["tenantAdmin", "designer"]`
-  - `"tenant-def"` -> `["moderator"]`
+  - `"018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f"` -> `["tenantAdmin", "designer"]`
+  - `"018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a"` -> `["moderator"]`
 
 First-party `control-ui` and `player-bootstrap` JWTs are short-lived bootstrap/control credentials and never become gameplay command authority. Gameplay context (for example `characterId` and `tenantId`) lives in Game Session bindings and is sent through typed command envelopes or `PlayerExecutionContext` rather than embedded in those end-user JWT contracts. The one-use `gameplay-connect` JWT ends at Gateway, and receiver-specific private delegation JWTs remain backend material for their named receiver.
 
