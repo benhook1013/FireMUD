@@ -37,7 +37,7 @@ JWT post-restore rotation preserves Account Service custody of the non-exportabl
 - run restore-hardening JWT rotation with compromise-style key cutover semantics
 - remove restored keys from active trust material rather than retaining overlap from snapshot-era keysets
 - keep JWT issuance and JWT-protected admission/control-plane traffic quarantined during cutover
-- request Account exactly once under the recovery controller's stable `restoreCutoverOperationId` to execute the single restore-cutover operation that publishes a fresh signing generation and `jwks.json`, advances the environment issuer authority generation, and invalidates old session authority; retries reuse that identity, and the Job must not perform these as separate cutover steps
+- request Account under the recovery controller's stable `restoreCutoverOperationId` to start or resume the single idempotent restore-cutover operation that publishes a fresh signing generation and `jwks.json`, advances the environment issuer authority generation, and invalidates old session authority; lost-response retries and reconciliation reuse that identity, and the Job must not perform these as separate cutover steps
 - refresh or restart every validator in the authoritative, complete validator inventory and prove that each rejects every restored `kid` and accepts the replacement `kid`; missing, unknown, unreachable, or non-converged validators fail closed
 - verify Account Service health, immutable restore-cutover evidence, and validator convergence before traffic reopen
 

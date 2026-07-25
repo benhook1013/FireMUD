@@ -72,7 +72,7 @@ Operational notes:
 | `FIREMUD_AUTH_JWKS_PATH` | Account-only path to the published `jwks.json` file | In player-facing environments, mount the fixed Account-owned `jwt-jwks` ConfigMap read-only at `/var/run/secrets/firemud/jwks` and set this to `/var/run/secrets/firemud/jwks/jwks.json`; Account updates the resource through `resourceVersion` CAS. |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | Changing it changes the `exp` claim only for newly issued JWTs; already issued JWTs retain their existing `exp`. |
 | `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Issued-token registry cleanup margin | It extends registry retention beyond each token's own `exp` only; it does not extend gameplay continuity. |
-| `FIREMUD_AUTH_SESSION_EXPIRATION_MS` | Initial gameplay-continuity retention | Effective value is capped at five minutes and applies only to newly admitted bindings; current code still defaults to one hour until aligned. |
+| `FIREMUD_AUTH_SESSION_EXPIRATION_MS` | Initial gameplay-continuity retention | Target default is `300000` ms (five minutes), with an inclusive valid range of `1..300000`; current code still defaults to `3600000` ms (one hour) and does not enforce that range. |
 
 For player-facing environments (`hobby-self-hosted`, staging, production), Account startup must fail closed if `FIREMUD_AUTH_JWKS_PATH` is unset, missing, unreadable, malformed, or does not contain a public JWK matching the Account signing key and `kid`. There is no classpath JWKS fallback in these environments. Account Service owns private-key generation, validation, promotion, JWKS publication, and public/private pruning; a non-exportable signer may perform only the private-key operations Account delegates. The `jwt-rotation` Job/CronJob requests Account-owned transitions through the single Account JWT rotation control/status interface, observes publication and validator convergence, records evidence, and must never read or update `jwt-signing-keys` or write `jwt-jwks`.
 
@@ -158,7 +158,7 @@ For guidance on how to respond to a suspected JWT signing key compromise (as opp
 
 ## Secret Governance Tiers
 
-FireMUD applies a tiered governance model so the highest-risk credentials have explicit controls while Kubernetes Secrets remains the canonical workload-delivery boundary:
+FireMUD applies a tiered governance model so the highest-risk credentials have explicit controls while Kubernetes Secret objects remain the canonical workload-delivery boundary:
 
 - **Tier A (high impact)**
   - Includes JWT signing keys/JWKS, PostgreSQL application/admin credentials, object-store credentials used for backup and restore, and operator-only control-plane credentials.

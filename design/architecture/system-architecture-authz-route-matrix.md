@@ -91,6 +91,7 @@ Without these fields, a route classification is incomplete for internal-only API
 
 Critical routes may also require explicit machine-readable fields for:
 
+- `applicability` when multiple entries share one transport route or command; predicates must be explicit and mutually exclusive so classification is deterministic
 - `membership_authority_generation_applies`
 - `tenant_billing_authority_generation_applies`
 - `required_live_checks` such as `membership`, `membership_generation`, `runtime_entitlements`, `admission_pointer`

@@ -57,9 +57,9 @@ ADR 0028 is authoritative when this decision's resume rules and entitlement-fres
 
 ### Storage, Transcript, and Logout
 
-- Redis TTL is physical cleanup metadata. Every gameplay-binding TTL refresh is capped at the remaining `continuityBindingExpiresAt` lifetime, for example `min(requestedTtlMs, max(0, continuityBindingExpiresAt - now))`, and must never create a sliding deadline. Key presence never grants resume authority, and early key loss makes the binding non-resumable rather than reconstructing authority from other projections.
+- Redis TTL is physical cleanup metadata. Every gameplay-binding refresh must set an absolute expiry no later than `continuityBindingExpiresAt` using `PEXPIREAT` (or an atomic server-side equivalent that compares the current deadline and cannot write a later one); a relative `PEXPIRE`/TTL refresh alone is insufficient. The effective physical deadline may be earlier, but no retry, concurrent update, or failover replay may set it after `continuityBindingExpiresAt` or create a sliding deadline. Key presence never grants resume authority, and early key loss makes the binding non-resumable rather than reconstructing authority from other projections.
 - Resume transcript retention is an independent bounded presentation policy. Transcript existence cannot prove identity or extend active or resume authority.
-- Explicit gameplay `LOGOUT` immediately terminates continuity/resume authority and makes the binding's private transcript non-replayable. Physical deletion of transcript rows or cache entries may complete asynchronously, but replay must honor the authoritative non-replayable state immediately. After a fresh non-logout `LOGIN` and `PLAY`, retained transcript context may replay subject to current identity, authorization, and gameplay scope; the terminated binding's logged-out context must not replay.
+- Explicit gameplay `LOGOUT` immediately terminates continuity/resume authority and must durably commit a binding-scoped replay-revocation marker, including a monotonic termination fence, in Game Session's authoritative durable session/transcript store before acknowledging logout. Replay/restore must check that marker before using any Redis binding or transcript cache, including after Redis loss or restart; marker retention must cover the maximum replay/transcript horizon. A missing or ambiguous marker for a binding claiming logout fails closed. Physical deletion of transcript rows or cache entries may complete asynchronously. After a fresh non-logout `LOGIN` and `PLAY`, retained transcript context may replay subject to current identity, authorization, and gameplay scope, but the terminated binding's logged-out context must not replay.
 
 ## Consequences
 
@@ -95,10 +95,10 @@ Fresh admission after every disconnect is simpler and more conservative but mate
 - Prove bounded retry while the receiver token remains valid, the `AUTH_TOKEN_EXPIRED` outcome when no replacement exists by `exp`, the `AUTH_SESSION_REVOKED` outcome for rejected authority, socket termination, and fresh `LOGIN`/`PLAY` reconnect or resume behavior.
 - Prove boundary behavior immediately before, at, and after both continuity and resume deadlines.
 - Prove repeated failed reconnects cannot extend one episode, successful resume closes it, and a later disconnect creates a new bounded episode without moving `continuityBindingExpiresAt`.
-- Prove Redis saves, TTL refresh capped at the remaining `continuityBindingExpiresAt`, restart, failover, and stale-key recovery cannot move or bypass logical deadlines.
+- Prove Redis saves, `PEXPIREAT` or an atomic equivalent capped at `continuityBindingExpiresAt`, restart, failover, and stale-key recovery cannot move or bypass logical deadlines.
 - Prove current subject, membership, revocation, uniqueness, lease, and gameplay-scope checks on every resume, and prove that entitlement input follows ADR 0028: eligible positive last-known-good state is accepted only for exact same-binding non-expanding continuity, while fresh entitlement is required for new commitments, fresh admission, changed bindings, and unsafe or expired continuity.
 - Prove stale bindings fall through to fresh admission only after full current authorization and receive a new identity and anchor.
-- Prove transcript bounds independently and prove explicit logout immediately prevents later private replay from the terminated binding, without requiring physical transcript deletion to complete synchronously.
+- Prove transcript bounds independently and prove the durable explicit-logout replay-revocation marker survives Redis loss/restart and is checked before later private replay from the terminated binding, without requiring physical transcript deletion to complete synchronously.
 
 ## Reversibility and Revisit Triggers
 

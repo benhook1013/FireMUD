@@ -29,7 +29,7 @@ The TCP Proxy Service participates in three distinct TLS and trust boundaries:
 | WebSocket mTLS bridge | TCP Proxy Service <-> Spring Cloud Gateway | Internal WebSocket hop that normalizes Telnet traffic into the same `/ws/game/**` route used by web clients. | `GATEWAY_WS_URL`, `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH`, `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`, `FIREMUD_GATEWAY_WS_CA_CERT_PATH` |
 | Internal gRPC mTLS | Internal clients <-> TCP Proxy Service | Internal-only gRPC endpoints such as `Ping`. | `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH` |
 
-Plaintext local and throwaway test profiles may omit these identities. Whenever TLS or mTLS is enabled, Telnet server TLS, Proxy-to-Gateway WebSocket mTLS, and internal gRPC mTLS use separate private identities appropriate to their distinct trust surfaces; reusing certificate files is not promotion evidence for a shared or player-facing environment.
+Plaintext local and throwaway test profiles may omit these identities. Local/dev and throwaway test profiles may also reuse the generated `certs/client.*` material used by the current Compose/test setup. Those repeated certificate defaults are local/dev-only convenience values, not identity defaults for shared or player-facing environments. In shared and player-facing environments, Telnet server TLS, Proxy-to-Gateway WebSocket mTLS, and internal gRPC mTLS use separate private identities appropriate to their distinct trust surfaces; reusing certificate files is not promotion evidence.
 
 ## Redis Role Guidance
 

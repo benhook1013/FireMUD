@@ -151,7 +151,7 @@ For any consumer or operator that needs to locate “where a region is” on the
     ```json
     {
       "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
-      "regionId": "room:starter-village",
+      "regionId": "rgn_7f3a9c2e",
       "regionEpoch": 14,
       "lastCommittedTickId": 9284,
       "executorFence": 51,

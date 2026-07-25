@@ -53,6 +53,9 @@ routes:
     transport_command: WORLDS
     scope: public
     classification: public
+    applicability:
+      all_of:
+        - authentication_state: unauthenticated
     response_profile: public_production_catalog_only
     required_live_checks: [public_production_visibility, runtime_entitlements]
   - service: game-session-service
@@ -60,6 +63,9 @@ routes:
     transport_command: WORLDS
     scope: account
     classification: pre_tenant_discovery
+    applicability:
+      all_of:
+        - authentication_state: authenticated
     auth_path: game_session_authenticated_context
     accepted_token_profiles: []
     delegated_subject: authenticated_session_account
@@ -350,20 +356,21 @@ routes:
     route: RefreshGameplayServiceToken
     scope: tenant
     classification: internal_workload
-    auth_path: exact_mtls_workload_plus_caller_specific_context
-    issued_token_state: current_exact_private_delegation_when_player_scoped
-    accepted_token_profiles: [game-session-account-delegation]
-    token_audience: account-service
     issued_token_profile: game-session-account-delegation
     issued_token_audience: account-service
-    allowed_callers:
-      any_of: [game-session-service]
-    mtls_callers:
-      any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
-    delegated_subject: gameplay_binding_subject
-    required_live_checks: [issuer_generation, current_token_generation, account_generation, tenant_generation, membership_generation, membership, runtime_entitlements, conditional_realm_grant, grant_version]
-    realm_grant_authority: conditional_account_owned
-    realm_grant_version: required_when_grant_gated
+    caller_policies:
+      - caller: game-session-service
+        auth_path: exact_mtls_workload_plus_caller_specific_context
+        issued_token_state: current_exact_private_delegation_when_player_scoped
+        accepted_token_profiles: [game-session-account-delegation]
+        token_audience: account-service
+        mtls_identity: "spiffe://firemud/ns/{namespace}/sa/game-session-service"
+        delegated_subject: gameplay_binding_subject
+        tenant_billing_authority_generation_applies: true
+        membership_authority_generation_applies: true
+        required_live_checks: [issuer_generation, current_token_generation, account_generation, tenant_generation, membership_generation, membership, runtime_entitlements, conditional_realm_grant, grant_version]
+        realm_grant_authority: conditional_account_owned
+        realm_grant_version: required_when_grant_gated
   - service: account-service
     route: GetTenantMembershipForRuntime
     scope: tenant
