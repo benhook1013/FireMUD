@@ -94,6 +94,8 @@ The account lifecycle, full-account export, tenant-scoped export, and deletion p
 | `GET` | `/support/tenants/{tenantId}/entitlements` | Cross-tenant support-safe entitlement view with redacted fields |
 | `GET` | `/.well-known/jwks.json` | JWKS for verifying issued JWTs |
 
+The current executable REST and internal response examples use numeric account and tenant IDs. UUID wire identities are an ADR 0020 target-state migration and are not current executable examples.
+
 Canonical `/auth/login` success shape:
 
 ```json
@@ -103,12 +105,12 @@ Canonical `/auth/login` success shape:
     "token": "jwt-token-here",
     "expiresAt": "2025-01-01T12:00:00Z",
     "account": {
-      "accountId": "550e8400-e29b-41d4-a716-446655440000",
+      "accountId": 42,
       "email": "demo@example.com"
     },
     "scopedRoles": {
-      "7b3b074e-d597-4e9b-b96f-4f5946d26120": ["tenantAdmin", "designer"],
-      "c56a4180-65aa-42ec-a945-5fd21dec0538": ["player"]
+      "7": ["tenantAdmin", "designer"],
+      "9": ["player"]
     },
     "globalRoles": ["platformAdmin"]
   }
@@ -153,8 +155,8 @@ Illustrative `GetTenantMembershipForRuntime(accountId, tenantId)` response:
 
 ```json
 {
-  "accountId": "550e8400-e29b-41d4-a716-446655440000",
-  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "accountId": 42,
+  "tenantId": 7,
   "gameplayAdmissionAllowed": true,
   "roles": ["player"],
   "membershipVersion": 42,
@@ -173,12 +175,12 @@ Illustrative `GetRealmAccessGrant(accountId, tenantId, worldSlug, realmSlug)` re
 
 ```json
 {
-  "accountId": "550e8400-e29b-41d4-a716-446655440000",
-  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "accountId": 42,
+  "tenantId": 7,
   "worldSlug": "demo",
   "realmSlug": "playtest-docks",
   "accessAllowed": true,
-  "grantedByAccountId": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+  "grantedByAccountId": 84,
   "grantedAt": "2026-03-13T09:10:00Z",
   "expiresAt": "2026-03-20T09:10:00Z",
   "evaluatedAt": "2026-03-13T09:15:31Z"
@@ -198,7 +200,7 @@ Illustrative `GetTenantEntitlementsForRuntime(tenantId)` response:
 
 ```json
 {
-  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "tenantId": 7,
   "subscriptionStatus": "active",
   "gameplayAvailable": true,
   "allowPublicJoin": true,

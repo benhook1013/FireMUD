@@ -559,7 +559,7 @@ Realm-routing contract (required):
   - the separately versioned catalog/policy reference used for visibility and public-production reads,
   - `updatedAt`,
   - `updatedBy` / change reason for audit.
-- The separately versioned catalog/policy reference is the sole authority for the realm's visibility, access policy, and public-production designation. The routing record stores that reference and the admission pointer; it must not duplicate a `publicProduction` flag or derive public-production behavior from `realmSlug`, display metadata, or `admissibleGameInstanceId`.
+- The separately versioned catalog/policy reference is the sole authority for the realm's visibility, access policy, and public-production designation. The routing record stores that reference and the admission pointer; it must not duplicate the `publicProduction` policy value or derive public-production behavior from `realmSlug`, display metadata, or `admissibleGameInstanceId`.
 - All player and control-plane flows must resolve the referenced catalog/policy revision together with the routing pointer, and must fail closed on a missing, stale, mismatched, or ambiguous pair:
   - `WORLDS` uses the catalog/policy public-production designation and visibility policy when building world discovery.
   - `REALMS` uses the same policy revision for public-production visibility versus explicit realm grants.

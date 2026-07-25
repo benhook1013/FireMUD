@@ -94,7 +94,7 @@ Minimum realm-catalog facts for one visible realm are:
 - `realmSlug`
 - bounded player-facing display metadata
 - whether the realm is visible
-- whether the realm is the explicit public-production realm or explicit-grant-only
+- `publicProduction` policy value distinguishing the explicit public-production realm from explicit-grant-only realms
 - whether the realm uses shared-state or isolated-state gameplay policy
 
 Minimum admission-pointer facts for one resolved realm are:
@@ -114,7 +114,7 @@ Contract rules:
 - `REALMS`, `CHARS`, `PLAY`, bootstrap discovery, connect-token issuance, and reconnect validation must all consume the same realm-catalog and admission-pointer truth.
 - Clients never select raw `gameInstanceId` values directly. They select a world and optional realm, and the server resolves that choice to the current admissible runtime target.
 - Each player-addressable realm has at most one admissible `gameInstanceId` at a time. `OPEN` names exactly one target; `CLOSED` names none.
-- Public-production onboarding and first-join membership creation are controlled by the persisted `publicProductionRealm` flag plus visibility and entitlement checks, not by comparing `realmSlug` with a reserved string.
+- Public-production onboarding and first-join membership creation are controlled by the catalog/policy revision's `publicProduction` value plus visibility and entitlement checks, not by a duplicated routing flag or by comparing `realmSlug` with a reserved string.
 - An explicitly `CLOSED` realm may remain visible with an unavailable/maintenance presentation, but ordinary gameplay admission returns the stable realm-unavailable outcome. Missing, malformed, or ambiguous routing state remains `ADMISSION_POINTER_UNAVAILABLE`; callers must not confuse authority failure with deliberate closure or guess a replacement target.
 
 Required read contract:

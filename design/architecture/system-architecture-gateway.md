@@ -301,7 +301,7 @@ This section is the canonical source of truth for connect-token enforcement and 
 - **Issuer and audience**
   - Issued only by the account/authentication control-plane after account authentication and tenant entitlement checks.
   - Issuance is performed via the control-plane connect-token API (for example `POST /auth/connect-token`); gateway must not mint connect tokens.
-  - Audience is the gateway gameplay route (`/ws/game/**`) and must not be accepted on unrelated routes.
+  - Audience is exactly `gameplay-connect`, the token profile for the gateway gameplay route (`/ws/game/**`), and must not be accepted on unrelated routes.
   - Gateway validates signatures against the issuer's published verification key set with explicit `kid` selection and overlap handling during rotation.
 - **Transport location**
   - Server-side and non-browser clients may send the connect token in the dedicated handshake header (`X-Firemud-Connect-Token`) on `/ws/game/**`.

@@ -39,6 +39,7 @@ The previous flow created membership implicitly during first-party connect-token
 Account Service is the sole join writer. The canonical operation is `JoinPublicProductionMembership`, surfaced through text `JOIN`, first-party `POST /auth/bootstrap/join` / `Join & Play`, and the internal Account join boundary. It accepts caller-bound account identity plus `{tenantId, worldSlug, realmSlug, requestId}` and:
 
 - revalidates that the realm is still the explicit public production realm, publicly visible, entitlement-eligible, and backed by an unambiguous current admission pointer;
+- obtains a fresh ADR 0028 entitlement evaluation/snapshot immediately before the membership commit. The evaluation must be fresh at the commit gate, must authorize explicit public join, and must be tied to the current caller, target, and entitlement authority version; a failed refresh returns `ENTITLEMENT_UNAVAILABLE`, and a stale, future-dated, mismatched, or otherwise unsafe snapshot cannot authorize the join;
 - treats `requestId` as the idempotency identity and makes concurrent joins converge on one membership;
 - advances a monotonic `membershipVersion` rather than exposing the membership row ID as a change version;
 - commits the membership and durable audit/outbox event in one database transaction; and
@@ -79,6 +80,7 @@ This avoids durable rows for casual visits but creates a second class of gamepla
 - Add explicit browser/mobile join and text `JOIN` flows before first character creation/connect/`PLAY`.
 - Converge the implicit `EnsurePublicProductionPlayerMembership` call sites onto the explicit join operation; `POST /auth/connect-token` and `PLAY` must not write membership.
 - Commit membership plus durable audit/outbox atomically and make SQL membership/operation state authoritative for replay.
+- Gate every new membership commit on the immediately preceding fresh ADR 0028 entitlement evaluation. Prove that a failed refresh returns `ENTITLEMENT_UNAVAILABLE`, and that no membership, audit, or outbox record is committed after a failed, stale, future-dated, mismatched, or otherwise invalid evaluation, including evaluation/commit races.
 - Implement monotonic membership versioning and prove races/retries return one membership and one logical join event.
 - Prove a successful join survives later token/socket/`PLAY` failure, while a failed join creates no membership, audit event, character, or admission state.
 - Prove closing enrollment blocks new joins without silently removing existing members, and prove the leave surface removes future membership authority without over-deleting retained data.
