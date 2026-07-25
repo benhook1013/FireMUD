@@ -32,6 +32,7 @@ The previous flow created membership implicitly during first-party connect-token
 - Successful membership powers the player's “my games”/return discovery even if the first connection or later `PLAY` attempt fails. A failed join transaction creates nothing.
 - Connect-token issuance, character creation, and `PLAY` require the resulting membership and never create it implicitly. If it is missing, they return `JOIN_REQUIRED` with recovery guidance.
 - `IssueConnectToken` must re-read the current caller-bound membership and membership authority generation at issuance time. A stale bootstrap token, discovery result, or cached membership decision cannot issue a connect token after membership authority has advanced or been revoked.
+- Fresh authority failure semantics are explicit: a fresh authoritative entitlement result that records a billing denial, grace state, or any state that does not allow public joining returns `TENANT_BILLING_BLOCKED`; inability to establish fresh authoritative entitlement returns `ENTITLEMENT_UNAVAILABLE` instead. A stale, future-dated, target-mismatched, version-mismatched, incomplete, or otherwise unsafe result cannot authorize a join and, if it cannot be replaced by fresh authority, follows the unavailable outcome.
 - Non-public and non-production realms retain their explicit Account-owned grant requirements and cannot use open enrollment.
 
 ### Membership Transaction

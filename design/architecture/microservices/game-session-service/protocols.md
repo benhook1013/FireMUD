@@ -15,7 +15,7 @@ The canonical player-facing paths are:
 - Telnet via TCP Proxy and Gateway
 - first-party web via `/ws/game/**` through Gateway
 
-Direct generic WebSocket access to Game Session remains useful as an internal/test and advanced-client seam, but it is not intended to be the primary product-facing client path. Real end-to-end client-path verification should prefer Gateway or TCP Proxy rather than relying only on direct Game Session WebSocket coverage.
+Direct generic WebSocket access to Game Session remains useful as an internal/test seam, but it is not a separate public authentication path. Public non-proxy WebSocket clients use Gateway `/ws/game/**`, obtain a connect token through the bootstrap/authentication control plane, and present it through the first-party cookie or the dedicated non-browser header. Real end-to-end client-path verification should prefer Gateway or TCP Proxy rather than relying only on direct Game Session WebSocket coverage.
 
 At the protocol level, commands are split into two groups:
 
@@ -40,7 +40,7 @@ PLAY <world> [realm] [character]
 
 | Command | Purpose | Example |
 | ------- | ------- | ------- |
-| `LOGIN <username> <secret>` | Authenticates a session and binds it to an account on credential-bearing transports. Account Service interprets the secret as an enabled password or verified-email login code. First-party `/ws/game/**` may instead use bare `LOGIN` after bootstrap/connect-token validation. | `LOGIN demo@example.com swordfish` |
+| `LOGIN <username> <secret>` | Authenticates a session and binds it to an account on credential-bearing transports. Account Service interprets the secret as an enabled password or verified-email login code. Public non-proxy `/ws/game/**` uses bare `LOGIN` after bootstrap/connect-token validation instead. | `LOGIN demo@example.com swordfish` |
 | `LOGON <username> <secret>` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
 | `LOGOUT` / `LOGOFF` / `QUIT` | Ends the current session and closes the transport. `LOGOFF` and `QUIT` are exact aliases for canonical `LOGOUT`. | `LOGOUT` |
 | `WORLDS` | Lists worlds visible to the caller. Before `LOGIN`, this is a public browse/discovery command intended to let players explore the platform before signing up or logging in. After `LOGIN`, it may also include caller-specific membership or entitlement context. | `WORLDS` |
@@ -63,8 +63,8 @@ Selector rules for `PLAY` match the lobby helpers: `<world>` accepts a stable wo
 
 Telnet and WebSocket clients share the line-based syntax, but transport context determines which `LOGIN` form is valid:
 
-- For Telnet and generic WebSocket clients, bare `LOGIN` or `LOGON` is intended to start a prompt flow, while `LOGIN <username> <secret>` performs an immediate authentication attempt.
-- For first-party `/ws/game/**` sessions that already carry a validated Gateway connect context, bare `LOGIN` completes gameplay authentication from the pre-established bootstrap identity instead of prompting for credentials. This bootstrap identity must not quietly reintroduce gameplay binding into `LOGIN`; `PLAY` remains the sole gameplay-admission and gameplay-scope binding step.
+- For Telnet and other non-WebSocket text clients, bare `LOGIN` or `LOGON` is intended to start a prompt flow, while `LOGIN <username> <secret>` performs an immediate authentication attempt.
+- For public non-proxy `/ws/game/**` sessions that already carry a validated Gateway connect context, bare `LOGIN` completes gameplay authentication from the pre-established bootstrap identity instead of prompting for credentials. First-party browsers use the protected connect-token cookie and explicitly classified non-browser clients use the dedicated connect-token header. This bootstrap identity must not quietly reintroduce gameplay binding into `LOGIN`; `PLAY` remains the sole gameplay-admission and gameplay-scope binding step.
 - The same `OK <COMMAND>` and `ERROR <CODE> <message>` response format applies to all transports so clients can react consistently.
 
 Prompt-based exchanges are planned but not implemented in this slice for Telnet and non-bootstrap clients. On those transports, bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <secret>.` First-party `/ws/game/**` sessions with a validated connect context are the exception: bare `LOGIN` consumes the bootstrap-backed context and must not ask the browser to resend credentials.

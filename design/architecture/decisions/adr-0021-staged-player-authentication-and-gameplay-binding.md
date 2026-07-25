@@ -18,7 +18,7 @@ Bootstrap, connect-token, and visible `LOGIN`/`PLAY` pieces exist, but the targe
 
 ## Context
 
-First-party browsers can authenticate over HTTPS before opening gameplay WebSockets, while Telnet and generic protocol clients need an in-band credential path. FireMUD must distinguish transport admission, account authentication, and gameplay binding without making the Gateway the general account-authentication authority.
+First-party browsers and explicitly classified non-browser WebSocket clients authenticate through the HTTPS bootstrap/connect-token path before opening public gameplay WebSockets, while Telnet and other non-WebSocket text transports need an in-band credential path. FireMUD must distinguish transport admission, account authentication, and gameplay binding without making the Gateway the general account-authentication authority. [ADR 0029](./adr-0029-single-use-gameplay-connect-token-carriage.md) subsequently made a connect token mandatory for every non-proxy public `/ws/game/**` handshake and defined the dedicated header carrier for non-browser clients.
 
 The staged sequence is partially implemented and tested. It adds an explicit browser `LOGIN` transition and short-lived token infrastructure, but preserves one visible `LOGIN` then `PLAY` protocol and leaves Game Session as the final gameplay-login state owner. Explicit membership joining and the final membership-authority reread remain target-state work.
 
@@ -40,9 +40,11 @@ Public-production membership and grant-backed realm access are different authori
 
 Reconnect uses a fresh bootstrap/connect-token sequence where required by the owning token lifetime, followed by fresh `LOGIN` and `PLAY`. A resumable gameplay session does not eliminate these authentication and binding steps after transport loss.
 
-### Text and Generic Protocol Flow
+### Telnet and Non-WebSocket Text Protocol Flow
 
-Telnet and generic WebSocket clients authenticate in-band with `LOGIN <username> <secret>`. A first public-production entry then uses explicit `JOIN <world>` before `CHARS` and `PLAY`; a missing public-production membership returns `JOIN_REQUIRED`. Grant-backed private/playtest entry validates the grant and any separately required existing membership, skips `JOIN`, and does not create membership. Account Service interprets the secret according to the account's enabled `PASSWORD` or verified-email `EMAIL_OTP` mode. Bare prompt-based login remains the target text-client experience, but its absence is an implementation gap rather than a different authentication contract.
+Telnet and other non-WebSocket text clients authenticate in-band with `LOGIN <username> <secret>`. A first public-production entry then uses explicit `JOIN <world>` before `CHARS` and `PLAY`; a missing public-production membership returns `JOIN_REQUIRED`. Grant-backed private/playtest entry validates the grant and any separately required existing membership, skips `JOIN`, and does not create membership. Account Service interprets the secret according to the account's enabled `PASSWORD` or verified-email `EMAIL_OTP` mode. Bare prompt-based login remains the target text-client experience, but its absence is an implementation gap rather than a different authentication contract.
+
+Public generic WebSocket clients do not use this credential-bearing exception. They obtain a scoped connect token through the bootstrap/authentication control plane, present it in the dedicated non-browser handshake header defined by ADR 0029, and send bare `LOGIN` after Gateway has established the signed connect context. Direct Game Session WebSocket access remains an internal/test seam rather than a separate public authentication contract.
 
 Plaintext Telnet credentials are a legacy exposure. As subsequently constrained by [ADR 0033](./adr-0033-public-player-facing-telnet-requires-tls.md), public player-facing deployments require Telnet-over-TLS or the first-party browser path. Local, test, and explicitly private-network plaintext listeners retain the documented pre-login warning where real credentials could be entered.
 
@@ -55,7 +57,7 @@ Every configured gameplay login mode must work through the applicable first-part
 ## Consequences
 
 - Account authentication, transport admission, and gameplay identity binding remain explicit and independently testable.
-- Browser and text transports share the visible `LOGIN` then `PLAY` state model even though their credential carriage differs.
+- Browser, non-browser WebSocket, and text transports share the visible `LOGIN` then `PLAY` state model even though their credential and connect-token carriage differs.
 - Game Session remains the final gameplay-login state owner; Gateway stays a bounded token-validation and connection-admission boundary.
 - Browsers incur one additional protocol transition after the WebSocket opens.
 - Operators must test token issuance, cookie carriage, expiry, replay denial, signed-context validation, `LOGIN`, `PLAY`, and reconnect behavior across releases.
@@ -79,11 +81,11 @@ This strengthens account takeover resistance but adds enrollment, recovery, supp
 
 - Remove any tenant requirement from account-level player-bootstrap authentication; tenant/realm selection occurs through authenticated discovery and is revalidated at connect-token issuance and `PLAY`.
 - Ensure `PASSWORD` and `EMAIL_OTP` account modes both work through first-party bootstrap where configured.
-- Ensure every first-party browser/mobile connect-token response carries the token only through the secure HttpOnly cookie or cookie jar and never serializes it into JavaScript-readable response data. Raw Telnet and generic gameplay clients use their separate in-band login flow and do not receive a connect token through this endpoint.
+- Ensure every first-party browser/mobile connect-token response carries the token only through the secure HttpOnly cookie or cookie jar and never serializes it into JavaScript-readable response data. Explicitly classified non-browser WebSocket clients may receive the token through their protected client integration and present it only through ADR 0029's dedicated handshake header. Raw Telnet and other non-WebSocket text clients use their separate in-band login flow.
 - Prove token expiry, replay, scope mismatch, missing signed context, account mismatch, and pre-`PLAY` gameplay commands fail closed with stable errors.
 - Prove `JOIN_REQUIRED` for a public-production caller without membership, prove explicit `JOIN` is the only membership-creating public-production action, and prove grant-backed private/playtest admission validates grant plus any separately required membership without creating membership.
-- Prove browser `LOGIN` never requests credentials again and that Telnet/generic credential login reaches the same authenticated pre-`PLAY` state.
-- Complete and prove the generic prompt-based login UX or continue reporting it as partial implementation.
+- Prove browser and non-browser connect-token-backed WebSocket `LOGIN` never request credentials again and that Telnet credential login reaches the same authenticated pre-`PLAY` state.
+- Complete and prove the Telnet/non-WebSocket prompt-based login UX or continue reporting it as partial implementation.
 - Exercise first connection, disconnect/reconnect, revoked/expired authentication, and resumable-session behavior in focused integration and player-experience proof.
 
 ## Required Documentation Alignment

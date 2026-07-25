@@ -142,6 +142,9 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `--scope region --tenant <tenantId> --game-instance <gameInstanceId> --region <regionId>`
   - `--scope tenant --tenant <tenantId>`
   - `--scope cluster`
+- Scope exceptions:
+  - The shared Gateway replay domain (`gateway:connect-token:jti:<jti>` and `replayAdmissionFence`) is intentionally not tenant- or region-tagged and is not modified by region- or tenant-scoped coordination resets. Only a shared cluster-domain reset may invalidate it, followed by the maximum gameplay-connect quarantine (`30 seconds`) plus two configured clock-skew intervals.
+  - Region- and tenant-scoped coordination resets preserve Account-owned `session:auth:token:<tokenHash>` records. A cluster-scoped reset may drop them and requires Account restore/reset cutover before protected traffic reopens; this policy is independent of `--preserve-sessions`.
 - Scope inventory source:
   - The authoritative affected-region set comes from the durable Game Session control/status store, not Redis key enumeration.
   - The first fully region-scoped implementation must use a PostgreSQL-backed `RegionStatus` or equivalent runtime ownership table as the inventory source for every tenant and cluster operation.
@@ -333,7 +336,7 @@ Direct `redis-cli` writes to coordination prefixes are reserved for **break-glas
 - Any break-glass write that mutates `tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:*`, or `tick-executor-lease:*` must be followed by a reset/cleanup scope that actually covers the mutated prefix before normal tick processing resumes:
   - For region-scoped families (`tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`), run a region- or tenant-scoped coordination reset as appropriate.
   - For tenant-scoped `remote:*`, run a tenant-scoped reset or an explicit tenant-scoped `remote:<tenantId>:*` cleanup workflow (with audit trail), not a region-only reset.
-  - For session prefixes, follow session reset policy (region resets preserve `session:game:*` and current `sessionctx:*` bootstrap/session-context keys by default; tenant resets always invalidate `session:auth:*` and preserve gameplay/session-context keys only when an explicit `--preserve-sessions` option is invoked; cluster resets invalidate both by default).
+  - For session prefixes, follow session reset policy (region resets preserve `session:game:*` and current `sessionctx:*` bootstrap/session-context keys by default; region- and tenant-scoped resets preserve Account-owned `session:auth:token:<tokenHash>` records; tenant resets preserve gameplay/session-context keys only when an explicit `--preserve-sessions` option is invoked; cluster resets invalidate both by default).
 - Operators must treat such writes as equivalent to “coordination state may be inconsistent” and use the Coordination Reset Model to bring the region/tenant/cluster back to a known-good state, rather than leaving ad-hoc edits in place as a permanent fix.
 - Break-glass flows should go through a small wrapper (CLI or Logging & Admin action) that:
   - Executes the minimal required Redis mutation.

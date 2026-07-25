@@ -100,7 +100,7 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
       - `current_tick_state` – the Redis-side execution state for `current_tick_id`. Allowed values are:
         - `STAGED` – Redis `pending`/queue state exists for this tick and hot-path scripts may continue to add idempotent entries for the same tick.
         - `RESOLVING` – durable domain/application work for this tick is in progress or being reconciled; no newer tick may be staged yet.
-        - `APPLIED` – all required effects for this tick have reached a durable applied/no-op terminal outcome in PostgreSQL-backed handlers or the reconciliation backlog.
+        - `APPLIED` – all required effects for this tick have reached the durable `APPLIED` terminal outcome in PostgreSQL-backed handlers or the reconciliation backlog. A replay-verified effect may have skipped a duplicate domain mutation, but its ledger state remains `APPLIED` and carries replay-verification audit metadata.
         - `ABANDONED` – the tick was intentionally terminated for the current epoch (for example due to reset/recovery) and no more work for that `(region_epoch, tickId)` may be staged through hot-path scripts.
       - `current_tick_terminal_at_ms` – caller-supplied timestamp marking when `current_tick_state` first entered `APPLIED` or `ABANDONED`; used for observability and bounded cleanup only, never for correctness decisions inside Lua.
     - Illustrative Redis hash contents:
@@ -120,7 +120,7 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
         - The first script or caller that hands staged effects to durable domain/application processing flips the state to `RESOLVING`.
         - Replays for the same tick must treat `STAGED` and `RESOLVING` as the same logical in-flight tick and may only add idempotent effect entries for that same `current_tick_id`.
       - `RESOLVING -> APPLIED`:
-        - Only after the durable tick ledger and/or reconciliation backlog for `(tenantId, gameInstanceId, regionId, region_epoch, tickId)` shows all required participants at applied/no-op terminal outcomes.
+        - Only after the durable tick ledger and/or reconciliation backlog for `(tenantId, gameInstanceId, regionId, region_epoch, tickId)` shows all required participants at `APPLIED` or `ABANDONED` terminal outcomes, with replay-verification metadata where a duplicate mutation was proven unnecessary.
       - `RESOLVING -> ABANDONED`:
         - Only after the control plane or recovery tooling has made an explicit terminal decision to abandon the tick for the current epoch.
       - `APPLIED` or `ABANDONED` for tick `T`:
@@ -312,7 +312,7 @@ Gateway connect-token replay state is a narrow security-critical exception to th
 
 - Each accepted token creates at most one exact-`jti` marker at `gateway:connect-token:jti:<jti>` in the player-facing Coordination Redis deployment. The marker is written with an absolute expiry of `token.exp + firemud.gateway.connectTokenClockSkewMs`; equivalently, its initial relative TTL is `max(0, token.exp + clockSkewMs - now)`. It is never refreshed, extended from consumption time, or replaced with a fixed 30-second TTL. The deployed clock-skew setting is the single `FIREMUD_GATEWAY_CONNECT_TOKEN_CLOCK_SKEW_MS` value, default `5000` ms and bounded to `0..5000` ms.
 - The current deployment has one shared replay-continuity domain, so replay markers and the shared `replayAdmissionFence` are not tenant- or region-partitioned. Region- and tenant-scoped coordination resets must leave the Gateway replay prefix and readiness record untouched and must not invalidate connect tokens solely because gameplay coordination in that narrower scope was reset. If either reset cannot prove that the shared replay domain was untouched and continuous, it escalates to the same shared quarantine rather than attempting a narrower fence.
-- A cluster-scoped Coordination Redis reset, loss of marker continuity, uncertain failover, eviction, capacity breach, or durability-acknowledgement failure invalidates the shared replay domain. The reset drops or makes untrusted all replay markers and readiness state, advances the shared fence, rejects new first-party handshakes for at least `30 seconds + 2 * clockSkewMs` after the recorded detection cutoff, and reopens only after the configured disposable-marker plus `WAITAOF` proof establishes `DURABLE_REPLAY_CONSUME_ACK`. Existing WebSockets are not closed by replay-state reset alone; the broader cluster reset separately applies the gameplay-session reset policy.
+- A cluster-scoped Coordination Redis reset, loss of marker continuity, uncertain failover, eviction, capacity breach, or durability-acknowledgement failure invalidates the shared replay domain. The reset drops or makes untrusted all replay markers and readiness state, advances the shared fence, rejects new first-party handshakes for at least the maximum gameplay-connect lifetime (`30 seconds`) plus two configured clock-skew intervals after the recorded detection cutoff, and reopens only after the configured disposable-marker plus `WAITAOF` proof establishes `DURABLE_REPLAY_CONSUME_ACK`. Existing WebSockets are not closed by replay-state reset alone; the broader cluster reset separately applies the gameplay-session reset policy.
 - A future partitioned replay deployment may narrow quarantine to a proven marker/fence domain only after its topology and reset contract establish that isolation. It must not be inferred from a tenant or region label in the current shared deployment.
 
 ---
@@ -378,6 +378,7 @@ Key principles:
   - All coordination and cache keys include a `tenantId` component.
   - Region-scoped coordination keys include both `gameInstanceId` and `regionId` so tick workloads and timers are scoped to the complete tick-region identity.
   - Human‑readable values (character names, room titles) are **never** embedded directly in keys; only stable identifiers (numeric IDs, UUIDs) appear in key components.
+  - Explicit exception: the shared Gateway replay domain (`gateway:connect-token:jti:<jti>` markers and its `replayAdmissionFence`) is intentionally not tenant- or region-tagged. These keys are shared security authority, remain outside tenant/region key-tagging rules, and are untouched by region- or tenant-scoped coordination resets.
 
 - **`{tenantRegionTag}` hash tag**
   - Tick‑region coordination keys use a canonical hash tag placeholder `{tenantRegionTag}` derived from the complete `<tenantId, gameInstanceId, regionId>` scope. The projection must remain collision-safe; callers treat the concrete encoding as opaque.

@@ -26,6 +26,15 @@ internal_workload_rules:
   caller_constraints: all_declared_constraints_must_pass
   caller_policy_alternatives: disjunctive
   allowed_callers_and_mtls_callers: conjunctive
+  caller_policies_schema:
+    identity_fields:
+      caller: method_caller_identity
+      mtls_identity: certificate_identity
+    identity_relation: conjunctive
+route_authentication_rules:
+  accepted_token_profile_audiences:
+    multi_profile_routes: exact_profile_to_audience_map_required
+    audience_source: token_profiles
 classifications:
   - public
   - account_scoped
@@ -122,6 +131,23 @@ routes:
       membership_creation: play_never_creates_membership
     implementation_status:
       known_drift: connect_token_and_play_may_still_invoke_ensure_public_production_player_membership
+  - service: spring-cloud-gateway
+    route: /ws/game/**
+    scope: tenant
+    classification: public_production_onboarding
+    applicability:
+      all_of:
+        - connection_mode: first_party_web
+        - admission_flow: connect_token_bootstrap
+    auth_path: gameplay_connect
+    accepted_token_profiles: [gameplay-connect]
+    accepted_token_profile_audiences:
+      gameplay-connect: gameplay-connect
+    accepted_carriers: [first_party_cookie, classified_non_browser_header]
+    edge_consumer: spring_cloud_gateway_public_non_proxy_websocket
+    connect_context_output: signed_connect_context
+    handshake_error_classes:
+      any_of: [CONNECT_TOKEN_MISSING, CONNECT_TOKEN_EXPIRED, CONNECT_TOKEN_REPLAYED, CONNECT_SCOPE_MISMATCH, CONNECT_REPLAY_PROTECTION_UNAVAILABLE, CONNECT_TOKEN_REJECTED, POLICY_DENY, BACKEND_UNAVAILABLE, PROTOCOL_MISMATCH, INTERNAL_ERROR]
   - service: account-service
     route: GET /auth/bootstrap/worlds
     scope: account
@@ -373,7 +399,7 @@ routes:
         delegated_subject: gameplay_binding_subject
         tenant_billing_authority_generation_applies: true
         membership_authority_generation_applies: true
-        required_live_checks: [issuer_generation, current_token_generation, account_generation, tenant_generation, membership_generation, membership, runtime_entitlements, conditional_realm_grant, grant_version]
+        required_live_checks: [issuer_generation, current_token_generation, account_generation, tenant_generation, membership_generation, membership, runtime_entitlements, conditional_realm_access_grant, grant_version]
         realm_grant_authority: conditional_account_owned
         realm_grant_version: required_when_grant_gated
   - service: account-service

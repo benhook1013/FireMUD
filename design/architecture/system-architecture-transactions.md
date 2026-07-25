@@ -65,7 +65,7 @@ If a proposed gameplay feature truly requires stronger semantics than this model
 
 Tick execution is replayable: retries, failover, and Redis AOF replay can cause the same logical effect to be attempted more than once. For gameplay commands this is expected and safe only because tick-invoked domain mutations are required to be idempotent with respect to a canonical `EffectId`.
 
-- The Game Session Service computes and propagates a stable `EffectId` derived from the region-scoped tick context (`tenantId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`) plus the target aggregate identity.
+- The Game Session Service computes and propagates a stable `EffectId` derived from the region-scoped tick context (`tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`) plus the target aggregate identity.
 - Owning services must implement durable idempotency guards (unique constraints, monotonic updates, transactional outbox) so duplicate `EffectId` attempts become OK/no-op outcomes rather than double-applying side effects.
 - For gameplay-visible mutations, `EffectId`-backed guard rows are the default idempotency boundary. Simpler `last_tick_id` watermark patterns are allowed only for aggregates explicitly documented as receiving at most one logical mutation per tick.
 - To keep this contract consistent across services, tick-driven handlers use a shared idempotency helper from `common-data-runtime` (for example an `IdempotentEffectExecutor`) instead of ad-hoc “check or insert” patterns. The helper:
@@ -229,7 +229,7 @@ In particular:
 Transactional guarantees for tick execution assume deterministic scripts for the `(versionId, scriptPatchVersion)` pair that was in effect when a given effect was applied:
 
 - The Game Session Service records the `scriptPatchVersion` that is active for each `gameInstanceId` and includes it in the context for every tick effect (for example via the EffectId metadata and per-effect audit/log records).
-- Tick handlers and script runners must treat `(versionId, scriptPatchVersion)` as part of the effect identity: replays and retries use the same pair that was originally logged for that effect, even if the instance later moves to a different patch.
+- Tick handlers and script runners must treat `(versionId, scriptPatchVersion)` as immutable effect execution context recorded alongside `EffectId`: replays and retries use the same pair that was originally logged for that effect, even if the instance later moves to a different patch.
 - Operational tooling is allowed to change the pinned `scriptPatchVersion` for a running instance at well-defined boundaries (for example between ticks or during maintenance), but that change only affects **future** effects. Previously applied effects remain tied to the patch version recorded alongside their EffectIds in logs and audit tables.
 
 ---

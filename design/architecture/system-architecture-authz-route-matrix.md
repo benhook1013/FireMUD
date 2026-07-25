@@ -77,14 +77,15 @@ Critical-domain inventory artifacts (required):
 | `cross_tenant_data_bearing` | One matching token record for the exact profile declared by the route | Yes when operation targets tenant-scoped data | Platform-admin-only data-bearing operations |
 | `internal_workload` | Route-specific: explicitly `none` or one exact delegated profile | Route-specific | Internal-only RPCs require exact mTLS workload identity and a method caller allowlist, and both constraints must pass. Each entry declares whether it carries delegated subject authority; this class never inherits an end-user token requirement implicitly. |
 
+Any route that accepts more than one token profile must declare an `accepted_token_profile_audiences` YAML map that binds each accepted profile to its exact audience rather than using an implicit shared audience. The mapping must cover exactly the accepted profiles and must match the audience declared by the token-profile vocabulary.
+
 Internal-service routes must additionally declare their **service caller policy** in the machine-readable matrix:
 
 - whether the route is callable only by specific service identities,
 - whether an end-user issued-token record and scope authorization are still evaluated on behalf of a delegated subject, and
 - which token profile/audience the caller must present.
-- When a route accepts more than one profile, its `accepted_token_profile_audiences` YAML map must bind each accepted profile to its exact audience rather than using an implicit shared audience.
 
-Each `caller_policies` entry is one complete alternative. Alternatives are disjunctive, while the caller identity, mTLS identity, token state/profile, applicable authority generations, delegated context, and live checks inside one entry are conjunctive. A caller name is not sufficient without its exact certificate identity, and an mTLS identity is not sufficient without the method caller policy. When alternatives use different token states, generation-applicability fields belong inside each caller policy rather than at route level.
+Each `caller_policies` entry is one complete alternative. Alternatives are disjunctive, while the `caller` method identity, `mtls_identity` certificate identity, token state/profile, applicable authority generations, delegated context, and live checks inside one entry are conjunctive. A caller name is not sufficient without its exact certificate identity, and an mTLS identity is not sufficient without the method caller policy. When alternatives use different token states, generation-applicability fields belong inside each caller policy rather than at route level. The YAML `caller_policies_schema` makes these two identity fields and their conjunctive relation explicit without introducing a broader policy framework.
 
 Without these fields, a route classification is incomplete for internal-only APIs.
 
@@ -93,7 +94,7 @@ Critical routes may also require explicit machine-readable fields for:
 - `applicability` when multiple entries share one transport route or command; predicates must be explicit and mutually exclusive so classification is deterministic
 - `membership_authority_generation_applies`
 - `tenant_billing_authority_generation_applies`
-- `required_live_checks` such as `membership`, `membership_generation`, `runtime_entitlements`, `admission_pointer`
+- `required_live_checks` such as `membership`, `conditional_realm_access_grant`, `membership_generation`, `runtime_entitlements`, `admission_pointer`
 - `mutation_contract` such as `shared_instrument_ack_required`
 - `canonical_errors` that CI and contract tests must expect for route-specific security rejections
 - `realm_grant_authority` and `realm_grant_version` when grant-gated access depends on Account-owned realm authority
@@ -115,6 +116,7 @@ Route authorization never becomes in-game elevation. If a global-role account pa
 | Game Session Service | `JOIN` | `public_production_onboarding` | Explicit caller-bound open-enrollment action for the current public production realm; Account commits durable membership plus audit/outbox idempotently |
 | Game Session Service | `CHARS` | `public_production_onboarding` | Requires an existing caller-bound membership plus any non-public realm grant and current entitlements. It resolves characters for the selected catalog realm but does not apply `PLAY`'s `admission_pointer` live-admission check. Missing public-game membership returns `JOIN_REQUIRED`. |
 | Game Session Service | `PLAY` | `public_production_onboarding` | Requires an existing caller-bound membership plus any non-public realm grant, current entitlements, and the current admissible realm pointer. Missing public-game membership returns `JOIN_REQUIRED`; `PLAY` never creates it. First-party `/ws/game/**` also enforces connect-context scope, and unavailable/ambiguous routing returns `ADMISSION_POINTER_UNAVAILABLE`; a deliberately closed realm returns `REALM_UNAVAILABLE`. |
+| Spring Cloud Gateway | `/ws/game/**` (connect-token bootstrap) | `public_production_onboarding` | Applies to every public non-proxy WebSocket bootstrap: first-party browsers use the protected cookie and explicitly classified non-browser clients use the dedicated handshake header. Tokenless public WebSocket support does not exist. Gateway consumes exactly one `gameplay-connect` token with audience `gameplay-connect`, strips its carrier, atomically enforces single use, and emits the signed connect context for Game Session. The current internal connection-mode value `first_party_web` denotes this verified connect-token path regardless of carrier. Non-`101` outcomes use the bounded `CONNECT_TOKEN_MISSING`, `CONNECT_TOKEN_EXPIRED`, `CONNECT_TOKEN_REPLAYED`, `CONNECT_SCOPE_MISMATCH`, `CONNECT_REPLAY_PROTECTION_UNAVAILABLE`, `CONNECT_TOKEN_REJECTED`, `POLICY_DENY`, `BACKEND_UNAVAILABLE`, `PROTOCOL_MISMATCH`, or `INTERNAL_ERROR` handshake classes. |
 | Account Service | `GET /auth/bootstrap/worlds` | `pre_tenant_discovery` | Accepts only the caller-bound `player-bootstrap` profile; derives visible worlds before a tenant is selected and applies the membership/public-production visibility contract plus live runtime entitlement filtering |
 | Account Service | `GET /auth/bootstrap/worlds/{worldSlug}/realms` | `public_production_onboarding` | Accepts only the caller-bound `player-bootstrap` profile; applies live realm visibility and runtime entitlement checks, including public-production visibility or an applicable Account-owned realm-access grant |
 | Account Service | `GET /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters` | `public_production_onboarding` | Accepts only the caller-bound `player-bootstrap` profile; requires live membership, applicable realm-grant and entitlement checks, and revalidates the signed `connectScopeId` against the current admission pointer |

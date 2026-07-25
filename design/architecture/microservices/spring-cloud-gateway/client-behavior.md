@@ -15,7 +15,7 @@
 - In player-facing environments, the TCP Proxy -> Gateway WebSocket hop is mTLS-authenticated.
 - Spring Cloud Gateway strips spoofable tenant and game-instance headers from public ingress and forwards `X-Tenant-Id` / `X-Game-Instance-Id` only when they are derived from trusted inputs, such as `X-Proxy-Tenant-Id` / `X-Proxy-Game-Instance-Id` on the authenticated TCP Proxy -> Gateway hop.
 - Gateway emits the gateway-owned discriminator `X-Firemud-Connection-Mode` on successful gameplay admission:
-  - `first_party_web` for connect-token-validated first-party WebSocket handshakes.
+  - `first_party_web` for every connect-token-validated public non-proxy WebSocket handshake, including protected browser-cookie and explicitly classified non-browser header carriers. The current value names the admission path rather than the client owner.
   - `trusted_tcp_proxy` for authenticated TCP Proxy bridge handshakes.
 - Game Session must rely on this positive marker rather than inferring path type from header absence.
 

@@ -71,6 +71,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - `command_id`
   - `status` ∈ {`SCHEDULED`, `APPLIED`, `ABANDONED`}
   - `reason` / `outcome`
+  - replay-verification audit metadata when a replay proves that the effect was already applied (for example verifier, timestamp, and evidence digest/reference)
   - `created_at`, `updated_at`
 - Each `(tenantId, gameInstanceId, regionId, region_epoch, tickId)` also has a durable tick-batch record owned by Game Session that stores at minimum:
   - `tick_batch_id`
@@ -102,6 +103,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - `status = APPLIED` – effect successfully committed to domain state.
   - `status = ABANDONED` – effect intentionally skipped or judged unrecoverable.
 - Rows must not remain in `SCHEDULED` beyond the emitted replay-convergence budget; stuck rows are treated as operational smells and surfaced via metrics and alerts.
+- The ledger vocabulary is closed to `SCHEDULED`, `APPLIED`, and `ABANDONED`; no replay-specific ledger status may be introduced. When replay verification proves that an effect was already applied, the ledger converges `SCHEDULED -> APPLIED` and records explicit replay-verification audit metadata. The handler may skip a duplicate domain mutation, but that implementation detail is not a ledger outcome.
 
 #### Replay Convergence Budget (Normative)
 
@@ -147,7 +149,7 @@ Replay of a tick is driven from ledger state:
 - When reprocessing a tick, the executor loads ledger rows for that `<tenantId, gameInstanceId, regionId, region_epoch, tickId>` with `status = SCHEDULED` and:
   - Re-queues/re-runs effects whose domain targets do not yet reflect `APPLIED`, then marks those rows `APPLIED`.
   - Marks effects `ABANDONED` with a precise reason when replay determines they are no longer valid (expired session, entity gone, descheduled tick, and so on).
-  - Marks effects `APPLIED` and skips domain calls when it determines the effect has already been applied idempotently.
+  - When idempotency evidence proves that the effect was already applied, verifies the relevant durable state, transitions `SCHEDULED -> APPLIED`, and records replay-verification audit metadata before skipping the duplicate domain call. This must not create a replay-specific ledger status.
 - Every Lua script that stages effects is required to include the `effect_key` used in the ledger so Redis `pending` entries can always be correlated with ledger rows; staging scripts that cannot be tied back to a ledger identity are rejected.
 - Recovery rules for Redis/SQL mismatch are explicit:
   - durable tick-batch + `SCHEDULED` ledger rows exist, Redis `pending` missing:
@@ -205,7 +207,7 @@ Minimum command-status surface for operators and clients:
 
 ### EffectId, Ledger Rows, and Guard Keys
 
-The canonical `EffectId` described in `system-architecture-transactions.md` (a stable identity derived from `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`, and target aggregate identity) is the logical key that ties together:
+The full domain idempotency identity for a tick-driven effect is `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey)` plus the target aggregate identity. The canonical `EffectId` is the logical projection of that identity that ties together:
 
 - Tick coordination in Redis.
 - Tick effect ledger rows in PostgreSQL.
@@ -214,8 +216,8 @@ The canonical `EffectId` described in `system-architecture-transactions.md` (a s
 In schema terms:
 
 - The tick effect ledger’s primary or unique key is a projection of `EffectId`:
-  - At minimum `(tenant_id, game_instance_id, region_id, region_epoch, tick_id, effect_key)`, with target aggregate identity either encoded in `effect_key` or captured in separate columns that share the same logical identity.
-  - Additional columns such as `command_id` or aggregate identifiers may exist for queryability, but they do not change the underlying `EffectId`.
+  - At minimum `(tenant_id, game_instance_id, region_id, region_epoch, tick_id, effect_key)`, with target aggregate identity encoded in `effect_key` or represented by additional columns in the same unique identity.
+  - `command_id` and other fields may be retained as payload, audit, or query attributes, but they do not replace or weaken the complete `EffectId`.
 - Guard tables such as `tick_effect_guard` implement the same identity for multi-effect operations:
   - Their primary key `(tenant_id, game_instance_id, region_id, region_epoch, tick_id, effect_key)` is the guard-side projection of `EffectId` for the logical effect being protected.
   - Handlers must not invent alternative idempotency keys for tick-driven effects; they should derive their guard keys directly from the same components used to compute `EffectId`.
@@ -371,8 +373,8 @@ Two patterns are used:
   - Inside the same transaction as the domain update, the handler attempts to insert `(tenant_id, game_instance_id, region_id, region_epoch, tick_id, effect_key)`:
     - If the insert succeeds, the effect is new for this tick and the handler applies all associated state changes.
     - If the insert conflicts on primary key, the effect has already been applied for this `(tenantId, gameInstanceId, regionId, regionEpoch, tickId, effectKey)` and the handler treats the call as a replay:
-      - In the simple case, it returns success without reapplying changes.
-      - In stricter flows, it may verify that current state is consistent with the previously applied effect before returning.
+      - It verifies durable state or an equivalent effect witness, transitions any `SCHEDULED` ledger row to `APPLIED`, and records replay-verification audit metadata.
+      - It may then return success without reapplying changes; the handler-level no-op is not a ledger status.
 
 Examples:
 

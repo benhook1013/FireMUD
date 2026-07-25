@@ -27,7 +27,7 @@ The existing target already requires a dedicated header or HttpOnly cookie, shar
 ### Supported Carriers
 
 - First-party browsers receive the token only as the `Secure`, `HttpOnly`, `SameSite=Strict`, `/ws/game`-scoped `Firemud-Connect-Token` cookie. Browser-readable response data contains only non-secret connection metadata.
-- Explicitly classified non-browser clients may use the dedicated `X-Firemud-Connect-Token` handshake header.
+- Explicitly classified non-browser WebSocket clients use the dedicated `X-Firemud-Connect-Token` handshake header. This is the public generic-WebSocket admission contract and supersedes ADR 0021's earlier credential-bearing generic-WebSocket wording; in-band credential login remains limited to Telnet and other non-WebSocket text transports.
 - A public gameplay handshake must contain exactly one non-empty, single-valued supported carrier. Duplicate header values, duplicate token cookies, or both carrier types are rejected; no precedence rule applies.
 - Query parameters are not a connect-token carrier. Gateway does not promote or accept a query-carried token in player-facing environments.
 - Gateway removes all external token carriers before forwarding and emits only the verified signed connect context.

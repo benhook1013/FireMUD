@@ -95,6 +95,15 @@ for path in [
 ]:
     require_contains(path, [canonical_reset_anchor])
 
+require_contains(
+    "design/architecture/system-architecture-redis-reset-and-recovery.md",
+    ["Region and tenant resets preserve Account-owned `session:auth:token:<tokenHash>` records"],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-ops-access.md",
+    ["Region- and tenant-scoped coordination resets preserve Account-owned `session:auth:token:<tokenHash>` records"],
+)
+
 operations_text = (root / "design/architecture/system-architecture-redis-operations.md").read_text(encoding="utf-8")
 required_reset_steps = [
     "1. `coordination-maintenance pause --operation reset ...`",

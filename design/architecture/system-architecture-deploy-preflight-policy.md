@@ -181,6 +181,8 @@ Compact schema appendix for `expected-bindings.yaml`:
   - `observability`
   - environment-owned non-secret shared values explicitly marked as shared with rationale
 
+The illustrative staging manifest below reflects the current checked-in Secret-backed JWKS contract (`secret://firemud/jwt-jwks`). A ConfigMap-backed `jwt-jwks` is target-state-only and must be explicitly identified as that target mode; it must not be inferred from this current example.
+
 Illustrative example:
 
 ```yaml
@@ -196,7 +198,7 @@ internalBindings:
       endpoint: redis-cache.firemud.svc.cluster.local:6379
   jwt:
     signingKeysRef: secret://firemud/jwt-signing-keys
-    jwksRef: configmap://firemud/jwt-jwks
+    jwksRef: secret://firemud/jwt-jwks
   certificates:
     issuerRef: cert-manager://firemud/clusterissuers/firemud-staging
     workloadMtlsRef: cert-manager://firemud/staging-workload-mtls

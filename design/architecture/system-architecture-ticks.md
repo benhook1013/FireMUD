@@ -413,14 +413,14 @@ See `system-architecture-tick-failures-and-operations.md` for the full crash-rec
 Domain services must ensure that tick-driven effects are **idempotent** with respect to the region-scoped tick timeline `(regionEpoch, tickId)`:
 
 - Single-aggregate updates use a “last applied tick” pattern that is epoch-aware (for example storing and comparing `(last_region_epoch, last_tick_id)` for the aggregate).
-- Multi-aggregate operations use effect guard tables keyed by the same epoch-scoped identity (for example `(tenantId, gameInstanceId, regionId, regionEpoch, tickId, effectKey)`).
+- Multi-aggregate operations use effect guard tables keyed by the full domain idempotency identity `(tenantId, gameInstanceId, regionId, regionEpoch, tickId, effectKey)` plus target aggregate identity.
 
 ### Tick Effect Identity and Idempotency Contract
 
 Effect identity and idempotency rules are defined jointly by:
 
 - The `(regionEpoch, tickId)` carried on tick-driven calls.
-- A stable, structured effect identity derived deterministically from the command payload and tick context, including at minimum `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`, aggregate type, and aggregate id.
+- The full domain idempotency identity is `(tenantId, gameInstanceId, regionId, regionEpoch, tickId, effectKey)` plus target aggregate identity, derived deterministically from the command payload and tick context. Guard schemas may encode the aggregate identity into `effectKey` or retain it in explicit unique-key columns, but they must preserve the same logical identity.
 
 Together these form the canonical `EffectId` described in `system-architecture-transactions.md`. Tick coordination keys in Redis, tick effect ledger rows, and domain-level guard tables (for example `tick_effect_guard`) must all use projections of this same `EffectId` rather than introducing ad-hoc idempotency keys.
 
