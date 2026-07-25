@@ -58,6 +58,9 @@ characters_request = requests.pop(0)
 expected_query = urlencode({"connectScopeId": connect_scope_id})
 assert characters_request["url"].endswith(f"/characters?{expected_query}")
 assert connect_scope_id not in characters_request["url"]
+assert characters_request["headers"] == {
+    "Authorization": "Bearer bootstrap-token",
+}
 PY
 
 SUCCESS_EVIDENCE="$TMP_DIR/success-evidence.json"

@@ -478,8 +478,7 @@ public class AccountServiceImpl implements AccountService {
             bootstrapContext.accountId(), scopeContext.tenantId(), request.requestId());
     if (!nonPublicGrant
         && !membership.gameplayAdmissionAllowed()
-        && currentRealm.publicProductionRealm()
-        && scopeContext.tenantId() == currentRealm.tenantId()) {
+        && currentRealm.publicProductionRealm()) {
       membership =
           toRuntimeMembership(
               ensurePublicProductionPlayerMembership(
@@ -854,16 +853,20 @@ public class AccountServiceImpl implements AccountService {
     try {
       List<RuntimeRealmTarget> candidates =
           gameSessionClient.listGameplayRealms(worldSlug).stream()
+              .filter(realm -> java.util.Objects.equals(worldSlug, realm.getWorldSlug()))
+              .filter(realm -> java.util.Objects.equals(realmSlug, realm.getRealmSlug()))
               .map(this::readRuntimeRealmTarget)
-              .filter(realm -> java.util.Objects.equals(worldSlug, realm.worldSlug()))
-              .filter(realm -> java.util.Objects.equals(realmSlug, realm.realmSlug()))
               .filter(realm -> expectedTenantId == null || realm.tenantId() == expectedTenantId)
-              .filter(realm -> isRealmAdmissible(bootstrapContext, realm))
               .toList();
       if (candidates.size() != 1) {
         throw new IllegalStateException("Selected gameplay realm is absent or ambiguous");
       }
       RuntimeRealmTarget candidate = candidates.getFirst();
+      if (!isRealmAdmissible(bootstrapContext, candidate)) {
+        throw new AuthenticationException(
+            "ADMISSION_POINTER_UNAVAILABLE",
+            "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
+      }
       RuntimeRealmTarget realm =
           readRuntimeRealmTarget(
               gameSessionClient.getAdmissionPointer(candidate.tenantId(), worldSlug, realmSlug));
