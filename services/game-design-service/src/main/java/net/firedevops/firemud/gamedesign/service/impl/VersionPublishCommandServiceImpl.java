@@ -135,7 +135,8 @@ public class VersionPublishCommandServiceImpl {
       publishGateService.assertGatePassed(dto, participantDigests);
       recordedParticipantDigestService.assertMatchesRecordedDigests(
           dto.tenantId(), PublishType.FULL_VERSION, participantDigests);
-      exportedManifest = assetExportService.exportAssets(request.tenantId(), dto.versionNumber());
+      exportedManifest =
+          assetExportService.exportAssets(request.tenantId(), dto.id(), dto.versionNumber());
       long exportedStateEpoch =
           versionAssetArtifactService
               .markExportedUnattested(
