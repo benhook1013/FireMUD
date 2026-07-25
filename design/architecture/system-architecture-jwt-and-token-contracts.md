@@ -76,8 +76,15 @@ Account Service issues the exact JWT profiles defined below for control-plane UI
 
 ### Example JWT Payload
 
+- `iss`: `"firemud-account-service"`
+- `sub`: `"018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a"`
+- `jti`: `"018f8f0a-4d9e-7c46-be37-8c1d0e9f7a5b"`
+- `aud`: `"control-ui"`
 - `accountId`: `"018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a"`
 - `iat`: `1735689600`
+- `nbf`: `1735689600`
+- `exp`: `1735693200`
+- `tokenGeneration`: `12`
 - `globalRoles`: `["billingAdmin"]`
 - `scopedRoles`:
   - `"018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f"` -> `["tenantAdmin", "designer"]`

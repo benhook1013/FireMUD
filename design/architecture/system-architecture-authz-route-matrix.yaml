@@ -211,11 +211,31 @@ routes:
     issued_token_profile: player-bootstrap
     issued_token_audience: player-bootstrap
   - service: account-service
-    route: EnsurePublicProductionPlayerMembership
+    route: POST /auth/bootstrap/join
     scope: tenant
     classification: public_production_onboarding
     auth_path: player_bootstrap
     accepted_token_profiles: [player-bootstrap]
+    subject_binding: caller_account_id
+    target_binding: signed_connect_scope_id_matches_route
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
+    required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
+    mutation_contract: explicit_public_membership_atomic
+  - service: account-service
+    route: EnsurePublicProductionPlayerMembership
+    target_route: JoinPublicProductionMembership
+    scope: tenant
+    classification: internal_workload
+    auth_path: mtls_workload
+    issued_token_state: none
+    accepted_token_profiles: []
+    token_audience: none
+    allowed_callers:
+      any_of: [game-session-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
+    delegated_subject: typed_player_execution_context
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
     required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]

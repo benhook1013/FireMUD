@@ -300,6 +300,7 @@ require_ordered_sequence \
   'currentPullRequest.state !== "open" ||' \
   'return;' \
   'github.rest.actions.listWorkflowRuns,'
+require_branch_return "$smoke_path" 'currentPullRequest.state !== "open" ||'
 require_contains "$smoke_path" 'head_sha: headSha,'
 require_contains "$smoke_path" 'mode-required'
 require_contains "$smoke_path" 'Build Runtime Images secure-pr-artifact pr-'

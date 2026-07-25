@@ -107,7 +107,7 @@ To start a session via REST:
 ```bash
 curl -X POST http://localhost:8086/sessions \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":"7b3b074e-d597-4e9b-b96f-4f5946d26120","gameTemplateId":"5f0d0c44-7e63-4b3b-9e35-7a4d7e2a8c11","controlPlaneRequestId":"cp-req-1001","ownerAccountId":"550e8400-e29b-41d4-a716-446655440000"}'
+  -d '{"tenantId":42,"gameTemplateId":7,"controlPlaneRequestId":"cp-req-1001","ownerAccountId":1001}'
 ```
 
 ### gRPC examples
@@ -119,7 +119,7 @@ grpcurl -plaintext localhost:6565 game_session.v1.GameSessionService/Ping
 ```
 
 ```bash
-grpcurl -plaintext -d '{"tenantId":"7b3b074e-d597-4e9b-b96f-4f5946d26120","gameTemplateId":"5f0d0c44-7e63-4b3b-9e35-7a4d7e2a8c11","controlPlaneRequestId":"cp-req-1001","ownerAccountId":"550e8400-e29b-41d4-a716-446655440000"}' \
+grpcurl -plaintext -d '{"tenantId":42,"gameTemplateId":7,"controlPlaneRequestId":"cp-req-1001","ownerAccountId":1001}' \
   localhost:6565 game_session.v1.GameSessionService/StartSession
 ```
 
