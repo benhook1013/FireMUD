@@ -13,14 +13,14 @@ Every protected route in a validated inventory must be listed here with:
 - required live authority checks for the route class,
 - any response-profile or mutation-contract requirements needed for CI/security enforcement.
 
-Before that inventory is validated, an unclassified protected or external route must remain conservatively denied or unreachable; this safeguard is not generated policy from the incomplete YAML. Runtime enforcement is immediate and independent of inventory completeness: every protected route without a deterministic classification is rejected rather than approximated.
+**Canonical incomplete-inventory rule:** Until source-stable OpenAPI/protobuf inventory coverage is complete and validated, the YAML is declaration-only and must not generate runtime or default-deny policy for routes absent from the validated inventory. Runtime must reject unclassified protected routes and leave unclassified external routes unreachable or denied; CI and deployment inventory checks must fail validated candidate routes missing from the YAML.
 
-Services must enforce these classifications through shared middleware annotations/interceptors immediately. A protected route missing from the current matrix is recorded as authorization drift/gap; runtime rejects it rather than forwarding or approximating it, while CI and deployment policy checks independently fail a validated candidate route missing its matrix registration. The incomplete YAML still must not be treated as a complete canonical registry or used to generate runtime policy.
+Services must enforce these classifications through shared middleware annotations/interceptors immediately. A protected route missing from the current matrix is recorded as authorization drift/gap; the canonical incomplete-inventory rule above governs its runtime and CI/deployment handling rather than forwarding or approximating it.
 
 ## Implementation Status
 
 - The static Gateway route catalog and bounded internal/actuator blockers provide partial edge-exposure enforcement.
-- The YAML is normative for declared entries, but the current route inventory is incomplete. CI inventory generation, source-stable OpenAPI/protobuf coverage, YAML completeness comparison, matrix-aware shared middleware, strict token-profile enforcement, and exact proof for remaining broad Gateway route families are not implemented. Missing coverage is a recorded drift/gap; runtime rejection of unclassified protected/external routes is still an immediate safeguard, and CI/deployment comparison remains an independent registration failure once a validated candidate inventory is available. The incomplete YAML must not generate their policy.
+- The YAML is normative for declared entries, but the current route inventory is incomplete. CI inventory generation, source-stable OpenAPI/protobuf coverage, YAML completeness comparison, matrix-aware shared middleware, strict token-profile enforcement, and exact proof for remaining broad Gateway route families are not implemented. Missing coverage is a recorded drift/gap; the canonical incomplete-inventory rule above remains the immediate runtime and CI/deployment safeguard.
 
 ## Token Profile Vocabulary
 
@@ -36,9 +36,8 @@ The current JWT profile names are `control-ui`, `player-bootstrap`, the one-use 
   - Fail if a route is marked billing- or support-safe but lacks required redaction/authorization tests.
   - Fail if generated route inventory (OpenAPI/proto) differs from the YAML matrix for auth/session and billing/subscription domains.
 - **Default-deny behavior**:
-  - The declared-entry `default_action: deny` is normative only for entries in the YAML. It does not generate policy for routes absent from this incomplete inventory.
-  - Runtime classification is independent of the inventory gate: any protected route that cannot be classified deterministically is rejected immediately until explicitly reviewed and added to the matrix. For an external route, the edge leaves it unreachable or denies it.
-  - CI and deployment inventory checks are a separate registration gate: a validated candidate route absent from the YAML matrix fails those checks. No generated default-deny policy is produced from the incomplete inventory; the runtime safeguard is an enforcement boundary, not an incomplete-YAML policy artifact.
+  - The declared-entry `default_action: deny` is normative only for entries in the YAML; the canonical incomplete-inventory rule above governs routes absent from the validated inventory.
+  - Runtime classification and CI/deployment inventory registration are separate gates; both follow the canonical incomplete-inventory rule above.
   - No route may default to `tenant_regular`, billing-safe, support-safe, or another executable class.
 - **Change control**:
   - `billing_safe_tenant`, `cross_tenant_support_safe`, and `cross_tenant_billing_safe` changes require explicit security review approval.
@@ -51,7 +50,7 @@ The following domains become full-fail in CI only after source-stable OpenAPI/pr
 - Billing-safe and support-safe routes.
 - Subscription mutation and entitlement routes.
 
-Before that gate passes, protected routes missing from the YAML matrix are recorded as drift/gap, including pre-existing routes; runtime rejects them, CI and deployment fail them when the validated candidate inventory is compared, and the incomplete matrix must not generate default-deny behavior for them.
+Before that gate passes, protected routes missing from the YAML matrix are recorded as drift/gap, including pre-existing routes; the canonical incomplete-inventory rule above applies until the validated candidate inventory is compared.
 
 CI should generate candidate inventories from OpenAPI/proto definitions and compare them against the YAML matrix so protected-route drift is detected automatically.
 
@@ -144,8 +143,8 @@ Route authorization never becomes in-game elevation. If a global-role account pa
 | Account Service | `ListSubscriptionsCrossTenantBillingSafeReports` | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |
 | Account Service | `GetCallerTenantMembershipTenant` | `billing_safe_tenant` | `tenantAdmin` (subject bound to caller); caller-bound membership authority generation applies |
 | Account Service | `GetTenantMembershipForAccountCrossTenant` | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |
-| Account Service | invoice/payment method APIs tenant-scoped variant | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped); shared-instrument acknowledgement contract required when mutation affects account-wide payment instrument |
-| Account Service | invoice/payment method APIs cross-tenant variant | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |
+| Account Service | `BillingArtifactsTenant` | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped); shared-instrument acknowledgement contract required when mutation affects account-wide payment instrument |
+| Account Service | `BillingArtifactsCrossTenant` | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |
 
 ### Target Public Production Onboarding Example
 

@@ -16,7 +16,7 @@ Redis coordination behavior and reset flows are defined in:
 
 ## Implementation Notes
 
-This runbook is written for the target tick/region model (`tenantId` + `regionId`). If your current deployment only exposes coarser tick pause controls (for example pausing by `tenantId` + `game_instance_id`), follow the same decision logic but apply it at the closest available scope and record the scope mismatch in the incident timeline for follow-up.
+This runbook is written for the target tick/region model (`tenantId` + `gameInstanceId` + `regionId`). If your current deployment only exposes coarser tick pause controls (for example pausing by `tenantId` + `game_instance_id`), follow the same decision logic but apply it at the closest available scope and record the scope mismatch in the incident timeline for follow-up.
 
 When applying scope substitution, use a deterministic mapping source (control-plane lookup or game-instance registry), record the resolved region set, and include the mapping evidence in the incident notes so post-incident reconciliation is auditable.
 
@@ -38,7 +38,7 @@ All trace-specific guidance in this runbook is conditional on the environment ad
 - Metrics and structured logs are the dependable baseline in every environment; mitigation must proceed without traces.
 - Use `tick_execute` / `tick_apply_effect` traces only when the environment advertises and proves the named workflow-tracing capability.
 - Apply temporary service-scoped sampling escalation only when that control is advertised and proved, and record start/end times.
-- Use collector tail-sampling by `tenantId`/`regionId` only when the environment advertises and proves scoped escalation; remove it after triage.
+- Use collector tail-sampling by `tenantId`/`gameInstanceId`/`regionId` only when the environment advertises and proves scoped escalation; remove it after triage.
 - If the relevant capability is absent or traces remain unavailable, continue with metrics and logs and proceed with region/tenant reset decisions using runbook thresholds.
 
 ## Stalled Tick Region
@@ -50,7 +50,7 @@ All trace-specific guidance in this runbook is conditional on the environment ad
   - `tick_execution_time_ms_p95` / `tick_execution_time_ms_p99` ratios vs `tick_lock_ttl_ms` exceeding the degraded thresholds described in `system-architecture-tick-concepts-and-invariants.md`.
 - Redis coordination metrics and dashboards show:
   - A region holding `tick-executor-lease:{tenantRegionTag}` for longer than expected without advancing `tickId`.
-  - Growing `tick_retry_queue_depth` or `tick_command_queue_depth` for the affected `<tenantId, regionId>`.
+  - Growing `tick_retry_queue_depth` or `tick_command_queue_depth` for the affected `<tenantId, gameInstanceId, regionId>`.
 - Logs and optional workflow traces:
   - Game Session logs show repeated retries or warnings for the affected region.
   - When the Trace Preconditions are satisfied, Jaeger traces for `tick_execute` or equivalent spans show long durations or repeated retries for the same region.
@@ -58,7 +58,7 @@ All trace-specific guidance in this runbook is conditional on the environment ad
 ### Decide (Stalled tick region)
 
 - If the stall is brief and metrics already show recovery (status returns to `RUNNING`, queues drain, execution time ratios return to healthy ranges), continue to monitor without intervention.
-- If the region remains stalled or degraded long enough that the shared tick-health paging conditions would still be firing for that scope, plan a **region-scoped** coordination reset for the affected `<tenantId, regionId>` as described in `system-architecture-redis-reset-and-recovery.md`.
+- If the region remains stalled or degraded long enough that the shared tick-health paging conditions would still be firing for that scope, plan a **region-scoped** coordination reset for the affected `<tenantId, gameInstanceId, regionId>` as described in `system-architecture-redis-reset-and-recovery.md`.
   - In shared rulesets, this means the same conditions that would keep the finalized per-region tick-health paging alert active for that region, starting with sustained `tick_status{scope,status="STALLED"} == 1` and any environment overlay that pages on prolonged `DEGRADED` state.
   - Treat `tick_status{scope,status="STALLED"} == 1` sustained through the environment’s alert hold time as an intervention threshold by itself.
   - Also treat sustained `tick_status{scope,status="DEGRADED"} == 1` together with continued over-threshold `tick_execution_time_ms_p95` / `tick_execution_time_ms_p99` ratios versus `tick_lock_ttl_ms`, or continued growth in `tick_retry_queue_depth` / `tick_command_queue_depth`, as sufficient to intervene before the region flips fully to `STALLED`.
@@ -67,7 +67,7 @@ All trace-specific guidance in this runbook is conditional on the environment ad
 ### Act (Stalled tick region)
 
 1. **Quiesce tick work for the region**
-   - Pause tick scheduling for the affected `<tenantId, regionId>` using the Game Session controls described in the tick architecture and Redis reset docs.
+   - Pause tick scheduling for the affected `<tenantId, gameInstanceId, regionId>` using the Game Session controls described in the tick architecture and Redis reset docs.
    - Ensure no new executor instances are attempting to acquire the region lease while you inspect metrics.
 2. **Inspect metrics and optional workflow traces**
    - Use the Tick Health dashboard to confirm:
@@ -190,7 +190,7 @@ All trace-specific guidance in this runbook is conditional on the environment ad
 - Alert: `TickCleanupLagHigh` fires (`tick_cleanup_lag_ms` sustained above the configured threshold).
 - Metrics and dashboards show:
   - `tick_durable_commit_total` continues increasing, but `tick_coordination_cleared_total` lags for the same regions.
-  - `tick_cleanup_lag_ms` remains elevated for affected `<tenantId, regionId>` scopes.
+  - `tick_cleanup_lag_ms` remains elevated for affected `<tenantId, gameInstanceId, regionId>` scopes.
 - Logs and optional workflow traces:
   - Game Session logs show repeated cleanup retries or failed transitions from durable commit to coordination-cleared.
   - When the Trace Preconditions are satisfied, `tick_execute` traces show long or repeated cleanup-related phases after durable state has been committed.
@@ -246,7 +246,7 @@ All trace-specific guidance in this runbook is conditional on the environment ad
 ### Act (Stuck tick effect ledger entries)
 
 1. **Inspect ledger and domain state**
-   - Use SQL or service-level admin APIs to query `tick_effects` (or the equivalent ledger table) for the affected `<tenantId, regionId>`:
+   - Use SQL or service-level admin APIs to query `tick_effects` (or the equivalent ledger table) for the affected `<tenantId, gameInstanceId, regionId>`:
      - Identify the oldest `SCHEDULED` entries and their associated `tickId` and `effectKey`.
    - Compare `tick_effects_pending_oldest_age_seconds` with `tick_effects_replay_convergence_budget_seconds` to distinguish “brief replay delay” from “budget breach that requires active remediation”.
    - For a small sample, inspect domain state (for example entity HP, inventory, room state) to determine whether the effects have already been applied.
@@ -270,7 +270,7 @@ All trace-specific guidance in this runbook is conditional on the environment ad
      - If effects are no longer valid, mark rows `ABANDONED` with precise reasons (for example `EXPIRED`, `INVALID_TARGET`, `REGION_RESET_SCOPED`) so they stop appearing as pending.
    - For replay-controller starvation:
      - Reduce per-region replay batch monopolization or other hot-region pressure first.
-     - If the region remains starved, run scoped replay-controller remediation for the affected `<tenantId,regionId>` before escalating to broader reset actions.
+     - If the region remains starved, run scoped replay-controller remediation for the affected `<tenantId, gameInstanceId, regionId>` before escalating to broader reset actions.
 4. **Prevent recurrence**
    - Review Game Session and domain handlers to ensure:
      - Ledger status transitions happen atomically with domain commits where required.
@@ -281,7 +281,7 @@ All trace-specific guidance in this runbook is conditional on the environment ad
 
 For all of the scenarios above, workflow traces are optional diagnostics rather than the operational baseline:
 
-- Only when the environment advertises and proves the named workflow-tracing capability, use Jaeger to search for spans representing tick scheduling and execution (for example `tick_schedule`, `tick_execute`) filtered by `tenantId`, `regionId`, and, where available, `tickId`.
+- Only when the environment advertises and proves the named workflow-tracing capability, use Jaeger to search for spans representing tick scheduling and execution (for example `tick_schedule`, `tick_execute`) filtered by `tenantId`, `gameInstanceId`, `regionId`, and, where available, `tickId`.
 - When that capability is proved, inspect stalled regions for long-running or repeated spans for the same tick IDs and cross-reference domain service spans to identify downstream bottlenecks.
 - When that capability is proved, search replay storms by effect identity attributes (for example `effectKey`, `effect_type`) and verify how often the same identity appears in recent traces.
 - If the capability is absent or unproved, use metrics and structured logs for each of these investigations and do not delay mitigation for trace collection.

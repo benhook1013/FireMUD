@@ -109,7 +109,7 @@ Minimum admission-pointer facts for one resolved realm are:
 - `catalogRevision`, referencing the same versioned catalog/policy snapshot
 - `updatedAt`
 
-`catalogRevision` is the one canonical catalog-only monotonic field. It identifies the separately versioned catalog/policy snapshot for the stable `{tenantId, worldSlug, realmSlug}` identity; the snapshot contains visibility, access-policy, and `publicProduction` facts. The routing record stores that revision as its catalog/policy reference. There is no separate `policyRevision` or second policy counter. Display metadata and other catalog-only edits advance `catalogRevision`, not the runtime `pointerVersion`, and therefore do not invalidate an existing gameplay binding. Admission-policy reads still revalidate current visibility, public-production, grant, and entitlement facts before creating or renewing authority.
+`catalogRevision` is the one canonical catalog-only monotonic field. It identifies the separately versioned catalog/policy snapshot for the stable `{tenantId, worldSlug, realmSlug}` identity; the snapshot contains visibility, access-policy, and `publicProduction` facts. The routing record stores that revision as its catalog/policy reference. There is no separate `policyRevision` or second policy counter. Display metadata and other catalog-only edits advance `catalogRevision`, not the runtime `pointerVersion`, and therefore do not invalidate an existing gameplay binding. Admission-policy reads must evaluate `publicProduction` and the other policy facts from the snapshot identified by the pointer's `catalogRevision`; callers must not infer public-production status from a slug, a current mutable catalog read, or an omitted revision. Admission-policy reads still revalidate current visibility, public-production, grant, and entitlement facts before creating or renewing authority.
 
 Contract rules:
 
@@ -117,13 +117,14 @@ Contract rules:
 - Clients never select raw `gameInstanceId` values directly. They select a world and optional realm, and the server resolves that choice to the current admissible runtime target.
 - Each player-addressable realm has at most one admissible `gameInstanceId` at a time. `OPEN` names exactly one target; `CLOSED` names none.
 - Public-production onboarding and first-join membership creation are controlled by the catalog/policy revision's `publicProduction` value plus visibility and entitlement checks, not by a duplicated routing flag or by comparing `realmSlug` with a reserved string.
-- An explicitly `CLOSED` realm may remain visible with an unavailable/maintenance presentation, but ordinary gameplay admission returns the stable realm-unavailable outcome. Missing, malformed, or ambiguous routing state remains `ADMISSION_POINTER_UNAVAILABLE`; callers must not confuse authority failure with deliberate closure or guess a replacement target.
+- An explicitly `CLOSED` realm may remain visible with an unavailable/maintenance presentation, but ordinary gameplay admission returns `REALM_UNAVAILABLE`; `CLOSED` is a deliberate authoritative state, not a missing pointer. Missing, malformed, unavailable, or ambiguous routing state remains `ADMISSION_POINTER_UNAVAILABLE`; callers must not confuse pointer-authority failure with deliberate closure or guess a replacement target.
 
 Required read contract:
 
 - `GetAdmissionPointer(tenantId, worldSlug, realmSlug)` is the authoritative gameplay-admission lookup.
 - The authoritative owner of this pointer contract is the Game Session control plane.
 - Callers must treat missing required pointer fields, ambiguous results, or stale pointer state as contract failures rather than inferring defaults. A complete `CLOSED` record is not an incomplete pointer.
+- The result mapping is stable: complete `CLOSED` authority maps to `REALM_UNAVAILABLE`; no result, malformed required fields, unavailable authority, or multiple ambiguous pointer results map to `ADMISSION_POINTER_UNAVAILABLE`. A pointer whose `catalogRevision` cannot resolve to the referenced catalog/policy snapshot is also unavailable rather than eligible for policy inference.
 
 Pointer freshness and cutover rules:
 

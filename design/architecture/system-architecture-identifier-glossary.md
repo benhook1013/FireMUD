@@ -12,14 +12,17 @@ The UUID target applies only to UUID-governed logical identifiers; it is not a b
 - `tenantId` – identifies the game/tenant. Present on all persistent domain tables and all cross-service APIs.
 - `versionId` – identifies a design bundle/version for a tenant. Domain service template data is scoped by `(tenantId, versionId)`.
 - `gameInstanceId` – identifies a running game instance for a tenant. Domain service runtime/instance data is scoped by `(tenantId, gameInstanceId)` and references the instance’s pinned `runtime_version`/`versionId`.
+- `regionId` – identifies an operational tick region within `(tenantId, gameInstanceId)`. It is an opaque runtime-coordination identity, not a World Management row ID, design-time region template ID, room ID, or slug. The complete region scope is `{tenantId, gameInstanceId, regionId}`.
 - `characterId` – identifies a character owned within a tenant. Gameplay session binding and any instance-local playable state use it together with `{tenantId, gameInstanceId}` scope.
 
 ## Identifier Format Conventions
 
 - `accountId`, `tenantId`, `versionId`, `gameInstanceId`, and `characterId` are UUID-governed canonical UUID string logical identifiers. Authored template identifiers are also client-allocatable UUID strings in that logical-identifier family.
-- Services treat these identifiers as opaque values unless a contract specifically requires UUID-shape validation. Consumers must not derive authority, routing, or related identifiers from their contents.
+- Public HTTP/gRPC ingress and cross-service readers of a UUID-governed identifier must reject a missing required value, blank value, malformed value, or non-canonical UUID text at the boundary before authorization, lookup, routing, or persistence; an optional field may be omitted but must be validated when supplied. This is shape validation only: after validation, services treat the value as opaque and must not derive authority, routing, tenant membership, or related identifiers from UUID contents. UUID version or bit patterns do not grant authority.
+- Where an existing implementation contract is still explicitly numeric, that contract remains a documented migration gap and must validate its declared numeric shape until the UUID contract is adopted; this rule does not silently change current DTOs or database schemas.
 - Services may maintain numeric primary and join keys internally. Private database keys never replace or appear as reversible encodings of the canonical UUID identity in public or cross-service contracts.
 - `regionInstanceId` and `zoneInstanceId` remain UUID-governed runtime identifiers. Live `roomInstanceId`, `entityId`, and `itemInstanceId` are deliberate typed scoped-numeric runtime identifiers: they may be stable numbers allocated within `(tenantId, gameInstanceId)` when the owning runtime guarantees concurrency safety and non-reuse for the required lifetime. They are not interchangeable with one another or with a UUID-governed logical identifier. `itemInstanceId` is the distinct concrete-item identity used by containment and equipment contracts; it is not an alias for `entityId` or `entityTemplateId`. Extending that exception to region or zone instances requires a future accepted architecture decision.
+- Redis and other operational key builders use `tenantRegionTag` as the canonical normalized hash-tag projection of the complete `{tenantId, gameInstanceId, regionId}` scope. A region tag must include the game-instance dimension; a bare `{tenantId, regionId}` projection is not collision-safe when two instances use the same region ID.
 - `tenantSlug` is a stable human-readable selector used only in player-facing lobby flows and resolved server-side to `tenantId`; it is not durable tenant identity.
 - Identifier values are never authorization credentials. Every lookup validates the complete tenant/runtime scope and caller authority even when the ID is globally unique or difficult to guess.
 
@@ -52,7 +55,7 @@ World Management may use a numeric room row key as `roomInstanceId` only when it
 
 Tick-driven, cross-service mutations are at-least-once and must be idempotent.
 
-- `EffectId` – the canonical idempotency identity derived from region-scoped tick context (`tenantId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`) plus the target aggregate identity. All services participating in a tick-driven effect must use projections of the same `EffectId` for idempotency guards and reconciliation.
+- `EffectId` – the canonical idempotency identity derived from region-scoped tick context (`tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`) plus the target aggregate identity. All services participating in a tick-driven effect must use projections of the same `EffectId` for idempotency guards and reconciliation.
 
 ## Cross-Service Read Fence Identity
 

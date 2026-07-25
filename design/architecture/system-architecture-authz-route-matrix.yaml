@@ -417,6 +417,7 @@ routes:
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
     delegated_subject: typed_player_execution_context
+    required_live_checks: [membership]
   - service: account-service
     route: GetTenantEntitlementsForRuntime
     scope: tenant
