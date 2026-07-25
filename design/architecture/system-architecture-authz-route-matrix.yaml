@@ -35,6 +35,27 @@ route_authentication_rules:
   accepted_token_profile_audiences:
     multi_profile_routes: exact_profile_to_audience_map_required
     audience_source: token_profiles
+required_live_check_vocabulary:
+  - account_generation
+  - admission_pointer
+  - conditional_realm_access_grant
+  - connect_scope_match
+  - connect_token_single_use_consume
+  - current_token_generation
+  - grant_version
+  - issuer_generation
+  - membership
+  - membership_generation
+  - public_production_admission
+  - public_production_visibility
+  - realm_visibility
+  - replay_admission_fence_match
+  - replay_protection_available
+  - runtime_entitlements
+  - tenant_generation
+implementation_status:
+  known_drift:
+    - public_production_membership_may_be_created_implicitly_by_connect_token_or_play
 classifications:
   - public
   - account_scoped
@@ -115,6 +136,8 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
     required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
+    canonical_errors:
+      any_of: [ADMISSION_POINTER_UNAVAILABLE]
     mutation_contract: explicit_public_membership_atomic
   - service: game-session-service
     route: PLAY
@@ -149,8 +172,20 @@ routes:
     accepted_carriers: [first_party_cookie, classified_non_browser_header]
     edge_consumer: spring_cloud_gateway_public_non_proxy_websocket
     connect_context_output: signed_connect_context
+    required_live_checks: [connect_token_single_use_consume, replay_protection_available, replay_admission_fence_match, connect_scope_match]
     handshake_error_classes:
-      any_of: [CONNECT_TOKEN_MISSING, CONNECT_TOKEN_EXPIRED, CONNECT_TOKEN_REPLAYED, CONNECT_SCOPE_MISMATCH, CONNECT_REPLAY_PROTECTION_UNAVAILABLE, CONNECT_TOKEN_REJECTED, POLICY_DENY, BACKEND_UNAVAILABLE, PROTOCOL_MISMATCH, INTERNAL_ERROR]
+      any_of:
+        - CONNECT_TOKEN_MISSING
+        - CONNECT_TOKEN_EXPIRED
+        - CONNECT_TOKEN_REPLAYED
+        - CONNECT_SCOPE_MISMATCH
+        - CONNECT_REPLAY_PROTECTION_UNAVAILABLE
+        - CONNECT_TOKEN_REJECTED
+        - POLICY_DENY
+        - POLICY_PRESSURE
+        - BACKEND_UNAVAILABLE
+        - PROTOCOL_MISMATCH
+        - INTERNAL_ERROR
   - service: account-service
     route: GET /auth/bootstrap/worlds
     scope: account
@@ -260,6 +295,8 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
     required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
+    canonical_errors:
+      any_of: [ADMISSION_POINTER_UNAVAILABLE]
     mutation_contract: explicit_public_membership_atomic
   - service: account-service
     route: EnsurePublicProductionPlayerMembership
@@ -278,6 +315,8 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
     required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
+    canonical_errors:
+      any_of: [ADMISSION_POINTER_UNAVAILABLE]
     mutation_contract: explicit_public_membership_atomic
   - service: account-service
     route: DELETE /tenants/{tenantId}/memberships/me
@@ -363,9 +402,9 @@ routes:
     issued_token_audience: gameplay-connect
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [membership, membership_generation, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
+    required_live_checks: [membership, membership_generation, conditional_realm_access_grant, runtime_entitlements, admission_pointer, replay_protection_available, replay_admission_fence_match]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, ENTITLEMENT_UNAVAILABLE]
+      any_of: [JOIN_REQUIRED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, CONNECT_REPLAY_PROTECTION_UNAVAILABLE, ENTITLEMENT_UNAVAILABLE]
     subject_binding: caller_account_id
     canonical_target:
       membership: existing_caller_bound_membership_required
@@ -466,7 +505,7 @@ routes:
         membership_authority_generation_applies: true
         mtls_identity: "spiffe://firemud/ns/{namespace}/sa/game-session-service"
         delegated_subject: typed_player_execution_context
-        required_live_checks: [current_token_generation, tenant_generation, membership_generation, membership, runtime_entitlements]
+        required_live_checks: [issuer_generation, account_generation, current_token_generation, tenant_generation, membership_generation, membership, runtime_entitlements]
       - caller: world-management-service
         auth_path: mtls_workload
         issued_token_state: none

@@ -144,7 +144,7 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `--scope cluster`
 - Scope exceptions:
   - The shared Gateway replay domain (`gateway:connect-token:jti:<jti>` and `replayAdmissionFence`) is intentionally not tenant- or region-tagged and is not modified by region- or tenant-scoped coordination resets. Only a Coordination Redis replay-continuity loss trigger, including a cluster-domain reset that invalidates the shared replay state, may apply the gameplay-connect quarantine of 30 seconds plus two configured clock-skew intervals.
-  - Region- and tenant-scoped coordination resets preserve Account-owned `session:auth:token:<tokenHash>` records and the shared Gateway replay domain. A cluster-scoped reset may invalidate them only as part of the documented Account repair/reset cutover and replay-readiness recovery; protected traffic remains closed until that cutover and the required re-registration/reauthentication complete. This policy is independent of `--preserve-sessions`.
+  - Region- and tenant-scoped coordination resets preserve Account-owned `session:auth:token:<tokenHash>` records and the shared Gateway replay domain. A cluster-scoped reset must invalidate those records as part of the documented Account repair/reset cutover and replay-readiness recovery; protected traffic remains closed until that cutover and the required re-registration/reauthentication complete. This policy is independent of `--preserve-sessions`.
 - Scope inventory source:
   - The authoritative affected-region set comes from the durable Game Session control/status store, not Redis key enumeration.
   - The first fully region-scoped implementation must use a PostgreSQL-backed `RegionStatus` or equivalent runtime ownership table as the inventory source for every tenant and cluster operation.
@@ -166,7 +166,7 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `coordination-maintenance reset`
     - accepts the scope grammar above.
     - requires `--maintenance-lock-token <token>` from the corresponding `pause` step.
-    - accepts `--preserve-sessions` / `--invalidate-sessions` where session policy allows an operator choice.
+    - accepts `--preserve-sessions` / `--invalidate-sessions` where gameplay-session policy allows an operator choice; a cluster-scoped reset must still invalidate Account-owned issued-token records through the Account repair/reset cutover.
     - never infers session invalidation from scope alone when the design says it is optional.
     - is the canonical operator entrypoint that performs and audits the mandatory PostgreSQL `region_epoch` bump before clearing Redis coordination state for the selected scope.
     - must emit the resulting bumped epoch per affected region in its audit output so downstream reconcile/init-meta steps consume one authoritative old/new epoch record.

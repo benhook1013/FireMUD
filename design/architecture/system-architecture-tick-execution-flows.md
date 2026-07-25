@@ -67,7 +67,7 @@ Within a region’s tick, each command proceeds through several phases:
    - Many commands do not need global awareness of “all regions finished”; origin and target regions can operate independently with eventual consistency.
    - For flows that truly require end-to-end completion (for example, complex cross-region trades), the origin region tracks success/failure from participating regions in that separate coordinator record and later applies a final status (success, partial, failed) in a subsequent origin-region tick once all responses or timeouts are observed.
 
-Every phase must be idempotent with respect to `(region_epoch, tickId)` and the complete `EffectId` so replays after failure do not double-apply effects.
+Every phase must use its phase-specific durable idempotency identity so replays after failure do not double-apply logical work. Command ingress uses `(tenantId, gameInstanceId, commandId)`; source claims and selection use the durable source identity (such as a timer member ID, retry member ID, or follow-up row ID) together with its bound target/timeline; tick effects use `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey, targetAggregateIdentity)`; and cross-region completion uses the coordinator identity plus the target ledger/result identity. A command or source item may cross tick boundaries without changing its ingress or source identity.
 
 ### Command Ingress Acknowledgement Contract (Required)
 

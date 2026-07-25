@@ -402,7 +402,9 @@ Details of timer key shapes and scaling strategies live in `system-architecture-
 On executor crash or failover, a new worker:
 
 - Acquires the region lease.
-- Reads the durable tick-batch, tick effect ledger, follow-up tables, and `RegionStatus` rows that define the authoritative recovery baseline for the affected `(tenantId, gameInstanceId, regionId, region_epoch)`.
+- Reads the durable tick-batch, tick effect ledger, and follow-up tables that define the recovery baseline for the affected work.
+  - **Current implementation:** obtains ownership and recovery status from `GetRuntimeOwnershipStatus` over the live `{tenantId, gameInstanceId}` boundary, together with the durable tick-batch, effect-ledger, and follow-up records. `RegionStatus` is not required for current recovery.
+  - **Target region-partitioned state:** once true region partitioning is live, also reads the authoritative `RegionStatus` for `(tenantId, gameInstanceId, regionId, region_epoch)` to obtain the region epoch, committed tick watermark, and executor fence.
 - Inspects any surviving Redis coordination state (`tick:{tenantRegionTag}:pending`, `retry:{tenantRegionTag}`, timers, leases) only as optional hints that may accelerate or narrow replay scope.
 - Replays or resumes work from the durable PostgreSQL record of staged or claimed work plus domain idempotency tables; Redis coordination state must not be treated as the sole persisted recovery basis.
 

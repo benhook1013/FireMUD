@@ -10,6 +10,14 @@ Backup readiness is an evidence chain, not an artifact-shaped timestamp record. 
 
 The artifact-integrity, recovery-participant, and reopen-attempt metrics in this document are target-state contracts, not evidence that the current runtime emits them. No reliable emitter for `backup_artifact_lineage_valid`, `backup_artifact_restore_readable`, `recovery_participant_convergence_state`, or `recovery_reopen_attempt_total` is currently implemented or proven. The reference Prometheus ruleset includes fail-safe missing-source alerts, but those alerts cannot identify an environment or participant after an entire family disappears and must not be interpreted as recovery state. Recovery observability remains unproved; the durable recovery controller and retained evidence records remain the readiness authority.
 
+## Restore-Cutover Actor Contract
+
+Before any restore-hardening observer or validator probe runs, the durable recovery controller must persist exactly one idempotent restore-cutover request for the target environment. The request contains a stable `restoreCutoverOperationId`, immutable request digest, target boundary, requested compromise/restore mode, and expected current authority context. A retry or lost response reuses that persisted request; failure to durably establish it or ambiguity about its identity keeps quarantine closed.
+
+The recovery controller's authenticated orchestration path submits that already-persisted request to Account Service. Account executes the single idempotent signing transition: the materialization controller performs only private Secret generation and resource-version CAS, while Account validates the result, advances issuer authority, publishes public JWKS, invalidates restored Account and gameplay session authority, and records the committed outcome. This is logical application ownership, not a claim that the Secret, JWKS, durable authority, and Redis effects share one physical transaction.
+
+The `jwt-rotation` Job/CronJob never creates or requests a second transition. It reads and reconciles the persisted request and Account outcome, runs validator-convergence probes using public JWKS, and writes only operation-bound rotation evidence. It cannot read or export private material, write `jwt-jwks`, mutate Account signing state, invalidate sessions, or request validator refresh/restart; those mutations remain with Account, the materialization controller, or the validator's owning operator/controller as defined by their respective contracts.
+
 ## Backup Observability and Alerts
 
 Backup and verification jobs must emit simple metrics with an `environment` label on every signal that feeds readiness or alerting. The environment label identifies the deployment boundary, not a tenant or region; convergence signals retain participant dimensions where they are available:

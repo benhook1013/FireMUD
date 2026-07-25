@@ -245,6 +245,7 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
 - Bootstrap issuance API: Account Service endpoint (for example `POST /auth/player-bootstrap`) that authenticates the player account for first-party gameplay bootstrap only and returns one short-lived bootstrap token plus expiry metadata.
 - Issuer: Account/authentication control-plane only, after direct player-account authentication. Tenant membership and entitlement checks do not occur here because no gameplay tenant has been selected yet.
 - First-party bootstrap ownership: Account Service owns `POST /auth/player-bootstrap`, bootstrap discovery, explicit `/auth/bootstrap/join`, `POST /auth/connect-token`, and membership lifecycle. Game Session exposes the equivalent text `JOIN` command and owns in-socket `LOGIN`/`PLAY`, but delegates membership mutation to Account and never creates it during `PLAY`.
+- `POST /auth/bootstrap/join` and the delegated `JoinPublicProductionMembership` operation accept the verified discovery `connectScopeId` plus `requestId`, not an independently authoritative tenant/world/realm tuple. Account resolves the selector for the caller, binds the resolved target and `pointerVersion` into the request/operation digest, and rechecks that selector and digest at the membership commit gate.
 - Bootstrap-discovery APIs: authenticated first-party HTTP endpoints (for example `GET /auth/bootstrap/worlds`, `GET /auth/bootstrap/worlds/{world}/realms`, `GET /auth/bootstrap/worlds/{world}/realms/{realm}/characters`) that accept only the `player-bootstrap` token profile and return the canonical lobby discovery data used to choose a target before socket open.
   - These endpoints are the canonical pre-socket discovery path for first-party clients.
   - They must apply the same caller-bound membership, realm visibility, and entitlement filtering rules as in-band `WORLDS` / `REALMS` / `CHARS`.
@@ -268,6 +269,7 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
   - Minimum request fields: `connectScopeId`, `requestId`.
   - Response fields for all clients are non-secret metadata only: `expiresAt`, `accountId`, `tenantId`, `gameInstanceId`, `realmSlug`, `jti`, and `issuedAt`. The connect token is set only as the `Firemud-Connect-Token` HttpOnly cookie and is never returned in the response body.
   - Before issuance, Account Service must resolve `connectScopeId` to the canonical `{tenantId, worldSlug, realmSlug, gameInstanceId, pointerVersion}` tuple, perform a live membership/public-admission check for `{accountId, tenantId, worldSlug, realmSlug}`, validate the current membership authority generation for that caller and tenant, perform a live runtime entitlement check for `tenantId`, and perform a live realm-routing read for the selected realm target via the Game Session control-plane API.
+  - Account must also read the shared replay-readiness record as `OPEN` and bind its exact `replayAdmissionFence` into the signed token. Missing, unreadable, `QUARANTINED`, or changing replay readiness fails issuance with `CONNECT_REPLAY_PROTECTION_UNAVAILABLE`; a token racing a later fence advance is rejected by Gateway.
   - The resolved tuple used for issuance must be treated as immutable for that request. Issuance may succeed only if `connectScopeId`, current realm visibility/grant state, and current admission-pointer state still converge on the same target at evaluation time.
   - `requestId` is the idempotency key for connect-token issuance. Retrying the same `(accountId, connectScopeId, requestId)` must return the same token payload or the same deterministic application failure; callers must use a new `requestId` when intentionally starting a new issuance attempt after rediscovery.
   - If realm-routing state is unavailable or ambiguous, connect-token issuance fails closed with `ADMISSION_POINTER_UNAVAILABLE`.
@@ -281,12 +283,13 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
   - An explicitly classified non-browser/server WebSocket route uses the dedicated `X-Firemud-Connect-Token` handshake header. This is the public generic-WebSocket carrier; it does not apply to Telnet credential-login traffic or create a first-party mobile header fallback.
   - Gateway must accept exactly one non-empty, single-valued supported carrier for non-proxy gameplay handshakes. Duplicate header values, duplicate cookie values, a malformed carrier, or simultaneous header and cookie carriers are rejected as `CONNECT_TOKEN_REJECTED`; Gateway never chooses precedence.
   - Query-string carriage is not a supported connect-token carrier in player-facing environments.
-- Required claims: `iss`, `aud`, `accountId`, `tenantId`, `gameInstanceId`, `worldSlug`, `realmSlug`, `pointerVersion`, `connectScopeId`, `requestId`, `iat`, `exp`, `jti`.
+- Required claims: `iss`, `aud`, `accountId`, `tenantId`, `gameInstanceId`, `worldSlug`, `realmSlug`, `pointerVersion`, `connectScopeId`, `requestId`, `iat`, `exp`, `jti`, `replayAdmissionFence`.
 - `iss` is required and must exactly match the deployment's configured Account Service issuer identifier used by the Account JWKS trust configuration; callers cannot select or override it.
 - `aud` is required and must be exactly `gameplay-connect`; Gateway rejects a missing, multi-valued, or different audience before consuming `jti`.
 - Lifetime: a platform hard maximum of 30 seconds from signed `iat` to `exp`; issuers may shorten but not widen it, and Gateway independently rejects missing/future-skewed `iat`, invalid ordering, and lifetimes above the maximum.
 - Signing and verification: token is signed by the Account/authentication control-plane key set and verified only at Gateway for `/ws/game/**` policy decisions.
 - Replay defense: gateway validates `jti` against a bounded replay cache and rejects replays until token expiry.
+  - Before and atomically during consumption, Gateway requires replay readiness to be `OPEN` and the signed `replayAdmissionFence` to equal the current shared fence.
   - Replay cache owner: Gateway.
   - Replay key format: `gateway:connect-token:jti:<jti>`.
   - Replay TTL: through `exp + bounded_skew`, covering the token's complete acceptance window.
@@ -297,7 +300,7 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
   - TCP Proxy bridge traffic is admitted without a connect token only when the gateway authenticates the proxy identity over the internal mTLS listener and header-trust checks pass.
 - Error mapping: connect-token admission failures map to HTTP `403` at handshake, with specific `CONNECT_*` classes when the gateway can classify the failure.
 
-The connect token is not a gameplay authorization grant and does not replace the canonical `LOGIN` + `PLAY` flow. It is an edge-admission artifact bound to a prior first-party bootstrap identity, not a substitute for gameplay authentication or gameplay binding.
+The connect token carries a short-lived, immutable snapshot of the selected gameplay target for edge admission. It is not a gameplay command authority, is not a gameplay authorization grant, and does not replace the canonical `LOGIN` + `PLAY` flow; it is an edge-admission artifact bound to a prior first-party bootstrap identity, not a substitute for gameplay authentication or gameplay binding.
 
 #### Gateway-to-Game Session connect context (normative)
 

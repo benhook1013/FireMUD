@@ -37,14 +37,14 @@ The previous flow created membership implicitly during first-party connect-token
 
 ### Membership Transaction
 
-Account Service is the sole join writer. The canonical operation is `JoinPublicProductionMembership`, surfaced through text `JOIN`, first-party `POST /auth/bootstrap/join` / `Join & Play`, and the internal Account join boundary. It accepts caller-bound account identity plus `{tenantId, worldSlug, realmSlug, requestId}` and:
+Account Service is the sole join writer. The canonical operation is `JoinPublicProductionMembership`, surfaced through credential-bearing text `JOIN`, first-party `POST /auth/bootstrap/join` / `Join & Play`, and the internal Account join boundary. It accepts caller-bound account identity plus `{connectScopeId, requestId}` and:
 
-- revalidates that the realm is still the explicit public production realm, publicly visible, entitlement-eligible, and backed by an unambiguous current admission pointer;
+- resolves and verifies `connectScopeId` for the caller, then revalidates that the selected realm is still the explicit public production realm, publicly visible, entitlement-eligible, and backed by an unambiguous current admission pointer; raw client-supplied tenant, world, realm, or game-instance fields are not an authority substitute for the verified selector;
 - obtains a fresh ADR 0028 entitlement evaluation/snapshot immediately before the membership commit. The evaluation must be fresh at the commit gate, must authorize explicit public join, and must be tied to the current caller, target, and entitlement authority version; a failed refresh returns `ENTITLEMENT_UNAVAILABLE`, and a stale, future-dated, mismatched, or otherwise unsafe snapshot cannot authorize the join;
-- binds `requestId` to the canonical operation and target digest: `JoinPublicProductionMembership`, `accountId`, `tenantId`, `worldSlug`, and `realmSlug`. Reusing a request ID with a different operation, account, tenant, world, or realm is an idempotency conflict; concurrent matching joins converge on one membership and one logical join outcome;
+- binds `requestId` to a versioned target digest containing `JoinPublicProductionMembership`, `accountId`, the verified `connectScopeId`, and the resolved `{tenantId, worldSlug, realmSlug, gameInstanceId, pointerVersion}`. Reusing a request ID with a different operation, account, selector, or resolved target is an idempotency conflict; concurrent matching joins converge on one membership and one logical join outcome;
 - advances a monotonic `membershipVersion` rather than exposing the membership row ID as a change version;
 - advances the caller-bound `membershipAuthorityGeneration` when the membership or tenant-role authority changes, separately from the membership content/version counter;
-- binds the immediately preceding fresh entitlement evaluation to the membership commit by its target, authority version, evaluation time, and positive join decision. The Account transaction conditionally commits only while that entitlement authority remains current, together with the membership, operation outcome, and durable audit/outbox event; an authority race or uncertain evaluation commits none of them; and
+- binds the verified `connectScopeId` and exact target digest, together with the immediately preceding fresh entitlement evaluation, to the membership commit. The Account transaction conditionally commits only while the selector still resolves to the same target/pointer version and the entitlement authority remains current, together with the membership, operation outcome, and durable audit/outbox event; an authority, selector, or target-digest race, or an uncertain evaluation, commits none of them; and
 - returns the existing successful membership for an already joined account without creating duplicate audit history.
 
 Redis may accelerate replay responses but is not the join transaction or audit authority. A successful join remains successful if the subsequent token, socket, character creation, or gameplay admission fails.
@@ -80,6 +80,7 @@ This avoids durable rows for casual visits but creates a second class of gamepla
 ## Implementation and Proof Obligations
 
 - Add explicit browser/mobile join and text `JOIN` flows before first character creation/connect/`PLAY`.
+- Carry the verified `connectScopeId` through `JoinPublicProductionMembership`, bind it into the versioned request/target digest, and prove the digest and selector are rechecked at the membership commit gate.
 - Converge the implicit `EnsurePublicProductionPlayerMembership` call sites onto the explicit join operation; `POST /auth/connect-token` and `PLAY` must not write membership.
 - Commit membership, its `membershipAuthorityGeneration`/`membershipVersion` changes, operation outcome, and durable audit/outbox atomically and make SQL membership/operation state authoritative for replay.
 - Gate every new membership commit on the immediately preceding fresh ADR 0028 entitlement evaluation. Prove that a failed refresh returns `ENTITLEMENT_UNAVAILABLE`, and that no membership, audit, or outbox record is committed after a failed, stale, future-dated, mismatched, or otherwise invalid evaluation, including evaluation/commit races.

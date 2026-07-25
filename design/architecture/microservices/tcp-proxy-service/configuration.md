@@ -94,7 +94,7 @@ The WebSocket client certificate must include the `clientAuth` extended key usag
 
 TLS handshake failures are fail-closed. The proxy does not fall back to plaintext.
 
-Shared and player-facing startup must validate both effective private keys, and the same validation must run before player-facing admission and after certificate reload. If the identities converge or either identity cannot be verified, player admission is disabled and the proxy fails closed. The separate certificate chains must also satisfy their respective `clientAuth` and `serverAuth` profiles.
+Shared and player-facing startup must validate every effective private key for an enabled TLS surface: the Telnet server identity (`TCP_PROXY_TLS_KEY`) in `DIRECT_TLS` mode, the Gateway WebSocket client identity, and the internal gRPC server identity. The same validation must run before player-facing admission and after certificate reload. If any applicable identity converges with another or cannot be verified, player admission is disabled and the proxy fails closed. The separate certificate chains must also satisfy their respective `clientAuth` and `serverAuth` profiles.
 
 When overriding `GATEWAY_WS_URL` in a `wss://` configuration, the host portion of the URL is used for both SNI and hostname verification. If you point `GATEWAY_WS_URL` at an IP address or a hostname that is not present in the Gateway certificate SANs, the TLS handshake fails with `reason="cert_validation"` and no insecure fallback occurs. In cluster-internal deployments, prefer the Kubernetes DNS name for the Gateway service.
 

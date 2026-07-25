@@ -253,6 +253,8 @@ Artifact lifecycle state for each exported prefix must be persisted in a dedicat
   - `last_error_code` / `last_error_message` (nullable; set on failed transitions)
   - `updated_at`
 
+Before the first byte is exported for a version, the workflow must freeze an immutable per-version export snapshot. The target shape is a `version_asset_export_item` projection keyed by `(tenant_id, version_id, usage_key)` with the selected `asset_id`, the source-row identity, and the computed source `content_hash` (plus size/type metadata when needed for verification). Same-version retries and exact-bytes repair must use this snapshot, never re-select the current tenant asset list or mutable draft mappings. The snapshot is frozen before `ExportAssets` writes bytes and is retained for every non-Retired or design-history-reachable release.
+
 `(tenant_id, version_id)` is unique in `version_asset_artifact`. This enum list is the canonical schema contract for both persistence and API validation. All lifecycle transitions must use compare-and-set on `state_epoch` so concurrent publish/repair/purge workflows cannot race.
 
 An index named `idx_game_assets_tenant` speeds up queries scoped to a tenant.
@@ -368,8 +370,9 @@ Transition enforcement contract:
     `(tenantId, versionId)` is missing, so partially published versions cannot be
     marked as Published.
 - The step is **idempotent**: rerunning `ExportAssets` for the same
-  `(tenantId, versionId)` overwrites the same prefix and manifest and leaves the
-  version metadata consistent.
+  `(tenantId, versionId)` reuses the frozen export snapshot, overwrites the same
+  prefix and manifest, and leaves the version metadata consistent. It must not
+  re-select assets after the snapshot is frozen.
 - A later `FinalizePublishedRelease` step must read the computed `manifestHash`,
   write `published_release_bundle`, and only then transition
   `version_asset_artifact` from `EXPORTED_UNATTESTED` to `PUBLISHED`. If the
@@ -379,6 +382,7 @@ Transition enforcement contract:
 - Once a version is in the **Published** or **Active** state, immutability rules apply:
   - `version_asset` rows for `(tenantId, versionId)` must be treated as immutable mappings.
   - Referenced `game_assets` binaries must not be modified in place; replacing bytes requires a new `game_assets` row and (for Draft versions only) an updated mapping.
+  - The per-version export snapshot's source row IDs and content hashes are immutable; a same-version retry or repair must prove those exact IDs and hashes before rewriting any object-store bytes.
   - Retrying `ExportAssets` for a Published/Active version must be bit-for-bit identical (the overwrite is a retry mechanism, not a mutation mechanism).
   - Version metadata and/or the immutable `published_release_bundle` attestation must record `manifestHash` (and optionally per-asset `contentHash` values) so operators and CI can detect drift between metadata mappings and object-store contents.
   - If `manifestHash` verification fails for a Published/Active version, treat it as a data corruption or process bug incident. Do not “fix” the version in place by changing attested content; the only allowed repair is an exact-bytes rebuild that reproduces the existing `published_release_bundle` attestation. If that is impossible, recovery requires publishing a new `versionId`.
@@ -395,7 +399,8 @@ Exact-bytes repair rule:
 
 - Repair of a Published/Active version must begin by reading `GetPublishedReleaseBundle(tenantId, versionId)`.
 - Repair must also read `GetVersionAssetArtifactState(tenantId, versionId)` and prove the expected `artifactState`, `stateEpoch`, and `manifestHash` before any bytes are rewritten.
-- For ordinary binary assets in the current first slice, the repair workflow regenerates object-store bytes from the immutable `game_assets.data` rows selected for the attested version export. Those rows must not be modified in place after they are referenced by a Published/Active release.
+- Repair must read and verify the immutable per-version export snapshot, including every exported source-row ID and content hash. If the current implementation cannot provide a version-scoped snapshot because it exported from the tenant-wide asset list, Published/Active repair must fail closed with `REPAIR_VERSION_SCOPE_UNAVAILABLE` rather than guessing from current draft assets; recovery then requires publishing a new `versionId`.
+- Once version-scoped selection and its frozen snapshot exist, the repair workflow may regenerate ordinary object-store bytes from the immutable `game_assets.data` rows recorded by that snapshot. Those rows must not be modified in place after they are referenced by a Published/Active release.
 - If a future storage model replaces `game_assets.data` with metadata plus object-store handles, the replacement repair source must be immutable and retained for every non-Retired or design-history-reachable release. A mutable draft object key by itself is not a valid repair source.
 - The repair workflow may only regenerate object-store bytes that hash to the existing attested `manifestHash` (and optional per-asset hashes if recorded).
 - If regenerated bytes would change the attestation payload, the workflow must fail closed and require a new `versionId` rather than mutating the published release in place.
@@ -404,6 +409,7 @@ Required deterministic repair/purge failure vocabulary:
 
 - `VERSION_ASSET_NOT_DELETABLE` when `CanDeleteVersionAssets` rejects eligibility.
 - `ASSET_ARTIFACT_STATE_CONFLICT` when `state_epoch` CAS fails or the lifecycle row no longer matches the caller's proof.
+- `REPAIR_VERSION_SCOPE_UNAVAILABLE` when a Published/Active release lacks the frozen version-scoped export snapshot required for exact repair.
 - `REPAIR_ATTESTATION_MISMATCH` when repair cannot reproduce the attested `manifestHash`.
 - `PURGE_WORKFLOW_NOT_FOUND` when status or finalization reads reference an unknown `purgeWorkflowId`.
 - `PURGE_FINALIZATION_CONFLICT` when byte deletion completed but lifecycle finalization failed and the retained workflow must be resumed.
@@ -446,12 +452,12 @@ Race-safe purge workflow:
 To prevent persistence and performance failures in asset workflows:
 
 - Maximum single asset size is 25 MiB; oversized uploads must fail with `ASSET_TOO_LARGE`.
-- Per-tenant draft asset quota is 2 GiB of stored `game_assets.data` bytes in the current first slice; writes beyond quota must fail with `ASSET_QUOTA_EXCEEDED`. A future metadata-only storage model may measure referenced draft object bytes instead.
+- Per-tenant draft asset quota is 2 GiB of stored `game_assets.data` bytes in the current first slice. This is a draft-only admission limit, not a total-retained storage cap: bytes retained solely because they are referenced by Published, Active, or Failed versions remain protected for history or repair and are not charged against the draft quota. Writes that would exceed the quota must fail with `ASSET_QUOTA_EXCEEDED`. A future metadata-only storage model may measure retained immutable draft-object bytes instead, without changing the draft-only boundary.
 - Upload/download APIs must support streaming/chunked transfer at the transport layer; services must not require buffering full payloads in memory before persistence.
 - Publish/export workers must process assets in bounded batches (configurable), with backpressure metrics to avoid starving version publish orchestration.
 - Quota and size limits must be configurable per environment but default to the values above when unset.
 
-In the current first slice, `game_assets` is the canonical design-time store for asset metadata and bytes, and its immutable `data` values remain the repair source for Published/Active releases. A future metadata-only storage model may treat the table as metadata and use retained immutable object-store draft keys, but that is target-only.
+In the current first slice, `game_assets` is the canonical design-time store for asset metadata and bytes. Its immutable `data` values become a valid Published/Active repair source only after the frozen version-scoped export snapshot identifies the exact rows and hashes used by that release; until then, same-version repair fails with `REPAIR_VERSION_SCOPE_UNAVAILABLE`. A future metadata-only storage model may treat the table as metadata and use retained immutable object-store draft keys, but that is target-only.
 
 Published assets still retain their `game_assets` rows for design history and exact-bytes repair.
 
