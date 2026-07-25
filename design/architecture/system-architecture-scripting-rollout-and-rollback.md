@@ -21,31 +21,32 @@ This document defines operator-driven promotion, rollback, convergence, timeout,
 
 ## Patch Rollback (Operator-Driven, Required)
 
-1. Call `PauseTicks` for the affected scope.
-2. Call `SetAutomationAdmissionMode(..., mode=PAUSED_FOR_ROLLBACK)` for the same scope.
-3. Call `RollbackScriptPatchVersion` (or `SetPinnedScriptPatchVersion`) to repin to the target known-good patch.
-4. Call `CancelPendingWorkItemsForPatch` in Automation & Scripting for the rolled-back patch (and optionally purge volatile coordination indexes).
-5. If plugin versions are also being rolled back, disabled, or revoked, call `CancelPendingWorkItemsForPluginVersion`.
-6. Call `PurgeQueuedTickCommandsForScriptPatch` (and, if applicable, `PurgeQueuedTickCommandsForPluginVersion`) so mismatched queued entries do not accumulate after repin.
-7. Automation & Scripting must reconcile durable schedules and timers before resuming admission:
+1. Call `PauseTicks` for the affected scope with `controlPlaneRequestId`, `actor`, and `reason`.
+2. Call `SetAutomationAdmissionMode(..., mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId, actor, reason)` for the same scope.
+3. Call `RollbackScriptPatchVersion` (or `SetPinnedScriptPatchVersion`) with `controlPlaneRequestId`, `actor`, and `reason` to repin to the target known-good patch.
+4. Call `CancelPendingWorkItemsForPatch` in Automation & Scripting for the rolled-back patch with `controlPlaneRequestId`, `actor`, and `reason` (and optionally purge volatile coordination indexes).
+5. If plugin versions are also being rolled back, disabled, or revoked, call `CancelPendingWorkItemsForPluginVersion` with `controlPlaneRequestId`, `actor`, and `reason`.
+6. Call `PurgeQueuedTickCommandsForScriptPatch` (and, if applicable, `PurgeQueuedTickCommandsForPluginVersion`) with `controlPlaneRequestId`, `actor`, and `reason` so mismatched queued entries do not accumulate after repin.
+7. Automation & Scripting must perform and durably complete schedule/timer reconciliation before resuming admission; the system-owned mutation records the same `controlPlaneRequestId`, `actor`, and `reason`:
    - timers owned by the displaced patch or plugin version are removed or tombstoned;
    - only schedules present in the rollback target may survive reconciliation;
    - cancellation of outbox work alone is not sufficient rollback cleanup.
 8. Wait for pin-convergence acknowledgments from both Automation & Scripting and Game Session for the new pin (`controlPlaneRequestId` must match).
 9. Wait for `GetAutomationDrainStatus` to report `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` for the rollback scope under the current `admissionEpoch`.
-10. Call `SetAutomationAdmissionMode(..., mode=NORMAL)` once convergence and cleanup complete.
-11. Resume ticks with `ResumeTicks`.
+10. Call `SetAutomationAdmissionMode(..., mode=NORMAL, controlPlaneRequestId, actor, reason)` once schedule reconciliation, convergence, and cleanup complete.
+11. Resume ticks with `ResumeTicks(controlPlaneRequestId, actor, reason)`.
 
 Concrete example:
 
 - `tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, current pin `P22`, rollback target `P21`, `controlPlaneRequestId=RB-42`.
-- Step 1: `PauseTicks(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444, RB-42)`.
-- Step 2: `SetAutomationAdmissionMode(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444, PAUSED_FOR_ROLLBACK, RB-42)`.
-- Step 3: `RollbackScriptPatchVersion(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444, P21, RB-42)`.
+- Step 1: `PauseTicks(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
+- Step 2: `SetAutomationAdmissionMode(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
+- Step 3: `RollbackScriptPatchVersion(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, targetScriptPatchVersion=P21, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
 - Step 4: Poll `GetAutomationPinConvergence(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444)` and `GetGameSessionPinConvergence(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444)` until both report `observedPinnedScriptPatchVersion=P21` and `lastObservedControlPlaneRequestId=RB-42`.
-- Step 5: Run patch and plugin-scoped cancel or purge hooks for displaced `P22` work, then poll `GetAutomationDrainStatus(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444)` until active executions and cancelable pending work are both zero.
-- Step 6: `SetAutomationAdmissionMode(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444, NORMAL, RB-42)`.
-- Step 7: `ResumeTicks(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444, RB-42)`.
+- Step 5: Run the system-owned durable schedule/timer reconciliation for target `P21`; it tombstones displaced `P22` timer rows, carries due state only for matching `scheduleDefinitionId` values, and records `controlPlaneRequestId=RB-42`, `actor=system:automation`, and `reason="rollback RB-42"` before timer admission can resume.
+- Step 6: Run patch and plugin-scoped cancel or purge hooks for displaced `P22` work with `controlPlaneRequestId=RB-42`, `actor=operator:alice`, and `reason="rollback RB-42"`, then poll `GetAutomationDrainStatus(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444)` until active executions and cancelable pending work are both zero.
+- Step 7: `SetAutomationAdmissionMode(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, mode=NORMAL, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
+- Step 8: `ResumeTicks(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
 
 Ordering is intentional: Automation admission returns to `NORMAL` only after convergence and drain complete, and ticks resume last.
 
@@ -61,13 +62,14 @@ Ownership and source-of-truth requirements:
 
 Required states:
 
-- `PAUSING` -> `REPINNING` -> `CANCELING` -> `PURGING` -> `CONVERGING` -> `DRAINING` -> `RESUMING` -> `COMPLETED`
+- `PAUSING` -> `REPINNING` -> `RECONCILING_SCHEDULES` -> `CANCELING` -> `PURGING` -> `CONVERGING` -> `DRAINING` -> `RESUMING` -> `COMPLETED`
 - Terminal failure state: `ROLLBACK_CONVERGENCE_TIMEOUT`
 
 State rules:
 
 - Each transition must be idempotent and keyed by `controlPlaneRequestId`.
 - Re-running a request in the same state must return current state, not restart from scratch.
+- `RECONCILING_SCHEDULES` must complete before timer admission, normal admission, or tick resumption can proceed; it must tombstone displaced version-owned rows and create or claim only target-version rows.
 - Failures in `CANCELING` or `PURGING` must not auto-resume admission or ticks.
 - Operator retries must continue from the last durable state.
 - `ROLLBACK_CONVERGENCE_TIMEOUT` keeps admission and ticks paused until explicit operator action.
@@ -75,7 +77,7 @@ State rules:
 
 Convergence timeout semantics (required):
 
-- Rollback orchestration must apply a bounded convergence timeout (for example `ROLLBACK_CONVERGENCE_TIMEOUT_MS`) for step 7.
+- Rollback orchestration must apply a bounded convergence timeout (for example `ROLLBACK_CONVERGENCE_TIMEOUT_MS`) to the convergence wait.
 - If timeout is reached before both convergence APIs report the expected `controlPlaneRequestId`, the rollback enters terminal state `ROLLBACK_CONVERGENCE_TIMEOUT`.
 - In `ROLLBACK_CONVERGENCE_TIMEOUT`, Automation admission remains paused for scope safety and ticks remain paused until an operator explicitly issues resume or abort actions.
 - The system must emit terminal event `ScriptRollbackConvergenceTimedOut` and increment `automation_rollback_convergence_timeout_total{scope, operation, reason}`.

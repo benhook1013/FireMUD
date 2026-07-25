@@ -47,7 +47,7 @@ Tick recovery is driven by durable PostgreSQL tick state plus domain-level idemp
 Failure handling assumes the same two-boundary model defined in the main tick design:
 
 - `durable_committed`:
-  - Ledger rows for `(tenantId, gameInstanceId, regionId, region_epoch, tickId)` are terminal (`APPLIED` or `ABANDONED`), and
+  - Ledger rows for `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId)` are terminal (`APPLIED` or `ABANDONED`), and
   - `RegionStatus.regionEpoch` still equals `region_epoch`, `RegionStatus.executorFence` still equals the batch's expected executor fence, and `RegionStatus.lastCommittedTickId` has advanced under that same fenced write.
 - `coordination_cleared`:
   - Redis `pending`/lock coordination for that tick is no longer in flight.
@@ -65,7 +65,7 @@ Crash-window behavior:
 To make replays observable and bounded, Game Session maintains a **tick effect ledger** in PostgreSQL. Conceptually, the ledger captures the same coordination timeline described in the Redis and tick architecture docs:
 
 - Every tick effect that has been durably claimed or staged for execution (for example, rows associated with a tick batch, replay-eligible retry work, or durable follow-up records) is mirrored into a Game Session–owned ledger table (for example `tick_effects`) with columns such as:
-  - `tenant_id`, `game_instance_id`, `region_id`, `region_epoch`, `tick_id`
+  - `tenant_id`, `game_instance_id`, `playable_state_scope`, `region_id`, `region_epoch`, `tick_id`
   - `tick_batch_id`
   - `effect_key` (stable, human-readable descriptor passed through from staging)
   - `target_aggregate_type`, `target_aggregate_id` (required target aggregate identity)
@@ -103,6 +103,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
 - For any `(tenant_id, game_instance_id, playable_state_scope, region_id, region_epoch, tick_id, effect_key, target_aggregate_type, target_aggregate_id)` there must eventually be **exactly one terminal state**:
   - `status = APPLIED` – effect successfully committed to domain state.
   - `status = ABANDONED` – effect intentionally skipped or judged unrecoverable.
+- A duplicate handler attempt may return a replay/no-op outcome such as `replay_ok`, but that outcome is recorded in service metrics/audit and never as a third ledger status; when the effect is already reflected in durable state, its ledger row is `APPLIED`.
 - Rows must not remain in `SCHEDULED` beyond the emitted replay-convergence budget; stuck rows are treated as operational smells and surfaced via metrics and alerts.
 
 #### Replay Convergence Budget (Normative)
@@ -146,7 +147,7 @@ New designs must not create ad-hoc ledger tables for tick effects in other servi
 
 Replay of a tick is driven from ledger state:
 
-- When reprocessing a tick, the executor loads ledger rows for that `<tenantId, gameInstanceId, regionId, region_epoch, tickId>` with `status = SCHEDULED` and:
+- When reprocessing a tick, the executor loads ledger rows for that `<tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId>` with `status = SCHEDULED` and:
   - Re-queues/re-runs effects whose domain targets do not yet reflect `APPLIED`, then marks those rows `APPLIED`.
   - Marks effects `ABANDONED` with a precise reason when replay determines they are no longer valid (expired session, entity gone, descheduled tick, and so on).
   - Marks effects `APPLIED` and skips domain calls when it determines the effect has already been applied idempotently.
@@ -257,7 +258,7 @@ Replay fairness is part of the operational contract, not just an implementation 
 Responsibility for driving ledger rows to a terminal outcome lies with the Game Session Service:
 
 - A background “ledger replay controller” in Game Session:
-  - Periodically scans for `SCHEDULED` rows that have exceeded the emitted replay-convergence budget for a given `(tenantId, gameInstanceId, regionId, region_epoch, tickId)`.
+  - Periodically scans for `SCHEDULED` rows that have exceeded the emitted replay-convergence budget for a given `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId)`.
   - Replays eligible effects using the same idempotent handlers the tick pipeline uses, marking rows `APPLIED` when domain state confirms success.
   - Marks rows `ABANDONED` with a precise reason when replay is no longer safe or meaningful (for example, entities removed, sessions expired, or region/tenant/cluster resets that bumped `region_epoch`).
   - Enforces bounded fairness across active scopes so replay does not starve smaller tenants/regions behind one hot backlog:
@@ -352,20 +353,21 @@ Two patterns are used:
   - It is a narrow exception, not the default for gameplay-visible mutations.
   - Typical safe uses are once-per-tick watermark-style updates or aggregates whose design guarantees a single logical writer/effect per tick.
   - Aggregates that may receive multiple legitimate effects in one tick must not use this pattern.
-  - A shadow tick-state record such as `entity_tick_state` is keyed by the aggregate identifier.
+  - A shadow tick-state record such as `entity_tick_state` is keyed by the complete `(tenant_id, game_instance_id, playable_state_scope, region_id, aggregate_id)` identity, not by the aggregate identifier alone.
   - The shadow state stores at minimum:
     - `last_region_epoch`
     - `last_tick_id`
     - (plus tenant/game-instance/region identifiers or a foreign key implying them)
   - When applying a tick effect:
-    - The handler reads the current tick state.
-    - If `(last_region_epoch, last_tick_id) >= (currentRegionEpoch, currentTickId)`, the update is treated as a replay or out-of-order attempt and becomes a no-op (or, in strict modes, a validation-only check).
-    - If `(last_region_epoch, last_tick_id) < (currentRegionEpoch, currentTickId)`, the handler applies the change and updates `(last_region_epoch, last_tick_id) = (currentRegionEpoch, currentTickId)` in the same transaction as the domain mutation.
+    - The handler resolves and reads the shadow tick-state row using the complete `(tenant_id, game_instance_id, playable_state_scope, region_id, aggregate_id)` key; an aggregate-only lookup is invalid.
+    - If `(last_region_epoch, last_tick_id) >= (currentRegionEpoch, currentTickId)` for that exact row, the update is treated as a replay or out-of-order attempt and becomes a no-op (or, in strict modes, a validation-only check).
+    - If `(last_region_epoch, last_tick_id) < (currentRegionEpoch, currentTickId)`, the handler applies the change and updates `(last_region_epoch, last_tick_id) = (currentRegionEpoch, currentTickId)` on that same composite-key row in the same transaction as the domain mutation.
 - **Operation-level effect guard**
   - This is the default pattern for gameplay-visible mutations.
   - Operations that may touch multiple aggregates or legitimately apply multiple distinct effects to the same aggregate in a single tick (for example trades, combat damage, healing, AoE damage, room occupancy changes, drops/pickups, or multi-target buffs) use a small guard table such as `tick_effect_guard` keyed by:
     - `tenant_id`
     - `game_instance_id`
+    - `playable_state_scope`
     - `region_id`
     - `region_epoch`
     - `tick_id`
@@ -381,12 +383,12 @@ Two patterns are used:
 Examples:
 
 - **Once-per-tick aggregate watermark (per-aggregate last-tick state)**
-  - `AdvanceRegionAuraWatermark` receives `(tenantId, gameInstanceId, regionId, regionEpoch, tickId, targetAggregateType, targetAggregateId)`.
+  - `AdvanceRegionAuraWatermark` receives `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, targetAggregateType, targetAggregateId)`.
   - The design guarantees this aggregate is advanced at most once per tick.
-  - It reads the shadow tick state for `aggregateId` and applies the update only when `(last_region_epoch, last_tick_id) < (regionEpoch, tickId)`.
+  - It reads the shadow tick state for the complete `(tenantId, gameInstanceId, playableStateScope, regionId, targetAggregateId)` key and applies the update only when `(last_region_epoch, last_tick_id) < (regionEpoch, tickId)`.
   - If `(last_region_epoch, last_tick_id) >= (regionEpoch, tickId)`, the handler treats the request as a replay/out-of-order and returns without changing state.
 - **Trade between two entities (operation-level effect guard)**
-  - `TradeItem` receives `(tenantId, gameInstanceId, regionId, regionEpoch, tickId, fromEntityId, toEntityId, itemId)` and creates one EffectId projection per affected inventory aggregate.
+  - `TradeItem` receives `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, fromEntityId, toEntityId, itemId)` and creates one EffectId projection per affected inventory aggregate.
   - It computes `effectKey = "trade:" + fromEntityId + ":" + toEntityId + ":" + itemId`.
   - In one transaction it:
     - Attempts to insert `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType=INVENTORY, targetAggregateId)` into `tick_effect_guard` for each affected inventory aggregate.
@@ -407,6 +409,7 @@ Tick-driven domain calls use a **canonical effect identity** and a shared contra
 - Effect identity is derived deterministically from tick context and target aggregate identity; conceptually it includes:
   - `tenantId`
   - `gameInstanceId`
+  - `playableStateScope`
   - `regionId`
   - `regionEpoch`
   - `tickId` (region-scoped)
@@ -600,7 +603,7 @@ When introducing a new command type that will run under tick control, design doc
   - Does it run because an entry is dequeued from `tick:{tenantRegionTag}:queue:<entityId>` or because a tick timer/retry fired?
   - If not, it may follow different idempotency rules and does not belong in this section.
 - **What is the idempotency key?**
-  - For single-aggregate updates: which `(last_region_epoch, last_tick_id)` (or equivalent) fields and table enforce “at most one update per tick timeline” for that aggregate?
+  - For single-aggregate updates: which complete `(tenant_id, game_instance_id, playable_state_scope, region_id, aggregate_id)` key plus `(last_region_epoch, last_tick_id)` (or equivalent) fields and table enforce “at most one update per tick timeline” for that aggregate?
   - For multi-aggregate or multi-effect operations: what is the `effect_key` used in `tick_effect_guard`, and how is it derived deterministically from the command payload?
 - **Where is the guard persisted?**
   - Which schema/table holds the per-aggregate “last applied tick” state or `tick_effect_guard` entries?

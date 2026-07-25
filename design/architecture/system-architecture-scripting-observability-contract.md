@@ -18,7 +18,7 @@ Event-scope ingress decisions and handler-scoped execution outcomes are separate
 
 - Event-scope ingress audit/logging records pre-resolution decisions for the incoming event, such as auth failure, reload backpressure, rollback pause, pin-state unavailability, or version unavailability. These records are keyed by the event-scope identity in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields` and must not invent a synthetic `scriptId`.
 - `script_event_audit` records handler-scoped, scheduler/timer-scoped, tenant-readiness `onLoad`, and dry-run/test executions after a concrete script or plugin handler identity exists.
-- per-command handoff history is a separate durable child surface keyed by `automationDispatchId` and `workItemId` so one handler audit row can still correlate to multiple emitted gameplay commands.
+- per-command handoff history is a separate durable child surface keyed by `automationDispatchId` and `outboxWorkItemId` so one handler audit row can still correlate to multiple emitted gameplay commands.
 - A successful event-scope ingress record means the event was accepted for handler resolution. It is not a summary of every handler outcome.
 - If ingress is accepted and resolves three handlers, tooling should expect one event-scope ingress record and up to three handler-scoped `script_event_audit` records, one per resolved Trigger Identity.
 - If one resolved handler emits three gameplay commands, tooling should expect one handler-scoped `script_event_audit` row plus three durable handoff-event rows under `ListScriptHandoffEvents`.
@@ -190,6 +190,7 @@ Illustrative record shape:
   "commandHandoffDispositions": [
     {
       "automationDispatchId": "work-9#0",
+      "outboxWorkItemId": "work-9",
       "handoffOutcome": "accepted",
       "executionOutcome": "executed",
       "sourceService": "game-session",
@@ -197,6 +198,7 @@ Illustrative record shape:
     },
     {
       "automationDispatchId": "work-9#1",
+      "outboxWorkItemId": "work-9",
       "handoffOutcome": "accepted",
       "executionOutcome": "version_fence_dropped",
       "executionReason": "script_patch_mismatch",

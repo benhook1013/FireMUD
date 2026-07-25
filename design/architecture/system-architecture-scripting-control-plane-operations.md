@@ -381,7 +381,7 @@ At a minimum, rollback consists of:
 
 1. Fence new evaluation by pausing ticks and setting Automation admission to rollback-pause mode for the affected scope.
 2. Repin the affected game instance(s) to the target `scriptPatchVersion` using the Game Session control-plane API.
-3. Reconcile durable schedule entries before timer admission resumes: tombstone every displaced version-owned entry and claim or create a new entry for the target patch or plugin version. Preserve `scheduleDefinitionId` only as the stable logical schedule identity; do not rewrite old entries or reuse their trigger claims or `scriptEventId` values.
+3. Reconcile durable schedule entries before timer admission resumes: tombstone every displaced version-owned entry and claim or create a new entry for the target patch or plugin version. This is a required mutating rollback phase and records the same `controlPlaneRequestId`, `actor`, and `reason` as the surrounding operator workflow. Preserve `scheduleDefinitionId` only as the stable logical schedule identity; do not rewrite old entries or reuse their trigger claims or `scriptEventId` values.
 4. Drain or purge queued script work items and staging entries that carry the rolled-back patch.
 5. If plugin versions are also being rolled back, disabled, or revoked, cancel pending work for those `pluginVersionId` values before queue purge.
 6. Verify pin convergence and drain completion before resuming normal admission.
@@ -393,9 +393,10 @@ Concrete rollback sequence example:
 2. Call `SetAutomationAdmissionMode(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` so new external and scheduler triggers are rejected with rollback backpressure.
 3. Call `RollbackScriptPatchVersion(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, targetScriptPatchVersion=P21, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` to repin the instance to the known-good patch.
 4. Poll `GetAutomationPinConvergence` and `GetGameSessionPinConvergence` until both report `observedPinnedScriptPatchVersion=P21` and the latest observed `controlPlaneRequestId=RB-42`.
-5. Call `CancelPendingWorkItemsForPatch(tenantId=11111111-1111-4111-8111-111111111111, scriptPatchVersion=P22, gameInstanceId=44444444-4444-4444-8444-444444444444, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` and `PurgeQueuedTickCommandsForScriptPatch(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, scriptPatchVersion=P22, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`; then poll `GetAutomationDrainStatus` until `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` for the paused scope.
-6. Call `SetAutomationAdmissionMode(..., mode=NORMAL, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` only after convergence and drain checks pass.
-7. Call `ResumeTicks(..., controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` last so gameplay resumes only after both runtime services agree on the rollback target and old-version work has quiesced.
+5. Run the system-owned durable schedule/timer reconciliation for target `P21`; it records `controlPlaneRequestId=RB-42`, `actor=system:automation`, and `reason="rollback RB-42"`, tombstones displaced `P22` rows, and creates or claims only target-version rows before timer admission can resume.
+6. Call `CancelPendingWorkItemsForPatch(tenantId=11111111-1111-4111-8111-111111111111, scriptPatchVersion=P22, gameInstanceId=44444444-4444-4444-8444-444444444444, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` and `PurgeQueuedTickCommandsForScriptPatch(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, scriptPatchVersion=P22, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`; then poll `GetAutomationDrainStatus` until `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` for the paused scope.
+7. Call `SetAutomationAdmissionMode(..., mode=NORMAL, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` only after schedule reconciliation, convergence, and drain checks pass.
+8. Call `ResumeTicks(..., controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` last so gameplay resumes only after both runtime services agree on the rollback target and old-version work has quiesced.
 
 Operationally, use control-plane APIs rather than direct data-store edits for pending and dead-lettered work:
 
@@ -415,13 +416,14 @@ Ownership and source-of-truth requirements:
 
 Required states:
 
-- `PAUSING` -> `REPINNING` -> `CANCELING` -> `PURGING` -> `CONVERGING` -> `DRAINING` -> `RESUMING` -> `COMPLETED`
+- `PAUSING` -> `REPINNING` -> `RECONCILING_SCHEDULES` -> `CANCELING` -> `PURGING` -> `CONVERGING` -> `DRAINING` -> `RESUMING` -> `COMPLETED`
 - Terminal failure state: `ROLLBACK_CONVERGENCE_TIMEOUT`
 
 State rules:
 
 - Each transition must be idempotent and keyed by `controlPlaneRequestId`.
 - Re-running a request in the same state must return current state, not restart from scratch.
+- `RECONCILING_SCHEDULES` must complete before timer admission, normal admission, or tick resumption can proceed; it must tombstone displaced version-owned rows and create or claim only target-version rows.
 - Failures in `CANCELING` or `PURGING` must not auto-resume admission or ticks.
 - Operator retries must continue from the last durable state.
 - `ROLLBACK_CONVERGENCE_TIMEOUT` keeps admission and ticks paused until explicit operator action.

@@ -225,13 +225,13 @@ Scripts that do not clearly fit one of these categories should be refactored unt
 Automation-related Redis operations follow stricter slotting rules to avoid `CROSSSLOT` errors and keep coordination boundaries clear:
 
 - Scripts that operate on `automation:queue:{tenantInstanceTag}:*` keys:
-  - Use only `automation:queue:{tenantInstanceTag}:*` keys for a single runtime instance scope in `KEYS`.
+  - Use only `automation:queue:{tenantInstanceTag}:*` keys for a single runtime instance scope in `KEYS`; all such keys must share the same `{tenantInstanceTag}` hash tag and Redis Cluster slot.
   - Must not include `tick:*` keys in the same invocation.
 - Cross-boundary rules:
   - Automation scripts **never** perform multi-key operations that span both `automation:*` and `tick:*` prefixes in one `EVAL`/`EVALSHA` call.
   - Automation work is projected under `automation:queue:*` and handed off to Game Session via gRPC; only Game Session scripts mutate `tick:*` prefixes.
-  - Fairness-critical automation handoff is idempotent on a durable dispatch identity (for example `(tenantId, gameInstanceId, regionId, regionEpoch, scheduleId, dueTickId, entityId, commandKind)` or an equivalent derived `automationDispatchId`) and must not depend on Redis queue contents as the sole dedupe record.
-  - Before invoking the Redis enqueue script, Game Session must insert or confirm a durable admission row keyed by `(tenantId, gameInstanceId, regionId, regionEpoch, automationDispatchId)` in its command/admission ledger. Redis enqueue scripts may treat the dispatch identity as an idempotent member key for hot-path dedupe, but the durable admission row is the authority used after resets, gRPC retries, and failover.
+  - Fairness-critical automation handoff is idempotent on the full scheduler Trigger Identity: `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, entityId, scriptId, eventType, eventSchemaVersion, scriptPatchVersion, scheduleDefinitionId, duePoint, isDryRun, triggerMode)`, plus `pluginId` and `pluginVersionId` when applicable. `duePoint` is exactly `dueTickId:<value>` or `dueAt:<epochMillis>`; nullable storage uses the other due field as explicit `NULL` and rejects both-null or both-populated rows. The per-command `automationDispatchId` is a child handoff identity derived from that trigger plus the command ordinal, and must not be replaced by `scriptEventId` alone.
+  - Before invoking the Redis enqueue script, Game Session must insert or confirm a durable admission row keyed by `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, automationDispatchId)` in its command/admission ledger. Redis enqueue scripts may treat the dispatch identity as an idempotent member key for hot-path dedupe, but the durable admission row and the durable trigger-instance uniqueness projection are the authorities used after resets, gRPC retries, and failover.
 
 CI must reject automation Lua scripts that:
 
@@ -389,7 +389,7 @@ All coordination-related Lua scripts live in a **Lua Script Registry** in the sh
 - Reset and tail-loss metadata:
   - `reset_sensitivity` describing which reset scopes (region, tenant, cluster) must be considered when changing script behavior or key shape.
   - `tail_loss_behavior` describing what is expected to happen if the script’s writes are lost or replayed within the tail-loss envelope (for example “pure lease; safe to lose”, “can enqueue duplicates; relies on domain idempotency”, “must not silently drop without a corresponding ledger row”).
-- Shard-locality metadata for multi-key scripts, including whether all `KEYS` must share the same `{tenantRegionTag}` hash tag and slot.
+  - Shard-locality metadata for multi-key scripts, including whether all `KEYS` must share the same `{tenantRegionTag}`, `{tenantInstanceTag}`, or `{tenantGameplayTag}` hash tag and slot.
 
 The registry descriptors are sufficient to **drive a generic test harness**: any coordination script must be invokable in isolation using only the registry metadata (script identifier, expected `KEYS`/`ARGV`, and allowed prefixes). Callers must not hard-code key names or slots that diverge from the registry.
 

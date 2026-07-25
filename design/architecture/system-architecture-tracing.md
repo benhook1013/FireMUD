@@ -11,7 +11,7 @@ Operational tracing claims are capability-gated:
 1. **Baseline observability** relies on metrics and structured logs; generic RPC spans and correlation are best-effort unless proved for the environment.
 2. **Workflow tracing** covers only named workflows whose semantic spans, bounded attributes, context propagation, ingestion, and queries have end-to-end proof.
 3. **Service-scoped incident sampling** additionally requires a wired sampler control and a proved increase/observe/revert drill.
-4. **Tenant/game-instance/region-scoped incident sampling** additionally requires compatible upstream sampling, propagated scope attributes, bounded collector tail sampling, and safe time-limited enable/revert proof.
+4. **Tenant/game-instance/region-scoped incident sampling** additionally requires candidate delivery from every upstream service participating in the scoped workflow, full propagation of the scope attributes across that workflow, bounded collector tail sampling, and safe time-limited enable/revert proof.
 
 Each environment must advertise its proved level and covered workflows. Runbooks must branch on that declaration and must not make mitigation depend on traces.
 
@@ -125,7 +125,7 @@ FireMUD defines two target escalation levels for incident-mode sampling. An oper
      - Add a temporary “always sample” policy for the target `<tenantId, gameInstanceId, regionId>` (and optionally `service.name`) and a time-bound note in the collector config (for example “remove after incident X”).
      - Verify: in Jaeger, filtering by `tenantId`/`gameInstanceId`/`regionId` should yield traces even when baseline sampling is low.
      - Revert: remove the temporary policy and reload the collector configuration.
-   - Limits: this requires tail sampling, relevant span attributes, and an upstream sampling strategy that delivers candidate traces to the collector. Tail sampling cannot recover a trace already discarded by service-side head sampling.
+   - Limits: this requires tail sampling, candidate delivery from every upstream service participating in the scoped workflow, and full propagation of the scope attributes across the workflow. Tail sampling cannot recover a trace already discarded by service-side head sampling.
 
 Declared sampler controls and their current support status are documented in `design/architecture/infrastructure/environment-and-secrets-catalog.md#observability`.
 
@@ -135,9 +135,11 @@ Environments that claim support for tenant/game-instance/region-scoped incident 
 
 - OpenTelemetry Collector is deployed with tail-sampling processors enabled.
 - Tail-sampling policies can match on `tenantId`, `gameInstanceId`, and `regionId` span attributes, and optionally `service.name`.
+- Every upstream service that can create spans for the scoped workflow delivers candidate traces to the collector for the incident window; service-side head sampling must not discard those candidates before tail sampling.
+- Every relevant span in the scoped workflow carries the complete `<tenantId, gameInstanceId, regionId>` scope, and service-to-service propagation preserves all three attributes on downstream spans rather than relying on the entry span alone.
 - Collector config supports safe runtime update/reload for temporary incident policies.
 - Runbook-level verification exists:
-  - Positive check: traces for the scoped `<tenantId, gameInstanceId, regionId>` appear above baseline after policy enablement.
+  - Positive check: candidate traces from each participating upstream service, including downstream spans with the complete scoped `<tenantId, gameInstanceId, regionId>`, appear above baseline after policy enablement.
   - Negative check: trace volume returns to baseline after policy removal.
 
 If an environment does not meet this contract, it must advertise its highest proved lower level—service-scoped sampling or baseline observability—and incident procedures must not claim tenant/game-instance/region-scoped escalation there.
