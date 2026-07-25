@@ -70,7 +70,7 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
 7. **Execution, audit, and observability**
    - On subsequent ticks, the Game Session Service executes at most one command per entity per tick, so `onEnterRegion` effects follow the same fairness and conflict-resolution rules as player actions.
    - Metrics such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total` are updated throughout this flow; see the metrics glossary in `design/architecture/system-architecture-scripting-quotas-and-operations.md` for names and label conventions.
-   - An audit record is written to `script_event_audit` for each resolved handler Trigger Identity, with identifiers such as `scriptEventId`, `scriptId`, `tenantId`, `tickId`, plus stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`) so operators can distinguish “DSL evaluated” from “accepted into tick queues”, enabling replay and troubleshooting as described in the same quotas and operations document.
+   - An audit record is written to `script_event_audit` for each resolved handler Trigger Identity, with identifiers such as `scriptEventId`, `scriptId`, `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, and `tickId`, plus stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`) so operators can distinguish “DSL evaluated” from “accepted into tick queues”, enabling replay and troubleshooting as described in the same quotas and operations document.
 
 ### Mixed Fan-Out Example
 
@@ -98,7 +98,7 @@ This example shows how a script that runs on a fixed cadence (for example, an NP
    - When the script is published, its compiled DSL graph, `intervalTicks` (or equivalent cadence configuration), and version metadata are stored in the Automation & Scripting Service database and exposed under the current `scriptPatchVersion` for that game.
 
 2. **Scheduling the next interval**
-   - When the NPC spawns or when the script is first loaded, the Automation & Scripting Service’s scheduler registers an interval entry for the `<tenantId, gameInstanceId, scriptId, entityId>` tuple, computing a `nextTick` or `nextRunAt` timestamp based on the configured cadence and current tick/time.
+   - When the NPC spawns or when the script is first loaded, the Automation & Scripting Service’s scheduler registers an interval entry for the `<tenantId, gameInstanceId, regionId, regionEpoch, scriptId, entityId>` tuple, computing a `nextTick` or `nextRunAt` timestamp based on the configured cadence and current tick/time.
    - Leaders track these interval entries alongside other automation timers, using bounded scans and the execution-budget knobs (for example, `AUTOMATION_TICK_DURATION_MS`, `AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) to decide which `onInterval` triggers should fire in each scheduling window.
 
 3. **Firing `onInterval` and enforcing budgets**
@@ -143,18 +143,18 @@ This example shows how one published plugin version is activated for one running
 
 1. **Plugin version is uploaded and published**
    - A creator uploads plugin bundle `town-crier-v3` through the Game Design Service.
-   - Game Design verifies signatures, extracts `plugin-manifest.json`, validates bindings against `baseVersionId=game-v12`, and records the version as `PUBLISHED`.
+   - Game Design verifies signatures, extracts `plugin-manifest.json`, validates bindings against `baseVersionId=66666666-6666-4666-8666-666666666666`, and records the version as `PUBLISHED`.
 
 2. **Instance-scoped activation is requested**
-   - An operator uses Logging & Admin to call `SetPluginActiveVersion` for `<tenantId=T1, gameInstanceId=I7, pluginId=town-crier, targetPluginVersionId=town-crier-v3>`.
-   - Another instance for the same tenant, such as `I8`, is unaffected because plugin activation is scoped to one `(tenantId, gameInstanceId, pluginId)`.
+   - An operator uses Logging & Admin to call `SetPluginActiveVersion` for `<tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, pluginId=town-crier, targetPluginVersionId=town-crier-v3>`.
+   - Another instance for the same tenant, such as `55555555-5555-4555-8555-555555555555`, is unaffected because plugin activation is scoped to one `(tenantId, gameInstanceId, pluginId)`.
 
 3. **Runtime compatibility gates are enforced**
    - Automation & Scripting loads the published plugin metadata and verifies that:
      - `town-crier-v3` is `PUBLISHED`.
-     - The instance runtime version is exactly `game-v12`.
+     - The instance runtime version is exactly `66666666-6666-4666-8666-666666666666`.
      - The instance’s bound ability schema digest matches the plugin’s recorded `abilitySchemaDigest`.
-   - If any of these checks fail, activation is rejected deterministically and the active plugin state for `I7` is unchanged.
+   - If any of these checks fail, activation is rejected deterministically and the active plugin state for `44444444-4444-4444-8444-444444444444` is unchanged.
 
 4. **Bindings resolve for the activated instance only**
    - Suppose the plugin manifest contains a binding:
@@ -163,12 +163,12 @@ This example shows how one published plugin version is activated for one running
      - `targetSelector={"regionTemplateId":"regionTemplateId:market-square"}`
      - `entrypointGraphId=announce-arrival`
      - `bindingId=announce-on-enter-market`
-   - After activation, only triggers occurring inside `I7` that match `regionTemplateId:market-square` resolve this plugin binding. The same tenant’s other instance `I8` does not resolve the plugin unless it separately activates the same `pluginVersionId`.
+   - After activation, only triggers occurring inside `44444444-4444-4444-8444-444444444444` that match `regionTemplateId:market-square` resolve this plugin binding. The same tenant’s other instance `55555555-5555-4555-8555-555555555555` does not resolve the plugin unless it separately activates the same `pluginVersionId`.
 
 5. **Trigger execution and audit**
-   - When a player enters `market-square` in `I7`, Game Session emits the event to Automation & Scripting.
-   - Automation resolves the active plugin binding for `I7`, executes graph `announce-arrival`, and records the resulting handler activity in `script_event_audit` with `pluginId=town-crier`, `pluginVersionId=town-crier-v3`, and `bindingId=announce-on-enter-market`.
+   - When a player enters `market-square` in `44444444-4444-4444-8444-444444444444`, Game Session emits the event to Automation & Scripting.
+   - Automation resolves the active plugin binding for `44444444-4444-4444-8444-444444444444`, executes graph `announce-arrival`, and records the resulting handler activity in `script_event_audit` with `pluginId=town-crier`, `pluginVersionId=town-crier-v3`, and `bindingId=announce-on-enter-market`.
 
 6. **Rollback remains instance-scoped**
-   - If `town-crier-v3` misbehaves in `I7`, Logging & Admin can disable or roll back that plugin only for `I7`.
+   - If `town-crier-v3` misbehaves in `44444444-4444-4444-8444-444444444444`, Logging & Admin can disable or roll back that plugin only for `44444444-4444-4444-8444-444444444444`.
    - Any other instance continues using its own separately activated plugin state.

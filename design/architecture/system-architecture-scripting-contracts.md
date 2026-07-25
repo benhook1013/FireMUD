@@ -30,7 +30,7 @@ To make script patch rollback meaningful:
 - Every script work item and tick command must carry the effective `scriptPatchVersion` used to produce it.
 - On execution, Game Session must enforce a **version fence**:
   - If a command’s `scriptPatchVersion` does not match the game instance’s currently pinned `scriptPatchVersion`, Game Session must not execute it.
-  - Rejection must be recorded with enough identifiers (`tenantId`, `gameInstanceId`/`regionId`, `entityId`, `scriptId`, `scriptEventId`, `scriptPatchVersion`) for operators to diagnose why work was dropped.
+  - Rejection must be recorded with enough identifiers (`tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `scriptEventId`, `scriptPatchVersion`) for operators to diagnose why work was dropped.
   - Rejected entries must be removed or moved to a bounded dead-letter store with explicit `maxAge`/`maxRows` and alert-backed cleanup cadence.
 - Operational rollback must include a drain/purge step for any queued automation work items and staging entries that cannot satisfy the version fence.
 

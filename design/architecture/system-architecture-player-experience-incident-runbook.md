@@ -20,8 +20,8 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 - Confirm baseline tracing is usable for the affected path (production-like default is non-zero sampling; around 1% for high-volume entry paths is the baseline usability target from `system-architecture-tracing.md`).
 - If traces are too sparse:
   - First escalate service-scoped sampling temporarily (`OTEL_TRACES_SAMPLER=parentbased_traceidratio`, increase `OTEL_TRACES_SAMPLER_ARG`) and record start/end times in the incident timeline.
-  - If the environment supports collector tail-sampling by `tenantId`/`regionId`, prefer scoped escalation for the impacted tenant/region and remove the policy immediately after triage.
-- If the environment does not meet the collector capability contract for tenant/region-scoped sampling, treat it as service-scoped-only and do not claim scoped escalation.
+  - If the environment supports collector tail-sampling by `tenantId`/`gameInstanceId`/`regionId`, prefer scoped escalation for the impacted tenant/game-instance/region and remove the policy immediately after triage.
+- If the environment does not meet the collector capability contract for tenant/game-instance/region-scoped sampling, treat it as service-scoped-only and do not claim scoped escalation.
 - If trace volume remains insufficient, continue with metrics + logs and do not block mitigation on trace availability.
 
 ## Login Success Ratio Below SLO
@@ -120,11 +120,11 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 5. **Verify recovery**
    - Ensure command p99 latency returns under the SLO threshold across core commands.
    - Confirm tick health metrics return to normal envelopes.
-   - Use the `player-incident-drilldown.json` and `tick-region-logs.json` Kibana saved searches to correlate any remaining slow commands with specific `tenantId`/`regionId` and to verify that logs no longer show systemic timeouts or retries for hot commands.
+   - Use the `player-incident-drilldown.json` and `tick-region-logs.json` Kibana saved searches to correlate any remaining slow commands with specific `tenantId`/`gameInstanceId`/`regionId` and to verify that logs no longer show systemic timeouts or retries for hot commands.
 6. **Degraded-mode branch (if observability backends are unavailable)**
    - If Grafana is down: run direct PromQL checks for command p99 latency, synthetic command-canary success/latency, tick safety ratio, Redis tail-loss, and queue depth per affected gameplay `scope`.
    - If Jaeger is down or sampling is insufficient: skip span-based narrowing and classify bottlenecks from metrics + structured logs only.
-   - If Kibana is down: inspect Game Session and hot domain-service logs directly for timeout/retry spikes by `tenantId`/`regionId`.
+   - If Kibana is down: inspect Game Session and hot domain-service logs directly for timeout/retry spikes by `tenantId`/`gameInstanceId`/`regionId`.
 
 ## Chat Delivery Latency Above SLO
 

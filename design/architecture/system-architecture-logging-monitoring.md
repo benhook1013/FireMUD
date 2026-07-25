@@ -10,7 +10,7 @@ The current implemented baseline is narrower than the full target-state observab
 
 - Runtime identity, startup logging, shared HTTP/gRPC request logging, bounded WebSocket/Telnet handler logging, `grpc.app_error`, and the first bounded gameplay command counters are implemented.
 - Raw runtime or gameplay identifiers such as `serviceInstanceId`, `tenantId`, `sessionId`, `characterId`, and `script_patch_version` are not approved as ordinary Prometheus metric labels. These identifiers belong in structured logs and traces unless a future architecture update records a narrow low-cardinality exception.
-- The player-experience SLI catalog below is a target-state metric contract. It describes the operator-visible SLO surface FireMUD wants, but it is not fully implemented by the current services. Before implementing any metric that needs tenant or region scoping, reconcile the label shape with the cardinality policy, for example through a bounded environment-specific scope label or an explicitly documented exception.
+- The player-experience SLI catalog below is a target-state metric contract. It describes the operator-visible SLO surface FireMUD wants, but it is not fully implemented by the current services. Before implementing any metric that needs tenant, game-instance, or region scoping, reconcile the label shape with the cardinality policy, for example through a bounded environment-specific scope label or an explicitly documented exception.
 - Synthetic player-flow canaries, the independent deadman/heartbeat mirror, and the related canonical canary alert families now have a canonical operator-run runtime harness in `dev-tools/observability/run-player-experience-smoke.py`. The authoritative external pager deployment remains environment-specific, but the repo now provides the shared runner, retained-evidence validator, and mirrored metric vocabulary required for prod-like observability smoke.
 - Routine backup dashboards and alert snippets use artifact freshness, lineage, integrity/readability, and current recovery-convergence signals. Tick-pause panels remain maintenance/reset views only and are not routine backup health signals.
 
@@ -22,8 +22,8 @@ The current implemented baseline is narrower than the full target-state observab
 - Logs are stored in **Elasticsearch** and explored through **Kibana** dashboards.
 - The **Logging & Admin Service** exposes moderation tools and log queries and embeds Kibana dashboards via its API for richer visualization.
 - Logs are emitted in JSON with request tracing fields (e.g., `traceId`) and gameplay identity context for moderation and incident drilldowns.
-- At minimum, log events for request/tick-handling paths should include: `service`, `tenantId` (when known), `regionId` (when known), `traceId`, and `correlationId`. When a player is authenticated or a session is bound, logs should also include `characterId`.
-- Kibana dashboards and saved searches filter by `tenantId`/`regionId` plus `traceId`/`characterId` so operators can scope incidents quickly without relying on ad-hoc message parsing.
+- At minimum, log events for request/tick-handling paths should include: `service`, `tenantId` (when known), `gameInstanceId` (when known), `regionId` (when known), `traceId`, and `correlationId`. When a player is authenticated or a session is bound, logs should also include `characterId`.
+- Kibana dashboards and saved searches filter by `tenantId`/`gameInstanceId`/`regionId` plus `traceId`/`characterId` so operators can scope incidents quickly without relying on ad-hoc message parsing.
 - gRPC services use the shared `LoggingInterceptor` to include `traceId` and `correlationId` in every log entry. See [Shared Libraries](./system-architecture-shared-libraries.md).
 - Log retention defaults to **14 days** in development and **90 days** in production, after which indices are archived. These values can be tuned via the [Deployment Environments](./infrastructure/deployment-environments.md) settings.
 - Log storage hosts can be customized via the `FLUENT_ELASTICSEARCH_HOST` and `FLUENT_ELASTICSEARCH_PORT` environment variables ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#observability)).
@@ -154,7 +154,7 @@ FireMUD’s metrics are designed around low- and medium-cardinality labels so da
 - Allowed labels typically include bounded values such as `service`, `job`, `grpc_method`, `status`, `code`, `redis_role`, `effect_type`, `outcome`, `type`, `reason`, and other explicitly documented bounded dimensions in the Redis, tick, and gRPC architecture docs.
 - Disallowed labels on ordinary gameplay/session counters and timers include raw runtime, tenant, request, session, player, or entity identifiers such as `serviceInstanceId`, `tenantId`, `regionId`, `traceId`, `spanId`, `characterId`, `sessionId`, `gameInstanceId`, `script_patch_version`, and arbitrary error messages or stack traces. These belong in logs and traces unless a specific operational metric contract explicitly approves them.
 - Existing Redis, tick, backup, and control-plane operational metrics may retain explicitly documented scope labels only when those labels are bounded operational buckets such as `scope`, `region_class`, or `operation`, not raw player/runtime identifiers.
-- No canonical metrics exception currently approves raw `tenantId` bucketing on ordinary Prometheus series. If a player SLO truly needs tenant or region drilldown, introduce an explicitly bounded `scope` label or record a narrow architecture exception here before adding new producers, dashboards, or alerts.
+- No canonical metrics exception currently approves raw `tenantId` bucketing on ordinary Prometheus series. If a player SLO truly needs tenant, game-instance, or region drilldown, introduce an explicitly bounded `scope` label or record a narrow architecture exception here before adding new producers, dashboards, or alerts.
 - When in doubt, prefer coarser labels (for example `error_code` from a bounded enum or small string set) and aggregate multiple rare values into an `other` bucket rather than exposing them as unbounded labels.
 - New metrics must document their label sets in the relevant architecture or service README and confirm that they conform to these guardrails before being added to dashboards or alerts.
 
@@ -164,20 +164,20 @@ In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines,
 
 - **Login success ratio**
   - SLI: fraction of successful login attempts over total login attempts, for example `login_requests_total{outcome="success"}` vs `login_requests_total`.
-  - SLO (production starting point): ≥ 99.5% success over a 15-minute rolling window, evaluated per approved tenant/region scope once the metric label shape is reconciled with the cardinality policy.
-  - Instrumentation: target-state instrumentation should be emitted by Spring Cloud Gateway (and any protocol-bridging entry points such as the TCP Proxy) for login-related routes, with bounded labels for outcome and any approved tenant/region scope. Do not add raw `tenantId` or `regionId` labels until the exception or bounded replacement is documented here.
+  - SLO (production starting point): ≥ 99.5% success over a 15-minute rolling window, evaluated per approved tenant/game-instance/region scope once the metric label shape is reconciled with the cardinality policy.
+  - Instrumentation: target-state instrumentation should be emitted by Spring Cloud Gateway (and any protocol-bridging entry points such as the TCP Proxy) for login-related routes, with bounded labels for outcome and any approved tenant/game-instance/region scope. Do not add raw `tenantId`, `gameInstanceId`, or `regionId` labels until the exception or bounded replacement is documented here.
 - **Command end-to-end latency**
   - SLI: gateway-to-domain command latency, measured from reception at Gateway or TCP Proxy through to domain commit, for example `command_end_to_end_latency_ms` histogram with labels such as `scope` and `command`.
-  - SLO: 99% of core gameplay commands (movement, look, combat) complete in < 250ms over a 5-minute window, per approved tenant/region scope.
-  - Instrumentation: target-state instrumentation should be emitted by Gateway (and optionally the TCP Proxy for Telnet) with bounded labels for command and any approved tenant/region scope. Core commands such as movement, LOOK, and combat should use a small, documented set of `command` label values so per-command latency panels remain low-cardinality.
+  - SLO: 99% of core gameplay commands (movement, look, combat) complete in < 250ms over a 5-minute window, per approved tenant/game-instance/region scope.
+  - Instrumentation: target-state instrumentation should be emitted by Gateway (and optionally the TCP Proxy for Telnet) with bounded labels for command and any approved tenant/game-instance/region scope. Core commands such as movement, LOOK, and combat should use a small, documented set of `command` label values so per-command latency panels remain low-cardinality.
   - Recording rules and alerts for the bounded core-command SLO set must preserve the `command` label. An additional aggregate “all core commands” panel is allowed for high-level dashboards, but it must not be the sole paging signal because it can hide a single broken command behind healthy higher-volume commands.
-  - Phase-split drilldown metrics must also be emitted for bounded command stages so operators can distinguish edge, dispatch, tick-wait, and domain-commit latency without depending entirely on traces. Use a histogram such as `command_latency_stage_ms_bucket{service,scope,command,stage,le}` where `scope` is an approved bounded tenant/region scope and `stage` is a bounded enum such as `edge_queue`, `dispatch`, `tick_wait`, or `domain_commit`.
+  - Phase-split drilldown metrics must also be emitted for bounded command stages so operators can distinguish edge, dispatch, tick-wait, and domain-commit latency without depending entirely on traces. Use a histogram such as `command_latency_stage_ms_bucket{service,scope,command,stage,le}` where `scope` is an approved bounded tenant/game-instance/region scope and `stage` is a bounded enum such as `edge_queue`, `dispatch`, `tick_wait`, or `domain_commit`.
 - **Telnet and WebSocket path availability**
   - SLI: fraction of successful connection attempts over total attempts for each entry path (Telnet and WebSocket). This SLI must be computed from an explicit attempts counter so it captures all failure modes, not just cap rejections.
   - SLO: ≥ 99.9% of connection attempts succeed over a 1-day window, evaluated per approved scope and `path`; sustained deviations are treated as P0 incidents for the affected entry path.
   - Instrumentation:
     - Edge services (TCP Proxy and Gateway) must emit a bounded attempts counter such as `entrypath_connection_attempts_total{scope,path,outcome}` where:
-      - `scope` is an approved low-cardinality tenant/region/environment scope, not a raw unbounded identifier.
+      - `scope` is an approved low-cardinality tenant/game-instance/region/environment scope, not a raw unbounded identifier.
       - `path` is a bounded enum (for example `telnet` or `websocket`).
       - `outcome` is a bounded enum (for example `success`, `limit_exceeded`, `auth_failed`, `upstream_unreachable`, `timeout`, `protocol_error`, `unknown`).
     - The SLI should be computed as `sum(rate(entrypath_connection_attempts_total{outcome="success"}[...])) / sum(rate(entrypath_connection_attempts_total[...]))` per `{scope,path}`.
@@ -209,7 +209,7 @@ Grafana dashboards under `design/observability/grafana` include:
 The metrics below are the desired Prometheus-facing shapes for player experience SLIs/SLOs after the scope-label decision is implemented. They are not the current implemented service metric set. Services may emit additional bounded drilldown metrics, but dashboards and alerts should prefer these names once producers exist and the scope label has been reconciled with the metrics-cardinality policy:
 
 - Login:
-  - `login_requests_total{scope,outcome}` where `scope` is an approved bounded tenant/region/environment scope and `outcome` is a bounded enum (for example `success`, `invalid_credentials`, `rate_limited`, `upstream_error`, `timeout`, `unknown`).
+  - `login_requests_total{scope,outcome}` where `scope` is an approved bounded tenant/game-instance/region/environment scope and `outcome` is a bounded enum (for example `success`, `invalid_credentials`, `rate_limited`, `upstream_error`, `timeout`, `unknown`).
 - Commands:
   - `command_end_to_end_latency_ms_bucket{scope,command,le}` with `scope` drawn from an approved bounded scope and `command` drawn from a documented, bounded command set for core SLO coverage.
     - Starting bounded set for SLO coverage (normalize synonyms/aliases in instrumentation): `move`, `look`, `combat`.
@@ -351,7 +351,7 @@ Player SLO owner mapping (normative):
 When Alertmanager is unavailable but Prometheus is still accessible, Logging & Admin may present a limited view of critical conditions based on recording rules evaluated directly in Prometheus. To keep behavior predictable, only a small set of fallback signals is supported:
 
 - **Redis coordination tail-loss SLO breaches**
-  - Recording rules based on bounded-scope series such as `redis_coordination_tail_loss_ms{scope}` that expose both `redis_coordination_tail_loss_budget_ms{scope}` and a derived breach indicator such as `redis_coordination_tail_loss_slo_breached{scope}` using the canonical envelope (`tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)`). Exact tenant/region drilldown belongs on the durable control-plane and runtime-health surfaces, not ordinary Prometheus labels.
+  - Recording rules based on bounded-scope series such as `redis_coordination_tail_loss_ms{scope}` that expose both `redis_coordination_tail_loss_budget_ms{scope}` and a derived breach indicator such as `redis_coordination_tail_loss_slo_breached{scope}` using the canonical envelope (`tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)`). Exact tenant/game-instance/region drilldown belongs on the durable control-plane and runtime-health surfaces, not ordinary Prometheus labels.
 - **Tick execution safety ratios**
   - Recording rule that exposes `tick_execution_time_ms_p99 / tick_lock_ttl_ms` per region, using the recording rules defined in the Redis operations metrics catalog.
 - **Login success ratio**
@@ -528,7 +528,7 @@ Structured log emission is not sufficient by itself. Prod-like environments must
   - Synthetic smoke traffic that emits logs with `service`, `traceId`, and the applicable contextual fields must land in the canonical log index pattern (`firemud-logs-*` unless an environment documents a compatibility mapping).
   - Those logs must become queryable in the Elasticsearch/Kibana path within a bounded delay suitable for incident response.
     - Default starting point for prod-like smoke: the records should be queryable within 2 minutes of emission unless an environment documents a stricter bound.
-  - Operators must be able to retrieve the smoke records by `service` and `traceId`, and by `tenantId` / `regionId` / `characterId` when those fields are expected by the logging contract.
+  - Operators must be able to retrieve the smoke records by `service` and `traceId`, and by `tenantId` / `gameInstanceId` / `regionId` / `characterId` when those fields are expected by the logging contract.
 - Failure semantics:
   - A pipeline that emits structured logs locally but fails Fluent Bit forwarding, Elasticsearch indexing, or Kibana/query entrypoint retrieval is non-compliant for prod-like readiness because incident drilldowns depend on end-to-end queryability, not only emitter correctness.
 

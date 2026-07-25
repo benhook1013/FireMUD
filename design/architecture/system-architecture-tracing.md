@@ -11,7 +11,7 @@ Operational tracing claims are capability-gated:
 1. **Baseline observability** relies on metrics and structured logs; generic RPC spans and correlation are best-effort unless proved for the environment.
 2. **Workflow tracing** covers only named workflows whose semantic spans, bounded attributes, context propagation, ingestion, and queries have end-to-end proof.
 3. **Service-scoped incident sampling** additionally requires a wired sampler control and a proved increase/observe/revert drill.
-4. **Tenant/region-scoped incident sampling** additionally requires compatible upstream sampling, propagated scope attributes, bounded collector tail sampling, and safe time-limited enable/revert proof.
+4. **Tenant/game-instance/region-scoped incident sampling** additionally requires compatible upstream sampling, propagated scope attributes, bounded collector tail sampling, and safe time-limited enable/revert proof.
 
 Each environment must advertise its proved level and covered workflows. Runbooks must branch on that declaration and must not make mitigation depend on traces.
 
@@ -65,20 +65,20 @@ To make traces consistently useful across services and runbooks, FireMUD uses a 
 - **Gateway and command path**
   - Gateway spans:
     - `gateway_request` – inbound HTTP and WebSocket and Telnet-bridged request into Spring Cloud Gateway or the TCP Proxy Service, tagged with `route`, `method`, `tenantId`, and, where applicable, `characterId`.
-    - `gateway_command_dispatch` – dispatch from Gateway/Proxy into Game Session or other domain services, tagged with `command`, `tenantId`, `regionId`, and `characterId`.
+    - `gateway_command_dispatch` – dispatch from Gateway/Proxy into Game Session or other domain services, tagged with `command`, `tenantId`, `gameInstanceId`, `regionId`, and `characterId`.
   - Game Session and domain spans:
-    - `gamesession_handle_command` – top-level span for handling a gameplay command, tagged with `command`, `tenantId`, `regionId`, `characterId`, and `instanceId`.
-    - Domain-specific spans such as `entity_apply_damage`, `inventory_transfer`, `room_resolve_look`, and `quest_update_state`, tagged with `tenantId`, `regionId`, and any relevant aggregate identifiers.
+    - `gamesession_handle_command` – top-level span for handling a gameplay command, tagged with `command`, `tenantId`, `gameInstanceId`, `regionId`, `characterId`, and `instanceId`.
+    - Domain-specific spans such as `entity_apply_damage`, `inventory_transfer`, `room_resolve_look`, and `quest_update_state`, tagged with `tenantId`, `gameInstanceId`, `regionId`, and any relevant aggregate identifiers.
 - **Tick executor and coordination**
-  - `tick_schedule` – scheduling of ticks for a `<tenantId, regionId>`, tagged with `tenantId`, `regionId`, `tickId`, and `region_epoch`.
-  - `tick_execute` – execution of a single tick, tagged with `tenantId`, `regionId`, `tickId`, `region_epoch`, and a `tick_phase` attribute for major phases (for example `load_effects`, `apply_effects`, `persist_ledger`, `drain_followups`).
-  - `tick_apply_effect` – per-effect spans for calls into domain services, tagged with `tenantId`, `regionId`, `tickId`, `effectKey`, `effect_type`, and `targetAggregateType`.
+  - `tick_schedule` – scheduling of ticks for a `<tenantId, gameInstanceId, regionId>`, tagged with `tenantId`, `gameInstanceId`, `regionId`, `tickId`, and `region_epoch`.
+  - `tick_execute` – execution of a single tick, tagged with `tenantId`, `gameInstanceId`, `regionId`, `tickId`, `region_epoch`, and a `tick_phase` attribute for major phases (for example `load_effects`, `apply_effects`, `persist_ledger`, `drain_followups`).
+  - `tick_apply_effect` – per-effect spans for calls into domain services, tagged with `tenantId`, `gameInstanceId`, `regionId`, `tickId`, `effectKey`, `effect_type`, and `targetAggregateType`.
 - **Telnet/TCP Proxy and WebSocket bridge**
   - `tcpproxy_connection` – lifecycle of a Telnet connection at the DMZ edge, tagged with `remote_ip_hash` (and optionally `remote_ip_prefix`), `tenantId`, and high-level `connection_outcome` (for example `ok`, `limit_exceeded`, `malformed`).
   - `tcpproxy_command` – command forwarding from Telnet to Gateway, tagged with `command`, `tenantId`, and `characterId`.
   - `tcpproxy_notify_disconnect` – spans for `NotifyDisconnect` calls into Game Session, tagged with `tenantId`, `characterId`, and `disconnect_reason`.
 - **Cross-region and saga flows**
-  - `gamesession_remote_followup_enqueue` – span for enqueuing cross-region follow-ups, tagged with origin and target `regionId`, `tenantId`, and a coarse `followup_type`.
+  - `gamesession_remote_followup_enqueue` – span for enqueuing cross-region follow-ups, tagged with origin and target `gameInstanceId`/`regionId`, `tenantId`, and a coarse `followup_type`.
   - `gamesession_remote_followup_drain` – span for draining remote follow-ups in the target region, tagged similarly and correlated with tick execution spans.
 - **Backup and recovery flows**
   - `backup_pg_dump_snapshot` – span measuring the online transactionally consistent logical backup, tagged with environment/database identity and immutable artifact lineage rather than gameplay scope.
@@ -88,15 +88,15 @@ To make traces consistently useful across services and runbooks, FireMUD uses a 
 
 All spans should include, where applicable:
 
-- `tenantId`, `regionId`, `characterId`, and `trace_locale` (for example `prod-us-east-1` or `dev-local`) so traces can be filtered by tenant and environment.
+- `tenantId`, `gameInstanceId`, `regionId`, `characterId`, and `trace_locale` (for example `prod-us-east-1` or `dev-local`) so traces can be filtered by tenant, game instance, region, and environment.
 - Error attributes such as `error.code` and `error.type` drawn from the same bounded catalogs used by `grpc.app_error` and domain error handling.
 
 ## Sampling and Sensitive Attributes
 
 - **Sampling**
   - An environment at a sampling-capable level declares and proves its baseline. A common target for high-volume entry paths is at least ~1%, but this is an operational usability target rather than a correctness boundary.
-  - Incident mode may be promised only at a proved service-scoped or tenant/region-scoped level, and every escalation must return to its declared baseline.
-  - Runbooks must treat traces as a best-effort diagnostic: when sampling is too low to find a representative trace, operators should pivot to metrics (SLO/SLI panels) and logs (Kibana searches filtered by `tenantId`, `regionId`, and `traceId` when available).
+  - Incident mode may be promised only at a proved service-scoped or tenant/game-instance/region-scoped level, and every escalation must return to its declared baseline.
+  - Runbooks must treat traces as a best-effort diagnostic: when sampling is too low to find a representative trace, operators should pivot to metrics (SLO/SLI panels) and logs (Kibana searches filtered by `tenantId`, `gameInstanceId`, `regionId`, and `traceId` when available).
   - If a workflow requires trace availability as part of an operational contract (for example debugging a recurring tick stall), document the minimum sampling expectations for that workflow explicitly in the owning runbook.
 - **Sensitive attributes**
   - Attributes such as `characterId` are operationally useful but should be treated as sensitive data and kept bounded (IDs only, no message payloads).
@@ -117,13 +117,13 @@ FireMUD defines two target escalation levels for incident-mode sampling. An oper
      - Roll out a temporary configuration change to the affected Deployment(s).
      - Verify: in Jaeger, `service.name="<service>"` should show a visibly higher trace volume within a few minutes.
      - Revert: restore the baseline ratio after the incident.
-   - Limits: this cannot scope sampling to a specific `tenantId` or `regionId`; it increases volume for the service overall.
+   - Limits: this cannot scope sampling to a specific `tenantId`, `gameInstanceId`, or `regionId`; it increases volume for the service overall.
 
-2. **Tenant/region-scoped sampling (precise, requires collector support)**
-   - Mechanism: configure the OpenTelemetry Collector to apply tail-sampling policies based on span attributes such as `tenantId` and `regionId` (as defined in this document’s span catalog).
+2. **Tenant/game-instance/region-scoped sampling (precise, requires collector support)**
+   - Mechanism: configure the OpenTelemetry Collector to apply tail-sampling policies based on span attributes such as `tenantId`, `gameInstanceId`, and `regionId` (as defined in this document’s span catalog).
    - Operational shape:
-     - Add a temporary “always sample” policy for the target `<tenantId, regionId>` (and optionally `service.name`) and a time-bound note in the collector config (for example “remove after incident X”).
-     - Verify: in Jaeger, filtering by `tenantId`/`regionId` should yield traces even when baseline sampling is low.
+     - Add a temporary “always sample” policy for the target `<tenantId, gameInstanceId, regionId>` (and optionally `service.name`) and a time-bound note in the collector config (for example “remove after incident X”).
+     - Verify: in Jaeger, filtering by `tenantId`/`gameInstanceId`/`regionId` should yield traces even when baseline sampling is low.
      - Revert: remove the temporary policy and reload the collector configuration.
    - Limits: this requires tail sampling, relevant span attributes, and an upstream sampling strategy that delivers candidate traces to the collector. Tail sampling cannot recover a trace already discarded by service-side head sampling.
 
@@ -131,23 +131,23 @@ Declared sampler controls and their current support status are documented in `de
 
 #### Collector Capability Contract (For Scoped Incident Sampling)
 
-Environments that claim support for tenant/region-scoped incident sampling (staging and production-like) must satisfy all of the following:
+Environments that claim support for tenant/game-instance/region-scoped incident sampling (staging and production-like) must satisfy all of the following:
 
 - OpenTelemetry Collector is deployed with tail-sampling processors enabled.
-- Tail-sampling policies can match on `tenantId` and `regionId` span attributes, and optionally `service.name`.
+- Tail-sampling policies can match on `tenantId`, `gameInstanceId`, and `regionId` span attributes, and optionally `service.name`.
 - Collector config supports safe runtime update/reload for temporary incident policies.
 - Runbook-level verification exists:
-  - Positive check: traces for the scoped `<tenantId, regionId>` appear above baseline after policy enablement.
+  - Positive check: traces for the scoped `<tenantId, gameInstanceId, regionId>` appear above baseline after policy enablement.
   - Negative check: trace volume returns to baseline after policy removal.
 
-If an environment does not meet this contract, it must advertise its highest proved lower level—service-scoped sampling or baseline observability—and incident procedures must not claim tenant/region-scoped escalation there.
+If an environment does not meet this contract, it must advertise its highest proved lower level—service-scoped sampling or baseline observability—and incident procedures must not claim tenant/game-instance/region-scoped escalation there.
 
 ## Operational Playbook: Using Traces During Incidents
 
 During incidents, Jaeger is a first-class tool alongside logs and metrics only for workflows included in the environment's proved tracing level. Otherwise use the corresponding metrics and structured-log path. The following are target queries for environments that advertise the required workflow spans:
 
 - **Stuck or degraded tick region**
-  - Filter by `operation= "tick_execute"` (or the equivalent span name) and `tenantId`/`regionId`.
+  - Filter by `operation= "tick_execute"` (or the equivalent span name) and `tenantId`/`gameInstanceId`/`regionId`.
   - Look for long-running spans or repeated spans for the same `tickId` and `region_epoch`.
   - Drill into child spans (`tick_apply_effect`, domain spans) to identify slow downstream services or guard failures.
 - **Replay storms and idempotency issues**

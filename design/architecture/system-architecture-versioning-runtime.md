@@ -46,8 +46,8 @@ The **Game Design Service** manages version metadata and publish workflows for g
 
 ```json
 {
-  "tenantId": "t1",
-  "versionId": "v42",
+  "tenantId": "11111111-1111-4111-8111-111111111111",
+  "versionId": "22222222-2222-4222-8222-222222222222",
   "commitId": "c-9001",
   "publishWorkflowId": "pub-42",
   "publishedAt": "2026-03-13T10:00:00Z",
@@ -93,8 +93,8 @@ Illustrative attestation payload for a release with no derived world artifacts:
 
 ```json
 {
-  "tenantId": "t1",
-  "versionId": "v43",
+  "tenantId": "11111111-1111-4111-8111-111111111111",
+  "versionId": "33333333-3333-4333-8333-333333333333",
   "commitId": "c-9002",
   "publishWorkflowId": "pub-43",
   "publishedAt": "2026-03-13T11:00:00Z",
@@ -206,8 +206,8 @@ and a `scriptPatchVersion` value such as `v42-script.3`:
 ```json
 {
   "isScriptOnly": true,
-  "baseVersionId": "v42",
-  "versionId": "v42",
+  "baseVersionId": "22222222-2222-4222-8222-222222222222",
+  "versionId": "22222222-2222-4222-8222-222222222222",
   "scriptPatchVersion": "v42-script.3"
 }
 ```
@@ -291,13 +291,13 @@ Launch and cutover preflight use one fail-closed predicate for a full-version re
 Illustrative launch-descriptor examples:
 
 - Fresh launch:
-  - `ResolveLaunchDescriptor(tenantId=t1, gameTemplateId=gt-default, controlPlaneRequestId=ld-req-1001)` resolves to exactly one `versionId` (for example `v42`) plus any explicit patch/defaults pinned to that same base version.
+  - `ResolveLaunchDescriptor(tenantId=11111111-1111-4111-8111-111111111111, gameTemplateId=gt-default, controlPlaneRequestId=ld-req-1001)` resolves to exactly one `versionId` (for example `22222222-2222-4222-8222-222222222222`) plus any explicit patch/defaults pinned to that same base version.
   - Repeating the same launch attempt with the same `controlPlaneRequestId` returns the same `versionId`, `scriptPatchVersion`, and release attestation identity.
 - Replacement-instance upgrade:
-  - `ResolveLaunchDescriptor(tenantId=t1, gameTemplateId=gt-default, controlPlaneRequestId=ld-req-2001, sourceVersionId=v42, targetVersionId=v43)` resolves to `versionId=v43` only when template references, release attestation, and any required `remapSetId` all validate against the target version.
+  - `ResolveLaunchDescriptor(tenantId=11111111-1111-4111-8111-111111111111, gameTemplateId=gt-default, controlPlaneRequestId=ld-req-2001, sourceVersionId=22222222-2222-4222-8222-222222222222, targetVersionId=33333333-3333-4333-8333-333333333333)` resolves to `versionId=33333333-3333-4333-8333-333333333333` only when template references, release attestation, and any required `remapSetId` all validate against the target version.
   - If `targetVersionId` would cause mixed-version dependencies or requires an unapproved remap, descriptor resolution fails before any instance rows are created.
 - Mixed-version rejection:
-  - If `game_template_world_ref` resolves to `versionId=v42` while `game_template_entity_ref` resolves to `versionId=v43`, `ResolveLaunchDescriptor` must fail validation instead of choosing one version heuristically.
+  - If `game_template_world_ref` resolves to `versionId=22222222-2222-4222-8222-222222222222` while `game_template_entity_ref` resolves to `versionId=33333333-3333-4333-8333-333333333333`, `ResolveLaunchDescriptor` must fail validation instead of choosing one version heuristically.
 
 Required preflight failure outcomes:
 

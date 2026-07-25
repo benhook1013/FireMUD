@@ -10,7 +10,7 @@ In addition to log and moderation tooling, the service acts as a control-plane c
 
 - Consumes metrics and health information published by the Game Session Service (for example, per-region status such as `HEALTHY`, `DEGRADED`, or `COORDINATION_UNTRUSTWORTHY`).
 - Exposes admin APIs and UI controls to:
-  - pause or resume tick execution for specific `<tenantId, regionId>` pairs; and
+  - pause or resume tick execution for specific `<tenantId, gameInstanceId, regionId>` pairs; and
   - request scoped coordination remediation through Game Session control APIs and operator runbooks in [Redis Operations & Migrations](../../system-architecture-redis-operations.md).
 - Implements guarded automation that:
   - automatically pauses ticks and marks regions as unhealthy when dual-leader or split-brain signals are detected; and

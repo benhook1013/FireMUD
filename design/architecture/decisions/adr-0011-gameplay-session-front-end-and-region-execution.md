@@ -9,7 +9,7 @@ Accepted
 FireMUD already makes two high-level decisions:
 
 - Spring Cloud Gateway does not own a gameplay shard-routing plane.
-- Gameplay execution is partitioned internally inside the Game Session layer by `<tenantId, regionId>` leases.
+- Gameplay execution is partitioned internally inside the Game Session layer by `<tenantId, gameInstanceId, regionId>` leases.
 
 Those decisions leave an important internal question open: when a player is connected to a stable `/ws/game/**` session surface but gameplay work for that player's current region is owned by a different Game Session pod, which component owns the socket and which component owns execution?
 
@@ -24,7 +24,7 @@ Without an explicit answer, docs and implementations risk drifting toward incomp
 FireMUD adopts a **session front-end + lease-owner execution** model inside the Game Session layer.
 
 - A connected gameplay socket is attached to a **session front-end** Game Session pod.
-- Region-scoped gameplay execution remains owned by the pod that currently holds the relevant `<tenantId, regionId>` lease.
+- Region-scoped gameplay execution remains owned by the pod that currently holds the relevant `<tenantId, gameInstanceId, regionId>` lease.
 - The session front-end pod may accept input, authenticate the session, manage connection-local state, and stream results back to the client.
 - The session front-end pod must not mutate tick-owned gameplay coordination state for a region it does not own.
 - When command execution or tick-owned mutation targets a region leased by another pod, the session front-end forwards the request over internal gRPC to the current **lease owner**.

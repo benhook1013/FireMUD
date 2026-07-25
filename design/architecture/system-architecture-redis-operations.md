@@ -228,7 +228,7 @@ Redis maintenance flows such as session cleanup, scoped resets, normalization mi
 Canonical maintenance-lock behavior:
 
 - lock identity: one active record per Coordination Redis deployment / gameplay environment boundary
-- minimum fields: `operation`, `scope_type`, `tenantId`, `regionId`, `actor`, `startedAt`, `expiresAt`, `compatibilityClass`, and an evidence or incident reference
+- minimum fields: `operation`, `scope_type`, `tenantId`, `gameInstanceId`, `regionId`, `actor`, `startedAt`, `expiresAt`, `compatibilityClass`, and an evidence or incident reference
 - acquisition is fail-closed for incompatible operations; operators may only break the lock with an explicit stale-lock or break-glass evidence record
 - acquisition owner: `coordination-maintenance pause --operation ...` is the canonical lock-acquiring command for multi-step restore, reset, cleanup, migration, topology-change, and exceptional backup-related maintenance workflows
 - refresh owner: every subsequent mutating CLI verb in that workflow refreshes the same lock using `maintenanceLockToken`; lock refresh is not a second independent acquisition
@@ -263,7 +263,7 @@ Runbook:
 
 ## Normalization and Hash-Tag Migration
 
-Goal: change how `tenantId` / `regionId` normalization and hash tags are formed without breaking shard-local assumptions.
+Goal: change how `tenantId` / `gameInstanceId` / `regionId` normalization and hash tags are formed without breaking shard-local assumptions.
 
 ### Runbook: Normalization Migration via Reset
 

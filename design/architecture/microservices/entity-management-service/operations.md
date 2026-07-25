@@ -27,13 +27,13 @@ Entity Management assumes the per-command execution phases described in the [Tic
 
 Entity Management implements tick idempotency using the per-aggregate last-tick state pattern described in the [Tick System and Runtime Design](../../system-architecture-ticks.md#domain-idempotency-rules-region-epoch--tickid-in-postgresql) document:
 
-- A shadow table (for example `entity_tick_state`) tracks `(last_region_epoch, last_tick_id)` (and associated tenant/region metadata) per `entityId`.
+- A shadow table (for example `entity_tick_state`) tracks `(last_region_epoch, last_tick_id)` (and associated tenant/game-instance/region metadata) per `entityId`.
 - Tick-driven handlers that mutate an entity:
   - load the current tick state for that `entityId`;
   - treat calls where `(last_region_epoch, last_tick_id) >= (currentRegionEpoch, currentTickId)` as replays/out-of-order and perform a no-op (or validation-only check); and
   - apply changes only when `(last_region_epoch, last_tick_id) < (currentRegionEpoch, currentTickId)`, then update `(last_region_epoch, last_tick_id) = (currentRegionEpoch, currentTickId)` in the same transaction as the entity update.
 
-Complex multi-entity operations (for example trades that touch two inventories) use the operation-level effect guard pattern described in the same tick document, inserting a `(tenantId, regionId, region_epoch, tickId, effectKey)` row into a guard table before applying changes so replays of the same logical effect become safe no-ops instead of double-applications.
+Complex multi-entity operations (for example trades that touch two inventories) use the operation-level effect guard pattern described in the same tick document, inserting a `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey)` row into a guard table before applying changes so replays of the same logical effect become safe no-ops instead of double-applications.
 
 Examples:
 
@@ -43,5 +43,5 @@ Examples:
 
 - **Trade between two entities** – when a tick performs a trade between `fromEntityId` and `toEntityId`:
   - the handler computes a deterministic `effectKey` such as `trade:<fromEntityId>:<toEntityId>:<itemId>`;
-  - it inserts `(tenantId, regionId, region_epoch, tickId, effectKey)` into the guard table before moving items between inventories; and
+  - it inserts `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey)` into the guard table before moving items between inventories; and
   - on primary-key conflict, the trade is treated as an already-applied effect for that tick and becomes a no-op.

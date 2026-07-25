@@ -103,7 +103,7 @@ Any new cache prefix family must:
 
 To keep monitoring systems stable:
 
-- emit bounded scope series such as `scope`, `region_class`, or another explicitly documented operational bucket rather than raw tenant or region identifiers
+- emit bounded scope series such as `scope`, `region_class`, or another explicitly documented operational bucket rather than raw tenant, game-instance, or region identifiers
 - provide aggregated rollups alongside per-region views
 - avoid adding extra high-cardinality labels such as per-command IDs on core coordination metrics
 

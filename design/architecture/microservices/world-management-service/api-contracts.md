@@ -84,9 +84,9 @@ Illustrative responses:
 
 ```json
 {
-  "tenantId": "t1",
-  "sourceGameInstanceId": "g-old",
-  "targetVersionId": "v2",
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
+  "targetVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "stateClassesChecked": ["S3"],
   "checkedFamilies": [
     "world_instance",
@@ -103,9 +103,9 @@ Illustrative responses:
 
 ```json
 {
-  "tenantId": "t1",
-  "sourceGameInstanceId": "g-old",
-  "targetVersionId": "v3",
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
+  "targetVersionId": "8e65e4a1-5b49-4c31-9f27-3d0b8c6a1e74",
   "checkedFamilies": [
     {
       "family": "housing_anchor",
@@ -150,10 +150,10 @@ Illustrative `GetRoomSnapshot` fragments:
 
 ```json
 {
-  "tenantId": "t1",
-  "gameInstanceId": "g1",
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "gameInstanceId": "9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78",
   "roomInstanceId": "R-1021",
-  "worldSnapshotId": "t1:g1:R-1021",
+  "worldSnapshotId": "7b3b074e-d597-4e9b-b96f-4f5946d26120:9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78:R-1021",
   "roomName": "Candle-lit Antechamber"
 }
 ```

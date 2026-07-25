@@ -99,10 +99,10 @@ Illustrative `ListRoomEntities` fragments:
 
 ```json
 {
-  "tenantId": "t1",
-  "gameInstanceId": "g1",
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "gameInstanceId": "9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78",
   "roomInstanceId": "R-1021",
-  "entitySnapshotId": "t1:g1:R-1021",
+  "entitySnapshotId": "7b3b074e-d597-4e9b-b96f-4f5946d26120:9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78:R-1021",
   "entities": [
     {
       "entityId": "char-mara",

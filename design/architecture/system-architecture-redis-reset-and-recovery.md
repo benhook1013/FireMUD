@@ -27,7 +27,7 @@ This document describes the intended reset/recovery end state. The currently shi
 
 Coordination Redis is treated as a **long‑lived, tail‑loss‑bounded coordination buffer** in persistent environments, **not** as a durable log of record; it remains volatile and reset‑tolerant under controlled conditions. Authoritative history for gameplay outcomes always lives in PostgreSQL tick effect ledgers and domain stores as described in `system-architecture-redis.md`, and neither coordination keys nor AOF contents are ever treated as the primary log of record. The reset model centers on three scopes:
 
-- **Region‑scoped reset** – affects a single `<tenantId, regionId>`:
+- **Region‑scoped reset** – affects a single `<tenantId, gameInstanceId, regionId>`:
   - Clears tick queues, timers, retry structures, and region‑scoped locks/leases for one region.
   - Leaves other regions and tenants untouched.
   - Typically used when:
@@ -61,11 +61,11 @@ Concrete commands live in [Canonical Coordination Reset Sequence](./system-archi
 Because ticks treat `(region_epoch, tickId)` as the canonical coordination timeline (see `system-architecture-ticks.md` and `system-architecture-tick-concepts-and-invariants.md`), every coordination reset must follow a simple handshake with the tick control plane:
 
 1. **Pause ticks for the chosen scope**
-   - The Game Session control plane (or equivalent admin service) pauses tick scheduling and new command intake for the affected `<tenantId, regionId>` pairs (region/tenant) or all regions (cluster).
+   - The Game Session control plane (or equivalent admin service) pauses tick scheduling and new command intake for the affected `<tenantId, gameInstanceId, regionId>` pairs (region/tenant) or all regions (cluster).
    - This pause step is complete only once the scope reaches the control-plane `PAUSED` state defined in `system-architecture-redis-ops-access.md`: no executor in the target scope is allowed to create new durable tick batches or new Redis coordination state under the old epoch.
 
 2. **Bump `region_epoch` in PostgreSQL**
-   - For each affected `<tenantId, regionId>`, the canonical reset control-plane operation (`RunScopedCoordinationReset(scope)` / `coordination-maintenance reset`) updates `region_epoch` in the coordination metadata table so that any surviving executors and locks become stale by definition.
+   - For each affected `<tenantId, gameInstanceId, regionId>`, the canonical reset control-plane operation (`RunScopedCoordinationReset(scope)` / `coordination-maintenance reset`) updates `region_epoch` in the coordination metadata table so that any surviving executors and locks become stale by definition.
    - This step is authoritative: new executors always treat the highest `region_epoch` as the only valid timeline, and tick heartbeat streams (`StreamTickHeartbeats`) will begin emitting the new `regionEpoch` for those regions so consumers can distinguish pre- and post-reset ticks.
 3. **Run the scoped reset tooling**
    - Use the versioned coordination maintenance CLI to clear keys in Coordination Redis for the chosen scope, using shared key builders and descriptors.
@@ -75,7 +75,7 @@ Because ticks treat `(region_epoch, tickId)` as the canonical coordination timel
    - New executors do not resume old-epoch `SCHEDULED` rows; any re-drive or migration across epochs is performed only by dedicated maintenance tooling that explicitly re-creates effects in the new epoch.
    - In the same reset scope, accepted command records that never became durably tied to a surviving `tick_batch_id` converge to `TERMINAL` with `executionOutcome = LOST_BEFORE_STAGING` and the command-type-appropriate `gameplayResult` (shared default `NOT_APPLIED`); reset tooling must not leave dedupe rows stranded in `RECEIVED` or `ENQUEUED`. For the canonical shared command terminal mapping table, see `system-architecture-tick-execution-flows.md` under `Canonical Command Terminal Mapping Table`.
 5. **Reset per-region metadata keys**
-   - Using the same maintenance CLI and key-builder helpers, initialize or update `tick:{tenantRegionTag}:meta` for each affected `<tenantId, regionId>` so that:
+   - Using the same maintenance CLI and key-builder helpers, initialize or update `tick:{tenantRegionTag}:meta` for each affected `<tenantId, gameInstanceId, regionId>` so that:
      - `region_epoch` reflects the new epoch recorded in PostgreSQL.
      - `current_tick_id` is set to the RegionStatus commit baseline sentinel (default `-1` immediately after a reset so the first committable tick in the new epoch is `tickId=0`, unless an explicit maintenance baseline is documented).
      - `current_tick_state` is initialized to the terminal baseline `APPLIED` for that sentinel `current_tick_id` so the next real tick may advance cleanly under the Lua state machine.
@@ -93,33 +93,33 @@ Because ticks treat `(region_epoch, tickId)` as the canonical coordination timel
    - Once Coordination Redis is clean for the scope, old-epoch ledger rows have converged, and accepted-but-unbound command records have converged, the control plane resumes tick scheduling.
    - New ticks start from the **new (bumped) `region_epoch`** with first committable tick `tickId=0` for each affected region (`lastCommittedTickId` remains at the sentinel `-1` until tick `0` commits), and all subsequent coordination state is written under that new epoch.
 
-Heartbeat consumers that track progress or offsets must key their state by `(tenantId, regionId, regionEpoch)` (with `lastCommittedTickId` / offsets stored as values) and treat any observed epoch change on the stream as a reset boundary, rebuilding their own derived state from domain stores instead of assuming continuity of `tickId` alone.
+Heartbeat consumers that track progress or offsets must key their state by `(tenantId, gameInstanceId, regionId, regionEpoch)` (with `lastCommittedTickId` / offsets stored as values) and treat any observed epoch change on the stream as a reset boundary, rebuilding their own derived state from domain stores instead of assuming continuity of `tickId` alone.
 
 This handshake ensures that resets move regions forward on the coordination timeline instead of trying to “repair” mixed-epoch state in place.
 
-Worked example: region-scoped reset for `<tenantId=T1, regionId=R7>`
+Worked example: region-scoped reset for `<tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120, gameInstanceId=9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, regionId=R7>`
 
-1. `PauseTicks(--scope region --tenant T1 --region R7)` rejects new command intake and stops new batch creation for `R7`.
-2. Control plane bumps `region_epoch` for `(T1, R7)` from `12` to `13` in PostgreSQL.
-3. `RunScopedCoordinationReset(--scope region --tenant T1 --region R7)` clears `tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, and `tick-executor-lease:{tenantRegionTag}` for `R7`.
-4. `ReconcileTickLedger(--scope region --tenant T1 --region R7 --old-region-epoch 12)` drives old-epoch `SCHEDULED` rows to `APPLIED` or `ABANDONED`, and `ConvergeCommandRecords(...)` moves accepted-but-unbound commands to `executionOutcome = LOST_BEFORE_STAGING` with default `gameplayResult = NOT_APPLIED`.
-5. `InitializeRegionMeta(--scope region --tenant T1 --region R7 --region-epoch 13 --current-tick-id -1 --current-tick-state APPLIED --current-tick-terminal-at-ms <resetTimeMs>)` re-establishes the full Redis-side meta baseline.
-6. `RebindRegionSessions(--scope region --tenant T1 --region R7 --region-epoch 13)` recreates region-authoritative `tick:{tenantRegionTag}:session-binding:<entityId>` entries for preserved sessions that still validate.
-7. `RunPostResetSmokeCheck(--scope region --tenant T1 --region R7)` proves a fresh lease can be acquired and a sample tick can stage/clear.
-8. `ResumeTicks(--scope region --tenant T1 --region R7)` allows `tickId=0` in epoch `13` to begin.
+1. `PauseTicks(--scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7)` rejects new command intake and stops new batch creation for `R7`.
+2. Control plane bumps `region_epoch` for `(7b3b074e-d597-4e9b-b96f-4f5946d26120, 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, R7)` from `12` to `13` in PostgreSQL.
+3. `RunScopedCoordinationReset(--scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7)` clears `tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, and `tick-executor-lease:{tenantRegionTag}` for `R7`.
+4. `ReconcileTickLedger(--scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7 --old-region-epoch 12)` drives old-epoch `SCHEDULED` rows to `APPLIED` or `ABANDONED`, and `ConvergeCommandRecords(...)` moves accepted-but-unbound commands to `executionOutcome = LOST_BEFORE_STAGING` with default `gameplayResult = NOT_APPLIED`.
+5. `InitializeRegionMeta(--scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7 --region-epoch 13 --current-tick-id -1 --current-tick-state APPLIED --current-tick-terminal-at-ms <resetTimeMs>)` re-establishes the full Redis-side meta baseline.
+6. `RebindRegionSessions(--scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7 --region-epoch 13)` recreates region-authoritative `tick:{tenantRegionTag}:session-binding:<entityId>` entries for preserved sessions that still validate.
+7. `RunPostResetSmokeCheck(--scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7)` proves a fresh lease can be acquired and a sample tick can stage/clear.
+8. `ResumeTicks(--scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7)` allows `tickId=0` in epoch `13` to begin.
 
 `RunPostResetSmokeCheck(scope)` is a required resume gate, not an optional example step. Its minimum pass criteria are defined in `system-architecture-redis-ops-access.md`.
 
-Worked example: tenant-scoped reset for `<tenantId=T1>`
+Worked example: tenant-scoped reset for `<tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120>`
 
-1. `PauseTicks(--scope tenant --tenant T1)` rejects new command intake and stops new batch creation for all regions owned by `T1`.
-2. Control plane bumps `region_epoch` for every `(T1, regionId)` in PostgreSQL.
-3. `RunScopedCoordinationReset(--scope tenant --tenant T1)` clears all coordination prefixes scoped to `T1`, including `tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`, and any tenant-scoped `remote:T1:*` keys.
-4. `ReconcileTickLedger(--scope tenant --tenant T1 --old-region-epoch-map ...)` converges old-epoch `SCHEDULED` rows for every affected region, and `ConvergeCommandRecords(--scope tenant --tenant T1)` terminates accepted-but-unbound command records with `executionOutcome = LOST_BEFORE_STAGING` and default `gameplayResult = NOT_APPLIED`.
-5. `InitializeRegionMeta(--scope tenant --tenant T1 --region-epoch-map ... --current-tick-id -1 --current-tick-state APPLIED --current-tick-terminal-at-ms <resetTimeMs>)` re-establishes the full Redis-side meta baseline for each affected region.
-6. If `--preserve-sessions` was used, `RebindRegionSessions(--scope tenant --tenant T1 --region-epoch-map ...)` recreates region-authoritative binding keys for preserved, still-valid sessions.
-7. `RunPostResetSmokeCheck(--scope tenant --tenant T1)` samples at least one representative region per affected executor/shard group.
-8. `ResumeTicks(--scope tenant --tenant T1)` allows each affected region to restart at `tickId=0` in its new epoch.
+1. `PauseTicks(--scope tenant --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120)` rejects new command intake and stops new batch creation for all regions owned by the tenant.
+2. Control plane bumps `region_epoch` for every `(gameInstanceId, regionId)` pair owned by the tenant in PostgreSQL.
+3. `RunScopedCoordinationReset(--scope tenant --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120)` clears all coordination prefixes scoped to the tenant, including `tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`, and tenant-scoped remote keys.
+4. `ReconcileTickLedger(--scope tenant --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --old-region-epoch-map ...)` converges old-epoch `SCHEDULED` rows for every affected region, and `ConvergeCommandRecords(--scope tenant --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120)` terminates accepted-but-unbound command records with `executionOutcome = LOST_BEFORE_STAGING` and default `gameplayResult = NOT_APPLIED`.
+5. `InitializeRegionMeta(--scope tenant --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --region-epoch-map ... --current-tick-id -1 --current-tick-state APPLIED --current-tick-terminal-at-ms <resetTimeMs>)` re-establishes the full per-game-instance/per-region Redis metadata baseline.
+6. If `--preserve-sessions` was used, `RebindRegionSessions(--scope tenant --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --region-epoch-map ...)` recreates region-authoritative binding keys for preserved, still-valid sessions.
+7. `RunPostResetSmokeCheck(--scope tenant --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120)` samples at least one representative region per affected executor/shard group.
+8. `ResumeTicks(--scope tenant --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120)` allows each affected region to restart at `tickId=0` in its new epoch.
 
 Worked example: cluster-scoped reset
 
@@ -153,7 +153,7 @@ The Redis-only cold-start/reset flow below is distinct from ADR 0015's PostgreSQ
   - Tick executors can replay or complete in‑flight ticks using idempotent domain logic and PostgreSQL guards.
   - This is the normal “Redis recovered” path; tail‑loss is bounded by the configured SLO.
 
-Worked example: normal failover for `<tenantId=T1, regionId=R7>`
+Worked example: normal failover for `<tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120, gameInstanceId=9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, regionId=R7>`
 
 1. Redis leader fails, but the replacement node replays intact AOF state and restores `tick:{tenantRegionTag}:pending`, `tick:{tenantRegionTag}:meta`, and the region lease key.
 2. The old executor loses its lease heartbeat and stops acting on in-memory state.
@@ -170,11 +170,11 @@ Worked example: normal failover for `<tenantId=T1, regionId=R7>`
     - Operators must run the same scoped reset handshake defined above, including pause, epoch bump, scoped reset, ledger reconcile, command convergence, metadata initialization, preserved-session rebind where applicable, smoke check, and resume.
     - Lazy recreation of `tick:{tenantRegionTag}:meta` by hot-path staging may still occur as an implementation detail after the reset completes, but it is not a substitute for the reset handshake and operators must not treat an empty keyspace as “safe to resume automatically”.
 
-Worked example: cold start for `<tenantId=T1, regionId=R7>`
+Worked example: cold start for `<tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120, gameInstanceId=9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, regionId=R7>`
 
-1. Coordination Redis starts empty after loss of its data directory, while PostgreSQL still shows `RegionStatus(regionEpoch=13, lastCommittedTickId=41)` for `(T1, R7)`.
+1. Coordination Redis starts empty after loss of its data directory, while PostgreSQL still shows `RegionStatus(regionEpoch=13, lastCommittedTickId=41)` for `(7b3b074e-d597-4e9b-b96f-4f5946d26120, 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, R7)`.
 2. Operators treat the event as a region-, tenant-, or cluster-scoped reset depending on blast radius and first drive the scope to the canonical `PAUSED` state.
-3. Control plane bumps `region_epoch` for the affected scope, for example from `13` to `14` for `(T1, R7)`.
+3. Control plane bumps `region_epoch` for the affected scope, for example from `13` to `14` for `(7b3b074e-d597-4e9b-b96f-4f5946d26120, 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, R7)`.
 4. Reset tooling reconciles old-epoch ledger rows and converges accepted-but-unbound command records before any new tick is allowed to stage work.
 5. `InitializeRegionMeta(...)` establishes the new-epoch Redis metadata baseline.
 6. If the chosen reset scope preserves gameplay sessions, `RebindRegionSessions(...)` recreates region-authoritative binding keys for still-valid sessions.

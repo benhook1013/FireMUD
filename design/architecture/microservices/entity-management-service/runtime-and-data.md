@@ -97,9 +97,9 @@ Illustrative responses for the current live first slice:
 
 ```json
 {
-  "tenantId": "t1",
-  "sourceGameInstanceId": "g-old",
-  "targetVersionId": "v2",
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
+  "targetVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "checkedFamilies": [
     "room_ground_inventory",
     "item_instances",
@@ -119,10 +119,10 @@ Target-state illustrative responses:
 
 ```json
 {
-  "tenantId": "t1",
-  "sourceGameInstanceId": "g-old",
-  "targetVersionId": "v2",
-  "durableFenceToken": "entity-cutover-fence:g-old:184",
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
+  "targetVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
+  "durableFenceToken": "entity-cutover-fence:2e3ee139-a6e8-44ad-b840-891b22c2255b:184",
   "checkedFamilies": [
     {
       "family": "equipment_bindings",
@@ -142,10 +142,10 @@ Target-state illustrative responses:
 
 ```json
 {
-  "tenantId": "t1",
-  "sourceGameInstanceId": "g-old",
-  "targetVersionId": "v3",
-  "durableFenceToken": "entity-cutover-fence:g-old:231",
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
+  "targetVersionId": "8e65e4a1-5b49-4c31-9f27-3d0b8c6a1e74",
+  "durableFenceToken": "entity-cutover-fence:2e3ee139-a6e8-44ad-b840-891b22c2255b:231",
   "checkedFamilies": [
     {
       "family": "class_assignment",
@@ -163,10 +163,10 @@ Target-state illustrative responses:
 
 ```json
 {
-  "tenantId": "t1",
-  "sourceGameInstanceId": "g-old",
-  "targetVersionId": "v2",
-  "durableFenceToken": "entity-cutover-fence:g-old:240",
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
+  "targetVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
+  "durableFenceToken": "entity-cutover-fence:2e3ee139-a6e8-44ad-b840-891b22c2255b:240",
   "checkedFamilies": [],
   "hasS2Rows": false,
   "result": "COMPATIBLE",
@@ -178,12 +178,12 @@ Target-state illustrative responses:
 
 ```json
 {
-  "tenantId": "t1",
-  "sourceGameInstanceId": "g-old",
-  "targetVersionId": "v2",
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
+  "targetVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "error": {
     "code": "CUTOVER_FENCE_UNAVAILABLE",
-    "message": "Deferred durable writes for sourceGameInstanceId=g-old could not be flushed to PostgreSQL; cutover validation refused."
+    "message": "Deferred durable writes for sourceGameInstanceId=2e3ee139-a6e8-44ad-b840-891b22c2255b could not be flushed to PostgreSQL; cutover validation refused."
   }
 }
 ```

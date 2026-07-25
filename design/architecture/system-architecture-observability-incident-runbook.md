@@ -109,7 +109,7 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 ### Elasticsearch/Kibana symptoms
 
 - Kibana dashboards and searches fail or show no recent logs.
-- Operators cannot drill down by `tenantId`/`regionId`/`traceId`.
+- Operators cannot drill down by `tenantId`/`gameInstanceId`/`regionId`/`traceId`.
 
 ### Elasticsearch/Kibana triage
 
@@ -120,14 +120,14 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 ### Elasticsearch/Kibana operator fallback
 
 - Use Kubernetes pod logs and service logs directly for the affected service(s).
-- Prefer structured log fields (`service`, `tenantId`, `regionId`, `correlationId`, `traceId`) when manually filtering logs.
+- Prefer structured log fields (`service`, `tenantId`, `gameInstanceId`, `regionId`, `correlationId`, `traceId`) when manually filtering logs.
 - If logs are unavailable, treat tracing as unreliable as well (trace-log correlation will fail) and pivot to metrics/health endpoints.
 
 ### Elasticsearch/Kibana recovery and verification
 
 1. Restore Elasticsearch cluster health.
 2. Verify recent logs appear for a known active service.
-3. Verify Kibana saved searches return results when filtering by `tenantId` and `service`.
+3. Verify Kibana saved searches return results when filtering by `tenantId`, `gameInstanceId`, and `service`.
 
 ## Grafana Down
 
@@ -172,13 +172,13 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 - Pivot to metrics and logs:
   - Use SLI/SLO panels and alert conditions to identify impacted tenants/regions.
-  - Use logs filtered by `tenantId`, `regionId`, and `correlationId` to follow the flow.
+  - Use logs filtered by `tenantId`, `gameInstanceId`, `regionId`, and `correlationId` to follow the flow.
 
 ### Jaeger/collector recovery and verification
 
 1. Restore collector + Jaeger and verify their health and export/query paths.
 2. Branch on the environment's advertised ADR 0017 capability. At level 1, confirm metrics and structured logs remain usable and treat trace arrival as best-effort rather than a recovery gate.
-3. At level 2 or above, verify a trace for a workflow explicitly proved at that level and confirm its required bounded attributes. Do not require login, command, or tenant/region trace evidence unless that exact workflow and scope are advertised and proved.
+3. At level 2 or above, verify a trace for a workflow explicitly proved at that level and confirm its required bounded attributes. Do not require login, command, or tenant/game-instance/region trace evidence unless that exact workflow and scope are advertised and proved.
 
 ## Post-Incident Checklist
 

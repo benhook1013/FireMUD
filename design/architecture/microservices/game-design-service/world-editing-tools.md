@@ -92,8 +92,8 @@ Illustrative request/response shapes:
 ```json
 {
   "request": {
-    "tenantId": "t1",
-    "versionId": "v42",
+    "tenantId": "11111111-1111-4111-8111-111111111111",
+    "versionId": "22222222-2222-4222-8222-222222222222",
     "commitId": "c901",
     "revisionId": "r-room-12",
     "aggregateType": "ROOM_TEMPLATE",
@@ -110,8 +110,8 @@ Illustrative request/response shapes:
 ```json
 {
   "request": {
-    "tenantId": "t1",
-    "versionId": "v42",
+    "tenantId": "11111111-1111-4111-8111-111111111111",
+    "versionId": "22222222-2222-4222-8222-222222222222",
     "commitId": "c901",
     "revisionId": "r-room-12",
     "aggregateType": "ROOM_TEMPLATE",
@@ -128,8 +128,8 @@ Illustrative request/response shapes:
 ```json
 {
   "request": {
-    "tenantId": "t1",
-    "versionId": "v42",
+    "tenantId": "11111111-1111-4111-8111-111111111111",
+    "versionId": "22222222-2222-4222-8222-222222222222",
     "commitId": "c902",
     "revisionId": "r-room-13",
     "aggregateType": "ROOM_TEMPLATE",
@@ -258,8 +258,8 @@ Illustrative unresolved-reference example:
 ```json
 {
   "request": {
-    "tenantId": "t1",
-    "versionId": "v42",
+    "tenantId": "11111111-1111-4111-8111-111111111111",
+    "versionId": "22222222-2222-4222-8222-222222222222",
     "commitId": "c903",
     "revisionId": "r-spawn-17",
     "bindingType": "WORLD_ENTITY_SPAWN_BINDING",

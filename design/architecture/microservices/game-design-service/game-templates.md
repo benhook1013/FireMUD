@@ -211,15 +211,15 @@ Normative examples:
 ```json
 {
   "request": {
-    "tenantId": "t1",
+    "tenantId": "11111111-1111-4111-8111-111111111111",
     "gameTemplateId": "gt-default",
     "controlPlaneRequestId": "ld-req-1001"
   },
   "response": {
     "launchDescriptorId": "ld-1001",
-    "tenantId": "t1",
+    "tenantId": "11111111-1111-4111-8111-111111111111",
     "gameTemplateId": "gt-default",
-    "versionId": "v42",
+    "versionId": "22222222-2222-4222-8222-222222222222",
     "scriptPatchVersion": null,
     "runtimeFlags": {
       "pvpEnabled": false
@@ -237,17 +237,17 @@ Normative examples:
 ```json
 {
   "request": {
-    "tenantId": "t1",
+    "tenantId": "11111111-1111-4111-8111-111111111111",
     "gameTemplateId": "gt-default",
     "controlPlaneRequestId": "ld-req-2001",
-    "sourceVersionId": "v42",
-    "targetVersionId": "v43"
+    "sourceVersionId": "22222222-2222-4222-8222-222222222222",
+    "targetVersionId": "33333333-3333-4333-8333-333333333333"
   },
   "response": {
     "launchDescriptorId": "ld-2001",
-    "tenantId": "t1",
+    "tenantId": "11111111-1111-4111-8111-111111111111",
     "gameTemplateId": "gt-default",
-    "versionId": "v43",
+    "versionId": "33333333-3333-4333-8333-333333333333",
     "scriptPatchVersion": "v43-script.1",
     "runtimeFlags": {
       "pvpEnabled": false
@@ -265,13 +265,13 @@ Normative examples:
 ```json
 {
   "request": {
-    "tenantId": "t1",
+    "tenantId": "11111111-1111-4111-8111-111111111111",
     "gameTemplateId": "gt-invalid-mixed",
     "controlPlaneRequestId": "ld-req-3001"
   },
   "error": {
     "code": "INVALID_TEMPLATE_CONFIGURATION",
-    "message": "Template references multiple base versionIds (world=v42, entity=v43); launchable templates must resolve to one canonical version."
+    "message": "Template references multiple base versionIds (world=22222222-2222-4222-8222-222222222222, entity=33333333-3333-4333-8333-333333333333); launchable templates must resolve to one canonical version."
   }
 }
 ```
@@ -282,23 +282,23 @@ Normative examples:
 {
   "request": {
     "controlPlaneRequestId": "ld-req-4001",
-    "tenantId": "t1",
+    "tenantId": "11111111-1111-4111-8111-111111111111",
     "gameTemplateId": "gt-default"
   },
   "resolvedDescriptor": {
     "launchDescriptorId": "ld-3001",
-    "versionId": "v42",
+    "versionId": "22222222-2222-4222-8222-222222222222",
     "generationConfigRevision": "genrev-42a1",
     "releaseBundleRef": "prb:t1:v42"
   },
   "releaseBundle": {
-    "tenantId": "t1",
-    "versionId": "v42",
+    "tenantId": "11111111-1111-4111-8111-111111111111",
+    "versionId": "22222222-2222-4222-8222-222222222222",
     "generationConfigRevision": "genrev-42b9"
   },
   "error": {
     "code": "RELEASE_ATTESTATION_MISMATCH",
-    "message": "Resolved launch descriptor does not match the current published release attestation for version v42."
+    "message": "Resolved launch descriptor does not match the current published release attestation for version 22222222-2222-4222-8222-222222222222."
   }
 }
 ```
@@ -328,7 +328,7 @@ Creators submit a `GameTemplateDto` via the REST API:
 ```bash
 curl -X POST http://localhost:8080/templates \
      -H 'Content-Type: application/json' \
-     -d '{"tenantId":"11111111-1111-1111-1111-111111111111","name":"Default","config":"{}"}'
+     -d '{"tenantId":"11111111-1111-4111-8111-111111111111","name":"Default","config":"{}"}'
 ```
 
 The service validates the payload and stores it in the `game_templates` table.
@@ -338,7 +338,7 @@ Template names must be unique for each tenant to avoid collisions.
 To list templates:
 
 ```bash
-curl "http://localhost:8080/templates?tenantId=11111111-1111-1111-1111-111111111111"
+curl "http://localhost:8080/templates?tenantId=11111111-1111-4111-8111-111111111111"
 ```
 
 See [openapi.yaml](../../../../services/game-design-service/src/main/resources/openapi.yaml)

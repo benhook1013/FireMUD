@@ -139,7 +139,7 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `coordination-maintenance resume`
   - `coordination-maintenance release-lock`
 - Scope grammar:
-  - `--scope region --tenant <tenantId> --region <regionId>`
+  - `--scope region --tenant <tenantId> --game-instance <gameInstanceId> --region <regionId>`
   - `--scope tenant --tenant <tenantId>`
   - `--scope cluster`
 - Scope inventory source:
@@ -223,10 +223,12 @@ Canonical epoch-map examples:
 ```yaml
 # old-region-epoch-map.yaml
 regions:
-  - tenantId: T1
+  - tenantId: 7b3b074e-d597-4e9b-b96f-4f5946d26120
+    gameInstanceId: 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78
     regionId: R7
     oldRegionEpoch: 12
-  - tenantId: T1
+  - tenantId: 7b3b074e-d597-4e9b-b96f-4f5946d26120
+    gameInstanceId: 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78
     regionId: R8
     oldRegionEpoch: 4
 ```
@@ -234,10 +236,12 @@ regions:
 ```yaml
 # region-epoch-map.yaml
 regions:
-  - tenantId: T1
+  - tenantId: 7b3b074e-d597-4e9b-b96f-4f5946d26120
+    gameInstanceId: 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78
     regionId: R7
     regionEpoch: 13
-  - tenantId: T1
+  - tenantId: 7b3b074e-d597-4e9b-b96f-4f5946d26120
+    gameInstanceId: 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78
     regionId: R8
     regionEpoch: 5
 currentTickId: -1
@@ -246,19 +250,22 @@ currentTickId: -1
 ```yaml
 # cluster-region-epoch-map.yaml
 regions:
-  - tenantId: T1
+  - tenantId: 7b3b074e-d597-4e9b-b96f-4f5946d26120
+    gameInstanceId: 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78
     regionId: R7
     regionEpoch: 13
-  - tenantId: T1
+  - tenantId: 7b3b074e-d597-4e9b-b96f-4f5946d26120
+    gameInstanceId: 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78
     regionId: R8
     regionEpoch: 5
-  - tenantId: T2
+  - tenantId: 6c0bb04d-bdcb-45a4-a1bc-a7ee7432b461
+    gameInstanceId: 2e3ee139-a6e8-44ad-b840-891b22c2255b
     regionId: R2
     regionEpoch: 21
 currentTickId: -1
 ```
 
-Minimum audit output for any command that auto-discovers or consumes an epoch map must include the resolved `<tenantId, regionId, oldRegionEpoch|regionEpoch>` tuples so operators can verify exactly which timeline coordinates were acted on.
+Minimum audit output for any command that auto-discovers or consumes an epoch map must include the resolved `<tenantId, gameInstanceId, regionId, oldRegionEpoch|regionEpoch>` tuples so operators can verify exactly which timeline coordinates were acted on.
 
 ### Pause/Status/Resume State Contract
 
@@ -277,6 +284,7 @@ Minimum audit output for any command that auto-discovers or consumes an epoch ma
   - Wait for any in-flight executor work in the scope to drain, fail, or lose lease so no executor can create new coordination state under the old epoch.
 - `GetRegionTickStatus(scope)` minimum fields per affected region:
   - `tenantId`
+  - `gameInstanceId`
   - `regionId`
   - `status`
   - `pauseRequested`
@@ -309,7 +317,7 @@ Jobs, wrappers, and dashboards may present this state differently, but they must
 | --- | --- |
 | Lease | A region lease for every sampled region in the scope can be acquired and renewed without stale-epoch or lock-conflict errors that persist beyond normal retry budget. |
 | Redis metadata baseline | `tick:{tenantRegionTag}:meta` exists or is created during the smoke run with the expected `region_epoch` and baseline `current_tick_id` for the sampled region. |
-| Batch allocation | The smoke tick allocates exactly one durable batch for the sampled `(tenantId, regionId, region_epoch, tickId)` and records the expected lease/fencing token. |
+| Batch allocation | The smoke tick allocates exactly one durable batch for the sampled `(tenantId, gameInstanceId, regionId, region_epoch, tickId)` and records the expected lease/fencing token. |
 | Redis staging | The smoke tick stages at least one no-op or synthetic smoke-test effect into `pending`, and `pending` correlates back to the durable `tick_batch_id`. |
 | Ledger convergence | The staged smoke effect reaches a terminal ledger outcome (`APPLIED` or explicit smoke-test `ABANDONED`) without leaving `SCHEDULED` rows stranded. |
 | Cleanup | `pending` is cleared, per-region locks are released, and the region is no longer considered in-flight after the smoke tick completes. |

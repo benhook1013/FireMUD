@@ -210,7 +210,7 @@ Registry and ops expectations for this category:
 
 #### Maintenance and non-lease scripts
 
-Some maintenance or dev-tools scripts may operate on coordination prefixes outside the normal tick/session flow (for example, inspecting or cleaning up keys for a paused tenant/region). These scripts:
+Some maintenance or dev-tools scripts may operate on coordination prefixes outside the normal tick/session flow (for example, inspecting or cleaning up keys for a paused tenant/game-instance/region). These scripts:
 
 - Run only in **maintenance contexts** (for example, dev-tools jobs or coordination reset tooling) and must not be invoked from hot-path gameplay.
 - Must respect the same shard-local and key-shape rules as tick scripts (for example, operate on one `{tenantRegionTag}` at a time).
@@ -230,7 +230,7 @@ Automation-related Redis operations follow stricter slotting rules to avoid `CRO
 - Cross-boundary rules:
   - Automation scripts **never** perform multi-key operations that span both `automation:*` and `tick:*` prefixes in one `EVAL`/`EVALSHA` call.
   - Automation work is projected under `automation:queue:*` and handed off to Game Session via gRPC; only Game Session scripts mutate `tick:*` prefixes.
-  - Fairness-critical automation handoff is idempotent on a durable dispatch identity (for example `(scheduleId, gameInstanceId, regionEpoch, dueTickId, entityId, commandKind)` or an equivalent derived `automationDispatchId`) and must not depend on Redis queue contents as the sole dedupe record.
+  - Fairness-critical automation handoff is idempotent on a durable dispatch identity (for example `(tenantId, gameInstanceId, regionId, regionEpoch, scheduleId, dueTickId, entityId, commandKind)` or an equivalent derived `automationDispatchId`) and must not depend on Redis queue contents as the sole dedupe record.
   - Before invoking the Redis enqueue script, Game Session must insert or confirm a durable admission row keyed by `(tenantId, gameInstanceId, regionId, regionEpoch, automationDispatchId)` in its command/admission ledger. Redis enqueue scripts may treat the dispatch identity as an idempotent member key for hot-path dedupe, but the durable admission row is the authority used after resets, gRPC retries, and failover.
 
 CI must reject automation Lua scripts that:
@@ -276,7 +276,7 @@ Bulk key-walking is reserved for **offline maintenance tooling**, not tick execu
     - Behavior (sketch):
       - Read `KEYS[1]`; if missing or if the stored token does not equal `expectedLeaseToken`, return `"STALE_LEASE"` and perform **no writes**.
       - If the token matches, extend the TTL via `PEXPIRE` (or `SET ... PX ... XX`) and return `"RENEWED"`.
-    - Callers treat `"STALE_LEASE"` as loss of leadership for that `<tenantId, regionId>` and stop acting as executor, matching the lease semantics described in the Redis architecture document.
+    - Callers treat `"STALE_LEASE"` as loss of leadership for that `<tenantId, gameInstanceId, regionId>` and stop acting as executor, matching the lease semantics described in the Redis architecture document.
 
 - **Pattern 2 – Compare-and-set on `region_epoch` + `tickId` (monotonic guards)**
   - Scripts that touch `tick:{tenantRegionTag}:pending` treat both `region_epoch` and `tickId` as monotonic guards:

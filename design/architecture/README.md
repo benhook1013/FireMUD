@@ -14,7 +14,7 @@ Unless a document explicitly says otherwise, docs in `design/architecture/` desc
 ## Canonical Terms
 
 - `session front-end` – The connected Game Session pod that owns socket I/O, connection-local state, and per-session sequencing.
-- `lease owner` – The Game Session execution owner currently holding the `<tenantId, regionId>` lease required to mutate region-scoped coordination state.
+- `lease owner` – The Game Session execution owner currently holding the `<tenantId, gameInstanceId, regionId>` lease required to mutate region-scoped coordination state.
 - `canonical room state` – A room view assembled only from same-fence World Management occupancy data and Entity Management containment/presentation data.
 - `control-plane API` – An infrastructure or domain admin API classification that is not part of player gameplay traffic; when describing ingress surfaces, prefer the named traffic planes below.
 - `bypass-safe workflow` – An explicitly documented external admin workflow allowed to bypass Logging & Admin ingress because it does not rely on Logging & Admin-owned policy, cross-domain write orchestration, or control-plane availability guarantees.

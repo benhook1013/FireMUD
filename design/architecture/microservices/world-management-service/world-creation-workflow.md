@@ -100,8 +100,8 @@ Illustrative stage outcome:
 
 ```json
 {
-  "tenantId": "t1",
-  "gameInstanceId": "g-100",
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "gameInstanceId": "9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78",
   "worldCreationRequestId": "wc-77",
   "launchDescriptorId": "ld-55",
   "stepName": "generateTerrainAndMaterializePopulationSchedules",
@@ -117,10 +117,10 @@ Illustrative operator-facing workflow status fragment:
 ```json
 {
   "workflowFamily": "world-lifecycle",
-  "workflowId": "world-lifecycle:t1:world-instance:g-100",
+  "workflowId": "world-lifecycle:7b3b074e-d597-4e9b-b96f-4f5946d26120:world-instance:9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78",
   "workflowStatus": "RUNNING",
-  "tenantId": "t1",
-  "gameInstanceId": "g-100",
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "gameInstanceId": "9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78",
   "steps": [
     {
       "stepName": "generateTerrainAndMaterializePopulationSchedules",

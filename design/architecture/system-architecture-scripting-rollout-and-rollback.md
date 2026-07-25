@@ -38,14 +38,14 @@ This document defines operator-driven promotion, rollback, convergence, timeout,
 
 Concrete example:
 
-- `tenantId=T1`, `gameInstanceId=G7`, current pin `P22`, rollback target `P21`, `controlPlaneRequestId=RB-42`.
-- Step 1: `PauseTicks(T1, G7, RB-42)`.
-- Step 2: `SetAutomationAdmissionMode(T1, G7, PAUSED_FOR_ROLLBACK, RB-42)`.
-- Step 3: `RollbackScriptPatchVersion(T1, G7, P21, RB-42)`.
-- Step 4: Poll `GetAutomationPinConvergence(T1, G7)` and `GetGameSessionPinConvergence(T1, G7)` until both report `observedPinnedScriptPatchVersion=P21` and `lastObservedControlPlaneRequestId=RB-42`.
-- Step 5: Run patch and plugin-scoped cancel or purge hooks for displaced `P22` work, then poll `GetAutomationDrainStatus(T1, G7)` until active executions and cancelable pending work are both zero.
-- Step 6: `SetAutomationAdmissionMode(T1, G7, NORMAL, RB-42)`.
-- Step 7: `ResumeTicks(T1, G7, RB-42)`.
+- `tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, current pin `P22`, rollback target `P21`, `controlPlaneRequestId=RB-42`.
+- Step 1: `PauseTicks(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444, RB-42)`.
+- Step 2: `SetAutomationAdmissionMode(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444, PAUSED_FOR_ROLLBACK, RB-42)`.
+- Step 3: `RollbackScriptPatchVersion(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444, P21, RB-42)`.
+- Step 4: Poll `GetAutomationPinConvergence(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444)` and `GetGameSessionPinConvergence(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444)` until both report `observedPinnedScriptPatchVersion=P21` and `lastObservedControlPlaneRequestId=RB-42`.
+- Step 5: Run patch and plugin-scoped cancel or purge hooks for displaced `P22` work, then poll `GetAutomationDrainStatus(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444)` until active executions and cancelable pending work are both zero.
+- Step 6: `SetAutomationAdmissionMode(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444, NORMAL, RB-42)`.
+- Step 7: `ResumeTicks(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444, RB-42)`.
 
 Ordering is intentional: Automation admission returns to `NORMAL` only after convergence and drain complete, and ticks resume last.
 

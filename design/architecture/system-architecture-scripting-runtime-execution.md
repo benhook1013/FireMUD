@@ -124,7 +124,7 @@ The pointer/index format must be forward-compatible (versioned envelope) so it c
 
 - **Uniqueness scope**
   - Uniqueness is enforced over the full Trigger Identity field set, including `gameInstanceId` and, for gameplay/tick-aligned triggers, `regionEpoch`.
-  - There is no requirement for global uniqueness across all tenants; downstream idempotency keys are derived from stable tuples such as `<tenantId, regionId, regionEpoch, entityId, scriptId, scriptEventId, tickId, scriptPatchVersion>` depending on the call path.
+  - There is no requirement for global uniqueness across all tenants; downstream idempotency keys are derived from stable tuples such as `<tenantId, gameInstanceId, regionId, regionEpoch, entityId, scriptId, scriptEventId, tickId, scriptPatchVersion>` depending on the call path.
 
 - **Deterministic scheduler IDs**
   - Scheduler-originated `scriptEventId` values must be deterministic so leader failover and bounded catch-up do not double-fire.

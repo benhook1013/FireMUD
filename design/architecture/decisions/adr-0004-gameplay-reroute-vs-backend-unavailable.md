@@ -18,7 +18,7 @@ The system needs a deterministic, operator-visible way to distinguish “move to
 FireMUD standardizes two distinct `1013` categories for gameplay connections:
 
 - `1013/reroute`
-  - Used when the gameplay shard mapping for a session’s `<tenantId, regionId>` has moved (lease transfer, planned drain, shard handoff).
+  - Used when the gameplay shard mapping for a session’s `<tenantId, gameInstanceId, regionId>` has moved (lease transfer, planned drain, shard handoff).
   - Intended semantics: reconnect promptly so the next connection is admitted to the new shard owner.
   - Client guidance: use only a small randomized delay (for example 0–250ms) to avoid stampedes; do not apply long exponential backoff solely due to reroute.
   - Telnet mapping: TCP Proxy emits a Telnet disconnect reason token `reroute`.

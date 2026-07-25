@@ -117,7 +117,7 @@ CPU and time limits are derived from three layers:
 
 - **Automation tick configuration**
   - `AUTOMATION_TICK_BUDGET_MS` defines the **soft budget** for automation work per tick window.
-  - The scheduler divides this budget across eligible scripts for that tenant and region when deciding how many runs to start.
+  - The scheduler divides this budget across eligible scripts for that tenant, game instance, and region when deciding how many runs to start.
 
 - **Cluster policies**
   - Cluster-level policies define absolute ceilings per container (for example, 100 ms per run, 500 ms per tick window) to protect overall latency and resource usage.

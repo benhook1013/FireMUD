@@ -30,13 +30,13 @@ Refer to those sections for the authoritative wording and examples.
 
 When designing new tick-driven features, keep these invariants in mind:
 
-- **Single authoritative executor per region** – all tick-side state for a `<tenantId, regionId>` is owned by one executor at a time.
+- **Single authoritative executor per region** – all tick-side state for a `<tenantId, gameInstanceId, regionId>` is owned by one executor at a time.
 - **Lease and lock tokens are authoritative** – region leases and per-entity locks in Redis always carry opaque tokens; tick scripts must validate those tokens (and the current `tickId`) inside a single Lua invocation before applying or cleaning up any staged work.
 - **One action per entity per tick** – fairness is enforced by limiting how many **tick work items** (player commands, AI/automation commands, due timers, retries, and remote follow-ups) a single entity can execute per tick. The scheduler and tick-execution flow choose at most one such work item per entity per tick; any additional due work for that entity is deferred to later ticks according to the retry and scheduling rules. This applies equally to player commands, AI scripts, automation, and remote follow-ups drained from other regions (which are enqueued into the same per-entity queues at the target region).
 - **No cross-region locks** – cross-region interactions are modeled as messages, not shared locks or multi-region transactions.
 - **Idempotent side effects** – the region-scoped tick timeline `(region_epoch, tickId)` and effect guards must be used so that replays after failure do not double-apply mutations.
 
-The tick system adopts the same **coordination timeline** concept as the Redis architecture: for each `<tenantId, regionId>` there is a canonical timeline defined by `(region_epoch, tickId)`. Within a given `region_epoch`:
+The tick system adopts the same **coordination timeline** concept as the Redis architecture: for each `<tenantId, gameInstanceId, regionId>` there is a canonical timeline defined by `(region_epoch, tickId)`. Within a given `region_epoch`:
 
 - `tickId` is monotonic and uniquely identifies each committed tick for that region.
 - All **staged tick coordination state** in Redis (for example `tick:{tenantRegionTag}:pending` entries and other data created for a specific in-flight tick) and all tick effect ledger rows in PostgreSQL conceptually belong to exactly one `(region_epoch, tickId)` pair.
@@ -45,7 +45,7 @@ The tick system adopts the same **coordination timeline** concept as the Redis a
   - They carry eligibility/order metadata that later maps selected work into a specific `(region_epoch, tickId)` when the tick batch is formed.
   - Reset/replay tooling must therefore distinguish “epoch-scoped source state” from “tick-scoped staged state” rather than treating every region key as already owned by one committed or in-flight tick.
 - Tenant-scoped coordination such as gameplay session keys (`session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`) live on Coordination Redis but are **not** bound to a single region epoch; they follow the authentication/reconnection contracts and reset behavior described in the Redis hub and usage/profile docs rather than the per-region epoch model.
-- When a scoped coordination reset occurs (or a topology/maintenance operation explicitly severs the old region timeline), the tick control plane bumps `region_epoch` and ensures that subsequent tick work for that `<tenantId, regionId>` is scheduled only on the new timeline; survivors from older epochs in region-scoped Redis keys are treated as stale and either ignored or explicitly reconciled via the tick effect ledger and reset tooling.
+- When a scoped coordination reset occurs (or a topology/maintenance operation explicitly severs the old region timeline), the tick control plane bumps `region_epoch` and ensures that subsequent tick work for that `<tenantId, gameInstanceId, regionId>` is scheduled only on the new timeline; survivors from older epochs in region-scoped Redis keys are treated as stale and either ignored or explicitly reconciled via the tick effect ledger and reset tooling.
 
 The main tick document contains the detailed rules and Redis key shapes behind each of these points.
 
@@ -54,16 +54,16 @@ The main tick document contains the detailed rules and Redis key shapes behind e
 Fairness and the “one action per entity per tick” rule apply to steady-state execution within a stable `region_epoch`. Around the coordination tail-loss window and explicit resets:
 
 - Redis tail-loss and scoped coordination resets may cause some actions near the tail of the timeline to be dropped, replayed, or slightly re-ordered.
-- In these cases, the system prioritizes **EffectId convergence** (each `(tenantId, regionId, region_epoch, tickId, effectKey)` ends up durably APPLIED or ABANDONED without double-apply) over strict per-entity fairness across the reset boundary.
+- In these cases, the system prioritizes **EffectId convergence** (each `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey)` ends up durably APPLIED or ABANDONED without double-apply) over strict per-entity fairness across the reset boundary.
 - Designers should treat fairness guarantees as strong within a healthy epoch and best-effort across failures and resets; if a feature requires stronger guarantees around resets, that requirement must be called out explicitly in its design and validated against the Redis tail-loss SLOs.
 
-Conceptually, domain services treat Redis locks and leases as **opaque tick-engine concerns**: handlers see only `(tenantId, regionId, region_epoch, tickId, effectKey)` plus their own idempotency state. They never read `tick:{tenantRegionTag}:lock:<entityId>` or `tick-executor-lease:{tenantRegionTag}` to make application-level decisions, nor do they depend on Cache/Rate-Limit Redis keys (for example `inventory:*`, `view:*`, `ratelimit:*`) for correctness or ordering. Cache usage, when present, is encapsulated inside domain services and affects only latency, not the tick engine’s notion of “what happened” or “in which order”.
+Conceptually, domain services treat Redis locks and leases as **opaque tick-engine concerns**: handlers see only `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey)` plus their own idempotency state. They never read `tick:{tenantRegionTag}:lock:<entityId>` or `tick-executor-lease:{tenantRegionTag}` to make application-level decisions, nor do they depend on Cache/Rate-Limit Redis keys (for example `inventory:*`, `view:*`, `ratelimit:*`) for correctness or ordering. Cache usage, when present, is encapsulated inside domain services and affects only latency, not the tick engine’s notion of “what happened” or “in which order”.
 
 ### Tail-Loss and Tick Replay Window
 
 Redis coordination state is subject to a bounded tail-loss envelope (see `system-architecture-redis.md` and `system-architecture-redis-operations.md`). From the tick system’s perspective:
 
-- A normal failover or restart may drop or replay the last `N` ticks for a `<tenantId, regionId>`, where the loss window is bounded by the canonical Redis SLO formula:
+- A normal failover or restart may drop or replay the last `N` ticks for a `<tenantId, gameInstanceId, regionId>`, where the loss window is bounded by the canonical Redis SLO formula:
   - `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` (see `system-architecture-redis-operations.md`).
 - Tick-driven designs must tolerate:
   - Some commands and timers near the tail of the timeline being lost, re-ordered slightly, or replayed.
@@ -73,7 +73,7 @@ Redis coordination state is subject to a bounded tail-loss envelope (see `system
 
 The tick system and Redis tail-loss SLOs combine into a simple contract:
 
-- For each `(tenantId, regionId, region_epoch, tickId, effectKey)` there must eventually be exactly one **terminal** outcome in PostgreSQL (`APPLIED` or `ABANDONED`), even if:
+- For each `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey)` there must eventually be exactly one **terminal** outcome in PostgreSQL (`APPLIED` or `ABANDONED`), even if:
   - The last few ticks for that region are dropped or replayed within the tail-loss envelope, or
   - Executors crash and re-acquire leases under the same `region_epoch`.
 - Any work that cannot be safely replayed after Redis loss or tick re-execution must be:
@@ -88,7 +88,7 @@ Redis tail-loss thresholds are defined in `system-architecture-redis-operations.
 
 Per-tick isolation is defined explicitly so replay and fairness remain deterministic:
 
-- Actions may only see staged state from the **current** tick for their `<tenantId, regionId>`.
+- Actions may only see staged state from the **current** tick for their `<tenantId, gameInstanceId, regionId>`.
 - Changes from other tick regions or from **future** ticks in the same region are invisible while a tick is in progress.
 - Changes staged earlier in the same tick are composable: later actions in that tick may observe them when computing their own outcomes.
 - When required state is missing or inconsistent, the action must fail and retry under the normal retry/backoff rules rather than speculatively mixing cross-tick or cross-region reads.
@@ -108,7 +108,7 @@ Distributed locking in the tick system is designed to avoid deadlocks and keep L
 - **Strict limits on multi-lock scripts**
   - Commands that truly cannot be decomposed and must lock multiple entities inside a single script must:
     - Acquire locks in a global, deterministic order (for example, sort all `entityId` values and acquire in ascending order).
-    - Operate entirely within a single `<tenantId, regionId>`; cross-region multi-lock scripts are not allowed.
+    - Operate entirely within a single `<tenantId, gameInstanceId, regionId>`; cross-region multi-lock scripts are not allowed.
   - If any required lock cannot be acquired, the script immediately releases all previously acquired locks and returns a contention result; no partial logical effects are applied for that command.
 - **Registry and CI enforcement (see Redis docs)**
   - The Lua Script Registry records, per script, a declared `max_entity_locks` value (default `1`) and enforces a small hard cap for multi-lock scripts.
@@ -180,7 +180,7 @@ Worked cadence-change example:
 4. Timer ordering state is re-derived for the new epoch, including canonical `due_tick_id` values for any timers that must survive the change.
 5. The new epoch resumes at `lastCommittedTickId = -1`, so the first committable tick under the new cadence is `tickId = 0`.
 
-At runtime, observed tick durations are compared against lock TTLs using Prometheus-facing series such as `tick_execution_time_ms_p95` and `tick_execution_time_ms_p99` (derived from `tick_execution_time_ms_bucket` recording rules). Ratios like `tick_execution_time_ms_p99 / tick_lock_ttl_ms` drive region health for each `<tenantId, regionId>`.
+At runtime, observed tick durations are compared against lock TTLs using Prometheus-facing series such as `tick_execution_time_ms_p95` and `tick_execution_time_ms_p99` (derived from `tick_execution_time_ms_bucket` recording rules). Ratios like `tick_execution_time_ms_p99 / tick_lock_ttl_ms` drive region health for each `<tenantId, gameInstanceId, regionId>`.
 
 ### Canonical Region Health States and Threshold Source
 
@@ -195,7 +195,7 @@ This table is the single source of truth for region health state names and thres
 
 Threshold values and alert windows are defined by this document’s ratio formulas plus the concrete metric thresholds in `system-architecture-redis-operations.md` and enforced through `tick_status{status="RUNNING|DEGRADED|STALLED|PAUSED"}`.
 
-In addition to timing-based health, Game Session tracks **forward progress** for each `<tenantId, regionId>`:
+In addition to timing-based health, Game Session tracks **forward progress** for each `<tenantId, gameInstanceId, regionId>`:
 
 - A simple progress record includes:
   - The tickId or timestamp of the last successful commit.

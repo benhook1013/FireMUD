@@ -42,13 +42,13 @@ Within a region’s tick, each command proceeds through several phases:
    - Game Session accepts commands from Telnet and WebSocket clients, AI, or automation.
    - Commands are enqueued into per-entity (or occasionally per-region) queues such as `tick:{tenantRegionTag}:queue:<entityId>`.
 2. **Target Resolution (read-only)**
-   - During the tick, the executor resolves targets from the pinned snapshot for that `<tenantId, regionId>`:
+   - During the tick, the executor resolves targets from the pinned snapshot for that `<tenantId, gameInstanceId, regionId>`:
      - Single-target actions select a specific entity or room.
      - Multi-target actions derive a bounded set of entity IDs from local region state (room occupants, threat lists, groups).
    - This phase is read-only with respect to durable state; it decides *what* to touch without mutating Redis or PostgreSQL.
 3. **Region-Local Mutations**
    - For purely local effects, the executor acquires the relevant entity lock(s) under `tick:{tenantRegionTag}:lock:<entityId>` and stages effects into `tick:{tenantRegionTag}:pending` via Lua.
-   - Domain services apply changes under local transactions and idempotency rules keyed by `(tenantId, regionId, region_epoch, tickId, effectKey)`.
+   - Domain services apply changes under local transactions and idempotency rules keyed by `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey)`.
 4. **Cross-Region Effects (if any)**
    - For cross-region commands, the origin region:
      - Applies local-only effects first (for example, text feedback, animations).
@@ -90,7 +90,7 @@ Ingress deduplication is not sufficient on its own: every accepted command must 
 - Minimum command lifecycle:
   - `RECEIVED` – durable dedupe record exists.
   - `ENQUEUED` – command has been accepted into volatile coordination flow.
-  - `BOUND_TO_BATCH` – command has been durably tied to a specific `tick_batch_id` and `(tenantId, regionId, region_epoch, tickId)`.
+  - `BOUND_TO_BATCH` – command has been durably tied to a specific `tick_batch_id` and `(tenantId, gameInstanceId, regionId, region_epoch, tickId)`.
   - `TERMINAL` – command has reached a final command outcome.
 - Minimum terminal command outcomes:
   - `APPLIED`
@@ -232,7 +232,7 @@ Storage rule:
 
 ## Tick Execution Flow
 
-At each tick for a `<tenantId, regionId>`, the executor:
+At each tick for a `<tenantId, gameInstanceId, regionId>`, the executor:
 
 1. Collects work:
    - Pulls at most one queued command per active entity into the per-entity worklist.
@@ -288,12 +288,12 @@ The canonical commit model uses the same two boundaries defined in `system-archi
 Conceptually, tick commit proceeds through these phases:
 
 1. **Durable batch creation**
-   - Before Redis `pending` is treated as authoritative for a tick, Game Session creates a durable tick-batch record in PostgreSQL for `(tenantId, regionId, region_epoch, tickId)`.
-   - Exactly one durable tick batch may exist for a given `(tenantId, regionId, region_epoch, tickId)`:
-     - PostgreSQL enforces a unique key on `(tenantId, regionId, region_epoch, tickId)`.
+   - Before Redis `pending` is treated as authoritative for a tick, Game Session creates a durable tick-batch record in PostgreSQL for `(tenantId, gameInstanceId, regionId, region_epoch, tickId)`.
+   - Exactly one durable tick batch may exist for a given `(tenantId, gameInstanceId, regionId, region_epoch, tickId)`:
+     - PostgreSQL enforces a unique key on `(tenantId, gameInstanceId, regionId, region_epoch, tickId)`.
      - Batch allocation is lease-fenced by the durable `executorFence` from `RegionStatus`; the creating transaction reads and records that fence on the batch row while the corresponding Redis lease is still valid.
      - Winner rule:
-       - The winner is the transaction that successfully creates the unique `(tenantId, regionId, region_epoch, tickId)` row while holding the currently valid Redis lease and the latest durable `executorFence`.
+       - The winner is the transaction that successfully creates the unique `(tenantId, gameInstanceId, regionId, region_epoch, tickId)` row while holding the currently valid Redis lease and the latest durable `executorFence`.
        - If a competing executor finds the existing row carries the same current `executorFence`, it must reuse that row as authoritative state for replay/continuation.
        - If a competing executor finds the existing row carries an older or newer `executorFence`, it must not continue that batch on the hot path. The first implementation abandons stale-owner unfinished batches and requeues still-unapplied commands for a fresh fenced batch; any future in-place adoption of an old-fence batch requires a dedicated reconcile transaction that explicitly transfers ownership before work continues.
    - The tick-batch record stores at minimum:
@@ -335,18 +335,18 @@ Conceptually, tick commit proceeds through these phases:
      - Implementations may satisfy this either by leaving source entries in place until `tick_batch.status = REDIS_STAGED`, or by creating durable claim rows tied to `tick_batch_id` before removing the source entry.
      - Removing selected work from its source queue/index before one of those durable conditions is met is not allowed.
    - Duplicate-allocation recovery rule (required):
-     - If recovery finds more than one durable row purporting to represent the same `(tenantId, regionId, region_epoch, tickId)`, the region is inconsistent by definition.
+     - If recovery finds more than one durable row purporting to represent the same `(tenantId, gameInstanceId, regionId, region_epoch, tickId)`, the region is inconsistent by definition.
      - Normal replay must not continue. The region is paused and explicit reconcile tooling chooses one survivor batch and converges the others to an audited terminal state before ticks resume.
    - Worked allocation-race example:
-     - Executor `E1` and executor `E2` both attempt `(tenantId=T1, regionId=R7, region_epoch=13, tickId=42)`.
-     - `E1` successfully inserts the unique batch row while holding Redis lease token `L9001` and durable `executorFence=27`; that row becomes the only valid durable batch for `(T1, R7, 13, 42)`.
+     - Executor `E1` and executor `E2` both attempt `(tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120, gameInstanceId=9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, regionId=R7, region_epoch=13, tickId=42)`.
+     - `E1` successfully inserts the unique batch row while holding Redis lease token `L9001` and durable `executorFence=27`; that row becomes the only valid durable batch for `(7b3b074e-d597-4e9b-b96f-4f5946d26120, 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, R7, 13, 42)`.
      - `E2` then reads the existing row.
        - If `E2` is acting under the same current `executorFence=27`, it may continue/replay from that row.
        - If `E2` now holds a later lease acquisition with `executorFence=28`, it must stop and treat the existing row as belonging to an older ownership generation. First implementation recovery abandons stale-owner unfinished work and requeues unapplied commands rather than continuing that batch in place.
      - `E2` must not overwrite the manifest, create a second batch row, or select different work for tick `42`.
-     - If storage ever reveals two durable rows for `(T1, R7, 13, 42)`, the region pauses immediately and reconcile tooling chooses the survivor before any later tick runs.
+     - If storage ever reveals two durable rows for `(7b3b074e-d597-4e9b-b96f-4f5946d26120, 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, R7, 13, 42)`, the region pauses immediately and reconcile tooling chooses the survivor before any later tick runs.
    - Canonical fence/write sequence (normative):
-     1. Executor wins the Redis lease for `<tenantId, regionId>`.
+     1. Executor wins the Redis lease for `<tenantId, gameInstanceId, regionId>`.
      2. Game Session advances `RegionStatus.executorFence` for that new ownership generation.
      3. The same ownership generation creates `tick_batch` and `SCHEDULED` ledger rows carrying that `executorFence`.
      4. Commit watermark advancement (`lastCommittedTickId`) succeeds only if the write still matches the same `executorFence`.
@@ -355,7 +355,7 @@ Conceptually, tick commit proceeds through these phases:
    - After the durable batch exists, the executor stages the selected effects into `tick:{tenantRegionTag}:pending`, carrying the `tick_batch_id` and the expected effect count (or equivalent digest) so Redis and PostgreSQL can be correlated during recovery.
    - `tick:{tenantRegionTag}:pending` is an acceleration/coordination structure. The durable tick-batch plus ledger rows are the authoritative record of what the tick intended to stage.
 3. **Domain application**
-   - Domain services process staged effects under idempotent rules keyed by `(tenantId, regionId, region_epoch, tickId, effectKey)` and update authoritative PostgreSQL state in their own databases.
+   - Domain services process staged effects under idempotent rules keyed by `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey)` and update authoritative PostgreSQL state in their own databases.
    - Game Session records the outcome of each effect in its tick effect ledger (`SCHEDULED` → `APPLIED` or `ABANDONED`) based on the domain calls’ return semantics. Domain services do not write to the Game Session ledger directly.
 4. **Commit visibility**
    - Once all ledger rows that belong to that tick batch are terminal (`APPLIED` or `ABANDONED`), Game Session advances the durable commit watermark for the region (for example updating `RegionStatus.lastCommittedTickId` for the current `region_epoch`) under the same `executorFence`, and only then emits the tick heartbeat for that `(region_epoch, tickId)`.
@@ -367,7 +367,7 @@ Conceptually, tick commit proceeds through these phases:
 From the perspective of the `(region_epoch, tickId)` timeline:
 
 - A tick is `durable_committed` once:
-  - All ledger rows owned by that tick batch for `(tenantId, regionId, region_epoch, tickId)` have reached a terminal state (`APPLIED` or `ABANDONED`), and
+  - All ledger rows owned by that tick batch for `(tenantId, gameInstanceId, regionId, region_epoch, tickId)` have reached a terminal state (`APPLIED` or `ABANDONED`), and
   - The durable commit watermark (for example `RegionStatus.lastCommittedTickId`) has advanced to that `(region_epoch, tickId)` under the same `executorFence`.
 - A tick is `coordination_cleared` once:
   - There is no remaining `pending` entry for that tick in Redis and lock cleanup for that tick has completed.
@@ -388,7 +388,7 @@ From the perspective of the `(region_epoch, tickId)` timeline:
 The **TickScheduler** in Game Session enforces a **single in-flight tick per region** invariant and derives tick positions from durable state:
 
 - A region is considered busy while prior tick coordination state has not reached `coordination_cleared` (in practice, while `tick:{tenantRegionTag}:pending` exists for an in-flight `tickId`).
-- The scheduler does not start a new tick for that `<tenantId, regionId>` until the previous tick is `coordination_cleared` as part of normal cleanup or explicitly handled during crash recovery.
+- The scheduler does not start a new tick for that `<tenantId, gameInstanceId, regionId>` until the previous tick is `coordination_cleared` as part of normal cleanup or explicitly handled during crash recovery.
 - The scheduler obtains the current `(region_epoch, tickId)` baseline for each region from PostgreSQL (for example, a `RegionStatus` table and/or the tick effect ledger); it **does not** use `tick:{tenantRegionTag}:meta.current_tick_id` to decide which tick to run next.
 - The scheduler and recovery tooling treat `RegionStatus.executorFence` as the durable owner generation; any batch or commit attempt that carries an older fence must stop rather than trying to race the new owner.
 - Additional work enqueued for the same region while a tick is in flight is modeled as retries or follow-up work for a later `tickId`, not as a second concurrent tick.
@@ -397,7 +397,7 @@ The **TickScheduler** in Game Session enforces a **single in-flight tick per reg
   - The first successful hot-path staging script for that tick initializes `tick:{tenantRegionTag}:meta.current_tick_id` to that requested tick as a Redis-side guard only.
   - Schedulers and operators continue to treat PostgreSQL `RegionStatus` as authoritative for baseline tick selection.
 
-If FireMUD later introduces limited intra-region parallelism (for example by sharding a single region into buckets of entities), this model will evolve to use **per-bucket pending keys** such as `tick:{tenantRegionTag}:bucket:<bucketId>:pending` plus matching idempotency and locking rules. Until such a change is explicitly designed, the invariant remains one `pending` entry and one in-flight tick per `<tenantId, regionId>`.
+If FireMUD later introduces limited intra-region parallelism (for example by sharding a single region into buckets of entities), this model will evolve to use **per-bucket pending keys** such as `tick:{tenantRegionTag}:bucket:<bucketId>:pending` plus matching idempotency and locking rules. Until such a change is explicitly designed, the invariant remains one `pending` entry and one in-flight tick per `<tenantId, gameInstanceId, regionId>`.
 
 Commands that cannot complete inside the configured tick budget are deferred via retry queues rather than blocking the current tick.
 
@@ -423,7 +423,7 @@ Remote follow-ups (work created in one region but owned by entities in another) 
     - `remote_followups_due_total`
     - `remote_followups_drain_lag_ms`
     - `remote_followups_backlog_over_budget_total`
-  - Those Prometheus metrics are aggregate process signals only. Region-specific diagnosis comes from the durable runtime ownership/control-plane reads, not raw `tenantId` / `regionId` metric labels.
+  - Those Prometheus metrics are aggregate process signals only. Region-specific diagnosis comes from the durable runtime ownership/control-plane reads, not raw `tenantId` / `gameInstanceId` / `regionId` metric labels.
   - The executor may temporarily bias part of the per-tick budget toward draining remote follow-ups (within the configured caps) to reduce cross-region lag.
   - Admission control applies at the origin: when the target region is degraded or backlog is high, new cross-region actions may be delayed, rate-limited, or rejected with a clear error so the system sheds load instead of accumulating an unbounded remote backlog.
     - The canonical signal for “target region degraded / unhealthy” comes from Game Session’s durable/control-plane region status (for example `GetRegionTickStatus` / `RegionStatus`), not from best-effort Redis hint keys such as `remote:*`.
@@ -500,23 +500,23 @@ Because chained effects still respect the “one action per entity per tick” r
 To illustrate how cross-region flows compose from the phases above, consider a **lifesteal spell** where a caster in region A damages a target in region B and heals based on the actual damage dealt:
 
 1. **Enqueue (origin region)**
-   - The caster issues a `LIFESTEAL <target>` command from a room in `<tenantId, regionA>`.
+   - The caster issues a `LIFESTEAL <target>` command from a room in `<tenantId, gameInstanceId, regionA>`.
    - Game Session enqueues the command under the caster’s per-entity queue key in Redis.
 2. **Target Resolution (origin region, read-only)**
-   - During the next tick for `<tenantId, regionA>`, the executor:
-     - Resolves which remote entity in `<tenantId, regionB>` is the intended target.
+   - During the next tick for `<tenantId, gameInstanceId, regionA>`, the executor:
+     - Resolves which remote entity in `<tenantId, gameInstanceId, regionB>` is the intended target.
      - Validates that a cross-region action is allowed (line of sight, range, permissions) using the pinned snapshot and metadata.
    - No HP or inventory state is changed yet; this phase only determines the target and target region.
 3. **Damage Leg (target region)**
-   - The origin region records durable follow-up work for the target entity in PostgreSQL (tick effect ledger / follow-up tables), attributed to `<tenantId, regionB>` and keyed by a stable effect identity.
+   - The origin region records durable follow-up work for the target entity in PostgreSQL (tick effect ledger / follow-up tables), attributed to `<tenantId, gameInstanceId, regionB>` and keyed by a stable effect identity.
    - It may also write a best-effort hint marker such as `remote:<tenantId>:<entityId>` (for the target entity) to reduce latency, but correctness does not depend on that marker.
-   - In the next tick for `<tenantId, regionB>`, the target region’s executor:
+   - In the next tick for `<tenantId, gameInstanceId, regionB>`, the target region’s executor:
      - Computes the damage amount as a percentage of the target’s authoritative current HP.
-     - Acquires the target’s lock (`tick:{tenantRegionTag}:lock:<entityId>` for the target entity) and applies damage via Entity Management using the normal `(tenantId, regionId, region_epoch, tickId, effectKey)` idempotency rules.
+     - Acquires the target’s lock (`tick:{tenantRegionTag}:lock:<entityId>` for the target entity) and applies damage via Entity Management using the normal `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey)` idempotency rules.
      - Writes a durable origin-addressed result row for region A containing `casterEntityId`, the actual `damageApplied`, and the target terminal outcome keyed to the coordinator identity.
 4. **Heal Leg (origin region)**
    - When region A receives the lifesteal result, it enqueues a local “apply lifesteal heal” command for the caster.
-   - In a subsequent tick for `<tenantId, regionA>`, the executor:
+   - In a subsequent tick for `<tenantId, gameInstanceId, regionA>`, the executor:
      - Acquires the caster’s lock.
      - Applies a heal up to `damageApplied` (subject to HP rules) using Entity Management and tick idempotency.
 5. **Player Feedback and Optional Coordination**
@@ -527,6 +527,6 @@ To illustrate how cross-region flows compose from the phases above, consider a *
 
 Throughout this sequence:
 
-- Each leg is idempotent and keyed by `(region_epoch, tickId)` and effect identity in the domain services.
+- Each leg is idempotent and keyed by `(tenantId, gameInstanceId, regionId, region_epoch, tickId)` and effect identity in the domain services.
 - Region executors never hold cross-region locks; they coordinate via queued commands, durable follow-up records, and durable origin-addressed result rows.
 - Retries due to lock contention or transient failures are handled by the standard retry queues and idempotent handlers in each region without breaking the overall experience.

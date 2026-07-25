@@ -138,8 +138,8 @@ Illustrative record shape:
 
 ```json
 {
-  "tenantId": "T1",
-  "gameInstanceId": "G7",
+  "tenantId": "11111111-1111-4111-8111-111111111111",
+  "gameInstanceId": "44444444-4444-4444-8444-444444444444",
   "regionId": "R2",
   "regionEpoch": 14,
   "entityId": "npc-guard-9",

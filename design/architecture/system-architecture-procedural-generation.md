@@ -126,8 +126,8 @@ Illustrative revision examples:
 ```json
 {
   "revisionType": "GENERATE_WORLD_SUBTREE",
-  "tenantId": "t1",
-  "versionId": "v42",
+  "tenantId": "11111111-1111-4111-8111-111111111111",
+  "versionId": "22222222-2222-4222-8222-222222222222",
   "revisionId": "r-gen-001",
   "targetScope": {
     "scopeType": "ZONE_SUBTREE",
@@ -147,8 +147,8 @@ Resulting replay semantics:
 ```json
 {
   "revisionType": "GENERATE_WORLD_SUBTREE",
-  "tenantId": "t1",
-  "versionId": "v42",
+  "tenantId": "11111111-1111-4111-8111-111111111111",
+  "versionId": "22222222-2222-4222-8222-222222222222",
   "revisionId": "r-gen-002",
   "targetScope": {
     "scopeType": "NEW_EMPTY_REGION",
