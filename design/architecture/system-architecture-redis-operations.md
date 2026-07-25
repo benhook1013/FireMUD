@@ -36,9 +36,10 @@ Canonical sequence:
 Rules:
 
 - `pause` is the canonical lock-acquiring step and must drive the chosen scope to canonical `PAUSED` before storage-level wipe or prefix deletion occurs.
+- Capture the `maintenanceLockToken` returned by `pause` and pass it as `--maintenance-lock-token <token>` to every subsequent mutating verb in the workflow, including `reconcile-ledger` and `converge-commands`.
 - `reset` is the only supported step that bumps `region_epoch` and emits the authoritative old/new epoch evidence for downstream reconciliation.
 - `reconcile-ledger` and `converge-commands` are required before traffic resumes; replay-first workflows may use those verbs without a preceding `reset`, but reset workflows must not skip them.
-- `init-meta` re-establishes `tick:{tenantRegionTag}:meta` from the durable baseline after the reset step.
+- `init-meta` re-establishes `tick:{tenantRegionTag}:meta` from the durable baseline after the reset step; `{tenantRegionTag}` is the opaque full-scope tag for `<tenantId, gameInstanceId, regionId>`.
 - `rebind-sessions` is conditional. Region-scoped resets preserve gameplay sessions by default, tenant-scoped resets do so only when `--preserve-sessions` is recorded, and cluster-scoped resets invalidate gameplay sessions by default.
 - `smoke-check` is the resume gate proving the new epoch can acquire leases, stage work, converge, and clean up correctly.
 - `resume` is the canonical success-path release step. If the workflow aborts before `resume`, operators must use `coordination-maintenance release-lock ...` rather than inventing an alternate unlock sequence.
@@ -228,7 +229,7 @@ Redis maintenance flows such as session cleanup, scoped resets, normalization mi
 Canonical maintenance-lock behavior:
 
 - lock identity: one active record per Coordination Redis deployment / gameplay environment boundary
-- minimum fields: `operation`, `scope_type`, `tenantId`, `gameInstanceId`, `regionId`, `actor`, `startedAt`, `expiresAt`, `compatibilityClass`, and an evidence or incident reference
+- minimum fields: `operation`, `scope_type`, `tenantId`, `gameInstanceId`, `regionId`, `actor`, `startedAt`, `expiresAt`, `compatibilityClass`, and an evidence or incident reference; `tenantId`, `gameInstanceId`, and `regionId` are nullable or omitted for a deployment-wide lock, and each is required when its corresponding tenant, game-instance, or region scope is included
 - acquisition is fail-closed for incompatible operations; operators may only break the lock with an explicit stale-lock or break-glass evidence record
 - acquisition owner: `coordination-maintenance pause --operation ...` is the canonical lock-acquiring command for multi-step restore, reset, cleanup, migration, topology-change, and exceptional backup-related maintenance workflows
 - refresh owner: every subsequent mutating CLI verb in that workflow refreshes the same lock using `maintenanceLockToken`; lock refresh is not a second independent acquisition

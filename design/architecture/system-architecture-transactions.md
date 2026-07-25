@@ -65,7 +65,8 @@ If a proposed gameplay feature truly requires stronger semantics than this model
 
 Tick execution is replayable: retries, failover, and Redis AOF replay can cause the same logical effect to be attempted more than once. For gameplay commands this is expected and safe only because tick-invoked domain mutations are required to be idempotent with respect to a canonical `EffectId`.
 
-- The Game Session Service computes and propagates a stable `EffectId` derived from the region-scoped tick context (`tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`) plus the target aggregate identity.
+- The Game Session Service computes and propagates a stable `EffectId` derived from the region-scoped tick context (`tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`) plus the required target aggregate identity (`targetAggregateType`, `targetAggregateId`).
+- `EffectId` and its terminal outcome are scoped to that complete identity. `APPLIED` or `ABANDONED` for one target aggregate must never be reused as the outcome for a different target aggregate in the same command, tick, or effect key.
 - Owning services must implement durable idempotency guards (unique constraints, monotonic updates, transactional outbox) so duplicate `EffectId` attempts become OK/no-op outcomes rather than double-applying side effects.
 - For gameplay-visible mutations, `EffectId`-backed guard rows are the default idempotency boundary. Simpler `last_tick_id` watermark patterns are allowed only for aggregates explicitly documented as receiving at most one logical mutation per tick.
 - To keep this contract consistent across services, tick-driven handlers use a shared idempotency helper from `common-data-runtime` (for example an `IdempotentEffectExecutor`) instead of ad-hoc “check or insert” patterns. The helper:

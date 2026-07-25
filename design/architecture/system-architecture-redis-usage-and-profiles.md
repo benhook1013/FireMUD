@@ -18,6 +18,8 @@ This document describes **how** FireMUD uses Redis in different roles and enviro
 
 FireMUD runs two logical Redis roles in all non‑trivial environments:
 
+Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the complete `<tenantId, gameInstanceId, regionId>` scope, while `{tenantInstanceTag}` is the canonical opaque tag for `<tenantId, gameInstanceId>`. Region-scoped coordination metadata keys therefore carry `gameInstanceId` through `{tenantRegionTag}`; callers must not substitute a tenant-only or region-only tag.
+
 - **Coordination Redis**
   - Responsibilities:
     - Tick queues, locks, timers, and executor leases.
@@ -78,7 +80,7 @@ A small set of automation/scheduler-specific prefixes live on Coordination Redis
   - Role: Coordination Redis.
   - Owner: Automation & Scripting Service.
   - Purpose: per-region checkpoint for “every N ticks” schedulers tied to the canonical `(regionEpoch, tickId)` timeline.
-  - Reset behavior: classified as reset-tolerant in the reset policy matrix; region/tenant/cluster resets may drop this key. After resets or data loss, Automation & Scripting recomputes due work from PostgreSQL schedules and the tick heartbeat as described in the tick and scripting docs. Duplicate trigger prevention comes from a durable PostgreSQL trigger-instance or outbox key such as `(tenantId, gameInstanceId, regionId, regionEpoch, scheduleId, dueTickId, triggerKind)` (or another complete runtime-scope/timeline projection), not from this Redis checkpoint.
+  - Reset behavior: classified as reset-tolerant in the reset policy matrix; region/tenant/cluster resets may drop this key. After resets or data loss, Automation & Scripting recomputes due work from PostgreSQL schedules and the tick heartbeat as described in the tick and scripting docs. Duplicate trigger prevention comes from a durable PostgreSQL trigger-instance or outbox row whose identity includes `(tenantId, gameInstanceId, regionId, regionEpoch, automationDispatchId, scheduleDefinitionId, dueTickId and/or dueAt, entityId, commandKind, scriptId, eventType, scriptPatchVersion, triggerMode, isDryRun)` plus `pluginId` and `pluginVersionId` when applicable. The row retains the full schedule projection (`cadence`, `unit`, `priorityTag`, `targetScopeType`, `targetScopeId`, binding priority/exclusivity, `scheduleSemanticsHash`, observed pin request, owner/version metadata, due-point state, and `runtimeRegionId`/`runtimeRegionEpoch`); it is not reduced to this Redis checkpoint or a schedule ID alone.
 - `automation:timer:{tenantRegionTag}`
   - Role: Coordination Redis.
   - Owner: Automation & Scripting Service.
@@ -102,7 +104,7 @@ Automation workloads split into two broad classes, with different expectations a
     - Must respect the “one action per entity per tick” invariant and other tick fairness rules from the tick architecture docs.
   - Design rule: automation in this category must be reviewed like core gameplay logic and is **not** allowed to depend on TTL-only caches or best-effort queues for correctness.
   - Canonical handoff contract:
-    - Automation & Scripting creates or reuses a durable PostgreSQL trigger-instance / outbox row keyed by a stable dispatch identity such as `(tenantId, gameInstanceId, regionId, regionEpoch, scheduleId, dueTickId, entityId, commandKind)` or an equivalent derived `automationDispatchId`.
+    - Automation & Scripting creates or reuses a durable PostgreSQL trigger-instance / outbox row keyed by the stable dispatch identity and full schedule projection: `(tenantId, gameInstanceId, regionId, regionEpoch, automationDispatchId, scheduleDefinitionId, dueTickId and/or dueAt, entityId, commandKind, scriptId, eventType, scriptPatchVersion, triggerMode, isDryRun)`, plus plugin identity when applicable. The row also retains `cadence`, `unit`, `priorityTag`, `targetScopeType`, `targetScopeId`, binding priority/exclusivity, `scheduleSemanticsHash`, observed pin request, owner/version metadata, due-point state, and `runtimeRegionId`/`runtimeRegionEpoch`.
     - Automation & Scripting then calls a Game Session gRPC/API contract such as `EnqueueAutomationCommandIfAbsent`, carrying:
       - `automationDispatchId`
       - `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `dueTickId`
@@ -120,8 +122,8 @@ Automation workloads split into two broad classes, with different expectations a
     - Redis keys are hot-path coordination state only; they are never the sole record that a fairness-critical automation action existed.
   - Worked example:
     - A schedule for NPC `entityId=E1` becomes due at `(tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120, gameInstanceId=9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, regionId=R1, regionEpoch=7, dueTickId=420)`.
-    - Automation & Scripting upserts a durable trigger-instance row keyed by `(tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120, gameInstanceId=9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, regionId=R1, regionEpoch=7, scheduleId=S1, dueTickId=420, entityId=E1, commandKind=MOVE)` and derives `automationDispatchId` from that identity.
-    - It calls `EnqueueAutomationCommandIfAbsent` with `automationDispatchId`, the target region timeline fields, and the deterministic command payload.
+    - Automation & Scripting assigns `automationDispatchId=AD1` and upserts a durable trigger-instance row keyed by `(tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120, gameInstanceId=9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, regionId=R1, regionEpoch=7, automationDispatchId=AD1, scheduleDefinitionId=S1, dueTickId=420, entityId=E1, commandKind=MOVE, scriptId=NPC_MOVE, eventType=onInterval, scriptPatchVersion=P3, triggerMode=NORMAL, isDryRun=false)` and retains the complete schedule projection, including `cadence`, `unit`, `priorityTag`, `targetScopeType`, `targetScopeId`, binding priority/exclusivity, `scheduleSemanticsHash`, observed pin request, owner/version metadata, due-point state, and `runtimeRegionId`/`runtimeRegionEpoch`.
+    - It calls `EnqueueAutomationCommandIfAbsent` with `automationDispatchId=AD1`, the target region timeline fields, and the deterministic command payload.
     - Game Session inserts or reads the durable admission row for `(7b3b074e-d597-4e9b-b96f-4f5946d26120, 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, R1, 7, automationDispatchId)`, validates the active region lease and epoch for `R1`, maps the request to `tick:{tenantRegionTag}:queue:E1`, and returns `"ENQUEUED"` on the first successful materialization.
     - If the same trigger retries due to gRPC timeout, Game Session sees the same durable admission row and returns a replay/no-op outcome instead of enqueuing a second command.
     - If the region has already moved to `regionEpoch=8`, Game Session returns a stale-timeline outcome and Automation & Scripting re-derives what should happen next from the durable trigger-instance row instead of inferring state from Redis.

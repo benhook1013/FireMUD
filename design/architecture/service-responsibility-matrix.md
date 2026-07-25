@@ -41,7 +41,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Authoritative owner: `versionStateEpoch` CAS enforcement | ✔ | | | | | | | | | | |
 | Version-state CAS APIs ownership/invocation for activation/rollback (`versionStateEpoch`) | ✔ | | | ✔ | | | | | ✔ | | |
 | Runtime feature flag overrides | | | | ✔ | | | | | | | |
-| Tick & coordination health metrics (per region) | | | | ✔ | | | | | | | |
+| Tick & coordination health metrics (`<tenantId, gameInstanceId, regionId>`) | | | | ✔ | | | | | | | |
 | Canonical room-state read fence production and same-fence room-view composition | | ✔ | | | ✔ | ✔ | | | | | |
 | Entity definition and persistence | | | | | ✔ | | | | | | |
 | NPC state, inventory, and stats | | | | | ✔ | | | | | | |

@@ -15,6 +15,8 @@ The incident flows below describe the target operator model. In the current impl
 - Accepted-but-unstaged commands already converge to `LOST_BEFORE_STAGING` during startup recovery, so command status is no longer purely transient Redis state.
 - The full `coordination-maintenance` replay/reset orchestration referenced below is not yet shipped as a complete repo-local CLI/control-plane surface; where the runbook names those verbs, read them as target-state recovery tooling rather than a claim that every step is already available today.
 
+Region-scoped coordination key examples use `{tenantRegionTag}`, the canonical opaque tag for `<tenantId, gameInstanceId, regionId>`; instance-scoped automation examples use `{tenantInstanceTag}`, the canonical opaque tag for `<tenantId, gameInstanceId>`. The tag carries the game-instance identity even when the raw identifier is not repeated in the key.
+
 ## Incident Types
 
 - **Coordination Redis outage or high latency**
@@ -117,16 +119,18 @@ The following Redis-focused incident flows build on the general recovery steps a
        - Goal: fence the old timeline with an epoch bump and use the canonical reset handshake to abandon or reconcile old-epoch work explicitly.
 3. **Act**
    1. If the chosen mode is `replay_first`:
-      - Run `coordination-maintenance reconcile-ledger ...` for the affected scope without bumping `region_epoch`; this is the canonical operator entrypoint for the replay controller / maintenance API path.
-      - Run `coordination-maintenance converge-commands ...` for the same scope unless the status surface proves that no accepted command records in the affected scope are unbound or non-terminal. This is a required replay-first step, not an optional reset-only cleanup.
+      - Run `coordination-maintenance pause --operation replay ...`, capture the returned `maintenanceLockToken`, and keep the affected scope in `PAUSED` while replay converges.
+      - Run `coordination-maintenance reconcile-ledger ... --maintenance-lock-token <token>` for the affected scope without bumping `region_epoch`; this is the canonical operator entrypoint for the replay controller / maintenance API path.
+      - Run `coordination-maintenance converge-commands ... --maintenance-lock-token <token>` for the same scope unless the status surface proves that no accepted command records in the affected scope are unbound or non-terminal. This is a required replay-first step, not an optional reset-only cleanup.
       - Watch `tick_effects_pending_oldest_age_seconds`, `tick_effects_replay_slo_breached`, and command convergence for one emitted replay-convergence budget window. Verify that command outcomes settle into the canonical terminal vocabulary described in `system-architecture-tick-execution-flows.md` rather than inventing a replay-only local interpretation.
       - Escalate to `reset_first` immediately if replay cannot make bounded progress, if inconsistent-state signals appear, or if the region transitions to `STALLED`.
       - Worked example:
         1. Region `(7b3b074e-d597-4e9b-b96f-4f5946d26120, 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, R7)` remains on `region_epoch = 13`, `tick_effects_pending_oldest_age_seconds` exceeds budget, and there is no evidence of mixed-epoch state or duplicate durable batches.
-        2. Operator runs `coordination-maintenance reconcile-ledger --scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7`.
-        3. Operator runs `coordination-maintenance converge-commands --scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7` unless command-status inspection proves there is no affected non-terminal command work.
-        4. The replay controller converges lingering epoch-13 `SCHEDULED` rows to `APPLIED` or `ABANDONED` without bumping `region_epoch`, and command records converge to the canonical terminal vocabulary.
-        5. If pending age and stalled signals recover within one emitted budget window, the region stays on epoch `13`; otherwise the operator escalates to `reset_first`.
+        2. Operator runs `coordination-maintenance pause --operation replay --scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7` and captures the returned `maintenanceLockToken` as `<token>`.
+        3. Operator runs `coordination-maintenance reconcile-ledger --scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7 --maintenance-lock-token <token>`.
+        4. Operator runs `coordination-maintenance converge-commands --scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7 --maintenance-lock-token <token>` unless command-status inspection proves there is no affected non-terminal command work.
+        5. The replay controller converges lingering epoch-13 `SCHEDULED` rows to `APPLIED` or `ABANDONED` without bumping `region_epoch`, and command records converge to the canonical terminal vocabulary.
+        6. If pending age and stalled signals recover within one emitted budget window, the region stays on epoch `13`; otherwise the operator escalates to `reset_first` and releases the lock through the failure path.
    2. If the chosen mode is `reset_first`:
       - Execute the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) for the same scope.
       - Keep only the incident-specific choices local to this runbook: scope selection, whether replay-first was exhausted first, whether gameplay sessions are preserved, and what evidence justified escalation.

@@ -15,6 +15,8 @@ Document conflict resolution order is defined in `design/architecture/system-arc
 
 - A **script work item** is the post-DSL output staged by Automation & Scripting (domain commands + metadata such as `scriptId`, `scriptPatchVersion`, and `scriptEventId`).
 - A **tick command** is a unit of work that has been accepted into an entity’s tick queue by Game Session and will be executed under tick locks and replay semantics.
+- Every gameplay command emitted from a script work item must carry the command-level discriminator `automationDispatchId`. It is distinct from Trigger Identity and `scriptEventId`: one handler may fan out into multiple commands, and each command must receive a deterministic dispatch identity (for example `<outboxWorkItemId>#<commandOrdinal>`).
+- `automationDispatchId` is the single scripting command discriminator used for handoff deduplication, execution-fence reporting, and effect identity. `scriptEventId` alone must never identify a fan-out command.
 
 Audit and outcomes must distinguish between:
 
@@ -30,7 +32,7 @@ To make script patch rollback meaningful:
 - Every script work item and tick command must carry the effective `scriptPatchVersion` used to produce it.
 - On execution, Game Session must enforce a **version fence**:
   - If a command’s `scriptPatchVersion` does not match the game instance’s currently pinned `scriptPatchVersion`, Game Session must not execute it.
-  - Rejection must be recorded with enough identifiers (`tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `scriptEventId`, `scriptPatchVersion`) for operators to diagnose why work was dropped.
+  - Rejection must be recorded with enough identifiers (`tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `scriptEventId`, `automationDispatchId`, `scriptPatchVersion`) for operators to diagnose exactly which fan-out command was dropped.
   - Rejected entries must be removed or moved to a bounded dead-letter store with explicit `maxAge`/`maxRows` and alert-backed cleanup cadence.
 - Operational rollback must include a drain/purge step for any queued automation work items and staging entries that cannot satisfy the version fence.
 
@@ -91,7 +93,7 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
 - Script work items and tick commands produced by plugins must carry `pluginId` and `pluginVersionId` in addition to `scriptPatchVersion`.
   - On execution, Game Session must enforce a **plugin version fence** analogous to the script patch fence:
   - If a command’s embedded `pluginVersionId` does not match the instance’s currently active plugin version for that `pluginId`, Game Session must not execute it.
-    - Rejection must be recorded with enough identifiers for diagnosis, and the rejected queue entry must be removed or moved to a bounded dead-letter store with explicit `maxAge`/`maxRows` and alert-backed cleanup cadence.
+    - Rejection must be recorded with `automationDispatchId` plus the applicable Trigger Identity, plugin, patch, target, and region fields for diagnosis, and the rejected queue entry must be removed or moved to a bounded dead-letter store with explicit `maxAge`/`maxRows` and alert-backed cleanup cadence.
 
 ### 9) Rollback Convergence Timeout Contract
 

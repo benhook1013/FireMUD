@@ -67,7 +67,7 @@ The tick heartbeat is the **canonical timeline** for each `<tenantId, gameInstan
   - A heartbeat `(regionEpoch, tickId)` is emitted only after the tick is considered committed for that region (as defined by the staging/commit model and the tick effect ledger), not merely after a tick begins or stages work.
   - Consumers must treat the heartbeat as the authoritative “last committed tick” watermark and must not infer commit from Redis `pending` keys or from observer event streams.
 - Consumers must be able to reconstruct their view of progress and scheduling purely from the heartbeat stream plus durable domain state; no Redis structure is treated as an authoritative log of past ticks.
-- Consumers that persist offsets or schedules must key them by `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` and treat any observed jump in `regionEpoch` as a reset boundary: state derived from the old epoch is discarded or reconciled from PostgreSQL before resuming.
+- Consumer checkpoint and offset state is keyed by `(tenantId, gameInstanceId, regionId, regionEpoch)`, not by `tickId`; the stored values include the latest committed `tickId` and the last processed stream offset. Durable schedule identity remains separately due-point-aware. Any observed jump in `regionEpoch` is a reset boundary: state derived from the old epoch is discarded or reconciled from PostgreSQL before resuming.
 
 ### Tick Commit Definition (Heartbeat Watermark)
 
@@ -103,7 +103,7 @@ In addition to the gRPC heartbeat, the Game Session Service exposes a **tick eve
   - The `activeVersionId` pinned for that tick.
 - Consumers (for example, schedulers or reconnection logic) typically:
   - Acquire a small lease such as `tick-events-lease:{tenantRegionTag}` to avoid duplicate processing.
-  - Persist their last-processed stream offset (for example a Redis Stream entry ID) in **Coordination Redis** under a region-scoped key such as `tick-events-offset:{tenantRegionTag}` so they can resume from the last observed stream entry when offsets/history are available. If the offset is missing or the stream has been truncated/reset, consumers bootstrap from the canonical heartbeat/RegionStatus instead of assuming the stream is a complete history.
+  - Persist the checkpoint value `{latestTickId, streamOffset}` in **Coordination Redis** under a region-scoped key such as `tick-events-offset:{tenantRegionTag}`. Its logical scope is `(tenantId, gameInstanceId, regionId, regionEpoch)`, so consumers can resume from the last observed stream entry when offsets/history are available. If the offset is missing or the stream has been truncated/reset, consumers bootstrap from the canonical heartbeat/RegionStatus instead of assuming the stream is a complete history.
 - The event stream is a **best-effort coordination structure**, not a durable log of record:
   - It is implemented on Coordination Redis under a region-scoped prefix such as `tick-events:{tenantRegionTag}`.
   - Production-like profiles that persist offsets use **Redis Streams** for this prefix so consumers can resume from an offset; pub/sub is reserved for fire-and-forget observers that never track offsets or history.
@@ -121,9 +121,9 @@ Durable automation schedules, quotas, and trigger-instance de-duplication live i
 Automation & Scripting Service instances typically:
 
 - Establish long-lived gRPC streams to `StreamTickHeartbeats` for the tenants/regions they own.
-- Maintain per-region scheduler state in Redis (for example `script-scheduler:{tenantRegionTag}:lastTickId`) only as a checkpoint/hint.
+- Maintain per-region scheduler state in Redis (for example `script-scheduler:{tenantRegionTag}:lastTickId`) only as a checkpoint/hint. The logical checkpoint key is `(tenantId, gameInstanceId, regionId, regionEpoch)` and its value stores `latestTickId` plus `streamOffset`; `tickId` and offsets are never key dimensions.
 - Claim or insert a durable PostgreSQL trigger-instance/outbox row keyed by an **instance-aware** uniqueness projection before enqueueing any `onInterval` or other tick-derived trigger so duplicate heartbeat consumers or failover cannot create duplicate logical gameplay actions.
-  - At minimum this uniqueness projection includes `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, the stable schedule identity, the due point (`dueTickId` or absolute `dueAt`), and `triggerKind`; a globally unique `scheduleId` does not replace runtime scope or timeline fencing.
+  - At minimum this uniqueness projection includes `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `scriptPatchVersion`, `isDryRun`, `scheduleDefinitionId`, the due point (`dueTickId` or absolute `dueAt`), and `triggerKind`; a globally unique `scheduleId` does not replace runtime scope, version, dry-run namespace, or timeline fencing.
 
 ### Bootstrap vs Stream (Authoritative Timeline Source)
 
@@ -147,7 +147,8 @@ For any consumer or operator that needs to locate “where a region is” on the
 
     ```json
     {
-      "tenantId": "tenant-demo",
+      "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+      "gameInstanceId": "9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78",
       "regionId": "room:starter-village",
       "regionEpoch": 14,
       "lastCommittedTickId": 9284,
@@ -354,7 +355,7 @@ Isolation and replay guarantees rely on:
 - A shared coordination timeline `(region_epoch, tickId)` per `<tenantId, gameInstanceId, regionId>` as described in the Redis architecture docs.
 - Domain-level idempotency rules keyed by `(region_epoch, tickId)` and effect identifiers.
 
-Crash recovery replays staged ticks safely by re-invoking domain handlers; replays must not double-apply logical effects. Even when Redis loses or replays up to a few ticks within the tail-loss envelope, the combination of the coordination timeline, the tick effect ledger, and per-service idempotency guards ensures that each `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey)` converges to a single terminal outcome (`APPLIED` or `ABANDONED`). See `system-architecture-tick-failures-and-operations.md` for the detailed story.
+Crash recovery replays staged ticks safely by re-invoking domain handlers; replays must not double-apply logical effects. Even when Redis loses or replays up to a few ticks within the tail-loss envelope, the combination of the coordination timeline, the tick effect ledger, and per-service idempotency guards ensures that each `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)` converges to a single terminal outcome (`APPLIED` or `ABANDONED`). See `system-architecture-tick-failures-and-operations.md` for the detailed story.
 
 ---
 
@@ -375,12 +376,13 @@ Tick-region timers and retry queues are **volatile coordination structures**, no
 Automation & Scripting uses the tick heartbeat plus durable PostgreSQL schedules to implement “every N ticks” and similar timers:
 
 - For each scheduled script or automation job, PostgreSQL stores at least:
-  - `(tenantId, gameInstanceId, regionId, region_epoch, scriptId, next_due_tickId)` and the interval in ticks.
+  - `(tenantId, gameInstanceId, regionId, region_epoch, scriptId, scriptPatchVersion, isDryRun, scheduleDefinitionId, dueTickId or dueAt)` and the interval in ticks.
 - Before enqueueing any trigger derived from a due boundary, the scheduler must first claim or insert a durable trigger-instance row keyed by an **instance-aware** uniqueness projection. Duplicate schedulers that race on the same heartbeat boundary must observe the same durable row and must not enqueue a second logical trigger.
-  - The uniqueness projection must include `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, stable schedule identity, the due point, and `triggerKind` even when `scheduleId` is globally unique.
+  - The uniqueness projection must include `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `scriptPatchVersion`, `isDryRun`, `scheduleDefinitionId`, the persisted due point, and `triggerKind` even when `scheduleId` is globally unique.
 - On startup or after a reset:
-  - The scheduler fetches current `(region_epoch, tickId)` for each `<tenantId, gameInstanceId, regionId>` from `GetRegionTickStatus` and the corresponding `next_due_tickId` from PostgreSQL.
-  - If `next_due_tickId <= currentTickId`, the scheduler may fire at most one **catch-up trigger** per script (for example “you missed one interval while down”) and then advances `next_due_tickId` by whole intervals until it is strictly greater than `currentTickId`.
+  - The scheduler fetches current `(region_epoch, tickId)` for each `<tenantId, gameInstanceId, regionId>` from `GetRegionTickStatus` and the corresponding durable due point from PostgreSQL.
+  - If a persisted scheduler checkpoint has a different `regionEpoch` than the current status, the scheduler rejects it, records `checkpoint_region_epoch_mismatch` in scheduler audit, increments `automation_script_timer_runtime_fence_dropped_total{scope, script_category, eventType, reason="checkpoint_region_epoch_mismatch"}`, discards the stale checkpoint and stream offset, and rebuilds the checkpoint from authoritative current-epoch status before reconciling durable due points under the bounded catch-up policy.
+  - If the current-epoch due point is at or before `currentTickId`, the scheduler may fire at most one **catch-up trigger** per script (for example “you missed one interval while down”) and then advances the due point by whole intervals until it is strictly greater than `currentTickId`.
   - Very old missed intervals are not replayed one-by-one; the system guarantees that **future intervals fire correctly** and, at most, a bounded catch-up occurs after downtime.
 - After recovery, the scheduler:
   - Tracks progression purely from the heartbeat stream and updates `next_due_tickId` in PostgreSQL as intervals elapse.
@@ -408,14 +410,14 @@ See `system-architecture-tick-failures-and-operations.md` for the full crash-rec
 Domain services must ensure that tick-driven effects are **idempotent** with respect to the region-scoped tick timeline `(regionEpoch, tickId)`:
 
 - Single-aggregate updates use a “last applied tick” pattern that is epoch-aware (for example storing and comparing `(last_region_epoch, last_tick_id)` for the aggregate).
-- Multi-aggregate operations use effect guard tables keyed by the same epoch-scoped identity (for example `(tenantId, gameInstanceId, regionId, regionEpoch, tickId, effectKey)`).
+- Multi-aggregate operations use effect guard tables keyed by the same epoch-scoped identity (for example `(tenantId, gameInstanceId, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)`).
 
 ### Tick Effect Identity and Idempotency Contract
 
 Effect identity and idempotency rules are defined jointly by:
 
 - The `(regionEpoch, tickId)` carried on tick-driven calls.
-- A stable, structured effect identity derived deterministically from the command payload and tick context, including at minimum `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`, aggregate type, and aggregate id.
+- A stable, structured effect identity derived deterministically from the command payload and tick context, including at minimum `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`, `targetAggregateType`, and `targetAggregateId`. For script-generated commands, `effectKey` must incorporate the command-level `automationDispatchId`; `scriptEventId` alone cannot distinguish fan-out commands.
 
 Together these form the canonical `EffectId` described in `system-architecture-transactions.md`. Tick coordination keys in Redis, tick effect ledger rows, and domain-level guard tables (for example `tick_effect_guard`) must all use projections of this same `EffectId` rather than introducing ad-hoc idempotency keys.
 

@@ -20,8 +20,8 @@ Bulk JSON import/export remains deferred. Current creator workflows use service-
 
 Concrete realm-swap example:
 
-- Production realm admission resolves `{ versionId: "22222222-2222-4222-8222-222222222222", scriptPatchVersion: "v42-script.1", manifestUrl: ".../tenant123/v42/manifest.json" }`, so the client keeps the live `v42` theme.
-- A tester then switches to `playtest-docks`, and `PLAY` resolves `{ versionId: "33333333-3333-4333-8333-333333333333", scriptPatchVersion: "v43-script.2", manifestUrl: ".../tenant123/v43/manifest.json" }`.
+- Production realm admission resolves `{ versionId: "22222222-2222-4222-8222-222222222222", scriptPatchVersion: "v42-script.1", manifestUrl: ".../tenant123/22222222-2222-4222-8222-222222222222/manifest.json" }`, so the client keeps the live `v42` theme.
+- A tester then switches to `playtest-docks`, and `PLAY` resolves `{ versionId: "33333333-3333-4333-8333-333333333333", scriptPatchVersion: "v43-script.2", manifestUrl: ".../tenant123/33333333-3333-4333-8333-333333333333/manifest.json" }`.
 - The client must treat the changed bundle identity as a hard theme boundary: load the `v43` manifest, swap logos/theme overrides, and render the fork with the `v43` look without mutating the production realm's active theme state.
 - If the player returns to production, the next `PLAY` or reconnect resume re-resolves the production bundle and the client switches back to `v42`.
 

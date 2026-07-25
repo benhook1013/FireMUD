@@ -52,7 +52,7 @@ Queue and quota behavior must be observable either through the canonical `cache.
 
 When diagnosing sandbox-related or automation-runtime issues in production, operators should:
 
-- Check `script_event_audit` records for `finalStage`, `finalOutcome`, `finalReason`, and associated scope fields such as `tenantId`, `scriptId`, `gameInstanceId`, `regionId`, `regionEpoch`, and `tickId`.
+- Check `script_event_audit` records for `finalStage`, `finalOutcome`, `finalReason`, and associated scope fields such as `tenantId`, `scriptId`, `gameInstanceId`, `regionId`, `regionEpoch`, `tickId`, resolved `playableStateScope` (`shared` or `isolated`), and `sourceService` when present. For emitted commands, inspect the supplementary command-handoff records for the rendered command text/shape, `automationDispatchId`, Game Session command id, and handoff outcome/reason so shared-state and isolated-state work can be distinguished without treating one handler audit row as one command.
 - Inspect sandbox and runtime metrics such as `automation_script_sandbox_failures_total`, `automation_script_runtime_seconds`, and queue delay metrics.
 - Verify patch and pin convergence using `GetScriptPatchStatus`, `GetScriptPatchInstanceRolloutStatus`, and `GetAutomationPinConvergence`.
 - Verify plugin policy/runtime convergence using `GetPluginStatus`, `ListPluginRuntimeEvents`, and `GetPluginPolicyConvergence` together with the design-time publication reads from Game Design.

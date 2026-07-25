@@ -426,7 +426,7 @@ This model avoids single-node bottlenecks for ticks or session handling; see [Ti
 
 ### Session Sharding & Routing
 
-Game Session Service instances are deployed as a **pool of identical workers**. Ownership of tick work and live gameplay session execution is partitioned by `<tenantId, gameInstanceId, regionId>` using Coordination Redis leases as described in [Tick System and Runtime Design](./system-architecture-ticks.md).
+Game Session Service instances are deployed as a **pool of identical workers**. Ownership of region-scoped tick/gameplay execution is partitioned by `<tenantId, gameInstanceId, regionId>` using Coordination Redis leases as described in [Tick System and Runtime Design](./system-architecture-ticks.md). Connected gameplay sessions remain attached to stable session front-ends rather than being partitioned by region ownership.
 
 Per `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`, shard/lease ownership remains internal to the Game Session layer: the edge does not implement lease-aware admission or a client-visible shard handoff signal. `/ws/game/**` is routed to a stable Game Session service surface and relies on the Game Session coordination model to respect tick ownership invariants.
 
@@ -650,7 +650,7 @@ Multi-tenant isolation is enforced both at the data layer and at specific enforc
 
 - **Entitlements and quotas source of truth** – Subscription entitlements and plan-driven quota values are owned by the Account Service (for example via `GetTenantEntitlements(tenantId)`). Operator overrides are surfaced and audited in Logging & Admin and represented as an overlay merged into the Account entitlement contract so enforcement points consume one canonical view.
 - **Gateway enforcement (edge-safety)** – Spring Cloud Gateway enforces per-IP and per-connection request/handshake limits for HTTP and WebSocket traffic using Cache/Rate-Limit Redis and shared rate-limit helpers. For gameplay WebSockets, Gateway does not attempt to infer tenant identity from post-login traffic; tenant-aware limits are enforced by Game Session after `LOGIN` binds the session.
-- **Game Session enforcement** – Game Session Service enforces scoped caps on active gameplay sessions and tick-region load, rejecting or deferring new logins when quotas are exceeded for a tenant, game instance, or region.
+- **Game Session enforcement** – Game Session Service enforces scoped caps on active gameplay sessions and tick-region load; tick-region load is keyed by `<tenantId, gameInstanceId, regionId>`, and new logins are rejected or deferred when the relevant session or region cap is exceeded.
 - **Downstream services** – Where additional quotas are needed (for example, chat message volume in Social & Groups), services reuse the same quota configuration and Cache/Rate-Limit Redis helpers rather than introducing ad hoc mechanisms.
 
 ## Related Documentation
