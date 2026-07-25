@@ -193,13 +193,13 @@ These are application-level launch-preflight outcomes, not transport failures. R
 Illustrative control-plane schema:
 
 - Request: `ResolveLaunchDescriptorRequest { tenantId, gameTemplateId, controlPlaneRequestId, requestedRuntimeFlags?, requestedScriptPatchVersion?, sourceVersionId?, targetVersionId? }`
-- Response: `ResolveLaunchDescriptorResponse { launchDescriptorId, tenantId, gameTemplateId, versionId, scriptPatchVersion, runtimeFlags, generationConfigRevision, versionStateEpoch, remapSetId?, releaseBundleRef }`
+- Response: `ResolveLaunchDescriptorResponse { launchDescriptorId, tenantId, gameTemplateId, versionId, scriptPatchVersion, runtimeFlags, generationConfigRevision, versionStateEpoch, remapSetId?, publishedReleaseBundleRef }`
 
 The exact transport schema may evolve, but every implementation must preserve the same contract shape:
 
 - request fields identify the template, the launch attempt identity, and any caller-supplied runtime overrides that are allowed to participate in deterministic resolution;
 - response fields are the immutable resolved values consumed by launch-time workflows;
-- `releaseBundleRef` (or equivalent attestation identity) must let downstream workflows prove they are using the same published release attestation that supplied `generationConfigRevision`. It is an opaque identity, such as a UUID; callers must not parse it as a tenant, version, or human-readable release alias. The UUID-like values below are illustrative opaque references for the immutable records returned by `GetPublishedReleaseBundle(tenantId, versionId)`.
+- `publishedReleaseBundleRef` is the exact attestation identity emitted by the current implementation in the form `prb:<tenantId>:<versionId>:<bundleId>`. Downstream workflows must compare the exact reference and verify it against `GetPublishedReleaseBundle(tenantId, versionId)` together with the attested `generationConfigRevision`; callers must not treat it as a raw UUID or invent a different release alias.
 - A request with the same `(tenantId, gameTemplateId, controlPlaneRequestId)` and the same input fields must return the same descriptor values; a request with a different `controlPlaneRequestId` is a new launch attempt and may resolve against newer valid state.
 - Idempotent retries that previously produced a deterministic business failure must return the same failure code and resolved context (where applicable) rather than re-evaluating against newer publish, patch, or template state.
 - If callers change any semantically relevant input field while reusing the same `controlPlaneRequestId`, the request must fail deterministically as an idempotency-key misuse rather than silently creating a second descriptor record.
@@ -219,7 +219,7 @@ Normative examples:
     "launchDescriptorId": "ld-1001",
     "tenantId": "11111111-1111-4111-8111-111111111111",
     "gameTemplateId": "gt-default",
-    "versionId": "22222222-2222-4222-8222-222222222222",
+    "versionId": 42,
     "scriptPatchVersion": null,
     "runtimeFlags": {
       "pvpEnabled": false
@@ -227,7 +227,7 @@ Normative examples:
     "generationConfigRevision": "genrev-42a1",
     "versionStateEpoch": 17,
     "remapSetId": null,
-    "releaseBundleRef": "9b2f2c86-1f8c-4da7-b5e0-7ce2bfef0a41"
+    "publishedReleaseBundleRef": "prb:11111111-1111-4111-8111-111111111111:42:7"
   }
 }
 ```
@@ -240,14 +240,14 @@ Normative examples:
     "tenantId": "11111111-1111-4111-8111-111111111111",
     "gameTemplateId": "gt-default",
     "controlPlaneRequestId": "ld-req-2001",
-    "sourceVersionId": "22222222-2222-4222-8222-222222222222",
-    "targetVersionId": "33333333-3333-4333-8333-333333333333"
+    "sourceVersionId": 42,
+    "targetVersionId": 43
   },
   "response": {
     "launchDescriptorId": "ld-2001",
     "tenantId": "11111111-1111-4111-8111-111111111111",
     "gameTemplateId": "gt-default",
-    "versionId": "33333333-3333-4333-8333-333333333333",
+    "versionId": 43,
     "scriptPatchVersion": "v43-script.1",
     "runtimeFlags": {
       "pvpEnabled": false
@@ -255,7 +255,7 @@ Normative examples:
     "generationConfigRevision": "genrev-43b7",
     "versionStateEpoch": 3,
     "remapSetId": "remap-v42-v43-r1",
-    "releaseBundleRef": "4d6e9e7a-2e0f-4b1f-9c0a-31c5a8d2e6f4"
+    "publishedReleaseBundleRef": "prb:11111111-1111-4111-8111-111111111111:43:8"
   }
 }
 ```
@@ -271,7 +271,7 @@ Normative examples:
   },
   "error": {
     "code": "INVALID_TEMPLATE_CONFIGURATION",
-    "message": "Template references multiple base versionIds (world=22222222-2222-4222-8222-222222222222, entity=33333333-3333-4333-8333-333333333333); launchable templates must resolve to one canonical version."
+    "message": "Template references multiple base versionIds (world=42, entity=43); launchable templates must resolve to one canonical version."
   }
 }
 ```
@@ -287,18 +287,18 @@ Normative examples:
   },
   "resolvedDescriptor": {
     "launchDescriptorId": "ld-3001",
-    "versionId": "22222222-2222-4222-8222-222222222222",
+    "versionId": 42,
     "generationConfigRevision": "genrev-42a1",
-    "releaseBundleRef": "9b2f2c86-1f8c-4da7-b5e0-7ce2bfef0a41"
+    "publishedReleaseBundleRef": "prb:11111111-1111-4111-8111-111111111111:42:7"
   },
   "releaseBundle": {
     "tenantId": "11111111-1111-4111-8111-111111111111",
-    "versionId": "22222222-2222-4222-8222-222222222222",
+    "versionId": 42,
     "generationConfigRevision": "genrev-42b9"
   },
   "error": {
     "code": "RELEASE_ATTESTATION_MISMATCH",
-    "message": "Resolved launch descriptor does not match the current published release attestation for version 22222222-2222-4222-8222-222222222222."
+    "message": "Resolved launch descriptor does not match the current published release attestation for version 42."
   }
 }
 ```
@@ -308,8 +308,8 @@ This failure occurs before any persistent `gameInstanceId` row or World `PREPARI
 Illustrative startup sequence:
 
 1. The instance-creation orchestrator calls `GetTemplateReferencePhase(tenantId)` and fails fast unless the result is `ENFORCED`.
-2. The orchestrator calls `ResolveLaunchDescriptor(...)` for the selected `gameTemplateId` and receives immutable resolved values including `versionId`, `scriptPatchVersion`, `generationConfigRevision`, `versionStateEpoch`, and `releaseBundleRef`.
-3. The orchestrator verifies `releaseBundleRef` by reading `GetPublishedReleaseBundle(tenantId, versionId)` and confirms the attested `generationConfigRevision` matches the resolved descriptor.
+2. The orchestrator calls `ResolveLaunchDescriptor(...)` for the selected `gameTemplateId` and receives immutable resolved values including `versionId`, `scriptPatchVersion`, `generationConfigRevision`, `versionStateEpoch`, and `publishedReleaseBundleRef`.
+3. The orchestrator verifies `publishedReleaseBundleRef` by reading `GetPublishedReleaseBundle(tenantId, versionId)` and confirms the attested `generationConfigRevision` matches the resolved descriptor.
 4. World creation starts using only the resolved descriptor fields and persists instance rows under `(tenantId, gameInstanceId)` without re-reading mutable template defaults.
 5. Game Session opens admission only after World reports successful activation for that same resolved descriptor.
 

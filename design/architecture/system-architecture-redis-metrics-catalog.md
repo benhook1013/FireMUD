@@ -109,7 +109,7 @@ To keep monitoring systems stable:
 - Treat every `scope` or `scope_bucket` label in this catalog as a bounded bucket, never as a raw `tenantId`, `gameInstanceId`, or `regionId` value.
 - Use control-plane APIs and structured logs/audit records for exact tenant/game-instance/region diagnosis; do not recover exact scope by expanding metric label cardinality.
 
-Metric rollups are bounded operational summaries, not the authoritative per-region diagnostic view. Exact per-region status and identity come from control-plane reads and structured logs/audit records; a metric dashboard may correlate those records with bounded rollups but must not claim that a `scope` or `scope_bucket` series identifies one exact region.
+Metric rollups are bounded operational summaries, not the authoritative exact-scope diagnostic view. Exact tenant, game-instance, and region status and identity come from control-plane reads and structured logs/audit records; a metric dashboard may correlate those records with bounded rollups but must not claim that a `scope` or `scope_bucket` series identifies one exact runtime scope.
 
 ## AOF Profiles
 

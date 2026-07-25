@@ -53,6 +53,7 @@ Additional required fields for plugin triggers:
 | --- | --- | --- |
 | `pluginId` | Yes (plugin triggers) | Required to distinguish plugin-triggered runs from core scripts when the same `scriptId` model is reused. |
 | `pluginVersionId` | Yes (plugin triggers) | Required for rollback safety, audit correlation, and version-fence drops. |
+| `bindingId` | Yes (resolved plugin handlers) | Stable signed-bundle binding identity. Required after handler resolution so multiple handlers contributed by one plugin version cannot alias in dedupe, audit, quota, timer firing, or handoff state. |
 
 Additional required fields for scheduler/timer triggers:
 
@@ -195,7 +196,7 @@ Deprecated aliases:
 
 If Game Session rejects a queued command because its embedded `scriptPatchVersion` does not match the currently pinned patch (or a plugin-produced command does not match the currently active `pluginVersionId` for its `pluginId`), it must:
 
-- Record the drop on the affected command-handoff record with identifiers sufficient for diagnosis (including `automationDispatchId`, `outboxWorkItemId`, `scriptEventId`, `scriptId`, `scriptPatchVersion`, `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, and `entityId`).
+- Record the drop on the affected command-handoff record with identifiers sufficient for diagnosis (including `automationDispatchId`, `outboxWorkItemId`, `scriptEventId`, `scriptId`, `scriptPatchVersion`, `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, and `entityId`, plus `pluginId`, `pluginVersionId`, and `bindingId` for a plugin handler).
 - Remove the rejected queue entry (or move it to a bounded dead-letter store) so mismatched entries cannot accumulate unboundedly after a rollback.
 - Emit an operator-visible metric for version-fence drops:
   - `automation_tick_version_fence_dropped_total{scope, script_category, reason}` for script patch mismatches (for example `reason="script_patch_mismatch"`).
@@ -236,7 +237,7 @@ This formula advances to the first valid cadence boundary at or after resume wit
 ### Version-Owned Durable Schedule Migration (Normative)
 
 - `scheduleDefinitionId` is the stable logical identity used to decide whether old and new definitions represent the same schedule. It is not the durable row or trigger-claim identity.
-- A change to `scriptPatchVersion`, `playableStateScope`, or, for a plugin-owned schedule, `pluginId`/`pluginVersionId` is a schedule/runtime migration fence. Reconciliation must create or confirm the new owner/scope entry before retiring the old entry, as one atomic durable result or a resumable idempotent operation. The new entry may carry forward cadence only through the canonical resume formula; the old entry's owner fields and claim history are immutable.
+- A change to `scriptPatchVersion`, `playableStateScope`, or, for a plugin-owned schedule, `pluginId`/`pluginVersionId`/`bindingId` is a schedule/runtime migration fence. Reconciliation must create or confirm the new owner/scope entry before retiring the old entry, as one atomic durable result or a resumable idempotent operation. The new entry may carry forward cadence only through the canonical resume formula; the old entry's owner fields and claim history are immutable.
 - The new version/scope-owned entry must derive a new scheduler trigger claim and `scriptEventId`; a matching `scheduleDefinitionId`, due point, handler, or old `playableStateScope` must never be used to reuse a Trigger Identity across the migration.
 
 ## Table 4: Metrics Label Matrix
@@ -246,7 +247,7 @@ This table defines the authoritative metric-family catalog and label sets for sc
 General rules:
 
 - `scriptEventId` is forbidden as a metric label.
-- Raw `tenantId`, `scriptId`, `pluginId`, and `pluginVersionId` are not approved ordinary Prometheus labels in the canonical repo-wide metrics policy. When this table names those logical dimensions, producers must map them to bounded operator-facing scope/category labels unless a later design update records an explicit exception.
+- Raw `tenantId`, `scriptId`, `pluginId`, `pluginVersionId`, and `bindingId` are not approved ordinary Prometheus labels in the canonical repo-wide metrics policy. When this table names those logical dimensions, producers must map them to bounded operator-facing scope/category labels unless a later design update records an explicit exception.
 
 | Metric family | Required labels | Forbidden labels | Notes |
 | --- | --- | --- | --- |

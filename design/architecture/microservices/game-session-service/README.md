@@ -31,7 +31,7 @@ This doc set is the authoritative source for:
 - Broadcast lifecycle events and world updates to other services.
 - Support reconnection and recovery of running games.
 - Own the authoritative, pinned `scriptPatchVersion` for each running game instance and enforce version fencing for script-generated work.
-- Publish coordination and tick-health metrics per `<tenantId, gameInstanceId, regionId>` and expose control APIs that allow authorized services to pause/resume tick execution and participate in scoped coordination resets.
+- Publish coordination and tick-health metrics per `<tenantId, gameInstanceId, regionId>` and expose control APIs that allow authorized services to pause/resume tick execution and participate in scoped coordination resets. The shipped pause/resume path is currently instance-scoped at `{tenantId, gameInstanceId}`; the target-state `GetRegionTickStatus` and regional pause/status APIs remain the broader regional control surface and are not yet fully implemented.
 - Front gameplay login commands and session binding, calling Account Service to verify credentials and obtain JWTs/tokens while enforcing single-session control for each character.
 - Accept bootstrap-backed bare `LOGIN` for first-party `/ws/game/**` after Gateway connect-token validation and signed connect-context verification; this path is intentionally credentialless and must not prompt the browser to replay username/password/OTP.
 - Mint and attach short-lived internal `SessionAttestation` payloads on gameplay-service gRPC calls so downstream gameplay services can verify delegated player identity (`accountId`, `tenantId`, `gameInstanceId`, `characterId`, `sessionId`) plus destination service/method scope in addition to mTLS caller identity.

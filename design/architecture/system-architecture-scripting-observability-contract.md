@@ -52,7 +52,7 @@ Audit records must include at least:
   - `regionEpoch` (required for gameplay/runtime and scheduler triggers; exceptions must be explicitly documented in the normative Trigger Identity table)
   - `entityId` (for entity-scoped events)
   - `scriptId`
-  - `pluginId` and `pluginVersionId` (required for plugin triggers)
+  - `pluginId`, `pluginVersionId`, and `bindingId` (required for resolved plugin handlers)
   - `eventType`
   - `scriptPatchVersion`
   - `scriptEventId`

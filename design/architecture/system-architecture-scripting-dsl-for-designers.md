@@ -165,7 +165,7 @@ The platform performs **extensive validation** at design time and at publish tim
   - For **safe test runs**, use the dry-run or test execution tools exposed by the Game Design / Logging & Admin UIs, which call a non-committing test path in the Automation & Scripting Service. These runs exercise the same sandbox and validation logic but do not enqueue commands into tick queues; see the Automation & Scripting Service README for details. Test tools are **privileged** and subject to their own rate limits and budgets so they cannot overload the scripting cluster; avoid running unbounded batches of dry-runs against production tenants.
   - When working with support or operators, you can use `scriptEventId` as a “debug ticket” for a single trigger, but always pair it with the full identity scope used at runtime:
     - Always include `tenantId` and `gameInstanceId`.
-    - Include `scriptId` and `scriptPatchVersion` (and `pluginId` / `pluginVersionId` for plugin executions).
+    - Include `scriptId` and `scriptPatchVersion` (and `pluginId` / `pluginVersionId` / `bindingId` for resolved plugin handlers).
     - For gameplay/runtime triggers, include `regionId` and `regionEpoch` so the trigger is fenced across coordination resets.
     The Game Design and Logging & Admin audit/log views (for example `script_event_audit` queries and trace/log search) should support filtering by these fields so a single trigger can be followed end-to-end without ambiguity.
 

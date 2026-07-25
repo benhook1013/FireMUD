@@ -174,7 +174,7 @@ Tick execution never depends on external buses; external services consume the he
 
 ## Region Authority and Tick Executor
 
-For each `<tenantId, gameInstanceId, regionId>` there is exactly one active tick executor (Game Session Service worker) at any given time. It:
+Target-state region authority: for each `<tenantId, gameInstanceId, regionId>` there is exactly one active tick executor (Game Session Service worker) at any given time. It:
 
 - Owns tick queues, timers, and retries for that region.
 - Holds the region lease in Redis.
@@ -182,12 +182,14 @@ For each `<tenantId, gameInstanceId, regionId>` there is exactly one active tick
 
 Other workers may be running but do not process ticks for that region while the lease is held. See `system-architecture-tick-concepts-and-invariants.md` for the full authority and lease model.
 
+The current-live durable ownership boundary remains instance-scoped at `{tenantId, gameInstanceId}`. Its `RuntimeOwnershipStatus` row carries the selected runtime region fields and opaque `executorFence`, but it is not yet a separate durable ownership row for every region. The region-scoped lease and target-state `GetRegionTickStatus` model above must not be treated as replacing that live instance-scoped boundary until the target surfaces are shipped.
+
 Lease ownership is enforced through a two-part fence. The following is the current-live ownership contract; target-state status surfaces must not be read as though they replace these live semantics until their implementation is shipped:
 
 - Redis remains the fast-path lease and liveness mechanism.
 - PostgreSQL `RuntimeOwnershipStatus.executorFence` is the durable ownership fence for current-live tick-control writes:
-  - Every successful lease acquisition publishes a fresh opaque generation token for that `<tenantId, gameInstanceId, regionId>`; it does not increment a numeric fence.
-  - Every durable tick-control write (`tick_batch`, ledger transitions, `lastCommittedTickId`, and equivalent recovery/control rows) records the expected token and succeeds only when the stored token matches it exactly.
+  - Every successful current-live ownership acquisition publishes a fresh opaque generation token for the instance-scoped `{tenantId, gameInstanceId}` row; `regionId` and `regionEpoch` are attributes of the selected runtime region, not additional live row-key fields.
+  - Every durable tick-control write (`tick_batch`, ledger transitions, `lastCommittedTickId`, and equivalent recovery/control rows) records the expected token plus its region/timeline fields and succeeds only when the stored instance ownership token matches exactly.
   - Rows written under a different or missing fence are stale by definition and must not advance or continue tick execution.
 
 This durable fence is the canonical protection against stale executors that lost Redis lease ownership but still have in-flight SQL work.
@@ -197,7 +199,7 @@ Canonical ownership sequence:
 1. The executor acquires or renews the Redis region lease.
 2. On successful ownership acquisition, Game Session publishes one fresh opaque `RuntimeOwnershipStatus.executorFence` token for that ownership generation.
 3. The executor creates `tick_batch` rows and other durable tick-control state using that new `executorFence`.
-4. Any later durable write for the same region must compare-and-match the current `executorFence`; stale writers fail closed and do not advance commit state.
+4. Any later durable write under that live instance ownership generation must compare-and-match the current `executorFence` and its expected region/timeline fields; stale writers fail closed and do not advance commit state.
 
 ---
 

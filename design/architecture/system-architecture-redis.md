@@ -105,7 +105,7 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
     - Illustrative Redis hash contents:
 
       ```text
-      HGETALL tick:{tenant-demo:region:starter-village}:meta
+      HGETALL tick:{tenantRegionTag}:meta
       region_epoch               14
       current_tick_id            9285
       current_tick_state         RESOLVING
