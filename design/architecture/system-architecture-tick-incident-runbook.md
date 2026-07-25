@@ -250,8 +250,8 @@ All trace-specific guidance in this runbook is conditional on the environment ad
 ### Act (Stuck tick effect ledger entries)
 
 1. **Inspect ledger and domain state**
-   - Use SQL or service-level admin APIs to query `tick_effects` (or the equivalent ledger table) for the exact affected `<tenantId, gameInstanceId, playableStateScope, regionId, region_epoch>` scope; do not mix rows from another `playableStateScope` or `region_epoch`:
-     - Identify the oldest `SCHEDULED` entries and their associated `region_epoch`, `tickId`, and `effectKey`.
+   - Use SQL or service-level admin APIs to query `tick_effects` (or the equivalent ledger table) for the exact affected `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch>` scope; do not mix rows from another `playableStateScope` or `regionEpoch`:
+     - Identify the oldest `SCHEDULED` entries and their associated `regionEpoch`, `tickId`, and `effectKey`.
    - Compare `tick_effects_pending_oldest_age_seconds` with `tick_effects_replay_convergence_budget_seconds` to distinguish “brief replay delay” from “budget breach that requires active remediation”.
    - For a small sample, inspect domain state (for example entity HP, inventory, room state) to determine whether the effects have already been applied.
 2. **Classify outcomes**
@@ -267,14 +267,14 @@ All trace-specific guidance in this runbook is conditional on the environment ad
 3. **Apply targeted remediation**
    - For “applied but not marked” rows:
      - Do not update ledger rows directly to `APPLIED` from ad hoc SQL, a generic admin endpoint, or a one-off script.
-     - Run the service-owned verifier/reconcile path for the affected `EffectId` within the exact `<tenantId, gameInstanceId, playableStateScope, regionId, region_epoch>` scope so the owning domain can prove the effect is already reflected in authoritative state or in its durable replay guard, then let that path transition the ledger row to `APPLIED` with an audit/`tick_effect_outcome_total{outcome="replay_ok"}` record when the domain call is a replay no-op. Replay no-op is an attempt outcome, not a third ledger status. Do not reconcile the same effect identity across region epochs.
+     - Run the service-owned verifier/reconcile path for the affected `EffectId` within the exact `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch>` scope so the owning domain can prove the effect is already reflected in authoritative state or in its durable replay guard, then let that path transition the ledger row to `APPLIED` with an audit/`tick_effect_outcome_total{outcome="replay_ok"}` record when the domain call is a replay no-op. Replay no-op is an attempt outcome, not a third ledger status. Do not reconcile the same effect identity across region epochs.
      - If no verifier exists for that effect family, treat the row as not safely proven and choose re-run or `ABANDONED` remediation instead of inventing a manual `APPLIED` correction.
    - For genuinely stuck rows:
      - If it is safe to re-run the effects, enqueue follow-up commands or trigger replay using the same idempotent handlers that tick execution uses.
      - If effects are no longer valid, mark rows `ABANDONED` with precise reasons (for example `EXPIRED`, `INVALID_TARGET`, `REGION_RESET_SCOPED`) so they stop appearing as pending.
    - For replay-controller starvation:
      - Reduce per-region replay batch monopolization or other hot-region pressure first.
-     - If the region remains starved, run scoped replay-controller remediation for the affected `<tenantId,gameInstanceId,regionId,region_epoch>` before escalating to broader reset actions.
+     - If the region remains starved, run scoped replay-controller remediation for the affected `<tenantId,gameInstanceId,regionId,regionEpoch>` before escalating to broader reset actions.
 4. **Prevent recurrence**
    - Review Game Session and domain handlers to ensure:
      - Ledger status transitions happen atomically with domain commits where required.

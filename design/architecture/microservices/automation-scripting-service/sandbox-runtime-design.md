@@ -116,8 +116,8 @@ CPU and time limits are derived from three layers:
   - These hints produce a **per-run budget** so that high-priority scripts can consume more time per run than background scripts, while still respecting global caps.
 
 - **Automation tick configuration**
-  - `AUTOMATION_TICK_BUDGET_MS` defines the **soft budget** for automation work per tick window.
-  - The scheduler divides this budget across eligible scripts for that tenant, game instance, and region when deciding how many runs to start.
+  - `AUTOMATION_TICK_BUDGET_MS` defines the **aggregate soft execution budget** for all live automation runs admitted during one tick window for one runtime scope (`tenantId`, `gameInstanceId`, and `regionId` where applicable); it is not a separate allowance for each script.
+  - The scheduler subdivides that scope budget into per-run reservations across eligible scripts when deciding how many runs to start. The sum of reservations across all runtime scopes remains subject to the cluster-wide execution ceiling, so scope-level allocation cannot expand total container or cluster capacity.
 
 - **Cluster policies**
   - Cluster-level policies define absolute ceilings per container (for example, 100 ms per run, 500 ms per tick window) to protect overall latency and resource usage.

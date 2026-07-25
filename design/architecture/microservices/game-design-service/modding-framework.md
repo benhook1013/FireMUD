@@ -165,7 +165,7 @@ Plugins share the same **event and timer semantics** as core scripts:
 
 - All plugin triggers are at-most-once per full applicable Trigger Identity; the scheduler never re-runs the plugin’s DSL graph for the same trigger, even if downstream services retry idempotent operations. `scriptEventId` is one field of that identity, not the complete key.
 - Timer-based handlers such as `onInterval` and `onTimerExpire` are **best-effort**. Individual firings may be skipped or delayed when per-script quotas, per-tenant budgets, or cluster ceilings are reached, and skipped firings are not backfilled later. Subsequent firings still follow the configured cadence as capacity allows.
-- Plugin logic must therefore be designed to tolerate missed or delayed events (for example, by recomputing from current world state rather than assuming every interval has executed) and to keep effects idempotent with respect to Trigger Identity plus the region-scoped tick timeline (for example `scriptEventId` and `(regionEpoch, tickId)`), following the same rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`.
+- Plugin logic must therefore be designed to tolerate missed or delayed events (for example, by recomputing from current world state rather than assuming every interval has executed) and to keep each emitted command's effects idempotent with respect to the full Trigger Identity, the region-scoped tick timeline (for example `(regionEpoch, tickId)`), the per-command `automationDispatchId`, and the target aggregate identity. `scriptEventId` alone is insufficient for fan-out commands; follow the same rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`.
 
 These guarantees ensure that plugins do not rely on stronger delivery semantics than the underlying scripting engine provides and that their behavior remains predictable under load.
 
@@ -407,9 +407,9 @@ Plugin rollback/disable/revocation flows must also cancel pending outbox work fo
 
 Rollback/disable/revocation flows must also reconcile durable plugin-owned timers:
 
-- Any timer or interval owned by the displaced `pluginVersionId` must be removed or tombstoned before normal scheduling resumes for that plugin.
+- Any timer or interval owned by the displaced `pluginVersionId` must be reconciled by creating or confirming the replacement owner entry before retiring the displaced row, as one atomic durable result or a resumable idempotent operation. No normal scheduling resumes for the plugin until that reconciliation is complete.
 - Canceling queued work items alone is insufficient; otherwise an old plugin version could continue minting new timer-driven triggers after disablement or rollback.
-- If a newer plugin version preserves the same schedule, the scheduler may carry it forward only when the old and new definitions share the same stable `scheduleDefinitionId`; reconciliation must then explicitly rewrite ownership to the new `pluginVersionId`.
+- If a newer plugin version preserves the same schedule, the scheduler may carry it forward only when the old and new definitions share the same stable `scheduleDefinitionId`; reconciliation must create or confirm the new `pluginVersionId` entry before retiring the old entry and must explicitly rewrite ownership without reusing old trigger claims.
 
 The normative control-plane API shapes and required events for plugin management are defined in `design/architecture/system-architecture-scripting-control-plane-api.md` (for example `SetPluginActiveVersion`, `DisablePlugin`, and `DrainPlugin`).
 For operator verification during rollback, disablement, or signer revocation, use the same control-plane read surfaces that gate scripting convergence for the affected runtime scope, including plugin-state reads from `design/architecture/system-architecture-scripting-control-plane-api.md` and the scripting drain/convergence workflow reads delegated from `design/architecture/system-architecture-scripting-control-plane-operations.md`.

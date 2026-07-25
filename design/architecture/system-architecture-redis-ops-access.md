@@ -205,7 +205,7 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `coordination-maintenance resume`
     - accepts only the scope grammar above.
     - requires `--maintenance-lock-token <token>`.
-    - exits non-zero unless the scope currently satisfies the selected workflow's resume gate: reset workflows require reset completion, old-epoch ledger convergence, command convergence, and a passing smoke check; replay-first workflows require in-epoch ledger and command convergence without an epoch bump and a passing replay budget/status check.
+    - exits non-zero unless the scope currently satisfies the selected workflow's resume gate: reset workflows require reset completion, old-epoch ledger convergence, command convergence, a passing smoke check, and a completed `rebind-sessions` step whenever the effective session policy preserved gameplay sessions; replay-first workflows require in-epoch ledger and command convergence without an epoch bump and a passing replay budget/status check.
     - is the canonical success-path command that releases the deployment maintenance lock after the scope returns to `RUNNING`.
   - `coordination-maintenance release-lock`
     - requires `--maintenance-lock-token <token>`.
@@ -323,7 +323,7 @@ Jobs, wrappers, and dashboards may present this state differently, but they must
 | --- | --- |
 | Lease | A region lease for every sampled region in the scope can be acquired and renewed without stale-epoch or lock-conflict errors that persist beyond normal retry budget. |
 | Redis metadata baseline | `tick:{tenantRegionTag}:meta` exists or is created during the smoke run with the expected `region_epoch` and baseline `current_tick_id` for the sampled region. |
-| Batch allocation | The smoke tick allocates exactly one durable batch for the sampled `(tenantId, gameInstanceId, regionId, region_epoch, tickId)` and records the expected lease/fencing token. |
+| Batch allocation | The smoke tick allocates exactly one durable batch for the sampled `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` and records the expected lease/fencing token. |
 | Redis staging | The smoke tick stages at least one no-op or synthetic smoke-test effect into `pending`, and `pending` correlates back to the durable `tick_batch_id`. |
 | Ledger convergence | The staged smoke effect reaches a terminal ledger outcome (`APPLIED` or explicit smoke-test `ABANDONED`) without leaving `SCHEDULED` rows stranded. |
 | Cleanup | `pending` is cleared, per-region locks are released, and the region is no longer considered in-flight after the smoke tick completes. |
@@ -339,7 +339,7 @@ Direct `redis-cli` writes to coordination prefixes are reserved for **break-glas
 - Any break-glass write that mutates `tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:*`, or `tick-executor-lease:*` must be followed by a reset/cleanup scope that actually covers the mutated prefix before normal tick processing resumes:
   - For region-scoped families (`tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`), run a region- or tenant-scoped coordination reset as appropriate.
   - For instance-scoped `remote:{tenantInstanceTag}:*`, run a tenant-scoped reset so the tooling resolves every affected game instance and removes each instance pattern with an audit trail; do not use a region-only reset or invent a tenant-only pattern.
-  - For session prefixes, follow session reset policy (region resets preserve `session:game:*` and current `sessionctx:*` bootstrap/session-context keys by default; tenant resets always invalidate `session:auth:*` and preserve gameplay/session-context keys only when an explicit `--preserve-sessions` option is invoked; cluster resets invalidate both by default).
+  - For session prefixes, follow the canonical reset-policy matrix: region resets do not delete broad `session:auth:*` prefixes through a region-only scan, but preserved sessions must pass auth/revocation validation and receive any required re-authentication before `rebind-sessions`; tenant resets always invalidate `session:auth:*` and preserve gameplay/session-context keys only when an explicit `--preserve-sessions` option is invoked; cluster resets invalidate both by default.
 - Operators must treat such writes as equivalent to “coordination state may be inconsistent” and use the Coordination Reset Model to bring the region/tenant/cluster back to a known-good state, rather than leaving ad-hoc edits in place as a permanent fix.
 - Break-glass flows should go through a small wrapper (CLI or Logging & Admin action) that:
   - Executes the minimal required Redis mutation.

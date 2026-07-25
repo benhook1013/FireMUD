@@ -33,15 +33,15 @@ Entity Management implements tick idempotency using the per-aggregate last-tick 
   - compare `(last_region_epoch, last_tick_id)` from that exact row with `(currentRegionEpoch, currentTickId)` and treat `>=` as a replay/out-of-order no-op (or validation-only check); and
   - when the comparison is `<`, apply the change and update `(last_region_epoch, last_tick_id) = (currentRegionEpoch, currentTickId)` on that same composite-key row in the same transaction as the entity update.
 
-Complex multi-entity operations (for example trades that touch two inventories) use the operation-level effect guard pattern described in the same tick document, inserting the complete `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)` identity into a guard table before applying changes so replays of the same logical effect become safe no-ops instead of double-applications.
+Complex multi-entity operations (for example trades that touch two inventories) use the operation-level effect guard pattern described in the same tick document. They derive the complete target guard set from one EffectId, insert or verify every target guard in the same transaction before applying changes, and treat a conflict as completion only after the complete expected guard set and authoritative target state are present. A partial conflict must enter same-EffectId reconciliation or fail closed; it must not be treated as proof that the whole operation already applied.
 
 Examples:
 
 - **Damage application** – when a tick instructs Entity Management to apply damage to `entityId`, the handler:
-  - reads `entity_tick_state` for the complete `(tenantId, gameInstanceId, playableStateScope, regionId, targetAggregateType, entityId)` key;
-  - skips the update if `(last_region_epoch, last_tick_id) >= (currentRegionEpoch, currentTickId)` (replay/out-of-order), or applies the HP change and updates that same composite-key row with `(last_region_epoch, last_tick_id) = (currentRegionEpoch, currentTickId)` in the same transaction if the comparison is `<`.
+  - derives the operation-level EffectId, including the stable `effectKey` and target aggregate identity, and inserts/verifies the corresponding `tick_effect_guard` row in the same transaction as the HP mutation;
+  - treats a guard conflict as a replay only after verifying the complete effect and target state, and otherwise reconciles or fails closed with the original EffectId. Damage does not assume an at-most-one-damage-per-aggregate-per-tick invariant, so the per-aggregate `entity_tick_state` watermark is not sufficient for this path.
 
 - **Trade between two entities** – when a tick performs a trade between `fromEntityId` and `toEntityId`:
   - the handler computes a deterministic `effectKey` such as `trade:<fromEntityId>:<toEntityId>:<itemId>`;
-  - it inserts one complete `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType=INVENTORY, targetAggregateId)` guard row for each affected inventory aggregate before moving items between inventories; and
-  - on primary-key conflict, the trade is treated as an already-applied effect for that tick and becomes a no-op.
+  - it inserts one complete `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType=INVENTORY, targetAggregateId)` guard row for each affected inventory aggregate before moving items between inventories; and
+  - on any primary-key conflict, it verifies that guard rows for both affected inventories and the corresponding inventory state are complete and consistent; only then is the trade an already-applied no-op. A partial guard set is reconciled with the original EffectId rather than accepted as completion.

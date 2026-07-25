@@ -28,7 +28,7 @@ Event-scope ingress decisions and handler-scoped execution outcomes are separate
 A resolved handler may emit zero, one, or many gameplay commands. `script_event_audit` remains one handler-scoped row per Trigger Identity and must not contain a single command dispatch field or a single post-handoff outcome for the whole Trigger Identity.
 
 - Persist or return one command-handoff record for each attempted emitted command.
-- Each record is keyed by its command-level `automationDispatchId` and includes the parent `outboxWorkItemId`, the parent Trigger Identity, handoff outcome/reason, and any later gameplay execution outcome/reason.
+- Each record is keyed by the command-level handoff identity `<tenantId, gameInstanceId, regionId, regionEpoch, automationDispatchId>` and includes `playableStateScope` when applicable, the parent `outboxWorkItemId`, the complete parent Trigger Identity (including `scriptEventId`), handoff outcome/reason, and any later gameplay execution outcome/reason. A child record must retain these fields rather than relying on an implicit join to the handler row for scope identity.
 - `ListScriptHandoffEvents` is the canonical query surface for these records. A query that combines handler and command data must expose a collection such as `commandHandoffDispositions[]`; it must not collapse sibling commands into one dispatch ID or one disposition on the handler audit row.
 - A version-fence drop on one command updates only that command-handoff record. It must not overwrite the handler audit row or the dispositions of sibling commands.
 
@@ -190,6 +190,11 @@ Illustrative record shape:
   ],
   "commandHandoffDispositions": [
     {
+      "tenantId": "11111111-1111-4111-8111-111111111111",
+      "gameInstanceId": "44444444-4444-4444-8444-444444444444",
+      "regionId": "R2",
+      "regionEpoch": 14,
+      "scriptEventId": "evt-7f4c",
       "automationDispatchId": "work-9#0",
       "outboxWorkItemId": "work-9",
       "playableStateScope": "isolated",
@@ -199,6 +204,11 @@ Illustrative record shape:
       "recordedAt": "2026-03-19T08:10:02Z"
     },
     {
+      "tenantId": "11111111-1111-4111-8111-111111111111",
+      "gameInstanceId": "44444444-4444-4444-8444-444444444444",
+      "regionId": "R2",
+      "regionEpoch": 14,
+      "scriptEventId": "evt-7f4c",
       "automationDispatchId": "work-9#1",
       "outboxWorkItemId": "work-9",
       "playableStateScope": "isolated",

@@ -95,7 +95,7 @@ Notes:
 
 - If an implementation wants to treat some gameplay lifecycle events as “not tick-aligned”, it must define that exception explicitly in this table (not only in prose docs) and document why it is safe across scoped coordination resets. The default contract is that gameplay lifecycle triggers are fenced by `regionEpoch`.
 - Dry-run/test ingress must use a namespace separate from live ingress (`isDryRun=true`) regardless of whether `scriptEventId` is caller-generated or server-generated.
-- Downstream service calls made from scripts must propagate an idempotency token derived from the full applicable Trigger Identity plus tick context when applicable (for example `tickId`), following `design/architecture/system-architecture-transactions.md`; `scriptEventId` alone is insufficient.
+- Downstream service calls made from scripts must propagate a per-command idempotency token derived from the full applicable Trigger Identity plus tick context when applicable (for example `tickId`), the emitted command's `automationDispatchId` (or an equivalent command-level identity), and the target aggregate type and ID, following `design/architecture/system-architecture-transactions.md`; `scriptEventId` alone is insufficient for fan-out.
 
 ## Table 1A: Event Ingress `scriptEventId` Ownership Matrix
 
