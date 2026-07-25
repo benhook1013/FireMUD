@@ -14,7 +14,7 @@ The following are canonical contracts across Telnet and WebSocket paths:
 
 ## Recommended Telnet Client Flows
 
-These flows describe how Telnet traffic is forwarded into the shared login/session pipeline; `LOGIN` / `LOGON` semantics and multi-client takeover behavior remain canonical in the [Authentication & Authorization](../../system-architecture-authentication.md) document.
+These flows describe how Telnet traffic is forwarded into the shared login/session pipeline; `LOGIN` / `LOGON` semantics and multi-client takeover behavior remain canonical in the [Authentication & Authorization](../../system-architecture-authentication.md) document. The target first public-production flow is `LOGIN` -> conditional `JOIN` -> `PLAY`; returning members skip `JOIN`. Current connect-token and text `PLAY` implementations may still create membership implicitly, which is recorded implementation drift and must converge to `JOIN_REQUIRED`, not treated as an alternate target flow.
 
 - **Target canonical player flow**
   - Connect to the TCP Proxy Service.
@@ -33,8 +33,8 @@ These flows describe how Telnet traffic is forwarded into the shared login/sessi
 Advanced Telnet tools may open more than one window or pane for the same account. The proxy forwards traffic for every TCP connection independently; visible behavior is governed by the Game Session Service’s one-session-per-character rules.
 
 - **Two Telnet windows**
-  - Window A connects, issues `LOGIN`, and enters gameplay with `PLAY`.
-  - Window B connects and issues `LOGIN` for the same character, then `PLAY`. Game Session treats this as a takeover: the old session is terminated, the new window becomes authoritative, and Window A is disconnected and stops receiving updates.
+  - Window A connects, issues `LOGIN`, takes the conditional `JOIN` step if it is first public-production entry, and enters gameplay with `PLAY`.
+  - Window B connects and issues `LOGIN` for the same character, takes `JOIN` only if it is not already a returning member, then issues `PLAY`. Game Session treats this as a takeover: the old session is terminated, the new window becomes authoritative, and Window A is disconnected and stops receiving updates.
   - If Window A reconnects and logs in again, it in turn takes over from Window B. There is no concurrent split control even though the proxy forwards traffic from both TCP connections.
 
 ## Data Flow

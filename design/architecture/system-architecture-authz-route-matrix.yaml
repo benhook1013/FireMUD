@@ -90,6 +90,8 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
     visibility_contract: membership_or_public_production_or_realm_access_grant
+    realm_grant_authority: account_owned_when_non_public
+    realm_grant_version: required_when_grant_gated
     required_live_checks: [realm_visibility, runtime_entitlements]
   - service: game-session-service
     route: CHARS
@@ -129,6 +131,7 @@ routes:
     canonical_target:
       membership: existing_caller_bound_membership_required
       membership_creation: play_never_creates_membership
+      missing_membership_error: JOIN_REQUIRED
     implementation_status:
       known_drift: connect_token_and_play_may_still_invoke_ensure_public_production_player_membership
   - service: spring-cloud-gateway
@@ -167,6 +170,8 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
     visibility_contract: membership_or_public_production_or_realm_access_grant
+    realm_grant_authority: account_owned_when_non_public
+    realm_grant_version: required_when_grant_gated
     required_live_checks: [realm_visibility, runtime_entitlements]
   - service: account-service
     route: GET /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters
@@ -389,6 +394,8 @@ routes:
     classification: internal_workload
     issued_token_profile: game-session-account-delegation
     issued_token_audience: account-service
+    # Route-level fields describe the issued response; caller-policy fields below
+    # describe the presented authority and remain conjunctive within the policy.
     caller_policies:
       - caller: game-session-service
         auth_path: exact_mtls_workload_plus_caller_specific_context

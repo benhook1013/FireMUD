@@ -19,9 +19,9 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Account-related email (verification, password reset, security alerts, subscription/billing notifications) | | | ✔ | | | | | | | | |
 | Operational and moderation notifications (alerts, moderation actions, admin digests) | | | | | | | | | ✔ | | |
 | Payment and subscriptions | | | ✔ | | | | | | | | |
-| Account-security bans (`account_security_ban`) policy + revocation authority | | | ✔ | | | | | | | | |
-| Gameplay-ban policy definition (`gameplay_ban`) | | | | | | | | | ✔ | | |
-| Chat mute/chat-ban policy definition (`chat_mute`, `chat_ban`) | | | | | | | | | ✔ | | |
+| Account-security ban policy (`account_security_ban`) and account authority-generation revocation | | | ✔ | | | | | | | | |
+| Gameplay-ban policy definition and audit (`gameplay_ban`) | | | | | | | | | ✔ | | |
+| Chat mute/chat-ban policy definition and audit (`chat_mute`, `chat_ban`) | | | | | | | | | ✔ | | |
 | Account security policy (password rules, lockout, MFA requirements) | | | ✔ | | | | | | | | |
 | Gameplay login command handling and session binding (Redis) | | | | ✔ | | | | | | | |
 | Login throttling, lockout, password reset, and email verification | | | ✔ | | | | | | | | |
@@ -72,8 +72,8 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Operator quota overrides, auditing, and dashboards (overlay on entitlements) | | | | | | | | | ✔ | | |
 | Enforcement of gameplay bans at login/command level | | | | ✔ | | | | | | | |
 | Enforcement of chat mutes/bans at message send time | | | | | | | | ✔ | | | |
-| Authoritative owner: gameplay-ban enforcement | | | | ✔ | | | | | | | |
-| Authoritative owner: chat mute/chat-ban enforcement | | | | | | | | ✔ | | | |
+| Authoritative owner: gameplay-ban enforcement (policy remains Logging & Admin-owned) | | | | ✔ | | | | | | | |
+| Authoritative owner: chat mute/chat-ban enforcement (policy remains Logging & Admin-owned) | | | | | | | | ✔ | | | |
 | Movement/location write contract orchestration (effect identity, order, and replay safety) | | ✔ | | ✔ | ✔ | ✔ | | | | | |
 | Instance termination orchestration (`PREPARING/ACTIVE/TERMINATING/TERMINATED`) and cross-service cleanup | | ✔ | | ✔ | ✔ | | | | ✔ | | |
 | Automated tick/coordination remediation (pause/resume/reset) | | | | ✔ | | | | | ✔ | | |
