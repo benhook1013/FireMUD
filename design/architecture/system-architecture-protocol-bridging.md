@@ -1,6 +1,6 @@
 # Protocol Bridging: WebSocket and Telnet (TCP)
 
-This document describes how FireMUD supports **both modern and traditional MUD clients** by bridging two distinct communication protocols: **WebSocket** and **raw TCP (Telnet)**. Both are routed into a unified backend session service for shared logic and scalability.
+This document describes how FireMUD supports **both modern and traditional MUD clients** by bridging two distinct communication protocols: **WebSocket** and **TCP/Telnet**. Both are routed into a unified backend session service for shared logic and scalability.
 
 This design is the **canonical specification** for gameplay command flows through the edge: it defines ordering and delivery guarantees, backpressure and slow-client behaviour, Telnet and WebSocket reconnection and buffering rules, and the Telnet disconnect reason taxonomy. Service-specific designs such as the TCP Proxy Service README describe implementation details and configuration but must remain consistent with the invariants in this document.
 
@@ -13,7 +13,7 @@ FireMUD enables real-time interaction through two types of client connections:
 | Client Type | Protocol | Entry Point |
 | --- | --- | --- |
 | Web-based clients | WebSocket | Spring Cloud Gateway (`/ws/game/**`) |
-| Traditional MUD clients | TCP (Telnet) | TCP Proxy Service (custom) |
+| Traditional MUD clients | TCP/Telnet | TCP Proxy Service (custom) |
 
 Despite their differences, both protocols are normalized into the same internal architecture using a **WebSocket-based session layer**.
 
@@ -45,8 +45,8 @@ Despite their differences, both protocols are normalized into the same internal 
 ## Telnet / TCP Client Flow (Legacy Clients)
 
 - Used by traditional MUD clients (e.g., MUDlet, TinTin++, GMud).
-- Clients connect using raw TCP (typically Telnet-compatible) and are handled by a dedicated **TCP Proxy Service**.
-- The TCP Proxy Service listens on port `2323` by default so Telnet clients can simply connect without additional configuration. This and the Spring Cloud Gateway WebSocket URL can be adjusted with the `TCP_PROXY_PORT` and `GATEWAY_WS_URL` environment variables described in the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md#environment-variables). `GATEWAY_WS_URL` should always be set explicitly by deployment config; local Compose smoke also sets it explicitly to the canonical in-stack target. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for general configuration guidance.
+- Clients connect using TCP/Telnet and are handled by a dedicated **TCP Proxy Service**.
+- For local development and explicitly private compatibility networks, the TCP Proxy Service listens on port `2323` by default. This plaintext/default port is not a public player-facing contract; public deployments must select one of the TLS modes below. The port and the Spring Cloud Gateway WebSocket URL can be adjusted with the `TCP_PROXY_PORT` and `GATEWAY_WS_URL` environment variables described in the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md#environment-variables). `GATEWAY_WS_URL` should always be set explicitly by deployment config; local Compose smoke also sets it explicitly to the canonical in-stack target. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for general configuration guidance.
 - Normal Telnet clients connect, optionally browse `WORLDS`, then issue `LOGIN` and `PLAY` before gameplay commands. Typed `SESSION` lines are no longer part of the Telnet contract. If smart-client attach hints return later, they should travel as hidden MCP metadata and remain advisory transport context only.
 
 ### Public Telnet TLS Modes
@@ -214,13 +214,13 @@ Shared and player-facing environments select exactly one public Telnet TLS mode 
 - **Edge termination with internal PROXY forwarding** – external clients connect to a dedicated TLS edge proxy (for example HAProxy), which forwards plaintext Telnet plus PROXY protocol to the internal-only `TCP_PROXY_PROXY_PROTOCOL_PORT` over an authenticated, cryptographically protected channel such as mTLS. That listener accepts traffic only from the network-restricted edge and is never exposed directly to the Internet; source restriction remains defense in depth rather than sender authentication.
 - **Direct TCP Proxy TLS termination** – external clients connect to `TCP_PROXY_PORT` with `TCP_PROXY_TLS_ENABLED=true`. This public listener terminates TLS itself and does not accept a PROXY header.
 
-The plaintext raw listener on `TCP_PROXY_PORT` remains valid only for local development and explicitly private compatibility networks. It is not a public player ingress. A deployment must not combine edge termination and direct TCP Proxy TLS on the same endpoint.
+The plaintext TCP/Telnet listener on `TCP_PROXY_PORT` remains valid only for local development and explicitly private compatibility networks. It is not a public player ingress. A deployment must not combine edge termination and direct TCP Proxy TLS on the same endpoint.
 
 When PROXY protocol is enabled, the TCP Proxy Service may derive the client IP from the PROXY header for security controls only after authenticating the edge-to-proxy channel with cryptographic protection such as mTLS; source restrictions alone are insufficient. Without that authenticated channel, it must use the direct TCP peer address for security controls and may retain the PROXY address only as untrusted advisory/observability metadata, never as authoritative `X-Proxy-Client-IP` or Account source context. Spring Cloud Gateway may derive `X-Client-IP` for Telnet sessions only from the authenticated proxy identity and trusted address input. When PROXY protocol is not in use (for example local dev or tightly controlled self-hosted deployments), `TCP_PROXY_MAX_CONNECTIONS_PER_IP` and other per-IP heuristics use the direct peer address and remain best-effort; they should be backed by higher-layer limits in Spring Cloud Gateway and the Game Session Service.
 
 ### Protocol handling and security
 
-- Accepts and parses line-based input from raw TCP clients; Telnet option negotiation is minimal and optional so plain TCP clients with ANSI color codes work without additional configuration.
+- Accepts and parses line-based input from TCP/Telnet clients; Telnet option negotiation is minimal and optional so compatible plain TCP clients with ANSI color codes work without additional configuration.
 - Sanitizes incoming data and allows only a safe subset of **Telnet protocol commands** as outlined in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls).
 - Runs alongside Spring Cloud Gateway in the network **DMZ** so no client ever reaches internal services directly. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design).
 - Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set; certificates are provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`. Plaintext Telnet is limited to local, automated-test, and explicitly private-network compatibility; player-facing deployments require TLS Telnet or the web client as defined in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls).
@@ -310,8 +310,8 @@ The exact Telnet configuration varies by environment, but recommended defaults a
 | Environment type | Public Telnet transport | Telnet edge proxy | Plaintext Telnet login policy |
 | --- | --- | --- | --- |
 | Local dev / CI | Plaintext to `TCP_PROXY_PORT` | Optional; often omitted | Allowed for protocol iteration; do not represent it as an account-factor-protected path. |
-| Hobby / self‑hosted (single operator) | Telnet-over-TLS through either edge termination plus restricted internal PROXY forwarding or direct TCP Proxy TLS; plaintext only on an explicitly private network | Required only when edge termination mode is selected | Public raw Telnet does not qualify as a supported player-facing deployment. |
-| Player-facing staging / production | Telnet-over-TLS through either edge termination plus restricted internal PROXY forwarding or direct TCP Proxy TLS | Required only when edge termination mode is selected | Select exactly one public TLS mode per endpoint; do not expose public plaintext, raw, or PROXY-protocol listeners. |
+| Hobby / self‑hosted (single operator) | Telnet-over-TLS through either edge termination plus restricted internal PROXY forwarding or direct TCP Proxy TLS; plaintext only on an explicitly private network | Required only when edge termination mode is selected | Public plaintext TCP/Telnet does not qualify as a supported player-facing deployment. |
+| Player-facing staging / production | Telnet-over-TLS through either edge termination plus restricted internal PROXY forwarding or direct TCP Proxy TLS | Required only when edge termination mode is selected | Select exactly one public TLS mode per endpoint; do not expose public plaintext TCP/Telnet or PROXY-protocol listeners. |
 
 These recommendations complement the detailed Telnet controls in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls) and the authentication flows in [Authentication & Authorization](./system-architecture-authentication.md). When in doubt, treat the Security Architecture and TCP Proxy Service design as canonical sources for Telnet hardening and update the bridge configuration here to match.
 

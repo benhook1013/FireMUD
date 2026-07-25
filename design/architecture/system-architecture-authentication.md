@@ -137,7 +137,7 @@ Any HTTP/gRPC route that depends on identity, roles, or tenant scoping must be p
 | `internal_workload` | Route-specific: no JWT or one exact private player-delegation profile | Exact mTLS workload identity and method caller allowlist; both constraints must pass | Route-specific | Internal routes do not inherit an end-user JWT requirement. `game-session-account-delegation` is accepted only for its named receiver with audience `account-service`. |
 | Cross-tenant (data-bearing) | One matching token record | Require `platformAdmin` | Yes when operation targets tenant-scoped data | Tenant parameters are allowed only because the caller holds `platformAdmin`; log/audit the target tenant |
 
-Protected routes that are absent from the route matrix are currently recorded as inventory drift/gap because source-stable OpenAPI/protobuf coverage and comparison validation are incomplete. They must not be converted into generated default-deny policy from the incomplete matrix. After that inventory gate passes, absent protected routes must fail CI and deployment policy checks, and runtime middleware must reject the unclassified protected route rather than approximating it as `tenant_regular` or another route class.
+Protected routes that are absent from the route matrix are currently recorded as inventory drift/gap because source-stable OpenAPI/protobuf coverage and comparison validation are incomplete. Runtime middleware must nevertheless reject every protected route whose classification is not deterministically known, immediately and independently of the inventory gate; it must not approximate the route as `tenant_regular` or another route class. Separately, CI and deployment policy checks must fail a validated candidate route that lacks matrix registration. The incomplete matrix must not be converted into generated policy, and its inventory failure must not weaken the runtime rejection.
 
 Billing-safe mutation membership contract (normative):
 
@@ -676,7 +676,7 @@ When adding a new public HTTP/gRPC route:
 - For all non-public routes, require `AuthTokenInterceptor` and the Tenant Authorization Contract described above.
 - For tenant-scoped routes that must remain reachable when a tenant is `suspended` or `canceled` for billing (for example, updating payment methods, viewing invoices, or tenant-scoped data export), explicitly mark them as **billing-safe control-plane routes** using a shared mechanism such as an annotation or route metadata flag (for example, `@BillingSafe`). Full account export remains `account_scoped` and must not be used as the suspended-tenant recovery export.
 - Log and audit cross-tenant operations, especially when initiated by roles such as `platformAdmin`, so misuse or misconfiguration is observable.
-- Register the route and its classification in [Authorization Route Matrix](./system-architecture-authz-route-matrix.md) so middleware and CI policy checks can enforce consistency; until the inventory gate passes, any missing registration remains an explicit drift/gap rather than generated default-deny policy.
+- Register the route and its classification in [Authorization Route Matrix](./system-architecture-authz-route-matrix.md). Runtime middleware rejects an unclassified protected route immediately; independently, CI and deployment policy checks fail a validated candidate route with missing registration. Neither check generates runtime policy from the incomplete matrix.
 
 ## Session Lifecycle and Rebinding
 

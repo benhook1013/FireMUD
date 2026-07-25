@@ -14,7 +14,8 @@ Use this guide for pull-request status, review handling, CI, Renovate, merging, 
 ## Change And Merge Policy
 
 - Keep PRs coherent, normally one medium-sized slice of roughly 800-2,000 changed lines including adjacent convergence. Use smaller PRs for isolated fixes; split only independent or genuinely hard-to-review work.
-- Before requesting CodeRabbit, keep the reviewer-selected file count comfortably below the active plan ceiling rather than targeting the exact limit. Split a coherent child or narrow the review boundary before spending a review invocation.
+- Before requesting CodeRabbit, keep the reviewer-selected file count comfortably below the active plan ceiling rather than targeting the exact limit. Never omit a valid fix to preserve the limit; split a coherent child or use a narrower supported review boundary instead.
+- Do not open a tiny extraction PR merely to cross a reviewer ceiling. A merge-first extraction must move a coherent, worthwhile subset and leave roughly 10-15% capacity for later fixes (for example, target at most 85-90 files under a 100-file ceiling); if no such split exists, keep the work together and use the available CLI or scoped-review path.
 - A substantive CodeRabbit review must cover feature-bearing commits. Direct fixes to its findings may merge without rereview only when they add no functionality or independently reviewable behavior. Request fresh review after new functionality or materially broader risk.
 - Merge only when explicitly authorized, the CodeRabbit check reports zero unresolved current and outdated threads, and required CI is green. Merge completed PRs rather than parking them after that threshold.
 - Treat failing Renovate PRs as maintenance work: inspect CI and push the smallest compatible fix to its branch when possible; otherwise use a replacement branch with required compatibility changes.

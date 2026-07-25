@@ -38,7 +38,9 @@ Accounts span multiple hosted games. The [Multi-Tenancy](./system-architecture-m
 
 ## Implementation Status
 
-The target journey below requires an explicit `JOIN` / `Join & Play` before character creation, connect-token issuance, or `PLAY`; `PLAY` never creates membership. Explicit `JOIN` / `Join & Play` is not yet fully implemented across all clients: current connect-token and `PLAY` paths may still invoke `EnsurePublicProductionPlayerMembership` implicitly. That is tracked implementation drift, not target behavior.
+The target journey below requires an explicit `JOIN` / `Join & Play` before character creation, connect-token issuance, or `PLAY`; `PLAY` never creates membership. Current implementation still allows the connect-token issuance and text `PLAY` paths to invoke `EnsurePublicProductionPlayerMembership` implicitly, so the explicit join boundary and `JOIN_REQUIRED` behavior are not yet implemented across all clients. That is tracked implementation drift, not target behavior.
+
+Realm-aware character discovery and the current creation-policy decision are implemented at the backend boundary, but the richer character-creation descriptor remains a gap. The current flow does not yet provide first-party clients with the published-version-specific template, race, class, and option descriptor needed to render the complete creation choices.
 
 ---
 

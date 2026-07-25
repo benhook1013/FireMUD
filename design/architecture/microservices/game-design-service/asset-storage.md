@@ -312,7 +312,7 @@ shared-schema artifact.
 
 ### Interaction with Script-Only Patches
 
-Script-only patches (see `system-architecture-versioning-runtime.md`) do not change assets or any data stored in `game_assets` / `version_asset`. Because assets are always bound to `(tenantId, versionId)` and exported during full `PublishVersion` flows, any change that requires adding, removing, or updating assets must be shipped as part of a new `versionId`, not as a script-only patch.
+Script-only patches (see `system-architecture-versioning-runtime.md`) do not change assets or any data stored in `game_assets` / `version_asset`. In the target contract, published asset selection is bound to `(tenantId, versionId)` and exported during full `PublishVersion` flows. The current first slice does not yet enforce that binding: `AssetExportServiceImpl` exports every tenant asset and the `version_asset` authoring path is absent. Asset changes therefore belong in a new `versionId` in the target state, while the current tenant-wide export remains an implementation gap to be corrected before version-bound export can be treated as proven.
 
 ### Asset Lifecycle and Publish Workflow
 

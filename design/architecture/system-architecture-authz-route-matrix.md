@@ -13,14 +13,14 @@ Every protected route in a validated inventory must be listed here with:
 - required live authority checks for the route class,
 - any response-profile or mutation-contract requirements needed for CI/security enforcement.
 
-Before that inventory is validated, an unclassified protected or external route must remain conservatively denied or unreachable; this safeguard is not generated policy from the incomplete YAML.
+Before that inventory is validated, an unclassified protected or external route must remain conservatively denied or unreachable; this safeguard is not generated policy from the incomplete YAML. Runtime enforcement is immediate and independent of inventory completeness: every protected route without a deterministic classification is rejected rather than approximated.
 
-Services must enforce these classifications through shared middleware annotations/interceptors and CI policy checks once the inventory gate is complete. A protected route missing from the current matrix is recorded as authorization drift/gap; before the gate completes it must be denied or unreachable rather than forwarded, and it must not be treated as evidence that the incomplete matrix is a complete canonical registry.
+Services must enforce these classifications through shared middleware annotations/interceptors immediately. A protected route missing from the current matrix is recorded as authorization drift/gap; runtime rejects it rather than forwarding or approximating it, while CI and deployment policy checks independently fail a validated candidate route missing its matrix registration. The incomplete YAML still must not be treated as a complete canonical registry or used to generate runtime policy.
 
 ## Implementation Status
 
 - The static Gateway route catalog and bounded internal/actuator blockers provide partial edge-exposure enforcement.
-- The YAML is normative for declared entries, but the current route inventory is incomplete. CI inventory generation, source-stable OpenAPI/protobuf coverage, YAML completeness comparison, matrix-aware shared middleware, strict token-profile enforcement, and exact proof for remaining broad Gateway route families are not implemented. Missing coverage is a recorded drift/gap; before source-stable coverage is complete and validated, unclassified protected/external routes remain denied or unreachable, and the incomplete YAML must not generate their policy.
+- The YAML is normative for declared entries, but the current route inventory is incomplete. CI inventory generation, source-stable OpenAPI/protobuf coverage, YAML completeness comparison, matrix-aware shared middleware, strict token-profile enforcement, and exact proof for remaining broad Gateway route families are not implemented. Missing coverage is a recorded drift/gap; runtime rejection of unclassified protected/external routes is still an immediate safeguard, and CI/deployment comparison remains an independent registration failure once a validated candidate inventory is available. The incomplete YAML must not generate their policy.
 
 ## Token Profile Vocabulary
 
@@ -31,14 +31,14 @@ The current JWT profile names are `control-ui`, `player-bootstrap`, the one-use 
 - **Owner**: Platform Security + Account Service maintainers jointly own this matrix.
 - **Machine-readable source**: `design/architecture/system-architecture-authz-route-matrix.yaml` is the normative source for declared entries; this Markdown file is the human-readable companion. It is not a complete route registry until the inventory gate below passes.
 - **CI enforcement**:
-  - Once source-stable OpenAPI/protobuf inventories cover the governed surfaces and validate in the same run, fail if a protected route is not present in the YAML matrix.
+  - Once source-stable OpenAPI/protobuf inventories cover the governed surfaces and validate in the same run, CI and deployment policy checks independently fail if a protected route is not present in the YAML matrix.
   - Fail if a route uses an unknown classification value.
   - Fail if a route is marked billing- or support-safe but lacks required redaction/authorization tests.
   - Fail if generated route inventory (OpenAPI/proto) differs from the YAML matrix for auth/session and billing/subscription domains.
 - **Default-deny behavior**:
   - The declared-entry `default_action: deny` is normative only for entries in the YAML. It does not generate policy for routes absent from this incomplete inventory.
-  - Before the inventory gate passes, any discovered but unlisted protected or external route is `drift/gap` and requires explicit review and matrix entry; it remains denied or unreachable. No generated default-deny policy is produced from the incomplete inventory; the conservative deny/unreachable safeguard is an ingress boundary, not an incomplete-YAML policy artifact.
-  - After the inventory gate passes, any protected route that cannot be classified deterministically must be rejected until explicitly reviewed and added to the matrix.
+  - Runtime classification is independent of the inventory gate: any protected route that cannot be classified deterministically is rejected immediately until explicitly reviewed and added to the matrix. For an external route, the edge leaves it unreachable or denies it.
+  - CI and deployment inventory checks are a separate registration gate: a validated candidate route absent from the YAML matrix fails those checks. No generated default-deny policy is produced from the incomplete inventory; the runtime safeguard is an enforcement boundary, not an incomplete-YAML policy artifact.
   - No route may default to `tenant_regular`, billing-safe, support-safe, or another executable class.
 - **Change control**:
   - `billing_safe_tenant`, `cross_tenant_support_safe`, and `cross_tenant_billing_safe` changes require explicit security review approval.
@@ -51,7 +51,7 @@ The following domains become full-fail in CI only after source-stable OpenAPI/pr
 - Billing-safe and support-safe routes.
 - Subscription mutation and entitlement routes.
 
-Before that gate passes, protected routes missing from the YAML matrix are recorded as drift/gap, including pre-existing routes; they remain denied or unreachable, but the incomplete matrix must not generate default-deny behavior for them.
+Before that gate passes, protected routes missing from the YAML matrix are recorded as drift/gap, including pre-existing routes; runtime rejects them, CI and deployment fail them when the validated candidate inventory is compared, and the incomplete matrix must not generate default-deny behavior for them.
 
 CI should generate candidate inventories from OpenAPI/proto definitions and compare them against the YAML matrix so protected-route drift is detected automatically.
 

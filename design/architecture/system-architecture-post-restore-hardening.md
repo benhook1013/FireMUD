@@ -22,9 +22,11 @@ Restore quarantine is a full restore-safe mode, not only an ingress block. Resto
 
 Post-restore hardening is performed by a dedicated Kubernetes Job such as `post-restore-secret-hardening` that coordinates multiple flows:
 
-The hardening automation should use least-privilege service accounts:
+The JWT restore-hardening actor and RBAC boundary is the existing `jwt-rotation` Job/CronJob and `sa-jwt-rotation` service-account contract described in [Security Architecture](./system-architecture-security.md#jwt-key--jwks-rotation-workflow):
 
-- JWT rotation automation may only request the Account-owned restore-cutover operation, orchestrate validator probes, and observe the Account-published JWKS and cutover status/evidence. It must not publish or update `jwt-jwks`, read or update `jwt-signing-keys`, advance issuer authority, invalidate sessions, or patch the Account Service Deployment.
+- `sa-jwt-rotation` may request Account-owned rotation transitions and status, run validator-convergence probes, and write the pre-created `jwt-rotation-status` evidence resource. It has no write access to `jwt-jwks`, no read or update access to `jwt-signing-keys`, and no `patch` authority on the Account Service Deployment.
+- Account Service remains the actor that owns restore cutover, issuer-authority advancement, session invalidation, and public JWKS publication. The materialization controller alone has name-scoped `get`, `update`, and `patch` authority over the pre-created signing Secret; Account has name-scoped read access to that Secret and update/patch authority over the public JWKS resource. Neither may list, create, or delete those pre-created resources.
+- Validator refresh or restart uses the validator's inventory-declared refresh/deployment mechanism; the JWT rotation Job may request or observe that mechanism and must not patch the Account Service Deployment. Validators receive public JWKS only.
 - DB rotation automation may read/update only the PostgreSQL credential Secrets and optionally restart the Deployments or StatefulSets that consume them.
 - Certificate reissuance automation may read/update only the specific certificate resources or Secrets required for workload, bridge, and operator leaf identities.
 
@@ -38,6 +40,8 @@ JWT post-restore rotation preserves Account Service custody of the non-exportabl
 - request Account to execute the single restore-cutover operation that publishes a fresh signing generation and `jwks.json`, advances the environment issuer authority generation, and invalidates old session authority; the Job must not perform these as separate cutover steps
 - refresh or restart every validator in the authoritative, complete validator inventory and prove that each rejects every restored `kid` and accepts the replacement `kid`; missing, unknown, unreachable, or non-converged validators fail closed
 - verify Account Service health, immutable restore-cutover evidence, and validator convergence before traffic reopen
+
+`validatorConvergenceEvidence` must contain one immutable record per inventoried validator. Each record identifies the validator workload and environment, its applicable JWT profiles/audiences, the observed refresh or restart, the JWKS generation and `kid` set observed, rejection of every restored `kid`, acceptance of the replacement `kid`, rejection of inapplicable audiences, the reserved-probe authorization/side-effect denial result, observation time, and an immutable evidence reference. A missing per-validator record, an unexpected acceptance or rejection, or a probe that authorizes an operation fails the recovery gate. The aggregate `jwtHardening` evidence also records the rotation Job reference, resulting key IDs, issuer authority-generation advance, and prior-generation registry rejection proof; no record contains private key material.
 
 ### 2. Database credential rotation
 

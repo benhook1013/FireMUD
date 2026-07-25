@@ -103,12 +103,12 @@ Canonical `/auth/login` success shape:
     "token": "jwt-token-here",
     "expiresAt": "2025-01-01T12:00:00Z",
     "account": {
-      "accountId": 42,
+      "accountId": "550e8400-e29b-41d4-a716-446655440000",
       "email": "demo@example.com"
     },
     "scopedRoles": {
-      "7": ["tenantAdmin", "designer"],
-      "8": ["player"]
+      "7b3b074e-d597-4e9b-b96f-4f5946d26120": ["tenantAdmin", "designer"],
+      "c56a4180-65aa-42ec-a945-5fd21dec0538": ["player"]
     },
     "globalRoles": ["platformAdmin"]
   }
