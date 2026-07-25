@@ -360,6 +360,8 @@ Transition enforcement contract:
   - **Current implementation:** selects every `game_assets` row for `tenantId`
     through `GameAssetRepository.findByTenantId`, including assets with no
     `version_asset` mapping, and reads the export bytes from `game_assets.data`.
+    The `version_asset` table and a Draft-version authoring action that creates
+    or removes those mappings are not implemented yet.
   - **Target convergence:** selects only assets obtained by joining
     `version_asset` to `game_assets` for the target `(tenantId, versionId)`;
     unmapped tenant assets are excluded from that version's export.
