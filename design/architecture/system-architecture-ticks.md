@@ -58,7 +58,8 @@ See `system-architecture-tick-concepts-and-invariants.md` for the full descripti
 Two related concepts:
 
 - **Tick execution** – the authoritative per-region loop inside the Game Session Service.
-- **Tick heartbeat** – a gRPC stream (`StreamTickHeartbeats`) whose subscription and every heartbeat message carry the complete `(tenantId, gameInstanceId, regionId)` scope plus `regionEpoch` and `tickId` progression so external services (for example Automation & Scripting) can align timers and quotas to the canonical tick timeline.
+- **Target-state tick heartbeat** – a gRPC stream (`StreamTickHeartbeats`) whose subscription and every heartbeat message carry the complete `(tenantId, gameInstanceId, regionId)` scope plus `regionEpoch` and `tickId` progression so external services (for example Automation & Scripting) can align timers and quotas to the canonical tick timeline.
+- **Current-live progress adapter** – `ObserveRuntimeTickProgress` is the current internal Game Session progress feed. It carries `(tenantId, gameInstanceId, regionId, regionEpoch, tickId, observedAtMs)` so Automation can advance durable tick-aligned schedules; it is not a `StreamTickHeartbeats` subscription.
 
 The tick heartbeat is the **canonical timeline** for each `<tenantId, gameInstanceId, regionId>`:
 
@@ -120,9 +121,10 @@ Durable automation schedules, quotas, and trigger-instance de-duplication live i
 
 Automation & Scripting Service instances typically:
 
-- Establish long-lived gRPC subscriptions to `StreamTickHeartbeats` with `tenantId`, `gameInstanceId`, and `regionId`; every message must repeat that complete scope so consumers cannot rely on an implicit stream binding to disambiguate instances.
+- In target-state deployments, establish long-lived gRPC subscriptions to `StreamTickHeartbeats` with `tenantId`, `gameInstanceId`, and `regionId`; every message must repeat that complete scope so consumers cannot rely on an implicit stream binding to disambiguate instances.
+- In the current live deployment, consume `ObserveRuntimeTickProgress` with the same complete runtime scope instead of assuming `StreamTickHeartbeats` is available.
 - Maintain per-region scheduler state in Redis (for example `script-scheduler:{tenantRegionTag}:lastTickId`) only as a checkpoint/hint. The physical value must store `{regionEpoch, latestTickId, streamOffset}`; callers must reject and rebuild it when its epoch differs from the authoritative current epoch. Its logical checkpoint key is `(tenantId, gameInstanceId, regionId, regionEpoch)`, while `tickId` and offsets are never key dimensions.
-- Claim or insert a durable PostgreSQL trigger-instance/outbox row keyed by an **instance-aware** uniqueness projection before enqueueing any `onInterval` or other tick-derived trigger so duplicate heartbeat consumers or failover cannot create duplicate logical gameplay actions.
+- After a due candidate passes the applicable schedule-admission checks, claim or insert a durable PostgreSQL trigger-instance/outbox row keyed by an **instance-aware** uniqueness projection before enqueueing any `onInterval` or other tick-derived trigger so duplicate heartbeat consumers or failover cannot create duplicate logical gameplay actions. Discovery of a due candidate alone does not create a firing claim or `scriptEventId`.
   - At minimum this uniqueness projection includes the applicable scheduler Trigger Identity fields: `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `eventType`, `eventSchemaVersion`, `scriptPatchVersion`, `isDryRun`, `scheduleDefinitionId`, the tagged due point, and `triggerMode`; plugin triggers also include `pluginId` and `pluginVersionId`. A globally unique `scheduleId` does not replace runtime scope, version, dry-run namespace, or timeline fencing. The tagged due point is exactly `dueTickId:<value>` or `dueAt:<epochMillis>`; when storage uses nullable `dueTickId`/`dueAt` columns, the alternate field is explicitly `NULL` (`dueTickId=<value>, dueAt=NULL` or `dueTickId=NULL, dueAt=<epochMillis>`), never an empty/zero substitute, and both fields may not be null or populated together.
 
 ### Bootstrap vs Stream (Authoritative Timeline Source)
@@ -136,7 +138,7 @@ For any consumer or operator that needs to locate “where a region is” on the
   - Timeline: `regionEpoch`, `lastCommittedTickId`, and an `updatedAt`/`lastCommitTimestamp`.
   - Ownership fencing: a durable `executorFence` (or equivalent name) recorded on tick batches and other durable tick-control writes.
     - Target-state may choose a monotonic numeric fence.
-    - Current live boundary uses an opaque generation token and compare-and-match semantics rather than numeric old/new ordering.
+    - Current live boundary uses an opaque generation token and exact compare-and-match semantics rather than numeric old/new ordering; callers must not increment, order, or otherwise interpret the token numerically.
   - Health: a bounded `status`/`health` value (for example `RUNNING`, `DEGRADED`, `PAUSED`, `STALLED`).
   - Backlog indicators:
     - Minimum required when cross-region gameplay, replay-driven admission control, or backlog-based shedding is enabled: retry depth and remote follow-up lag/backlog so origin-side admission control can shed load without relying on Redis hints.
@@ -152,7 +154,7 @@ For any consumer or operator that needs to locate “where a region is” on the
       "regionId": "room:starter-village",
       "regionEpoch": 14,
       "lastCommittedTickId": 9284,
-      "executorFence": 51,
+      "executorFence": "fence-51",
       "status": "RUNNING",
       "retryQueueDepth": 2,
       "remoteFollowupOldestAgeMs": 180,
@@ -180,20 +182,20 @@ For each `<tenantId, gameInstanceId, regionId>` there is exactly one active tick
 
 Other workers may be running but do not process ticks for that region while the lease is held. See `system-architecture-tick-concepts-and-invariants.md` for the full authority and lease model.
 
-Lease ownership is enforced through a two-part fence:
+Lease ownership is enforced through a two-part fence. The following is the current-live ownership contract; target-state status surfaces must not be read as though they replace these live semantics until their implementation is shipped:
 
 - Redis remains the fast-path lease and liveness mechanism.
-- PostgreSQL `RegionStatus.executorFence` is the durable ownership fence for tick-control writes:
-  - Every successful lease acquisition increments `executorFence` exactly once for that `<tenantId, gameInstanceId, regionId>`.
-  - Every durable tick-control write (`tick_batch`, ledger transitions, `lastCommittedTickId`, and equivalent recovery/control rows) records and compares that fence.
-  - Rows written under an older fence are stale by definition and must not advance or continue tick execution.
+- PostgreSQL `RuntimeOwnershipStatus.executorFence` is the durable ownership fence for current-live tick-control writes:
+  - Every successful lease acquisition publishes a fresh opaque generation token for that `<tenantId, gameInstanceId, regionId>`; it does not increment a numeric fence.
+  - Every durable tick-control write (`tick_batch`, ledger transitions, `lastCommittedTickId`, and equivalent recovery/control rows) records the expected token and succeeds only when the stored token matches it exactly.
+  - Rows written under a different or missing fence are stale by definition and must not advance or continue tick execution.
 
 This durable fence is the canonical protection against stale executors that lost Redis lease ownership but still have in-flight SQL work.
 
 Canonical ownership sequence:
 
 1. The executor acquires or renews the Redis region lease.
-2. On successful ownership acquisition, Game Session advances `RegionStatus.executorFence` exactly once for that ownership generation.
+2. On successful ownership acquisition, Game Session publishes one fresh opaque `RuntimeOwnershipStatus.executorFence` token for that ownership generation.
 3. The executor creates `tick_batch` rows and other durable tick-control state using that new `executorFence`.
 4. Any later durable write for the same region must compare-and-match the current `executorFence`; stale writers fail closed and do not advance commit state.
 

@@ -163,8 +163,8 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `coordination-maintenance reset`
     - accepts the scope grammar above.
     - requires `--maintenance-lock-token <token>` from the corresponding `pause` step.
-    - accepts `--preserve-sessions` / `--invalidate-sessions` where session policy allows an operator choice.
-    - never infers session invalidation from scope alone when the design says it is optional.
+    - records the effective session policy in its audit output: region scope preserves gameplay and session-context records by default and accepts `--invalidate-sessions` as an explicit opt-out; tenant scope preserves them only with explicit `--preserve-sessions` and otherwise invalidates them; cluster scope invalidates them by default and permits preservation only where an explicit deployment policy allows `--preserve-sessions`.
+    - must not infer tenant or cluster preservation from scope alone; the explicit preservation option and any deployment policy gate remain required.
     - is the canonical operator entrypoint that performs and audits the mandatory PostgreSQL `region_epoch` bump before clearing Redis coordination state for the selected scope.
     - must emit the resulting bumped epoch per affected region in its audit output so downstream reconcile/init-meta steps consume one authoritative old/new epoch record.
     - for tenant and cluster scopes, resolves every affected `gameInstanceId` from the durable affected-region snapshot, then enumerates and removes `remote:{tenantInstanceTag}:*` for each resolved instance using bounded `SCAN`/`UNLINK` batches; it must not attempt a tenant-only pattern.
@@ -190,7 +190,7 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
     - accepts the scope grammar above.
     - requires `--maintenance-lock-token <token>` from the same paused reset workflow.
     - accepts either `--region-epoch <epoch>` for `--scope region` or `--region-epoch-map <path>` for tenant/cluster scopes.
-    - is permitted only when the reset recorded `--preserve-sessions`; it recreates region-authoritative bindings from the durable affected-session inventory and must refresh the same maintenance lock rather than acquiring another lock.
+    - is permitted when the reset's effective session policy preserved sessions: this is the default for region scope, while tenant and cluster scopes require the recorded `--preserve-sessions` choice and any required deployment-policy approval. It recreates region-authoritative bindings from the durable affected-session inventory and must refresh the same maintenance lock rather than acquiring another lock.
   - `coordination-maintenance session-cleanup`
     - accepts only `--scope tenant --tenant <tenantId>` in first implementation; broader cleanup scopes are out of contract until explicitly designed.
     - requires `--maintenance-lock-token <token>`.

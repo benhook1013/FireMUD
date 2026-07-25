@@ -72,14 +72,14 @@ Direct script upload and update APIs such as `UpdateScript` are limited to boots
 - Scheduler and timer ingress (`onInterval`, `onTimerExpire`): scheduler generates deterministic `scriptEventId` from due-point identity, including `gameInstanceId`.
 - Dry-run and test ingress: service generates by default; caller-supplied IDs are optional and must pass dry-run namespace collision validation.
 
-These identifiers are the canonical idempotency keys for event ingress:
+Only the full applicable Trigger Identity, as defined by the normative Trigger Identity table and including plugin-, scheduler-, timer-, or lifecycle-specific fields when applicable, is the canonical idempotency key for event ingress. No partial tuple, due point, or `scriptEventId` alone is a canonical key.
 
-- Any RPC that accepts `scriptEventId` is idempotent with respect to Trigger Identity.
-- For entity-scoped external events, the idempotency key is at least `<tenantId, gameInstanceId, regionId, regionEpoch, entityId, scriptId, eventType, scriptPatchVersion, scriptEventId, isDryRun>` for gameplay/runtime triggers.
-- For gameplay/runtime triggers, the resolved `playableStateScope` is part of the admitted trigger identity even when the surrounding runtime target is already keyed by `gameInstanceId`, so shared-state and isolated-state realms do not collide in durable ingress/work-item/audit rows.
-- For scheduler events, the idempotency key also includes a due point (`dueTickId` / `dueAt`) in deterministic `scriptEventId` derivation.
-- Re-sending the same request with the same idempotency key must not cause the DSL body to run twice.
-- The service records at most one `script_event_audit` row per handler-scoped idempotency key, meaning one row per resolved Trigger Identity after fan-out to a specific `scriptId` or plugin handler.
+- Any RPC that accepts `scriptEventId` is idempotent with respect to the full applicable Trigger Identity.
+- For a resolved entity-scoped gameplay/runtime handler, that full identity includes `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, entityId, scriptId, eventType, eventSchemaVersion, scriptPatchVersion, scriptEventId, isDryRun>`, plus `pluginId` and `pluginVersionId` for plugin triggers.
+- For scheduler/timer handlers, the full identity additionally includes `scheduleDefinitionId`, `triggerMode`, and exactly one due point (`dueTickId` or `dueAt`); the scheduler derives `scriptEventId` from all non-generated applicable identity fields, never from a preimage that includes `scriptEventId` itself.
+- Tenant-readiness `onLoad` uses its distinct full applicable identity and intentionally omits runtime fields such as `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, and `entityId`, as defined by the normative table.
+- Re-sending the same full applicable Trigger Identity must not cause the DSL body to run twice.
+- The service records at most one `script_event_audit` row per full handler-scoped Trigger Identity after fan-out to a specific `scriptId` or plugin handler.
 
 Downstream calls made from DSL components must carry a stable idempotency token derived from Trigger Identity plus tick context when applicable so infrastructure-level retries do not duplicate side effects.
 

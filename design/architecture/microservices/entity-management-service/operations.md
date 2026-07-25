@@ -27,9 +27,9 @@ Entity Management assumes the per-command execution phases described in the [Tic
 
 Entity Management implements tick idempotency using the per-aggregate last-tick state pattern described in the [Tick System and Runtime Design](../../system-architecture-ticks.md#domain-idempotency-rules-region-epoch--tickid-in-postgresql) document:
 
-- A shadow table (for example `entity_tick_state`) uses `(tenantId, gameInstanceId, playableStateScope, regionId, entityId)` as its complete lookup key and tracks `(last_region_epoch, last_tick_id)` for that key, so shared and isolated gameplay-state namespaces cannot reuse one watermark.
+- A shadow table (for example `entity_tick_state`) uses `(tenantId, gameInstanceId, playableStateScope, regionId, targetAggregateType, entityId)` as its complete lookup key and tracks `(last_region_epoch, last_tick_id)` for that key, so shared and isolated gameplay-state namespaces and aggregate types cannot reuse one watermark. For this table, `entityId` is the `targetAggregateId`; entity handlers supply the canonical entity aggregate type.
 - Tick-driven handlers that mutate an entity:
-  - resolve and read the `entity_tick_state` row using the complete `(tenantId, gameInstanceId, playableStateScope, regionId, entityId)` key; an `entityId`-only lookup is invalid;
+  - resolve and read the `entity_tick_state` row using the complete `(tenantId, gameInstanceId, playableStateScope, regionId, targetAggregateType, entityId)` key; an `entityId`-only lookup is invalid;
   - compare `(last_region_epoch, last_tick_id)` from that exact row with `(currentRegionEpoch, currentTickId)` and treat `>=` as a replay/out-of-order no-op (or validation-only check); and
   - when the comparison is `<`, apply the change and update `(last_region_epoch, last_tick_id) = (currentRegionEpoch, currentTickId)` on that same composite-key row in the same transaction as the entity update.
 
@@ -38,7 +38,7 @@ Complex multi-entity operations (for example trades that touch two inventories) 
 Examples:
 
 - **Damage application** – when a tick instructs Entity Management to apply damage to `entityId`, the handler:
-  - reads `entity_tick_state` for the complete `(tenantId, gameInstanceId, playableStateScope, regionId, entityId)` key;
+  - reads `entity_tick_state` for the complete `(tenantId, gameInstanceId, playableStateScope, regionId, targetAggregateType, entityId)` key;
   - skips the update if `(last_region_epoch, last_tick_id) >= (currentRegionEpoch, currentTickId)` (replay/out-of-order), or applies the HP change and updates that same composite-key row with `(last_region_epoch, last_tick_id) = (currentRegionEpoch, currentTickId)` in the same transaction if the comparison is `<`.
 
 - **Trade between two entities** – when a tick performs a trade between `fromEntityId` and `toEntityId`:

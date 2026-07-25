@@ -16,9 +16,11 @@ Redis coordination behavior and reset flows are defined in:
 
 ## Implementation Notes
 
-This runbook is written for the target tick/region model (`tenantId` + `gameInstanceId` + `regionId`). If your current deployment only exposes coarser tick pause controls (for example pausing by `tenantId` + `game_instance_id`), follow the same decision logic but apply it at the closest available scope and record the scope mismatch in the incident timeline for follow-up.
+This runbook is written for the target tick/region model (`tenantId` + `gameInstanceId` + `regionId`). If your current deployment only exposes coarser tick pause controls (for example pausing by `tenantId` + `gameInstanceId`), follow the same decision logic but apply it at the closest available scope and record the scope mismatch in the incident timeline for follow-up.
 
 When applying scope substitution, use a deterministic mapping source (control-plane lookup or game-instance registry), record the resolved region set, and include the mapping evidence in the incident notes so post-incident reconciliation is auditable.
+
+Canonical API and workflow scope names in this runbook use `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, and `regionEpoch`. SQL and storage examples may use `tenant_id`, `game_instance_id`, `playable_state_scope`, `region_id`, and `region_epoch`; these are aliases for the same fields, not different scopes.
 
 ## Incident Types
 
@@ -80,6 +82,8 @@ All trace-specific guidance in this runbook is conditional on the environment ad
      - `timer:{tenantRegionTag}`
      - `retry:{tenantRegionTag}`
      - `tick-executor-lease:{tenantRegionTag}`
+     - `automation:timer:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId` as reset-tolerant scheduler metadata; Automation rebuilds them from durable schedules and the active status/progress adapter.
+     - `tick-events-lease:{tenantRegionTag}`, `tick-events:{tenantRegionTag}`, and `tick-events-offset:{tenantRegionTag}` as reset-tolerant observer hints; consumers reacquire leases and re-establish baselines from the active status/progress adapter and durable domain state.
    - Do not delete domain data or non-coordination prefixes.
 4. **Resume ticks and verify recovery**
    - Resume tick scheduling for the region.

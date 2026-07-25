@@ -219,12 +219,13 @@ In addition to functional, load, and security tests, FireMUD treats observabilit
 - **Tracing checks**
   - In at least one non-production pipeline where Jaeger (or an OTLP-compatible trace backend) is available, run a small smoke test that:
     - Exercises a login flow and a representative gameplay command.
-    - Verifies the presence of at least one `gamesession_handle_command` span with attributes such as `tenantId`, `gameInstanceId`, `regionId`, and `characterId`.
-    - Verifies the presence of at least one `tick_execute` span in environments where ticks are enabled.
-    - Verifies the presence of at least one TCP edge incident span (`tcpproxy_notify_disconnect` or `tcpproxy_connection`) in environments that expose the Telnet path.
+    - When the environment advertises and independently proves the corresponding gameplay-command workflow-tracing capability, verifies the presence of at least one `gamesession_handle_command` span with the applicable `tenantId`, `gameInstanceId`, `regionId`, and `characterId` attributes.
+    - When the environment advertises and independently proves the corresponding tick workflow-tracing capability, verifies the presence of at least one `tick_execute` span when ticks are enabled.
+    - When the environment advertises and independently proves the corresponding TCP-edge workflow-tracing capability, verifies the presence of at least one TCP edge incident span (`tcpproxy_notify_disconnect` or `tcpproxy_connection`) when the Telnet path is exposed.
     - Only when the environment advertises and independently proves the specific `backup` workflow-tracing capability, verifies `backup_pg_dump_snapshot` and `backup_verify_artifact` spans with matching environment/database, artifact, and tool lineage.
     - Only when the environment advertises and independently proves the specific `recovery` workflow-tracing capability, verifies `recovery_converge_participant` spans cover every declared and enabled participant and contain only approved safe dispositions before controlled reopen.
   - A workflow-span assertion runs only when both conditions hold: the environment capability descriptor names that exact workflow and its immutable end-to-end proof shows semantic spans, context propagation, collector ingestion, and supported queries. Generic Jaeger/OTLP availability, an environment variable, a sample span, or an externally supplied evidence reference is not proof. When either condition is absent, skip the span assertion and use the metrics/log fallback; do not make tracing a hidden readiness dependency.
+  - The four gameplay identity attributes are required together only for the applicable `gamesession_handle_command` workflow assertion; they are not a universal requirement for login, TCP-edge, backup, recovery, or generic RPC span checks.
 
 - **Structured log-field contract checks**
   - After a short synthetic login + command + tick smoke flow, assert that representative log lines from Gateway, Game Session, and TCP Proxy contain the structured fields required by the logging contract:

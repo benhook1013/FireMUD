@@ -13,7 +13,7 @@ Use Grafana/Kibana/Jaeger when available. If any observability backend is degrad
 
 Synthetic canary identities used in this runbook should be treated as operational probes, not normal players. Operator workflows should keep them out of routine moderation, behavior review, and player-facing analytics unless an incident specifically involves canary validation.
 
-Metrics in this runbook may identify only deployment-wide degradation or an approved bounded `scope` bucket. Resolve an exact `<tenantId, gameInstanceId, regionId>` runtime scope through Game Session/control-plane runtime-health reads and structured logs before taking scope-specific action; do not infer exact runtime ownership from ordinary metric labels.
+Metrics in this runbook use the bounded `scope` contract from [Logging & Monitoring](./system-architecture-logging-monitoring.md#canonical-bounded-metrics-scope): pre-gameplay flows use `scope="environment"`, while each gameplay metric family documents any narrower bounded operational buckets it supports. Resolve an exact `<tenantId, gameInstanceId, regionId>` runtime scope through Game Session/control-plane runtime-health reads and structured logs before taking gameplay-scope action; do not infer exact runtime ownership from ordinary metric labels.
 
 ## Trace Preconditions (For Latency/Tick Root Cause)
 
@@ -72,9 +72,9 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 5. **Verify recovery**
    - Confirm the login success SLI panel returns to acceptable levels.
    - Ensure `LoginSuccessRatioLowGateway` and/or `LoginSuccessRatioLowTcpProxy` clear (as applicable) and player reports subside.
-   - Use the `player-incident-drilldown.json` Kibana saved search to spot-check representative player logs by `characterId`, `tenantId`, and `traceId` to confirm that errors have returned to normal levels.
+   - Use the `player-incident-drilldown.json` Kibana saved search to spot-check representative logs by `service` and `traceId`, adding `tenantId` or `characterId` only when those fields are present, to confirm that errors have returned to normal levels.
 6. **Degraded-mode branch (if observability backends are unavailable)**
-   - If Grafana is down: query Prometheus directly for login success ratio by ingress path and approved gameplay `scope`, plus `playerflow_canary_success{flow="login",path=...}`.
+   - If Grafana is down: query Prometheus directly for login success ratio by ingress path and the deployment-wide `scope="environment"` baseline, plus `playerflow_canary_success{flow="login",path=...}`. Do not require `gameInstanceId` or `regionId`: login occurs before gameplay scope is selected.
    - If Kibana is down: use service logs from Gateway/TCP Proxy/Account pods filtered by `tenantId` and `correlationId`.
    - If Prometheus is down: prioritize service health endpoints and dependency health (Postgres/Redis), and use conservative ingress mitigation (rollback/scale) based on authoritative service signals.
 
@@ -181,7 +181,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 ### Decide (Entry path availability)
 
 - Determine scope:
-  - Single approved gameplay `scope` bucket vs environment-wide.
+  - Single approved bounded `scope` bucket vs the deployment-wide baseline.
   - Single `path` vs multiple (`path="telnet"` vs `path="websocket"`).
 - Determine dominant failure outcomes by inspecting `entrypath_connection_attempts_total` broken down by `outcome`:
   - `limit_exceeded` suggests caps or abusive clients.

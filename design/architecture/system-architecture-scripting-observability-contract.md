@@ -150,6 +150,7 @@ Illustrative record shape:
 {
   "tenantId": "11111111-1111-4111-8111-111111111111",
   "gameInstanceId": "44444444-4444-4444-8444-444444444444",
+  "playableStateScope": "isolated",
   "regionId": "R2",
   "regionEpoch": 14,
   "entityId": "npc-guard-9",
@@ -191,17 +192,18 @@ Illustrative record shape:
     {
       "automationDispatchId": "work-9#0",
       "outboxWorkItemId": "work-9",
-      "handoffOutcome": "accepted",
-      "executionOutcome": "executed",
+      "playableStateScope": "isolated",
+      "outcome": "accepted",
+      "reason": "game_session_accepted",
       "sourceService": "game-session",
       "recordedAt": "2026-03-19T08:10:02Z"
     },
     {
       "automationDispatchId": "work-9#1",
       "outboxWorkItemId": "work-9",
-      "handoffOutcome": "accepted",
-      "executionOutcome": "version_fence_dropped",
-      "executionReason": "script_patch_mismatch",
+      "playableStateScope": "isolated",
+      "outcome": "version_fence_dropped",
+      "reason": "script_patch_mismatch",
       "sourceService": "game-session",
       "recordedAt": "2026-03-19T08:10:03Z"
     }
