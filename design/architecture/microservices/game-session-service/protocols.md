@@ -4,7 +4,7 @@ This document defines Game Session transport framing and service-level protocol 
 
 ## Implementation Status
 
-Unless explicitly described as current behavior, this document defines the target protocol. `JOIN` and first-party `Join & Play` are not yet implemented as explicit commands/actions: current connect-token and `PLAY` paths may call Account's `EnsurePublicProductionPlayerMembership` implicitly. That drift must be removed before claiming the target `JOIN_REQUIRED` boundary.
+Unless explicitly described as current behavior, this document defines the target protocol. The target requires explicit `JOIN`/`Join & Play` for first public-production entry, while an existing durable membership permits direct `PLAY` and a grant-backed non-public path may proceed only when its required durable membership already exists. A grant never creates or substitutes membership. `JOIN` and first-party `Join & Play` are not yet implemented as explicit commands/actions: current connect-token and `PLAY` paths may call Account's `EnsurePublicProductionPlayerMembership` implicitly. That confirmed implementation drift must be removed before claiming the target `JOIN_REQUIRED` boundary.
 
 ## Minimal Text Command Protocol
 
@@ -25,7 +25,7 @@ At the protocol level, commands are split into two groups:
 The player-facing protocol is also stage-aware:
 
 - **Connected, not logged in** – players can browse public worlds and get help, but they are not yet authenticated. The normal human flow is `WORLDS` then `LOGIN`.
-- **Logged in, not yet playing** – existing members can issue `PLAY` directly. A first-time public-production player must issue `JOIN` first; either player may use lobby helper commands such as `REALMS` and `CHARS` to disambiguate selection.
+- **Logged in, not yet playing** – existing members with confirmed durable membership can issue `PLAY` directly. A first-time public-production player must issue `JOIN` first; if `PLAY` is attempted without the required membership, the target response is `JOIN_REQUIRED` rather than implicit membership creation. Either player may use lobby helper commands such as `REALMS` and `CHARS` to disambiguate selection.
 - **In-game** – gameplay commands such as `LOOK`, `SAY`, and movement are available.
 
 The normal happy path for a human player should therefore be:
@@ -47,7 +47,7 @@ PLAY <world> [realm] [character]
 | `REALMS <world>` | Lists visible realms for a world, where `<world>` is a world slug or a menu index from `WORLDS`. The default public production realm may be visible before membership exists; additional realms require explicit grants. | `REALMS demo` |
 | `JOIN <world>` | Explicitly joins the selected world's public production realm through the Account-owned idempotent membership writer. The resulting membership is durable and powers later return discovery. | `JOIN demo` |
 | `CHARS <world> [realm]` | Lists characters for a world and optional realm from the authoritative character store, filtered to `{accountId, tenantId, gameInstanceId}` ownership. | `CHARS demo production` |
-| `PLAY <world> [realm] [character]` | Binds the authenticated connection to a world, optional realm, and optional character after `LOGIN`, enforcing tenant authorization, realm routing, and entitlements. Players may omit `[realm]` or `[character]` when the resolved choice is unambiguous. A first-time public player must complete `JOIN <world>` first; `PLAY` returns `JOIN_REQUIRED` and never creates membership implicitly. | `PLAY demo production Sora` |
+| `PLAY <world> [realm] [character]` | Binds the authenticated connection to a world, optional realm, and optional character after `LOGIN`, enforcing tenant authorization, realm routing, and entitlements. Players may omit `[realm]` or `[character]` when the resolved choice is unambiguous. A first-time public player must complete `JOIN <world>` first; a grant-backed non-public path may proceed only when its required durable membership already exists. `PLAY` returns `JOIN_REQUIRED` and never creates or substitutes membership implicitly. | `PLAY demo production Sora` |
 | `LOOK` | Requests the current room snapshot aggregated from Game Logic plus World and Entity services. | `LOOK` |
 | `INVENTORY` / `INV HERE` | Lists carried items or the current room-ground item holder. The command is rendered by Game Session, but item state is read through Game Logic and Entity Management. | `INV HERE` |
 | `GET <item>` / `DROP <item>` | Moves a visible room-ground item into carried inventory, or a carried item into the current room. Game Session forwards the raw selector and quantity to Game Logic; Game Logic resolves names, visible refs, container refs, and stack refs before Entity Management mutates state. | `GET torch1` |
@@ -128,6 +128,7 @@ Additional Game Session-specific login failures cover parsing and session-state 
 - `PROMPT_LOGIN_UNSUPPORTED` – prompt-based `LOGIN`/`LOGON` exchanges are planned but not implemented yet on non-bootstrap transports, so those clients must send `LOGIN <username> <password>`.
 - `INVALID_ACCOUNT` – Account Service returned an account identifier that could not be parsed into the expected format.
 - `ACCOUNT_MISMATCH` – bootstrap-backed `LOGIN` resolved to an account different from the validated connect-context subject, or the authenticated account is otherwise not permitted to attach to the requested game instance or tenant context.
+- `JOIN_REQUIRED` – the selected public-production target has no confirmed durable membership for the account, so the client must complete explicit `JOIN`/`Join & Play`; a grant or cached discovery result is not a substitute.
 - `SESSION_NOT_FOUND` – the supplied game instance identifier has no corresponding `GameInstance`.
 - `INVALID_ARGUMENT` – session ID parsing or other validation failed before the handler reached gameplay state.
 - `PLAY_REQUIRED` – a gameplay command that requires admitted gameplay scope was sent before `PLAY` completed successfully.

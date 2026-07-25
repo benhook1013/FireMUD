@@ -28,6 +28,7 @@ The target-state tick architecture in this document is intentionally broader tha
 Current live substrate to keep in mind while reading:
 
 - the live durable ownership and command-status boundary is currently keyed by `{tenantId, gameInstanceId}`, not true `regionId` partitioning;
+- target-state `regionId` is an opaque logical runtime-coordination identifier scoped by `{tenantId, gameInstanceId}`. It is not a World Management numeric row id, a design-time region template id, a room id, or a slug; implementations must not substitute those identifiers for the tick-region identity.
 - the live control-plane/status APIs are `GetRuntimeOwnershipStatus` and the canonical `GetGameplayCommandStatus`; region status and the accepted richer gameplay-command lifecycle fields remain target-state follow-through;
 - the live `executorFence` is an opaque generation token used for compare-and-match stale-fence protection, not yet the richer numeric ordering model used in some target-state examples;
 - the live `tick_batch` / `tick_effect` substrate is real, and the current gameplay-command manifest now carries current-boundary `enqueueSeq`, `sourceType`, `dueTickId`, and explicit claimed-source state plus digest-checked replay reuse; timer/retry/remote-follow-up source-claim breadth and the cross-region result-return contract described below are still target-state follow-through rather than fully shipped behavior.

@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The decision is accepted; implementation and proof remain partial. Durable bounded transcript storage and Redis caching exist, but immutable continuity/resume anchors, deadline enforcement in `PLAY`, token-refresh independence, repeated-episode behavior, and explicit-logout replay suppression remain incomplete or unproved. Current Game Session code still defaults `FIREMUD_AUTH_SESSION_EXPIRATION_MS` to one hour and does not enforce the five-minute continuity cap. Acceptance records the target decision, not completion; the obligations below define the remaining proof.
+The decision is accepted; implementation and proof remain partial. Durable bounded transcript storage and Redis caching exist, but immutable continuity/resume anchors, deadline enforcement in `PLAY`, token-refresh independence, repeated-episode behavior, and explicit-logout replay suppression remain incomplete or unproved. The target `FIREMUD_AUTH_SESSION_EXPIRATION_MS` default is `300000` ms with an inclusive valid range of `1..300000` ms; current Game Session code still defaults it to one hour (`3600000` ms) and does not enforce that range. Acceptance records the target decision, not completion; the obligations below define the remaining proof.
 
 ## Decision Record
 
@@ -42,7 +42,7 @@ On successful gameplay admission, Game Session records an immutable continuity a
 
 `continuityBindingExpiresAt = admissionAt + min(FIREMUD_AUTH_SESSION_EXPIRATION_MS, 300000 ms)`
 
-where `FIREMUD_AUTH_SESSION_EXPIRATION_MS` is the independent logical active-session/continuity horizon and the 300,000 millisecond cap is part of this contract. It is not derived from JWT lifetime or changed by private player-delegation token rotation. Passing this anchor does not itself kick a continuously connected, currently authorized player. It means that after the next transport loss the old binding cannot be resumed.
+where `FIREMUD_AUTH_SESSION_EXPIRATION_MS` is the independent logical active-session/continuity horizon, has target default `300000` ms, and must be validated at startup/preflight as a finite integer in the inclusive range `1..300000` ms. Zero, negative, non-integral, non-finite, and above-maximum values are configuration errors; the live one-hour Game Session default is implementation drift, not a valid target override. The 300,000 millisecond cap is part of this contract. It is not derived from JWT lifetime or changed by private player-delegation token rotation. Passing this anchor does not itself kick a continuously connected, currently authorized player. It means that after the next transport loss the old binding cannot be resumed.
 
 Each connected-to-disconnected transition starts one immutable disconnection episode. At that transition:
 

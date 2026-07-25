@@ -28,8 +28,10 @@ FireMUD accepts trusted first-party gameplay workloads as one internal delegatio
 
 ### Workload and Method Authorization
 
-- Every gameplay service presents a unique mTLS workload identity derived from its authenticated certificate, such as an approved SPIFFE ID or SAN. A generic `internalService=true` bearer claim is not sufficient workload identity.
-- Every internal gameplay RPC has a default-deny allowlist of exact caller workload identities. Network policy narrows reachability but does not replace application-level caller enforcement.
+- Every gameplay service presents an mTLS certificate that chains to the approved workload trust root and carries exactly one canonical workload identity in the URI SAN, using the established SPIFFE-style representation (for example, `spiffe://firemud/ns/<namespace>/sa/<service>`). Gameplay delegation does not choose between a SPIFFE identity and a separate DNS/SAN identity model; DNS SAN and fingerprint fallbacks documented for the TCP Proxy -> Gateway migration and break-glass path do not apply here. A generic `internalService=true` bearer claim is not sufficient workload identity.
+- The peer identity extractor normalizes the URI SAN and the configured allowlist values into the canonical representation before comparison, rejects malformed or non-canonical values, and then uses exact matching only. Wildcards, fuzzy matching, implicit aliases, and selecting one identity from multiple competing URI SANs are forbidden. A certificate with no canonical URI SAN, more than one eligible canonical identity, or conflicting identity representations is rejected.
+- Certificate validation authenticates the peer identity; every internal gameplay RPC separately has a default-deny allowlist that authorizes exact authenticated workload identities for that method. Network policy narrows reachability but does not replace either certificate authentication or application-level caller authorization.
+- Certificate rotation may use a bounded overlap in which the old and new canonical URI identities are both present in the relevant exact allowlists. Each presented certificate must still resolve to one unambiguous identity, and the old identity is removed after the documented rotation/drain window; overlap is not permission to accept alternate identity representations.
 - Services reject client-supplied or forwarded raw identity headers as authority. Only the authenticated workload and the typed request contract participate in internal gameplay delegation.
 
 ### Player Execution Context

@@ -195,6 +195,8 @@ routes:
     classification: tenant_regular
     tenant_billing_authority_generation_applies: true
     membership_authority_generation_applies: true
+    # Refreshes security/role state only; it does not admit gameplay or expand runtime capacity.
+    required_live_checks: []
     accepted_token_profiles: [control-ui]
     roles:
       any_of: [tenantAdmin, platformAdmin]

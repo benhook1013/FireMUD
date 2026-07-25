@@ -275,7 +275,8 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
 - Transport: connect-token carriage on `/ws/game/**` handshake.
   - First-party browser clients use the cookie `Firemud-Connect-Token` set by `POST /auth/connect-token` with `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/ws/game`, and `Max-Age` no longer than the connect-token TTL. The cookie value is the connect token; browser JavaScript must not read or persist it.
   - Mobile and other non-browser first-party clients use a cookie jar for the same `Firemud-Connect-Token` cookie; no dedicated header carrier is supported.
-  - Gateway must accept exactly one non-empty, single-valued `Firemud-Connect-Token` cookie for non-proxy gameplay handshakes. Duplicate values or a malformed carrier are rejected as `CONNECT_TOKEN_REJECTED` rather than choosing precedence.
+  - An explicitly classified non-browser/server route may use the dedicated `X-Firemud-Connect-Token` handshake header. This exception does not apply to Telnet/generic credential-login traffic or create a first-party mobile header fallback.
+  - Gateway must accept exactly one non-empty, single-valued supported carrier for non-proxy gameplay handshakes. Duplicate header values, duplicate cookie values, a malformed carrier, or simultaneous header and cookie carriers are rejected as `CONNECT_TOKEN_REJECTED`; Gateway never chooses precedence.
   - Query-string carriage is not a supported connect-token carrier in player-facing environments.
 - Required claims: `iss`, `aud`, `accountId`, `tenantId`, `gameInstanceId`, `worldSlug`, `realmSlug`, `pointerVersion`, `connectScopeId`, `requestId`, `iat`, `exp`, `jti`.
 - `iss` is required and must exactly match the deployment's configured Account Service issuer identifier used by the Account JWKS trust configuration; callers cannot select or override it.
@@ -297,7 +298,7 @@ The connect token is not a gameplay authorization grant and does not replace the
 
 #### Gateway-to-Game Session connect context (normative)
 
-Gateway verification of the presented `Firemud-Connect-Token` cookie must not be translated into trust of raw forwarded headers. For first-party `/ws/game/**` handshakes, Gateway must validate and consume the cookie, strip it before the upgrade completes, and attach a short-lived signed connect context that Game Session verifies before applying connect-token scope checks.
+Gateway verification of a supported connect-token carrier must not be translated into trust of raw forwarded headers. Gateway must validate and consume the token, strip every external carrier before the upgrade completes, and attach a short-lived signed connect context that Game Session verifies before applying connect-token scope checks.
 
 - Gateway-issued context fields (minimum): `accountId`, `tenantId`, `gameInstanceId`, `connectTokenJti`, `verifiedAt`, `expiresAt`, `gatewayRequestId`.
 - Transport: single signed compact payload header (for example `X-Firemud-Connect-Context`) plus `kid` metadata if not embedded in payload.

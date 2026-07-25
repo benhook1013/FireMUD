@@ -6,7 +6,7 @@ For a conceptual overview and operator quick reference, see `environment-and-sec
 
 ## Implementation Status
 
-The target gameplay-continuity policy is independent of JWT lifetime and caps `FIREMUD_AUTH_SESSION_EXPIRATION_MS` at five minutes. Current Game Session code still defaults this setting to one hour and does not enforce the target cap; the catalog records that as implementation drift rather than target policy.
+The target gameplay-continuity policy is independent of JWT lifetime. Its target default for `FIREMUD_AUTH_SESSION_EXPIRATION_MS` is `300000` ms (five minutes), and its inclusive valid range is `1..300000` ms. Current Game Session code still defaults this setting to one hour (`3600000` ms) and does not enforce the target range; the catalog records that out-of-range runtime default as implementation drift rather than target policy.
 
 ## Table of Contents
 
@@ -165,13 +165,13 @@ Implementation drift: the current runtime loads and immediately replaces one sha
 | `FIREMUD_AUTH_JWKS_PATH` | Account-only filesystem path to the published `jwks.json` used by the Account JWKS endpoint; in player-facing environments it must point into the read-only `jwt-jwks` mount | *(unset; target-state `classpath:jwks.json` fallback is local/test only)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
 | `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Cleanup margin added to each token's remaining lifetime for issued-token registry retention only | `300000` |
-| `FIREMUD_AUTH_SESSION_EXPIRATION_MS` | Initial gameplay-continuity retention; effective value is independently capped at five minutes | `300000` |
+| `FIREMUD_AUTH_SESSION_EXPIRATION_MS` | Initial gameplay-continuity retention; target range is `1..300000` ms and target default is five minutes | `300000` (target; current Game Session default is `3600000`) |
 
 Server-side gameplay sessions use a distinct bounded continuity policy:
 
-- `session_expiration_ms = min(FIREMUD_AUTH_SESSION_EXPIRATION_MS, 300000)`
+- `session_expiration_ms = min(FIREMUD_AUTH_SESSION_EXPIRATION_MS, 300000)` after target-range validation; the existing `300000` ms maximum is a hard design bound, not permission to accept an unbounded positive input.
 
-Startup and deployment preflight must parse both session settings as finite integer millisecond values before initializing runtime state or Redis TTLs. `FIREMUD_AUTH_SESSION_EXPIRATION_MS` must be positive; larger positive inputs remain valid but are reduced by the five-minute effective cap above. `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` must be non-negative, and its addition to a token's remaining lifetime must not overflow. Invalid input fails startup or preflight closed rather than producing a zero, negative, or wrapped TTL.
+Startup and deployment preflight must parse both session settings as finite integer millisecond values before initializing runtime state or Redis TTLs. `FIREMUD_AUTH_SESSION_EXPIRATION_MS` must be within the inclusive range `1..300000`; zero, negative, non-integral, non-finite, and above-maximum values fail startup or preflight closed. `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` must be non-negative, and its addition to a token's remaining lifetime must not overflow. Invalid input fails startup or preflight closed rather than producing a zero, negative, or wrapped TTL.
 
 This value defines the initial continuity-retention and physical cleanup horizon for a gameplay binding independently of JWT lifetime and issued-token cleanup retention. It establishes immutable `continuityBindingExpiresAt` at admission and seeds the Redis TTL for `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` keys (see `../system-architecture-redis.md#session-keys-and-gameplay-binding`). Passing that anchor makes the old binding non-resumable after transport loss; it does not itself kick a continuously connected player whose current authorization and rotated backend token remain valid. Every later gameplay-binding TTL refresh is capped at the remaining `continuityBindingExpiresAt` lifetime, for example `min(requestedTtlMs, max(0, continuityBindingExpiresAt - now))`. Each JWT remains valid only through its own `exp`.
 

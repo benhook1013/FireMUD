@@ -153,7 +153,7 @@ All internal gRPC calls use **mutual TLS**. FireMUD services now express the ser
 - `spring.grpc.server.ssl.bundle=firemud-grpc`
 - `spring.grpc.server.ssl.client-auth=REQUIRE` for services that require client certificates
 
-Outside intentionally relaxed local development and hosted preview while its documented plaintext exception remains active, each workload has a distinct cert-manager-issued private key and certificate in its own Kubernetes Secret. Services may share a CA trust bundle, but they must not share one leaf private key or collapse concrete workload identity into a generic “FireMUD service” certificate. Method caller allowlists authenticate the peer identity derived from this certificate.
+Outside intentionally relaxed local development and hosted preview while its documented plaintext exception remains active, each workload has a distinct cert-manager-issued private key and certificate in its own Kubernetes Secret. Services may share a CA trust bundle, but they must not share one leaf private key or collapse concrete workload identity into a generic “FireMUD service” certificate. The certificate and trust chain authenticate the peer identity; exact method caller allowlists then authorize that already-authenticated identity for the individual RPC. A valid certificate alone does not authorize every internal method.
 
 Hosted preview may temporarily use plaintext internal gRPC while the Spring gRPC `1.0.x` SSL-bundle migration and preview re-proof are in flight. That exception is preview-only, must be documented in the preview slice/docs, and does not change the canonical non-local target state above.
 
