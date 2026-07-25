@@ -66,7 +66,7 @@ The Game Session Service is responsible for:
 
 - Authenticating sockets and binding identity context.
 - Managing gameplay Redis session state such as `characterId`, `tenantId`, and tick region.
-- Managing JWTs for backend interactions.
+- Obtaining Account-issued JWTs for backend interactions. Game Session never mints JWTs; Account is the sole JWT issuer.
 
 ### Session Types and Lifetimes
 
@@ -122,7 +122,7 @@ On reconnect/resume (after the client re-`LOGIN`s and re-`PLAY`s), Game Session 
 
 When resume relies on grace-period continuity, Account issues an exact-binding, exact-resume-episode activation lease only after validating current lifecycle, billing, membership, grant, and security authority. Game Session may move the binding only to provisional `RESUME_PENDING` under the lease fence; Account must durably finalize the matching lease as `COMMITTED` before the binding becomes admissible. A concurrent Account cutoff fences the lease, and stale local CAS or late finalization fails closed. This is an ordered idempotent cross-service protocol, not a cross-store atomic transaction.
 
-Resume validation must not depend on the previous private player-delegation token remaining valid. After a fresh successful `LOGIN`, Game Session must mint or obtain a fresh `game-session-account-delegation` token, atomically replace stored `authTokenHash`, `authTokenIssuedAt`, and `authTokenExpiresAt`, update `membershipVersion`, consume the current disconnection episode, and then resume the gameplay binding. The new token's expiration must be persisted before resumed backend calls use it. Resume is rejected for any failed validation above, including subject mismatch, stale or lost gameplay membership, expired or non-resumable gameplay state, an expired resume window, a changed uniqueness key, or revoked account or tenant state. The fresh token's validity remains bounded by its own `exp`; obtaining it does not extend `continuityBindingExpiresAt` or the current episode's `resumeDeadline`.
+Resume validation must not depend on the previous private player-delegation token remaining valid. After a fresh successful `LOGIN`, Game Session must request and obtain a fresh `game-session-account-delegation` token issued by Account; Game Session never mints this token and Account is the sole JWT issuer. Game Session then atomically replaces stored `authTokenHash`, `authTokenIssuedAt`, and `authTokenExpiresAt`, updates `membershipVersion`, consumes the current disconnection episode, and resumes the gameplay binding. The new token's expiration must be persisted before resumed backend calls use it. Resume is rejected for any failed validation above, including subject mismatch, stale or lost gameplay membership, expired or non-resumable gameplay state, an expired resume window, a changed uniqueness key, or revoked account or tenant state. The fresh token's validity remains bounded by its own `exp`; obtaining it does not extend `continuityBindingExpiresAt` or the current episode's `resumeDeadline`.
 
 ### Active-Socket Auth Revocation
 
@@ -187,13 +187,14 @@ For per-token logout, clients call `POST /auth/logout` with the current JWT in t
 - Computes the `tokenHash` from the presented JWT and commits a durable `PENDING` operation record bound to the request ID, immutable request digest, and exact token identity before touching Redis.
 - Idempotently deletes the corresponding `session:auth:token:<tokenHash>` registry record, then advances the matching operation to `COMMITTED` with its completed tombstone, per-token logout audit, and outbox state in an Account database transaction before reporting success.
 - The bounded Account operation reconciler retries matching `PENDING` work. If a crash occurs after deletion but before the durable completion commit, that precommitted exact-token intent plus the established absent-record postcondition lets the reconciler commit the tombstone safely. Bare registry absence without matching `PENDING` or `COMMITTED` evidence remains denied. Only `COMMITTED` evidence satisfies an idempotent success response; the outbox publishes from that state and retries delivery independently.
+- Treats the exact-token tombstone as a monotonic Account-owned token-identity fence. Refresh, rebind, installation, and reconciliation compare-and-set operations for that lineage must validate the current fence and cannot recreate a registry record superseded by logout. This ordering does not claim a transaction across Account state, Coordination Redis, and Game Session state.
 
 This flow performs a per-token logout: it invalidates the current browser or device session without affecting other devices or unrelated gameplay bindings for the same account. A first-party player UI separately stops reconnect, closes its socket through gameplay `LOGOUT`, and then revokes that device's `player-bootstrap` token; Account does not discover sockets from the per-token endpoint.
 
 For `POST /auth/logout-all`, the Account Service must:
 
 - In one Account database transaction, idempotently advance the account authority generation and commit the durable account-wide logout event, audit record, and outbox entry with distinct action type, actor, account, and request identity without recording raw tokens.
-- Return success even when no active tokens remain (idempotent behavior).
+- Do not infer success from the absence of active tokens. Success requires the authorized logout-all operation and its durable account-generation/event evidence, or matching durable evidence that an earlier logout-all already superseded the presented authority.
 - Treat the account authority generation as immediate authority for bulk revocation; older token records may be removed by bounded background cleanup and must not be required for correctness.
 - Terminate control-plane tokens, player-bootstrap tokens, and active gameplay bindings for the account across tenants through the account-security event and bounded reconciliation contract in ADR 0030.
 

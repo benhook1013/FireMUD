@@ -111,7 +111,7 @@ To keep trust boundaries clear, FireMUD has exactly these JWT profile categories
 
 - **Gameplay-connect JWTs**
   - Issued by Account after bootstrap discovery and current membership, entitlement, and admission checks with profile and audience `gameplay-connect`.
-  - Carried exactly once to the Gateway gameplay WebSocket handshake through the approved header or HttpOnly cookie carrier and consumed under the replay contract in ADR 0029.
+  - Carried exactly once to the Gateway gameplay WebSocket handshake through the approved header or HttpOnly cookie carrier and consumed under the replay contract in [ADR 0029](./decisions/adr-0029-single-use-gameplay-connect-token-carriage.md).
   - Gateway validates and consumes this token, strips its carrier, and forwards only the signed connect context. Gameplay commands and backend services never accept it as authorization.
 
 - **Receiver-specific private player-delegation JWTs**
@@ -119,7 +119,7 @@ To keep trust boundaries clear, FireMUD has exactly these JWT profile categories
   - `game-session-account-delegation` is issued for Game Session's Account calls via gRPC `Authenticate` or the generation-bound refresh contract and has the exact audience `account-service`.
   - Carried only over mTLS-protected service-to-service links.
   - Lifetime: short-lived and backed by one `session:auth:token:<tokenHash>` registry record; services must not cache them beyond their expiry or ignore registry revocation.
-  - An active gameplay binding rotates its private `game-session-account-delegation` JWT through the Account-owned refresh contract in ADR 0031. Refresh authority includes the still-valid per-lineage `tokenGeneration` and cannot be derived from Game Session mTLS identity plus an account ID alone.
+  - An active gameplay binding rotates its private `game-session-account-delegation` JWT through the Account-owned refresh contract in [ADR 0031](./decisions/adr-0031-revocation-safe-session-token-rotation-and-logout.md). Refresh authority includes the still-valid per-lineage `tokenGeneration` and cannot be derived from Game Session mTLS identity plus an account ID alone.
   - Account rejects rotation when the current lineage, applicable authority generation, or private-realm `grantVersion` is blocked by account, tenant, membership, or grant revocation. A replacement with a newer `iat` must not cross a logout-all, password-reset, security-lock, membership-loss, or realm-grant cutoff.
 
 There is no generic backend JWT profile, and the `internal` audience is forbidden. Services must validate both the signature and the exact expected audience/profile for incoming tokens and reject an unexpected `aud` (for example, a `control-ui` JWT presented to a player-bootstrap surface or a `player-bootstrap` JWT presented to an admin API). A privileged-control window is a route/session authorization condition, not a JWT profile or audience.

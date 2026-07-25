@@ -559,7 +559,14 @@ Realm-routing contract (required):
   - the separately versioned catalog/policy reference used for visibility and public-production reads,
   - `updatedAt`,
   - `updatedBy` / change reason for audit.
-- `WORLDS`, `REALMS`, `CHARS`, bootstrap discovery, connect-token issuance, admission (`PLAY`), reconnect validation, and runtime control-plane operations must consume the same catalog/policy plus routing-pointer authority for realm selection and gameplay-admissible instance routing.
+- The separately versioned catalog/policy reference is the sole authority for the realm's visibility, access policy, and public-production designation. The routing record stores that reference and the admission pointer; it must not duplicate a `publicProduction` flag or derive public-production behavior from `realmSlug`, display metadata, or `admissibleGameInstanceId`.
+- All player and control-plane flows must resolve the referenced catalog/policy revision together with the routing pointer, and must fail closed on a missing, stale, mismatched, or ambiguous pair:
+  - `WORLDS` uses the catalog/policy public-production designation and visibility policy when building world discovery.
+  - `REALMS` uses the same policy revision for public-production visibility versus explicit realm grants.
+  - `CHARS` uses that policy decision before resolving caller-valid characters for the selected realm and routed instance.
+  - Bootstrap discovery and connect-token issuance reread the same policy reference and routing pointer before issuing target-specific evidence.
+  - Admission (`PLAY`) and reconnect validation revalidate the current policy designation/access decision and the current admissible routing target; neither trusts a duplicated flag in a routing payload or a stale discovery result.
+  - Runtime control-plane launch, cutover, rollback, and fork operations publish or consume the versioned catalog/policy reference and routing pointer as one auditable authority pair; they must not maintain a second public-production flag in routing state.
 - Routing updates use an atomic database compare-and-set on the stable tenant-qualified `{tenantId, worldSlug, realmSlug}` identity, with the expected `pointerVersion` included in the update predicate and advanced in the stored value. Failed CAS must not admit or expose dual-admissible state for the same realm. The expected version is required for an existing record, and route state, audit, idempotent request outcome, and prepared-cutover execution commit atomically.
 - Ownership: Game Session Service is the sole writer and system of record for gameplay realm-routing state; other services consume via API/read models and must not write routing state directly.
 - API surface: Game Session exposes control-plane APIs for reading/updating realm-routing state. All launch, cutover, rollback, and fork lifecycle workflows must use these APIs rather than direct table writes.
@@ -569,7 +576,7 @@ Realm-routing contract (required):
 - Pointer state controls new or renewed gameplay bindings. Existing connected source sessions do not re-read it per action and remain on the source only before the persisted drain deadline; fresh `PLAY` and reconnect use the current target.
 - `firemud.game-session.cutover-drain.duration-ms` has a five-minute platform default and hard maximum. Tenant/game overrides may shorten it or set it to zero but cannot extend it. The cutover audit and prepared-upgrade execution record preserve the effective value, policy version, `sourceDrainId`, and `sourceDrainDeadlineAt` so retries and operators observe one deadline.
 - Game Session may complete a drain early after the source session index is empty. When the deadline is reached, it sends one bounded update notice, closes remaining source sockets, rejects further source commands through the instance lifecycle fence, marks the source `STOPPING`, and retries the idempotent `InstanceTermination` workflow until the source is terminal.
-- One visible realm may be marked as the public-production realm. Additional realms, including playtest forks, are valid first-class player-addressable realms when they are intentionally exposed through the authenticated discovery contract, but public-production onboarding must follow the explicit routing flag rather than inferring behavior from the `realmSlug`.
+- One visible realm may be marked as the public-production realm by the `publicProduction` policy value in the referenced catalog/policy revision. Additional realms, including playtest forks, are valid first-class player-addressable realms when intentionally exposed through that policy and the authenticated discovery contract; public-production onboarding must consume that policy value and never infer behavior from `realmSlug` or a duplicate routing-record flag.
 
 ### Fork-Snapshot Boundary For Playtest Realms
 

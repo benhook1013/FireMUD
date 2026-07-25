@@ -68,7 +68,7 @@ A fresh snapshot is necessary but not sufficient: its operation-specific flag mu
 
 ## Consequences
 
-- Account failure no longer prevents a recently admitted player from resuming the same session or blocks non-expanding recovery of recently entitled capacity.
+- Continuity grace tolerates only unavailability of the entitlement snapshot/evaluation itself. Current lifecycle, revocation, membership, applicable grant, and ADR 0030 `resumeActivationLease` checks still require Account reachability and fail closed when unavailable; the grace window remains a platform maximum of five minutes and creates no new commitment.
 - A tenant whose hard cutoff has not reached runtime services may receive at most five minutes of bounded continuity from the Account `evaluatedAt` of already-observed positive state. New commitments remain unavailable.
 - Login/admission load uses one short-lived cache per tenant rather than one Account/database call per player, while billing events and sequence reconciliation bound staleness.
 - The contract requires real entitlement versions, per-tenant billing sequences, event consumers, cache policy, operation classification, and proof for hard-denial propagation.
