@@ -34,7 +34,7 @@ This process is invisible to the client; no re-login is needed.
 
 Membership changes that affect tenant access follow a stricter contract than ordinary role refresh:
 
-1. The Account Service emits a membership-change event containing `accountId`, `tenantId`, `membershipVersion`, the changed role set, and whether gameplay admission remains allowed.
+1. The Account Service emits a membership-change event containing `accountId`, `tenantId`, `membershipVersion`, `membershipAuthorityGeneration`, the changed role set, and whether gameplay admission remains allowed.
 2. Game Session compares the event against active gameplay bindings for `{accountId, tenantId}`.
 3. Losing tenant membership or losing gameplay-admission authority (for example removal of `player` or a required private-realm grant) immediately revokes the affected gameplay sessions. Planned realm or playtest closure uses the owning close-and-drain workflow before grants are revoked; grant revocation itself is not a graceful-drain mechanism.
 4. For caller-bound tenant control-plane access, the Account Service must also advance the `{accountId, tenantId}` membership authority generation when membership or tenant-role changes invalidate previously issued tenant authority for that caller.
@@ -43,8 +43,8 @@ Membership changes that affect tenant access follow a stricter contract than ord
 
 Membership-change event delivery semantics are required, not best-effort folklore:
 
-- Every event must include a stable `eventId` plus the tuple `{accountId, tenantId, membershipVersion}`.
-- `membershipVersion` must be monotonic per `{accountId, tenantId}` and must advance on any role or membership change that can affect gameplay or tenant-safe control-plane authority.
+- Every event must include a stable `eventId` plus the tuple `{accountId, tenantId, membershipVersion, membershipAuthorityGeneration}`.
+- `membershipVersion` must be monotonic per `{accountId, tenantId}` and must advance on any role or membership change that can affect gameplay or tenant-safe control-plane authority. `membershipAuthorityGeneration` is a separate authority fence that advances whenever previously issued caller-bound tenant authority must be invalidated; consumers must not substitute one for the other.
 - Consumers must treat duplicate or older versions as no-ops.
 - If Game Session detects a version gap or has no prior version for an active binding, it must reconcile immediately via the authoritative internal membership API before deciding whether the session remains valid.
 - Account Service owns the version increment rules; other services must not synthesize membership versions locally.
@@ -80,7 +80,7 @@ FireMUD uses distinct lifetimes and invariants for each session type:
 - **Gameplay session bindings**
   - Keys: tenant-scoped session keys described in [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding), storing `accountId`, `tenantId`, `characterId`, and tick-region context.
   - Purpose: bind a connected socket or reconnect token to a character in a specific tenant, enforce one session per character, and support reconnect flows.
-  - Lifetime: on successful gameplay admission at `admissionAt`, Game Session stores the immutable continuity anchor `continuityBindingExpiresAt = admissionAt + session_expiration_ms`. Passing it does not itself end a continuously connected, currently authorized session, but the old binding cannot resume after a later transport loss. The Redis TTL is physical cleanup metadata and may refresh while active without moving the anchor. Each connected-to-disconnected transition starts an immutable episode at `disconnectAt`, with `resumeDeadline = min(continuityBindingExpiresAt, disconnectAt + effective firemud.reconnection.policy.resume-window-ms)`. Failed reconnects cannot extend that pair. Successful resume consumes the episode; a later transport loss starts a new episode bounded by the same continuity anchor. An `auth-revoked` result received while connected must first terminate the active binding and create this disconnection episode before any fresh re-admission. Redis key presence and transcript retention are not sufficient authority to resume.
+  - Lifetime: on successful gameplay admission at `admissionAt`, Game Session stores the immutable continuity anchor `continuityBindingExpiresAt = admissionAt + session_expiration_ms`. Passing it does not itself end a continuously connected, currently authorized session, but the old binding cannot resume after a later transport loss. The authoritative active binding and its current revocation/fencing state are distinct from the expiring reconnect/transcript cache; cache refresh cannot extend active or resume authority, and cache loss cannot authorize a new binding. The Redis TTL is physical cleanup metadata and may refresh while active without moving the anchor. Each connected-to-disconnected transition starts an immutable episode at `disconnectAt`, with `resumeDeadline = min(continuityBindingExpiresAt, disconnectAt + effective firemud.reconnection.policy.resume-window-ms)`. Failed reconnects cannot extend that pair. Successful resume consumes the episode; a later transport loss starts a new episode bounded by the same continuity anchor. An `auth-revoked` result received while connected must first terminate the active binding and create this disconnection episode before any fresh re-admission. Redis key presence and transcript retention are not sufficient authority to resume.
 
 - **Bootstrap/pre-auth session contexts**
   - Keys: current implementation-local `sessionctx:*` entries described in the Game Session runtime docs.
@@ -112,15 +112,16 @@ Each gameplay session binding must store the server-side auth token identity it 
 - `authTokenIssuedAt` (`iat`) – the issuance time of that JWT.
 - `authTokenExpiresAt` (`exp`) – the deadline used to schedule rotation before expiry.
 - `membershipVersion` – the latest authoritative tenant-membership version used when the session was admitted or last refreshed.
+- `membershipAuthorityGeneration` – the Account-owned authority fence used to reject caller-bound tenant authority issued before a membership or tenant-role invalidation.
 - When roles or private delegation are refreshed mid-session, Game Session must atomically update `authTokenHash`, `authTokenIssuedAt`, and `authTokenExpiresAt` in the gameplay session binding and persist the refreshed `membershipVersion` when tenant membership authority is consulted.
 
 On reconnect/resume (after the client re-`LOGIN`s and re-`PLAY`s), Game Session must load the gameplay session binding and confirm:
 
 - The newly authenticated caller `accountId` matches the stored gameplay binding subject.
-- Current tenant membership and role authority still permits gameplay admission for the target tenant and is not older than the stored `membershipVersion`.
+- Current tenant membership and role authority still permits gameplay admission for the target tenant, is not older than the stored `membershipVersion`, and matches the current `membershipAuthorityGeneration` authority fence.
 - The gameplay session key remains logically resumable (key present, `continuityBindingExpiresAt` has not passed, the current `resumeDeadline` has not passed, and the uniqueness key is unchanged).
 - Current revocation state does not block the account or tenant for gameplay admission.
-- Current entitlement authority is fresh for a new binding. Resume of the same still-resumable binding may instead use an eligible positive last-known-good snapshot no older than five minutes when refresh is unavailable; hard denial, revocation, a newer billing sequence, or a sequence gap forbids this continuity path.
+- Current entitlement authority is fresh for a new binding. Only resume of the same still-resumable binding may use an eligible positive last-known-good snapshot no older than five minutes when refresh is unavailable; the snapshot must be authoritative for the same target and authority tuple. New joins, fresh bindings, expansion, target changes, and any uncertain, missing, stale, negative, revoked, or gapped authority fail closed.
 
 When resume relies on grace-period continuity, Account issues an exact-binding, exact-resume-episode activation lease only after validating current lifecycle, billing, membership, grant, and security authority. Game Session may move the binding only to provisional `RESUME_PENDING` under the lease fence. `RESUME_PENDING` is never admissible: Game Session must observe the exact lease, binding, and resume-episode identity durably finalized as `COMMITTED` before it may replace token state, consume the episode, or publish the binding as admitted. If the matching lease is missing, expired, fenced, ambiguous, or not `COMMITTED`, Game Session performs none of those mutations, retires any candidate token through Account's idempotent abort path, and fails closed. A concurrent Account cutoff fences the lease, and stale local CAS or late finalization fails closed. This is an ordered idempotent cross-service protocol, not a cross-store atomic transaction.
 
@@ -195,10 +196,11 @@ This flow performs a per-token logout: it invalidates the current browser or dev
 
 For `POST /auth/logout-all`, the Account Service must:
 
-- In one Account database transaction, idempotently advance the account authority generation and commit the durable account-wide logout event, audit record, and outbox entry with distinct action type, actor, account, and request identity without recording raw tokens.
+- Use a stable high-entropy `requestId` bound to an immutable logout-all request digest. A durable Account operation row has a uniqueness constraint on `(accountId, requestId)` and records the expected and committed authority generation plus the response outcome.
+- In one Account database transaction, compare-and-set the expected account authority generation and commit the operation result, account-wide logout event, audit record, and outbox entry exactly once with distinct action type, actor, account, and request identity without recording raw tokens. A retry with the same request ID and digest returns the previously committed result; reuse with a different digest is rejected. A retry cannot advance the generation or duplicate audit/outbox records.
 - Do not infer success from the absence of active tokens. Success requires the authorized logout-all operation and its durable account-generation/event evidence, or matching durable evidence that an earlier logout-all already superseded the presented authority.
 - Treat the account authority generation as immediate authority for bulk revocation; older token records may be removed by bounded background cleanup and must not be required for correctness.
-- Terminate control-plane tokens, player-bootstrap tokens, and active gameplay bindings for the account across tenants through the account-security event and bounded reconciliation contract in ADR 0030.
+- Terminate control-plane tokens, player-bootstrap tokens, and all `game-session-account-delegation` lineages plus active gameplay bindings for the account across tenants through the account-security event and bounded reconciliation contract in ADR 0030. The event is consumed idempotently; account-wide completion is not reported while an active binding or durable index-repair obligation remains unresolved.
 
 See [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding) for Redis structure and gameplay rebinding.
 

@@ -41,9 +41,10 @@ Account Service is the sole join writer. The canonical operation is `JoinPublicP
 
 - revalidates that the realm is still the explicit public production realm, publicly visible, entitlement-eligible, and backed by an unambiguous current admission pointer;
 - obtains a fresh ADR 0028 entitlement evaluation/snapshot immediately before the membership commit. The evaluation must be fresh at the commit gate, must authorize explicit public join, and must be tied to the current caller, target, and entitlement authority version; a failed refresh returns `ENTITLEMENT_UNAVAILABLE`, and a stale, future-dated, mismatched, or otherwise unsafe snapshot cannot authorize the join;
-- treats `requestId` as the idempotency identity and makes concurrent joins converge on one membership;
+- binds `requestId` to the canonical operation and target digest: `JoinPublicProductionMembership`, `accountId`, `tenantId`, `worldSlug`, and `realmSlug`. Reusing a request ID with a different operation, account, tenant, world, or realm is an idempotency conflict; concurrent matching joins converge on one membership and one logical join outcome;
 - advances a monotonic `membershipVersion` rather than exposing the membership row ID as a change version;
-- commits the membership and durable audit/outbox event in one database transaction; and
+- advances the caller-bound `membershipAuthorityGeneration` when the membership or tenant-role authority changes, separately from the membership content/version counter;
+- binds the immediately preceding fresh entitlement evaluation to the membership commit by its target, authority version, evaluation time, and positive join decision. The Account transaction conditionally commits only while that entitlement authority remains current, together with the membership, operation outcome, and durable audit/outbox event; an authority race or uncertain evaluation commits none of them; and
 - returns the existing successful membership for an already joined account without creating duplicate audit history.
 
 Redis may accelerate replay responses but is not the join transaction or audit authority. A successful join remains successful if the subsequent token, socket, character creation, or gameplay admission fails.
@@ -80,7 +81,7 @@ This avoids durable rows for casual visits but creates a second class of gamepla
 
 - Add explicit browser/mobile join and text `JOIN` flows before first character creation/connect/`PLAY`.
 - Converge the implicit `EnsurePublicProductionPlayerMembership` call sites onto the explicit join operation; `POST /auth/connect-token` and `PLAY` must not write membership.
-- Commit membership plus durable audit/outbox atomically and make SQL membership/operation state authoritative for replay.
+- Commit membership, its `membershipAuthorityGeneration`/`membershipVersion` changes, operation outcome, and durable audit/outbox atomically and make SQL membership/operation state authoritative for replay.
 - Gate every new membership commit on the immediately preceding fresh ADR 0028 entitlement evaluation. Prove that a failed refresh returns `ENTITLEMENT_UNAVAILABLE`, and that no membership, audit, or outbox record is committed after a failed, stale, future-dated, mismatched, or otherwise invalid evaluation, including evaluation/commit races.
 - Implement monotonic membership versioning and prove races/retries return one membership and one logical join event.
 - Prove a successful join survives later token/socket/`PLAY` failure, while a failed join creates no membership, audit event, character, or admission state.

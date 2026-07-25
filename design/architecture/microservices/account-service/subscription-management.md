@@ -80,6 +80,8 @@ State transitions are driven by:
 
 Each transition triggers domain events that downstream services can consume to adjust quotas or availability.
 
+Account owns the lifecycle boundary. A transition becomes authoritative when Account commits the new status, its monotonic billing sequence/authority changes, and the durable event/outbox evidence. Provider confirmation and downstream revocation, projection, instance drain, socket closure, and cache convergence are separate execution stages. They may be partial or pending after the Account commit, so status and enforcement progress must be reported separately; a retry must resume the idempotent transition execution rather than create a second lifecycle transition or roll back committed Account authority.
+
 ### Plan Changes, Downgrades, and Cancellation Timing
 
 Plan changes have one canonical entitlement timing model:
@@ -156,6 +158,7 @@ Runtime services such as the Game Session Service and world-management component
 - They cache entitlements per tenant, coalesce concurrent refreshes, and invalidate or advance cached state immediately when `SubscriptionStatusChanged` or `TenantBillingStateChanged` events arrive rather than checking entitlements on every tick or issuing one Account call per player.
 - A snapshot is fresh for 15 seconds. Explicit join, first/new session admission, new instance/scale, quota increase, paid-feature activation, and capacity-creating cutover require fresh authority and fail closed with `ENTITLEMENT_UNAVAILABLE` when refresh cannot complete.
 - Reconnecting the same resumable session and non-expanding restart/rollback/recovery may use a previously authoritative positive snapshot for at most five minutes from `evaluatedAt`. A different realm target or fresh binding is new admission. The five-minute maximum may be shortened or disabled but not widened by operator configuration.
+- This outage fallback is valid only for the same existing binding, target, authority tuple, and still-valid resume episode with a positive authoritative snapshot. New joins, fresh bindings, expansion, target changes, and uncertain, missing, stale, negative, revoked, or gapped authority fail closed.
 - Last-known-good is forbidden after observed `suspended`/`canceled`, tenant/account authority-generation revocation, a newer locally observed `tenantBillingSequence`, a sequence gap, or when no positive authoritative snapshot exists. An operation-specific negative flag invalidates authority for that requested operation only; it does not erase an otherwise eligible positive continuity snapshot for a different resumable operation. Sequence uncertainty reconciles immediately through `GetTenantEntitlementsForRuntime(tenantId)`.
 - Existing uninterrupted sessions do not check entitlements per action. Hard billing events still revoke them immediately through the canonical event/authority-generation flow.
 - Missing subscription state is not implicit gameplay availability. Free and trial hosting use explicit entitlement states.
@@ -166,7 +169,7 @@ Edge cases around billing and subscription management include:
 
 - **Payment failures and retries** – Repeated failed charges move a subscription from `active` → `past_due` → `grace` → `suspended` based on configured retry and grace-period policies. Webhooks annotate `subscription` records with Stripe’s failure reasons so operators can investigate.  
 - **Partial periods and proration** – Upgrades and downgrades use Stripe’s proration settings; internal subscription records track the current plan and effective period, but proration details are left to Stripe.  
-- **Webhook delays or outages** – If webhooks are delayed, internal subscription state may temporarily lag Stripe; regular reconciliation jobs query Stripe to detect mismatches and correct local state. During extended outages, the platform errs on the side of keeping existing tenants available until configured maximum grace windows expire.
+- **Webhook delays or outages** – If webhooks are delayed, internal subscription state may temporarily lag Stripe; regular reconciliation jobs query Stripe to detect mismatches and correct local state. During an outage, only an existing, still-resumable binding with a valid positive authoritative snapshot may use the bounded continuity fallback. New joins, fresh bindings, expansion, quota increases, target changes, and any operation with uncertain or missing authority fail closed; outage duration must not silently widen the fallback.
 
 ## APIs and Events
 

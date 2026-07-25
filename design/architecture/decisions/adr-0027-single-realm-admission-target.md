@@ -42,7 +42,7 @@ The prior design correctly routed each realm to one Game Session-owned instance,
 
 - Creating a route uses the equivalent of expected version `0`; every change to an existing route requires its current positive `pointerVersion`.
 - The database mutation performs a real conditional write against `{tenantId, worldSlug, realmSlug, pointerVersion}`. A prior read followed by an unconditional row update is not compare-and-set.
-- Pointer state, the append-only audit event, the idempotent control-plane request outcome, and prepared-cutover execution state commit atomically when they share the Game Session database. If a later deployment separates those stores, it must preserve equivalent durable recovery and retry semantics.
+- Pointer state, the append-only audit event, the idempotent control-plane request outcome, and prepared-cutover execution state are one transaction boundary when they share the Game Session database. The current target requires all four to commit or roll back together; a pointer update without its audit, outcome, or prepared-cutover state is not a committed cutover. If a later deployment separates those stores, this ADR does not silently substitute an “equivalent” protocol: a new accepted architecture decision must first define and prove the replacement recovery, retry, and visibility semantics.
 - A replacement instance remains non-admissible until preparation and compatibility checks pass. Cutover atomically moves `OPEN(source)` to `OPEN(target)`; failure leaves the source as the sole target. Stopping a realm without a replacement first moves it to `CLOSED` and persists the same source drain identity, source instance, absolute deadline, and lifecycle state before the old runtime drains; it does not use an untracked shutdown path. A zero-duration policy sets the persisted deadline at that closure/cutover commit and immediately applies the same notice, socket-closure, command-fence, and idempotent `STOPPING` transition as any other expired drain.
 
 ### Existing Sessions And Scaling
@@ -80,7 +80,7 @@ Exposing raw instance IDs makes routing explicit to the client but leaks replace
 
 - Add explicit `OPEN`/`CLOSED` routing state and a tenant-qualified uniqueness constraint.
 - Implement database-level CAS with required expected versions and prove concurrent writers yield one winner and strictly increasing committed versions.
-- Atomically persist pointer state, audit, request replay, and prepared-cutover execution, including crash/retry proof at every boundary.
+- Atomically persist pointer state, audit, request replay, and prepared-cutover execution in one transaction, including crash/retry proof at every boundary. If those records cannot share a transaction in a future topology, stop and obtain a new accepted decision before implementing or claiming the split-store cutover contract.
 - Separate catalog revisioning from admission routing and prove display-only edits do not invalidate connect or active gameplay state unnecessarily.
 - Remove pointer-currentness checks from routine action authority for an already admitted binding; prove cutover admits new/reconnecting players only to the target while source sessions end through the bounded drain.
 - Persist and prove the resolved drain policy, unique drain identity, absolute deadline, early-empty completion, deadline enforcement, socket closure, command rejection, and idempotent source termination.

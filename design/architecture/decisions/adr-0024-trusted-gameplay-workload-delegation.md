@@ -47,7 +47,9 @@ Player-delegated gameplay RPCs carry a typed protobuf `PlayerExecutionContext`. 
 - validate required fields and equality with duplicated request fields;
 - scope existing reads and writes by the complete tenant/game/resource identity;
 - validate domain ownership, visibility, lease, and playable-state relationships required by the operation; and
-- record the player context, authenticated calling workload, and request/command/effect identity in applicable audit and diagnostic events.
+- record only the minimum applicable audit and diagnostic identity: authenticated workload identity, operation/method, outcome, stable request/command/effect identity, and the account/tenant/game/session/character or narrower resource identifiers needed to explain the decision. Do not dump the full context, credentials, JWTs, token hashes, secrets, or unrelated routing fields into an event.
+
+Audit and diagnostic evidence have different access and retention policies. Durable audit records are restricted to authorized security, operations, or compliance readers and retain the minimum identity and outcome needed for accountability. Diagnostics are redacted, short-retention troubleshooting data with narrower field and access requirements; they must not become a second durable authorization or player-history store. Both surfaces must preserve enough stable correlation data to investigate a rejected or committed operation without retaining raw delegated credentials.
 
 Context validation should be folded into existing scoped queries and domain checks. It must not introduce a fresh Account, Redis, or database round trip merely to validate every routine action.
 
@@ -93,7 +95,7 @@ This reuses token infrastructure but conflates workload authentication with play
 - Bind server-side authorization to concrete mTLS certificate identities and enforce an exact caller allowlist for each gameplay RPC.
 - Prove client/untrusted metadata cannot create player context, wrong-service callers fail, and wrong-tenant/game/session/character contexts fail closed.
 - Prove reads add no authorization-store round trip and mutations retain their operation-specific idempotency behavior.
-- Prove audit/diagnostic records preserve authenticated caller workload and scoped player/request identity without logging credentials.
+- Prove audit records and short-retention diagnostics preserve only the minimum authenticated workload, scoped player/request identity, operation outcome, and correlation data required for their respective access and retention policies; neither may log delegated credentials or a full unredacted `PlayerExecutionContext`.
 - Keep admin/operator and payment proof on their owning control-plane and financial boundaries.
 
 ## Superseded Guidance
