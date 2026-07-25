@@ -69,7 +69,7 @@ The tick heartbeat is the **canonical timeline** for each `<tenantId, gameInstan
   - A heartbeat `(regionEpoch, tickId)` is emitted only after the tick is considered committed for that region (as defined by the staging/commit model and the tick effect ledger), not merely after a tick begins or stages work.
   - Consumers must treat the heartbeat as the authoritative “last committed tick” watermark and must not infer commit from Redis `pending` keys or from observer event streams.
 - Consumers must be able to reconstruct their view of progress and scheduling purely from the heartbeat stream plus durable domain state; no Redis structure is treated as an authoritative log of past ticks.
-- Consumers that persist offsets or schedules must key them by `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` and treat any observed jump in `regionEpoch` as a reset boundary: state derived from the old epoch is discarded or reconciled from PostgreSQL before resuming.
+- Consumers that persist offsets must key stable consumer identity by `(tenantId, gameInstanceId, regionId, consumerId)` and store `regionEpoch` and `lastSeenTickId` as mutable timeline state. Durable schedule identity is `(tenantId, gameInstanceId, regionId, scheduleId)` (or `scriptId` when that is the durable schedule key); `regionEpoch`, `lastSeenTickId`, and `nextDueTickId` are mutable timeline/watermark fields, not part of stable schedule identity. Trigger-instance de-duplication may derive a separate per-occurrence key from that stable schedule identity plus `regionEpoch`, `dueTickId`, and `triggerKind`, but must not mutate or redefine the schedule itself. Any observed jump in `regionEpoch` is a reset boundary: state derived from the old epoch is discarded or reconciled from PostgreSQL before resuming.
 
 ### Tick Commit Definition (Heartbeat Watermark)
 
@@ -125,6 +125,7 @@ Automation & Scripting Service instances typically:
 - Establish long-lived gRPC streams to `StreamTickHeartbeats` for the tenants/regions they own.
 - Maintain per-region scheduler state in Redis (for example `script-scheduler:{tenantRegionTag}:lastTickId`) only as a checkpoint/hint.
 - Claim or insert a durable PostgreSQL trigger-instance/outbox row keyed by an **instance-aware** uniqueness projection before enqueueing any `onInterval` or other tick-derived trigger so duplicate heartbeat consumers or failover cannot create duplicate logical gameplay actions.
+  - This trigger-instance projection is a per-occurrence de-duplication key, not the durable schedule identity; the schedule's mutable `nextDueTickId` remains separate.
   - At minimum this uniqueness projection must include either:
     - a globally unique `scheduleId`, or
     - `gameInstanceId` together with the other trigger-identity fields (for example `regionEpoch`, `dueTickId`, and `triggerKind`).
@@ -359,7 +360,7 @@ Isolation and replay guarantees rely on:
 - A shared coordination timeline `(region_epoch, tickId)` per `<tenantId, gameInstanceId, regionId>` as described in the Redis architecture docs.
 - Domain-level idempotency rules keyed by `(region_epoch, tickId)` and effect identifiers.
 
-Crash recovery replays staged ticks safely by re-invoking domain handlers; replays must not double-apply logical effects. Even when Redis loses or replays up to a few ticks within the tail-loss envelope, the combination of the coordination timeline, the tick effect ledger, and per-service idempotency guards ensures that each `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey)` converges to a single terminal outcome (`APPLIED` or `ABANDONED`). See `system-architecture-tick-failures-and-operations.md` for the detailed story.
+Crash recovery replays staged ticks safely by re-invoking domain handlers; replays must not double-apply logical effects. Even when Redis loses or replays up to a few ticks within the tail-loss envelope, the combination of the coordination timeline, the tick effect ledger, and per-service idempotency guards ensures that each canonical `EffectId` `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey, targetAggregateIdentity)` converges to a single terminal outcome (`APPLIED` or `ABANDONED`). See `system-architecture-tick-failures-and-operations.md` for the detailed story.
 
 ---
 
@@ -380,11 +381,12 @@ Tick-region timers and retry queues are **volatile coordination structures**, no
 Automation & Scripting uses the tick heartbeat plus durable PostgreSQL schedules to implement “every N ticks” and similar timers:
 
 - For each scheduled script or automation job, PostgreSQL stores at least:
-  - `(tenantId, gameInstanceId, regionId, region_epoch, scriptId, next_due_tickId)` and the interval in ticks.
+  - Stable schedule identity `(tenantId, gameInstanceId, regionId, scheduleId)` or `(tenantId, gameInstanceId, regionId, scriptId)`, plus mutable `region_epoch`, `next_due_tickId`, and the interval in ticks. The mutable tick watermark is never part of the stable schedule identity.
 - Before enqueueing any trigger derived from a due boundary, the scheduler must first claim or insert a durable trigger-instance row keyed by an **instance-aware** uniqueness projection. Duplicate schedulers that race on the same heartbeat boundary must observe the same durable row and must not enqueue a second logical trigger.
   - If `scheduleId` is not globally unique across game instances, the uniqueness projection must include `gameInstanceId`.
 - On startup or after a reset:
-  - The scheduler fetches current `(region_epoch, tickId)` for each `<tenantId, gameInstanceId, regionId>` from `GetRegionTickStatus` and the corresponding `next_due_tickId` from PostgreSQL.
+  - **Current implementation:** the scheduler bootstraps from `GetRuntimeOwnershipStatus` over the live `{tenantId, gameInstanceId}` ownership boundary and combines that status with the corresponding mutable `next_due_tickId` from PostgreSQL.
+  - **Target state:** once true region partitioning is implemented, the scheduler fetches current `(region_epoch, tickId)` for each `<tenantId, gameInstanceId, regionId>` from `GetRegionTickStatus` and combines that status with the same stable schedule identity and mutable `next_due_tickId` from PostgreSQL.
   - If `next_due_tickId <= currentTickId`, the scheduler may fire at most one **catch-up trigger** per script (for example “you missed one interval while down”) and then advances `next_due_tickId` by whole intervals until it is strictly greater than `currentTickId`.
   - Very old missed intervals are not replayed one-by-one; the system guarantees that **future intervals fire correctly** and, at most, a bounded catch-up occurs after downtime.
 - After recovery, the scheduler:

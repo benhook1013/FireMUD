@@ -36,6 +36,8 @@ When designing new tick-driven features, keep these invariants in mind:
 - **No cross-region locks** – cross-region interactions are modeled as messages, not shared locks or multi-region transactions.
 - **Idempotent side effects** – the region-scoped tick timeline `(region_epoch, tickId)` and effect guards must be used so that replays after failure do not double-apply mutations.
 
+The canonical `EffectId` for a tick-driven mutation is the collision-safe identity tuple `(tenantId, gameInstanceId, regionId, regionEpoch, tickId, effectKey, targetAggregateIdentity)`. `targetAggregateIdentity` identifies the aggregate or aggregate set being mutated. It may be stored as explicit target-type/target-id columns, or it must be encoded into `effectKey` with an enforceable collision-safe representation. A bare tick tuple or a bare `effectKey` is not a complete `EffectId` unless that encoding proof is documented.
+
 The tick system adopts the same **coordination timeline** concept as the Redis architecture: for each `<tenantId, gameInstanceId, regionId>` there is a canonical timeline defined by `(region_epoch, tickId)`. Within a given `region_epoch`:
 
 - `tickId` is monotonic and uniquely identifies each committed tick for that region.
@@ -54,10 +56,10 @@ The main tick document contains the detailed rules and Redis key shapes behind e
 Fairness and the “one action per entity per tick” rule apply to steady-state execution within a stable `region_epoch`. Around the coordination tail-loss window and explicit resets:
 
 - Redis tail-loss and scoped coordination resets may cause some actions near the tail of the timeline to be dropped, replayed, or slightly re-ordered.
-- In these cases, the system prioritizes **EffectId convergence** (each `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey)` ends up durably APPLIED or ABANDONED without double-apply) over strict per-entity fairness across the reset boundary.
+- In these cases, the system prioritizes **EffectId convergence** (each canonical `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey, targetAggregateIdentity)` ends up durably APPLIED or ABANDONED without double-apply) over strict per-entity fairness across the reset boundary.
 - Designers should treat fairness guarantees as strong within a healthy epoch and best-effort across failures and resets; if a feature requires stronger guarantees around resets, that requirement must be called out explicitly in its design and validated against the Redis tail-loss SLOs.
 
-Conceptually, domain services treat Redis locks and leases as **opaque tick-engine concerns**: handlers see only `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey)` plus their own idempotency state. They never read `tick:{tenantRegionTag}:lock:<entityId>` or `tick-executor-lease:{tenantRegionTag}` to make application-level decisions, nor do they depend on Cache/Rate-Limit Redis keys (for example `inventory:*`, `view:*`, `ratelimit:*`) for correctness or ordering. Cache usage, when present, is encapsulated inside domain services and affects only latency, not the tick engine’s notion of “what happened” or “in which order”.
+Conceptually, domain services treat Redis locks and leases as **opaque tick-engine concerns**: handlers receive the complete `EffectId` `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey, targetAggregateIdentity)` plus their own idempotency state. They never read `tick:{tenantRegionTag}:lock:<entityId>` or `tick-executor-lease:{tenantRegionTag}` to make application-level decisions, nor do they depend on Cache/Rate-Limit Redis keys (for example `inventory:*`, `view:*`, `ratelimit:*`) for correctness or ordering. Cache usage, when present, is encapsulated inside domain services and affects only latency, not the tick engine’s notion of “what happened” or “in which order”.
 
 ### Tail-Loss and Tick Replay Window
 
@@ -73,7 +75,7 @@ Redis coordination state is subject to a bounded tail-loss envelope (see `system
 
 The tick system and Redis tail-loss SLOs combine into a simple contract:
 
-- For each `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey)` there must eventually be exactly one **terminal** outcome in PostgreSQL (`APPLIED` or `ABANDONED`), even if:
+- For each canonical `EffectId` `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey, targetAggregateIdentity)` there must eventually be exactly one **terminal** outcome in PostgreSQL (`APPLIED` or `ABANDONED`), even if:
   - The last few ticks for that region are dropped or replayed within the tail-loss envelope, or
   - Executors crash and re-acquire leases under the same `region_epoch`.
 - Any work that cannot be safely replayed after Redis loss or tick re-execution must be:

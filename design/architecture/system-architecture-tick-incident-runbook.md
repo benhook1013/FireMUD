@@ -16,7 +16,7 @@ Redis coordination behavior and reset flows are defined in:
 
 ## Implementation Notes
 
-This runbook is written for the target tick/region model (`tenantId` + `gameInstanceId` + `regionId`). If your current deployment only exposes coarser tick pause controls (for example pausing by `tenantId` + `game_instance_id`), follow the same decision logic but apply it at the closest available scope and record the scope mismatch in the incident timeline for follow-up.
+This runbook is written for the target tick/region model (`tenantId` + `gameInstanceId` + `regionId`). Incident queries must use the canonical fields `tenantId`, `gameInstanceId`, `regionId`, and `region_epoch` (or their exact storage projections) together; do not substitute `game_instance_id` for the canonical `gameInstanceId` spelling in operator-facing queries. If your current deployment only exposes coarser tick pause controls, follow the same decision logic at the closest available scope and record the scope mismatch in the incident timeline for follow-up.
 
 When applying scope substitution, use a deterministic mapping source (control-plane lookup or game-instance registry), record the resolved region set, and include the mapping evidence in the incident notes so post-incident reconciliation is auditable.
 
@@ -246,8 +246,8 @@ All trace-specific guidance in this runbook is conditional on the environment ad
 ### Act (Stuck tick effect ledger entries)
 
 1. **Inspect ledger and domain state**
-   - Use SQL or service-level admin APIs to query `tick_effects` (or the equivalent ledger table) for the affected `<tenantId, gameInstanceId, regionId>`:
-     - Identify the oldest `SCHEDULED` entries and their associated `tickId` and `effectKey`.
+   - Use SQL or service-level admin APIs to query `tick_effects` (or the equivalent ledger table) for the affected `<tenantId, gameInstanceId, regionId, region_epoch>`:
+     - Identify the oldest `SCHEDULED` entries and their associated `gameInstanceId`, `region_epoch`, `tickId`, `effectKey`, and target aggregate identity.
    - Compare `tick_effects_pending_oldest_age_seconds` with `tick_effects_replay_convergence_budget_seconds` to distinguish “brief replay delay” from “budget breach that requires active remediation”.
    - For a small sample, inspect domain state (for example entity HP, inventory, room state) to determine whether the effects have already been applied.
 2. **Classify outcomes**
@@ -263,7 +263,7 @@ All trace-specific guidance in this runbook is conditional on the environment ad
 3. **Apply targeted remediation**
    - For “applied but not marked” rows:
      - Do not update ledger rows directly to `APPLIED` from ad hoc SQL, a generic admin endpoint, or a one-off script.
-     - Run the service-owned verifier/reconcile path for the affected `EffectId` so the owning domain can prove the effect is already reflected in authoritative state or in its durable replay guard, then let that path transition the ledger row to `APPLIED` or `REPLAY_NOOP` with an audit record.
+     - Run the service-owned verifier/reconcile path for the affected `EffectId` so the owning domain can prove the effect is already reflected in authoritative state or in its durable replay guard, then let that path transition the ledger row to `APPLIED` with replay-verification audit metadata.
      - If no verifier exists for that effect family, treat the row as not safely proven and choose re-run or `ABANDONED` remediation instead of inventing a manual `APPLIED` correction.
    - For genuinely stuck rows:
      - If it is safe to re-run the effects, enqueue follow-up commands or trigger replay using the same idempotent handlers that tick execution uses.
@@ -281,9 +281,9 @@ All trace-specific guidance in this runbook is conditional on the environment ad
 
 For all of the scenarios above, workflow traces are optional diagnostics rather than the operational baseline:
 
-- Only when the environment advertises and proves the named workflow-tracing capability, use Jaeger to search for spans representing tick scheduling and execution (for example `tick_schedule`, `tick_execute`) filtered by `tenantId`, `gameInstanceId`, `regionId`, and, where available, `tickId`.
+- Only when the environment advertises and proves the named workflow-tracing capability, use Jaeger to search for spans representing tick scheduling and execution (for example `tick_schedule`, `tick_execute`) filtered by `tenantId`, `gameInstanceId`, `regionId`, `region_epoch`, and, where available, `tickId`.
 - When that capability is proved, inspect stalled regions for long-running or repeated spans for the same tick IDs and cross-reference domain service spans to identify downstream bottlenecks.
-- When that capability is proved, search replay storms by effect identity attributes (for example `effectKey`, `effect_type`) and verify how often the same identity appears in recent traces.
+- When that capability is proved, search replay storms by canonical effect identity attributes (for example `gameInstanceId`, `region_epoch`, `effectKey`, `targetAggregateIdentity`, `effect_type`) and verify how often the same identity appears in recent traces.
 - If the capability is absent or unproved, use metrics and structured logs for each of these investigations and do not delay mitigation for trace collection.
 
 The Tracing architecture doc (`system-architecture-tracing.md`) includes example Jaeger queries and attribute conventions to make these investigations repeatable.

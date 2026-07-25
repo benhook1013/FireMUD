@@ -68,6 +68,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - `tenant_id`, `game_instance_id`, `region_id`, `region_epoch`, `tick_id`
   - `tick_batch_id`
   - `effect_key` (stable, human-readable descriptor passed through from staging)
+  - `target_aggregate_type`, `target_aggregate_id` (or an enforceably collision-safe target identity encoded in `effect_key`)
   - `command_id`
   - `status` ∈ {`SCHEDULED`, `APPLIED`, `ABANDONED`}
   - `reason` / `outcome`
@@ -99,7 +100,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - Batch allocation is lease-fenced using the recorded `lease_token` (or equivalent fencing token).
   - Recovery that observes multiple durable rows for the same coordinates treats the region as inconsistent, pauses it, and requires reconcile tooling before normal ticks resume.
 - Current live boundary note: gameplay commands do not yet use the fuller target-state `BOUND_TO_BATCH` vocabulary. Instead, the command ledger exposes `enqueueSeq`, `STAGED`, `DRAINED`, and later terminal/requeue outcomes, while the sealed batch manifest digest is used to ensure replay reuses only matching staged batches instead of silently mutating an older batch contract.
-- For any `(tenant_id, game_instance_id, region_id, region_epoch, tick_id, effect_key)` there must eventually be **exactly one terminal state**:
+- For any canonical `EffectId` `(tenant_id, game_instance_id, region_id, region_epoch, tick_id, effect_key, target_aggregate_identity)` there must eventually be **exactly one terminal state**:
   - `status = APPLIED` – effect successfully committed to domain state.
   - `status = ABANDONED` – effect intentionally skipped or judged unrecoverable.
 - Rows must not remain in `SCHEDULED` beyond the emitted replay-convergence budget; stuck rows are treated as operational smells and surfaced via metrics and alerts.
@@ -137,7 +138,7 @@ Tick-related durable structures are intentionally split between a central ledger
 
 - **Game Session Service**
   - Owns the global tick effect ledger tables (for example `tick_effects`) and any cross-region follow-up tables that encode scheduled work between regions.
-  - Defines the canonical projection of `EffectId` into ledger schema and is responsible for convergence of `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey)` to `APPLIED` or `ABANDONED`.
+  - Defines the canonical projection of `EffectId` into ledger schema and is responsible for convergence of `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey, targetAggregateIdentity)` to `APPLIED` or `ABANDONED`.
 - **Domain services (Entity Management, World Management, etc.)**
   - Own their own idempotency guard tables (for example `entity_tick_state`, `tick_effect_guard`) in their respective schemas.
   - Use those guards to implement per-aggregate `last_tick_id` and operation-level idempotency patterns, but do not introduce additional “mini-ledgers” for tick effects.
@@ -207,7 +208,7 @@ Minimum command-status surface for operators and clients:
 
 ### EffectId, Ledger Rows, and Guard Keys
 
-The full domain idempotency identity for a tick-driven effect is `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey)` plus the target aggregate identity. The canonical `EffectId` is the logical projection of that identity that ties together:
+The full domain idempotency identity for a tick-driven effect is `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey, targetAggregateIdentity)`. The canonical `EffectId` is the logical projection of that identity that ties together:
 
 - Tick coordination in Redis.
 - Tick effect ledger rows in PostgreSQL.
@@ -216,10 +217,10 @@ The full domain idempotency identity for a tick-driven effect is `(tenantId, gam
 In schema terms:
 
 - The tick effect ledger’s primary or unique key is a projection of `EffectId`:
-  - At minimum `(tenant_id, game_instance_id, region_id, region_epoch, tick_id, effect_key)`, with target aggregate identity encoded in `effect_key` or represented by additional columns in the same unique identity.
+  - At minimum `(tenant_id, game_instance_id, region_id, region_epoch, tick_id, effect_key, target_aggregate_identity)`, with target aggregate identity either represented by additional columns in the same unique identity or encoded in `effect_key` using an enforceably collision-safe representation.
   - `command_id` and other fields may be retained as payload, audit, or query attributes, but they do not replace or weaken the complete `EffectId`.
 - Guard tables such as `tick_effect_guard` implement the same identity for multi-effect operations:
-  - Their primary key `(tenant_id, game_instance_id, region_id, region_epoch, tick_id, effect_key)` is the guard-side projection of `EffectId` for the logical effect being protected.
+  - Their primary/unique key is the guard-side projection of `EffectId`, including target aggregate identity either as columns or as an enforceably collision-safe `effect_key` encoding.
   - Handlers must not invent alternative idempotency keys for tick-driven effects; they should derive their guard keys directly from the same components used to compute `EffectId`.
 
 The ledger makes replay visible operationally via metrics such as:
@@ -288,7 +289,7 @@ Common scenarios and invariants:
     - The same reconcile scope also converges accepted-but-unbound command records to terminal command status fields (for example `executionOutcome = LOST_BEFORE_STAGING` with default `gameplayResult = NOT_APPLIED`) so ingress dedupe state does not strand commands indefinitely after coordination loss.
 - **GC pause > `lock_ttl_ms` but < `lease_ttl_ms`**
   - Redis: locks may expire and be reacquired; `pending` remains; lease still held by original executor.
-  - PostgreSQL: any effects applied before the pause remain consistent; replays of the same `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey)` are treated as no-ops by idempotent handlers.
+  - PostgreSQL: any effects applied before the pause remain consistent; replays of the same canonical `EffectId` `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey, targetAggregateIdentity)` are treated as no-ops by idempotent handlers.
   - Invariants: no double-apply; lease ownership unchanged; at-most-one executor per region.
   - Action: late work that fails token checks is retried; regions with persistent over-TTL behavior may be marked degraded until configuration or workload is adjusted.
 - **GC pause > `lease_ttl_ms` (lease lost)**
@@ -369,10 +370,10 @@ Two patterns are used:
     - `region_id`
     - `region_epoch`
     - `tick_id`
-    - `effect_key` – a deterministic identifier describing the logical effect (for example `entity:<entityId>:award:achievement:<achievementId>` or `room:<roomId>:drop:item:<itemId>`).
-  - Inside the same transaction as the domain update, the handler attempts to insert `(tenant_id, game_instance_id, region_id, region_epoch, tick_id, effect_key)`:
+    - `effect_key` – a deterministic, collision-safe identifier describing the logical effect and its target aggregate (for example `entity:<entityId>:award:achievement:<achievementId>` or `room:<roomId>:drop:item:<itemId>`).
+  - Inside the same transaction as the domain update, the handler attempts to insert the complete `EffectId` projection `(tenant_id, game_instance_id, region_id, region_epoch, tick_id, effect_key, target_aggregate_identity)` or the equivalent collision-safe encoded key:
     - If the insert succeeds, the effect is new for this tick and the handler applies all associated state changes.
-    - If the insert conflicts on primary key, the effect has already been applied for this `(tenantId, gameInstanceId, regionId, regionEpoch, tickId, effectKey)` and the handler treats the call as a replay:
+    - If the insert conflicts on the complete `EffectId`, the effect has already been applied for this `(tenantId, gameInstanceId, regionId, regionEpoch, tickId, effectKey, targetAggregateIdentity)` and the handler treats the call as a replay:
       - It verifies durable state or an equivalent effect witness, transitions any `SCHEDULED` ledger row to `APPLIED`, and records replay-verification audit metadata.
       - It may then return success without reapplying changes; the handler-level no-op is not a ledger status.
 
@@ -387,7 +388,7 @@ Examples:
   - `TradeItem` receives `(tenantId, gameInstanceId, regionId, regionEpoch, tickId, fromEntityId, toEntityId, itemId)`.
   - It computes `effectKey = "trade:" + fromEntityId + ":" + toEntityId + ":" + itemId`.
   - In one transaction it:
-    - Attempts to insert `(tenantId, gameInstanceId, regionId, regionEpoch, tickId, effectKey)` into `tick_effect_guard`.
+    - Attempts to insert the complete `EffectId` projection, including both target aggregate identities, into `tick_effect_guard`.
     - If the insert conflicts, it treats the call as a replay and returns success without modifying inventories.
     - If the insert succeeds, it debits the item from `fromEntityId`, credits it to `toEntityId`, and commits both inventory changes and the guard-row insert together.
 
@@ -402,14 +403,15 @@ Operationally:
 
 Tick-driven domain calls use a **canonical effect identity** and a shared contract for retries:
 
-- Effect identity is derived deterministically from tick context and target aggregate identity; conceptually it includes:
+- Effect identity is derived deterministically from tick context and target aggregate identity; the canonical `EffectId` includes:
   - `tenantId`
+  - `gameInstanceId`
+  - `regionId`
   - `regionEpoch`
   - `tickId` (region-scoped)
   - `effectKey` (stable descriptor such as `damage:entity:<id>:command:<commandId>`)
-  - `targetAggregateType` (for example `ENTITY`, `INVENTORY`, `ROOM_STATE`, `QUEST`, `ACHIEVEMENT`)
-  - `targetAggregateId`
-  - Optional `domainScope` when needed to avoid collisions across independently owned domains.
+  - `targetAggregateIdentity`, represented by `targetAggregateType` plus `targetAggregateId` (for example `ENTITY`, `INVENTORY`, `ROOM_STATE`, `QUEST`, or `ACHIEVEMENT`)
+  - Optional `domainScope` when needed to avoid collisions across independently owned domains; any such scope remains part of the collision-safe projection.
 - Game Session derives this identity while computing tick outcomes and passes it to each tick-invoked handler; handlers must not generate fresh random IDs for idempotency in tick paths.
 
 Every gRPC endpoint that can be invoked from tick execution must document and implement:
@@ -465,7 +467,7 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
   - Timeline impact:
     - All regions for a given `tenantId` have their region-scoped tick coordination keys cleared and `region_epoch` bumped.
     - Cross-region flows (for example follow-ups) resume only under the new epochs; stale follow-ups from previous epochs are ignored or reconciled.
-    - Session and authentication keys follow their own documented reset behavior in the Redis and authentication docs; a tenant reset may choose to clear them, but this is an explicit design choice rather than an inherent property of coordination resets.
+    - Session and authentication keys follow their own documented reset behavior, but the Account-owned token domain and shared Gateway replay domain are canonical exceptions: tenant-scoped coordination resets preserve both. Gameplay session/context keys may be cleared only through their explicit session policy.
   - Ledger behavior:
     - Tick effect ledger rows for the tenant with `status = SCHEDULED` follow the same default policy:
       - Bulk-marked `ABANDONED` with a tenant-scoped reset reason (for example `RESET_TENANT_SCOPED`) via the scoped ledger reconcile step so that all affected effects converge to a terminal outcome.
@@ -481,13 +483,15 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
   - Ledger behavior:
     - `SCHEDULED` ledger rows for all affected regions should normally be bulk-marked `ABANDONED` with a cluster reset reason (for example `RESET_CLUSTER_SCOPED`) by the ledger reconcile tooling.
     - Only in exceptional, explicitly designed cases should migration or batch re-drive tooling attempt to carry work across a cluster reset; such tools must document their expectations and failure modes in the owning feature’s design docs.
+  - Shared replay/token behavior:
+    - A cluster reset may invalidate the shared Gateway replay domain and Account-owned token records only through the documented replay-continuity quarantine and Account repair/reset cutover; tenant- and region-scoped resets never perform that invalidation.
   - Player impact:
     - All active regions experience at least a brief pause while epochs are re-established and ticks resume under the new coordination state.
     - UX and communications for planned cluster resets should set expectations (maintenance windows, possible brief rollbacks).
 
 In all three cases, the **goal is convergence**:
 
-- For each `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey)` there must eventually be exactly one terminal ledger state (`APPLIED` or `ABANDONED`), regardless of resets.
+- For each canonical `EffectId` `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey, targetAggregateIdentity)` there must eventually be exactly one terminal ledger state (`APPLIED` or `ABANDONED`), regardless of resets.
 - Reset tooling and Game Session control flows must ensure that no tick remains forever “half-applied” in the ledger (for example, perpetually `SCHEDULED` with no chance of replay), by running a scoped tick-effect-ledger reconcile for the relevant `(tenantId, gameInstanceId, regionId, region_epoch)` combinations as part of the reset flow.
 
 These expectations should be reflected in the coordination reset tooling described in `system-architecture-redis-operations.md` and the reset policy matrix in `system-architecture-redis-reset-and-recovery.md`.
@@ -513,7 +517,7 @@ Operationally:
 
 Region resets and epoch bumps intentionally sever the old coordination timeline for a `<tenantId, gameInstanceId, regionId>`. Cross-region follow-ups must behave predictably across those boundaries:
 
-- Follow-up rows and tick effects are always tied to a specific `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey)`; they **never** silently migrate to a new epoch.
+- Follow-up rows and tick effects are always tied to a specific canonical `EffectId` `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey, targetAggregateIdentity)`; they **never** silently migrate to a new epoch.
 - When a target region’s `region_epoch` is bumped (via region/tenant/cluster reset):
   - Any undrained follow-ups or `SCHEDULED` ledger rows for the old epoch are treated as **terminal for that epoch**.
   - The ledger replay controller converges those rows to `ABANDONED` with a reset-specific reason (for example `RESET_REGION_SCOPED` or `RESET_TENANT_SCOPED`), rather than attempting to “replay them into the new epoch”.
@@ -530,14 +534,15 @@ Cross-region follow-ups are durable PostgreSQL records owned by Game Session (or
 
 - **Identity and scoping**
   - Each follow-up is tied to a specific target region timeline and effect identity, including at minimum:
-    - `tenant_id`, `target_game_instance_id`, `target_region_id`, `target_region_epoch`
+    - Originating `EffectId` projection: `origin_tenant_id`, `origin_game_instance_id`, `origin_region_id`, `origin_region_epoch`, `origin_tick_id`, and `origin_effect_key` plus its target aggregate identity.
+    - Target timeline: `tenant_id`, `target_game_instance_id`, `target_region_id`, `target_region_epoch`
     - `due_tick_id` in the target region timeline (preferred; do not use wall-clock due-time fields for cross-region follow-up eligibility)
     - `effect_key` (stable, deterministic) and any additional EffectId projection fields needed for traceability.
   - `due_tick_id` is computed from the target region’s durable status surface (for example `GetRegionTickStatus` / `RegionStatus.lastCommittedTickId`), not from Redis hint keys:
     - Canonical baseline: `due_tick_id = target_last_committed_tick_id + delta_ticks` (for immediate eligibility, `delta_ticks = 1`).
     - The writer must persist `target_region_epoch` and `due_tick_id` together from the same read so eligibility is deterministic across retries and failover.
 - **Uniqueness / de-duplication**
-  - The follow-up table must prevent duplicate scheduling of the same logical follow-up for the same target timeline (for example via a unique key that includes `(tenant_id, target_game_instance_id, target_region_id, target_region_epoch, effect_key)` or an equivalent projection that matches the feature’s semantics).
+  - The follow-up table must prevent duplicate scheduling of the same logical follow-up for the same target timeline. Its unique projection must include the originating `EffectId` projection plus the target timeline, or the design must prove that `effect_key` is globally unique across all possible origins and target aggregates. A target-only key such as `(tenant_id, target_game_instance_id, target_region_id, target_region_epoch, effect_key)` is insufficient without that proof.
 - **Claiming and concurrency**
   - Draining follow-ups into a tick must use database-side concurrency control (for example `FOR UPDATE SKIP LOCKED` or an atomic “claim” update) so that only one executor can claim a follow-up at a time, even during failover or when multiple workers are racing around lease changes.
 - **Epoch boundaries**
@@ -551,15 +556,15 @@ Cross-region follow-ups are durable PostgreSQL records owned by Game Session (or
 
 ## Remote Hint Markers and Resets
 
-Cross-region flows may use best-effort Redis hint markers such as `remote:<tenantId>:<entityId>` (for target entities) to reduce latency when draining remote follow-ups. Operationally:
+Cross-region flows may use best-effort Redis hint markers such as `remote:<tenantId>:<gameInstanceId>:<entityId>` (for target entities) to reduce latency when draining remote follow-ups. Operationally:
 
 - These markers are **latency hints only**:
   - They may be overwritten, duplicated, or lost.
   - Correctness is derived from durable follow-up rows in PostgreSQL, not from the presence of `remote:*` keys.
 - The marker key must be TTL-bounded so the hint keyspace cannot grow without bound:
-  - Canonical write form: `SET remote:<tenantId>:<entityId> 1 PX remote_hint_ttl_ms` with default `remote_hint_ttl_ms = 60_000`.
+  - Canonical write form: `SET remote:<tenantId>:<gameInstanceId>:<entityId> 1 PX remote_hint_ttl_ms` with default `remote_hint_ttl_ms = 60_000`.
   - TTL refresh happens when new durable follow-ups are recorded for that target entity (and optionally while backlog remains due); expiry is treated as normal and must not be interpreted as “no work exists”.
-- Region-level coordination resets do not attempt to delete `remote:*` keys because these keys are tenant-scoped rather than region-scoped.
+  - Region-level coordination resets do not attempt to delete `remote:*` keys because these keys are tenant- and game-instance-scoped rather than region-scoped.
 - Tenant- and cluster-scoped coordination resets may drop `remote:*` keys alongside other coordination state for the affected tenant; losing them remains safe because they only affect how quickly remote follow-ups are noticed, not whether those follow-ups eventually apply.
 - After a region reset, the next tick executor:
   - Resumes draining due follow-ups from PostgreSQL into its normal tick pipeline.
@@ -571,7 +576,7 @@ When debugging cross-region issues, operators should rely on PostgreSQL follow-u
 
 Because crash recovery relies on idempotent handlers, each service with tick-driven logic should include integration tests that simulate Redis-style replays:
 
-- Invoke the same handler multiple times with identical `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey, payload)` and assert that:
+- Invoke the same handler multiple times with identical canonical `EffectId` fields `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey, targetAggregateIdentity)` and payload, and assert that:
   - The first call mutates state as expected.
   - Subsequent calls are treated as replays and do not apply additional logical effects (HP changes, inventory moves, etc.).
 - Exercise both idempotency strategies:
