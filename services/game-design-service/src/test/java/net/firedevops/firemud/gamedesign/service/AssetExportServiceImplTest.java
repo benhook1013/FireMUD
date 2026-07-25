@@ -2,7 +2,6 @@ package net.firedevops.firemud.gamedesign.service;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
-import static org.mockito.ArgumentMatchers.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -48,9 +47,9 @@ class AssetExportServiceImplTest {
     asset.setFileName("logo.png");
     asset.setContentType("image/png");
     asset.setData("data".getBytes(StandardCharsets.UTF_8));
-    when(repository.findByTenantIdAndVersionId("t", 7L)).thenReturn(List.of(asset));
+    when(repository.findByTenantId("t")).thenReturn(List.of(asset));
 
-    ExportedAssetManifest manifest = service.exportAssets("t", 7L, 1);
+    ExportedAssetManifest manifest = service.exportAssets("t", 1);
 
     verify(s3Client)
         .putObject(
@@ -61,31 +60,6 @@ class AssetExportServiceImplTest {
             argThat((PutObjectRequest r) -> r.key().equals("t/1/manifest.json")),
             any(RequestBody.class));
     org.junit.jupiter.api.Assertions.assertEquals(2, manifest.requiredManifestAssetKeys().size());
-  }
-
-  @Test
-  void exportDoesNotPublishAssetThatIsNotMappedToRequestedVersion() {
-    GameAsset mappedAsset = new GameAsset();
-    mappedAsset.setTenantId("t");
-    mappedAsset.setFileName("mapped.png");
-    mappedAsset.setContentType("image/png");
-    mappedAsset.setData("mapped".getBytes(StandardCharsets.UTF_8));
-    when(repository.findByTenantIdAndVersionId("t", 7L)).thenReturn(List.of(mappedAsset));
-
-    ExportedAssetManifest manifest = service.exportAssets("t", 7L, 1);
-
-    verify(repository).findByTenantIdAndVersionId("t", 7L);
-    verify(repository, never()).findByTenantId("t");
-    verify(s3Client)
-        .putObject(
-            argThat((PutObjectRequest r) -> r.key().equals("t/1/mapped.png")),
-            any(RequestBody.class));
-    verify(s3Client, never())
-        .putObject(
-            argThat((PutObjectRequest r) -> r.key().equals("t/1/unmapped.png")),
-            any(RequestBody.class));
-    org.junit.jupiter.api.Assertions.assertEquals(
-        List.of("mapped.png", "manifest.json"), manifest.requiredManifestAssetKeys());
   }
 
   @Test

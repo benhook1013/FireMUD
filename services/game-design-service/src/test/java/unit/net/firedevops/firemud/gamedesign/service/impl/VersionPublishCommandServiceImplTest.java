@@ -117,7 +117,7 @@ class VersionPublishCommandServiceImplTest {
 
     ExportedAssetManifest exportedManifest =
         new ExportedAssetManifest("abc123", List.of("logo.png", "manifest.json"));
-    when(assetExportService.exportAssets("tenant-1", 10L, 8)).thenReturn(exportedManifest);
+    when(assetExportService.exportAssets("tenant-1", 8)).thenReturn(exportedManifest);
     List<PublishParticipantDigestDto> participantDigests =
         List.of(
             new PublishParticipantDigestDto(
@@ -198,7 +198,7 @@ class VersionPublishCommandServiceImplTest {
             any(VersionDto.class),
             org.mockito.ArgumentMatchers.eq(PublishType.FULL_VERSION),
             any(String.class));
-    verify(assetExportService).exportAssets("tenant-1", 10L, 8);
+    verify(assetExportService).exportAssets("tenant-1", 8);
     verify(recordedParticipantDigestService)
         .recordVerifiedDigests(any(String.class), any(), any(String.class), any(List.class));
   }
@@ -288,7 +288,7 @@ class VersionPublishCommandServiceImplTest {
         .thenReturn(Optional.empty(), Optional.of(attempt));
     when(versionRepository.findByTenantIdAndId("tenant-1", 10L))
         .thenReturn(Optional.of(savedDraft));
-    when(assetExportService.exportAssets("tenant-1", 10L, 1))
+    when(assetExportService.exportAssets("tenant-1", 1))
         .thenReturn(new ExportedAssetManifest("abc123", List.of("manifest.json")));
     when(publishGateService.collectFullVersionParticipantDigests(any(VersionDto.class)))
         .thenReturn(

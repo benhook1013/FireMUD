@@ -120,7 +120,7 @@ class VersionAssetArtifactServiceImplTest {
                 false,
                 null,
                 LocalDateTime.now()));
-    when(assetExportService.exportAssets("tenant-1", 7L, 8))
+    when(assetExportService.exportAssets("tenant-1", 8))
         .thenReturn(new ExportedAssetManifest("different", List.of("manifest.json")));
 
     assertThrows(
@@ -162,7 +162,7 @@ class VersionAssetArtifactServiceImplTest {
                 false,
                 null,
                 LocalDateTime.now()));
-    when(assetExportService.exportAssets("tenant-1", 7L, 8))
+    when(assetExportService.exportAssets("tenant-1", 8))
         .thenReturn(new ExportedAssetManifest("attested", List.of("manifest.json")));
 
     IllegalStateException thrown =

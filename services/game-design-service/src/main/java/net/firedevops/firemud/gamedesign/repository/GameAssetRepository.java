@@ -17,25 +17,14 @@ import org.springframework.stereotype.Repository;
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class GameAssetRepository {
   private static final Table<?> TABLE_REF = DSL.table(DSL.name("game_assets"));
-  private static final Table<?> VERSION_ASSET_TABLE = DSL.table(DSL.name("version_asset"));
-  private static final Field<Long> ID =
-      DSL.field(DSL.name("game_assets", "id"), Long.class);
-  private static final Field<String> TENANT_ID =
-      DSL.field(DSL.name("game_assets", "tenant_id"), String.class);
-  private static final Field<String> FILE_NAME =
-      DSL.field(DSL.name("game_assets", "file_name"), String.class);
+  private static final Field<Long> ID = DSL.field(DSL.name("id"), Long.class);
+  private static final Field<String> TENANT_ID = DSL.field(DSL.name("tenant_id"), String.class);
+  private static final Field<String> FILE_NAME = DSL.field(DSL.name("file_name"), String.class);
   private static final Field<String> CONTENT_TYPE =
-      DSL.field(DSL.name("game_assets", "content_type"), String.class);
-  private static final Field<byte[]> DATA =
-      DSL.field(DSL.name("game_assets", "data"), byte[].class);
+      DSL.field(DSL.name("content_type"), String.class);
+  private static final Field<byte[]> DATA = DSL.field(DSL.name("data"), byte[].class);
   private static final Field<LocalDateTime> CREATED_AT =
-      DSL.field(DSL.name("game_assets", "created_at"), LocalDateTime.class);
-  private static final Field<String> VERSION_ASSET_TENANT_ID =
-      DSL.field(DSL.name("version_asset", "tenant_id"), String.class);
-  private static final Field<Long> VERSION_ASSET_VERSION_ID =
-      DSL.field(DSL.name("version_asset", "version_id"), Long.class);
-  private static final Field<Long> VERSION_ASSET_ASSET_ID =
-      DSL.field(DSL.name("version_asset", "asset_id"), Long.class);
+      DSL.field(DSL.name("created_at"), LocalDateTime.class);
 
   private final DSLContext dsl;
 
@@ -46,28 +35,6 @@ public class GameAssetRepository {
   public List<GameAsset> findByTenantId(String tenantId) {
     return dsl.selectFrom(TABLE_REF)
         .where(TENANT_ID.eq(tenantId))
-        .orderBy(ID.asc())
-        .fetch(this::toEntity);
-  }
-
-  public List<GameAsset> findByTenantIdAndVersionId(String tenantId, long versionId) {
-    return dsl.select(
-            ID,
-            TENANT_ID,
-            FILE_NAME,
-            CONTENT_TYPE,
-            DATA,
-            CREATED_AT)
-        .from(TABLE_REF)
-        .join(VERSION_ASSET_TABLE)
-        .on(
-            VERSION_ASSET_ASSET_ID
-                .eq(ID)
-                .and(VERSION_ASSET_TENANT_ID.eq(TENANT_ID)))
-        .where(
-            VERSION_ASSET_TENANT_ID
-                .eq(tenantId)
-                .and(VERSION_ASSET_VERSION_ID.eq(versionId)))
         .orderBy(ID.asc())
         .fetch(this::toEntity);
   }

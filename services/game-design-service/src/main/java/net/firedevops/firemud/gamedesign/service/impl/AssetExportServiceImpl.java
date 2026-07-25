@@ -58,10 +58,9 @@ public class AssetExportServiceImpl implements AssetExportService {
 
   @Override
   @Timed("gamedesign.asset.export")
-  public ExportedAssetManifest exportAssets(
-      String tenantId, long versionId, int exportedVersionNumber) {
-    String prefix = tenantId + "/" + exportedVersionNumber + "/";
-    List<GameAsset> assets = repository.findByTenantIdAndVersionId(tenantId, versionId);
+  public ExportedAssetManifest exportAssets(String tenantId, int version) {
+    String prefix = tenantId + "/" + version + "/";
+    List<GameAsset> assets = repository.findByTenantId(tenantId);
     Map<String, String> manifest = new HashMap<>();
     ArrayList<String> requiredManifestAssetKeys = new ArrayList<>();
     for (GameAsset asset : assets) {

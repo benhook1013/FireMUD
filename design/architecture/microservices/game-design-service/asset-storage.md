@@ -295,7 +295,7 @@ Implementation notes:
 A basic repository (`GameAssetRepository`) and service implementation
 (`GameAssetServiceImpl`) persist uploads using Spring Data JPA.
 
-At publish time, the current implementation reads asset bytes from `game_assets.data`, selects only the rows mapped to the requested `(tenantId, versionId)` through `version_asset`, exports them into a version-number-scoped published prefix in object storage, and references them in the generated `manifest.json`. Runtime clients load branding and theme resources directly from the CDN using this manifest; the Game Design Service is not involved. A future metadata-only storage model may use retained immutable object-store draft keys, but those keys are target-only and are not the current upload or repair source. See [Game Design Service Architecture](README.md) for how these assets fit into published versions.
+At publish time, the current implementation reads asset bytes from `game_assets.data`, exports them into version-scoped published prefixes in object storage, and references them in the generated `manifest.json`. Runtime clients load branding and theme resources directly from the CDN using this manifest; the Game Design Service is not involved. A future metadata-only storage model may use retained immutable object-store draft keys, but those keys are target-only and are not the current upload or repair source. See [Game Design Service Architecture](README.md) for how these assets fit into published versions.
 
 The `published_release_bundle` attestation must reference the final asset state
 for the version by including `manifestHash` (and optionally per-asset
@@ -312,7 +312,7 @@ shared-schema artifact.
 
 ### Interaction with Script-Only Patches
 
-Script-only patches (see `system-architecture-versioning-runtime.md`) do not change assets or any data stored in `game_assets` / `version_asset`. Published asset selection is now bound to `(tenantId, versionId)` during full `PublishVersion` flows, so an uploaded tenant asset without a mapping is not exported or made externally reachable through the published asset prefix. The Draft-version authoring action that creates or removes `version_asset` mappings remains absent; until that action exists, only explicitly seeded or otherwise controlled mappings can make an uploaded asset publishable. Asset changes therefore belong in a new `versionId` in the target state.
+Script-only patches (see `system-architecture-versioning-runtime.md`) do not change assets or any data stored in `game_assets` / `version_asset`. In the target contract, published asset selection is bound to `(tenantId, versionId)` and exported during full `PublishVersion` flows. The current first slice does not yet enforce that binding: `AssetExportServiceImpl` exports every tenant asset and the `version_asset` authoring path is absent. Asset changes therefore belong in a new `versionId` in the target state, while the current tenant-wide export remains an implementation gap to be corrected before version-bound export can be treated as proven.
 
 ### Asset Lifecycle and Publish Workflow
 
@@ -357,12 +357,11 @@ Transition enforcement contract:
 - `PUBLISHED` is the only success state that may be treated as launchable. Object-store bytes in `STAGED` or `EXPORTED_UNATTESTED` are not publish-complete on their own.
 
 - For each `(tenantId, versionId)` the durable publish workflow runs an `ExportAssets` step that:
-  - **Current implementation:** selects only `game_assets` rows returned by
-    `GameAssetRepository.findByTenantIdAndVersionId`, which joins
-    `version_asset` for the requested tenant and version row ID, and reads the
-    export bytes from `game_assets.data`. The `version_asset` table now exists,
-    but a Draft-version authoring action that creates or removes those mappings
-    is not implemented yet.
+  - **Current implementation:** selects every `game_assets` row for `tenantId`
+    through `GameAssetRepository.findByTenantId`, including assets with no
+    `version_asset` mapping, and reads the export bytes from `game_assets.data`.
+    The `version_asset` table and a Draft-version authoring action that creates
+    or removes those mappings are not implemented yet.
   - **Target convergence:** selects only assets obtained by joining
     `version_asset` to `game_assets` for the target `(tenantId, versionId)`;
     unmapped tenant assets are excluded from that version's export.

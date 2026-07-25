@@ -351,8 +351,7 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
             .findById(versionId)
             .filter(found -> found.getTenantId().equals(tenantId))
             .orElseThrow(() -> new IllegalArgumentException("version not found"));
-    var exported =
-        assetExportService.exportAssets(tenantId, versionId, version.getVersionNumber());
+    var exported = assetExportService.exportAssets(tenantId, version.getVersionNumber());
     try {
       PublishedReleaseBundleContract.requireExactRepairMatch(bundle, exported);
     } catch (IllegalStateException ex) {
