@@ -7,7 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
-import net.firedevops.firemud.accountservice.dto.LoginRequest;
+import net.firedevops.firemud.accountservice.dto.PlayerBootstrapRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
@@ -36,8 +36,8 @@ class PublicBootstrapRoutesProdProfileTest {
 
   @Test
   void playerBootstrapRemainsPublicInProdProfile() throws Exception {
-    LoginRequest request = new LoginRequest(1L, "demo@example.com", "swordfish");
-    when(accountService.issuePlayerBootstrap(1L, "demo@example.com", "swordfish"))
+    PlayerBootstrapRequest request = new PlayerBootstrapRequest("demo@example.com", "swordfish");
+    when(accountService.issuePlayerBootstrap("demo@example.com", "swordfish"))
         .thenReturn(
             new PlayerBootstrapResult(
                 1L, "boot123", "2026-03-30T00:00:00Z", "2026-03-30T00:05:00Z"));

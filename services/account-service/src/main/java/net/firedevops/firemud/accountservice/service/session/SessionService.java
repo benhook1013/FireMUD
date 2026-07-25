@@ -18,7 +18,11 @@ public interface SessionService {
 
   void storeSession(Long tenantId, Long accountId, String token, long expirationMs);
 
+  void storeAccountSession(Long accountId, String token, long expirationMs);
+
   Long getAccountId(Long tenantId, String token);
+
+  boolean isAccountSessionActive(Long accountId, String token);
 
   Optional<ConnectTokenReplay> getConnectTokenReplay(
       Long tenantId, Long accountId, String connectScopeId, String requestId);

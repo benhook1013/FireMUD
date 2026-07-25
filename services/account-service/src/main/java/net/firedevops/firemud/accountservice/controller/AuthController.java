@@ -10,9 +10,11 @@ import net.firedevops.firemud.accountservice.dto.BootstrapRealmDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
+import net.firedevops.firemud.accountservice.dto.ConnectTokenResponse;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.LoginRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
+import net.firedevops.firemud.accountservice.dto.PlayerBootstrapRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
@@ -27,6 +29,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -51,10 +54,9 @@ public class AuthController {
 
   @PostMapping("/player-bootstrap")
   public ResponseEntity<ApiResponse<PlayerBootstrapResult>> playerBootstrap(
-      @Valid @RequestBody LoginRequest request) {
+      @Valid @RequestBody PlayerBootstrapRequest request) {
     PlayerBootstrapResult bootstrap =
-        accountService.issuePlayerBootstrap(
-            request.tenantId(), request.username(), request.password());
+        accountService.issuePlayerBootstrap(request.accountIdentifier(), request.secret());
     return ResponseEntity.ok(ApiResponse.success(bootstrap));
   }
 
@@ -79,15 +81,17 @@ public class AuthController {
   public ResponseEntity<ApiResponse<List<BootstrapCharacterDto>>> listBootstrapCharacters(
       @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
       @PathVariable String worldSlug,
-      @PathVariable String realmSlug) {
+      @PathVariable String realmSlug,
+      @RequestParam String connectScopeId) {
     String bootstrapToken = extractBearerToken(authorization);
     return ResponseEntity.ok(
         ApiResponse.success(
-            accountService.listBootstrapCharacters(bootstrapToken, worldSlug, realmSlug)));
+            accountService.listBootstrapCharacters(
+                bootstrapToken, worldSlug, realmSlug, connectScopeId)));
   }
 
   @PostMapping("/connect-token")
-  public ResponseEntity<ApiResponse<ConnectTokenResult>> connectToken(
+  public ResponseEntity<ApiResponse<ConnectTokenResponse>> connectToken(
       @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
       @Valid @RequestBody ConnectTokenRequest request) {
     String bootstrapToken = extractBearerToken(authorization);
@@ -102,7 +106,7 @@ public class AuthController {
             .build();
     return ResponseEntity.ok()
         .header(HttpHeaders.SET_COOKIE, cookie.toString())
-        .body(ApiResponse.success(result));
+        .body(ApiResponse.success(ConnectTokenResponse.from(result)));
   }
 
   private long connectTokenMaxAgeSeconds(ConnectTokenResult result) {
