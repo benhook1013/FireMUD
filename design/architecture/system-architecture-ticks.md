@@ -258,7 +258,7 @@ For most deployments, region topology changes (splits, merges, or reassignments 
 
 World Management owns region topology (layout and `<regionId>` assignments) and may, over time, support “drain and split” or “merge” flows:
 
-- Split flows mark a region for split, allow existing ticks to complete, and then move entities plus queues under new `<tenantId, gameInstanceId, regionId>` prefixes before ticks resume.
+- Split flows mark a region for split, freeze scheduling and new command intake, converge in-flight and durable outcomes, bump `regionEpoch` when the ownership mapping changes, move entities to new `<tenantId, gameInstanceId, regionId>` assignments, and reset/rebuild coordination state from durable state before ticks resume. They do not move live Redis queues by renaming them under new prefixes.
 - Merge flows consolidate lightly used regions into a single region to reduce overhead.
 
 ### Topology Changes (Split/Merge) Protocol (Required Invariants)
@@ -355,7 +355,7 @@ Isolation and replay guarantees rely on:
 - A shared coordination timeline `(region_epoch, tickId)` per `<tenantId, gameInstanceId, regionId>` as described in the Redis architecture docs.
 - Domain-level idempotency rules keyed by `(region_epoch, tickId)` and effect identifiers.
 
-Crash recovery replays staged ticks safely by re-invoking domain handlers; replays must not double-apply logical effects. Even when Redis loses or replays up to a few ticks within the tail-loss envelope, the combination of the coordination timeline, the tick effect ledger, and per-service idempotency guards ensures that each `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)` converges to a single terminal outcome (`APPLIED` or `ABANDONED`). See `system-architecture-tick-failures-and-operations.md` for the detailed story.
+Crash recovery replays staged ticks safely by re-invoking domain handlers; replays must not double-apply logical effects. Even when Redis loses or replays up to a few ticks within the tail-loss envelope, the combination of the coordination timeline, the tick effect ledger, and per-service idempotency guards ensures that each `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)` converges to a single terminal outcome (`APPLIED` or `ABANDONED`). See `system-architecture-tick-failures-and-operations.md` for the detailed story.
 
 ---
 
@@ -410,14 +410,14 @@ See `system-architecture-tick-failures-and-operations.md` for the full crash-rec
 Domain services must ensure that tick-driven effects are **idempotent** with respect to the region-scoped tick timeline `(regionEpoch, tickId)`:
 
 - Single-aggregate updates use a “last applied tick” pattern that is epoch-aware (for example storing and comparing `(last_region_epoch, last_tick_id)` for the aggregate).
-- Multi-aggregate operations use effect guard tables keyed by the same epoch-scoped identity (for example `(tenantId, gameInstanceId, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)`).
+- Multi-aggregate operations use effect guard tables keyed by the same epoch-scoped identity (for example `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)`).
 
 ### Tick Effect Identity and Idempotency Contract
 
 Effect identity and idempotency rules are defined jointly by:
 
 - The `(regionEpoch, tickId)` carried on tick-driven calls.
-- A stable, structured effect identity derived deterministically from the command payload and tick context, including at minimum `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`, `targetAggregateType`, and `targetAggregateId`. For script-generated commands, `effectKey` must incorporate the command-level `automationDispatchId`; `scriptEventId` alone cannot distinguish fan-out commands.
+- A stable, structured effect identity derived deterministically from the command payload and tick context, including at minimum `tenantId`, `gameInstanceId`, resolved `playableStateScope`, `regionId`, `regionEpoch`, `tickId`, `effectKey`, `targetAggregateType`, and `targetAggregateId`. For script-generated commands, `effectKey` must incorporate the command-level `automationDispatchId`; `scriptEventId` alone cannot distinguish fan-out commands.
 
 Together these form the canonical `EffectId` described in `system-architecture-transactions.md`. Tick coordination keys in Redis, tick effect ledger rows, and domain-level guard tables (for example `tick_effect_guard`) must all use projections of this same `EffectId` rather than introducing ad-hoc idempotency keys.
 

@@ -381,10 +381,11 @@ At a minimum, rollback consists of:
 
 1. Fence new evaluation by pausing ticks and setting Automation admission to rollback-pause mode for the affected scope.
 2. Repin the affected game instance(s) to the target `scriptPatchVersion` using the Game Session control-plane API.
-3. Drain or purge queued script work items and staging entries that carry the rolled-back patch.
-4. If plugin versions are also being rolled back, disabled, or revoked, cancel pending work for those `pluginVersionId` values before queue purge.
-5. Verify pin convergence and drain completion before resuming normal admission.
-6. Resume ticks only after the workflow state machine reaches a terminal completed state.
+3. Reconcile durable schedule entries before timer admission resumes: tombstone every displaced version-owned entry and claim or create a new entry for the target patch or plugin version. Preserve `scheduleDefinitionId` only as the stable logical schedule identity; do not rewrite old entries or reuse their trigger claims or `scriptEventId` values.
+4. Drain or purge queued script work items and staging entries that carry the rolled-back patch.
+5. If plugin versions are also being rolled back, disabled, or revoked, cancel pending work for those `pluginVersionId` values before queue purge.
+6. Verify pin convergence and drain completion before resuming normal admission.
+7. Resume ticks only after the workflow state machine reaches a terminal completed state.
 
 Concrete rollback sequence example:
 

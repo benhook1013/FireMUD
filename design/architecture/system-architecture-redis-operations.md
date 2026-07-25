@@ -36,7 +36,7 @@ Canonical sequence:
 Rules:
 
 - `pause` is the canonical lock-acquiring step and must drive the chosen scope to canonical `PAUSED` before storage-level wipe or prefix deletion occurs.
-- Capture the `maintenanceLockToken` returned by `pause` and pass it as `--maintenance-lock-token <token>` to every subsequent mutating verb in the workflow, including `reconcile-ledger` and `converge-commands`.
+- Capture the `maintenanceLockToken` returned by `pause` and pass it as `--maintenance-lock-token <token>` to every subsequent mutating verb in the workflow: `reset`, `reconcile-ledger`, `converge-commands`, `init-meta`, conditional `rebind-sessions`, `smoke-check`, and `resume`.
 - `reset` is the only supported step that bumps `region_epoch` and emits the authoritative old/new epoch evidence for downstream reconciliation.
 - `reconcile-ledger` and `converge-commands` are required before traffic resumes; replay-first workflows may use those verbs without a preceding `reset`, but reset workflows must not skip them.
 - `init-meta` re-establishes `tick:{tenantRegionTag}:meta` from the durable baseline after the reset step; `{tenantRegionTag}` is the opaque full-scope tag for `<tenantId, gameInstanceId, regionId>`.
@@ -213,6 +213,12 @@ The cleanup command is the only supported mutating path for session-schema clean
 
 Default runbooks should still prefer fixing deployments and relying on TTL over aggressive keyspace scrubbing.
 
+### Remote Hint Cleanup Scope
+
+Remote hints use the complete instance scope `remote:{tenantInstanceTag}:<entityId>`, where `{tenantInstanceTag}` is derived from `<tenantId, gameInstanceId>`. There is no tenant-only remote key family. A tenant-scoped coordination reset is the canonical cleanup path: after the durable affected-region inventory resolves every game instance for the tenant, the reset tooling builds and scans one `remote:{tenantInstanceTag}:*` pattern per game instance and removes the matched keys with bounded `SCAN`/`UNLINK` batches. Cluster resets apply the same process to the cluster inventory; region resets do not remove instance-wide hints.
+
+The reset audit must include the resolved game-instance inventory and scanned/deleted remote-hint counts. Operators must not invent a raw tenant-wide Redis pattern or use a region-only reset to clean instance-scoped hints.
+
 ## Maintenance Job Coordination
 
 Redis maintenance flows such as session cleanup, scoped resets, normalization migrations, unknown-prefix scanning, split-brain recovery, restore coordination recovery, and topology-changing scaling can place non-trivial load on Coordination Redis and can invalidate each other if they overlap. Routine online PostgreSQL backups do not use this pause/status/epoch control plane. To keep mutating coordination work predictable:
@@ -240,7 +246,7 @@ Canonical maintenance-lock behavior:
 
 Canonical maintenance-active signal:
 
-- metric: `coordination_maintenance_active{scope_type,scope,operation}`
+- metric: `coordination_maintenance_active{scope_type,scope_bucket,operation}`
 - health/readiness projection: environments may expose an equivalent health field, but the metric name above is the canonical observability contract used by dashboards and Logging & Admin.
 
 ## Dual-Leader Detection and Coordination Reset

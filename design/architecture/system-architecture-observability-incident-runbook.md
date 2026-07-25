@@ -127,11 +127,8 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 1. Restore Elasticsearch cluster health.
 2. Verify recent logs appear for a known active service.
-3. Emit or identify a recovery smoke record carrying `service`, `traceId`,
-   `tenantId`, `gameInstanceId`, `regionId`, and `characterId` when applicable.
-4. Verify Kibana saved searches return that record when filtering by `service`
-   and `traceId`, then by `tenantId`, `gameInstanceId`, `regionId`, and
-   `characterId` when those fields are expected by the logging contract.
+3. Emit or identify a recovery smoke record carrying `service`, `traceId`, `tenantId`, `gameInstanceId`, `regionId`, and `characterId` when applicable.
+4. Verify Kibana saved searches return that record when filtering by `service` and `traceId`, then by `tenantId`, `gameInstanceId`, `regionId`, and `characterId` when those fields are expected by the logging contract.
 
 ## Grafana Down
 

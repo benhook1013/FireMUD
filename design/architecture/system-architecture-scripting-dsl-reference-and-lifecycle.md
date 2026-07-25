@@ -162,9 +162,9 @@ Concrete supersession example:
 
 Implementers should treat `scheduleDefinitionId` as the canonical answer to "is this the same logical schedule?":
 
-- If patch `P21` contains a patrol interval compiled to `scheduleDefinitionId=patrol.main.v1` and patch `P22` keeps the same logical timer while only changing unrelated dialogue nodes, the scheduler preserves that timer row and its due state across the patch transition.
+- If patch `P21` contains a patrol interval compiled to `scheduleDefinitionId=patrol.main.v1` and patch `P22` keeps the same logical timer while only changing unrelated dialogue nodes, the scheduler tombstones the `P21` version-owned row, creates or claims the corresponding `P22` row, and carries the due state forward through the canonical resume rule.
 - If patch `P22` instead changes the patrol logic into a distinct combat-alert timer compiled to `scheduleDefinitionId=patrol.alert.v1`, the previous timer row is tombstoned and a new timer row is created with fresh due state.
-- Rollback uses the same rule. A timer is preserved only when the rollback target exposes the same `scheduleDefinitionId`; otherwise rollback must recreate the old logical schedule rather than trying to reinterpret the newer timer row.
+- Rollback uses the same rule. Due state is carried into a newly owned row only when the rollback target exposes the same `scheduleDefinitionId`; otherwise rollback recreates the old logical schedule with fresh due state rather than trying to reinterpret the newer timer row.
 
 ---
 
@@ -439,10 +439,10 @@ Crucially, **script handlers are not re-executed during tick replay or recovery*
 Script executions are treated as **at-most-once per trigger** at the scheduler level, but the resulting commands participate in the same **idempotent replay model** as other tick actions:
 
 - Script-generated commands must be **idempotent with respect to the region-scoped tick timeline, Trigger Identity, and command identity**: `(regionEpoch, tickId)`, `scriptEventId`, and `automationDispatchId`. These identifiers travel with the command payload and are recorded alongside `scriptId` and `tenantId` in `script_event_audit` records and logs so operators can correlate replays and ensure side effects remain consistent even when ticks are retried or a reset bumps `regionEpoch`.
-- When commands cause database writes or cross-service calls, domain services should derive the canonical `EffectId` from `<tenantId, gameInstanceId, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId>`. For script-originated commands, `effectKey` must include the command-level `automationDispatchId` (or be deterministically derived from it); `scriptEventId` alone is not sufficient. This follows the patterns in `design/architecture/system-architecture-transactions.md` and the tick idempotency rules described in `design/architecture/system-architecture-ticks.md#domain-idempotency-rules-region-epoch--tickid-in-postgresql`.
+- When commands cause database writes or cross-service calls, domain services should derive the canonical `EffectId` from `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId>`. For script-originated commands, `effectKey` must include the command-level `automationDispatchId` (or be deterministically derived from it); `scriptEventId` alone is not sufficient. This follows the patterns in `design/architecture/system-architecture-transactions.md` and the tick idempotency rules described in `design/architecture/system-architecture-ticks.md#domain-idempotency-rules-region-epoch--tickid-in-postgresql`.
 - Conceptually, `scriptEventId` identifies the handler trigger while `automationDispatchId` identifies one emitted gameplay command:
-  - For purely tick-driven logic, idempotency guards use `(tenantId, gameInstanceId, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)`.
-  - For script-originated logic, the same full EffectId applies, with `effectKey` incorporating `automationDispatchId` and the target aggregate identity. A guard keyed only by `(tenantId, gameInstanceId, regionId, regionEpoch, tickId, scriptEventId)` is invalid for fan-out commands.
+  - For purely tick-driven logic, idempotency guards use `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)`.
+  - For script-originated logic, the same full EffectId applies, with `effectKey` incorporating `automationDispatchId` and the target aggregate identity. A guard keyed only by `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, scriptEventId)` is invalid for fan-out commands.
 
 ---
 

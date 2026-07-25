@@ -229,13 +229,14 @@ In addition to functional, load, and security tests, FireMUD treats observabilit
 - **Structured log-field contract checks**
   - After a short synthetic login + command + tick smoke flow, assert that representative log lines from Gateway, Game Session, and TCP Proxy contain the structured fields required by the logging contract:
     - Required for request/tick handling paths: `service`, `traceId`, `correlationId`.
-    - Required when known in context: `tenantId`, `gameInstanceId`, `regionId`.
-    - Required when a player session is authenticated/bound: `characterId`.
-  - Fail the check if any expected service path emits only free-form messages without these fields, because incident runbooks and Kibana drilldowns depend on those keys.
+    - Required when known and applicable to the emitting operation: `tenantId`, `gameInstanceId`, and `regionId`.
+    - Required when a player session is authenticated/bound and the field is known: `characterId`.
+  - The smoke harness must not fabricate or post-enrich `tenantId`, `gameInstanceId`, `regionId`, or `characterId` merely to satisfy the contract. Assert each contextual field only on records whose source operation knows and applies that context.
+  - Fail the check if any expected service path emits only free-form messages without the fields required for that path; do not fail a record because an inapplicable contextual ID is absent.
   - In prod-like observability smoke, also verify end-to-end log pipeline queryability:
     - run a synthetic login + command + tick flow that records expected `traceId` values,
     - verify the resulting records arrive in the canonical Elasticsearch/Kibana log-query path within the environment's bounded indexing delay (default starting point: within 2 minutes unless the environment documents a stricter bound),
-    - verify those records are retrievable by `service` and `traceId`, plus `tenantId` / `gameInstanceId` / `regionId` / `characterId` when applicable,
+    - verify those records are retrievable by `service` and `traceId`, plus each contextual ID when it is present and applicable to the source operation; do not fabricate or post-enrich IDs for query assertions,
     - fail readiness if structured logs are emitted but not queryable end-to-end through the documented log-query path.
 
 New services and features that add critical metrics or alerts should extend these observability tests where feasible so configuration errors are caught in CI rather than only in staging or production.
@@ -269,8 +270,8 @@ To keep PR feedback fast while still preventing “it only breaks in staging” 
   - External edge blackbox smoke: verify prod-like environments expose an independent synthetic probe metric for each public entry path and that a forced probe failure (or equivalent test target) trips the non-production blackbox alert path.
   - Player-flow canary smoke: verify the prod-like environment exposes mirrored `playerflow_canary_success` and `playerflow_canary_latency_ms` signals for login and the representative command path, and that a controlled non-production failure can trip the canary alert path.
   - Tracing smoke: run a login + representative command flow and verify the applicable advertised-and-proved workflow capabilities before asserting named spans. In environments that advertise and prove the `backup` workflow, verify matching `backup_pg_dump_snapshot` + `backup_verify_artifact` evidence; in environments that advertise and prove the `recovery` workflow, verify participant-convergence spans. Without those specific proofs, retain the metrics/log fallback and do not assert workflow spans.
-  - Structured log contract smoke: verify sampled logs from critical paths contain required structured fields (`service`, `traceId`, `correlationId`, plus contextual `tenantId`/`gameInstanceId`/`regionId`/`characterId`).
-  - Log pipeline queryability smoke: verify those same synthetic records are queryable end-to-end in the canonical Elasticsearch/Kibana or documented compatible log-query path.
+  - Structured log contract smoke: verify sampled logs from critical paths contain `service`, `traceId`, and `correlationId`, plus contextual `tenantId`/`gameInstanceId`/`regionId`/`characterId` only when each is known and applicable; smoke evidence must not fabricate or post-enrich those IDs.
+  - Log pipeline queryability smoke: verify those same synthetic records are queryable end-to-end in the canonical Elasticsearch/Kibana or documented compatible log-query path using contextual IDs only when they are present and applicable; do not fabricate or post-enrich IDs for the query.
   - Prometheus rules conformance smoke: query the Prometheus rules API and verify the required fallback/recording rules are loaded (tail-loss fallback, tick safety ratio recording, login success ratio recording, command p99 latency recording, entry-path availability recording, and chat delivery latency recording).
     - This includes the canonical dynamic tail-loss pair (`redis_coordination_tail_loss_budget_ms`, `redis_coordination_tail_loss_slo_breached`) and both short-window and 1-day entry-path availability recordings.
     - This includes preserving the bounded `command` label on the core-command latency recording rules so single-command regressions continue to alert.

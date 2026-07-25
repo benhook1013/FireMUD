@@ -46,6 +46,7 @@ Game Session treats Redis Coordination and Cache/Rate-Limit roles as separate co
 ### Redis role and prefix details
 
 - Coordination prefixes are reset-tolerant in line with [Redis Reset & Recovery](../../system-architecture-redis-reset-and-recovery.md), except for reset-sensitive gameplay session bindings under `session:game:*`. Region-scoped resets preserve gameplay sessions by default; wider tenant or cluster resets may invalidate sessions according to the reset policy matrix. Game Session’s coordination design must therefore remain safe under the documented Redis tail-loss envelope rather than assuming perfect recovery of every transient coordination key.
+- The canonical opaque `{tenantRegionTag}` is derived by the shared key builders from the full `<tenantId, gameInstanceId, regionId>` tuple. It is the region scope for lease, queue, timer, retry, pending, and lock keys below; key examples must retain `{tenantRegionTag}` rather than substituting a differently named or partial tag.
 - Coordination ownership includes registered Lua-script access to prefixes such as:
   - `tick:{tenantRegionTag}:queue:<entityId>`
   - `tick:{tenantRegionTag}:pending`
@@ -53,8 +54,8 @@ Game Session treats Redis Coordination and Cache/Rate-Limit roles as separate co
   - `timer:{tenantRegionTag}`
   - `retry:{tenantRegionTag}`
   - `tick-executor-lease:{tenantRegionTag}`
-  - `remote:<tenantId>:<entityId>` and related coordination prefixes listed in the [Redis Cheat Sheet](../../system-architecture-redis-cheatsheet.md)
-- `remote:<tenantId>:<entityId>` remains a best-effort hint marker for cross-region follow-ups; durable follow-up state lives in PostgreSQL via the tick effect ledger and follow-up tables.
+  - `remote:{tenantInstanceTag}:<entityId>` and related coordination prefixes listed in the [Redis Cheat Sheet](../../system-architecture-redis-cheatsheet.md)
+- `remote:{tenantInstanceTag}:<entityId>` derives `{tenantInstanceTag}` from `<tenantId, gameInstanceId>` and remains a best-effort hint marker for cross-region follow-ups; durable follow-up state lives in PostgreSQL via the tick effect ledger and follow-up tables.
 - Coordination keys must be constructed through the shared key builders and script-registry contracts rather than ad-hoc string concatenation in service code.
 - Changes to Game Session Redis usage must also be reviewed against the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) in addition to the core Redis architecture docs.
 - Game Session may rely on Cache/Rate-Limit Redis for read-side caches that help serve hot-path session views, most notably pre-rendered room LOOK aggregates under `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>` as defined in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md#cache-rate-limit-key-catalog).

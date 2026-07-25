@@ -25,13 +25,13 @@ Concrete realm-swap example:
 - The client must treat the changed bundle identity as a hard theme boundary: load the `v43` manifest, swap logos/theme overrides, and render the fork with the `v43` look without mutating the production realm's active theme state.
 - If the player returns to production, the next `PLAY` or reconnect resume re-resolves the production bundle and the client switches back to `v42`.
 
-Example `manifest.json`:
+Example `manifest.json` for the production `versionId` above:
 
 ```json
 {
-  "logo": "https://cdn.example.com/tenant123/v1/logo.png",
-  "favicon": "https://cdn.example.com/tenant123/v1/favicon.ico",
-  "theme": "https://cdn.example.com/tenant123/v1/theme.json"
+  "logo": "https://cdn.example.com/tenant123/22222222-2222-4222-8222-222222222222/logo.png",
+  "favicon": "https://cdn.example.com/tenant123/22222222-2222-4222-8222-222222222222/favicon.ico",
+  "theme": "https://cdn.example.com/tenant123/22222222-2222-4222-8222-222222222222/theme.json"
 }
 ```
 

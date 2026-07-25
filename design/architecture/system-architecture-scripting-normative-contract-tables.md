@@ -149,7 +149,13 @@ Additional non-committing terminal outcome rules:
 
 Supplementary post-handoff correlation rule:
 
-- Execution-time version/plugin fence drops that happen after tick handoff must not be left as metrics-only signals. They must be exposed through the same Trigger Identity via the observability contract's supplementary `executionDisposition` surface, using bounded reasons such as `script_patch_mismatch` or `plugin_version_mismatch`.
+- Execution-time version/plugin fence drops that happen after tick handoff must not be left as metrics-only signals. They must be exposed on the affected per-command handoff disposition keyed by `automationDispatchId`, with the parent Trigger Identity retained for correlation, using bounded reasons such as `script_patch_mismatch` or `plugin_version_mismatch`.
+
+Per-command handoff correlation rule:
+
+- `script_event_audit` remains one handler record per Trigger Identity, even when that handler emits multiple gameplay commands. It must not contain a single command dispatch field or a single post-handoff outcome for the whole Trigger Identity.
+- Handoff and later execution dispositions are represented as a child/collection surface with one record per emitted command. Each record is keyed by its command-level `automationDispatchId` and retains the parent `outboxWorkItemId` and Trigger Identity for correlation. `ListScriptHandoffEvents` is the canonical query surface for these records.
+- A handler may therefore have zero, one, or many command-handoff records; a later version-fence drop on one command must not overwrite or summarize the handler audit row or the dispositions of sibling commands.
 
 ### Canonical `finalOutcome` Values (Normative)
 
@@ -189,7 +195,7 @@ Deprecated aliases:
 
 If Game Session rejects a queued command because its embedded `scriptPatchVersion` does not match the currently pinned patch (or a plugin-produced command does not match the currently active `pluginVersionId` for its `pluginId`), it must:
 
-- Record the drop with identifiers sufficient for diagnosis (including `scriptEventId`, `scriptId`, `scriptPatchVersion`, `gameInstanceId`, `regionId`, `entityId`).
+- Record the drop on the affected command-handoff record with identifiers sufficient for diagnosis (including `automationDispatchId`, `outboxWorkItemId`, `scriptEventId`, `scriptId`, `scriptPatchVersion`, `gameInstanceId`, `regionId`, `entityId`).
 - Remove the rejected queue entry (or move it to a bounded dead-letter store) so mismatched entries cannot accumulate unboundedly after a rollback.
 - Emit an operator-visible metric for version-fence drops:
   - `automation_tick_version_fence_dropped_total{scope, script_category, reason}` for script patch mismatches (for example `reason="script_patch_mismatch"`).
@@ -213,9 +219,25 @@ The matrix below defines what the scheduler does when a firing becomes due under
 | `PAUSED_FOR_ROLLBACK` | Do not admit new timer firings while rollback cleanup and repin complete. | `finalStage=ADMISSION` with `finalOutcome=rollback_paused`. |
 | Leader failover / short downtime | May perform bounded catch-up for missed cadence boundaries: at most one synthetic firing per cadence boundary crossed, and never more than `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME` for a resume window. Excess candidates are coalesced/dropped and never enqueued as triggers. | Catch-up firings must use `triggerMode=CATCH_UP` and deterministic `scriptEventId` derived from the due point. Truncated catch-up must emit an operator-visible metric and bounded reason code. |
 | Runtime scope / epoch change before due-point admission | Do not remint stale due points under the newer `(tenantId, gameInstanceId, regionId, regionEpoch)` timeline. Advance the schedule to the next valid due point for the new scope and treat the old due point as fenced. | Record the dropped candidate against the old Trigger Identity with `finalStage=ADMISSION`, `finalOutcome=canceled`, and `finalReason=runtime_scope_changed`, and emit the runtime-fence metric. |
-| Preserved timer across reload/rollback | Recalculate the next due point from the canonical resume formula using `resumeTickId`, `previousDueTickId`, and cadence; do not replay the paused window unless the next valid cadence boundary lands exactly on resume. | The preserved firing cadence must remain derivable from durable schedule metadata and the documented resume rule. |
+| Preserved timer across reload/rollback | Recalculate the next due point from the canonical resume formula using `resumeTickId`, `previousDueTickId`, and cadence; do not replay the paused window. If the cadence boundary is exactly `resumeTickId`, the firing is due immediately and must not be advanced by one interval. | The preserved firing cadence must remain derivable from durable schedule metadata and the documented resume rule. |
 | Long downtime or sustained overload | No guarantee of eventual execution for every firing; the system converges by running future firings once capacity returns. | Missed firings must be visible as skips/drops in metrics and audit. |
 | Infrastructure error after admission | Do not re-run the DSL body for the same `scriptEventId`. Only idempotent downstream ops may retry. | `finalStage` must reflect where it failed; do not record `success`. |
+
+### Canonical Preserved-Timer Resume Formula (Normative)
+
+For `intervalTicks > 0`, let `remainder = (resumeTickId - previousDueTickId) % intervalTicks`:
+
+- If `previousDueTickId > resumeTickId`, keep `nextTick = previousDueTickId`.
+- Otherwise, if `remainder = 0`, set `nextTick = resumeTickId` so an exact cadence boundary can fire immediately.
+- Otherwise, set `nextTick = resumeTickId + intervalTicks - remainder`.
+
+This formula advances to the first valid cadence boundary at or after resume without replaying the paused window. A modulo-zero result is the boundary case, not a reason to skip to the following interval.
+
+### Version-Owned Durable Schedule Migration (Normative)
+
+- `scheduleDefinitionId` is the stable logical identity used to decide whether old and new definitions represent the same schedule. It is not the durable row or trigger-claim identity.
+- A change to `scriptPatchVersion` or, for a plugin-owned schedule, `pluginId`/`pluginVersionId` must tombstone the old version-owned schedule entry and then claim or create a new entry under the new owner. The new entry may carry forward schedule state through the canonical resume formula, but the old entry's owner fields and claim history are immutable.
+- The new version-owned entry must derive a new scheduler trigger claim and `scriptEventId`; a matching `scheduleDefinitionId`, due point, or handler must never be used to reuse a trigger identity across versions.
 
 ## Table 4: Metrics Label Matrix
 

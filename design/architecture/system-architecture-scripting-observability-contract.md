@@ -18,10 +18,19 @@ Event-scope ingress decisions and handler-scoped execution outcomes are separate
 
 - Event-scope ingress audit/logging records pre-resolution decisions for the incoming event, such as auth failure, reload backpressure, rollback pause, pin-state unavailability, or version unavailability. These records are keyed by the event-scope identity in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields` and must not invent a synthetic `scriptId`.
 - `script_event_audit` records handler-scoped, scheduler/timer-scoped, tenant-readiness `onLoad`, and dry-run/test executions after a concrete script or plugin handler identity exists.
-- per-command handoff history is a separate durable surface keyed by `automationDispatchId` and `workItemId` so one handler audit row can still correlate to multiple emitted gameplay commands.
+- per-command handoff history is a separate durable child surface keyed by `automationDispatchId` and `workItemId` so one handler audit row can still correlate to multiple emitted gameplay commands.
 - A successful event-scope ingress record means the event was accepted for handler resolution. It is not a summary of every handler outcome.
 - If ingress is accepted and resolves three handlers, tooling should expect one event-scope ingress record and up to three handler-scoped `script_event_audit` records, one per resolved Trigger Identity.
 - If one resolved handler emits three gameplay commands, tooling should expect one handler-scoped `script_event_audit` row plus three durable handoff-event rows under `ListScriptHandoffEvents`.
+
+### Per-Command Handoff Records (Required)
+
+A resolved handler may emit zero, one, or many gameplay commands. `script_event_audit` remains one handler-scoped row per Trigger Identity and must not contain a single command dispatch field or a single post-handoff outcome for the whole Trigger Identity.
+
+- Persist or return one command-handoff record for each attempted emitted command.
+- Each record is keyed by its command-level `automationDispatchId` and includes the parent `outboxWorkItemId`, the parent Trigger Identity, handoff outcome/reason, and any later gameplay execution outcome/reason.
+- `ListScriptHandoffEvents` is the canonical query surface for these records. A query that combines handler and command data must expose a collection such as `commandHandoffDispositions[]`; it must not collapse sibling commands into one dispatch ID or one disposition on the handler audit row.
+- A version-fence drop on one command updates only that command-handoff record. It must not overwrite the handler audit row or the dispositions of sibling commands.
 
 ## `script_event_audit` (Required Fields)
 
@@ -60,7 +69,7 @@ Audit records must include at least:
     - DSL evaluation outcome
     - Work-item persistence outcome (if using a durable outbox)
     - Handoff/enqueue outcome into the tick system
-  - Optional but required when present downstream: `executionDisposition` for post-handoff execution-time rejections reported by Game Session or another downstream owner. This is not part of the Automation-owned `finalStage` progression; it is a supplementary correlation surface keyed to the same Trigger Identity.
+  - A query-composed `commandHandoffDispositions[]` collection when post-handoff execution-time results are present. These child records are not part of the Automation-owned `finalStage` progression and are keyed by `automationDispatchId`, with the parent Trigger Identity retained for correlation.
   - `policyViolations` (optional array, plugin policy rollouts only; see schema below)
 
 Outcome fields must be sufficient to distinguish “DSL evaluated successfully” from “commands were accepted into the tick system”. Do not collapse these into a single `success` signal.
@@ -111,12 +120,13 @@ Stage semantics:
 - Quota denials must use `finalStage=ADMISSION` unless quotas are evaluated inside the DSL runtime for a given trigger (rare; avoid mixing).
 - Intentional rollback/control-plane fencing after admission must stay visible as `finalOutcome=canceled` at the last attempted live stage, with bounded `finalReason` values such as `rollback_epoch_advanced`, `superseded_by_newer_patch`, `operator_canceled`, or `operator_purged`.
 
-### Supplementary Execution Disposition (Required When Present)
+### Supplementary Per-Command Post-Handoff Outcomes (Required When Present)
 
 `script_event_audit` is the canonical lifecycle record through `TICK_HANDOFF`, but Game Session may later reject handed-off commands at execution-time version fences during rollback or plugin version changes. Tooling must not rely on metrics alone to correlate those drops back to the original trigger.
 
-When a downstream service reports such a post-handoff rejection, the audit surface must expose an `executionDisposition` object keyed to the same Trigger Identity with:
+When a downstream service reports such a post-handoff rejection, the command-handoff surface must expose a child disposition keyed to the affected `automationDispatchId` with:
 
+- `automationDispatchId` – the stable identity of the emitted gameplay command.
 - `outcome` – bounded enum. Minimum required value: `version_fence_dropped`.
 - `reason` – bounded reason such as `script_patch_mismatch` or `plugin_version_mismatch`.
 - `recordedAt` – timestamp.
@@ -124,15 +134,15 @@ When a downstream service reports such a post-handoff rejection, the audit surfa
 
 Rules:
 
-- `executionDisposition` does **not** replace `finalStage` / `finalOutcome`; those fields remain the Automation-owned pipeline result.
-- A trigger may therefore show `finalStage=TICK_HANDOFF`, `finalOutcome=success`, and later `executionDisposition.outcome=version_fence_dropped`.
+- A command-handoff disposition does **not** replace `finalStage` / `finalOutcome`; those fields remain the Automation-owned handler pipeline result.
+- A handler may therefore show `finalStage=TICK_HANDOFF`, `finalOutcome=success`, while one child command disposition has `outcome=version_fence_dropped` and sibling command dispositions remain successful.
 - When present, UI/query surfaces must return both views together so operators can distinguish “accepted into tick queues” from “later fenced before execution.”
 
 Concrete example:
 
 - `script_event_audit` row for Trigger Identity `T123` ends with `finalStage=TICK_HANDOFF`, `finalOutcome=success`.
-- Later, Game Session rejects the queued command during rollback convergence and appends `executionDisposition={ outcome=version_fence_dropped, reason=script_patch_mismatch, sourceService=game-session, recordedAt=... }`.
-- Queries for `T123` must surface both facts in one result so operators can tell that Automation succeeded but gameplay execution was later fenced.
+- The handler emitted two commands. Later, Game Session rejects only `automationDispatchId=work-9#1` during rollback convergence and appends a child disposition with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, `sourceService=game-session`, and `recordedAt=...`; `work-9#0` remains a separate sibling record.
+- Queries for `T123` must surface the handler row plus both command-handoff records so operators can tell that Automation succeeded and which gameplay command was later fenced.
 
 Illustrative record shape:
 
@@ -177,16 +187,27 @@ Illustrative record shape:
       "at": "2026-03-19T08:10:01Z"
     }
   ],
-  "executionDisposition": {
-    "outcome": "version_fence_dropped",
-    "reason": "script_patch_mismatch",
-    "sourceService": "game-session",
-    "recordedAt": "2026-03-19T08:10:03Z"
-  }
+  "commandHandoffDispositions": [
+    {
+      "automationDispatchId": "work-9#0",
+      "handoffOutcome": "accepted",
+      "executionOutcome": "executed",
+      "sourceService": "game-session",
+      "recordedAt": "2026-03-19T08:10:02Z"
+    },
+    {
+      "automationDispatchId": "work-9#1",
+      "handoffOutcome": "accepted",
+      "executionOutcome": "version_fence_dropped",
+      "executionReason": "script_patch_mismatch",
+      "sourceService": "game-session",
+      "recordedAt": "2026-03-19T08:10:03Z"
+    }
+  ]
 }
 ```
 
-This example is illustrative rather than prescriptive about JSON column layout, but any API or query surface must preserve the same information model: one Trigger Identity, one Automation-owned final stage/outcome, and an optional later downstream execution disposition.
+This example is illustrative rather than prescriptive about JSON column layout, but any API or query surface must preserve the same information model: one Trigger Identity, one Automation-owned handler final stage/outcome, and zero or more later per-command handoff dispositions keyed by `automationDispatchId`.
 
 ### Canonical Outcome Taxonomy (Required)
 

@@ -14,7 +14,7 @@ Script timers are layered on top of the core tick model and always express caden
 - Missed firings are handled in a bounded, deterministic way:
   - When leaders change, the new leader walks forward from its last persisted `tickId` to the current `tickId` and enqueues at most one synthetic firing for each cadence boundary crossed in that gap.
   - Before enqueueing any such firing, the scheduler must first claim or insert a durable trigger-instance row keyed by an instance-aware uniqueness projection so failover or duplicate consumers cannot create duplicate logical triggers.
-  - The projection must include `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `scriptPatchVersion`, `isDryRun`, `scheduleDefinitionId`, the persisted due point (`dueTickId` or `dueAt`), and `triggerKind`; globally unique schedule IDs do not replace runtime scope, version, dry-run namespace, or timeline fencing.
+  - The projection must include the applicable Trigger Identity fields, including `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `eventType`, `eventSchemaVersion`, `scriptPatchVersion`, `isDryRun`, `scheduleDefinitionId`, the persisted due point (`dueTickId` or `dueAt`), and `triggerKind`; plugin-owned claims must additionally include `pluginId` and `pluginVersionId`. Globally unique schedule IDs do not replace runtime scope, version, dry-run namespace, plugin ownership, or timeline fencing.
   - Missed firings due to quotas, budgets, disabled scripts, or failed or unknown versions are not replayed later; they are recorded in `script_event_audit` and associated metrics as dropped or skipped triggers.
 
 Within that model:
@@ -35,9 +35,9 @@ When reload, rollback, or schedule preservation keeps a logical timer alive acro
   - `intervalTicks` = the preserved schedule cadence in ticks.
 - Rule:
   - if `previousDueTickId > resumeTickId`, keep `nextTick = previousDueTickId`;
-  - otherwise set `nextTick = resumeTickId + intervalTicks - ((resumeTickId - previousDueTickId) % intervalTicks)`, with the modulo term treated as `0` when the cadence boundary lands exactly on `resumeTickId`.
+  - otherwise calculate `remainder = (resumeTickId - previousDueTickId) % intervalTicks`; set `nextTick = resumeTickId` when `remainder = 0`, otherwise set `nextTick = resumeTickId + intervalTicks - remainder`.
 - Consequences:
-  - the scheduler resumes on the next future cadence boundary at or after resume, never by replaying every missed firing from the paused window;
+  - the scheduler resumes on the next valid cadence boundary at or after resume, never by replaying every missed firing from the paused window;
   - a preserved schedule may fire immediately after resume only when its next valid cadence boundary is exactly `resumeTickId`;
   - reload and rollback preservation and leader-failover catch-up remain distinct behaviors. The resume rule governs preserved timers after a version transition; bounded catch-up rules govern missed firings after scheduler downtime within the same logical schedule and version.
 - Equivalent wall-clock timers must define an analogous formula over `nextRunAt` and `resumeAt`, but gameplay-facing cadence remains specified in ticks and must reduce to the same tick-boundary behavior when tick-aligned.
@@ -56,11 +56,11 @@ All durable timer identity and scheduler checkpoints must be instance-aware even
 
 The current interval-entry identity is the complete runtime and version-scoped tuple:
 
-`<tenantId, gameInstanceId, regionId, regionEpoch, entityId, scriptId, eventType, scriptPatchVersion, isDryRun, scheduleDefinitionId, duePoint>`
+`<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, entityId, scriptId, pluginId?, pluginVersionId?, eventType, eventSchemaVersion, scriptPatchVersion, isDryRun, scheduleDefinitionId, duePoint>`
 
-- `scheduleDefinitionId` is the stable logical schedule identity; `scriptPatchVersion` is the current definition owner and `isDryRun` separates test execution from live scheduling. Live durable interval entries persist `isDryRun=false`.
+- `scheduleDefinitionId` is the stable logical schedule identity, not the durable row or trigger-claim identity. `scriptPatchVersion` is the current definition owner, plugin-owned entries additionally carry `pluginId` and `pluginVersionId`, and `isDryRun` separates test execution from live scheduling. Live durable interval entries persist `isDryRun=false`.
 - `duePoint` is exactly one persisted value: `dueTickId` for tick-aligned schedules or `dueAt` for wall-clock timers. `nextTick` and `nextRunAt` are projections of that stored due point, not substitutes for it.
-- The durable trigger-instance claim and deterministic `scriptEventId` must use this same tuple, including the tagged due point. A preserved logical schedule may update its current patch owner during reconciliation, but it must not reuse an entry or firing from a different patch, dry-run namespace, schedule definition, or due point.
+- The durable trigger-instance claim and deterministic `scriptEventId` must use this same tuple, including the tagged due point and plugin owner fields when applicable. A preserved logical schedule may carry schedule state across a version change, but it must not reuse an entry, claim, or firing from a different patch, plugin version, dry-run namespace, schedule definition, or due point.
 
 ### Normal Operation
 
@@ -97,20 +97,20 @@ The current interval-entry identity is the complete runtime and version-scoped t
 
 Timer reconciliation on patch or plugin change is a required part of reload and rollback safety:
 
-- Durable timer identities must be version-scoped by the schedule definition that created them (for example `scriptPatchVersion` for core scripts and `pluginVersionId` for plugins), not just by entity and cadence.
+- Durable timer identities must be version-scoped by the schedule definition that created them, including `scriptPatchVersion` and, for plugin-owned schedules, `pluginId` and `pluginVersionId`; they must not be keyed just by entity and cadence.
 - Every compiled timer or interval definition must carry a stable `scheduleDefinitionId` generated by the Game Design compilation pipeline and persisted with the schedule metadata. This identifier represents one logical schedule definition within a patch or plugin version.
 - A patch or plugin version must not contain duplicate `scheduleDefinitionId` values within the same owning scope; compilation and publish must fail deterministically if duplicates are present.
 - Implementations may additionally persist a `scheduleSemanticsHash` or equivalent normalized fingerprint for debugging and migration visibility, but reconciliation authority is the stable `scheduleDefinitionId`.
-- When an instance observes a newly pinned `scriptPatchVersion`, the scheduler must compare the durable schedules for the previously observed patch with those for the newly pinned patch before resuming timer admission.
+- When an instance observes a newly pinned `scriptPatchVersion`, the scheduler must compare the durable schedules for the previously observed patch with those for the newly pinned patch before resuming timer admission. Plugin activation, disablement, rollback, and revocation perform the same comparison for `(pluginId, pluginVersionId)`.
 - Schedules that do not exist in the newly pinned patch must be removed or tombstoned so they can no longer generate triggers.
 - Schedules may be preserved across patch or plugin changes only when the old and new definitions share the same `scheduleDefinitionId`. Matching by cadence, node shape, entity binding, or other inferred semantic similarity is not sufficient.
-- When a preserved schedule keeps the same `scheduleDefinitionId`, reconciliation must rewrite the durable owner and version metadata to the newly pinned `scriptPatchVersion` or `pluginVersionId` before scheduling resumes, and must recalculate `nextTick` or `nextRunAt` from the normative timer resume rule rather than reusing stale due points blindly.
+- When a preserved schedule keeps the same `scheduleDefinitionId`, reconciliation must first tombstone the old version-owned `script_schedule_instances` entry and then claim or create a new entry keyed by the newly pinned `scriptPatchVersion` and, when applicable, `(pluginId, pluginVersionId)` before scheduling resumes. The new entry may carry forward schedule state, but must recalculate `nextTick` or `nextRunAt` from the normative timer resume rule and must mint a new trigger claim and `scriptEventId`; it must never rewrite the old entry in place or reuse its trigger identity.
 - The same rule applies to plugin activation, disable, rollback, and signer-revocation flows: any schedule owned by a displaced `pluginVersionId` must be removed or tombstoned before normal scheduling resumes for that plugin.
 - Canceling outbox work items alone is insufficient for rollback safety; old-version timer schedules must also be reconciled so they cannot mint new `scriptEventId` values after the version has been displaced.
 
 Plugin example:
 
-- If plugin version `combat-helper@v4` and `combat-helper@v5` both compile a "reapply guard aura every 20 ticks" timer with `scheduleDefinitionId=combat-helper.guard-aura.v1`, reconciliation preserves that durable timer row across the version switch, rewrites ownership from `pluginVersionId=v4` to `pluginVersionId=v5`, and recalculates the next due point from the resume rule before scheduling resumes.
+- If plugin version `combat-helper@v4` and `combat-helper@v5` both compile a "reapply guard aura every 20 ticks" timer with `scheduleDefinitionId=combat-helper.guard-aura.v1`, reconciliation tombstones the `v4` entry, claims or creates a `v5` entry with the same logical `scheduleDefinitionId`, and recalculates the next due point from the resume rule before scheduling resumes. The `v5` entry receives a new trigger claim and `scriptEventId`.
 - If `combat-helper@v5` replaces that timer with a different logical schedule such as "pulse only while threat > 0" compiled to a different `scheduleDefinitionId`, the old timer owned by `v4` must be tombstoned and a new timer created for `v5`.
 
 Under this model, durable script schedules, quotas, and trigger-instance de-duplication live in PostgreSQL, while `automation:timer:{tenantRegionTag}`, `script-scheduler:{tenantRegionTag}:lastTickId`, and related coordination keys form a reset-tolerant coordination layer for interval state. Stored entries and reconciliation logic remain instance-aware even though the Redis keys are region-scoped. The combination of tick heartbeat, durable trigger-instance claims, checkpoints, and script patch versioning preserves both correctness and determinism across failures and leader changes: losing or resetting these Redis keys may delay or slightly reshuffle timer firings within the tail-loss envelope but must not change which scripts are eventually scheduled according to their stored configurations or cause duplicate logical trigger creation.

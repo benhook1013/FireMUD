@@ -97,9 +97,11 @@ Use this when adding or changing coordination prefixes (for example `tick:*`, `t
 ### Observability
 
 - [ ] Metrics exist to track:
-  - [ ] Key counts or approximate size for this prefix by tenant/game-instance/region.
+  - [ ] Key counts or approximate size for this prefix using bounded operational buckets such as `scope_bucket`, `region_class`, deployment, or Redis role; metrics must not use raw `tenantId`, `gameInstanceId`, or `regionId` labels.
   - [ ] Error or outcome codes from relevant Lua scripts.
   - [ ] Any important watermarks (for example, tick IDs, backlog depths).
+- [ ] Exact tenant/game-instance/region diagnosis is obtained from control-plane APIs and structured logs/audit records (for example `GetRegionTickStatus`), not by adding raw identity labels to metrics.
+- [ ] Aggregated rollups remain available for dashboards and alerts so bounded metric cardinality does not hide scope-wide regressions.
 - [ ] For session-to-region bridge flows, metrics and alerts can distinguish stale-generation cleanup, successful region rebinds, and orphaned region bindings detected after session expiry.
 - [ ] Dashboards and alerts consider this prefix when assessing tail‑loss SLOs.
 
