@@ -55,7 +55,7 @@ For designer-oriented guidance on building and debugging scripts in the visual e
 
 ## Terminology Glossary
 
-- **`{tenantRegionTag}` hash tag** – an opaque placeholder produced by shared Redis key builders from the complete `<tenantId, gameInstanceId, regionId>` scope. It exists for shard locality across region-scoped keys; it is not a replacement for those identity fields and does not define a competing schedule or tenant key family.
+- **`{tenantRegionTag}` hash tag** – an opaque placeholder produced by shared Redis key builders from the complete `<tenantId, gameInstanceId, regionId>` scope documented in [Redis Architecture](./system-architecture-redis.md#key-naming-and-shard-discipline). It exists for shard locality across region-scoped keys; it is not a replacement for those identity fields and does not define a competing schedule or tenant key family. `playableStateScope` is intentionally not part of this existing tag topology; it remains in durable Trigger Identity and command/effect identity and must not be inferred from the tag.
 - **Game tick** – a region-scoped tick in the Game Session Service. Each `<tenantId, gameInstanceId, regionId>` advances through a monotonic `tickId` stream; game ticks are authoritative for gameplay state changes and use `tick:{tenantRegionTag}:...` keys and locks as described in [Tick System and Runtime Design](./system-architecture-ticks.md).
 - **Automation execution loop** – the durable executor path inside the Automation & Scripting Service. It claims persisted **script work items** from the outbox, evaluates the current command-emission format, and hands resulting commands to the Game Session Service so Game Session can enqueue **tick commands** into per-entity tick queues for later execution by game ticks. `automation:queue:{tenantInstanceTag}:<entityId>` remains a reset-tolerant derived pointer index for visibility and rebuildable coordination, not an authoritative execution log.
 - **Automation queue** – an instance-aware, per-entity Redis queue (`automation:queue:{tenantInstanceTag}:<entityId>`) that holds **derived work-item indexes/pointers** after sandboxed DSL execution and durable persistence. It is reset-tolerant and rebuildable from the durable outbox; it must not be treated as an authoritative log of pending work.
@@ -83,7 +83,7 @@ Normative Trigger Identity required fields (including `gameInstanceId` and when 
 | --- | --- | --- | --- |
 | 1 | **Trigger** | A concrete event such as `onEnterRegion`, `onCommand`, or a custom event emitted by a service. | gRPC `TriggerScriptEvent` call, tick heartbeat, or internal scheduler event. |
 | 2 | **DSL run** | Execution of a script handler in the sandboxed DSL for a single trigger. Produces domain commands, not direct state changes. | In-memory execution in the Automation & Scripting Service; results summarized as script work items. |
-| 3 | **Script work item** | A post-DSL, per-entity descriptor of what should happen (domain commands + `scriptEventId`, `scriptId`, version metadata) persisted durably (outbox). | Indexed via `automation:queue:{tenantInstanceTag}:<entityId>` and later claimed by Automation's durable executor for Game Session handoff. |
+| 3 | **Script work item** | A post-DSL, per-entity descriptor of what should happen (domain commands plus the full applicable Trigger Identity, including `scriptEventId`, `playableStateScope` and `regionEpoch` when applicable, and version metadata) persisted durably (outbox). | Indexed via `automation:queue:{tenantInstanceTag}:<entityId>` and later claimed by Automation's durable executor for Game Session handoff. |
 | 4 | **Tick command** | A concrete command that the Game Session Service executes during game ticks under its normal locking and idempotency rules. | Enqueued into `tick:{tenantRegionTag}:queue:<entityId>` for consumption by the tick loop. |
 
 Triggers lead to DSL runs, which produce durable script work items plus queue-pointer projection entries, and Automation's execution loop turns those work items into tick commands for the Game Session Service.
@@ -98,7 +98,7 @@ The authoritative outbox, queue-pointer contract, and drain/handoff semantics no
 
 ## `scriptEventId` Lifecycle and Deduplication
 
-`scriptEventId` remains the canonical identifier for a single script trigger/run, but the runtime ownership, downstream propagation, and deduplication contract now live in [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#scripteventid-lifecycle-and-deduplication). Use this DSL reference for event meaning and author-facing lifecycle, and the runtime doc for queueing, handoff, and idempotent replay behavior.
+`scriptEventId` remains the canonical identifier for a single script trigger/run, but it is only one field of the composite Trigger Identity. The runtime ownership, downstream propagation, and deduplication contract now live in [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#scripteventid-lifecycle-and-deduplication). Use this DSL reference for event meaning and author-facing lifecycle, and the runtime doc for queueing, handoff, and idempotent replay behavior.
 
 ---
 
@@ -107,7 +107,7 @@ The authoritative outbox, queue-pointer contract, and drain/handoff semantics no
 The DSL supports a variety of **built-in lifecycle events** and **custom events**. The exact set of events and their payload schemas are defined in the Automation & Scripting Service and domain service contracts; this section summarizes the main categories and how they behave.
 
 - **Script lifecycle events**
-  - `onLoad` is a **script-level lifecycle event** that runs once per `<tenantId, scriptId, scriptPatchVersion>` while that patch is becoming tenant-`READY`. In the first implementation slice it is limited to ephemeral readiness work (for example, validating configuration and warming recomputable in-process caches) rather than per-entity setup or durable shared-state creation.
+  - `onLoad` is a **script-level lifecycle event** that runs once per canonical readiness identity `<tenantId, scriptId, eventSchemaVersion, scriptPatchVersion, eventType=onLoad, isDryRun=false>` while that patch is becoming tenant-`READY`. In the first implementation slice it is limited to ephemeral readiness work (for example, validating configuration and warming recomputable in-process caches) rather than per-entity setup or durable shared-state creation.
 
 - **Spawn and destruction events**
   - `onSpawn` events fire when an entity (such as an NPC) is created or enters a relevant region.
@@ -134,21 +134,21 @@ See the Automation & Scripting Service README and service protos for the full, u
 `onLoad` is a **script-level lifecycle event**, not an entity-level event. It runs without an entity context and executes once per script definition and script patch for a tenant, not once per NPC or player.
 
 - **When it fires**
-  - The scheduler emits an `onLoad` trigger exactly once per `<tenantId, scriptId, scriptPatchVersion>` while that patch is the **pending** patch for the tenant, before it is promoted to the active `scriptPatchVersion` used by Game Session. In practice this means:
+  - The scheduler emits an `onLoad` trigger exactly once per canonical readiness Trigger Identity while that patch is the **pending** patch for the tenant, before it is promoted to the active `scriptPatchVersion` used by Game Session. In practice this means:
     - When a script first becomes part of the tenant’s pending script set under a given `scriptPatchVersion` (lifecycle `PENDING_VALIDATION` → `ONLOAD_RUNNING`), and
     - After a successful hot reload that introduces a new pending patch for that tenant, `onLoad` fires once for each script in that pending patch.
   - If reload or validation fails and the patch never reaches `READY`, `activePatchVersion` remains unchanged and no additional `onLoad` events are generated for that patch.
 
 - **Per-script vs per-entity**
-  - `onLoad` runs **without an entity context**; it executes once per `<tenantId, scriptId, scriptPatchVersion>`.
+  - `onLoad` runs **without an entity context**; it executes once per canonical readiness identity `<tenantId, scriptId, eventSchemaVersion, scriptPatchVersion, eventType=onLoad, isDryRun=false>`.
   - Scripts that need per-entity initialization (for example, setting up patrol state when an NPC enters the world) should use `onSpawn`, `onEnterRegion`, or other entity-scoped events instead of relying on `onLoad`.
 
 - **Interaction with reloads and recovery**
-  - The Automation & Scripting Service treats `onLoad` as **at-most-once per `<tenantId, scriptId, scriptPatchVersion>`**, even across process restarts and leader changes. Load-completion state is tracked in persistent metadata so that simply restarting a scheduler instance does not re-fire `onLoad` for a script whose patch has already been initialized for that tenant.
+  - The Automation & Scripting Service treats `onLoad` as **at-most-once per canonical readiness Trigger Identity**, even across process restarts and leader changes. Load-completion state is tracked in persistent metadata so that simply restarting a scheduler instance does not re-fire `onLoad` for a script whose patch has already been initialized for that tenant.
   - `onLoad` triggers are enqueued only while the patch is tracked as `pendingPatchVersion` with lifecycle `ONLOAD_RUNNING`; `activePatchVersion` remains on the previous patch until all `onLoad` handlers succeed and the lifecycle transitions to `READY`. Scripts never run `onLoad` against a patch that is already the active `scriptPatchVersion` for a tenant.
   - Tenant readiness allows only **one pending patch per tenant** at a time. If Game Design publishes a newer patch while an older patch is still `PENDING_VALIDATION` or `ONLOAD_RUNNING`, the older patch is transitioned deterministically to `SUPERSEDED` with a bounded reason such as `superseded_by_newer_patch`, any not-yet-started `onLoad` work for that older patch is canceled, and any in-flight `onLoad` executions for it must be prevented from later advancing the patch to `READY`.
   - A `SUPERSEDED` patch is terminal for readiness purposes: it remains queryable for audit/history, but it is no longer eligible for pinning and must not emit further `onLoad` work after the superseding publish is accepted.
-- Each `onLoad` trigger uses the tenant-readiness identity defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields`: `<tenantId, scriptId, scriptPatchVersion, eventType=onLoad, scriptEventId, isDryRun=false>`, with no `gameInstanceId`, `regionId`, `regionEpoch`, or `entityId`. Automation & Scripting generates `scriptEventId` deterministically from that tuple and reuses it for bounded infrastructure retries.
+- Each `onLoad` trigger uses the tenant-readiness identity defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields`: `<tenantId, scriptId, eventSchemaVersion, scriptPatchVersion, eventType=onLoad, scriptEventId, isDryRun=false>`, with no `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, or `entityId`. Automation & Scripting generates `scriptEventId` deterministically from all non-generated applicable onLoad identity fields and reuses it for bounded infrastructure retries.
 - Each `onLoad` trigger is recorded in `script_event_audit` with `eventType=onLoad`, `tenantId`, `scriptId`, the target `scriptPatchVersion`, and stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`, plus any per-stage breakdown) so operators can verify that initialization ran for a given script and patch and see exactly where it failed. Because `onLoad` must not persist gameplay effects or hand off tick commands, successful readiness uses `finalStage=DSL_EVAL`, `finalOutcome=readiness_success`, and is separately reflected in patch lifecycle state (`READY`) rather than by live `finalOutcome=success`.
 
 Concrete supersession example:
@@ -163,9 +163,10 @@ Concrete supersession example:
 
 Implementers should treat `scheduleDefinitionId` as the canonical answer to "is this the same logical schedule?":
 
-- If patch `P21` contains a patrol interval compiled to `scheduleDefinitionId=patrol.main.v1` and patch `P22` keeps the same logical timer while only changing unrelated dialogue nodes, the scheduler tombstones the `P21` version-owned row, creates or claims the corresponding `P22` row, and carries the due state forward through the canonical resume rule.
-- If patch `P22` instead changes the patrol logic into a distinct combat-alert timer compiled to `scheduleDefinitionId=patrol.alert.v1`, the previous timer row is tombstoned and a new timer row is created with fresh due state.
-- Rollback uses the same rule. Due state is carried into a newly owned row only when the rollback target exposes the same `scheduleDefinitionId`; otherwise rollback recreates the old logical schedule with fresh due state rather than trying to reinterpret the newer timer row.
+- If patch `P21` contains a patrol interval compiled to `scheduleDefinitionId=patrol.main.v1` and patch `P22` keeps the same logical timer while only changing unrelated dialogue nodes, the scheduler creates or confirms the corresponding `P22` row before retiring the `P21` version-owned row, as one atomic durable result or a resumable idempotent operation, and carries cadence forward through the canonical resume rule.
+- If patch `P22` instead changes the patrol logic into a distinct combat-alert timer compiled to `scheduleDefinitionId=patrol.alert.v1`, the scheduler creates the new timer with fresh due state before retiring the previous row under the same atomic-or-resumable rule.
+- A change to `playableStateScope` is a schedule/runtime migration fence even when `scheduleDefinitionId` is unchanged: create or confirm a new row under the new scope before retiring the old-scope row, as one atomic durable result or a resumable idempotent operation, without reusing the old due point, trigger claim, or `scriptEventId`.
+- Rollback uses the same rule. Due state is carried into a newly owned row only when the rollback target exposes the same `scheduleDefinitionId` and playable-state scope; otherwise rollback recreates the old logical schedule with fresh due state rather than trying to reinterpret the newer timer row.
 
 ---
 
@@ -207,7 +208,7 @@ Domain services can define **custom events** that feed into the scripting pipeli
 - Service-specific events follow the same trigger → DSL run → automation queue → tick command flow as built-in events.
 - Event schemas are versioned so scripts can be migrated when payloads change.
 
-Custom events must follow the same determinism and idempotency rules as built-in events; they are keyed by Trigger Identity plus tick context when producing commands (for example including `entityId`, `eventType`, `scriptPatchVersion`, `scriptEventId`, and `tickId`/`regionEpoch` where applicable).
+Custom events must follow the same determinism and idempotency rules as built-in events; they are keyed by the full applicable Trigger Identity plus tick context when producing commands (for example including `tenantId`, `gameInstanceId`, `playableStateScope`, `entityId`, `eventType`, `eventSchemaVersion`, `scriptPatchVersion`, `scriptEventId`, and `tickId`/`regionEpoch` where applicable).
 
 Custom events also require an explicit trust and ownership contract:
 
@@ -321,7 +322,7 @@ The tenant lifecycle governs patch readiness and eligibility. The instance lifec
 Runtime execution must still remain **instance-aware** even though patch readiness is tenant-scoped:
 
 - A tenant-scoped `READY` state means a patch is eligible to be pinned by instances in that tenant; it does not imply that every running instance must pause, reload, or switch together.
-- Admission, timer scheduling, rollback pause, convergence checks, and plugin activation must evaluate the effective runtime scope as `<tenantId, gameInstanceId>`, even if implementations batch internal work by tenant.
+- Admission, timer scheduling, rollback pause, convergence checks, and plugin activation must evaluate the effective runtime scope as `<tenantId, gameInstanceId, playableStateScope>`, even if implementations batch internal work by tenant. Region and epoch fields remain required for region/tick-aligned runtime timelines.
 - If a deployment wants stronger coupling, it must explicitly declare the invariant that all instances in a tenant share one active script patch. Absent that declaration, instance isolation is the normative behavior.
 - Instance-scoped runtime state tracks only **pin observation and admission control** for the patch that an instance is trying to run (for example `observedPinnedScriptPatchVersion`, `reloadState`, convergence checkpoints, and rollback pause). It does **not** rerun tenant patch readiness or `onLoad`.
 - A single tenant-wide mutable `activePatchVersion` inside Automation & Scripting is therefore not sufficient. The service must keep tenant-scoped patch readiness separate from instance-scoped pin observation and scheduling state.
@@ -342,7 +343,7 @@ Interpretation rules:
 The canonical states are:
 
 - `PENDING_VALIDATION` – the Game Design Service has published a script-only patch version and the Automation & Scripting Service has accepted the compiled graphs and bindings, but `onLoad` initialization has not yet completed for the tenant.
-- `ONLOAD_RUNNING` – `onLoad` handlers for scripts in the patch are executing for the tenant. These executions are keyed by `<tenantId, scriptId, scriptPatchVersion>` and must be idempotent.
+- `ONLOAD_RUNNING` – `onLoad` handlers for scripts in the patch are executing for the tenant. These executions are keyed by the full applicable onLoad identity, `<tenantId, scriptId, eventSchemaVersion, scriptPatchVersion, eventType=onLoad, scriptEventId, isDryRun=false>`, and must be idempotent.
 - `READY` – all `onLoad` handlers for the patch have completed successfully for the tenant. The patch is eligible to become the `activePatchVersion` for games in that tenant, and Game Session may pin it as the current `scriptPatchVersion`.
 - `FAILED` – one or more `onLoad` handlers for the patch have failed for the tenant with a logical, sandbox, or infrastructure error after retries are exhausted. The previous instance-observed pin remains in use for running games, and the failed patch is not eligible to be pinned.
 - `SUPERSEDED` – a newer publish for the same tenant was accepted while this patch was still non-terminal (`PENDING_VALIDATION` or `ONLOAD_RUNNING`). The superseded patch remains visible for audit/history but is no longer eligible for pinning or further readiness progression.
@@ -376,8 +377,8 @@ When a trigger arrives at the Automation & Scripting Service:
 
 Scripts are designed to behave **deterministically for a given game configuration and event**, so that both the original execution and any offline replay in tools or tests produce the same observable behavior. The Automation & Scripting Service enforces this by constraining how randomness and time are exposed to DSL components:
 
-- All **pseudo-random behavior** (for example, “pick a random waypoint”, “roll for loot”, or encounter selection) flows through curated components that read from a **seeded RNG** supplied by the runtime. The seed is derived from stable identifiers such as `<tenantId, gameInstanceId, regionId, entityId, scriptId, eventType, scriptEventId, tickId, scriptPatchVersion[, regionEpoch, pluginId, pluginVersionId]>` so that re-evaluating the same trigger with the same inputs produces the **same sequence of random values**. Components must not call process-wide RNG APIs directly; they receive a scoped RNG instance from the sandbox.
-  - Seeds are derived from this tuple primarily so offline replay tools and test harnesses can reproduce behavior for a given event stream; production tick replays never re-enter the DSL for the same `scriptEventId`.
+- All **pseudo-random behavior** (for example, “pick a random waypoint”, “roll for loot”, or encounter selection) flows through curated components that read from a **seeded RNG** supplied by the runtime. The seed is derived from stable identifiers such as `<tenantId, gameInstanceId, playableStateScope, regionId, entityId, scriptId, eventType, eventSchemaVersion, scriptEventId, tickId, scriptPatchVersion[, regionEpoch, pluginId, pluginVersionId]>` so that re-evaluating the same trigger with the same inputs produces the **same sequence of random values**. Components must not call process-wide RNG APIs directly; they receive a scoped RNG instance from the sandbox.
+  - Seeds are derived from the full applicable identity tuple primarily so offline replay tools and test harnesses can reproduce behavior for a given event stream; production tick replays never re-enter the DSL for the same full applicable Trigger Identity.
 - **Wall-clock time is not exposed** to scripts. DSL components see only **derived game time** sourced from the tick and session model (for example, `tickId`, region-local “world time” counters, or effect durations computed by Game Logic). This ensures that replaying the same tick timeline yields the same time values from the script’s perspective, independent of real-world clock drift.
 - Any component that introduces variability must either:
   - be implemented in terms of the seeded RNG and tick-based time described above, or
@@ -439,7 +440,7 @@ Crucially, **script handlers are not re-executed during tick replay or recovery*
 
 Script executions are treated as **at-most-once per trigger** at the scheduler level, but the resulting commands participate in the same **idempotent replay model** as other tick actions:
 
-- Script-generated commands must be **idempotent with respect to the region-scoped tick timeline, Trigger Identity, and command identity**: `(regionEpoch, tickId)`, `scriptEventId`, and `automationDispatchId`. These identifiers travel with the command payload and are recorded alongside `scriptId` and `tenantId` in `script_event_audit` records and logs so operators can correlate replays and ensure side effects remain consistent even when ticks are retried or a reset bumps `regionEpoch`.
+- Script-generated commands must be **idempotent with respect to the region-scoped tick timeline, the full applicable Trigger Identity, and command identity**: `(regionEpoch, tickId)`, all applicable Trigger Identity fields including `scriptEventId`, and `automationDispatchId`. These identifiers travel with the command payload and are recorded alongside `scriptId` and `tenantId` in `script_event_audit` records and logs so operators can correlate replays and ensure side effects remain consistent even when ticks are retried or a reset bumps `regionEpoch`.
 - When commands cause database writes or cross-service calls, domain services should derive the canonical `EffectId` from `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId>`. For script-originated fan-out, the command identity is the command-level `automationDispatchId` and it must be an explicit component of `effectKey` (for example `<baseEffectKey>:<automationDispatchId>`, or an equivalent deterministic encoding). `scriptEventId` alone is not sufficient because sibling commands from one handler must derive distinct EffectIds. This follows the patterns in `design/architecture/system-architecture-transactions.md` and the tick idempotency rules described in `design/architecture/system-architecture-ticks.md#domain-idempotency-rules-region-epoch--tickid-in-postgresql`.
 - Conceptually, `scriptEventId` identifies the handler trigger while `automationDispatchId` identifies one emitted gameplay command:
   - For purely tick-driven logic, idempotency guards use `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)`.

@@ -60,7 +60,7 @@ Audit records must include at least:
   - `sourceService` (required for custom/service-specific events; omitted for built-in events that originate entirely within Automation & Scripting)
 - Scheduling context (when applicable)
   - `triggerMode` (for example `NORMAL` vs `CATCH_UP`)
-  - `dueTickId` and/or `dueAt` (for timers/intervals)
+  - Exactly one of `dueTickId` or `dueAt` (for timers/intervals); the alternate field is absent/`NULL`
 - Outcomes (stage-aware)
   - `finalStage` (the last stage reached for this trigger; see below)
   - `finalOutcome` and `finalReason` (canonical outcome taxonomy used by dashboards and operators)

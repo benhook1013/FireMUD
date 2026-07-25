@@ -13,15 +13,17 @@ Use Grafana/Kibana/Jaeger when available. If any observability backend is degrad
 
 Synthetic canary identities used in this runbook should be treated as operational probes, not normal players. Operator workflows should keep them out of routine moderation, behavior review, and player-facing analytics unless an incident specifically involves canary validation.
 
+Metrics in this runbook may identify only deployment-wide degradation or an approved bounded `scope` bucket. Resolve an exact `<tenantId, gameInstanceId, regionId>` runtime scope through Game Session/control-plane runtime-health reads and structured logs before taking scope-specific action; do not infer exact runtime ownership from ordinary metric labels.
+
 ## Trace Preconditions (For Latency/Tick Root Cause)
 
 Trace-driven triage is optional but often decisive for command-latency incidents. Before relying on Jaeger as a primary diagnostic:
 
 - Confirm baseline tracing is usable for the affected path (production-like default is non-zero sampling; around 1% for high-volume entry paths is the baseline usability target from `system-architecture-tracing.md`).
 - If traces are too sparse:
-  - First escalate service-scoped sampling temporarily (`OTEL_TRACES_SAMPLER=parentbased_traceidratio`, increase `OTEL_TRACES_SAMPLER_ARG`) and record start/end times in the incident timeline.
-  - If the environment supports collector tail-sampling by `tenantId`/`gameInstanceId`/`regionId`, prefer scoped escalation for the impacted tenant/game-instance/region and remove the policy immediately after triage.
-- If the environment does not meet the collector capability contract for tenant/game-instance/region-scoped sampling, treat it as service-scoped-only and do not claim scoped escalation.
+  - Use temporary service-scoped sampling (`OTEL_TRACES_SAMPLER=parentbased_traceidratio`, increase `OTEL_TRACES_SAMPLER_ARG`) only when the environment advertises and independently proves ADR 0017 level 3 for the affected workflow; record start/end times in the incident timeline.
+  - Use tenant/game-instance/region-scoped escalation only when the environment advertises and independently proves ADR 0017 level 4 for the affected workflow, and only after the exact runtime scope is resolved through control-plane/runtime-health reads and logs. Remove the policy immediately after triage.
+- If the environment does not meet the advertised-and-proved ADR 0017 capability for the required level, treat it as baseline or service-scoped-only as applicable and do not claim scoped escalation.
 - If trace volume remains insufficient, continue with metrics + logs and do not block mitigation on trace availability.
 
 ## Login Success Ratio Below SLO
@@ -38,8 +40,8 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 ### Decide (Login success ratio)
 
 - Determine scope:
-  - Single tenant vs all tenants.
-  - Single ingress path (Telnet vs WebSocket/HTTPS) or multiple.
+  - Use metrics only to classify deployment-wide degradation versus an approved bounded `scope` bucket.
+  - Resolve any exact tenant/game-instance/region and ingress path through control-plane/runtime-health reads and structured logs.
 - Decide if the incident is primarily:
   - **Edge-related** (TCP Proxy/Gateway/Cloud LB).
   - **Auth-related** (Account Service, JWT, database).
@@ -98,7 +100,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 
 1. **Check tick health first**
    - Use the Tick Health & Ledger dashboard:
-     - Inspect `tick_execution_time_ms_p99 / tick_lock_ttl_ms` for affected regions.
+     - Inspect `tick_execution_time_ms_p99 / tick_lock_ttl_ms` for affected approved scope buckets, then resolve exact regions through control-plane/runtime-health reads and structured logs.
      - Inspect `tick_retry_queue_depth` and `tick_command_queue_depth`.
    - If the representative command canary is failing or slow while the live-traffic SLI is quiet, use the canary result as the trigger to continue triage rather than waiting for more user traffic.
    - If tick execution is also degraded:
@@ -172,7 +174,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 
 - Player reports: failed or flaky connections on one entry path (Telnet or WebSocket/HTTPS).
 - Metrics:
-  - Player Experience dashboard shows a drop in availability computed from `entrypath_connection_attempts_total{path,outcome}` for one or more tenants.
+  - Player Experience dashboard shows a drop in availability computed from `entrypath_connection_attempts_total{path,outcome}` for one or more approved bounded `scope` buckets; resolve exact tenants through control-plane/runtime-health reads and structured logs.
   - External synthetic probes show whether the public Telnet or WebSocket path is reachable at all when traffic may not be reaching Gateway or TCP Proxy.
   - TCP Proxy dashboards show whether `tcpproxy_connections_limit_exceeded` or `tcpproxy_telnet_discarded` are elevated (Telnet path), and Gateway dashboards show whether WebSocket upgrade failures are elevated (WebSocket path).
 
@@ -206,7 +208,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
      - Scale or roll back Gateway/TCP Proxy if a recent change correlates with the incident.
      - Validate downstream dependencies (Redis/Postgres) and tick health for player-facing regions.
 3. **Verify recovery**
-   - Confirm the short-window detection view recovers quickly for affected `{tenantId,path}` combinations and the dominant failure outcomes subside.
+   - Confirm the short-window detection view recovers quickly for affected `{scope,path}` combinations and the dominant failure outcomes subside; use control-plane/runtime-health reads and structured logs for exact runtime scope.
    - Confirm the 1-day compliance view trends back toward SLO after the acute incident is resolved.
 4. **Degraded-mode branch (if observability backends are unavailable)**
    - If Grafana is down: query Prometheus directly for both `entrypath_connection_attempts_total` success/total ratios by `{scope,path}`, the external synthetic-probe metric for each public path, and the mirrored login/command canary metrics where relevant.

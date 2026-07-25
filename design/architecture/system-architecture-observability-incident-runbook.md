@@ -127,8 +127,8 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 1. Restore Elasticsearch cluster health.
 2. Verify recent logs appear for a known active service.
-3. Emit or identify a recovery smoke record carrying `service`, `traceId`, `tenantId`, `gameInstanceId`, `regionId`, and `characterId` when applicable.
-4. Verify Kibana saved searches return that record when filtering by `service` and `traceId`, then by `tenantId`, `gameInstanceId`, `regionId`, and `characterId` when those fields are expected by the logging contract.
+3. Emit or identify a recovery smoke record carrying `service` and `traceId`; include gameplay identity fields (`tenantId`, `gameInstanceId`, `regionId`, and `characterId` when applicable) only when the exercised record's canonical logging schema requires them.
+4. Verify Kibana saved searches return that record when filtering by `service` and `traceId`, then apply the gameplay identity filters only when those fields are expected by the logging contract for that record.
 
 ## Grafana Down
 
@@ -172,14 +172,15 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 ### Jaeger/collector operator fallback
 
 - Pivot to metrics and logs:
-  - Use SLI/SLO panels and alert conditions to identify impacted tenants/regions.
+  - Use SLI/SLO panels and alert conditions only to identify an impacted deployment or approved bounded `scope` bucket.
+  - Resolve the exact `<tenantId, gameInstanceId, regionId>` runtime scope through control-plane/runtime-health reads and structured logs before taking scope-specific action.
   - Use logs filtered by `tenantId`, `gameInstanceId`, `regionId`, and `correlationId` to follow the flow.
 
 ### Jaeger/collector recovery and verification
 
 1. Restore collector + Jaeger and verify their health and export/query paths.
-2. Branch on the environment's advertised ADR 0017 capability. At level 1, confirm metrics and structured logs remain usable and treat trace arrival as best-effort rather than a recovery gate.
-3. At level 2 or above, verify a trace for a workflow explicitly proved at that level and confirm its required bounded attributes. Do not require login, command, or tenant/game-instance/region trace evidence unless that exact workflow and scope are advertised and proved.
+2. Branch on the environment's advertised and independently proved ADR 0017 capability and covered workflow. At level 1, confirm metrics and structured logs remain usable and treat trace arrival as best-effort rather than a recovery gate.
+3. At levels 2-3, verify only a workflow explicitly proved at that level and confirm its required bounded attributes. Treat tenant/game-instance/region-scoped sampling or verification as available only when ADR 0017 level 4 is both advertised and independently proved for the affected workflow; do not require login, command, or scoped trace evidence otherwise.
 
 ## Post-Incident Checklist
 

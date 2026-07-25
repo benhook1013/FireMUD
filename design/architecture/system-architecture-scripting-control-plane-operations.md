@@ -423,7 +423,7 @@ State rules:
 
 - Each transition must be idempotent and keyed by `controlPlaneRequestId`.
 - Re-running a request in the same state must return current state, not restart from scratch.
-- `RECONCILING_SCHEDULES` must complete before timer admission, normal admission, or tick resumption can proceed; it must tombstone displaced version-owned rows and create or claim only target-version rows.
+- `RECONCILING_SCHEDULES` must complete before timer admission, normal admission, or tick resumption can proceed. Replacement creation and displaced-row retirement must be one atomic durable result or a resumable idempotent operation keyed by `controlPlaneRequestId`; retries create or confirm only target-version rows before retiring displaced rows. Reconciliation creates no firing claim or `scriptEventId`.
 - Failures in `CANCELING` or `PURGING` must not auto-resume admission or ticks.
 - Operator retries must continue from the last durable state.
 - `ROLLBACK_CONVERGENCE_TIMEOUT` keeps admission and ticks paused until explicit operator action.

@@ -284,7 +284,7 @@ Common scenarios and invariants:
   - Invariants: no double-apply; some ticks may be lost or need manual reconstruction.
   - Action:
     - Metrics and dashboards surface gaps or stuck regions.
-    - Operators treat serious tail-loss as a trigger to run the **ledger replay controller** (and, where appropriate, the scoped reset/reconcile flows) for the affected `(tenantId, gameInstanceId, regionId, region_epoch)` combinations.
+    - Operators treat serious tail-loss as a trigger to run the **ledger replay controller** (and, where appropriate, the scoped reset/reconcile flows) for the affected `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch)` combinations.
     - The controller drives any lingering `SCHEDULED` effects in the tail-loss window to terminal `APPLIED` or `ABANDONED` outcomes based on idempotent domain state. It does **not** attempt to re-stage older ticks through the normal tick-staging Lua scripts; any need to move effects across epochs or tick ranges is handled only by dedicated maintenance tooling that understands ledger state.
     - The same reconcile scope also converges accepted-but-unbound command records to terminal command status fields (for example `executionOutcome = LOST_BEFORE_STAGING` with default `gameplayResult = NOT_APPLIED`) so ingress dedupe state does not strand commands indefinitely after coordination loss.
 - **GC pause > `lock_ttl_ms` but < `lease_ttl_ms`**
@@ -353,13 +353,13 @@ Two patterns are used:
   - It is a narrow exception, not the default for gameplay-visible mutations.
   - Typical safe uses are once-per-tick watermark-style updates or aggregates whose design guarantees a single logical writer/effect per tick.
   - Aggregates that may receive multiple legitimate effects in one tick must not use this pattern.
-  - A shadow tick-state record such as `entity_tick_state` is keyed by the complete `(tenant_id, game_instance_id, playable_state_scope, region_id, aggregate_id)` identity, not by the aggregate identifier alone.
+  - A shadow tick-state record such as `entity_tick_state` is keyed by the complete `(tenant_id, game_instance_id, playable_state_scope, region_id, target_aggregate_type, aggregate_id)` identity, not by the aggregate identifier alone.
   - The shadow state stores at minimum:
     - `last_region_epoch`
     - `last_tick_id`
     - (plus tenant/game-instance/region identifiers or a foreign key implying them)
   - When applying a tick effect:
-    - The handler resolves and reads the shadow tick-state row using the complete `(tenant_id, game_instance_id, playable_state_scope, region_id, aggregate_id)` key; an aggregate-only lookup is invalid.
+    - The handler resolves and reads the shadow tick-state row using the complete `(tenant_id, game_instance_id, playable_state_scope, region_id, target_aggregate_type, aggregate_id)` key; an aggregate-only or aggregate-type-free lookup is invalid.
     - If `(last_region_epoch, last_tick_id) >= (currentRegionEpoch, currentTickId)` for that exact row, the update is treated as a replay or out-of-order attempt and becomes a no-op (or, in strict modes, a validation-only check).
     - If `(last_region_epoch, last_tick_id) < (currentRegionEpoch, currentTickId)`, the handler applies the change and updates `(last_region_epoch, last_tick_id) = (currentRegionEpoch, currentTickId)` on that same composite-key row in the same transaction as the domain mutation.
 - **Operation-level effect guard**
@@ -385,7 +385,7 @@ Examples:
 - **Once-per-tick aggregate watermark (per-aggregate last-tick state)**
   - `AdvanceRegionAuraWatermark` receives `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, targetAggregateType, targetAggregateId)`.
   - The design guarantees this aggregate is advanced at most once per tick.
-  - It reads the shadow tick state for the complete `(tenantId, gameInstanceId, playableStateScope, regionId, targetAggregateId)` key and applies the update only when `(last_region_epoch, last_tick_id) < (regionEpoch, tickId)`.
+  - It reads the shadow tick state for the complete `(tenantId, gameInstanceId, playableStateScope, regionId, targetAggregateType, targetAggregateId)` key and applies the update only when `(last_region_epoch, last_tick_id) < (regionEpoch, tickId)`.
   - If `(last_region_epoch, last_tick_id) >= (regionEpoch, tickId)`, the handler treats the request as a replay/out-of-order and returns without changing state.
 - **Trade between two entities (operation-level effect guard)**
   - `TradeItem` receives `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, fromEntityId, toEntityId, itemId)` and creates one EffectId projection per affected inventory aggregate.
@@ -461,8 +461,9 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
     - Region-authoritative `tick:{tenantRegionTag}:session-binding:*` keys are still region-scoped and are dropped with the rest of `tick:{tenantRegionTag}:*`; preserved sessions must be rebound through the session-to-region bridge before normal command intake resumes.
     - A new `region_epoch` is established; subsequent ticks for that region advance on the **new (bumped) `region_epoch`** starting at `tickId=0` on the coordination timeline described in `system-architecture-redis.md`.
   - Ledger behavior:
-    - Tick effect ledger rows with `status = SCHEDULED` for the affected `<tenantId, gameInstanceId, regionId, region_epoch>` must not remain indefinitely pending.
-    - The **default policy** is to mark those rows `ABANDONED` with a reset reason (for example `RESET_REGION_SCOPED`) via the scoped ledger reconcile step in the coordination reset tooling, so operators can see exactly which work was discarded.
+    - Tick effect ledger rows with `status = SCHEDULED` for the affected `<tenantId, gameInstanceId, playableStateScope, regionId, region_epoch>` must not remain indefinitely pending.
+    - The scoped ledger reconcile inspects each row's durable domain guard/state and any existing `APPLIED` ledger or domain-state reflection before choosing a terminal outcome. Effects already reflected in durable state are marked `APPLIED`; effects whose domain state confirms they were not applied and cannot be safely re-driven across the reset are marked `ABANDONED` with a reset reason such as `RESET_REGION_SCOPED`.
+    - The reset step must not bulk-mark every `SCHEDULED` row `ABANDONED`; an inconclusive row is replayed through its idempotent handler or held for reconciliation until the state proves applied or unapplied.
     - Only features that explicitly document alternative behavior may opt into re-scheduling selected SCHEDULED effects under the new epoch, and such behavior must be implemented via dedicated reset tooling, not ad-hoc replay.
   - Player impact:
     - In-flight actions within the tail-loss envelope may be dropped or replayed, but authoritative domain state remains consistent due to idempotency guards.
@@ -474,9 +475,8 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
     - Cross-region flows (for example follow-ups) resume only under the new epochs; stale follow-ups from previous epochs are ignored or reconciled.
     - Session and authentication keys follow their own documented reset behavior in the Redis and authentication docs; a tenant reset may choose to clear them, but this is an explicit design choice rather than an inherent property of coordination resets.
   - Ledger behavior:
-    - Tick effect ledger rows for the tenant with `status = SCHEDULED` follow the same default policy:
-      - Bulk-marked `ABANDONED` with a tenant-scoped reset reason (for example `RESET_TENANT_SCOPED`) via the scoped ledger reconcile step so that all affected effects converge to a terminal outcome.
-      - Re-scheduling across epochs is allowed only for features that explicitly document this requirement and provide dedicated tooling.
+    - Tick effect ledger rows for the tenant with `status = SCHEDULED` follow the per-effect reconciliation rule above: inspect durable domain state and any existing `APPLIED` reflection first, mark confirmed reflections `APPLIED`, and mark `ABANDONED` with a tenant-scoped reset reason such as `RESET_TENANT_SCOPED` only when domain state confirms the effect was unapplied and cannot be safely re-driven across the reset.
+    - Re-scheduling across epochs is allowed only for features that explicitly document this requirement and provide dedicated tooling.
   - Player impact:
     - The tenant experiences a “clean slate” for tick coordination: timers, retries, and queued commands are cleared.
     - Long-lived domain state (characters, inventory, world) is preserved; tick-driven features must be designed so players can naturally continue from durable state.
@@ -486,7 +486,7 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
     - All `<tenantId, gameInstanceId, regionId>` pairs on the deployment lose region-scoped tick coordination keys and receive new epochs.
     - This is effectively a deliberate, unbounded tail-loss event for all regions and must be treated as a rare, planned operation.
   - Ledger behavior:
-    - `SCHEDULED` ledger rows for all affected regions should normally be bulk-marked `ABANDONED` with a cluster reset reason (for example `RESET_CLUSTER_SCOPED`) by the ledger reconcile tooling.
+    - `SCHEDULED` ledger rows for all affected regions follow the per-effect reconciliation rule above: durable domain state or an existing `APPLIED` reflection wins, and the ledger reconcile tooling may use a cluster reset reason such as `RESET_CLUSTER_SCOPED` only for effects confirmed unapplied and not safely re-drivable across the reset.
     - Only in exceptional, explicitly designed cases should migration or batch re-drive tooling attempt to carry work across a cluster reset; such tools must document their expectations and failure modes in the owning feature’s design docs.
   - Player impact:
     - All active regions experience at least a brief pause while epochs are re-established and ticks resume under the new coordination state.
@@ -495,7 +495,7 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
 In all three cases, the **goal is convergence**:
 
 - For each `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)` there must eventually be exactly one terminal ledger state (`APPLIED` or `ABANDONED`), regardless of resets.
-- Reset tooling and Game Session control flows must ensure that no tick remains forever “half-applied” in the ledger (for example, perpetually `SCHEDULED` with no chance of replay), by running a scoped tick-effect-ledger reconcile for the relevant `(tenantId, gameInstanceId, regionId, region_epoch)` combinations as part of the reset flow.
+- Reset tooling and Game Session control flows must ensure that no tick remains forever “half-applied” in the ledger (for example, perpetually `SCHEDULED` with no chance of replay), by running a per-effect tick-effect-ledger reconcile for the relevant `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch)` combinations as part of the reset flow. The reconcile must inspect durable domain state before terminalizing each row and may abandon only effects confirmed unapplied.
 
 These expectations should be reflected in the coordination reset tooling described in `system-architecture-redis-operations.md` and the reset policy matrix in `system-architecture-redis-reset-and-recovery.md`.
 
@@ -522,8 +522,8 @@ Region resets and epoch bumps intentionally sever the old coordination timeline 
 
 - Follow-up rows and tick effects are always tied to a specific `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)`; they **never** silently migrate to a new epoch.
 - When a target region’s `region_epoch` is bumped (via region/tenant/cluster reset):
-  - Any undrained follow-ups or `SCHEDULED` ledger rows for the old epoch are treated as **terminal for that epoch**.
-  - The ledger replay controller converges those rows to `ABANDONED` with a reset-specific reason (for example `RESET_REGION_SCOPED` or `RESET_TENANT_SCOPED`), rather than attempting to “replay them into the new epoch”.
+  - Any undrained follow-ups or `SCHEDULED` ledger rows for the old epoch are treated as **terminal for that epoch** only after per-effect reconciliation inspects durable domain guard/state and any existing `APPLIED` reflection.
+  - The ledger replay controller marks confirmed reflections `APPLIED` and converges only effects confirmed unapplied to `ABANDONED` with a reset-specific reason (for example `RESET_REGION_SCOPED` or `RESET_TENANT_SCOPED`), rather than attempting to “replay them into the new epoch”.
   - Target-region tick executors ignore old-epoch work based on epoch/tick guards in their coordination scripts; they only stage and apply effects for the current epoch.
 - Origin regions:
   - Observe the `ABANDONED` outcomes (or timeouts that result in `ABANDONED`) for remote legs and compute the appropriate high-level command outcome (`PARTIAL` or `FAILED`).
@@ -603,7 +603,7 @@ When introducing a new command type that will run under tick control, design doc
   - Does it run because an entry is dequeued from `tick:{tenantRegionTag}:queue:<entityId>` or because a tick timer/retry fired?
   - If not, it may follow different idempotency rules and does not belong in this section.
 - **What is the idempotency key?**
-  - For single-aggregate updates: which complete `(tenant_id, game_instance_id, playable_state_scope, region_id, aggregate_id)` key plus `(last_region_epoch, last_tick_id)` (or equivalent) fields and table enforce “at most one update per tick timeline” for that aggregate?
+  - For single-aggregate updates: which complete `(tenant_id, game_instance_id, playable_state_scope, region_id, target_aggregate_type, aggregate_id)` key plus `(last_region_epoch, last_tick_id)` (or equivalent) fields and table enforce “at most one update per tick timeline” for that aggregate?
   - For multi-aggregate or multi-effect operations: what is the `effect_key` used in `tick_effect_guard`, and how is it derived deterministically from the command payload?
 - **Where is the guard persisted?**
   - Which schema/table holds the per-aggregate “last applied tick” state or `tick_effect_guard` entries?

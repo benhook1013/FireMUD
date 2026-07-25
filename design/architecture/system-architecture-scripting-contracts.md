@@ -32,20 +32,20 @@ To make script patch rollback meaningful:
 - Every script work item and tick command must carry the effective `scriptPatchVersion` used to produce it.
 - On execution, Game Session must enforce a **version fence**:
   - If a command’s `scriptPatchVersion` does not match the game instance’s currently pinned `scriptPatchVersion`, Game Session must not execute it.
-  - Rejection must be recorded with enough identifiers (`tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `scriptEventId`, `automationDispatchId`, `scriptPatchVersion`) for operators to diagnose exactly which fan-out command was dropped.
+  - Rejection must be recorded with enough identifiers (`tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `scriptEventId`, `automationDispatchId`, `scriptPatchVersion`) for operators to diagnose exactly which fan-out command was dropped.
   - Rejected entries must be removed or moved to a bounded dead-letter store with explicit `maxAge`/`maxRows` and alert-backed cleanup cadence.
 - Operational rollback must include a drain/purge step for any queued automation work items and staging entries that cannot satisfy the version fence.
 
 ### 4) `scriptEventId` Identity and At-Most-Once Dedupe
 
-`scriptEventId` is the primary idempotency token for “run a handler for this trigger”.
+`scriptEventId` identifies the handler trigger, but it is not the complete idempotency token for “run a handler for this trigger”. Scripting idempotency must use every applicable field in the full Trigger Identity defined in the normative contract tables; `scriptEventId` alone is insufficient.
 
-- **Entity-scoped events** (`onSpawn`, `onEnterRegion`, `onCommand`, custom events) must treat the unique trigger identity as including at least `tenantId`, `gameInstanceId`, `regionId`, `entityId`, `scriptId`, `eventType`, `scriptPatchVersion`, `scriptEventId`, and `isDryRun`. For gameplay/runtime triggers, `regionEpoch` is required to fence across scoped coordination resets as defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md`.
-- **Scheduler events** (`onInterval`, `onTimerExpire`) must use deterministic identities that include the due point plus `regionEpoch`, `scriptPatchVersion`, and `isDryRun` so leader catch-up and retries do not double-fire. For tick-cadence scheduling (for example `onInterval` configured in ticks), the due point must be expressed as `dueTickId` in the canonical tick timeline. For wall-clock timers, the due point must be expressed as absolute `dueAt` (and still include `regionEpoch` to fence across coordination resets).
-- Scheduler identities and durable timer state must also include `gameInstanceId`. For plugin timers, `pluginId` and `pluginVersionId` are additionally required so multi-instance and plugin-version rollbacks cannot alias timer state.
-- **Tenant-readiness `onLoad` events** are keyed by `<tenantId, scriptId, scriptPatchVersion, eventType=onLoad, scriptEventId, isDryRun=false>` and intentionally omit `gameInstanceId`, `regionId`, `regionEpoch`, and `entityId` because they run before any instance pins the patch. Automation & Scripting owns deterministic `scriptEventId` generation for this lifecycle path.
+- **Entity-scoped events** (`onSpawn`, `onEnterRegion`, `onCommand`, custom events) must use every applicable field in the full Trigger Identity, including `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch` when gameplay/runtime-scoped, `entityId`, `scriptId`, `eventType`, `eventSchemaVersion`, `scriptPatchVersion`, `scriptEventId`, and `isDryRun`. These fields, not `scriptEventId` alone, define the unique trigger identity.
+- **Scheduler events** (`onInterval`, `onTimerExpire`) must use every applicable Trigger Identity field plus the due point and `triggerMode` so leader catch-up and retries do not double-fire. For tick-cadence scheduling (for example `onInterval` configured in ticks), the due point must be expressed as `dueTickId` in the canonical tick timeline. For wall-clock timers, the due point must be expressed as absolute `dueAt` and still include `regionEpoch` to fence across coordination resets.
+- Scheduler identities and durable timer state must also include `gameInstanceId` and `playableStateScope` for gameplay/runtime schedules. For plugin timers, `pluginId` and `pluginVersionId` are additionally required so multi-instance and plugin-version rollbacks cannot alias timer state.
+- **Tenant-readiness `onLoad` events** are keyed by `<tenantId, scriptId, eventSchemaVersion, scriptPatchVersion, eventType=onLoad, scriptEventId, isDryRun=false>` and intentionally omit `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, and `entityId` because they run before any instance pins the patch. Automation & Scripting owns deterministic `scriptEventId` generation for this lifecycle path.
 
-Callers must reuse the same `scriptEventId` on retries for live ingress. For dry-run/test ingress, server-generated IDs are preferred by default; if caller-supplied IDs are accepted, they must be collision-validated in the dry-run namespace.
+Callers must reuse the same full applicable Trigger Identity on retries for live ingress, including the same `scriptEventId`. For dry-run/test ingress, server-generated IDs are preferred by default; if caller-supplied IDs are accepted, they must be collision-validated in the dry-run namespace.
 
 Ingress ownership is endpoint-specific and must follow the matrix in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1a-event-ingress-scripteventid-ownership-matrix`.
 
@@ -71,7 +71,7 @@ Dry-run executions are privileged and must not destabilize production:
 ### 7) Reload Backpressure Contract
 
 - During `reloadState=RELOADING`, the Automation & Scripting Service must return an explicit application-level backpressure outcome (not a silent drop).
-- For low-rate external events, callers may retry with the same `scriptEventId` using bounded exponential backoff and jitter:
+- For low-rate external events, callers may retry with the same full applicable Trigger Identity, including the same `scriptEventId`, using bounded exponential backoff and jitter:
   - `maxAttempts` must be finite and documented per client.
   - `maxElapsedMs` must be finite and documented per client.
   - Jitter must be non-zero to avoid synchronized retry storms.
@@ -93,7 +93,7 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
 - Script work items and tick commands produced by plugins must carry `pluginId` and `pluginVersionId` in addition to `scriptPatchVersion`.
   - On execution, Game Session must enforce a **plugin version fence** analogous to the script patch fence:
   - If a command’s embedded `pluginVersionId` does not match the instance’s currently active plugin version for that `pluginId`, Game Session must not execute it.
-    - Rejection must be recorded with `automationDispatchId` plus the applicable Trigger Identity, plugin, patch, target, and region fields for diagnosis, and the rejected queue entry must be removed or moved to a bounded dead-letter store with explicit `maxAge`/`maxRows` and alert-backed cleanup cadence.
+    - Rejection must be recorded with `automationDispatchId` plus the applicable Trigger Identity, including `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, plugin, patch, and target fields for diagnosis, and the rejected queue entry must be removed or moved to a bounded dead-letter store with explicit `maxAge`/`maxRows` and alert-backed cleanup cadence.
 
 ### 9) Rollback Convergence Timeout Contract
 

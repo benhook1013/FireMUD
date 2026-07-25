@@ -115,23 +115,23 @@ The pointer/index format must be forward-compatible (versioned envelope) so it c
 
 ## `scriptEventId` Lifecycle and Deduplication
 
-`scriptEventId` is the canonical identifier for a single script trigger/run; it appears on automation queue entries, tick commands, and `script_event_audit` rows so behavior can be correlated end-to-end.
+`scriptEventId` is the canonical identifier for a single script trigger/run; it appears on automation queue entries, tick commands, and `script_event_audit` rows so behavior can be correlated end-to-end. It is not sufficient as the scripting idempotency key by itself: deduplication, retry, and handoff decisions must use every applicable field in the full Trigger Identity from the normative contract tables, plus `automationDispatchId` for an emitted command.
 
 - **Generation rules**
-  - For external events, the event source that owns the trigger creates a `scriptEventId` when the event is first emitted and includes it in the `TriggerScriptEvent` payload. If the caller retries the gRPC call due to infrastructure errors, it must reuse the same `scriptEventId`.
-  - For scheduler-originated events such as `onInterval` and `onTimerExpire`, the Automation & Scripting scheduler creates the `scriptEventId` when the timer or interval becomes due.
+  - For external events, the event source that owns the trigger creates a `scriptEventId` when the event is first emitted and includes it in the `TriggerScriptEvent` payload. If the caller retries the gRPC call due to infrastructure errors, it must reuse the same full applicable Trigger Identity, including the same `scriptEventId`; changing any identity field is not a retry of the original trigger.
+  - For scheduler-originated events such as `onInterval` and `onTimerExpire`, the Automation & Scripting scheduler creates the `scriptEventId` deterministically from the due point and all applicable Trigger Identity fields when the timer or interval becomes due.
   - For dry-run/test invocations, the Automation & Scripting Service generates `scriptEventId` by default so test tooling does not create cross-client collisions.
 
 - **Uniqueness scope**
-  - Uniqueness is enforced over the full Trigger Identity field set, including `gameInstanceId` and, for gameplay/tick-aligned triggers, `regionEpoch`.
-  - There is no requirement for global uniqueness across all tenants; downstream idempotency keys are derived from stable tuples such as `<tenantId, gameInstanceId, regionId, regionEpoch, entityId, scriptId, scriptEventId, tickId, scriptPatchVersion>` depending on the call path.
+  - Uniqueness is enforced over the full applicable Trigger Identity field set, including `gameInstanceId`, `playableStateScope` and, for gameplay/tick-aligned triggers, `regionEpoch`; `scriptEventId` alone must never define the idempotency scope.
+  - There is no requirement for global uniqueness across all tenants; downstream idempotency keys are derived from the full applicable Trigger Identity, plus tick context and command identity when applicable, rather than from `scriptEventId` alone.
 
 - **Deterministic scheduler IDs**
   - Scheduler-originated `scriptEventId` values must be deterministic so leader failover and bounded catch-up do not double-fire.
   - The specific encoding is an implementation detail, but it must be derived from stable inputs, not from process-local randomness.
 
 - **Handling retries and duplicates**
-  - The Automation & Scripting Service treats script execution as at-most-once per Trigger Identity.
+  - The Automation & Scripting Service treats script execution as at-most-once per the full applicable Trigger Identity, never per `scriptEventId` alone.
   - Duplicate delivery handling must preserve a single `script_event_audit` row per Trigger Identity with monotonic stage progression.
   - Downstream services and replay tools rely on stable idempotency tokens derived from Trigger Identity plus tick context when applicable.
 
@@ -211,9 +211,11 @@ The main Redis keys used by the Automation & Scripting Service are:
 | `automation:timer:{tenantRegionTag}` | Automation & Scripting scheduler | Region-scoped index of script timers and intervals for the full `<tenantId, gameInstanceId, regionId>` scope represented by the opaque tag. | Hash-tagged on the shared `{tenantRegionTag}` derived by key helpers; the tag is not a competing identity family. | Persistent while timers are active. |
 | Scheduler leadership state | Automation & Scripting scheduler | Derived scheduler ownership aligned to the canonical runtime and region-scoped coordination model; do not assume a separate first-class `script-leader:*` prefix unless a later Redis design update explicitly introduces it. | Must follow the same slotting and reset rules as the documented scheduler coordination families. | Short-lived and reset-tolerant by design. |
 
+`{tenantRegionTag}` is owned by the shared Redis key builders under [Redis Architecture](./system-architecture-redis.md#key-naming-and-shard-discipline) and is intentionally limited to full `<tenantId, gameInstanceId, regionId>` locality. `playableStateScope` remains a first-class field in durable Trigger Identity, command/effect identity, and handoff diagnostics; it must not be inferred from, or added to, this tag without an owning Redis design and key-builder change.
+
 ## Failure Modes and Error Handling
 
-Script executions are treated as at-most-once per trigger. Common outcome classes include:
+Script executions are treated as at-most-once per full applicable Trigger Identity. Common outcome classes include:
 
 - `success`
 - `quota_denied`
@@ -243,6 +245,7 @@ Rollback of a script patch must not allow previously queued work from the rolled
 
 - Script work items and tick commands carry the effective `scriptPatchVersion` used to produce them.
 - Game Session revalidates the admitted runtime scope and current pinned script patch immediately before durable effect execution. Plugin-backed commands also re-read the authoritative Automation & Scripting plugin status and require the same enabled version and runtime scope.
+- Any handoff or execution-time version-fence rejection must retain the applicable Trigger Identity and command identity for diagnosis, including `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `scriptEventId`, `automationDispatchId`, and `scriptPatchVersion`.
 - A version or runtime-scope mismatch terminalizes the command as not applied. Temporary inability to read the plugin authority leaves the durable effect retryable rather than executing without a fence.
 - Operational rollback flows include a drain/purge step for queued automation work items and staging entries that cannot satisfy the version fence.
 
@@ -252,7 +255,7 @@ Timer-based triggers such as `onInterval` and `onTimerExpire` are subject to the
 
 - When a timer becomes due, the scheduler attempts to admit the corresponding trigger subject to quotas and budgets.
 - If a timer trigger is skipped because of quotas, budgets, or an unavailable patch, the scheduler records the skip in `script_event_audit` with a canonical outcome and reason.
-- If a timer trigger fails with `infrastructure_error` after admission, the DSL body is not re-executed for the same `scriptEventId`.
+- If a timer trigger fails with `infrastructure_error` after admission, the DSL body is not re-executed for the same full applicable Trigger Identity; `scriptEventId` alone does not authorize re-execution or deduplication.
 - The scheduler’s responsibility is to attempt to fire timers that fit within configured budgets and capacity; there is no guarantee of eventual execution for every individual interval or timer firing.
 
 ## `onLoad` Semantics and Failure Handling
@@ -260,7 +263,7 @@ Timer-based triggers such as `onInterval` and `onTimerExpire` are subject to the
 The `onLoad` lifecycle event is a tenant-readiness check for scripts in a given `<tenantId, scriptPatchVersion>` before that patch becomes active:
 
 - `onLoad` handlers run after static validation and compilation succeed, but before the patch is marked `READY` for a tenant.
-- Each `onLoad` execution is keyed by `<tenantId, scriptId, scriptPatchVersion>` and is treated as at-most-once.
+- Each `onLoad` execution is keyed by the canonical readiness Trigger Identity `<tenantId, scriptId, eventSchemaVersion, scriptPatchVersion, eventType=onLoad, scriptEventId, isDryRun=false>` and is treated as at-most-once.
 - Allowed uses are limited to ephemeral or trivially recomputable runtime initialization.
 - `onLoad` must not create durable or semi-durable artifacts in databases, Redis, object storage, or other shared stores.
 - There is no compensating `onUnload` / `onDeactivate` lifecycle in the current architecture.
@@ -272,7 +275,7 @@ Failure handling:
 - If `onLoad` completes successfully for a tenant, the Automation & Scripting Service may mark the patch as `READY` for that tenant.
 - If `onLoad` fails with a logical or sandbox-level error, the patch is marked `FAILED` for that tenant and events that reference the failed patch are rejected at admission with `version_unavailable` or a more specific bounded variant such as `onload_failed`.
 - If the dedicated `onLoad` initialization budget is exhausted before completion, the patch must fail deterministically with an explicit bounded reason.
-- If `onLoad` fails with `infrastructure_error`, the service may optionally retry the initialization a bounded number of times using the same `scriptEventId` and idempotent operations.
+- If `onLoad` fails with `infrastructure_error`, the service may optionally retry the initialization a bounded number of times using the same full onLoad Trigger Identity, including the same `scriptEventId`, and idempotent operations.
 
 All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad`, the target `scriptPatchVersion`, and their final stage-aware outcome. A successful `onLoad` contributes to patch readiness aggregation and must use `finalStage=DSL_EVAL`, `finalOutcome=readiness_success`; it does not use live `finalOutcome=success`, which remains reserved for tick handoff.
 Patch-level readiness for `<tenantId, scriptPatchVersion>` is derived from the aggregate of all per-script `onLoad` runs; the patch becomes `READY` only after every required `onLoad` handler succeeds.

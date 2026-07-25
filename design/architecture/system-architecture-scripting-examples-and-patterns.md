@@ -122,7 +122,7 @@ This example shows how a script that runs on a fixed cadence (for example, an NP
    - The `onInterval` handler runs inside the sandboxed DSL engine, evaluating conditions such as “is the NPC currently out of combat?” and “is the patrol still active?” before deciding on the next waypoint or behavior.
    - Actions produced by the handler (for example, “move to the next patrol room,” “play an emote,” “schedule an `onTimerExpire` follow-up”) are converted into domain commands and persisted as a durable script work item (outbox), then indexed into `automation:queue:{tenantInstanceTag}:<entityId>` for the affected entity.
    - Before persistence, runtime output budgets cap how many commands and how many serialized bytes this single firing may emit. Oversized patrol firings fail as non-success outcomes rather than creating unbounded backlog.
-   - Each work item carries the originating `scriptEventId`, `scriptId`, `gameInstanceId`, version metadata, and the **current region** for the entity at enqueue time. Each emitted command carries its `automationDispatchId` and target aggregate identity for downstream effect idempotency.
+   - Each work item carries the full applicable Trigger Identity, including `scriptEventId`, `scriptId`, `gameInstanceId`, `playableStateScope`, version metadata, and the **current region and epoch** for the entity at enqueue time. Each emitted command carries its `automationDispatchId` and target aggregate identity for downstream effect idempotency.
 
 5. **Execution, audit, and observability**
    - Automation later claims the durable work items, uses `automation:queue` only as a rebuildable pointer index, and hands the resulting commands to the Game Session Service over internal gRPC so Game Session can enqueue them into the appropriate `tick:{tenantRegionTag}:queue:<entityId>`.
@@ -137,7 +137,7 @@ As with `onEnterRegion`, reload failures or version issues are surfaced via spec
 Timer-driven handlers such as `onInterval` follow the same **at-most-once per trigger** semantics described in the DSL reference:
 
 - If an `onInterval` firing is skipped because of quotas, tenant budgets, cluster ceilings, or version issues, that specific firing is not automatically replayed later, although subsequent firings based on the cadence may still occur.
-- If an admitted `onInterval` firing fails with `infrastructure_error`, lower layers may retry individual downstream operations in an idempotent way, but the DSL body is not re-executed for the same `scriptEventId`.
+- If an admitted `onInterval` firing fails with `infrastructure_error`, lower layers may retry individual downstream operations in an idempotent way, but the DSL body is not re-executed for the same full applicable Trigger Identity.
 - Designers and operators should use `script_event_audit` and automation metrics to detect heavily throttled or consistently failing timers and adjust cadence, budgets, or script design as needed.
 
 ### `scheduleDefinitionId` Example

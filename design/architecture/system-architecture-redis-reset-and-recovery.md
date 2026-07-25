@@ -36,7 +36,7 @@ Coordination Redis is treated as a **long‑lived, tail‑loss‑bounded coordin
 
 - **Tenant‑scoped reset** – affects a single `tenantId`:
   - Clears coordination keys for all regions under one tenant.
-  - Preserves `session:game:*` only when operators explicitly choose `--preserve-sessions`; `session:auth:*` is always invalidated and reissued for tenant resets.
+  - Preserves `session:game:*` records and the current `sessionctx:*` records/indexes only when operators explicitly choose `--preserve-sessions`; `session:auth:*` is always invalidated and reissued for tenant resets.
   - Often combined with an in‑game maintenance window or a revert/repin of tenant‑specific published content.
   - Used when:
     - A full in‑game reset is acceptable for a single tenant.
@@ -113,11 +113,11 @@ Worked example: region-scoped reset for `<tenantId=7b3b074e-d597-4e9b-b96f-4f594
 Worked example: tenant-scoped reset for `<tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120>` with `--preserve-sessions`
 
 1. `coordination-maintenance pause --operation reset --scope tenant --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120` rejects new command intake, stops new batch creation, and returns `maintenanceLockToken=<token>`.
-2. `coordination-maintenance reset --scope tenant --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --preserve-sessions --maintenance-lock-token <token>` bumps `region_epoch` for every affected `(gameInstanceId, regionId)` pair and clears all tenant coordination prefixes, including every `remote:{tenantInstanceTag}:*` pattern resolved from the durable game-instance inventory.
+2. `coordination-maintenance reset --scope tenant --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --preserve-sessions --maintenance-lock-token <token>` bumps `region_epoch` for every affected `(gameInstanceId, regionId)` pair and clears tenant coordination prefixes except preserved `session:game:*` records and current `sessionctx:*` records/indexes, including every `remote:{tenantInstanceTag}:*` pattern resolved from the durable game-instance inventory.
 3. `coordination-maintenance reconcile-ledger --scope tenant --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --old-region-epoch-map ... --maintenance-lock-token <token>` converges old-epoch `SCHEDULED` rows for every affected region.
 4. `coordination-maintenance converge-commands --scope tenant --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --old-region-epoch-map ... --maintenance-lock-token <token>` terminates accepted-but-unbound command records with `executionOutcome = LOST_BEFORE_STAGING` and default `gameplayResult = NOT_APPLIED`.
 5. `coordination-maintenance init-meta --scope tenant --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --region-epoch-map ... --current-tick-id -1 --maintenance-lock-token <token>` re-establishes the full per-game-instance/per-region Redis metadata baseline.
-6. `coordination-maintenance rebind-sessions --scope tenant --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --region-epoch-map ... --maintenance-lock-token <token>` recreates region-authoritative binding keys for preserved, still-valid sessions.
+6. `coordination-maintenance rebind-sessions --scope tenant --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --region-epoch-map ... --maintenance-lock-token <token>` recreates region-authoritative binding keys for preserved, still-valid sessions while retaining their `session:game:*` records and current `sessionctx:*` records/indexes; `session:auth:*` remains invalidated, so rebind revalidates identity, membership, and revocation before obtaining fresh backend auth as required.
 7. `coordination-maintenance smoke-check --scope tenant --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --maintenance-lock-token <token>` samples at least one representative region per affected executor/shard group.
 8. `coordination-maintenance resume --scope tenant --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --maintenance-lock-token <token>` allows each affected region to restart at `tickId=0` in its new epoch.
 

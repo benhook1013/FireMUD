@@ -28,7 +28,7 @@ The target-state tick architecture in this document is intentionally broader tha
 Current live substrate to keep in mind while reading:
 
 - the live durable ownership and command-status boundary is currently keyed by `{tenantId, gameInstanceId}`, not true `regionId` partitioning;
-- the live control-plane/status APIs are `GetRuntimeOwnershipStatus` and the canonical `GetGameplayCommandStatus`; region status and the accepted richer gameplay-command lifecycle fields remain target-state follow-through;
+- the live control-plane/status APIs are `GetRuntimeOwnershipStatus` and the canonical `GetGameplayCommandStatus`; the live scheduler progress feed is `ObserveRuntimeTickProgress` carrying `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)`; `StreamTickHeartbeats` and `GetRegionTickStatus` remain target-state follow-through;
 - the live `executorFence` is an opaque generation token used for compare-and-match stale-fence protection, not yet the richer numeric ordering model used in some target-state examples;
 - the live `tick_batch` / `tick_effect` substrate is real, and the current gameplay-command manifest now carries current-boundary `enqueueSeq`, `sourceType`, `dueTickId`, and explicit claimed-source state plus digest-checked replay reuse; timer/retry/remote-follow-up source-claim breadth and the cross-region result-return contract described below are still target-state follow-through rather than fully shipped behavior.
 
@@ -58,13 +58,13 @@ See `system-architecture-tick-concepts-and-invariants.md` for the full descripti
 Two related concepts:
 
 - **Tick execution** – the authoritative per-region loop inside the Game Session Service.
-- **Tick heartbeat** – a gRPC stream (`StreamTickHeartbeats`) exposing `regionEpoch` and `tickId` progression so external services (for example Automation & Scripting) can align timers and quotas to the canonical tick timeline.
+- **Tick heartbeat** – a gRPC stream (`StreamTickHeartbeats`) whose subscription and every heartbeat message carry the complete `(tenantId, gameInstanceId, regionId)` scope plus `regionEpoch` and `tickId` progression so external services (for example Automation & Scripting) can align timers and quotas to the canonical tick timeline.
 
 The tick heartbeat is the **canonical timeline** for each `<tenantId, gameInstanceId, regionId>`:
 
 - The canonical coordination timeline is the pair `(regionEpoch, tickId)`; within a given `regionEpoch`, `tickId` is monotonic per region.
 - Heartbeats represent **committed tick progression**:
-  - A heartbeat `(regionEpoch, tickId)` is emitted only after the tick is considered committed for that region (as defined by the staging/commit model and the tick effect ledger), not merely after a tick begins or stages work.
+  - A heartbeat `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` is emitted only after the tick is considered committed for that region (as defined by the staging/commit model and the tick effect ledger), not merely after a tick begins or stages work.
   - Consumers must treat the heartbeat as the authoritative “last committed tick” watermark and must not infer commit from Redis `pending` keys or from observer event streams.
 - Consumers must be able to reconstruct their view of progress and scheduling purely from the heartbeat stream plus durable domain state; no Redis structure is treated as an authoritative log of past ticks.
 - Consumer checkpoint and offset state is physically stored under region-scoped Redis keys but is fenced by a value containing `{regionEpoch, latestTickId, streamOffset}`; the logical identity is `(tenantId, gameInstanceId, regionId, regionEpoch)`, not `tickId` alone. Durable schedule identity remains separately due-point-aware. Consumers must compare the stored epoch with the authoritative epoch before using either the checkpoint or offset; a mismatch is a reset boundary, so old-epoch state is discarded or reconciled from PostgreSQL before resuming.
@@ -81,7 +81,7 @@ FireMUD uses two explicit tick boundaries for `<tenantId, gameInstanceId, region
 
 Heartbeat emission and consumer semantics are tied to `durable_committed`, not to Redis cleanup:
 
-- A heartbeat `(regionEpoch, tickId)` is emitted only after `durable_committed` has been reached.
+- A heartbeat `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` is emitted only after `durable_committed` has been reached.
 - Consumers treat heartbeat as the authoritative “last committed tick” watermark and must not infer commit from Redis `pending` state.
 
 If a crash occurs after `durable_committed` but before `coordination_cleared`, recovery finishes cleanup under idempotent replay rules. This is an operational lag window, not a commit regression.
@@ -96,31 +96,31 @@ If a crash occurs after `durable_committed` but before `coordination_cleared`, r
 
 In addition to the gRPC heartbeat, the Game Session Service exposes a **tick event stream** for schedulers and observers:
 
-- Events are keyed by `<tenantId, gameInstanceId, regionId>` and include:
+- Events are keyed by `<tenantId, gameInstanceId, regionId>` and each event explicitly carries `tenantId`, `gameInstanceId`, and `regionId`, then includes:
   - `regionEpoch` and `tickId` (the canonical coordination timeline for the region).
-  - `regionId` / shard metadata.
+  - shard metadata.
   - The timestamp when the tick began.
   - The `activeVersionId` pinned for that tick.
 - Consumers (for example, schedulers or reconnection logic) typically:
   - Acquire a small lease such as `tick-events-lease:{tenantRegionTag}` to avoid duplicate processing.
-  - Persist the checkpoint value `{regionEpoch, latestTickId, streamOffset}` in **Coordination Redis** under a region-scoped key such as `tick-events-offset:{tenantRegionTag}`. Its logical scope is `(tenantId, gameInstanceId, regionId, regionEpoch)`, so consumers can resume from the last observed stream entry only after the stored epoch matches the authoritative epoch. If the offset is missing, epoch-mismatched, or the stream has been truncated/reset, consumers discard it and bootstrap from the canonical heartbeat/RegionStatus instead of assuming the stream is a complete history.
+  - Persist the checkpoint value `{regionEpoch, latestTickId, streamOffset}` in **Coordination Redis** under a region-scoped key such as `tick-events-offset:{tenantRegionTag}`. Its logical scope is `(tenantId, gameInstanceId, regionId, regionEpoch)`, so consumers can resume from the last observed stream entry only after the stored epoch matches the authoritative epoch. If the offset is missing, epoch-mismatched, or the stream has been truncated/reset, consumers discard it and bootstrap from the active deployment's canonical status/progress adapter (`GetRuntimeOwnershipStatus` plus `ObserveRuntimeTickProgress` currently, `GetRegionTickStatus` plus `StreamTickHeartbeats` at target state) instead of assuming the stream is a complete history.
 - The event stream is a **best-effort coordination structure**, not a durable log of record:
   - It is implemented on Coordination Redis under a region-scoped prefix such as `tick-events:{tenantRegionTag}`.
   - Production-like profiles that persist offsets use **Redis Streams** for this prefix so consumers can resume from an offset; pub/sub is reserved for fire-and-forget observers that never track offsets or history.
-  - Producers must cap stream retention (for example via `XADD ... MAXLEN ~ tick_events_maxlen`, default `tick_events_maxlen = 2048` per `<tenantId, gameInstanceId, regionId>`) so `tick-events:*` cannot grow without bound; consumers must treat “offset too old / trimmed” as normal truncation and re-bootstrap from the heartbeat/RegionStatus baseline.
+  - Producers must cap stream retention (for example via `XADD ... MAXLEN ~ tick_events_maxlen`, default `tick_events_maxlen = 2048` per `<tenantId, gameInstanceId, regionId>`) so `tick-events:*` cannot grow without bound; consumers must treat “offset too old / trimmed” as normal truncation and re-bootstrap from the active deployment's canonical status/progress baseline.
   - Events may be dropped, duplicated, or reordered relative to the heartbeat; correctness must not rely on seeing every past event.
   - Events represent **tick start notifications** (a “tick began” signal), not a commit guarantee:
-    - A tick may begin and later be retried or abandoned due to failures; consumers must use the heartbeat/RegionStatus as the commit watermark.
+    - A tick may begin and later be retried or abandoned due to failures; consumers must use the active deployment's heartbeat/status adapter as the commit watermark.
   - It is classified as **reset-tolerant** in the Redis reset policy matrix: region/tenant/cluster resets may drop both the event stream and any stored offsets without violating correctness.
-  - Consumers must treat missing or truncated history as a signal to re-establish their baseline from the canonical gRPC heartbeat and domain state rather than assuming every past event is available.
+  - Consumers must treat missing or truncated history as a signal to re-establish their baseline from the active deployment's canonical status/progress adapter and domain state rather than assuming every past event is available. The current live adapter is `GetRuntimeOwnershipStatus` plus `ObserveRuntimeTickProgress`; target-state deployments use `GetRegionTickStatus` plus `StreamTickHeartbeats`.
 
-This event stream is an observer/wakeup hint used for reconnection timer replay hints and other out-of-band reporting. “Every N ticks” scheduling correctness comes from the committed heartbeat/RegionStatus timeline plus durable PostgreSQL schedules; tick events may reduce latency by prompting quicker work discovery, but missing or duplicated events must not change which schedules eventually fire.
+This event stream is an observer/wakeup hint used for reconnection timer replay hints and other out-of-band reporting. “Every N ticks” scheduling correctness comes from the active deployment's committed status/progress timeline (target-state heartbeat/RegionStatus) plus durable PostgreSQL schedules; tick events may reduce latency by prompting quicker work discovery, but missing or duplicated events must not change which schedules eventually fire.
 
 Durable automation schedules, quotas, and trigger-instance de-duplication live in PostgreSQL (see the scripting DSL and Automation & Scripting service docs); Redis structures such as `tick-events:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId` are coordination hints only. Losing or resetting those keys must not change which automation jobs are eventually executed, only when they are next discovered.
 
 Automation & Scripting Service instances typically:
 
-- Establish long-lived gRPC streams to `StreamTickHeartbeats` for the tenants/regions they own.
+- Establish long-lived gRPC subscriptions to `StreamTickHeartbeats` with `tenantId`, `gameInstanceId`, and `regionId`; every message must repeat that complete scope so consumers cannot rely on an implicit stream binding to disambiguate instances.
 - Maintain per-region scheduler state in Redis (for example `script-scheduler:{tenantRegionTag}:lastTickId`) only as a checkpoint/hint. The physical value must store `{regionEpoch, latestTickId, streamOffset}`; callers must reject and rebuild it when its epoch differs from the authoritative current epoch. Its logical checkpoint key is `(tenantId, gameInstanceId, regionId, regionEpoch)`, while `tickId` and offsets are never key dimensions.
 - Claim or insert a durable PostgreSQL trigger-instance/outbox row keyed by an **instance-aware** uniqueness projection before enqueueing any `onInterval` or other tick-derived trigger so duplicate heartbeat consumers or failover cannot create duplicate logical gameplay actions.
   - At minimum this uniqueness projection includes the applicable scheduler Trigger Identity fields: `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `eventType`, `eventSchemaVersion`, `scriptPatchVersion`, `isDryRun`, `scheduleDefinitionId`, the tagged due point, and `triggerMode`; plugin triggers also include `pluginId` and `pluginVersionId`. A globally unique `scheduleId` does not replace runtime scope, version, dry-run namespace, or timeline fencing. The tagged due point is exactly `dueTickId:<value>` or `dueAt:<epochMillis>`; when storage uses nullable `dueTickId`/`dueAt` columns, the alternate field is explicitly `NULL` (`dueTickId=<value>, dueAt=NULL` or `dueTickId=NULL, dueAt=<epochMillis>`), never an empty/zero substitute, and both fields may not be null or populated together.
@@ -130,8 +130,8 @@ Automation & Scripting Service instances typically:
 For any consumer or operator that needs to locate “where a region is” on the `(regionEpoch, tickId)` timeline:
 
 - **Bootstrap** from a durable view:
-  - Target-state, Game Session exposes a control/status API such as `GetRegionTickStatus` backed by a PostgreSQL `RegionStatus` or equivalent table that records the latest committed `(regionEpoch, tickId)` per `<tenantId, gameInstanceId, regionId>`.
-  - Current live boundary: the equivalent owner-of-record/status read is `GetRuntimeOwnershipStatus` over the current `{tenantId, gameInstanceId}` ownership row. New consumers and operational tools should bootstrap from that live surface today and treat the region-scoped API described here as target-state until true region partitioning lands.
+  - Target-state, Game Session exposes `GetRegionTickStatus` backed by a PostgreSQL `RegionStatus` or equivalent table that records the latest committed `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` for each region.
+  - Current-live adapter: consumers and operational tools bootstrap owner/status from `GetRuntimeOwnershipStatus` over the current `{tenantId, gameInstanceId}` ownership row, using its stored `regionId` and committed tick fields when a region is selected. The live scheduler receives its progress baseline through `ObserveRuntimeTickProgress` with the same tenant/game-instance/region scope; it must not call target-state `GetRegionTickStatus` as though that surface were already live.
 - Minimum `RegionStatus` contract (required for consumers and admission control):
   - Timeline: `regionEpoch`, `lastCommittedTickId`, and an `updatedAt`/`lastCommitTimestamp`.
   - Ownership fencing: a durable `executorFence` (or equivalent name) recorded on tick batches and other durable tick-control writes.
@@ -161,8 +161,8 @@ For any consumer or operator that needs to locate “where a region is” on the
     ```
 
 - **Follow** via streaming heartbeats:
-  - After bootstrapping, consumers attach to `StreamTickHeartbeats` and treat the combination of the bootstrap status and the live heartbeat as the authoritative progression of the timeline.
-  - If the heartbeat stream drops or a reset bumps `regionEpoch`, consumers use the new `(regionEpoch, tickId)` from the stream plus durable state to re-establish their position.
+  - After bootstrapping, consumers attach to `StreamTickHeartbeats` with the same `(tenantId, gameInstanceId, regionId)` subscription and treat the combination of the bootstrap status and the live, scope-complete heartbeat as the authoritative progression of the timeline.
+  - If the heartbeat stream drops or a reset bumps `regionEpoch`, consumers use the new `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` from the stream plus durable state to re-establish their position through the active deployment's status/progress adapter.
 
 Redis coordination keys remain a volatile buffer; neither `tick:*` nor event-stream prefixes are considered sources of truth for epoch or tick counters.
 
@@ -377,15 +377,16 @@ Automation & Scripting uses the tick heartbeat plus durable PostgreSQL schedules
 
 - For each scheduled script or automation job, PostgreSQL stores at least:
   - `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, scriptId, eventType, eventSchemaVersion, scriptPatchVersion, isDryRun, scheduleDefinitionId, duePoint)` and the interval in ticks. `duePoint` is exactly one tagged value: `dueTickId:<value>` or `dueAt:<epochMillis>`.
-- Before enqueueing any trigger derived from a due boundary, the scheduler must first claim or insert a durable trigger-instance row keyed by an **instance-aware** uniqueness projection. Duplicate schedulers that race on the same heartbeat boundary must observe the same durable row and must not enqueue a second logical trigger.
+- After a due candidate passes admission and before enqueueing its trigger, the scheduler must claim or insert a durable trigger-instance row keyed by an **instance-aware** uniqueness projection. Duplicate schedulers that race on the same heartbeat boundary must observe the same durable row and must not enqueue a second logical trigger.
   - The uniqueness projection must include the full scheduler Trigger Identity, including `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `eventType`, `eventSchemaVersion`, `scriptPatchVersion`, `isDryRun`, `scheduleDefinitionId`, the persisted tagged due point, and `triggerMode` (plus plugin identity when applicable) even when `scheduleId` is globally unique.
 - On startup or after a reset:
-  - The scheduler fetches current `(region_epoch, tickId)` for each `<tenantId, gameInstanceId, regionId>` from `GetRegionTickStatus` and the corresponding durable due point from PostgreSQL.
+  - The scheduler uses the active deployment's canonical bootstrap/progress surface and the corresponding durable due point from PostgreSQL: current-live recovery uses `GetRuntimeOwnershipStatus` for owner/status and `ObserveRuntimeTickProgress` for `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` progress, while target-state recovery uses `GetRegionTickStatus`.
   - If a persisted scheduler checkpoint has a different `regionEpoch` than the current status, the scheduler rejects it, records `checkpoint_region_epoch_mismatch` in scheduler audit, increments `automation_script_timer_runtime_fence_dropped_total{scope, script_category, eventType, reason="checkpoint_region_epoch_mismatch"}`, discards the stale checkpoint and stream offset, and rebuilds the checkpoint from authoritative current-epoch status before reconciling durable due points under the bounded catch-up policy.
-  - If the current-epoch due point is at or before `currentTickId`, the scheduler may fire at most one **catch-up trigger** per script (for example “you missed one interval while down”) and then advances the due point by whole intervals until it is strictly greater than `currentTickId`.
+  - If `duePoint = dueTickId:<value>` and the due tick is at or before `currentTickId`, the scheduler may fire at most one **tick catch-up trigger** per script (for example “you missed one interval while down”) and then advances the tick due point by whole intervals until it is strictly greater than `currentTickId`.
+  - If `duePoint = dueAt:<epochMillis>` and the due time is at or before the reconciliation's captured current wall-clock time, the scheduler may fire at most one **wall-clock catch-up trigger** per script and then advances the wall-clock due point by whole intervals until it is strictly greater than that current time. A wall-clock due point is never compared with `currentTickId`.
   - Very old missed intervals are not replayed one-by-one; the system guarantees that **future intervals fire correctly** and, at most, a bounded catch-up occurs after downtime.
 - After recovery, the scheduler:
-  - Tracks progression purely from the heartbeat stream and updates `next_due_tickId` in PostgreSQL as intervals elapse.
+  - Tracks tick-aligned progression from the active canonical progress source (target-state heartbeat, current-live `ObserveRuntimeTickProgress`) and updates `next_due_tickId` in PostgreSQL; wall-clock schedules use wall-clock observations and update `next_due_at`. The scheduler does not infer one due-point type from the other.
   - Uses Redis coordination keys such as `script-scheduler:{tenantRegionTag}:lastTickId` as hints/checkpoints only; losing them affects when work is next discovered, not which durably-configured schedules eventually execute, because durable trigger-instance uniqueness remains the de-duplication boundary.
 
 Details of timer key shapes and scaling strategies live in `system-architecture-tick-concepts-and-invariants.md` and `system-architecture-scripting-scheduler-and-timers.md`.
@@ -397,7 +398,7 @@ Details of timer key shapes and scaling strategies live in `system-architecture-
 On executor crash or failover, a new worker:
 
 - Acquires the region lease.
-- Reads the durable tick-batch, tick effect ledger, follow-up tables, and `RegionStatus` rows that define the authoritative recovery baseline for the affected `(tenantId, gameInstanceId, regionId, region_epoch)`.
+- Reads the durable tick-batch, tick effect ledger, and follow-up tables plus the active deployment's authoritative status surface for the affected `(tenantId, gameInstanceId, regionId, region_epoch)`: target-state `RegionStatus`/`GetRegionTickStatus`, or current-live `GetRuntimeOwnershipStatus` with `ObserveRuntimeTickProgress` progress.
 - Inspects any surviving Redis coordination state (`tick:{tenantRegionTag}:pending`, `retry:{tenantRegionTag}`, timers, leases) only as optional hints that may accelerate or narrow replay scope.
 - Replays or resumes work from the durable PostgreSQL record of staged or claimed work plus domain idempotency tables; Redis coordination state must not be treated as the sole persisted recovery basis.
 

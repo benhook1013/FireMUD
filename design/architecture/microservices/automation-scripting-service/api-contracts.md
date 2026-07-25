@@ -38,7 +38,7 @@ Domain services such as Game Session and Game Logic deliver automation events th
 - `tenantId`, `gameInstanceId`, `regionId`, and `entityId` for the target runtime context.
 - resolved `playableStateScope` for gameplay-originated events so shared versus isolated realm state stays explicit through durable trigger identity, timer follow-up work, and operator read models.
 - `regionEpoch` for gameplay/runtime triggers and scheduler triggers so Trigger Identity is fenced across scoped coordination resets.
-- `scriptEventId` as an idempotency identifier following endpoint ownership rules.
+- `scriptEventId` as one required field of the applicable Trigger Identity, following endpoint ownership rules; it is not a complete idempotency key by itself.
 - `isDryRun` so live and dry-run/test traffic are always in separate idempotency namespaces.
 - `eventType` and versioning metadata such as `scriptPatchVersion`.
 - `eventSchemaVersion` for custom or service-specific events governed by the event registry.
@@ -85,8 +85,8 @@ Downstream calls made from DSL components must carry a stable idempotency token 
 
 Transport-level retries:
 
-- Unary event-ingress calls are safe to retry at the gRPC transport layer only if they reuse the same `scriptEventId`.
-- Timer and scheduler internals may retry infrastructure operations such as Redis writes but never re-execute the DSL body for the same `scriptEventId`; they replay only idempotent downstream operations.
+- Unary event-ingress calls are safe to retry at the gRPC transport layer only if they reuse the same full applicable Trigger Identity, including the same `scriptEventId`.
+- Timer and scheduler internals may retry infrastructure operations such as Redis writes but never re-execute the DSL body for the same full applicable Trigger Identity; they replay only idempotent downstream operations.
 
 ## Dry-Run and Test Execution Contract
 
@@ -127,7 +127,7 @@ Event-scope admission outcomes are intentionally limited to ingress-time fences 
 
 For retry behavior:
 
-- Low-rate external events may retry with the same `scriptEventId` using bounded exponential backoff and jitter with explicit `maxAttempts` and `maxElapsedMs`.
+- Low-rate external events may retry with the same full applicable Trigger Identity, including the same `scriptEventId`, using bounded exponential backoff and jitter with explicit `maxAttempts` and `maxElapsedMs`.
 - Timer-derived scheduler events use best-effort timer semantics; triggers not admitted during reload are not backfilled unless explicitly covered by a bounded catch-up rule.
 - Event-ingress response fields (`admitted`, `admissionOutcome`, `admissionReason`, `retryAfterMs`) and enum values are normative API contract and must align with [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md).
 

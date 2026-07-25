@@ -163,7 +163,7 @@ Plugin executions appear in `script_event_audit` with the same identifiers as re
 
 Plugins share the same **event and timer semantics** as core scripts:
 
-- All plugin triggers are at-most-once per `scriptEventId`; the scheduler never re-runs the plugin’s DSL graph for the same trigger, even if downstream services retry idempotent operations.
+- All plugin triggers are at-most-once per full applicable Trigger Identity; the scheduler never re-runs the plugin’s DSL graph for the same trigger, even if downstream services retry idempotent operations. `scriptEventId` is one field of that identity, not the complete key.
 - Timer-based handlers such as `onInterval` and `onTimerExpire` are **best-effort**. Individual firings may be skipped or delayed when per-script quotas, per-tenant budgets, or cluster ceilings are reached, and skipped firings are not backfilled later. Subsequent firings still follow the configured cadence as capacity allows.
 - Plugin logic must therefore be designed to tolerate missed or delayed events (for example, by recomputing from current world state rather than assuming every interval has executed) and to keep effects idempotent with respect to Trigger Identity plus the region-scoped tick timeline (for example `scriptEventId` and `(regionEpoch, tickId)`), following the same rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`.
 
