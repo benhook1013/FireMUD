@@ -10,7 +10,7 @@ The documents linked from this overview describe the target-state design, but th
 
 - **Gateway responsibility model:** Spring Cloud Gateway is the single ingress for HTTP and WebSocket traffic and the central place for routing, coarse route gating, rate limiting, and observability. It is not the platform’s authorization authority: JWT validation and role/tenant authorization are performed by the consuming meta/control services using shared middleware and the Account Service JWKS.
 - **Gameplay sharding scope (edge vs Game Session):** Spring Cloud Gateway does not own a gameplay shard routing plane. `/ws/game/**` routes to a stable Game Session service surface; any lease ownership and region sharding are internal to the Game Session layer and its coordination mechanisms. See `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md` for the canonical scope decision.
-- **Gameplay session routing inside Game Session:** Connected gameplay sockets attach to a stable Game Session session front-end pod, while region-scoped tick execution remains fenced to the current lease owner for `<tenantId, regionId>`. Session front-ends may forward region-owned work over internal gRPC, but only the lease owner may mutate tick coordination state. See `design/architecture/decisions/adr-0011-gameplay-session-front-end-and-region-execution.md`.
+- **Gameplay session routing inside Game Session:** Connected gameplay sockets attach to a stable Game Session session front-end pod, while region-scoped tick execution remains fenced to the current lease owner for `<tenantId, gameInstanceId, regionId>`. Session front-ends may forward region-owned work over internal gRPC, but only the lease owner may mutate tick coordination state. See `design/architecture/decisions/adr-0011-gameplay-session-front-end-and-region-execution.md`.
 - **Non-edge failover contract:** Per [ADR 0013](./decisions/adr-0013-bounded-invisible-non-edge-restart-recovery.md), meaningful live gameplay state must be externalized into durable or shared coordination systems rather than hidden in single-process memory. When the edge socket, healthy same-type replacement capacity, and shared authority remain available, an ordinary Game Session or Game Logic instance loss must recover behind the established edge connection without fresh `LOGIN`/`PLAY`. The ordinary functional target is 10 seconds and the hard hidden-recovery cutoff is 30 seconds, after which affected sessions close with `1013/backend_unavailable`. In-flight bytes or one ambiguously delivered command may still be lost under the at-most-once edge contract.
 - **Multi-cluster gameplay sharding scope:** FireMUD target state assumes single-cluster gameplay execution per deployment, with scale via lease-based in-cluster Game Session rebalancing. Cross-cluster gameplay sharding is out of scope until a dedicated end-to-end design package is accepted. See `design/architecture/decisions/adr-0008-multi-cluster-gameplay-sharding-scope.md`.
 - **Lease moves and reconnect behavior:** The platform favors **close-and-reconnect** over mid-connection migration at the edge contract. The edge contract does not define a distinct “shard handoff” close category; client-visible outcomes remain limited to the standard close taxonomy (for example `backend_unavailable` after the bounded non-edge recovery window). Ordinary lease moves remain internal and fenced, while an attached Game Session process loss uses ADR 0013's bounded upstream rebind whenever its qualifying conditions hold. If a future design introduces explicit handoff semantics at the edge, it must be defined as a dedicated design update and integrated into the gateway + protocol bridging contracts (see `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`).
@@ -426,14 +426,14 @@ This model avoids single-node bottlenecks for ticks or session handling; see [Ti
 
 ### Session Sharding & Routing
 
-Game Session Service instances are deployed as a **pool of identical workers**. Ownership of tick work and live gameplay session execution is partitioned by `<tenantId, regionId>` using Coordination Redis leases as described in [Tick System and Runtime Design](./system-architecture-ticks.md).
+Game Session Service instances are deployed as a **pool of identical workers**. Ownership of tick work and live gameplay session execution is partitioned by `<tenantId, gameInstanceId, regionId>` using Coordination Redis leases as described in [Tick System and Runtime Design](./system-architecture-ticks.md).
 
 Per `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`, shard/lease ownership remains internal to the Game Session layer: the edge does not implement lease-aware admission or a client-visible shard handoff signal. `/ws/game/**` is routed to a stable Game Session service surface and relies on the Game Session coordination model to respect tick ownership invariants.
 
 Per `design/architecture/decisions/adr-0011-gameplay-session-front-end-and-region-execution.md`, this stable surface is implemented as a **session front-end + lease-owner execution** model:
 
 - A gameplay socket binds to a Game Session **session front-end** pod that owns connection-local state and client I/O.
-- Region-scoped execution remains fenced to the current **lease owner** for `<tenantId, regionId>`.
+- Region-scoped execution remains fenced to the current **lease owner** for `<tenantId, gameInstanceId, regionId>`.
 - Session front-ends may forward command execution or region-owned work over internal gRPC to the lease owner.
 - Only the lease owner may mutate region-scoped coordination keys or commit tick-owned gameplay state for that region.
 - The session front-end owns the character’s current execution-region pointer and advances it only after a fenced region-transition commit succeeds end-to-end.
@@ -498,7 +498,7 @@ For gameplay/chat moderation specifically, the operator policy plane and enforce
 ## Glossary
 
 - **Session front-end** – The connected Game Session pod that owns socket I/O, connection-local state, and per-session sequencing.
-- **Lease owner** – The Game Session execution owner currently holding the `<tenantId, regionId>` lease required to mutate region-scoped coordination state.
+- **Lease owner** – The Game Session execution owner currently holding the `<tenantId, gameInstanceId, regionId>` lease required to mutate region-scoped coordination state.
 - **Canonical room state** – A room view assembled only from same-fence World Management occupancy data and Entity Management containment/presentation data.
 - **Control-plane API** – An infrastructure or domain admin API that is not part of player gameplay traffic.
 - **Bypass-safe workflow** – An explicitly documented external admin workflow allowed to bypass Logging & Admin ingress because it does not rely on Logging & Admin-owned policy, cross-domain write orchestration, or control-plane availability guarantees.

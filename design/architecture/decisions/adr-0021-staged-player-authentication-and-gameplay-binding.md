@@ -92,8 +92,8 @@ This strengthens account takeover resistance but adds enrollment, recovery, supp
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-authentication.md`
-- `design/architecture/system-architecture-gateway.md`
-- `design/architecture/system-architecture-reconnection.md`
-- `design/architecture/microservices/account-service/api-contracts.md`
-- `design/architecture/microservices/game-session-service/protocols.md`
+- [Authentication architecture](../system-architecture-authentication.md)
+- [Gateway architecture](../system-architecture-gateway.md)
+- [Reconnection architecture](../system-architecture-reconnection.md)
+- [Account API contracts](../microservices/account-service/api-contracts.md)
+- [Game Session protocols](../microservices/game-session-service/protocols.md)

@@ -226,12 +226,12 @@ Canonical epoch-map examples:
 ```yaml
 # old-region-epoch-map.yaml
 regions:
-  - tenantId: T1
-    gameInstanceId: G1
+  - tenantId: 7b3b074e-d597-4e9b-b96f-4f5946d26120
+    gameInstanceId: 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78
     regionId: R7
     oldRegionEpoch: 12
-  - tenantId: T1
-    gameInstanceId: G1
+  - tenantId: 7b3b074e-d597-4e9b-b96f-4f5946d26120
+    gameInstanceId: 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78
     regionId: R8
     oldRegionEpoch: 4
 ```
@@ -239,12 +239,12 @@ regions:
 ```yaml
 # region-epoch-map.yaml
 regions:
-  - tenantId: T1
-    gameInstanceId: G1
+  - tenantId: 7b3b074e-d597-4e9b-b96f-4f5946d26120
+    gameInstanceId: 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78
     regionId: R7
     regionEpoch: 13
-  - tenantId: T1
-    gameInstanceId: G1
+  - tenantId: 7b3b074e-d597-4e9b-b96f-4f5946d26120
+    gameInstanceId: 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78
     regionId: R8
     regionEpoch: 5
 currentTickId: -1
@@ -253,16 +253,16 @@ currentTickId: -1
 ```yaml
 # cluster-region-epoch-map.yaml
 regions:
-  - tenantId: T1
-    gameInstanceId: G1
+  - tenantId: 7b3b074e-d597-4e9b-b96f-4f5946d26120
+    gameInstanceId: 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78
     regionId: R7
     regionEpoch: 13
-  - tenantId: T1
-    gameInstanceId: G1
+  - tenantId: 7b3b074e-d597-4e9b-b96f-4f5946d26120
+    gameInstanceId: 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78
     regionId: R8
     regionEpoch: 5
-  - tenantId: T2
-    gameInstanceId: G2
+  - tenantId: 6c0bb04d-bdcb-45a4-a1bc-a7ee7432b461
+    gameInstanceId: 2e3ee139-a6e8-44ad-b840-891b22c2255b
     regionId: R2
     regionEpoch: 21
 currentTickId: -1

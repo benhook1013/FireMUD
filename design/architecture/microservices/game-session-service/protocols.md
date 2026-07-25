@@ -15,7 +15,7 @@ The canonical player-facing paths are:
 - Telnet via TCP Proxy and Gateway
 - first-party web via `/ws/game/**` through Gateway
 
-Direct generic WebSocket access to Game Session remains useful as an internal/test seam, but it is not a separate public authentication path. Public non-proxy WebSocket clients use Gateway `/ws/game/**`, obtain a connect token through the bootstrap/authentication control plane, and present it through the first-party cookie or the dedicated non-browser header. Real end-to-end client-path verification should prefer Gateway or TCP Proxy rather than relying only on direct Game Session WebSocket coverage.
+Direct generic WebSocket access to Game Session remains useful as an internal/test seam, but it is not a separate public authentication path. Public non-browser WebSocket clients use Gateway `/ws/game/**`, obtain a connect token through the bootstrap/authentication control plane, and present it through the dedicated non-browser header. Real end-to-end client-path verification should prefer Gateway or TCP Proxy rather than relying only on direct Game Session WebSocket coverage.
 
 At the protocol level, commands are split into two groups:
 

@@ -102,7 +102,7 @@ Operational behavior around Stripe integration focuses on observability, idempot
 - Webhook handlers are idempotent and keyed by Stripe event IDs; repeated deliveries do not change internal state after the first successful application.  
 - Metrics track payment and subscription statuses (for example, counts of `payment_transaction` by `status`, and subscriptions in `past_due` or `grace` states).  
 - Alerts fire when webhook processing fails repeatedly, when Stripe API calls start failing at elevated rates, or when the number of tenants in `grace` or `suspended` billing states exceeds thresholds.  
-- During Stripe outages, new purchases and subscription changes fail closed, but existing tenants remain in their last-known-good state until internal policies (for example, maximum grace period) dictate otherwise. Where possible, the same webhook pipeline that updates subscription state also emits the revocation events described above, so failures in that pipeline are observable and can be correlated with potential entitlement enforcement drift.
+- During Stripe outages, new purchases and subscription changes fail closed, but existing tenants remain in their last-known-good state until internal policies (for example, maximum grace period) dictate otherwise. Webhook reconciliation may repair Account's committed billing state and outbox, but Account remains the sole producer of `SubscriptionStatusChanged` and `TenantBillingStateChanged`; downstream consumers process those Account-owned events. Failures in either stage remain independently observable so potential entitlement-enforcement drift can be correlated without introducing a second event source.
 
 For current requirements and additional context, see:
 

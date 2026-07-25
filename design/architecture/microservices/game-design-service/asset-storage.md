@@ -62,12 +62,12 @@ Illustrative `GetPublishableDerivedArtifact` fragments:
 ```json
 {
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
-  "versionId": "v42",
+  "versionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "artifactKind": "NAVMESH",
   "status": "NOT_READY",
   "error": {
     "code": "DERIVED_ARTIFACT_NOT_FINALIZED",
-    "message": "Navmesh generation has not produced finalized bytes for tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120 versionId=v42."
+    "message": "Navmesh generation has not produced finalized bytes for tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120 versionId=4f035f76-4b87-4a5e-8b9f-ea6c9e66e620."
   }
 }
 ```
@@ -77,7 +77,7 @@ Illustrative `GetPublishableDerivedArtifact` fragments:
 ```json
 {
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
-  "versionId": "v42",
+  "versionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "artifactKind": "NAVMESH",
   "status": "FAILED",
   "error": {
@@ -112,18 +112,18 @@ Illustrative `GetPublishedReleaseBundle` fragment:
 ```json
 {
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
-  "versionId": "v42",
+  "versionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "manifestHash": "sha256:2d4b2e...",
   "artifactDigests": [
     {
       "artifactType": "WORLD_NAVMESH_BUNDLE",
-      "artifactPath": "versions/v42/world/navmesh.bundle",
+      "artifactPath": "versions/4f035f76-4b87-4a5e-8b9f-ea6c9e66e620/world/navmesh.bundle",
       "artifactDigest": "sha256:8fd0c4...",
       "artifactSchemaVersion": 1
     },
     {
       "artifactType": "WORLD_PATH_GRAPH_BUNDLE",
-      "artifactPath": "versions/v42/world/path-graph.bundle",
+      "artifactPath": "versions/4f035f76-4b87-4a5e-8b9f-ea6c9e66e620/world/path-graph.bundle",
       "artifactDigest": "sha256:91baf2...",
       "artifactSchemaVersion": 1
     }
@@ -163,16 +163,16 @@ Illustrative `manifest.json` fragment:
       "contentType": "application/octet-stream",
       "contentHash": "sha256:8fd0c4...",
       "producerService": "world-management-service",
-      "versionId": "v42",
-      "url": "https://cdn.example.invalid/t1/v42/world/navmesh.bin"
+      "versionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
+      "url": "https://cdn.example.invalid/7b3b074e-d597-4e9b-b96f-4f5946d26120/4f035f76-4b87-4a5e-8b9f-ea6c9e66e620/world/navmesh.bin"
     },
     "world.pathGraph": {
       "artifactKind": "PATH_GRAPH",
       "contentType": "application/json",
       "contentHash": "sha256:91baf2...",
       "producerService": "world-management-service",
-      "versionId": "v42",
-      "url": "https://cdn.example.invalid/t1/v42/world/path-graph.json"
+      "versionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
+      "url": "https://cdn.example.invalid/7b3b074e-d597-4e9b-b96f-4f5946d26120/4f035f76-4b87-4a5e-8b9f-ea6c9e66e620/world/path-graph.json"
     }
   }
 }
@@ -452,7 +452,7 @@ Race-safe purge workflow:
 To prevent persistence and performance failures in asset workflows:
 
 - Maximum single asset size is 25 MiB; oversized uploads must fail with `ASSET_TOO_LARGE`.
-- Per-tenant draft asset quota is 2 GiB of stored `game_assets.data` bytes in the current first slice. This is a draft-only admission limit, not a total-retained storage cap: bytes retained solely because they are referenced by Published, Active, or Failed versions remain protected for history or repair and are not charged against the draft quota. Writes that would exceed the quota must fail with `ASSET_QUOTA_EXCEEDED`. A future metadata-only storage model may measure retained immutable draft-object bytes instead, without changing the draft-only boundary.
+- Per-tenant draft asset quota is 2 GiB. The target admission rule excludes bytes retained solely because a `version_asset` reference keeps them reachable from a Published, Active, or Failed version. The current first slice has no authoritative `version_asset` mapping, so it cannot prove that exemption and conservatively charges all stored `game_assets.data` bytes to the tenant quota. Once version-scoped references exist, the quota query must derive exempt bytes from those normalized references rather than from tenant-wide export contents or object-store path conventions. Writes that would exceed the currently enforceable quota must fail with `ASSET_QUOTA_EXCEEDED`. A future metadata-only storage model may measure retained immutable draft-object bytes instead, without changing the draft-only target boundary.
 - Upload/download APIs must support streaming/chunked transfer at the transport layer; services must not require buffering full payloads in memory before persistence.
 - Publish/export workers must process assets in bounded batches (configurable), with backpressure metrics to avoid starving version publish orchestration.
 - Quota and size limits must be configurable per environment but default to the values above when unset.

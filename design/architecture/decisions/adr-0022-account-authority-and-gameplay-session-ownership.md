@@ -96,9 +96,9 @@ Relying only on short token expiry removes allowlists and authority-generation p
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-authentication.md`
-- `design/architecture/system-architecture-jwt-and-token-contracts.md`
-- `design/architecture/system-architecture-session-behavior.md`
-- `design/architecture/microservices/account-service/runtime-and-data.md`
-- `design/architecture/microservices/game-session-service/runtime-and-data.md`
-- `design/architecture/system-architecture-gateway.md`
+- [Authentication architecture](../system-architecture-authentication.md)
+- [JWT and token contracts](../system-architecture-jwt-and-token-contracts.md)
+- [Session behavior](../system-architecture-session-behavior.md)
+- [Account runtime and data](../microservices/account-service/runtime-and-data.md)
+- [Game Session runtime and data](../microservices/game-session-service/runtime-and-data.md)
+- [Gateway architecture](../system-architecture-gateway.md)

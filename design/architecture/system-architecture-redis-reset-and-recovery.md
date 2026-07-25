@@ -352,7 +352,7 @@ Recommended actions:
 
 Expected impact:
 
-- All coordination state is reset; ticks restart from a clean slate. Tenant-scoped resets preserve Account-owned `session:auth:token:*` records while invalidating tenant gameplay/session-context state unless the command explicitly records `--preserve-sessions`; cluster resets close protected admission, complete the required Account issuer-generation cutover, then drop issued-token records as cleanup, deny missing-record token use, and invalidate gameplay sessions by default until re-registration completes.
+- All coordination state is reset; ticks restart from a clean slate. For this cluster-scoped action, protected admission closes, the required Account issuer-generation cutover completes, issued-token records are then dropped as cleanup, missing-record token use is denied, and gameplay sessions remain invalid until re-registration completes. By contrast, a tenant-scoped reset preserves Account-owned `session:auth:token:*` records while invalidating tenant gameplay/session-context state unless the command explicitly records `--preserve-sessions`.
 - Domain data (PostgreSQL) remains authoritative.
 
 ---

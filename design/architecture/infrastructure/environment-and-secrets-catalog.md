@@ -99,7 +99,7 @@ Truly ephemeral environments (for example one-shot CI utility stacks) may collap
 
 ## TLS & Certificates
 
-Mutual TLS protects all internal service-to-service traffic. Certificates are normally provisioned by **cert-manager** and mounted from distinct per-workload Kubernetes Secrets so every service has a concrete private identity. These certificates secure:
+Mutual TLS protects internal service-to-service traffic in shared and player-facing Kubernetes environments. Certificates are normally provisioned by **cert-manager** and mounted from distinct per-workload Kubernetes Secrets so every service has a concrete private identity. Explicit local-development and throwaway-test profiles may use plaintext internal transport, including the documented `ws://` Proxy-to-Gateway bridge, and do not provide player-facing or promotion evidence. These certificates secure:
 
 - All gRPC calls between services
 - Any internal WebSocket bridges that require mTLS (for example, the TCP Proxy Service connecting to Spring Cloud Gateway over `wss://`)

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Orchestrates live game sessions, including tick execution, player input validation, and runtime feature toggles. It is the gameplay session front door for both Telnet and `/ws/game/**` clients and the lease-owning tick executor for each active `<tenantId, regionId>` pair.
+Orchestrates live game sessions, including tick execution, player input validation, and runtime feature toggles. It is the gameplay session front door for both Telnet and `/ws/game/**` clients and the lease-owning tick executor for each active `<tenantId, gameInstanceId, regionId>` scope.
 
 Meaningful gameplay-session and tick-coordination state is externalized into Redis and PostgreSQL rather than kept as authoritative process-local memory. The target state therefore treats Game Session instances as replaceable workers: a new instance of the same service type should be able to resume session-front-end or lease-owner responsibility from shared state. Hidden same-type recovery is not a current availability guarantee; its implementation and proof remain a gap, and any user-visible reconnect caused solely by a non-edge Game Session restart remains implementation/proof debt rather than target behavior.
 
@@ -20,7 +20,7 @@ This doc set is the authoritative source for:
 - **Game instance** – a specific running instance of a tenant’s world, identified by an opaque internal `gameInstanceId` in the database and runtime APIs as described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md#version-activation--rollback). Even if a deployment runs at most one instance per tenant, APIs and persistence models still carry `gameInstanceId` explicitly so multi-instance support does not require rewriting identifiers later; clients must treat the identifier as server-issued and opaque rather than inferring special values.
 - **Character identity** – gameplay identity keyed by `characterId`.
 - **Player gameplay session** – a single player’s live connection and gameplay context bound to a specific game instance and character identity. Gameplay sessions are stored in Redis under `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` and are purged when the session ends.
-- **Region / region shard** – a subdivision of the world used for tick execution and scaling. Tick coordination keys are scoped per `<tenantId, regionId>` and do not follow individual player session lifecycles.
+- **Region / region shard** – a subdivision of one running game instance used for tick execution and scaling. Tick coordination keys are scoped per `<tenantId, gameInstanceId, regionId>` and do not follow individual player session lifecycles.
 
 ## Responsibilities
 
@@ -31,10 +31,10 @@ This doc set is the authoritative source for:
 - Broadcast lifecycle events and world updates to other services.
 - Support reconnection and recovery of running games.
 - Own the authoritative, pinned `scriptPatchVersion` for each running game instance and enforce version fencing for script-generated work.
-- Publish coordination and tick-health metrics per `<tenantId, regionId>` and expose control APIs that allow authorized services to pause/resume tick execution and participate in scoped coordination resets.
+- Publish coordination and tick-health metrics per `<tenantId, gameInstanceId, regionId>` and expose control APIs that allow authorized services to pause/resume tick execution and participate in scoped coordination resets.
 - Front gameplay login commands and session binding, calling Account Service to verify credentials and obtain JWTs/tokens while enforcing single-session control for each character.
 - Accept bootstrap-backed bare `LOGIN` for first-party `/ws/game/**` after Gateway connect-token validation and signed connect-context verification; this path is intentionally credentialless and must not prompt the browser to replay username/password/OTP.
-- Attach typed unsigned `PlayerExecutionContext` to player-delegated gameplay RPCs; expose a concrete mTLS workload identity and rely on exact method caller allowlists, context/domain validation, and mutation idempotency rather than per-action signing or replay storage.
+- Attach typed unsigned `PlayerExecutionContext` to player-delegated gameplay RPCs; expose a concrete mTLS workload identity and rely on exact method caller allowlists, context/domain validation, and mutation idempotency rather than per-action signing or a generic cross-service replay cache. Command, effect, and request idempotency records remain mandatory in their owning services.
 - Fail readiness for new gameplay traffic when the currently exposed `LOGIN` plus first-command path is not safe.
 
 ## Architecture Summary
@@ -42,7 +42,7 @@ This doc set is the authoritative source for:
 Game Session is both a session front-end and a tick executor:
 
 - Connected sockets bind to a stable session front-end pod.
-- Region-scoped command execution belongs to the current lease owner for the target `<tenantId, regionId>`.
+- Region-scoped command execution belongs to the current lease owner for the target `<tenantId, gameInstanceId, regionId>`.
 - Session front-ends may authenticate, normalize input, manage connection-local state, and stream results back to the client.
 - Only the lease owner may mutate region-scoped coordination state or commit tick-owned Redis changes.
 - Front-ends may forward execution requests to lease owners over internal gRPC, but forwarded work is still fenced by the current region lease/epoch and must reject stale or missing fences.

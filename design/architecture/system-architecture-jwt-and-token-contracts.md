@@ -92,7 +92,7 @@ Account Service issues the exact JWT profiles defined below for control-plane UI
   - `"018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f"` -> `["tenantAdmin", "designer"]`
   - `"018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a"` -> `["moderator"]`
 
-First-party `control-ui` and `player-bootstrap` JWTs are short-lived, non-gameplay control/bootstrap credentials and never become gameplay command authority. `player-bootstrap` can authorize caller-bound discovery, join, and connect-token issuance, but it remains tenant-free and does not itself carry a selected runtime target. Gameplay context (for example `characterId` and `tenantId`) lives in Game Session bindings and is sent through typed command envelopes or `PlayerExecutionContext` rather than embedded in those end-user JWT contracts. The bounded `gameplay-connect` JWT is the separate edge-admission profile: its `tenantId`, `worldSlug`, `realmSlug`, `gameInstanceId`, `pointerVersion`, `connectScopeId`, and `requestId` fields are one short-lived target snapshot, consumed at Gateway, and never gameplay command authority. Receiver-specific private delegation JWTs remain backend material for their named receiver.
+First-party `control-ui` and `player-bootstrap` JWTs are short-lived, non-gameplay control/bootstrap credentials and never become gameplay command authority. `player-bootstrap` can authorize caller-bound discovery, join, and connect-token issuance, but it remains tenant-free and does not itself carry a selected runtime target. Gameplay context (for example `characterId` and `tenantId`) lives in Game Session bindings and is sent through typed command envelopes or `PlayerExecutionContext` rather than embedded in those end-user JWT contracts. The bounded `gameplay-connect` JWT is the separate edge-admission profile: its `tenantId`, `worldSlug`, `realmSlug`, `gameInstanceId`, `pointerVersion`, `connectScopeId`, `requestId`, and `replayAdmissionFence` fields are one short-lived target and replay-readiness snapshot, consumed at Gateway, and never gameplay command authority. Receiver-specific private delegation JWTs remain backend material for their named receiver.
 
 ### Token Profiles and Audiences
 
@@ -149,6 +149,7 @@ Services must enforce this claim contract before role/tenant authorization:
 | `pointerVersion` | Not required | Not required | Required | Not required | Gameplay-connect routing-freshness fence |
 | `connectScopeId` | Not required | Not required | Required | Not required | Opaque discovery scope used for issuance |
 | `requestId` | Not required | Not required | Required | Not required | Connect-token issuance idempotency identity |
+| `replayAdmissionFence` | Not required | Not required | Required | Not required | Exact shared replay-readiness fence observed at issuance; Gateway validates equality before authorization and repeats the check atomically during token consumption |
 | `globalRoles` | Optional | Optional | Not used | Optional | Empty list when none; gameplay-connect admission never authorizes from role claims |
 | `scopedRoles` | Optional | Optional | Not used | Optional | Empty map when none; gameplay-connect admission never authorizes from role claims |
 

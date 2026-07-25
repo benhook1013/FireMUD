@@ -70,11 +70,11 @@ Observation avoids mutation but still grants access to private live state and co
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-authentication.md`
-- `design/architecture/system-architecture-authz-route-matrix.md`
-- `design/architecture/microservices/logging-admin-service/runtime-and-data.md`
-- `design/project-management/implementation-tracking/player-access-and-session.md`
-- `design/project-management/implementation-tracking/player-experience-commands-and-communication.md`
+- [Authentication architecture](../system-architecture-authentication.md)
+- [Authorization route matrix](../system-architecture-authz-route-matrix.md)
+- [Logging Admin runtime and data](../microservices/logging-admin-service/runtime-and-data.md)
+- [Player access and session tracker](../../project-management/implementation-tracking/player-access-and-session.md)
+- [Player experience, commands, and communication tracker](../../project-management/implementation-tracking/player-experience-commands-and-communication.md)
 
 ## Reversibility and Revisit Triggers
 

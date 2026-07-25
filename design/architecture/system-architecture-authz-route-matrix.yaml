@@ -38,9 +38,11 @@ route_authentication_rules:
 required_live_check_vocabulary:
   - account_generation
   - admission_pointer
+  - browser_origin
   - conditional_realm_access_grant
   - connect_scope_match
   - connect_token_single_use_consume
+  - csrf
   - current_token_generation
   - grant_version
   - issuer_generation
@@ -53,6 +55,7 @@ required_live_check_vocabulary:
   - replay_protection_available
   - runtime_entitlements
   - tenant_generation
+  - trusted_proxy_identity
 implementation_status:
   known_drift:
     - public_production_membership_may_be_created_implicitly_by_connect_token_or_play
@@ -100,7 +103,7 @@ routes:
     accepted_token_profiles: []
     delegated_subject: authenticated_session_account
     visibility_contract: membership_or_public_production_visibility
-    required_live_checks: [runtime_entitlements]
+    required_live_checks: [membership, public_production_visibility, runtime_entitlements]
   - service: game-session-service
     route: REALMS
     scope: tenant
@@ -186,6 +189,44 @@ routes:
         - BACKEND_UNAVAILABLE
         - PROTOCOL_MISMATCH
         - INTERNAL_ERROR
+  - service: spring-cloud-gateway
+    route: /ws/game/**
+    scope: tenant
+    classification: public_production_onboarding
+    applicability:
+      all_of:
+        - connection_mode: trusted_tcp_proxy
+        - listener: internal_mtls
+    auth_path: exact_mtls_workload
+    accepted_token_profiles: []
+    accepted_carriers: []
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/tcp-proxy-service"]
+    edge_consumer: spring_cloud_gateway_internal_mtls_websocket
+    connect_context_output: trusted_tcp_proxy_mode
+    required_live_checks: [trusted_proxy_identity]
+    handshake_error_classes:
+      any_of: [POLICY_DENY, BACKEND_UNAVAILABLE, PROTOCOL_MISMATCH, INTERNAL_ERROR]
+  - service: spring-cloud-gateway
+    route: POST /ws/game/connect-token/revoke
+    scope: tenant
+    classification: public_production_onboarding
+    applicability:
+      all_of:
+        - connection_mode: first_party_web
+        - operation: connect_token_cookie_revoke
+    auth_path: gameplay_connect_cookie_revoke
+    accepted_token_profiles: [gameplay-connect]
+    accepted_token_profile_audiences:
+      gameplay-connect: gameplay-connect
+    accepted_carriers: [first_party_cookie]
+    cookie_absence_outcome: idempotent_success
+    edge_consumer: spring_cloud_gateway_http
+    required_live_checks: [browser_origin, csrf]
+    canonical_errors:
+      any_of: [CONNECT_TOKEN_REJECTED, POLICY_DENY, INTERNAL_ERROR]
+    implementation_status:
+      target_only: true
   - service: account-service
     route: GET /auth/bootstrap/worlds
     scope: account
@@ -194,7 +235,7 @@ routes:
     accepted_token_profiles: [player-bootstrap]
     subject_binding: caller_account_id
     visibility_contract: membership_or_public_production_visibility
-    required_live_checks: [runtime_entitlements]
+    required_live_checks: [membership, public_production_visibility, runtime_entitlements]
   - service: account-service
     route: GET /auth/bootstrap/worlds/{worldSlug}/realms
     scope: tenant
@@ -505,7 +546,9 @@ routes:
         membership_authority_generation_applies: true
         mtls_identity: "spiffe://firemud/ns/{namespace}/sa/game-session-service"
         delegated_subject: typed_player_execution_context
-        required_live_checks: [issuer_generation, account_generation, current_token_generation, tenant_generation, membership_generation, membership, runtime_entitlements]
+        required_live_checks: [issuer_generation, account_generation, current_token_generation, tenant_generation, membership_generation, membership, runtime_entitlements, conditional_realm_access_grant, grant_version]
+        realm_grant_authority: conditional_account_owned
+        realm_grant_version: required_when_grant_gated
       - caller: world-management-service
         auth_path: mtls_workload
         issued_token_state: none

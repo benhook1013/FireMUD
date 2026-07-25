@@ -35,7 +35,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Authoritative owner: Coordination Redis auth sessions (`session:auth:*`) | | | ✔ | | | | | | | | |
 | Authoritative owner: Coordination Redis connect-token replay (`gateway:connect-token:jti:*` and replay-readiness fence) | | | | | | | | | | | ✔ |
 | Authoritative owner: Coordination Redis automation tick keyspace (`automation:tick:*`) | | | | | | | ✔ | | | | |
-| Tick-region lease ownership and executor coordination (`<tenantId, regionId>`) | | | | ✔ | | | | | | | |
+| Tick-region lease ownership and executor coordination (`<tenantId, gameInstanceId, regionId>`) | | | | ✔ | | | | | | | |
 | Gameplay WebSocket route definition and routing (`/ws/game/**` canonical route) | | | | | | | | | | | ✔ |
 | Game version activation at runtime | | | | ✔ | | | | | | | |
 | Replacement-instance compatibility preflight (`ValidateInstanceCutoverCompatibility`) | ✔ | ✔ | | ✔ | ✔ | | ✔ | | ✔ | | |

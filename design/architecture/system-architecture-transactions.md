@@ -228,8 +228,8 @@ In particular:
 
 Transactional guarantees for tick execution assume deterministic scripts for the `(versionId, scriptPatchVersion)` pair that was in effect when a given effect was applied:
 
-- The Game Session Service records the `scriptPatchVersion` that is active for each `gameInstanceId` and includes it in the context for every tick effect (for example via the EffectId metadata and per-effect audit/log records).
-- Tick handlers and script runners must treat `(versionId, scriptPatchVersion)` as immutable effect execution context recorded alongside `EffectId`: replays and retries use the same pair that was originally logged for that effect, even if the instance later moves to a different patch.
+- The Game Session Service records the `versionId` and `scriptPatchVersion` active for each `gameInstanceId` and seals both fields into durable tick-batch/effect manifest or effect-ledger state alongside `EffectId`. Logs and optional audit records may project that context but are not its replay authority.
+- Tick handlers and script runners must treat the sealed `(versionId, scriptPatchVersion)` pair as immutable effect execution context: replays and retries load the same durable pair that was recorded for the original effect, even if the instance later moves to a different patch. Missing or mismatched durable execution context fails closed rather than falling back to the instance's current patch.
 - Operational tooling is allowed to change the pinned `scriptPatchVersion` for a running instance at well-defined boundaries (for example between ticks or during maintenance), but that change only affects **future** effects. Previously applied effects remain tied to the patch version recorded alongside their EffectIds in logs and audit tables.
 
 ---

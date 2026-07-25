@@ -31,7 +31,7 @@ The service runtime model assumes replaceable workers, not authoritative in-proc
 
 Game Session uses the gameplay layer’s session front-end plus lease-owner execution model:
 
-- Connected sockets bind to a stable session front-end pod, while region-scoped tick execution remains fenced to the current `<tenantId, regionId>` lease owner.
+- Connected sockets bind to a stable session front-end pod, while region-scoped tick execution remains fenced to the current `<tenantId, gameInstanceId, regionId>` lease owner.
 - Session front-ends may forward work to lease owners over internal gRPC, but only lease owners may mutate region-scoped coordination state.
 - Tick-related multi-key operations, including locks, pending state, queues, timers, and retry metadata, are performed exclusively via the shared Lua scripts described in [Redis Architecture](../../system-architecture-redis.md#atomicity-and-concurrency-control). Ad-hoc multi-key sequences against tick keys are not allowed outside these scripts.
 - Because session bindings, leases, queues, timers, and retry markers are externalized, another Game Session instance of the same type must be able to assume session-front-end or lease-owner responsibility after an ordinary qualifying failure. Exhausted recovery, unavailable shared authority, unsafe ownership ambiguity, terminal session policy, or edge transport loss uses explicit fallback instead.
@@ -108,7 +108,7 @@ Rebind-handle exchange uses a stable exchange request ID and an immutable reques
 
 ## Tick Coordination and Lease Ownership
 
-Game Session acts as the authoritative tick executor for each `<tenantId, regionId>` it owns:
+Game Session acts as the authoritative tick executor for each `<tenantId, gameInstanceId, regionId>` scope it owns:
 
 - It participates in region leadership using the Redis lease key `tick-executor-lease:{tenantRegionTag}` described in [Redis Architecture](../../system-architecture-redis.md#region-leadership-and-tick-executor-lease).
 - While it holds the lease for a region, it is the only instance allowed to consume commands from that region’s queues and timers, drive `tick:{tenantRegionTag}:pending`, and issue tick-scoped gRPC calls on behalf of that region’s commands.

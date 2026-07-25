@@ -72,6 +72,8 @@ Operational notes:
 
 ### Authentication & JWT
 
+The resource and startup requirements in this subsection are the accepted target-mode contract. Current checked-in runtime and preflight remain in the legacy Secret-backed mode described under [Current and Target JWT/JWKS Resource Modes](#current-and-target-jwtjwks-resource-modes); a passing current preflight does not prove these requirements.
+
 | Variable | Purpose | Rotation / Safety Notes |
 | -------- | ------- | ----------------------- |
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Account-only path to the versioned private signing bundle | In player-facing environments, mount `jwt-signing-keys` read-only only into Account Service; the canonical mount is `/var/run/secrets/firemud/jwt` and the active bundle is `/var/run/secrets/firemud/jwt/current.key`. |
@@ -137,6 +139,8 @@ The Account-only private-key and asymmetric-signing boundary above is target sta
 ---
 
 ## JWT Trust Model by Environment
+
+The following environment matrix is the accepted target-mode contract. It is not a claim that current manifests or preflight implement ConfigMap publication, Account-only CAS/RBAC, or fail-closed asymmetric validation.
 
 JWT signing key and JWKS behavior differs slightly by environment to balance safety and operational complexity:
 

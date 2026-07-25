@@ -92,7 +92,7 @@ An identifier family can migrate representation without changing namespace seman
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-identifier-glossary.md`
-- `design/architecture/system-architecture-authentication.md`
-- `design/architecture/system-architecture-versioning-runtime.md`
+- [Identifier glossary](../system-architecture-identifier-glossary.md)
+- [Authentication architecture](../system-architecture-authentication.md)
+- [Runtime versioning architecture](../system-architecture-versioning-runtime.md)
 - owning microservice API and data contracts for each identifier family

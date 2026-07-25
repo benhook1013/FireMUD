@@ -122,9 +122,9 @@ The following Redis-focused incident flows build on the general recovery steps a
       - Watch `tick_effects_pending_oldest_age_seconds`, `tick_effects_replay_slo_breached`, and command convergence for one emitted replay-convergence budget window. Verify that command outcomes settle into the canonical terminal vocabulary described in `system-architecture-tick-execution-flows.md` rather than inventing a replay-only local interpretation.
       - Escalate to `reset_first` immediately if replay cannot make bounded progress, if inconsistent-state signals appear, or if the region transitions to `STALLED`.
       - Worked example:
-        1. Region `(T1, G1, R7)` remains on `region_epoch = 13`, `tick_effects_pending_oldest_age_seconds` exceeds budget, and there is no evidence of mixed-epoch state or duplicate durable batches.
-        2. Operator runs `coordination-maintenance reconcile-ledger --scope region --tenant T1 --game-instance G1 --region R7`.
-        3. Operator runs `coordination-maintenance converge-commands --scope region --tenant T1 --game-instance G1 --region R7` unless command-status inspection proves there is no affected non-terminal command work.
+        1. Region `(7b3b074e-d597-4e9b-b96f-4f5946d26120, 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, R7)` remains on `region_epoch = 13`, `tick_effects_pending_oldest_age_seconds` exceeds budget, and there is no evidence of mixed-epoch state or duplicate durable batches.
+        2. Operator runs `coordination-maintenance reconcile-ledger --scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7`.
+        3. Operator runs `coordination-maintenance converge-commands --scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7` unless command-status inspection proves there is no affected non-terminal command work.
         4. The replay controller converges lingering epoch-13 `SCHEDULED` rows to `APPLIED` or `ABANDONED` without bumping `region_epoch`, and command records converge to the canonical terminal vocabulary.
         5. If pending age and stalled signals recover within one emitted budget window, the region stays on epoch `13`; otherwise the operator escalates to `reset_first`.
    2. If the chosen mode is `reset_first`:

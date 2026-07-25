@@ -63,6 +63,32 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors = self.validator.validate(path)
         self.assertTrue(any("POLICY_PRESSURE" in error for error in errors))
 
+    def test_trusted_tcp_proxy_route_is_required(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            text = MATRIX.read_text(encoding="utf-8").replace(
+                "        - connection_mode: trusted_tcp_proxy",
+                "        - connection_mode: missing_trusted_proxy",
+                1,
+            )
+            path.write_text(text, encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(any("trusted_tcp_proxy" in error for error in errors))
+
+    def test_connect_token_revoke_checks_are_required(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            text = MATRIX.read_text(encoding="utf-8").replace(
+                "    required_live_checks: [browser_origin, csrf]",
+                "    required_live_checks: [browser_origin]",
+                1,
+            )
+            path.write_text(text, encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(
+            any("POST /ws/game/connect-token/revoke is missing" in error for error in errors)
+        )
+
     def test_issue_connect_token_replay_fence_checks_are_required(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
@@ -113,8 +139,8 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
             text = MATRIX.read_text(encoding="utf-8").replace(
-                "required_live_checks: [issuer_generation, account_generation, current_token_generation, tenant_generation, membership_generation, membership, runtime_entitlements]",
-                "required_live_checks: [current_token_generation, tenant_generation, membership_generation, membership, runtime_entitlements]",
+                "required_live_checks: [issuer_generation, account_generation, current_token_generation, tenant_generation, membership_generation, membership, runtime_entitlements, conditional_realm_access_grant, grant_version]",
+                "required_live_checks: [current_token_generation, tenant_generation, membership_generation, membership, runtime_entitlements, conditional_realm_access_grant, grant_version]",
                 1,
             )
             path.write_text(text, encoding="utf-8")

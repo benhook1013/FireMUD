@@ -339,13 +339,13 @@ Conceptually, tick commit proceeds through these phases:
      - If recovery finds more than one durable row purporting to represent the same `(tenantId, gameInstanceId, regionId, region_epoch, tickId)`, the region is inconsistent by definition.
      - Normal replay must not continue. The region is paused and explicit reconcile tooling chooses one survivor batch and converges the others to an audited terminal state before ticks resume.
    - Worked allocation-race example:
-     - Executor `E1` and executor `E2` both attempt `(tenantId=T1, gameInstanceId=G1, regionId=R7, region_epoch=13, tickId=42)`.
-     - `E1` successfully inserts the unique batch row while holding Redis lease token `L9001` and durable `executorFence=27`; that row becomes the only valid durable batch for `(T1, G1, R7, 13, 42)`.
+     - Executor `E1` and executor `E2` both attempt `(tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120, gameInstanceId=9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, regionId=R7, region_epoch=13, tickId=42)`.
+     - `E1` successfully inserts the unique batch row while holding Redis lease token `L9001` and durable `executorFence=27`; that row becomes the only valid durable batch for `(7b3b074e-d597-4e9b-b96f-4f5946d26120, 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, R7, 13, 42)`.
      - `E2` then reads the existing row.
        - If `E2` is acting under the same current `executorFence=27`, it may continue/replay from that row.
        - If `E2` now holds a later lease acquisition with `executorFence=28`, it must stop the hot path and run the fenced reconcile transaction. If the unfinished batch is transferable, that transaction changes ownership to fence `28` in place while preserving tick `42`'s row, manifest, ledger identities, and bound command state; if not transferable, it converges the old batch to terminal outcomes and only schedules explicitly retryable source work for a later tick.
      - `E2` must not overwrite the manifest, create a second batch row, or select different work for tick `42`.
-     - If storage ever reveals two durable rows for `(T1, G1, R7, 13, 42)`, the region pauses immediately and reconcile tooling chooses the survivor before any later tick runs.
+     - If storage ever reveals two durable rows for `(7b3b074e-d597-4e9b-b96f-4f5946d26120, 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, R7, 13, 42)`, the region pauses immediately and reconcile tooling chooses the survivor before any later tick runs.
    - Canonical fence/write sequence (normative):
      1. Executor wins the Redis lease for `<tenantId, gameInstanceId, regionId>`.
      2. Game Session advances `RegionStatus.executorFence` for that new ownership generation.

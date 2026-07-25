@@ -21,7 +21,7 @@ It also communicates game lifecycle changes to other microservices over gRPC so 
 Game Session deliberately separates socket ownership from region execution ownership:
 
 - The pod holding a player's WebSocket or proxied Telnet bridge is the session front-end for that gameplay session.
-- Region-scoped command execution belongs to the current lease owner for the target `<tenantId, regionId>`.
+- Region-scoped command execution belongs to the current lease owner for the target `<tenantId, gameInstanceId, regionId>`.
 - Session front-ends may authenticate, normalize input, manage connection-local state, and stream results to the client.
 - Session front-ends must not directly stage or commit tick-owned Redis mutations for regions they do not lease.
 - When a command or follow-up targets a region owned by another pod, the session front-end forwards the request over internal gRPC to the lease owner and returns the resulting output to the client.
