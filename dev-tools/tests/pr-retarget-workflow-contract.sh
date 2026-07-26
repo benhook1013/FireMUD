@@ -323,6 +323,11 @@ require_contains "$image_wait_path" 'display_title.startswith("Build Runtime Ima
 require_contains "$image_wait_path" 'and f" head-{head_sha} " in display_title'
 require_contains "$image_wait_path" 'and display_title.endswith(" mode-required")'
 require_contains "$image_wait_path" 'gh api --paginate --slurp'
+require_contains "$image_wait_path" 'GitHub API poll failed while %s; retrying within the existing wait deadline.'
+# shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
+require_contains "$image_wait_path" 'if ! workflow_payload="$('
+# shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
+require_contains "$image_wait_path" 'if ! publisher_payload="$('
 require_contains "$preview_path" "cancel-in-progress: \${{ github.event_name == 'pull_request' || inputs.action == 'destroy' }}"
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 require_contains "$preview_reconciler_path" '--workflow "${preview_workflow_name}"'
