@@ -9,8 +9,8 @@
       "title": "Entry Path Outcomes (rate)",
       "targets": [
         {
-          "expr": "sum by (scope, path, outcome) (rate(entrypath_connection_attempts_total[5m]))",
-          "legendFormat": "{{scope}} {{path}} {{outcome}}",
+          "expr": "sum by (service, scope, path, outcome) (rate(entrypath_connection_attempts_total[5m]))",
+          "legendFormat": "{{service}} {{scope}} {{path}} {{outcome}}",
           "refId": "A"
         }
       ],

@@ -13,15 +13,19 @@ Use Grafana/Kibana/Jaeger when available. If any observability backend is degrad
 
 Synthetic canary identities used in this runbook should be treated as operational probes, not normal players. Operator workflows should keep them out of routine moderation, behavior review, and player-facing analytics unless an incident specifically involves canary validation.
 
+Metrics in this runbook use the bounded `scope` contract from [Logging & Monitoring](./system-architecture-logging-monitoring.md#canonical-bounded-metrics-scope): pre-gameplay flows use `scope="environment"`, while each gameplay metric family documents any narrower bounded operational buckets it supports. Resolve an exact `<tenantId, gameInstanceId, regionId>` runtime scope through Game Session/control-plane runtime-health reads and structured logs before taking gameplay-scope action; do not infer exact runtime ownership from ordinary metric labels.
+
+Log searches in this runbook must preserve the emitting `service` and `traceId` as the primary correlation fields, with `correlationId` when available. Add `tenantId`, `gameInstanceId`, `regionId`, and `characterId` only when those gameplay fields are present and expected by the affected record's logging contract; pre-gameplay records must not be forced to carry them.
+
 ## Trace Preconditions (For Latency/Tick Root Cause)
 
 Trace-driven triage is optional but often decisive for command-latency incidents. Before relying on Jaeger as a primary diagnostic:
 
 - Confirm baseline tracing is usable for the affected path (production-like default is non-zero sampling; around 1% for high-volume entry paths is the baseline usability target from `system-architecture-tracing.md`).
 - If traces are too sparse:
-  - First escalate service-scoped sampling temporarily (`OTEL_TRACES_SAMPLER=parentbased_traceidratio`, increase `OTEL_TRACES_SAMPLER_ARG`) and record start/end times in the incident timeline.
-  - If the environment supports collector tail-sampling by `tenantId`/`regionId`, prefer scoped escalation for the impacted tenant/region and remove the policy immediately after triage.
-- If the environment does not meet the collector capability contract for tenant/region-scoped sampling, treat it as service-scoped-only and do not claim scoped escalation.
+  - Use temporary service-scoped sampling (`OTEL_TRACES_SAMPLER=parentbased_traceidratio`, increase `OTEL_TRACES_SAMPLER_ARG`) only when the environment advertises and independently proves ADR 0017 level 3 for the affected workflow; record start/end times in the incident timeline.
+  - Use tenant/game-instance/region-scoped escalation only when the environment advertises and independently proves ADR 0017 level 4 for the affected workflow, and only after the exact runtime scope is resolved through control-plane/runtime-health reads and logs. Remove the policy immediately after triage.
+- If the environment does not meet the advertised-and-proved ADR 0017 capability for the required level, treat it as baseline or service-scoped-only as applicable and do not claim scoped escalation.
 - If trace volume remains insufficient, continue with metrics + logs and do not block mitigation on trace availability.
 
 ## Login Success Ratio Below SLO
@@ -29,7 +33,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 ### Detect (Login success ratio)
 
 - Alert: `LoginSuccessRatioLowGateway` or `LoginSuccessRatioLowTcpProxy` fires (for example, success ratio < 99.5% over 15 minutes).
-- Independent canary alerts for `playerflow_canary_success{flow="login",path=...}` may fire before live-traffic SLIs move materially in low-traffic environments.
+- Independent canary alerts for `playerflow_canary_success{flow="login",path=...,target=...}` may fire before live-traffic SLIs move materially in low-traffic environments.
 - Player reports: widespread login failures or timeouts.
 - Metrics:
   - Player Experience dashboard shows a drop in the login success panel.
@@ -38,8 +42,8 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 ### Decide (Login success ratio)
 
 - Determine scope:
-  - Single tenant vs all tenants.
-  - Single ingress path (Telnet vs WebSocket/HTTPS) or multiple.
+  - Use metrics only to classify deployment-wide degradation versus an approved bounded `scope` bucket.
+  - When the affected record carries gameplay identity, resolve the exact tenant/game-instance/region and ingress path through control-plane/runtime-health reads and structured logs. For pre-gameplay login failures without gameplay identity, classify the deployment-wide environment, ingress path, and synthetic probe target instead; do not infer a game instance or region.
 - Decide if the incident is primarily:
   - **Edge-related** (TCP Proxy/Gateway/Cloud LB).
   - **Auth-related** (Account Service, JWT, database).
@@ -70,10 +74,10 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 5. **Verify recovery**
    - Confirm the login success SLI panel returns to acceptable levels.
    - Ensure `LoginSuccessRatioLowGateway` and/or `LoginSuccessRatioLowTcpProxy` clear (as applicable) and player reports subside.
-   - Use the `player-incident-drilldown.json` Kibana saved search to spot-check representative player logs by `characterId`, `tenantId`, and `traceId` to confirm that errors have returned to normal levels.
+   - Use the `player-incident-drilldown.json` Kibana saved search to spot-check representative logs by `service`, `traceId`, and `correlationId`, adding `tenantId` or `characterId` only when those fields are present, to confirm that errors have returned to normal levels.
 6. **Degraded-mode branch (if observability backends are unavailable)**
-   - If Grafana is down: query Prometheus directly for login success ratio by ingress path and approved gameplay `scope`, plus `playerflow_canary_success{flow="login",path=...}`.
-   - If Kibana is down: use service logs from Gateway/TCP Proxy/Account pods filtered by `tenantId` and `correlationId`.
+   - If Grafana is down: query Prometheus directly for `login_requests_total` success ratio by its available `scope`, `service`, and `outcome` labels, using the deployment-wide `scope="environment"` baseline. Use `playerflow_canary_success{flow="login",path=...,target=...}` to distinguish ingress paths; `login_requests_total` itself has no `path` label. Do not require `gameInstanceId` or `regionId`: login occurs before gameplay scope is selected.
+   - If Kibana is down: use service logs from Gateway/TCP Proxy/Account pods filtered by `service`, `traceId`, and `correlationId`; do not require gameplay identity fields for this pre-gameplay login path.
    - If Prometheus is down: prioritize service health endpoints and dependency health (Postgres/Redis), and use conservative ingress mitigation (rollback/scale) based on authoritative service signals.
 
 ## Command Latency Above SLO
@@ -81,7 +85,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 ### Detect (Command latency)
 
 - Alert: `CommandLatencyP99HighGateway` or `CommandLatencyP99HighTcpProxy` fires (p99 command latency > 250ms over 5 minutes).
-- Independent canary alerts for `playerflow_canary_success{flow="command",path=...}` or `playerflow_canary_latency_ms{flow="command",path=...}` may fire before traffic-derived latency panels move in low-volume periods.
+- Independent canary alerts for `playerflow_canary_success{flow="command",path=...,target=...}` or `playerflow_canary_latency_ms{flow="command",path=...,target=...}` may fire before traffic-derived latency panels move in low-volume periods.
 - Player reports: perceived lag or delayed command responses in game.
 - Metrics:
   - Player Experience dashboard shows elevated command p99 latency for one or more bounded core commands (`move`, `look`, `combat`).
@@ -98,7 +102,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 
 1. **Check tick health first**
    - Use the Tick Health & Ledger dashboard:
-     - Inspect `tick_execution_time_ms_p99 / tick_lock_ttl_ms` for affected regions.
+     - Inspect `tick_execution_time_ms_p99 / tick_lock_ttl_ms` for affected approved scope buckets, then resolve exact regions through control-plane/runtime-health reads and structured logs.
      - Inspect `tick_retry_queue_depth` and `tick_command_queue_depth`.
    - If the representative command canary is failing or slow while the live-traffic SLI is quiet, use the canary result as the trigger to continue triage rather than waiting for more user traffic.
    - If tick execution is also degraded:
@@ -120,11 +124,11 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 5. **Verify recovery**
    - Ensure command p99 latency returns under the SLO threshold across core commands.
    - Confirm tick health metrics return to normal envelopes.
-   - Use the `player-incident-drilldown.json` and `tick-region-logs.json` Kibana saved searches to correlate any remaining slow commands with specific `tenantId`/`regionId` and to verify that logs no longer show systemic timeouts or retries for hot commands.
+   - Use the `player-incident-drilldown.json` and `tick-region-logs.json` Kibana saved searches to correlate any remaining slow commands by `service` and `traceId`, adding `correlationId` and the applicable `tenantId`, `gameInstanceId`, `regionId`, `characterId`, and `tickId` fields only when those saved objects and affected records expose them. Resolve the exact `<tenantId, gameInstanceId, regionId>` runtime scope through Game Session/control-plane runtime-health reads and structured logs rather than inferring `gameInstanceId` from these saved-object filters.
 6. **Degraded-mode branch (if observability backends are unavailable)**
    - If Grafana is down: run direct PromQL checks for command p99 latency, synthetic command-canary success/latency, tick safety ratio, Redis tail-loss, and queue depth per affected gameplay `scope`.
    - If Jaeger is down or sampling is insufficient: skip span-based narrowing and classify bottlenecks from metrics + structured logs only.
-   - If Kibana is down: inspect Game Session and hot domain-service logs directly for timeout/retry spikes by `tenantId`/`regionId`.
+   - If Kibana is down: inspect Game Session and hot domain-service logs directly by `service` and `traceId`, adding `correlationId` and conditional gameplay identity fields (`tenantId`, `gameInstanceId`, `regionId`, `characterId`) only when present in the affected records.
 
 ## Chat Delivery Latency Above SLO
 
@@ -160,10 +164,10 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 4. **Verify recovery**
    - Confirm chat p99 latency returns below the SLO for active channels.
    - Ensure the alert clears and player reports improve.
-   - Use the `player-incident-drilldown.json` Kibana saved search to validate that chat-related errors or delays in logs have subsided for affected players and channels.
+   - Use the `player-incident-drilldown.json` Kibana saved search to validate that chat-related errors or delays have subsided by `service` and `traceId`, adding `correlationId` and conditional gameplay identity fields only when present in the affected records.
 5. **Degraded-mode branch (if observability backends are unavailable)**
    - If Grafana is down: query Prometheus directly for `chat_delivery_latency_ms_bucket` p99 by `scope` / `channel_type`.
-   - If Kibana is down: inspect Social/Groups service logs directly using `tenantId` and correlation identifiers.
+   - If Kibana is down: inspect Social/Groups service logs directly using `service` and `traceId`, adding `correlationId` and conditional `tenantId`/`gameInstanceId`/`regionId`/`characterId` fields when present.
    - If Prometheus is down: use service health + queue/dependency indicators from application logs and reduce chat feature pressure (throttle or temporary feature disable) if needed.
 
 ## Telnet and WebSocket Path Availability Below SLO
@@ -172,16 +176,16 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 
 - Player reports: failed or flaky connections on one entry path (Telnet or WebSocket/HTTPS).
 - Metrics:
-  - Player Experience dashboard shows a drop in availability computed from `entrypath_connection_attempts_total{path,outcome}` for one or more tenants.
+  - Player Experience dashboard shows a drop in availability computed from `entrypath_connection_attempts_total{service,scope,path,outcome}` for one or more approved bounded `service` and `scope` buckets. Resolve an exact tenant/game-instance/region through control-plane/runtime-health reads and structured logs only when the affected connection record has gameplay identity; otherwise use the emitting service, environment, entry `path`, and external/synthetic `probe target` as the operational scope.
   - External synthetic probes show whether the public Telnet or WebSocket path is reachable at all when traffic may not be reaching Gateway or TCP Proxy.
   - TCP Proxy dashboards show whether `tcpproxy_connections_limit_exceeded` or `tcpproxy_telnet_discarded` are elevated (Telnet path), and Gateway dashboards show whether WebSocket upgrade failures are elevated (WebSocket path).
 
 ### Decide (Entry path availability)
 
 - Determine scope:
-  - Single approved gameplay `scope` bucket vs environment-wide.
+  - Single approved bounded `scope` bucket vs the deployment-wide baseline.
   - Single `path` vs multiple (`path="telnet"` vs `path="websocket"`).
-- Determine dominant failure outcomes by inspecting `entrypath_connection_attempts_total` broken down by `outcome`:
+- Determine dominant failure outcomes by inspecting `entrypath_connection_attempts_total{service,scope,path,outcome}` broken down by `service` and `outcome`:
   - `limit_exceeded` suggests caps or abusive clients.
   - `protocol_error` suggests client/edge parsing problems.
   - `upstream_unreachable` suggests Gateway or downstream availability issues.
@@ -206,9 +210,9 @@ Trace-driven triage is optional but often decisive for command-latency incidents
      - Scale or roll back Gateway/TCP Proxy if a recent change correlates with the incident.
      - Validate downstream dependencies (Redis/Postgres) and tick health for player-facing regions.
 3. **Verify recovery**
-   - Confirm the short-window detection view recovers quickly for affected `{tenantId,path}` combinations and the dominant failure outcomes subside.
+   - Confirm the short-window detection view recovers quickly for every affected `{service,scope,path}` combination and the dominant failure outcomes subside. Use control-plane/runtime-health reads and structured logs for exact runtime scope only when gameplay identity is present; otherwise verify the environment, entry path, and probe target.
    - Confirm the 1-day compliance view trends back toward SLO after the acute incident is resolved.
 4. **Degraded-mode branch (if observability backends are unavailable)**
-   - If Grafana is down: query Prometheus directly for both `entrypath_connection_attempts_total` success/total ratios by `{scope,path}`, the external synthetic-probe metric for each public path, and the mirrored login/command canary metrics where relevant.
-   - If Kibana is down: use Gateway/TCP Proxy logs directly to classify failures (`limit_exceeded`, `protocol_error`, `upstream_unreachable`, `auth_failed`).
+   - If Grafana is down: query Prometheus directly for both `entrypath_connection_attempts_total` success/total ratios by `{service,scope,path}`, the external synthetic-probe metric for each public path, and the mirrored login/command canary metrics where relevant.
+   - If Kibana is down: use Gateway/TCP Proxy logs directly, preserving `service`, `traceId`, and `correlationId` and adding conditional gameplay identity fields only when present, to classify failures (`limit_exceeded`, `protocol_error`, `upstream_unreachable`, `auth_failed`).
    - If Prometheus is down: rely on edge health, pod events, and direct ingress error logs to guide rollback/scale/cap actions.

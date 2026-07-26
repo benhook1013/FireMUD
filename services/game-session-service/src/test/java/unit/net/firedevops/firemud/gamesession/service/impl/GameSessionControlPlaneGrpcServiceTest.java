@@ -3684,15 +3684,15 @@ class GameSessionControlPlaneGrpcServiceTest {
         .thenReturn(3L);
     Mockito.when(
             remoteFollowupRepository
-                .countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
-                    1L, "region-7", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 15L))
+                .countByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
+                    1L, 7L, "region-7", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 15L))
         .thenReturn(2L);
     RemoteFollowup oldestFollowup = new RemoteFollowup();
     oldestFollowup.setDueTickId(13L);
     Mockito.when(
             remoteFollowupRepository
-                .findFirstByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
-                    1L, "region-7", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 15L))
+                .findFirstByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
+                    1L, 7L, "region-7", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 15L))
         .thenReturn(Optional.of(oldestFollowup));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
@@ -3854,13 +3854,13 @@ class GameSessionControlPlaneGrpcServiceTest {
         .thenReturn(0L);
     Mockito.when(
             remoteFollowupRepository
-                .countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
-                    1L, "region-7", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 15L))
+                .countByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
+                    1L, 7L, "region-7", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 15L))
         .thenReturn(0L);
     Mockito.when(
             remoteFollowupRepository
-                .findFirstByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
-                    1L, "region-7", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 15L))
+                .findFirstByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
+                    1L, 7L, "region-7", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 15L))
         .thenReturn(Optional.empty());
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
@@ -5299,6 +5299,34 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("ops", responseRef.get().getFollowups(0).getWorldSlug());
     assertEquals("preview", responseRef.get().getFollowups(0).getRealmSlug());
     assertEquals(29L, responseRef.get().getFollowups(0).getPointerVersion());
+  }
+
+  @Test
+  void listRemoteFollowupsRejectsTargetRegionWithoutTargetGameInstanceId() {
+    RemoteFollowupRepository repository = Mockito.mock(RemoteFollowupRepository.class);
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        remoteControlPlaneService(repository, null, null, null, null, null, gameDesignClient());
+
+    AtomicReference<ListRemoteFollowupsResponse> responseRef = new AtomicReference<>();
+    service.listRemoteFollowups(
+        ListRemoteFollowupsRequest.newBuilder()
+            .setTenantId("1")
+            .setTargetRegionId("region-b")
+            .setLimit(25)
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ListRemoteFollowupsResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
+    assertEquals(
+        "target_game_instance_id is required when target_region_id is set",
+        responseRef.get().getError().getMessage());
+    Mockito.verifyNoInteractions(repository);
   }
 
   @Test

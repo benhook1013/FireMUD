@@ -694,7 +694,7 @@ class TickStagingServiceTest {
     followup.setRequiresSoloTick(true);
     followup.setPayloadJson("{\"kind\":\"noop\"}");
     when(remoteFollowupDrainService.claimDueFollowups(
-            eq(1L), eq("region-a"), eq(1L), anyString(), eq(16)))
+            eq(1L), eq(2L), eq("region-a"), eq(1L), anyString(), eq(16)))
         .thenReturn(new RemoteFollowupDrainService.ClaimOutcome(List.of("followup-1"), 1));
     when(remoteFollowupRepository.findByClaimedTickBatchIdOrderByIdAsc(anyString()))
         .thenReturn(List.of(followup));
@@ -726,7 +726,7 @@ class TickStagingServiceTest {
     net.firedevops.firemud.gamesession.entity.RemoteFollowup second =
         remoteFollowup("followup-2", "entity-2");
     when(remoteFollowupDrainService.claimDueFollowups(
-            eq(1L), eq("region-a"), eq(1L), anyString(), eq(16)))
+            eq(1L), eq(2L), eq("region-a"), eq(1L), anyString(), eq(16)))
         .thenReturn(
             new RemoteFollowupDrainService.ClaimOutcome(List.of("followup-1", "followup-2"), 2));
     when(remoteFollowupRepository.findByClaimedTickBatchIdOrderByIdAsc(anyString()))

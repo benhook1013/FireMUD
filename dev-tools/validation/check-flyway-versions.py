@@ -9,7 +9,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-VERSION_RE = re.compile(r"^V(?P<version>[0-9]+(?:\.[0-9]+)*)__.+\.sql$")
+VERSION_RE = re.compile(r"^V(?P<version>[0-9]+(?:\.[0-9]+)*)__.+\.(?:java|sql)$")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -42,11 +42,15 @@ def discover_migration_files(repo_root: Path) -> list[MigrationFile]:
         return []
 
     discovered: list[MigrationFile] = []
-    for path in services_dir.glob("*/src/main/resources/db/migration/**/V*__*.sql"):
+    sql_paths = services_dir.glob("*/src/main/resources/db/migration/**/V*__*.sql")
+    java_paths = services_dir.glob("*/src/main/java/db/migration/**/V*__*.java")
+    for path in [*sql_paths, *java_paths]:
         if not path.is_file():
             continue
         rel_path = path.relative_to(repo_root).as_posix()
-        if "src/main/resources/db/migration" not in rel_path:
+        is_sql = "src/main/resources/db/migration" in rel_path
+        is_java = "src/main/java/db/migration" in rel_path
+        if not is_sql and not is_java:
             continue
 
         match = VERSION_RE.match(path.name)
@@ -55,11 +59,17 @@ def discover_migration_files(repo_root: Path) -> list[MigrationFile]:
 
         service_name = path.relative_to(repo_root).parts[1]
         project_root = repo_root / "services" / service_name
+        if is_java:
+            java_root = project_root / "src/main/java/db/migration"
+            relative_parent = path.parent.relative_to(java_root)
+            logical_root = project_root / "src/main/resources/db/migration" / relative_parent
+        else:
+            logical_root = path.parent
         version_text = match.group("version")
         discovered.append(
             MigrationFile(
                 path=path,
-                root=path.parent,
+                root=logical_root,
                 project=project_root,
                 version_text=version_text,
                 version_key=normalize_version(version_text),
@@ -125,7 +135,7 @@ def run_self_test() -> None:
             repo_root,
             [
                 "services/clean-service/src/main/resources/db/migration/V1__init.sql",
-                "services/clean-service/src/main/resources/db/migration/V2__next.sql",
+                "services/clean-service/src/main/java/db/migration/V2__next.java",
             ],
         )
         issues, _, _ = collect_issues(repo_root)
@@ -138,7 +148,7 @@ def run_self_test() -> None:
             repo_root,
             [
                 "services/duplicate-service/src/main/resources/db/migration/V1__init.sql",
-                "services/duplicate-service/src/main/resources/db/migration/V1__dup.sql",
+                "services/duplicate-service/src/main/java/db/migration/V1__dup.java",
             ],
         )
         issues, _, _ = collect_issues(repo_root)

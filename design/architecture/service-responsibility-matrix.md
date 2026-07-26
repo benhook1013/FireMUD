@@ -34,14 +34,14 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Authoritative owner: Coordination Redis gameplay coordination keys (`tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`) | | | | ✔ | | | | | | | |
 | Authoritative owner: Coordination Redis auth sessions (`session:auth:*`) | | | ✔ | | | | | | | | |
 | Authoritative owner: Coordination Redis automation tick keyspace (`automation:tick:*`) | | | | | | | ✔ | | | | |
-| Tick-region lease ownership and executor coordination (`<tenantId, regionId>`) | | | | ✔ | | | | | | | |
+| Tick-region lease ownership and executor coordination (`<tenantId, gameInstanceId, regionId>`) | | | | ✔ | | | | | | | |
 | Gameplay WebSocket route definition and routing (`/ws/game/**` canonical route) | | | | | | | | | | | ✔ |
 | Game version activation at runtime | | | | ✔ | | | | | | | |
 | Replacement-instance compatibility preflight (`ValidateInstanceCutoverCompatibility`) | ✔ | ✔ | | ✔ | ✔ | | ✔ | | ✔ | | |
 | Authoritative owner: `versionStateEpoch` CAS enforcement | ✔ | | | | | | | | | | |
 | Version-state CAS APIs ownership/invocation for activation/rollback (`versionStateEpoch`) | ✔ | | | ✔ | | | | | ✔ | | |
 | Runtime feature flag overrides | | | | ✔ | | | | | | | |
-| Tick & coordination health metrics (per region) | | | | ✔ | | | | | | | |
+| Tick & coordination health metrics (diagnostic scope: `<tenantId, gameInstanceId, regionId>`) | | | | ✔ | | | | | | | |
 | Canonical room-state read fence production and same-fence room-view composition | | ✔ | | | ✔ | ✔ | | | | | |
 | Entity definition and persistence | | | | | ✔ | | | | | | |
 | NPC state, inventory, and stats | | | | | ✔ | | | | | | |
@@ -89,6 +89,8 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Admin/creator API participation (edge-routable domain APIs) | ✔ | | ✔ | ✔ | | | | ✔ | ✔ | | ✔ |
 | External operator write ingress for moderation, quota overrides, runtime feature flags, and tick remediation | | | | | | | | | ✔ | | ✔ |
 | API gateway rate limiting and abuse filters | | | | | | | | | | | ✔ |
+
+The `<tenantId, gameInstanceId, regionId>` tuple in the tick and coordination health metrics row is the diagnostic scope Game Session must support through control-plane status, structured logs, and audit records. It is not a Prometheus label tuple: metric series must use bounded `scope`, `scope_bucket`, `region_class`, or equivalent operational buckets under the cardinality policy, while exact identities remain in diagnostic records.
 
 For the edge-routable services in this matrix, participation does not imply that every mutation may be called directly by external tools. Per the overview’s canonical operator write ingress policy, external mutating operator workflows for moderation, quota overrides, runtime feature-flag overrides, and tick remediation must enter through Logging & Admin. Direct external writes on other edge-routable services require an explicit bypass-safe designation in the owning service contract. Game Design tenant-scoped asset and template creator writes are the current architecture-level bypass-safe write class delegated to an owning service contract.
 

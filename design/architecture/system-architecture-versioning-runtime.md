@@ -42,12 +42,14 @@ The **Game Design Service** manages version metadata and publish workflows for g
      - Activation, cutover preflight, and repair workflows must use a fresh attestation read; cached/stale attestation payloads are not sufficient for admission decisions.
      - Ordinary repair tooling must not mutate the attestation payload for a Published/Active release. If exact-bytes repair cannot reproduce the attested bundle, recovery requires a new `versionId` or a separately defined re-attestation workflow with its own audit and approval contract.
 
+   The current Game Design launch and published-release protobuf contracts expose `version_id` as `int64`, so the illustrative `versionId` values below are numeric. UUID-shaped version identifiers are target-state examples only and must not be substituted into current-contract payloads until the transport fields migrate together.
+
    Illustrative attestation payload:
 
 ```json
 {
-  "tenantId": "t1",
-  "versionId": "v42",
+  "tenantId": "11111111-1111-4111-8111-111111111111",
+  "versionId": 42,
   "commitId": "c-9001",
   "publishWorkflowId": "pub-42",
   "publishedAt": "2026-03-13T10:00:00Z",
@@ -93,8 +95,8 @@ Illustrative attestation payload for a release with no derived world artifacts:
 
 ```json
 {
-  "tenantId": "t1",
-  "versionId": "v43",
+  "tenantId": "11111111-1111-4111-8111-111111111111",
+  "versionId": 43,
   "commitId": "c-9002",
   "publishWorkflowId": "pub-43",
   "publishedAt": "2026-03-13T11:00:00Z",
@@ -206,8 +208,8 @@ and a `scriptPatchVersion` value such as `v42-script.3`:
 ```json
 {
   "isScriptOnly": true,
-  "baseVersionId": "v42",
-  "versionId": "v42",
+  "baseVersionId": 42,
+  "versionId": 42,
   "scriptPatchVersion": "v42-script.3"
 }
 ```
@@ -291,13 +293,13 @@ Launch and cutover preflight use one fail-closed predicate for a full-version re
 Illustrative launch-descriptor examples:
 
 - Fresh launch:
-  - `ResolveLaunchDescriptor(tenantId=t1, gameTemplateId=gt-default, controlPlaneRequestId=ld-req-1001)` resolves to exactly one `versionId` (for example `v42`) plus any explicit patch/defaults pinned to that same base version.
-  - Repeating the same launch attempt with the same `controlPlaneRequestId` returns the same `versionId`, `scriptPatchVersion`, and release attestation identity.
+  - `ResolveLaunchDescriptor(tenantId=11111111-1111-4111-8111-111111111111, gameTemplateId=gt-default, controlPlaneRequestId=ld-req-1001)` resolves to exactly one numeric `versionId` (for example `42`) plus any explicit patch/defaults pinned to that same base version.
+  - Repeating the same launch attempt with the same `controlPlaneRequestId` returns the same numeric `versionId`, `scriptPatchVersion`, and release attestation identity.
 - Replacement-instance upgrade:
-  - `ResolveLaunchDescriptor(tenantId=t1, gameTemplateId=gt-default, controlPlaneRequestId=ld-req-2001, sourceVersionId=v42, targetVersionId=v43)` resolves to `versionId=v43` only when template references, release attestation, and any required `remapSetId` all validate against the target version.
+  - `ResolveLaunchDescriptor(tenantId=11111111-1111-4111-8111-111111111111, gameTemplateId=gt-default, controlPlaneRequestId=ld-req-2001, sourceVersionId=42, targetVersionId=43)` resolves to `versionId=43` only when template references, release attestation, and any required `remapSetId` all validate against the target version.
   - If `targetVersionId` would cause mixed-version dependencies or requires an unapproved remap, descriptor resolution fails before any instance rows are created.
 - Mixed-version rejection:
-  - If `game_template_world_ref` resolves to `versionId=v42` while `game_template_entity_ref` resolves to `versionId=v43`, `ResolveLaunchDescriptor` must fail validation instead of choosing one version heuristically.
+  - If `game_template_world_ref` resolves to `versionId=42` while `game_template_entity_ref` resolves to `versionId=43`, `ResolveLaunchDescriptor` must fail validation instead of choosing one version heuristically.
 
 Required preflight failure outcomes:
 

@@ -342,15 +342,18 @@ final class GameSessionRemoteControlPlaneService {
             blankToEmpty(request.getWorldSlug()),
             blankToEmpty(request.getRealmSlug()),
             requestedPointerVersion);
+    String targetRegionId = blankToEmpty(request.getTargetRegionId());
+    Long targetGameInstanceId = parseOptionalGameInstanceId(request.getTargetGameInstanceId());
+    requireTargetGameInstanceForRegion(targetRegionId, targetGameInstanceId);
     List<RemoteFollowup> followups =
         remoteFollowupRepository.findForControlPlane(
             tenantId,
-            blankToEmpty(request.getTargetRegionId()),
+            targetRegionId,
             blankToEmpty(request.getStatus()),
             parseOptionalGameInstanceId(request.getOriginGameInstanceId()),
             blankToEmpty(request.getOriginRegionId()),
             request.getOriginRegionEpoch(),
-            parseOptionalGameInstanceId(request.getTargetGameInstanceId()),
+            targetGameInstanceId,
             request.getTargetRegionEpoch(),
             blankToEmpty(request.getCurrentOriginRuntimeRegionId()),
             request.getCurrentOriginRuntimeRegionEpoch(),
@@ -513,6 +516,14 @@ final class GameSessionRemoteControlPlaneService {
       return null;
     }
     return parseGameInstanceId(gameInstanceId);
+  }
+
+  private static void requireTargetGameInstanceForRegion(
+      String targetRegionId, Long targetGameInstanceId) {
+    if (targetRegionId != null && !targetRegionId.isBlank() && targetGameInstanceId == null) {
+      throw new IllegalArgumentException(
+          "target_game_instance_id is required when target_region_id is set");
+    }
   }
 
   private Long parseOptionalPositivePointerVersion(boolean hasPointerVersion, long pointerVersion) {

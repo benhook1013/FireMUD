@@ -85,7 +85,7 @@ Illustrative retained evidence shape for a prod-like observability smoke or hobb
     "traceId": "9c8d7e6f5a4b3210",
     "queryPath": "firemud-logs-*",
     "queryableWithinSeconds": 74,
-    "verifiedFields": ["service", "traceId", "tenantId", "regionId", "characterId"]
+    "verifiedFields": ["service", "traceId", "tenantId", "gameInstanceId", "regionId", "characterId"]
   }
 }
 ```
@@ -219,23 +219,25 @@ In addition to functional, load, and security tests, FireMUD treats observabilit
 - **Tracing checks**
   - In at least one non-production pipeline where Jaeger (or an OTLP-compatible trace backend) is available, run a small smoke test that:
     - Exercises a login flow and a representative gameplay command.
-    - Verifies the presence of at least one `gamesession_handle_command` span with attributes such as `tenantId`, `regionId`, and `characterId`.
-    - Verifies the presence of at least one `tick_execute` span in environments where ticks are enabled.
-    - Verifies the presence of at least one TCP edge incident span (`tcpproxy_notify_disconnect` or `tcpproxy_connection`) in environments that expose the Telnet path.
+    - When the environment advertises and independently proves the corresponding gameplay-command workflow-tracing capability, verifies the presence of at least one `gamesession_handle_command` span with the applicable `tenantId`, `gameInstanceId`, `regionId`, and `characterId` attributes.
+    - When the environment advertises and independently proves the corresponding tick workflow-tracing capability, verifies the presence of at least one `tick_execute` span when ticks are enabled.
+    - When the environment advertises and independently proves the corresponding TCP-edge workflow-tracing capability, verifies the presence of at least one TCP edge incident span (`tcpproxy_notify_disconnect` or `tcpproxy_connection`) when the Telnet path is exposed.
     - Only when the environment advertises and independently proves the specific `backup` workflow-tracing capability, verifies `backup_pg_dump_snapshot` and `backup_verify_artifact` spans with matching environment/database, artifact, and tool lineage.
     - Only when the environment advertises and independently proves the specific `recovery` workflow-tracing capability, verifies `recovery_converge_participant` spans cover every declared and enabled participant and contain only approved safe dispositions before controlled reopen.
   - A workflow-span assertion runs only when both conditions hold: the environment capability descriptor names that exact workflow and its immutable end-to-end proof shows semantic spans, context propagation, collector ingestion, and supported queries. Generic Jaeger/OTLP availability, an environment variable, a sample span, or an externally supplied evidence reference is not proof. When either condition is absent, skip the span assertion and use the metrics/log fallback; do not make tracing a hidden readiness dependency.
+  - The four gameplay identity attributes are required together only for the applicable `gamesession_handle_command` workflow assertion; they are not a universal requirement for login, TCP-edge, backup, recovery, or generic RPC span checks.
 
 - **Structured log-field contract checks**
   - After a short synthetic login + command + tick smoke flow, assert that representative log lines from Gateway, Game Session, and TCP Proxy contain the structured fields required by the logging contract:
     - Required for request/tick handling paths: `service`, `traceId`, `correlationId`.
-    - Required when known in context: `tenantId`, `regionId`.
-    - Required when a player session is authenticated/bound: `characterId`.
-  - Fail the check if any expected service path emits only free-form messages without these fields, because incident runbooks and Kibana drilldowns depend on those keys.
+    - Required when known and applicable to the emitting operation: `tenantId`, `gameInstanceId`, and `regionId`.
+    - Required when a player session is authenticated/bound and the field is known: `characterId`.
+  - The smoke harness must not fabricate or post-enrich `tenantId`, `gameInstanceId`, `regionId`, or `characterId` merely to satisfy the contract. Assert each contextual field only on records whose source operation knows and applies that context.
+  - Fail the check if any expected service path emits only free-form messages without the fields required for that path; do not fail a record because an inapplicable contextual ID is absent.
   - In prod-like observability smoke, also verify end-to-end log pipeline queryability:
     - run a synthetic login + command + tick flow that records expected `traceId` values,
     - verify the resulting records arrive in the canonical Elasticsearch/Kibana log-query path within the environment's bounded indexing delay (default starting point: within 2 minutes unless the environment documents a stricter bound),
-    - verify those records are retrievable by `service` and `traceId`, plus `tenantId` / `regionId` / `characterId` when applicable,
+    - verify those records are retrievable by `service` and `traceId`, plus each contextual ID when it is present and applicable to the source operation; do not fabricate or post-enrich IDs for query assertions,
     - fail readiness if structured logs are emitted but not queryable end-to-end through the documented log-query path.
 
 New services and features that add critical metrics or alerts should extend these observability tests where feasible so configuration errors are caught in CI rather than only in staging or production.
@@ -269,14 +271,14 @@ To keep PR feedback fast while still preventing “it only breaks in staging” 
   - External edge blackbox smoke: verify prod-like environments expose an independent synthetic probe metric for each public entry path and that a forced probe failure (or equivalent test target) trips the non-production blackbox alert path.
   - Player-flow canary smoke: verify the prod-like environment exposes mirrored `playerflow_canary_success` and `playerflow_canary_latency_ms` signals for login and the representative command path, and that a controlled non-production failure can trip the canary alert path.
   - Tracing smoke: run a login + representative command flow and verify the applicable advertised-and-proved workflow capabilities before asserting named spans. In environments that advertise and prove the `backup` workflow, verify matching `backup_pg_dump_snapshot` + `backup_verify_artifact` evidence; in environments that advertise and prove the `recovery` workflow, verify participant-convergence spans. Without those specific proofs, retain the metrics/log fallback and do not assert workflow spans.
-  - Structured log contract smoke: verify sampled logs from critical paths contain required structured fields (`service`, `traceId`, `correlationId`, plus contextual `tenantId`/`regionId`/`characterId`).
-  - Log pipeline queryability smoke: verify those same synthetic records are queryable end-to-end in the canonical Elasticsearch/Kibana or documented compatible log-query path.
+  - Structured log contract smoke: verify sampled logs from critical paths contain `service`, `traceId`, and `correlationId`, plus contextual `tenantId`/`gameInstanceId`/`regionId`/`characterId` only when each is known and applicable; smoke evidence must not fabricate or post-enrich those IDs.
+  - Log pipeline queryability smoke: verify those same synthetic records are queryable end-to-end in the canonical Elasticsearch/Kibana or documented compatible log-query path using contextual IDs only when they are present and applicable; do not fabricate or post-enrich IDs for the query.
   - Prometheus rules conformance smoke: query the Prometheus rules API and verify the required fallback/recording rules are loaded (tail-loss fallback, tick safety ratio recording, login success ratio recording, command p99 latency recording, entry-path availability recording, and chat delivery latency recording).
     - This includes the canonical dynamic tail-loss pair (`redis_coordination_tail_loss_budget_ms`, `redis_coordination_tail_loss_slo_breached`) and both short-window and 1-day entry-path availability recordings.
-    - This includes preserving the bounded `command` label on the core-command latency recording rules so single-command regressions continue to alert.
+    - This includes preserving the bounded `service` and `command` labels on the core-command latency recording rules so service-specific or single-command regressions continue to alert.
     - This includes the replay-convergence set (`tick_effects_pending_oldest_age_seconds`, `tick_effects_replay_convergence_budget_seconds`, `tick_effects_replay_slo_breached`, and `tick_effects_replay_starved`) so ledger backlog alerting does not drift into environment-specific guesswork.
-    - This also includes backup fallback signals (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_pipeline_recent_restore_drill_slo_breached`, `backup_artifact_lineage_invalid`, `backup_artifact_restore_unreadable`, `recovery_participant_convergence_blocked`) and the observability alert group (`firemud.alerts.observability`) so new platform-health alerts cannot drift out of the shared ruleset silently.
-    - This also includes the tick-state projections (`current_tick_state`, `current_tick_terminal_at_ms`) and the aggregate remote follow-up recordings (`remote_followups_due_total`, `remote_followups_drain_lag_ms`, `remote_followups_backlog_over_budget_total`) so the observability contract stays aligned with the Redis and scaling docs without drifting back into forbidden tenant/region metric labels.
+    - This also includes backup fallback signals (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_pipeline_recent_restore_drill_slo_breached`, `backup_artifact_lineage_invalid`, `backup_artifact_restore_unreadable`, `recovery_participant_convergence_blocked`, `recovery_environment_convergence_blocked`, `recovery_participant_convergence_coverage_missing`, `recovery_participant_convergence_source_missing`) and the observability alert group (`firemud.alerts.observability`) so new platform-health alerts cannot drift out of the shared ruleset silently.
+    - This also includes the tick-state projections (`current_tick_state`, `current_tick_terminal_at_ms`) and the aggregate remote follow-up recordings (`remote_followups_due_total`, `remote_followups_drain_lag_ms`, `remote_followups_backlog_over_budget_total`) so the observability contract stays aligned with the Redis and scaling docs without drifting back into forbidden tenant/game-instance/region metric labels.
   - External-signal contract smoke: verify the prod-like environment exposes the canonical independent-signal contract from `design/architecture/system-architecture-logging-monitoring.md#external-probe-and-deadman-contract-normative`, or a documented compatibility mapping:
     - `entrypath_blackbox_probe_success{path,target}` for `path="websocket"` and `path="telnet"`, or a documented equivalent mapping.
     - `observability_deadman_heartbeat_timestamp_seconds{source}` or a documented equivalent external heartbeat signal.

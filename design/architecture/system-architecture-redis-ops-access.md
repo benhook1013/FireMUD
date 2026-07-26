@@ -121,10 +121,10 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `ResumeTicks(scope)`
   - `GetRegionTickStatus(scope)`
   - `RunScopedCoordinationReset(scope)`
-  - `ReconcileTickLedger(scope, oldRegionEpoch)`
-  - `ConvergeCommandRecords(scope, oldRegionEpoch)`
-  - `InitializeRegionMeta(scope, regionEpoch, currentTickId, currentTickState, currentTickTerminalAtMs)`
-  - `RebindRegionSessions(scope, regionEpoch)`
+  - `ReconcileTickLedger(scope, oldRegionEpoch | oldRegionEpochMap)`
+  - `ConvergeCommandRecords(scope, oldRegionEpoch | oldRegionEpochMap)`
+  - `InitializeRegionMeta(scope, regionEpoch | regionEpochMap, currentTickId, currentTickState, currentTickTerminalAtMs)`
+  - `RebindRegionSessions(scope, regionEpoch | regionEpochMap)`
   - `RunPostResetSmokeCheck(scope)`
 - Required CLI verbs:
   - `coordination-maintenance pause`
@@ -139,7 +139,7 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `coordination-maintenance resume`
   - `coordination-maintenance release-lock`
 - Scope grammar:
-  - `--scope region --tenant <tenantId> --region <regionId>`
+  - `--scope region --tenant <tenantId> --game-instance <gameInstanceId> --region <regionId>`
   - `--scope tenant --tenant <tenantId>`
   - `--scope cluster`
 - Scope inventory source:
@@ -150,6 +150,7 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - Cluster scope includes every active, paused, degraded, stalled, or draining region assigned to the Coordination Redis deployment at the inventory snapshot.
   - Redis `SCAN` is used only to enumerate keys for deletion/inspection after the durable scope has been established; it must not decide which regions exist.
   - Commands that auto-discover epoch maps must derive them from the same durable affected-region snapshot and emit that snapshot in audit output.
+- Epoch arguments are scope-dependent and use one typed contract across the control plane and CLI: region scope accepts scalar `oldRegionEpoch`/`regionEpoch`; tenant and cluster scopes accept `oldRegionEpochMap`/`regionEpochMap` containing one entry for every region in the durable affected-region snapshot. `RunScopedCoordinationReset(scope)` does not accept a caller-supplied epoch; it must return the corresponding scalar old/new epoch evidence for region scope or complete old/new epoch maps for tenant/cluster scope, and all downstream reconcile, command-convergence, metadata-initialization, and session-rebind calls consume that exact evidence. A map must never be collapsed to one scalar, and a scalar must never be reused for multiple regions.
 - Required argument contract:
   - `coordination-maintenance pause`
     - accepts only the scope grammar above.
@@ -163,10 +164,11 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `coordination-maintenance reset`
     - accepts the scope grammar above.
     - requires `--maintenance-lock-token <token>` from the corresponding `pause` step.
-    - accepts `--preserve-sessions` / `--invalidate-sessions` where session policy allows an operator choice.
-    - never infers session invalidation from scope alone when the design says it is optional.
+    - records the effective session policy in its audit output: region scope preserves gameplay and session-context records by default and accepts `--invalidate-sessions` as an explicit opt-out; tenant scope preserves them only with explicit `--preserve-sessions` and otherwise invalidates them; cluster scope invalidates them by default and permits preservation only where an explicit deployment policy allows `--preserve-sessions`.
+    - must not infer tenant or cluster preservation from scope alone; the explicit preservation option and any deployment policy gate remain required.
     - is the canonical operator entrypoint that performs and audits the mandatory PostgreSQL `region_epoch` bump before clearing Redis coordination state for the selected scope.
     - must emit the resulting bumped epoch per affected region in its audit output so downstream reconcile/init-meta steps consume one authoritative old/new epoch record.
+    - for tenant and cluster scopes, resolves every affected `gameInstanceId` from the durable affected-region snapshot, then enumerates and removes `remote:{tenantInstanceTag}:*` for each resolved instance using bounded `SCAN`/`UNLINK` batches; it must not attempt a tenant-only pattern.
   - `coordination-maintenance reconcile-ledger`
     - accepts the scope grammar above.
     - requires `--maintenance-lock-token <token>`.
@@ -184,7 +186,13 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `coordination-maintenance init-meta`
     - accepts the scope grammar above.
     - requires `--maintenance-lock-token <token>`.
-    - accepts either `--region-epoch <epoch> --current-tick-id <tickId>` for `--scope region` or `--region-epoch-map <path> --current-tick-id <tickId>` for tenant/cluster scopes.
+    - accepts either `--region-epoch <epoch>` for `--scope region` or `--region-epoch-map <path>` for tenant/cluster scopes, together with `--current-tick-id <tickId>`, `--current-tick-state <STAGED|RESOLVING|APPLIED|ABANDONED>`, and `--current-tick-terminal-at-ms <epochMillis>`.
+    - For reset initialization, `--current-tick-id` defaults to `-1`, `--current-tick-state` defaults to `APPLIED`, and `--current-tick-terminal-at-ms` defaults to the init-meta write time. A terminal timestamp is `NULL` for `STAGED` or `RESOLVING`; callers may override the reset defaults only with a state/timestamp combination accepted by the control-plane signature. The CLI passes these normalized values to `InitializeRegionMeta(scope, regionEpoch | regionEpochMap, currentTickId, currentTickState, currentTickTerminalAtMs)` and must not invent a separate default or argument shape.
+  - `coordination-maintenance rebind-sessions`
+    - accepts the scope grammar above.
+    - requires `--maintenance-lock-token <token>` from the same paused reset workflow.
+    - accepts either `--region-epoch <epoch>` for `--scope region` or `--region-epoch-map <path>` for tenant/cluster scopes.
+    - is permitted when the reset's effective session policy preserved sessions: this is the default for region scope, while tenant and cluster scopes require the recorded `--preserve-sessions` choice and any required deployment-policy approval. It recreates region-authoritative bindings from the durable affected-session inventory and must refresh the same maintenance lock rather than acquiring another lock.
   - `coordination-maintenance session-cleanup`
     - accepts only `--scope tenant --tenant <tenantId>` in first implementation; broader cleanup scopes are out of contract until explicitly designed.
     - requires `--maintenance-lock-token <token>`.
@@ -199,7 +207,7 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `coordination-maintenance resume`
     - accepts only the scope grammar above.
     - requires `--maintenance-lock-token <token>`.
-    - exits non-zero unless the scope currently satisfies the resume gate: reset complete, old-epoch ledger converged, command convergence complete, and smoke check passing.
+    - exits non-zero unless the scope currently satisfies the selected workflow's resume gate: reset workflows require reset completion, old-epoch ledger convergence, command convergence, a passing smoke check, and a completed `rebind-sessions` step whenever the effective session policy preserved gameplay sessions; replay-first workflows require in-epoch ledger and command convergence without an epoch bump and a passing replay budget/status check.
     - is the canonical success-path command that releases the deployment maintenance lock after the scope returns to `RUNNING`.
   - `coordination-maintenance release-lock`
     - requires `--maintenance-lock-token <token>`.
@@ -217,16 +225,20 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - One workflow owns one deployment maintenance lock from `coordination-maintenance pause` until either `coordination-maintenance resume` or `coordination-maintenance release-lock` completes.
   - Later subcommands in that workflow refresh the lock TTL with the same `maintenanceLockToken`; they do not acquire independent locks.
   - If a command loses the lock, every later mutating command must fail closed until an operator explicitly releases or restarts the workflow.
+  - A `replay_first` workflow starts with compatibility class `cleanup`. Escalation to `reset_first` must atomically compare-and-match that same token and upgrade the class to `reset` without releasing or reacquiring the lock. The upgrade audit record, including scope, old/new class, token/workflow lineage, actor, reason, and resulting epoch transition, must be durable before the epoch bump or reset-key mutation is allowed.
+  - If the same-token upgrade or its audit write cannot complete, the workflow remains paused and no reset mutation may proceed; the operator must use the explicit failure/abort path. A second lock cannot be used to bypass the failed upgrade.
 
 Canonical epoch-map examples:
 
 ```yaml
 # old-region-epoch-map.yaml
 regions:
-  - tenantId: T1
+  - tenantId: 7b3b074e-d597-4e9b-b96f-4f5946d26120
+    gameInstanceId: 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78
     regionId: R7
     oldRegionEpoch: 12
-  - tenantId: T1
+  - tenantId: 7b3b074e-d597-4e9b-b96f-4f5946d26120
+    gameInstanceId: 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78
     regionId: R8
     oldRegionEpoch: 4
 ```
@@ -234,10 +246,12 @@ regions:
 ```yaml
 # region-epoch-map.yaml
 regions:
-  - tenantId: T1
+  - tenantId: 7b3b074e-d597-4e9b-b96f-4f5946d26120
+    gameInstanceId: 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78
     regionId: R7
     regionEpoch: 13
-  - tenantId: T1
+  - tenantId: 7b3b074e-d597-4e9b-b96f-4f5946d26120
+    gameInstanceId: 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78
     regionId: R8
     regionEpoch: 5
 currentTickId: -1
@@ -246,19 +260,22 @@ currentTickId: -1
 ```yaml
 # cluster-region-epoch-map.yaml
 regions:
-  - tenantId: T1
+  - tenantId: 7b3b074e-d597-4e9b-b96f-4f5946d26120
+    gameInstanceId: 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78
     regionId: R7
     regionEpoch: 13
-  - tenantId: T1
+  - tenantId: 7b3b074e-d597-4e9b-b96f-4f5946d26120
+    gameInstanceId: 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78
     regionId: R8
     regionEpoch: 5
-  - tenantId: T2
+  - tenantId: 6c0bb04d-bdcb-45a4-a1bc-a7ee7432b461
+    gameInstanceId: 2e3ee139-a6e8-44ad-b840-891b22c2255b
     regionId: R2
     regionEpoch: 21
 currentTickId: -1
 ```
 
-Minimum audit output for any command that auto-discovers or consumes an epoch map must include the resolved `<tenantId, regionId, oldRegionEpoch|regionEpoch>` tuples so operators can verify exactly which timeline coordinates were acted on.
+Minimum audit output for any command that auto-discovers or consumes an epoch map must include the resolved `<tenantId, gameInstanceId, regionId, oldRegionEpoch|regionEpoch>` tuples so operators can verify exactly which timeline coordinates were acted on.
 
 ### Pause/Status/Resume State Contract
 
@@ -277,6 +294,7 @@ Minimum audit output for any command that auto-discovers or consumes an epoch ma
   - Wait for any in-flight executor work in the scope to drain, fail, or lose lease so no executor can create new coordination state under the old epoch.
 - `GetRegionTickStatus(scope)` minimum fields per affected region:
   - `tenantId`
+  - `gameInstanceId`
   - `regionId`
   - `status`
   - `pauseRequested`
@@ -309,7 +327,7 @@ Jobs, wrappers, and dashboards may present this state differently, but they must
 | --- | --- |
 | Lease | A region lease for every sampled region in the scope can be acquired and renewed without stale-epoch or lock-conflict errors that persist beyond normal retry budget. |
 | Redis metadata baseline | `tick:{tenantRegionTag}:meta` exists or is created during the smoke run with the expected `region_epoch` and baseline `current_tick_id` for the sampled region. |
-| Batch allocation | The smoke tick allocates exactly one durable batch for the sampled `(tenantId, regionId, region_epoch, tickId)` and records the expected lease/fencing token. |
+| Batch allocation | The smoke tick allocates exactly one durable batch for the sampled `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` and records the expected lease/fencing token. |
 | Redis staging | The smoke tick stages at least one no-op or synthetic smoke-test effect into `pending`, and `pending` correlates back to the durable `tick_batch_id`. |
 | Ledger convergence | The staged smoke effect reaches a terminal ledger outcome (`APPLIED` or explicit smoke-test `ABANDONED`) without leaving `SCHEDULED` rows stranded. |
 | Cleanup | `pending` is cleared, per-region locks are released, and the region is no longer considered in-flight after the smoke tick completes. |
@@ -324,8 +342,8 @@ Direct `redis-cli` writes to coordination prefixes are reserved for **break-glas
 
 - Any break-glass write that mutates `tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:*`, or `tick-executor-lease:*` must be followed by a reset/cleanup scope that actually covers the mutated prefix before normal tick processing resumes:
   - For region-scoped families (`tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`), run a region- or tenant-scoped coordination reset as appropriate.
-  - For tenant-scoped `remote:*`, run a tenant-scoped reset or an explicit tenant-scoped `remote:<tenantId>:*` cleanup workflow (with audit trail), not a region-only reset.
-  - For session prefixes, follow session reset policy (region resets preserve `session:game:*` and current `sessionctx:*` bootstrap/session-context keys by default; tenant resets always invalidate `session:auth:*` and preserve gameplay/session-context keys only when an explicit `--preserve-sessions` option is invoked; cluster resets invalidate both by default).
+  - For instance-scoped `remote:{tenantInstanceTag}:*`, run a tenant-scoped reset so the tooling resolves every affected game instance and removes each instance pattern with an audit trail; do not use a region-only reset or invent a tenant-only pattern.
+  - For session prefixes, follow the canonical reset-policy matrix: region resets do not delete broad `session:auth:*` prefixes through a region-only scan, but preserved sessions must pass auth/revocation validation and receive any required re-authentication before `rebind-sessions`; tenant resets always invalidate `session:auth:*` and preserve gameplay/session-context keys only when an explicit `--preserve-sessions` option is invoked; cluster resets invalidate both by default.
 - Operators must treat such writes as equivalent to “coordination state may be inconsistent” and use the Coordination Reset Model to bring the region/tenant/cluster back to a known-good state, rather than leaving ad-hoc edits in place as a permanent fix.
 - Break-glass flows should go through a small wrapper (CLI or Logging & Admin action) that:
   - Executes the minimal required Redis mutation.

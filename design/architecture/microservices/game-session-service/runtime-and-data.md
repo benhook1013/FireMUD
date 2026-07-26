@@ -30,7 +30,7 @@ The service runtime model assumes replaceable workers, not authoritative in-proc
 
 Game Session uses the gameplay layer’s session front-end plus lease-owner execution model:
 
-- Connected sockets bind to a stable session front-end pod, while region-scoped tick execution remains fenced to the current `<tenantId, regionId>` lease owner.
+- Connected sockets bind to a stable session front-end pod, while region-scoped tick execution remains fenced to the current `<tenantId, gameInstanceId, regionId>` lease owner.
 - Session front-ends may forward work to lease owners over internal gRPC, but only lease owners may mutate region-scoped coordination state.
 - Tick-related multi-key operations, including locks, pending state, queues, timers, and retry metadata, are performed exclusively via the shared Lua scripts described in [Redis Architecture](../../system-architecture-redis.md#atomicity-and-concurrency-control). Ad-hoc multi-key sequences against tick keys are not allowed outside these scripts.
 - Because session bindings, leases, queues, timers, and retry markers are externalized, another Game Session instance of the same type must be able to assume session-front-end or lease-owner responsibility after an ordinary qualifying failure. Exhausted recovery, unavailable shared authority, unsafe ownership ambiguity, terminal session policy, or edge transport loss uses explicit fallback instead.
@@ -46,6 +46,7 @@ Game Session treats Redis Coordination and Cache/Rate-Limit roles as separate co
 ### Redis role and prefix details
 
 - Coordination prefixes are reset-tolerant in line with [Redis Reset & Recovery](../../system-architecture-redis-reset-and-recovery.md), except for reset-sensitive gameplay session bindings under `session:game:*`. Region-scoped resets preserve gameplay sessions by default; wider tenant or cluster resets may invalidate sessions according to the reset policy matrix. Game Session’s coordination design must therefore remain safe under the documented Redis tail-loss envelope rather than assuming perfect recovery of every transient coordination key.
+- The canonical opaque `{tenantRegionTag}` is derived by the shared key builders from the full `<tenantId, gameInstanceId, regionId>` tuple. It is the region scope for lease, queue, timer, retry, pending, and lock keys below; key examples must retain `{tenantRegionTag}` rather than substituting a differently named or partial tag.
 - Coordination ownership includes registered Lua-script access to prefixes such as:
   - `tick:{tenantRegionTag}:queue:<entityId>`
   - `tick:{tenantRegionTag}:pending`
@@ -53,8 +54,8 @@ Game Session treats Redis Coordination and Cache/Rate-Limit roles as separate co
   - `timer:{tenantRegionTag}`
   - `retry:{tenantRegionTag}`
   - `tick-executor-lease:{tenantRegionTag}`
-  - `remote:<tenantId>:<entityId>` and related coordination prefixes listed in the [Redis Cheat Sheet](../../system-architecture-redis-cheatsheet.md)
-- `remote:<tenantId>:<entityId>` remains a best-effort hint marker for cross-region follow-ups; durable follow-up state lives in PostgreSQL via the tick effect ledger and follow-up tables.
+  - `remote:{tenantInstanceTag}:<entityId>` and related coordination prefixes listed in the [Redis Cheat Sheet](../../system-architecture-redis-cheatsheet.md)
+- `remote:{tenantInstanceTag}:<entityId>` derives `{tenantInstanceTag}` from `<tenantId, gameInstanceId>` and remains a best-effort hint marker for cross-region follow-ups; durable follow-up state lives in PostgreSQL via the tick effect ledger and follow-up tables.
 - Coordination keys must be constructed through the shared key builders and script-registry contracts rather than ad-hoc string concatenation in service code.
 - Changes to Game Session Redis usage must also be reviewed against the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) in addition to the core Redis architecture docs.
 - Game Session may rely on Cache/Rate-Limit Redis for read-side caches that help serve hot-path session views, most notably pre-rendered room LOOK aggregates under `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>` as defined in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md#cache-rate-limit-key-catalog).
@@ -98,7 +99,7 @@ These identity and revocation rules are defined in [Authentication & Authorizati
 
 ## Tick Coordination and Lease Ownership
 
-Game Session acts as the authoritative tick executor for each `<tenantId, regionId>` it owns:
+Game Session acts as the authoritative tick executor for each `<tenantId, gameInstanceId, regionId>` it owns:
 
 - It participates in region leadership using the Redis lease key `tick-executor-lease:{tenantRegionTag}` described in [Redis Architecture](../../system-architecture-redis.md#region-leadership-and-tick-executor-lease).
 - While it holds the lease for a region, it is the only instance allowed to consume commands from that region’s queues and timers, drive `tick:{tenantRegionTag}:pending`, and issue tick-scoped gRPC calls on behalf of that region’s commands.

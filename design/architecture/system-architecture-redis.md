@@ -75,14 +75,14 @@ FireMUD uses Redis as a **transient, high‑performance coordination layer**, no
 
 Redis coordination keys form a long-running, tail-loss-bounded **coordination buffer**, not the durable log of record for gameplay effects:
 
-- Durable history for tick-driven outcomes (for example, “which effects were applied or abandoned for a given `(tenantId, regionId, region_epoch, tickId, effectKey)`”) lives in PostgreSQL via the tick effect ledger and domain idempotency tables described in `system-architecture-tick-failures-and-operations.md` and `system-architecture-transactions.md`.
+- Durable history for tick-driven outcomes (for example, “which effects were applied or abandoned for a given `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)`”) lives in PostgreSQL via the tick effect ledger and domain idempotency tables described in `system-architecture-tick-failures-and-operations.md` and `system-architecture-transactions.md`.
 - Coordination Redis holds volatile structures such as tick queues, `pending` sets, timers, region leases, tick event streams, and scheduler offsets; these structures are expected to be subject to bounded tail-loss and scoped resets as defined in this document and the Redis reset/runbook docs.
 - Application and ops designs must not treat AOF contents or Redis key history as the primary log for audits, analytics, or long-term effect replay; those concerns belong in PostgreSQL-backed ledgers and domain stores.
 
 - **Coordination timeline = `(regionEpoch, tickId)`**
-- For each `<tenantId, regionId>` the canonical coordination timeline is the pair `(region_epoch, tickId)`:
+- For each `<tenantId, gameInstanceId, regionId>` the canonical coordination timeline is the pair `(region_epoch, tickId)`:
   - `region_epoch` lives in PostgreSQL and is advanced by the tick control plane when a scoped coordination reset occurs (or when explicitly performing topology/maintenance operations that intentionally sever the old timeline for a region).
-  - `tickId` is monotonic per `<tenantId, regionId>` within a given `region_epoch` and is carried on all tick‑driven calls and ledger entries.
+  - `tickId` is monotonic per `<tenantId, gameInstanceId, regionId>` within a given `region_epoch` and is carried on all tick‑driven calls and ledger entries.
 - **Bootstrap vs stream**
   - The authoritative **baseline** for `(region_epoch, tickId)` comes from Game Session’s control/status surface (for example a `GetRegionTickStatus` API) backed by a PostgreSQL `RegionStatus`-style table; new consumers and operational tooling must obtain their initial view of the timeline from there rather than inferring it from Redis keys.
   - Long‑lived consumers then follow `StreamTickHeartbeats` as the authoritative progression of the timeline after that baseline; if a heartbeat disconnects or an epoch bump is observed, they reconcile using the control API plus durable domain state before resuming.
@@ -94,18 +94,18 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
     - Reset/replay tooling and Lua validation must therefore distinguish epoch-scoped source state from tick-scoped staged state.
   - A single **per-region metadata key** captures the Redis-side view of this timeline for coordination scripts:
     - `tick:{tenantRegionTag}:meta` is a hash that stores at least:
-      - `region_epoch` – the epoch currently considered valid for this `<tenantId, regionId>` in Redis.
+      - `region_epoch` – the epoch currently considered valid for this `<tenantId, gameInstanceId, regionId>` in Redis.
       - `current_tick_id` – the highest **staged** `tickId` for this region as observed by the tick executor’s coordination scripts. It is a monotonic guard for Redis writes only; it is **not** the source of truth for “last committed tick”.
       - `current_tick_state` – the Redis-side execution state for `current_tick_id`. Allowed values are:
         - `STAGED` – Redis `pending`/queue state exists for this tick and hot-path scripts may continue to add idempotent entries for the same tick.
         - `RESOLVING` – durable domain/application work for this tick is in progress or being reconciled; no newer tick may be staged yet.
-        - `APPLIED` – all required effects for this tick have reached a durable applied/no-op terminal outcome in PostgreSQL-backed handlers or the reconciliation backlog.
+        - `APPLIED` – every required participant for this tick has explicit durable terminal evidence: its participant outcome is `APPLIED` or `ABANDONED` in the PostgreSQL-backed ledger or an equivalent durable terminal record. The mere presence of a reconciliation-backlog item is not evidence of a terminal outcome. Handler-level replay/no-op results are recorded separately as `replay_ok` attempt outcomes and do not satisfy this requirement by themselves.
         - `ABANDONED` – the tick was intentionally terminated for the current epoch (for example due to reset/recovery) and no more work for that `(region_epoch, tickId)` may be staged through hot-path scripts.
       - `current_tick_terminal_at_ms` – caller-supplied timestamp marking when `current_tick_state` first entered `APPLIED` or `ABANDONED`; used for observability and bounded cleanup only, never for correctness decisions inside Lua.
     - Illustrative Redis hash contents:
 
       ```text
-      HGETALL tick:{tenant-demo:region:starter-village}:meta
+      HGETALL tick:{tenantRegionTag}:meta
       region_epoch               14
       current_tick_id            9285
       current_tick_state         RESOLVING
@@ -119,7 +119,7 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
         - The first script or caller that hands staged effects to durable domain/application processing flips the state to `RESOLVING`.
         - Replays for the same tick must treat `STAGED` and `RESOLVING` as the same logical in-flight tick and may only add idempotent effect entries for that same `current_tick_id`.
       - `RESOLVING -> APPLIED`:
-        - Only after the durable tick ledger and/or reconciliation backlog for `(tenantId, regionId, region_epoch, tickId)` shows all required participants at applied/no-op terminal outcomes.
+        - Only after the durable tick ledger or equivalent durable terminal records for `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId)` contain explicit `APPLIED` or `ABANDONED` evidence for every required participant. A reconciliation-backlog item may identify work still needing reconciliation, but its presence alone cannot establish `APPLIED`; replay/no-op is a handler attempt outcome, recorded as `replay_ok`, not a ledger status.
       - `RESOLVING -> ABANDONED`:
         - Only after the control plane or recovery tooling has made an explicit terminal decision to abandon the tick for the current epoch.
       - `APPLIED` or `ABANDONED` for tick `T`:
@@ -135,10 +135,10 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
     - Schedulers and operators:
       - Obtain their authoritative baseline for `(region_epoch, tickId)` from PostgreSQL RegionStatus/tick effect ledger and heartbeats, not from `current_tick_id`.
       - On a normal cold start with empty Coordination Redis, the next winning tick executor initializes or recreates `tick:{tenantRegionTag}:meta` during hot-path staging from PostgreSQL `RegionStatus`; schedulers and operators do not treat missing `meta` as a manual pre-seeding task.
-      - Treat Redis `pending` contents as an implementation detail of the hot path, not as proof of durable convergence. The durable proof that a tick is safe to move past lives in PostgreSQL-ledger and reconciliation state, after which the caller records `APPLIED` or `ABANDONED` in `tick:{tenantRegionTag}:meta`.
+      - Treat Redis `pending` contents as an implementation detail of the hot path, not as proof of durable convergence. The durable proof that a tick is safe to move past is explicit terminal `APPLIED` or `ABANDONED` evidence for every required participant in the PostgreSQL ledger or equivalent durable terminal records; reconciliation-backlog presence and `replay_ok` attempt outcomes are insufficient by themselves. Only after that proof does the caller record `APPLIED` or `ABANDONED` in `tick:{tenantRegionTag}:meta`.
       - Recovery after tail loss or reset does **not** reconstruct old ticks by silently restaging them through normal hot-path scripts. Recovery completes or abandons older work from durable manifests, ledger rows, and reconciliation backlog state, then records the resulting terminal meta state before allowing newer ticks to stage.
 - Split‑brain detection, replay, and reset handling treat this timeline as the arbiter of “which work is valid”:
-  - If multiple executors attempt to own the same `<tenantId, regionId>` with different `region_epoch` values, the highest epoch wins and lower epochs are treated as stale.
+  - If multiple executors attempt to own the same `<tenantId, gameInstanceId, regionId>` with different `region_epoch` values, the highest epoch wins and lower epochs are treated as stale.
   - After a region‑ or tenant‑scoped reset, a new `region_epoch` is created and any surviving coordination state from older epochs is ignored or explicitly cleaned up by reset tooling.
 
 - **Non‑authoritative for game data**
@@ -147,14 +147,14 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
   - Losing coordination state within a bounded window must not create irreversible financial effects, cross‑tenant data leaks, or unfixable domain inconsistencies.
 
 - **Tail‑loss envelope**
-  - Coordination Redis is configured with AOF and sized so that **only a small tail** of recent coordination state per `<tenantId, regionId>` may be lost during failover or restart. In production‑like environments, the canonical envelope is:
+  - Coordination Redis is configured with AOF and sized so that **only a small tail** of recent coordination state per `<tenantId, gameInstanceId, regionId>` may be lost during failover or restart. In production‑like environments, the canonical envelope is:
     - `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` (see `system-architecture-redis-operations.md`).
   - Designs must tolerate the loss of a few ticks’ worth of:
     - Commands, staged effects, timers, and retry markers, and
     - Session liveness hints and other advisory metadata.
   - In terms of the coordination timeline:
-    - A normal failover or bounded tail‑loss event may drop or replay the last `N` ticks on the timeline for a `<tenantId, regionId>`, where `N` corresponds to the configured tail‑loss SLOs in `system-architecture-redis-operations.md` (computed from `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)`).
-    - Tick effect ledger behavior and domain idempotency rules (see `system-architecture-tick-failures-and-operations.md`) must guarantee that those dropped/replayed ticks converge to a final state where each `(tenantId, regionId, region_epoch, tickId, effectKey)` is either durably applied or durably abandoned, never left indefinitely “half‑applied”.
+    - A normal failover or bounded tail‑loss event may drop or replay the last `N` ticks on the timeline for a `<tenantId, gameInstanceId, regionId>`, where `N` corresponds to the configured tail‑loss SLOs in `system-architecture-redis-operations.md` (computed from `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)`).
+    - Tick effect ledger behavior and domain idempotency rules (see `system-architecture-tick-failures-and-operations.md`) must guarantee that those dropped/replayed ticks converge to a final state where each `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)` is either durably `APPLIED` or durably `ABANDONED`, never left indefinitely “half‑applied”.
   - Flows that **cannot** tolerate this tail‑loss (for example, real‑money purchases, cross‑tenant transfers, or unique external side effects) must use durable domain mechanisms and may only use Redis for optional coordination.
 
 - **Idempotent replay and monotonic guards**
@@ -164,7 +164,7 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
   - Lua scripts must treat Redis as the single coordination state for their keys, re‑deriving their desired state from current contents and arguments rather than relying on in‑process history.
 
 - **Region authority**
-  - For each `<tenantId, regionId>` there is at most **one active tick executor** at a time, guarded by a region‑scoped lease key.
+  - For each `<tenantId, gameInstanceId, regionId>` there is at most **one active tick executor** at a time, guarded by a region‑scoped lease key.
   - All tick queues, locks, timers, and pending sets for that region live in a single hash‑slot‑compatible keyspace (see [Key Naming and Shard Discipline](#key-naming-and-shard-discipline)).
 
 - **Session binding**
@@ -183,7 +183,7 @@ The **Redis Design Checklist** (`system-architecture-redis-design-checklist.md`)
 From an application perspective:
 
 - Coordination Redis is expected to be **highly available** within the limits of the chosen profile (for example, `production_clustered`).
-- Tail-loss is bounded to a **small window** per `<tenantId, regionId>`; losing more than this window is treated as an incident and investigated using the metrics and alerts defined in `system-architecture-redis-operations.md`.
+- Tail-loss is bounded to a **small window** per `<tenantId, gameInstanceId, regionId>`; losing more than this window is treated as an incident and investigated using the metrics and alerts defined in `system-architecture-redis-operations.md`.
 - Lua scripts and domain idempotency guarantees ensure that replay and partial loss of coordination keys do not:
   - Double-apply critical effects.
   - Violate cross-tenant isolation.
@@ -370,10 +370,10 @@ Key principles:
   - Human‑readable values (character names, room titles) are **never** embedded directly in keys; only stable identifiers (numeric IDs, UUIDs) appear in key components.
 
 - **`{tenantRegionTag}` hash tag**
-  - Tick‑region coordination keys use a canonical hash tag placeholder `{tenantRegionTag}` derived from `<tenantId, regionId>`.
+  - Tick‑region coordination keys use a canonical hash tag placeholder `{tenantRegionTag}` derived from `<tenantId, gameInstanceId, regionId>`.
   - Properties:
     - The concrete string format is an implementation detail of shared key helpers; callers treat it as opaque.
-    - All region‑scoped keys for a given region share the same `{tenantRegionTag}` and therefore land in the same Redis Cluster slot.
+    - All region‑scoped keys for a given `<tenantId, gameInstanceId, regionId>` share the same full-scope `{tenantRegionTag}` and therefore land in the same Redis Cluster slot.
     - Multi‑key coordination scripts must only receive keys that share the same hash tag; CI and helpers enforce this.
   - Representative patterns:
     - `tick:{tenantRegionTag}:lock:<entityId>`
@@ -381,6 +381,10 @@ Key principles:
     - `timer:{tenantRegionTag}`
     - `retry:{tenantRegionTag}`
     - `tick-executor-lease:{tenantRegionTag}`
+
+- **`{tenantInstanceTag}` hash tag**
+  - Instance-scoped coordination or automation projection keys use a canonical opaque hash tag placeholder `{tenantInstanceTag}` derived from `<tenantId, gameInstanceId>`.
+  - The concrete string format is an implementation detail of shared key helpers; callers must not replace it with a tenant-only tag or append a second raw instance identifier.
 
 - **`{tenantGameplayTag}` hash tag**
   - Session-only gameplay keys use a canonical hash tag placeholder `{tenantGameplayTag}` derived from `<tenantId>`.
@@ -414,7 +418,7 @@ When designing or reviewing coordination flows, use this shard-local checklist:
 
 - All mutating Lua scripts for coordination prefixes are either:
   - Single-key operations, or
-  - Shard-local multi-key operations where all `KEYS` share the same `{tenantRegionTag}` or `{tenantGameplayTag}` hash tag and Redis Cluster slot.
+  - Shard-local multi-key operations where all `KEYS` share the same `{tenantRegionTag}`, `{tenantInstanceTag}`, or `{tenantGameplayTag}` hash tag and Redis Cluster slot.
 - Cross-region behavior is implemented via per-region operations and durable follow-up records in PostgreSQL, **not** via cross-region multi-key scripts.
 - Callers always construct keys via shared key helpers (for example, builders in `firemud-common`) so `{tenantRegionTag}`, `{tenantGameplayTag}`, prefixes, and slots remain consistent; scripts and callers must not hand-roll key strings with embedded hostnames, region names, or ad-hoc hash tags.
 - CI and the Lua Script Registry:
@@ -438,14 +442,14 @@ This table lists representative coordination keys and their responsibilities. Fu
 | `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>` and `session:game:index:tenant:{tenantGameplayTag}` | Tenant-scoped reverse indexes used for bounded revocation, reconnect, and inspection without wildcard scans. |
 | `retry:{tenantRegionTag}` | Retry queue for failed actions, keyed by `next_eligible_tick_id` on the target region timeline (not wall-clock due time). |
 | `timer:{tenantRegionTag}` | Sorted set of timers for a region; score is expiration timestamp (ms), members encode entity/effect metadata. |
-| `remote:<tenantId>:<entityId>` | Best‑effort, TTL-bounded hint marker for cross‑region follow‑ups (durable follow‑ups live in PostgreSQL). Default `remote_hint_ttl_ms = 60_000`; expiry/missing keys affect latency only. |
-| `route:{tenantRegionTag}:gamesession` | Reserved for a potential future gameplay routing view for `<tenantId, regionId> → shardTarget`. Per ADR 0007, lease-aware edge admission and a client-visible shard handoff signal are not part of the current edge contract; do not implement Gateway consumption of this mapping without a dedicated sharding/routing design update. |
-| `tick-events:{tenantRegionTag}` and `tick-events-offset:{tenantRegionTag}` | Best-effort per-region tick event stream and consumer offset (typically Redis Stream entry ID). Streams are retention-capped (default `tick_events_maxlen = 2048` per region); consumers treat trimmed history as normal truncation and bootstrap from committed heartbeats/RegionStatus. |
+| `remote:{tenantInstanceTag}:<entityId>` | Best‑effort, TTL-bounded hint marker scoped to the complete `<tenantId, gameInstanceId>` identity for cross-region follow-ups (durable follow-ups live in PostgreSQL). Default `remote_hint_ttl_ms = 60_000`; expiry/missing keys affect latency only. Tenant/cluster reset tooling resolves game instances from the durable scope inventory and scans one `remote:{tenantInstanceTag}:*` pattern per instance; no tenant-only remote key family exists. |
+| `route:{tenantRegionTag}:gamesession` | Reserved for a potential future gameplay routing view for `<tenantId, gameInstanceId, regionId> → shardTarget`. Per ADR 0007, lease-aware edge admission and a client-visible shard handoff signal are not part of the current edge contract; do not implement Gateway consumption of this mapping without a dedicated sharding/routing design update. |
+| `tick-events:{tenantRegionTag}` and `tick-events-offset:{tenantRegionTag}` | Best-effort per-region tick event stream and consumer offset (typically Redis Stream entry ID). The offset value must include `{regionEpoch, latestTickId, streamOffset}`; consumers compare `regionEpoch` with the current control-plane epoch and discard the value before reuse on mismatch. Streams are retention-capped (default `tick_events_maxlen = 2048` per region); consumers treat trimmed history as normal truncation and bootstrap from committed heartbeats/RegionStatus. |
 | `tick-events-lease:{tenantRegionTag}` | Best-effort lease to avoid duplicate tick-event consumption work by observers. Safe to drop; consumers reacquire after restarts/resets. |
 | `automation:timer:{tenantRegionTag}` | Region-scoped Automation & Scripting timer index for `onInterval` and timer coordination. Stored entries remain instance-aware in payload and durable identity (`gameInstanceId`, and plugin identifiers when applicable) even though the Redis key is region-scoped for slotting and reset targeting. |
-| `script-scheduler:{tenantRegionTag}:lastTickId` | Automation & Scripting scheduler checkpoint for “every N ticks” triggers; used to resume interval counting after leader changes. Durable automation schedules, quotas, and trigger-instance de-duplication live in PostgreSQL; this key is a coordination hint, not the source of truth for which scripts should eventually run or whether a due trigger was already emitted. |
+| `script-scheduler:{tenantRegionTag}:lastTickId` | Automation & Scripting derived discovery hint for “every N ticks” triggers. Its value contains `{regionEpoch, latestTickId}` and is rejected/rebuilt when the stored epoch differs from the authoritative epoch. It never stores or owns `streamOffset`; `tick-events-offset:{tenantRegionTag}` is the sole event-stream offset record. Durable automation schedules, quotas, and trigger-instance de-duplication live in PostgreSQL; this key is not the source of truth for which scripts should eventually run or whether a due trigger was already emitted. |
 
-Region‑scoped coordination keys share the same `{tenantRegionTag}` hash tag and therefore land in the same Redis Cluster slot. Tenant-scoped gameplay session keys share `{tenantGameplayTag}` for session-only CAS/index updates. Other tenant-scoped auth or single-key prefixes that are not mutated together may remain ordinary single-key operations, but they must still honour the coordination vs cache role split described above.
+Region‑scoped coordination metadata keys share the same full-scope `{tenantRegionTag}` hash tag and therefore carry `<tenantId, gameInstanceId, regionId>` while landing in the same Redis Cluster slot. Instance-scoped projections use `{tenantInstanceTag}` for `<tenantId, gameInstanceId>`, and tenant-scoped gameplay session keys share `{tenantGameplayTag}` for session-only CAS/index updates. Pre-auth `sessionctx:*` and tenant-only auth/quotas are intentionally outside the runtime region scope and must retain their documented lifecycle scope.
 
 ---
 
@@ -472,7 +476,7 @@ In all topologies:
 Redis designs in FireMUD assume several invariants that are defined and enforced in other parts of the system. This section summarizes the most important ones so Redis reviews do not have to repeatedly re-derive them:
 
 - **Region epoch and single-writer guarantees**
-  - The tick system maintains a `region_epoch` per `<tenantId, regionId>` in PostgreSQL (see `system-architecture-tick-concepts-and-invariants.md` and related docs).
+  - The tick system maintains a `region_epoch` per `<tenantId, gameInstanceId, regionId>` in PostgreSQL (see `system-architecture-tick-concepts-and-invariants.md` and related docs).
   - At any time, at most one executor is allowed to hold the active epoch for a region; Lua scripts validate epoch and lease tokens against this metadata by:
     - Carrying the expected `region_epoch` (directly or via an epoch-bearing lease token) in `ARGV`.
     - Comparing it against epoch metadata stored alongside region-scoped coordination keys such as `tick:{tenantRegionTag}:pending` before performing any writes.
@@ -480,7 +484,7 @@ Redis designs in FireMUD assume several invariants that are defined and enforced
   - Redis designs may assume that “single writer per region + epoch” is upheld by the tick control plane and database, and must treat violations (for example, split-brain) as incidents that trigger resets, not normal control flow.
   - Normal executor rebalancing / lease handoff does **not** bump `region_epoch`. Lease tokens provide fencing between executors; `region_epoch` is reserved for resets and explicit “sever the old timeline” maintenance operations.
   - Scoped coordination resets are expected to interact with `region_epoch` as follows:
-    - Region- or tenant-scoped resets normally bump `region_epoch` for the affected `<tenantId, regionId>` pairs and invalidate any pre-reset executor leases.
+    - Region- or tenant-scoped resets normally bump `region_epoch` for the affected `<tenantId, gameInstanceId, regionId>` pairs and invalidate any pre-reset executor leases.
     - Cluster-scoped resets are accompanied by a coordinated epoch bump for all affected regions so that new executors cannot accidentally reuse stale coordination state.
 - **Idempotent domain effects**
   - Domain-level effects (damage application, currency transfers, quest progress, etc.) are recorded via idempotent identifiers or transaction rows in PostgreSQL (see `system-architecture-transactions.md`).

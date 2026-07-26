@@ -22,7 +22,7 @@
 
 ## Scaling and Region Rebalancing
 
-- Region-to-instance mapping is flexible and driven by a scheduler or consistent-hashing layer that assigns `<tenantId, regionId>` values to Game Session instances.
+- Region-to-instance mapping is flexible and driven by a scheduler or consistent-hashing layer that assigns `<tenantId, gameInstanceId, regionId>` values to Game Session instances.
 - To scale out, operators add more Game Session pods and allow the scheduler to assign regions to new instances; each instance acquires leases for its assigned regions.
 - To rebalance load, an instance can stop renewing the lease for selected regions and drain in-flight work to a safe point; other instances then acquire those leases and continue tick processing from the existing Redis state.
 - Combined with region sizing, splitting hot regions and merging cold ones, this lease-based ownership model allows FireMUD to scale horizontally without global downtime.

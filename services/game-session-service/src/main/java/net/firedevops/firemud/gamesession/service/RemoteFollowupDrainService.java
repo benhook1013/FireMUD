@@ -4,7 +4,12 @@ import java.util.List;
 
 public interface RemoteFollowupDrainService {
   ClaimOutcome claimDueFollowups(
-      long tenantId, String targetRegionId, long dueTickIdInclusive, String tickBatchId, int limit);
+      long tenantId,
+      long targetGameInstanceId,
+      String targetRegionId,
+      long dueTickIdInclusive,
+      String tickBatchId,
+      int limit);
 
   int releaseClaimedFollowups(String tickBatchId, String failureCode, String failureMessage);
 

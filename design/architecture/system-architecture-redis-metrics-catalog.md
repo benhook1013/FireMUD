@@ -10,7 +10,7 @@ This document summarizes the canonical Redis-related metrics, alerting surfaces,
 - `redis_coordination_tail_loss_ms{scope}`
 - `redis_replication_lag_ms{redis_role,nodeId,upstreamNodeId}`
 - `redis_replication_offset_lag_bytes{redis_role,nodeId,upstreamNodeId}`
-- `coordination_maintenance_active{scope_type,scope,operation}`
+- `coordination_maintenance_active{scope_type,scope_bucket,operation}`
 - error and outcome metrics for stale lease, stale lock, unsupported epoch, and similar replay/coordination failures
 - size and count metrics for coordination prefixes such as `tick:*`, `timer:*`, `retry:*`, `session:*`, and `tick-executor-lease:*`
 - over-budget and oversize counters such as:
@@ -103,9 +103,13 @@ Any new cache prefix family must:
 
 To keep monitoring systems stable:
 
-- emit bounded scope series such as `scope`, `region_class`, or another explicitly documented operational bucket rather than raw tenant or region identifiers
-- provide aggregated rollups alongside per-region views
+- emit bounded scope series such as `scope`, `region_class`, or another explicitly documented operational bucket rather than raw tenant, game-instance, or region identifiers
+- provide bounded aggregate and operational region-class rollups; do not imply an exact Prometheus time series for every tenant, game instance, or region
 - avoid adding extra high-cardinality labels such as per-command IDs on core coordination metrics
+- Treat every `scope` or `scope_bucket` label in this catalog as a bounded bucket, never as a raw `tenantId`, `gameInstanceId`, or `regionId` value.
+- Use control-plane APIs and structured logs/audit records for exact tenant/game-instance/region diagnosis; do not recover exact scope by expanding metric label cardinality.
+
+Metric rollups are bounded operational summaries, not the authoritative exact-scope diagnostic view. Exact tenant, game-instance, and region status and identity come from control-plane reads and structured logs/audit records; a metric dashboard may correlate those records with bounded rollups but must not claim that a `scope` or `scope_bucket` series identifies one exact runtime scope.
 
 ## AOF Profiles
 

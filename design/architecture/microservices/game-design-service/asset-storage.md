@@ -51,17 +51,19 @@ Illustrative producer API for derived artifacts:
 
 Illustrative `GetPublishableDerivedArtifact` fragments:
 
+The UUID-shaped `tenantId` and `versionId` values in these illustrative artifact responses are target-state identifiers. Current transport examples must use the numeric `int64` `versionId` contract until the related APIs are migrated together.
+
 - `NOT_READY`:
 
 ```json
 {
-  "tenantId": "t1",
-  "versionId": "v42",
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "versionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "artifactKind": "NAVMESH",
   "status": "NOT_READY",
   "error": {
     "code": "DERIVED_ARTIFACT_NOT_FINALIZED",
-    "message": "Navmesh generation has not produced finalized bytes for tenantId=t1 versionId=v42."
+    "message": "Navmesh generation has not produced finalized bytes for tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120 versionId=4f035f76-4b87-4a5e-8b9f-ea6c9e66e620."
   }
 }
 ```
@@ -70,8 +72,8 @@ Illustrative `GetPublishableDerivedArtifact` fragments:
 
 ```json
 {
-  "tenantId": "t1",
-  "versionId": "v42",
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "versionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "artifactKind": "NAVMESH",
   "status": "FAILED",
   "error": {
@@ -103,21 +105,24 @@ Required-artifact attestation contract:
 
 Illustrative `GetPublishedReleaseBundle` fragment:
 
+This target-state attestation example uses a UUID-shaped `versionId`. Current Game Design transport examples must use numeric `int64` `versionId` values until the related protobuf fields are migrated together.
+
 ```json
 {
-  "tenantId": "t1",
-  "versionId": "v42",
+  "id": 7,
+  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "versionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "manifestHash": "sha256:2d4b2e...",
   "artifactDigests": [
     {
       "artifactType": "WORLD_NAVMESH_BUNDLE",
-      "artifactPath": "versions/v42/world/navmesh.bundle",
+      "artifactPath": "versions/4f035f76-4b87-4a5e-8b9f-ea6c9e66e620/world/navmesh.bundle",
       "artifactDigest": "sha256:8fd0c4...",
       "artifactSchemaVersion": 1
     },
     {
       "artifactType": "WORLD_PATH_GRAPH_BUNDLE",
-      "artifactPath": "versions/v42/world/path-graph.bundle",
+      "artifactPath": "versions/4f035f76-4b87-4a5e-8b9f-ea6c9e66e620/world/path-graph.bundle",
       "artifactDigest": "sha256:91baf2...",
       "artifactSchemaVersion": 1
     }
@@ -157,16 +162,16 @@ Illustrative `manifest.json` fragment:
       "contentType": "application/octet-stream",
       "contentHash": "sha256:8fd0c4...",
       "producerService": "world-management-service",
-      "versionId": "v42",
-      "url": "https://cdn.example.invalid/t1/v42/world/navmesh.bin"
+      "versionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
+      "url": "https://cdn.example.invalid/7b3b074e-d597-4e9b-b96f-4f5946d26120/4f035f76-4b87-4a5e-8b9f-ea6c9e66e620/world/navmesh.bin"
     },
     "world.pathGraph": {
       "artifactKind": "PATH_GRAPH",
       "contentType": "application/json",
       "contentHash": "sha256:91baf2...",
       "producerService": "world-management-service",
-      "versionId": "v42",
-      "url": "https://cdn.example.invalid/t1/v42/world/path-graph.json"
+      "versionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
+      "url": "https://cdn.example.invalid/7b3b074e-d597-4e9b-b96f-4f5946d26120/4f035f76-4b87-4a5e-8b9f-ea6c9e66e620/world/path-graph.json"
     }
   }
 }

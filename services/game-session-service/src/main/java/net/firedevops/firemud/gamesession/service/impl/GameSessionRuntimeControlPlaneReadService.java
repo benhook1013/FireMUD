@@ -150,15 +150,18 @@ final class GameSessionRuntimeControlPlaneReadService {
             .countByTenantIdAndGameInstanceIdAndCompletedAtIsNullAndExecutionOutcomeIn(
                 status.getTenantId(), status.getGameInstanceId(), ACTIVE_GAMEPLAY_COMMAND_OUTCOMES);
     long dueRemoteFollowupCount =
-        remoteFollowupRepository.countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
-            status.getTenantId(),
-            status.getRegionId(),
-            RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
-            status.getLastCommittedTickId() + 1L);
+        remoteFollowupRepository
+            .countByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
+                status.getTenantId(),
+                status.getGameInstanceId(),
+                status.getRegionId(),
+                RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
+                status.getLastCommittedTickId() + 1L);
     long oldestDueRemoteFollowupTickId =
         remoteFollowupRepository
-            .findFirstByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
+            .findFirstByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
                 status.getTenantId(),
+                status.getGameInstanceId(),
                 status.getRegionId(),
                 RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
                 status.getLastCommittedTickId() + 1L)

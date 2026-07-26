@@ -126,8 +126,8 @@ Illustrative revision examples:
 ```json
 {
   "revisionType": "GENERATE_WORLD_SUBTREE",
-  "tenantId": "t1",
-  "versionId": "v42",
+  "tenantId": "11111111-1111-4111-8111-111111111111",
+  "versionId": "22222222-2222-4222-8222-222222222222",
   "revisionId": "r-gen-001",
   "targetScope": {
     "scopeType": "ZONE_SUBTREE",
@@ -135,7 +135,7 @@ Illustrative revision examples:
   },
   "replacementPolicy": "REPLACE_SCOPE",
   "generatorType": "SimpleDungeonGenerator",
-  "generationRequestId": "genreq-t1-v42-starter-caves-r1"
+  "generationRequestId": "7f4c2b8e-91d4-4a2f-8c10-2f6e4d9b8a31"
 }
 ```
 
@@ -147,8 +147,8 @@ Resulting replay semantics:
 ```json
 {
   "revisionType": "GENERATE_WORLD_SUBTREE",
-  "tenantId": "t1",
-  "versionId": "v42",
+  "tenantId": "11111111-1111-4111-8111-111111111111",
+  "versionId": "22222222-2222-4222-8222-222222222222",
   "revisionId": "r-gen-002",
   "targetScope": {
     "scopeType": "NEW_EMPTY_REGION",
@@ -156,7 +156,7 @@ Resulting replay semantics:
   },
   "replacementPolicy": "SEED_APPEND_ONLY",
   "generatorType": "OverworldMapGenerator",
-  "generationRequestId": "genreq-t1-v42-northern-wilds-r1"
+  "generationRequestId": "b6a1e093-4c72-4f8d-9e15-63c0a7d2b849"
 }
 ```
 

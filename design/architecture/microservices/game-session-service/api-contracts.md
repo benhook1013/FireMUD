@@ -21,16 +21,17 @@ It also communicates game lifecycle changes to other microservices over gRPC so 
 Game Session deliberately separates socket ownership from region execution ownership:
 
 - The pod holding a player's WebSocket or proxied Telnet bridge is the session front-end for that gameplay session.
-- Region-scoped command execution belongs to the current lease owner for the target `<tenantId, regionId>`.
+- Region-scoped command execution belongs to the current lease owner for the target `<tenantId, gameInstanceId, regionId>`.
 - Session front-ends may authenticate, normalize input, manage connection-local state, and stream results to the client.
 - Session front-ends must not directly stage or commit tick-owned Redis mutations for regions they do not lease.
-- When a command or follow-up targets a region owned by another pod, the session front-end forwards the request over internal gRPC to the lease owner and returns the resulting output to the client.
+- In the target-state model, when a command or follow-up targets a region owned by another pod, the session front-end forwards the request over internal gRPC to the lease owner and returns the resulting output to the client.
+- Current-live fallback: the existing `EnqueueCommand` path resolves the session's current `{tenantId, gameInstanceId}` queue target and runtime ownership, persists the command, and uses the local Game Session tick-queue path. It does not expose a dedicated cross-pod forwarding RPC; if runtime ownership is missing or paused, admission rejects the command rather than performing an unfenced handoff.
 
 ### Forwarding contract
 
-The internal front-end to lease-owner path is a fenced gameplay contract, not a best-effort proxy hop:
+The internal front-end to lease-owner path is a **target-state** fenced gameplay contract, not a best-effort proxy hop. The live proto and Game Session implementation do not yet expose this forwarding RPC; the current-live fallback is the existing local `EnqueueCommand` admission path described above. [GR-1.1](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md) tracks that gap.
 
-- Forwarded requests include `tenantId`, `gameInstanceId`, `sessionId`, `characterId`, target `regionId`, command/action identifier, and a monotonic per-session sequencing token.
+- Forwarded requests include `tenantId`, `gameInstanceId`, `playableStateScope`, `sessionId`, `characterId`, target `regionId`, command/action identifier, and a monotonic per-session sequencing token.
 - Forwarded requests include the current region lease/epoch fence. Lease owners reject stale or missing fences with an application-level stale-lease response rather than silently executing.
 - The session front-end preserves per-connection FIFO when emitting forwarded work. Cross-connection ordering remains undefined during takeovers as described in the reconnection and protocol-bridging docs.
 - If the lease owner rejects a stale fence before execution, the front-end refreshes ownership and may retry the request once against the new lease owner when the request is still valid.

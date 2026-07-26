@@ -18,7 +18,7 @@ The decision is accepted; implementation and proof remain partial. Metrics, stru
 
 ## Context
 
-FireMUD's tracing catalog defines valuable semantic spans for gameplay commands, ticks, TCP connections, cross-region work, backups, and recovery. It also describes service-scoped head-sampling escalation and tenant/region-scoped collector tail sampling. These capabilities would make multi-service and asynchronous incidents substantially easier to diagnose.
+FireMUD's tracing catalog defines valuable semantic spans for gameplay commands, ticks, TCP connections, cross-region work, backups, and recovery. It also describes service-scoped head-sampling escalation and tenant/game-instance/region-scoped collector tail sampling. These capabilities would make multi-service and asynchronous incidents substantially easier to diagnose.
 
 The live repository does not implement that complete contract. It creates generic gRPC server spans, but the named workflow spans and required attributes are not present, cross-service context propagation is not proved, the manual SDK configuration does not consume the documented sampler variables, and the sample collector has no tail-sampling processor. A downstream tail sampler also cannot recover traces already discarded by an upstream head sampler. Runbooks must not turn target queries into operational or release promises before the complete path is proved.
 
@@ -31,13 +31,13 @@ FireMUD retains the semantic span catalog as the target vocabulary but gates eve
 1. **Baseline observability** provides metrics and structured logs. Generic RPC spans, export, and trace/log correlation are best-effort unless separately proved. This level does not promise named workflow traces or controllable incident sampling.
 2. **Workflow tracing** may be claimed for a named workflow only after its semantic spans, bounded attributes, incoming and outgoing context propagation, collector ingestion, and supported queries are proved end to end.
 3. **Service-scoped incident sampling** may be claimed only after the deployed SDK consumes the declared sampler controls and an increase, observation, and revert drill succeeds.
-4. **Tenant/region-scoped incident sampling** may be claimed only when the complete pipeline preserves candidate traces, propagates the matching attributes, applies bounded collector tail-sampling policies, supports safe time-limited enable/revert, and proves both increased scoped visibility and return to baseline.
+4. **Tenant/game-instance/region-scoped incident sampling** may be claimed only when the complete pipeline preserves candidate traces, propagates the matching attributes, applies bounded collector tail-sampling policies, supports safe time-limited enable/revert, and proves both increased scoped visibility and return to baseline.
 
 Each environment advertises the highest supported level and the workflows covered at that level. Capability is not inferred from the presence of environment variables, example manifests, health alerts, or externally supplied evidence. Runbooks branch on the advertised and proved capability and use metrics and logs when a required trace capability is absent.
 
 ### Sampling and Data Safety
 
-- A collector tail-sampling rule cannot override an earlier head-sampling decision. The end-to-end sampling design must ensure candidate tenant/region traces reach the collector before scoped sampling is claimed.
+- A collector tail-sampling rule cannot override an earlier head-sampling decision. The end-to-end sampling design must ensure candidate tenant/game-instance/region traces reach the collector before scoped sampling is claimed.
 - Sampling changes must be bounded in duration and volume, record operator and incident identity, and have a verified revert path.
 - Trace attributes remain bounded and privacy controlled. Raw client addresses, user-provided text, and unbounded payloads are excluded.
 - Traces are diagnostic evidence, not durable gameplay, recovery, or authorization authority.
@@ -70,7 +70,7 @@ Implementation notes could continue to call the richer behavior future work. Tha
 - Add and test context extraction and injection across every transport in a claimed workflow.
 - Prove each claimed span name, bounded attribute set, parent/child relationship, collector ingestion, and query path.
 - Wire sampler configuration before publishing it as supported, and prove baseline, escalation, and revert behavior.
-- For tenant/region sampling, prove candidate preservation before the collector, tail-policy bounds, safe reload, scoped visibility, volume limits, and cleanup.
+- For tenant/game-instance/region sampling, prove candidate preservation before the collector, tail-policy bounds, safe reload, scoped visibility, volume limits, and cleanup.
 - Keep fallback runbook steps executable when tracing, the collector, or Jaeger is unavailable.
 
 ## Reversibility and Revisit Triggers

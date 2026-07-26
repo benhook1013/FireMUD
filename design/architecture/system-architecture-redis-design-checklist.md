@@ -67,11 +67,12 @@ Use this when adding or changing coordination prefixes (for example `tick:*`, `t
 - [ ] Identify the owning service(s) and document them in the service README and Redis cheat sheet.
 - [ ] Define the scope of the keys:
   - [ ] `tenantId` dimension.
+  - [ ] `gameInstanceId` dimension for runtime/gameplay keys.
   - [ ] `regionId` or equivalent region concept where applicable.
 
 ### Key Naming and Shard Discipline
 
-- [ ] Key format uses `tenantId` (and `regionId` if applicable) as stable IDs, not user‑provided strings.
+- [ ] Region-scoped key formats use the complete `tenantId`, `gameInstanceId`, and `regionId` identity as stable IDs, not user-provided strings.
 - [ ] Region‑scoped keys use `{tenantRegionTag}` (or an equivalent canonical hash tag) so all keys for a region land in a single cluster slot.
 - [ ] Session-vs-region authority is explicit where applicable:
   - [ ] `session:game:*` remains session-authoritative for reconnect/CAS semantics.
@@ -96,9 +97,11 @@ Use this when adding or changing coordination prefixes (for example `tick:*`, `t
 ### Observability
 
 - [ ] Metrics exist to track:
-  - [ ] Key counts or approximate size for this prefix by tenant/region.
+  - [ ] Key counts or approximate size for this prefix using bounded operational buckets such as `scope_bucket`, `region_class`, deployment, or Redis role; metrics must not use raw `tenantId`, `gameInstanceId`, or `regionId` labels.
   - [ ] Error or outcome codes from relevant Lua scripts.
   - [ ] Any important watermarks (for example, tick IDs, backlog depths).
+- [ ] Exact tenant/game-instance/region diagnosis is obtained from control-plane APIs and structured logs/audit records (for example `GetRegionTickStatus`), not by adding raw identity labels to metrics.
+- [ ] Aggregated rollups remain available for dashboards and alerts so bounded metric cardinality does not hide scope-wide regressions.
 - [ ] For session-to-region bridge flows, metrics and alerts can distinguish stale-generation cleanup, successful region rebinds, and orphaned region bindings detected after session expiry.
 - [ ] Dashboards and alerts consider this prefix when assessing tail‑loss SLOs.
 

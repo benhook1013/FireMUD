@@ -19,7 +19,7 @@ Automation & Scripting treats event ingress as at-most-once per **Trigger Identi
 - Tenant-readiness `onLoad` follows the explicit non-runtime exception in the normative table and does not invent sentinel runtime, region, or entity identity.
 - Plugin-trigger identity additionally carries plugin and binding identity where the invocation unit is plugin- or binding-scoped.
 
-Callers must reuse the same `scriptEventId` when retrying a logically identical trigger.
+Callers must reuse the same full applicable Trigger Identity, including the same `scriptEventId`, when retrying a logically identical trigger.
 
 ## Consequences
 

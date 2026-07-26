@@ -1,8 +1,12 @@
 # FireMUD Scripting & Automation: Observability Contract
 
-This document defines the observability contract for scripting and automation: what is recorded in `script_event_audit`, what is emitted as metrics, and which identifiers may be used for correlation.
+This document defines the observability contract for scripting and automation: what is recorded in `script_event_audit`, what is returned by `ListScriptHandoffEvents`, what is emitted as metrics, and which identifiers may be used for correlation.
 
 Document conflict resolution order is defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#document-precedence-normative`. This document is authoritative for observability details not fully enumerated in the normative tables.
+
+## Live Versus Target-State Handoff Diagnostics
+
+The complete per-command handoff diagnostic model below is **target-state**. The live `EnqueueAutomationCommandIfAbsent` contract currently carries the narrower scope, dispatch/work-item, script/plugin provenance, target-command, routing, and origin-source fields listed in [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#work-item-outbox-contract-normative), plus the returned Game Session `commandId`/admission outcome. It does not yet carry `commandOrdinal` or the full applicable Trigger Identity, including fields such as `bindingId`, `eventType`, `eventSchemaVersion`, `scriptEventId`, `isDryRun`, and scheduler identity. Current live command status/readbacks therefore expose only that narrower fallback surface; the examples below must not be read as evidence that the full target-state handoff contract is already implemented.
 
 ## Correlation Rules (High Cardinality)
 
@@ -18,10 +22,19 @@ Event-scope ingress decisions and handler-scoped execution outcomes are separate
 
 - Event-scope ingress audit/logging records pre-resolution decisions for the incoming event, such as auth failure, reload backpressure, rollback pause, pin-state unavailability, or version unavailability. These records are keyed by the event-scope identity in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields` and must not invent a synthetic `scriptId`.
 - `script_event_audit` records handler-scoped, scheduler/timer-scoped, tenant-readiness `onLoad`, and dry-run/test executions after a concrete script or plugin handler identity exists.
-- per-command handoff history is a separate durable surface keyed by `automationDispatchId` and `workItemId` so one handler audit row can still correlate to multiple emitted gameplay commands.
+- per-command handoff history is a separate durable child surface keyed by the complete applicable command-handoff scope plus the target-state `(automationDispatchId, commandOrdinal)` pair; `outboxWorkItemId` is retained only as parent-work correlation so one handler audit row can still correlate to multiple emitted gameplay commands.
 - A successful event-scope ingress record means the event was accepted for handler resolution. It is not a summary of every handler outcome.
 - If ingress is accepted and resolves three handlers, tooling should expect one event-scope ingress record and up to three handler-scoped `script_event_audit` records, one per resolved Trigger Identity.
 - If one resolved handler emits three gameplay commands, tooling should expect one handler-scoped `script_event_audit` row plus three durable handoff-event rows under `ListScriptHandoffEvents`.
+
+### Per-Command Handoff Records (Target-State)
+
+A resolved handler may emit zero, one, or many gameplay commands. `script_event_audit` remains one handler-scoped row per Trigger Identity and must not contain a single command dispatch field or a single post-handoff outcome for the whole Trigger Identity.
+
+- Persist or return one command-handoff record for each attempted emitted command.
+- Each gameplay command record is keyed by the target-state scope-complete command-level handoff identity `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, automationDispatchId, commandOrdinal>` plus any other applicable target identity dimensions. It includes the parent `outboxWorkItemId` only as correlation, the complete parent Trigger Identity (including `scriptEventId` and plugin `bindingId` when applicable), handoff outcome/reason, and any later gameplay execution outcome/reason. A child record must retain these fields rather than relying on an implicit join to the handler row for scope identity.
+- `ListScriptHandoffEvents` is the canonical query surface for these records. A query that combines handler and command data must expose a collection such as `commandHandoffDispositions[]`; it must not collapse sibling commands into one dispatch ID or one disposition on the handler audit row.
+- A version-fence drop on one command updates only that command-handoff record. It must not overwrite the handler audit row or the dispositions of sibling commands.
 
 ## `script_event_audit` (Required Fields)
 
@@ -43,7 +56,7 @@ Audit records must include at least:
   - `regionEpoch` (required for gameplay/runtime and scheduler triggers; exceptions must be explicitly documented in the normative Trigger Identity table)
   - `entityId` (for entity-scoped events)
   - `scriptId`
-  - `pluginId` and `pluginVersionId` (required for plugin triggers)
+  - `pluginId`, `pluginVersionId`, and `bindingId` (required for resolved plugin handlers)
   - `eventType`
   - `scriptPatchVersion`
   - `scriptEventId`
@@ -51,7 +64,7 @@ Audit records must include at least:
   - `sourceService` (required for custom/service-specific events; omitted for built-in events that originate entirely within Automation & Scripting)
 - Scheduling context (when applicable)
   - `triggerMode` (for example `NORMAL` vs `CATCH_UP`)
-  - `dueTickId` and/or `dueAt` (for timers/intervals)
+  - Exactly one of `dueTickId` or `dueAt` (for timers/intervals); the alternate field is absent/`NULL`
 - Outcomes (stage-aware)
   - `finalStage` (the last stage reached for this trigger; see below)
   - `finalOutcome` and `finalReason` (canonical outcome taxonomy used by dashboards and operators)
@@ -60,7 +73,7 @@ Audit records must include at least:
     - DSL evaluation outcome
     - Work-item persistence outcome (if using a durable outbox)
     - Handoff/enqueue outcome into the tick system
-  - Optional but required when present downstream: `executionDisposition` for post-handoff execution-time rejections reported by Game Session or another downstream owner. This is not part of the Automation-owned `finalStage` progression; it is a supplementary correlation surface keyed to the same Trigger Identity.
+  - A query-composed `commandHandoffDispositions[]` collection whenever emitted command child records exist, including initial handoff-only records before a later execution-time result is known. These target-state child records are not part of the Automation-owned `finalStage` progression and are keyed by the complete applicable command-handoff scope plus `(automationDispatchId, commandOrdinal)`, with the parent Trigger Identity retained for correlation. `outboxWorkItemId` is correlation metadata, not a substitute for the child key.
   - `policyViolations` (optional array, plugin policy rollouts only; see schema below)
 
 Outcome fields must be sufficient to distinguish “DSL evaluated successfully” from “commands were accepted into the tick system”. Do not collapse these into a single `success` signal.
@@ -111,40 +124,48 @@ Stage semantics:
 - Quota denials must use `finalStage=ADMISSION` unless quotas are evaluated inside the DSL runtime for a given trigger (rare; avoid mixing).
 - Intentional rollback/control-plane fencing after admission must stay visible as `finalOutcome=canceled` at the last attempted live stage, with bounded `finalReason` values such as `rollback_epoch_advanced`, `superseded_by_newer_patch`, `operator_canceled`, or `operator_purged`.
 
-### Supplementary Execution Disposition (Required When Present)
+### Per-Command Handoff and Post-Handoff Outcomes (Required When Present)
 
-`script_event_audit` is the canonical lifecycle record through `TICK_HANDOFF`, but Game Session may later reject handed-off commands at execution-time version fences during rollback or plugin version changes. Tooling must not rely on metrics alone to correlate those drops back to the original trigger.
+`script_event_audit` is the canonical Automation-owned lifecycle record through `TICK_HANDOFF`, but it is not the sole post-handoff surface and it must not contain a single disposition for a fan-out trigger. In the target state, `ListScriptHandoffEvents` is the canonical durable query for per-command records: an initial handoff-only child is recorded for every attempted emitted command, and later Game Session acceptance, rejection, or execution-time version-fence results update or extend that command's disposition. A combined trigger read must expose those records as `commandHandoffDispositions[]`, with one element per emitted command keyed by its complete applicable command-handoff scope plus `(automationDispatchId, commandOrdinal)`. Each child retains the parent Trigger Identity, including plugin `bindingId` when applicable; tooling must not rely on metrics alone to correlate the records back to the original trigger.
 
-When a downstream service reports such a post-handoff rejection, the audit surface must expose an `executionDisposition` object keyed to the same Trigger Identity with:
+When a downstream service reports a later handoff or execution result, the target-state command-handoff surface must expose or update a child disposition keyed to the affected `(automationDispatchId, commandOrdinal)` pair with:
 
+- `automationDispatchId` – the stable handoff/work-item identity shared by the emitted gameplay commands; `commandOrdinal` distinguishes each command under it.
+- `commandOrdinal` – the deterministic ordinal of that emitted command within the handler handoff.
 - `outcome` – bounded enum. Minimum required value: `version_fence_dropped`.
 - `reason` – bounded reason such as `script_patch_mismatch` or `plugin_version_mismatch`.
 - `recordedAt` – timestamp.
 - `sourceService` – producer of the disposition (for example `game-session`).
 
+Each returned child retains the parent `outboxWorkItemId` only for correlation and retains the applicable Trigger Identity fields needed for diagnosis, including plugin `bindingId` when applicable; the target-state `(automationDispatchId, commandOrdinal)` pair is part of the scope-complete command-level key and must not be replaced with the parent `scriptEventId`.
+
 Rules:
 
-- `executionDisposition` does **not** replace `finalStage` / `finalOutcome`; those fields remain the Automation-owned pipeline result.
-- A trigger may therefore show `finalStage=TICK_HANDOFF`, `finalOutcome=success`, and later `executionDisposition.outcome=version_fence_dropped`.
+- A command-handoff disposition does **not** replace `finalStage` / `finalOutcome`; those fields remain the Automation-owned handler pipeline result.
+- A handler may therefore show `finalStage=TICK_HANDOFF`, `finalOutcome=success`, while one child command disposition has `outcome=version_fence_dropped` and sibling command dispositions remain successful.
 - When present, UI/query surfaces must return both views together so operators can distinguish “accepted into tick queues” from “later fenced before execution.”
+
+During rollback, operator views must show the handler's `finalStage`/`finalOutcome` beside the `commandHandoffDispositions[]` returned from `ListScriptHandoffEvents`. A successful `TICK_HANDOFF` therefore remains visible even when one or more individual commands later receive `version_fence_dropped`; a child result must never overwrite the handler result or collapse sibling command records.
 
 Concrete example:
 
 - `script_event_audit` row for Trigger Identity `T123` ends with `finalStage=TICK_HANDOFF`, `finalOutcome=success`.
-- Later, Game Session rejects the queued command during rollback convergence and appends `executionDisposition={ outcome=version_fence_dropped, reason=script_patch_mismatch, sourceService=game-session, recordedAt=... }`.
-- Queries for `T123` must surface both facts in one result so operators can tell that Automation succeeded but gameplay execution was later fenced.
+- The handler emitted two commands. Later, Game Session rejects only `(automationDispatchId=work-9, commandOrdinal=1)` during rollback convergence and appends a child disposition with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, `sourceService=game-session`, and `recordedAt=...`; `(automationDispatchId=work-9, commandOrdinal=0)` remains a separate sibling record.
+- Queries for `T123` must surface the handler row plus both command-handoff records so operators can tell that Automation succeeded and which gameplay command was later fenced.
 
 Illustrative record shape:
 
 ```json
 {
-  "tenantId": "T1",
-  "gameInstanceId": "G7",
+  "tenantId": "11111111-1111-4111-8111-111111111111",
+  "gameInstanceId": "44444444-4444-4444-8444-444444444444",
+  "playableStateScope": "isolated",
   "regionId": "R2",
   "regionEpoch": 14,
   "entityId": "npc-guard-9",
   "scriptId": "guard-on-enter",
   "eventType": "onEnterRegion",
+  "eventSchemaVersion": 1,
   "scriptPatchVersion": "P22",
   "scriptEventId": "evt-7f4c",
   "isDryRun": false,
@@ -177,16 +198,54 @@ Illustrative record shape:
       "at": "2026-03-19T08:10:01Z"
     }
   ],
-  "executionDisposition": {
-    "outcome": "version_fence_dropped",
-    "reason": "script_patch_mismatch",
-    "sourceService": "game-session",
-    "recordedAt": "2026-03-19T08:10:03Z"
-  }
+  "commandHandoffDispositions": [
+    {
+      "tenantId": "11111111-1111-4111-8111-111111111111",
+      "gameInstanceId": "44444444-4444-4444-8444-444444444444",
+      "regionId": "R2",
+      "regionEpoch": 14,
+      "entityId": "npc-guard-9",
+      "scriptId": "guard-on-enter",
+      "eventType": "onEnterRegion",
+      "eventSchemaVersion": 1,
+      "scriptPatchVersion": "P22",
+      "scriptEventId": "evt-7f4c",
+      "isDryRun": false,
+      "commandOrdinal": 0,
+      "automationDispatchId": "work-9",
+      "outboxWorkItemId": "work-9",
+      "playableStateScope": "isolated",
+      "outcome": "accepted",
+      "reason": "game_session_accepted",
+      "sourceService": "game-session",
+      "recordedAt": "2026-03-19T08:10:02Z"
+    },
+    {
+      "tenantId": "11111111-1111-4111-8111-111111111111",
+      "gameInstanceId": "44444444-4444-4444-8444-444444444444",
+      "regionId": "R2",
+      "regionEpoch": 14,
+      "entityId": "npc-guard-9",
+      "scriptId": "guard-on-enter",
+      "eventType": "onEnterRegion",
+      "eventSchemaVersion": 1,
+      "scriptPatchVersion": "P22",
+      "scriptEventId": "evt-7f4c",
+      "isDryRun": false,
+      "commandOrdinal": 1,
+      "automationDispatchId": "work-9",
+      "outboxWorkItemId": "work-9",
+      "playableStateScope": "isolated",
+      "outcome": "version_fence_dropped",
+      "reason": "script_patch_mismatch",
+      "sourceService": "game-session",
+      "recordedAt": "2026-03-19T08:10:03Z"
+    }
+  ]
 }
 ```
 
-This example is illustrative rather than prescriptive about JSON column layout, but any API or query surface must preserve the same information model: one Trigger Identity, one Automation-owned final stage/outcome, and an optional later downstream execution disposition.
+This target-state example is illustrative rather than prescriptive about JSON column layout, but any API or query surface must preserve the same information model: one Trigger Identity, one Automation-owned handler final stage/outcome, and zero or more later per-command handoff dispositions keyed by `(automationDispatchId, commandOrdinal)`.
 
 ### Canonical Outcome Taxonomy (Required)
 

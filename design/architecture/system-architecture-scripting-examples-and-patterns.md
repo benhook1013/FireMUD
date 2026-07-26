@@ -39,7 +39,7 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
 2. **`onEnterRegion` event is emitted**
    - After the move is committed and the player is now in the new region, the Game Session Service emits an `onEnterRegion` **script event** to the Automation & Scripting Service over gRPC.
    - Conceptually this is a unary `TriggerScriptEvent` call on the Automation & Scripting Service that carries:
-     - `tenantId`, `gameInstanceId`, and `regionId`.
+     - `tenantId`, `gameInstanceId`, `playableStateScope`, and `regionId`.
      - Target `entityId` (for example, an NPC guarding the room).
      - `eventType=onEnterRegion`.
      - The currently pinned `scriptPatchVersion` for that game.
@@ -49,11 +49,11 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
 
 3. **Bindings and quotas**
    - The Automation & Scripting Service looks up all scripts bound to `onEnterRegion` for the target entity and tenant, using the version metadata provided by the Game Session Service to resolve the correct script definitions.
-   - Per-script quotas and tenant budgets are applied before execution (see `design/architecture/system-architecture-scripting-quotas-and-operations.md` for details). Handler-scoped quota is charged at handler admission; tenant runtime budget is charged only when a handler actually reserves sandbox capacity. Scripts that fail quota checks are skipped and logged; others proceed to sandboxed execution.
+   - Per-script quotas, tenant budgets, and the aggregate target-state `AUTOMATION_TICK_BUDGET_MS` reservation are applied before execution (see `design/architecture/system-architecture-scripting-quotas-and-operations.md` for details). Handler-scoped quota is charged at handler admission; the tick-window and tenant runtime budgets are reserved and accounted for only when a handler is admitted to sandbox capacity. A per-run timeout is a separate execution guard, not the tick-window budget. Scripts that fail quota or reservation checks are skipped and logged; others proceed to sandboxed execution.
 
 4. **Sandboxed DSL execution**
    - For each allowed script, the Automation & Scripting Service executes the `onEnterRegion` handler inside the sandboxed DSL runtime, walking the graph of condition, timer, and action nodes for the current event payload.
-   - All gameplay-affecting reads in that handler use the same run snapshot token captured at admission for the trigger's committed `(gameInstanceId, regionId, regionEpoch, tick/read-version)` view; the handler must not silently mix fresher state mid-run.
+   - All gameplay-affecting reads in that handler use the same run snapshot token captured at admission for the trigger's committed `(gameInstanceId, playableStateScope, regionId, regionEpoch, tick/read-version)` view; the handler must not silently mix fresher state mid-run.
    - Typical patterns include:
      - Checking player or NPC state (faction, health, quest flags).
      - Branching into dialogue, combat, or flavor events.
@@ -61,7 +61,8 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
 
 5. **Automation queue staging**
    - Actions produced by the handler are converted into domain commands and persisted as a durable script work item (outbox), then indexed into `automation:queue:{tenantInstanceTag}:<entityId>` for the affected entity.
-   - Each work item carries the originating `scriptEventId`, `scriptId`, `gameInstanceId`, version metadata, and region context.
+   - The firing admission links the durable firing claim, handler audit row, work item, queue-pointer projection, and due-point advancement in one atomic durable transition or a resumable idempotent recovery operation. Recovery completes missing links from the existing claim rather than re-evaluating the handler.
+   - Each work item carries the originating `scriptEventId`, `scriptId`, `gameInstanceId`, `playableStateScope`, version metadata, and region context. In the target handoff contract, it receives one stable `automationDispatchId` when its emitted commands are first persisted, and every logical command receives a deterministic `commandOrdinal` under that shared dispatch. Both values are reused for every handoff, retry, and downstream disposition. The current live Game Session handoff carries `automationDispatchId`, command id/text, selected provenance, and parent work-item correlation, but does not yet carry `commandOrdinal` or the complete Trigger Identity; current diagnostics must use those live fields as a fallback rather than imply the target contract is implemented. The target `ListScriptHandoffEvents` child records are keyed by `(automationDispatchId, commandOrdinal)` and retain the full parent Trigger Identity while the handler audit remains one row.
 
 6. **Automation ticks and tick command enqueue**
    - Automation's durable execution loop claims pending work items and hands emitted commands to Game Session.
@@ -70,7 +71,7 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
 7. **Execution, audit, and observability**
    - On subsequent ticks, the Game Session Service executes at most one command per entity per tick, so `onEnterRegion` effects follow the same fairness and conflict-resolution rules as player actions.
    - Metrics such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total` are updated throughout this flow; see the metrics glossary in `design/architecture/system-architecture-scripting-quotas-and-operations.md` for names and label conventions.
-   - An audit record is written to `script_event_audit` for each resolved handler Trigger Identity, with identifiers such as `scriptEventId`, `scriptId`, `tenantId`, `tickId`, plus stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`) so operators can distinguish “DSL evaluated” from “accepted into tick queues”, enabling replay and troubleshooting as described in the same quotas and operations document.
+   - An audit record is written to `script_event_audit` for each resolved handler Trigger Identity, with identifiers such as `scriptEventId`, `scriptId`, `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, and `tickId`, plus stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`) so operators can distinguish “DSL evaluated” from “accepted into tick queues”, enabling replay and troubleshooting as described in the same quotas and operations document.
 
 ### Mixed Fan-Out Example
 
@@ -78,11 +79,22 @@ One admitted event can still produce different outcomes per bound handler. For e
 
 - Game Session emits one `TriggerScriptEvent` for `eventType=onEnterRegion` with a single `scriptEventId`.
 - The Automation & Scripting Service accepts that event at ingress, resolves three handlers, and creates three handler-scoped Trigger Identities.
-- The first handler is admitted, evaluates successfully, and reaches `finalStage=TICK_HANDOFF`, `finalOutcome=success`.
+- The first handler is admitted, evaluates successfully, and reaches `finalStage=TICK_HANDOFF`, `finalOutcome=success` after all of its commands are accepted; the target handoff identity uses one persisted `automationDispatchId` for the work-item handoff and distinct `commandOrdinal` values for its commands, and retries reuse the same dispatch.
 - The second handler is rejected during admission with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, `finalReason=per_script_window_exhausted`.
 - The third handler is skipped with `finalStage=ADMISSION`, `finalOutcome=script_disabled`, `finalReason=admin_hard_disable`.
 
+The first handler's audit remains one row for its Trigger Identity even if it emits two commands. Its separate command-handoff records are, for example:
+
+| `commandOrdinal` | `automationDispatchId` | Parent `outboxWorkItemId` | Handoff outcome |
+| --- | --- | --- | --- |
+| `0` | `work-9` | `work-9` | `accepted` |
+| `1` | `work-9` | `work-9` | `accepted` |
+
+If Game Session later fences only `(automationDispatchId=work-9, commandOrdinal=1)`, that command-handoff record gets the bounded version-fence disposition; the handler audit and the `(automationDispatchId=work-9, commandOrdinal=0)` sibling record remain unchanged.
+
 In this case the unary ingress response still reports only that the event itself was accepted for handler resolution. Operators and replay tooling must inspect `script_event_audit` by Trigger Identity to understand the handler-level mix of success, denial, and skip outcomes for that one inbound event.
+
+They must inspect the separate per-command handoff records by `automationDispatchId` for command-level outcomes.
 For the handler-scoped idempotency and audit-row rule behind this fan-out behavior, see the **Idempotency & Retries** section in `design/architecture/microservices/automation-scripting-service/README.md`.
 
 If the `scriptPatchVersion` pinned by the Game Session Service for a given game is later marked failed or unknown for that tenant, subsequent `onEnterRegion` triggers referencing it follow the reload failure behavior described in `design/architecture/system-architecture-scripting-quotas-and-operations.md` instead of the happy-path flow.
@@ -98,25 +110,26 @@ This example shows how a script that runs on a fixed cadence (for example, an NP
    - When the script is published, its compiled DSL graph, `intervalTicks` (or equivalent cadence configuration), and version metadata are stored in the Automation & Scripting Service database and exposed under the current `scriptPatchVersion` for that game.
 
 2. **Scheduling the next interval**
-   - When the NPC spawns or when the script is first loaded, the Automation & Scripting Service’s scheduler registers an interval entry for the `<tenantId, gameInstanceId, scriptId, entityId>` tuple, computing a `nextTick` or `nextRunAt` timestamp based on the configured cadence and current tick/time.
+   - When the NPC spawns or when the script is first loaded, the Automation & Scripting Service's scheduler registers a stable interval row for `<tenantId, gameInstanceId, playableStateScope, scriptId, pluginId?, pluginVersionId?, bindingId?, eventType=onInterval, eventSchemaVersion, scriptPatchVersion, isDryRun=false, scheduleDefinitionId, scheduleSemanticsHash, targetScopeType, targetScopeId>`. Runtime `regionId`/`regionEpoch` and exactly one due point, `dueTickId` for tick cadence or `dueAt` for wall-clock cadence, are mutable schedule state rather than row identity. `nextTick` and `nextRunAt` are derived projections. Plugin-owned entries include all three plugin binding-owner fields. A reconciliation also records the explicit displaced and replacement owner identities; neither may be inferred from whichever row is read first.
    - Leaders track these interval entries alongside other automation timers, using bounded scans and the execution-budget knobs (for example, `AUTOMATION_TICK_DURATION_MS`, `AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) to decide which `onInterval` triggers should fire in each scheduling window.
 
 3. **Firing `onInterval` and enforcing budgets**
-   - When an interval becomes due, the scheduler creates a `scriptEventId` for the `onInterval` trigger and evaluates it using the same quota, cadence, and budgeting layers described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
+   - When an interval becomes due, the scheduler first evaluates the candidate through the applicable admission, quota, cadence, aggregate `AUTOMATION_TICK_BUDGET_MS` reservation, and budgeting layers. Only after the candidate passes admission does it create a durable firing claim from the stable schedule-row identity plus the applicable runtime region and epoch, target selector identity (`entityId` only for an entity target scope), trigger mode, and tagged due point. It derives `scriptEventId` from that complete firing identity. The claim, work item, handler audit, queue projection, and canonical due-point advancement are committed together or recovered by one idempotent operation; retries do not re-run the DSL.
    - If multiple handlers are bound to the timer event, the timer firing is admitted once at event scope and then fans out into handler-scoped Trigger Identities whose outcomes are tracked independently.
-   - If the script is outside its budgets or disabled, the trigger is skipped and recorded in both metrics and the audit feed.
-   - If allowed, the scheduler enqueues the `onInterval` trigger for sandbox execution and updates the interval entry with a new `nextTick` or `nextRunAt`, ensuring the cadence remains stable even if some intervals are occasionally delayed by load. If the timer survives a reload or rollback because the logical schedule is preserved, the next due point is recalculated from the canonical resume rule rather than by replaying the paused window.
+   - If the script is outside its budgets or disabled, the due candidate is skipped and recorded in both metrics and an event-scope audit record keyed by a deterministic `scheduleCandidateId` derived from the stable schedule-row identity, applicable runtime region and epoch, and tagged due point. The skip must atomically consume the candidate by advancing its canonical due point, or quarantine/tombstone the schedule when safe advancement is impossible; it creates no firing claim, handler Trigger Identity, or `scriptEventId` and cannot be rediscovered on a later scan.
+   - If allowed, the scheduler enqueues the `onInterval` trigger for sandbox execution, advances the canonical due point (`dueTickId` for tick cadence or `dueAt` for wall-clock cadence) according to the cadence or resume rule, and then derives `nextTick` or `nextRunAt` from that due point. This keeps the cadence stable even if some intervals are occasionally delayed by load. If the timer survives a reload or rollback because the logical schedule is preserved, the next due point is recalculated from the canonical resume rule rather than by replaying the paused window.
 
 4. **Sandbox execution and command enqueue**
    - The `onInterval` handler runs inside the sandboxed DSL engine, evaluating conditions such as “is the NPC currently out of combat?” and “is the patrol still active?” before deciding on the next waypoint or behavior.
    - Actions produced by the handler (for example, “move to the next patrol room,” “play an emote,” “schedule an `onTimerExpire` follow-up”) are converted into domain commands and persisted as a durable script work item (outbox), then indexed into `automation:queue:{tenantInstanceTag}:<entityId>` for the affected entity.
    - Before persistence, runtime output budgets cap how many commands and how many serialized bytes this single firing may emit. Oversized patrol firings fail as non-success outcomes rather than creating unbounded backlog.
-   - Each work item carries the originating `scriptEventId`, `scriptId`, `gameInstanceId`, version metadata, and the **current region** for the entity at enqueue time.
+   - Each work item carries the full applicable Trigger Identity, including `scriptEventId`, `scriptId`, `gameInstanceId`, `playableStateScope`, version metadata, and the immutable trigger-created `regionId` and `regionEpoch`. If current entity state is needed to route the work at enqueue time, persist separate fields such as `enqueueRegionId` and `enqueueRegionEpoch`; never overwrite the original trigger fields. Deduplication, fencing, and replay continue to use the original `regionId` and `regionEpoch`. In the target handoff contract, the work item persists one stable `automationDispatchId` and assigns each emitted command a `commandOrdinal` under that dispatch; retries reuse both identities. Until the Game Session handoff is widened, current diagnostics fall back to the live dispatch, command id/text, selected provenance, and parent work-item fields.
 
 5. **Execution, audit, and observability**
    - Automation later claims the durable work items, uses `automation:queue` only as a rebuildable pointer index, and hands the resulting commands to the Game Session Service over internal gRPC so Game Session can enqueue them into the appropriate `tick:{tenantRegionTag}:queue:<entityId>`.
    - On subsequent ticks, the Game Session Service executes at most one command per entity per tick, so patrol movements and emotes follow the same fairness and conflict-resolution rules as player actions.
-   - Each fired interval contributes to `automation_script_triggers_total` (tagged with `eventType=onInterval`) and, if it produces work that is accepted into tick queues, increases `automation_tick_events_enqueued_total`. An audit record is written to `script_event_audit` so missed or delayed intervals can be debugged using stage-aware fields (`finalStage`, `finalOutcome`, `finalReason`) alongside identifiers like `scriptEventId`, `scriptId`, and `tickId`; see the metrics and audit sections in `design/architecture/system-architecture-scripting-quotas-and-operations.md` for interpretation.
+   - Each fired interval contributes to `automation_script_triggers_total` (tagged with `eventType=onInterval`) and, if it produces work that is accepted into tick queues, increases `automation_tick_events_enqueued_total`. An audit record is written to `script_event_audit` so missed or delayed intervals can be debugged using stage-aware fields (`finalStage`, `finalOutcome`, `finalReason`) alongside identifiers like `scriptEventId`, `scriptId`, `scheduleDefinitionId`, the persisted due point, and `tickId`.
+   - The current `ListScriptHandoffEvents` read carries Automation-owned dispatch and handoff fields; the handler audit does not carry a single dispatch ID. The live Game Session handoff still lacks `commandOrdinal` and complete Trigger Identity propagation, so its narrower fields are only a diagnostic fallback. A combined downstream execution-disposition view keyed by the complete Trigger Identity plus `(automationDispatchId, commandOrdinal)` remains target-state until the handoff is widened. See the metrics and audit sections in `design/architecture/system-architecture-scripting-quotas-and-operations.md` for interpretation.
 
 As with `onEnterRegion`, reload failures or version issues are surfaced via specific outcomes (for example, `skipped_reloading`, `rollback_paused`, `version_unavailable`) and corresponding metrics, detailed in the quotas and operations document.
 
@@ -124,16 +137,18 @@ As with `onEnterRegion`, reload failures or version issues are surfaced via spec
 
 Timer-driven handlers such as `onInterval` follow the same **at-most-once per trigger** semantics described in the DSL reference:
 
-- If an `onInterval` firing is skipped because of quotas, tenant budgets, cluster ceilings, or version issues, that specific firing is not automatically replayed later, although subsequent firings based on the cadence may still occur.
-- If an admitted `onInterval` firing fails with `infrastructure_error`, lower layers may retry individual downstream operations in an idempotent way, but the DSL body is not re-executed for the same `scriptEventId`.
+- If an `onInterval` firing is skipped because of quotas, tenant budgets, cluster ceilings, or version issues, that specific firing is atomically consumed by due-point advancement or quarantine/tombstoning and is not automatically replayed later, although subsequent firings based on the cadence may still occur.
+- If an admitted `onInterval` firing fails with `infrastructure_error`, lower layers may retry individual downstream operations in an idempotent way, but the DSL body is not re-executed for the same full applicable Trigger Identity.
 - Designers and operators should use `script_event_audit` and automation metrics to detect heavily throttled or consistently failing timers and adjust cadence, budgets, or script design as needed.
 
 ### `scheduleDefinitionId` Example
 
-`scheduleDefinitionId` is the stable compiled identity used to decide whether a logical timer survives publish, reload, or rollback:
+`scheduleDefinitionId` is the stable compiled identity used to decide whether a logical timer survives publish, reload, or rollback. It identifies the logical schedule definition; each patch/plugin owner materializes that definition as its own physical durable schedule row, so the logical identity must not be confused with a row or firing-claim identity:
 
-- If patch `P11` and patch `P12` both define the NPC patrol timer as "run every 30 ticks while patrol is enabled" and Game Design emits the same `scheduleDefinitionId`, Automation & Scripting preserves the existing timer row and carries its due state forward under the new patch.
-- If patch `P12` replaces that patrol timer with a different logical schedule such as "run every 5 ticks while alerted" and the compiled `scheduleDefinitionId` changes, the old timer is tombstoned and a new timer is created. Rollback to `P11` follows the same rule in reverse: preserve only matching `scheduleDefinitionId` values, and recreate timers for schedules whose identity no longer matches.
+For carry-forward, the complete immutable schedule-owner identity is `<tenantId, gameInstanceId, playableStateScope, targetScopeType, targetScopeId, scriptId, eventType, eventSchemaVersion, isDryRun, scheduleDefinitionId, scheduleSemanticsHash, pluginId?, displacedScriptPatchVersion, replacementScriptPatchVersion?, displacedPluginVersionId?, replacementPluginVersionId?, bindingId?>`. The displaced and replacement owner identities are part of the mapping; matching only `scheduleDefinitionId` or semantic similarity is insufficient.
+
+- If patch `P11` and patch `P12` both define the NPC patrol timer as "run every 30 ticks while patrol is enabled" and Game Design emits the same schedule definition and semantics for the same tenant, game instance, playable-state scope, target scope, script/binding owner, and explicit `P11`-to-`P12` replacement mapping, Automation & Scripting creates or confirms the `P12` version-owned timer row, carries its due state forward through the canonical resume rule, and only then retires the `P11` row. Replacement and retirement are one atomic durable result or a resumable idempotent operation. The new row receives a firing claim and `scriptEventId` only after a due candidate passes admission; the old row and its trigger history are not reused.
+- If patch `P12` replaces that patrol timer with a different logical schedule such as "run every 5 ticks while alerted", or if any tenant, game instance, target scope, playable-state scope, script/plugin/binding owner, displaced/replacement owner, `scheduleDefinitionId`, or `scheduleSemanticsHash` component differs, the scheduler creates the new timer before retiring the old row under the same atomic-or-resumable rule and gives it fresh due state. Rollback to `P11` follows the same complete-identity and explicit reverse-mapping rule.
 
 ---
 
@@ -143,18 +158,18 @@ This example shows how one published plugin version is activated for one running
 
 1. **Plugin version is uploaded and published**
    - A creator uploads plugin bundle `town-crier-v3` through the Game Design Service.
-   - Game Design verifies signatures, extracts `plugin-manifest.json`, validates bindings against `baseVersionId=game-v12`, and records the version as `PUBLISHED`.
+   - Game Design verifies signatures, extracts `plugin-manifest.json`, validates bindings against `baseVersionId=66666666-6666-4666-8666-666666666666`, and records the version as `PUBLISHED`.
 
 2. **Instance-scoped activation is requested**
-   - An operator uses Logging & Admin to call `SetPluginActiveVersion` for `<tenantId=T1, gameInstanceId=I7, pluginId=town-crier, targetPluginVersionId=town-crier-v3>`.
-   - Another instance for the same tenant, such as `I8`, is unaffected because plugin activation is scoped to one `(tenantId, gameInstanceId, pluginId)`.
+   - An operator uses Logging & Admin to call `SetPluginActiveVersion` for `<tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, pluginId=town-crier, targetPluginVersionId=town-crier-v3>`.
+   - Another instance for the same tenant, such as `55555555-5555-4555-8555-555555555555`, is unaffected because plugin activation is scoped to one `(tenantId, gameInstanceId, pluginId)`.
 
 3. **Runtime compatibility gates are enforced**
    - Automation & Scripting loads the published plugin metadata and verifies that:
      - `town-crier-v3` is `PUBLISHED`.
-     - The instance runtime version is exactly `game-v12`.
+     - The instance runtime version is exactly `66666666-6666-4666-8666-666666666666`.
      - The instance’s bound ability schema digest matches the plugin’s recorded `abilitySchemaDigest`.
-   - If any of these checks fail, activation is rejected deterministically and the active plugin state for `I7` is unchanged.
+   - If any of these checks fail, activation is rejected deterministically and the active plugin state for `44444444-4444-4444-8444-444444444444` is unchanged.
 
 4. **Bindings resolve for the activated instance only**
    - Suppose the plugin manifest contains a binding:
@@ -163,12 +178,12 @@ This example shows how one published plugin version is activated for one running
      - `targetSelector={"regionTemplateId":"regionTemplateId:market-square"}`
      - `entrypointGraphId=announce-arrival`
      - `bindingId=announce-on-enter-market`
-   - After activation, only triggers occurring inside `I7` that match `regionTemplateId:market-square` resolve this plugin binding. The same tenant’s other instance `I8` does not resolve the plugin unless it separately activates the same `pluginVersionId`.
+   - After activation, only triggers occurring inside `44444444-4444-4444-8444-444444444444` that match `regionTemplateId:market-square` resolve this plugin binding. The same tenant’s other instance `55555555-5555-4555-8555-555555555555` does not resolve the plugin unless it separately activates the same `pluginVersionId`.
 
 5. **Trigger execution and audit**
-   - When a player enters `market-square` in `I7`, Game Session emits the event to Automation & Scripting.
-   - Automation resolves the active plugin binding for `I7`, executes graph `announce-arrival`, and records the resulting handler activity in `script_event_audit` with `pluginId=town-crier`, `pluginVersionId=town-crier-v3`, and `bindingId=announce-on-enter-market`.
+   - When a player enters `market-square` in `44444444-4444-4444-8444-444444444444`, Game Session emits the event to Automation & Scripting.
+   - Automation resolves the active plugin binding for `44444444-4444-4444-8444-444444444444`, executes graph `announce-arrival`, and records the resulting handler activity in `script_event_audit` with `pluginId=town-crier`, `pluginVersionId=town-crier-v3`, and `bindingId=announce-on-enter-market`.
 
 6. **Rollback remains instance-scoped**
-   - If `town-crier-v3` misbehaves in `I7`, Logging & Admin can disable or roll back that plugin only for `I7`.
+   - If `town-crier-v3` misbehaves in `44444444-4444-4444-8444-444444444444`, Logging & Admin can disable or roll back that plugin only for `44444444-4444-4444-8444-444444444444`.
    - Any other instance continues using its own separately activated plugin state.
