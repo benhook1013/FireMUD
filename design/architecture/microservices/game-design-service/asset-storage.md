@@ -230,7 +230,7 @@ To associate assets with specific published versions while still allowing reuse 
 
 - `version_asset`:
   - `tenant_id` – owning game
-  - `version_id` – published version identifier
+  - `version_id` – owning Draft, Published, or Active version identifier
   - `asset_id` – foreign key to `game_assets.id`
   - `usage_key` – canonical manifest key. For ordinary binary assets in the current
     first slice, this is the persisted `game_assets.file_name` value verbatim; target
@@ -305,7 +305,7 @@ Implementation notes:
 A basic repository (`GameAssetRepository`) and service implementation
 (`GameAssetServiceImpl`) persist uploads using Spring Data JPA.
 
-At publish time, the current implementation reads asset bytes from `game_assets.data`, freezes a process-local selection for the version, exports those bytes into version-scoped published prefixes in object storage, and references them in the generated `manifest.json`. Runtime clients load branding and theme resources directly from the CDN data plane using the manifest; the Game Design Service is not involved in byte delivery, but its `GetPublishedReleaseBundle` response and attested `manifestHash` remain the control-plane authority. A future metadata-only storage model may use retained immutable object-store draft keys, but those keys are target-only and are not the current upload or repair source. See [Game Design Service Architecture](README.md) for how these assets fit into published versions.
+At publish time, the current implementation reads asset bytes from `game_assets.data`, freezes a process-local selection for the version, exports those bytes into version-scoped published prefixes in object storage, and references them in the generated `manifest.json`. The process-local snapshot cache is bounded by `asset.store.frozen-snapshot-cache-max-entries` (default `256`) and evicts least-recently-used entries; a Published/Active retry whose snapshot was evicted fails closed with `REPAIR_VERSION_SCOPE_UNAVAILABLE`. Runtime clients load branding and theme resources directly from the CDN data plane using the manifest; the Game Design Service is not involved in byte delivery, but its `GetPublishedReleaseBundle` response and attested `manifestHash` remain the control-plane authority. A future metadata-only storage model may use retained immutable object-store draft keys, but those keys are target-only and are not the current upload or repair source. See [Game Design Service Architecture](README.md) for how these assets fit into published versions.
 
 The `published_release_bundle` attestation must reference the final asset state for the version by including `manifestHash` (and optionally per-asset `contentHash` values) exposed through Game Design’s `GetPublishedReleaseBundle` API. Activation, cutover preflight, and repair tooling must consume the API instead of reconstructing asset state from `version_asset_artifact` and version metadata separately.
 

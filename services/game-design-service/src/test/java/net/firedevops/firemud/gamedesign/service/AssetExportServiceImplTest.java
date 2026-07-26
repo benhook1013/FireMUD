@@ -43,15 +43,19 @@ class AssetExportServiceImplTest {
 
   @BeforeEach
   void setup() {
+    service = newService(256);
+  }
+
+  private AssetExportServiceImpl newService(int frozenSnapshotCacheMaxEntries) {
     AssetStoreProperties props = new AssetStoreProperties();
     props.setBucket("bucket");
     props.setEndpoint("http://localhost:9000");
     props.setRegion("ap-southeast-2");
     props.setAccessKey("a");
     props.setSecretKey("s");
-    service =
-        new AssetExportServiceImpl(
-            repository, s3Client, props, new ObjectMapper(), versionRepository);
+    props.setFrozenSnapshotCacheMaxEntries(frozenSnapshotCacheMaxEntries);
+    return new AssetExportServiceImpl(
+        repository, s3Client, props, new ObjectMapper(), versionRepository);
   }
 
   @Test
@@ -153,6 +157,27 @@ class AssetExportServiceImplTest {
   }
 
   @Test
+  void evictedPublishedSnapshotFailsClosedInsteadOfGrowingCacheWithoutBound() {
+    service = newService(1);
+    when(versionRepository.findByTenantIdAndVersionNumber("t", 1))
+        .thenReturn(
+            Optional.of(version(7L, 1, VersionLifecycleState.DRAFT)),
+            Optional.of(version(7L, 1, VersionLifecycleState.PUBLISHED)));
+    when(versionRepository.findByTenantIdAndVersionNumber("t", 2))
+        .thenReturn(Optional.of(version(8L, 2, VersionLifecycleState.DRAFT)));
+    when(repository.findByTenantId("t"))
+        .thenReturn(
+            List.of(gameAsset("first.png", "first")), List.of(gameAsset("second.png", "second")));
+
+    service.exportAssets("t", 1);
+    service.exportAssets("t", 2);
+
+    IllegalStateException thrown =
+        assertThrows(IllegalStateException.class, () -> service.exportAssets("t", 1));
+    assertEquals("REPAIR_VERSION_SCOPE_UNAVAILABLE", thrown.getMessage());
+  }
+
+  @Test
   void deleteExportedAssetsUsesExactManifestKeyList() {
     service.deleteExportedAssets("t", 1, List.of("logo.png", "manifest.json"));
 
@@ -163,10 +188,14 @@ class AssetExportServiceImplTest {
   }
 
   private static Version version(VersionLifecycleState state) {
+    return version(7L, 1, state);
+  }
+
+  private static Version version(Long id, int versionNumber, VersionLifecycleState state) {
     Version version = new Version();
-    version.setId(7L);
+    version.setId(id);
     version.setTenantId("t");
-    version.setVersionNumber(1);
+    version.setVersionNumber(versionNumber);
     version.setVersionState(state);
     return version;
   }

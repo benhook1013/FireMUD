@@ -279,20 +279,29 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
 
     def test_empty_expected_secondary_matches_no_parsed_handoff(self) -> None:
         root = Path("/fixture")
+        source_path = "design/architecture/decisions/adr-empty-secondary.md"
+        expected = {source_path: ("AA-1", "Accepted", frozenset())}
         self.validator.validate_expected_allocation(
             root,
             root / "allocation.md",
-            "design/architecture/decisions/adr-empty-secondary.md",
+            source_path,
             "AA-1",
             "Accepted",
-            {
-                "design/architecture/decisions/adr-empty-secondary.md": (
-                    "AA-1",
-                    "Accepted",
-                    frozenset(),
-                )
-            },
-            None,
+            expected,
+            frozenset(),
+        )
+        expect_call_failure(
+            "unexpected secondary capability against explicit empty allocation",
+            lambda: self.validator.validate_expected_allocation(
+                root,
+                root / "allocation.md",
+                source_path,
+                "AA-1",
+                "Accepted",
+                expected,
+                frozenset({"SF-1"}),
+            ),
+            "unexpected secondary capabilities",
         )
 
     def test_exempt_adr_secondary_handoff_drift(self) -> None:

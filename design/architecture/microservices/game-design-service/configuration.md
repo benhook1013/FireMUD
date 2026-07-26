@@ -29,3 +29,4 @@ Published assets are uploaded to an S3-compatible bucket. Configure the client w
 | `ASSET_STORE_REGION` | Region name for the S3 client | `ap-southeast-2` |
 | `ASSET_STORE_ACCESS_KEY` | Access key for the bucket | *(none)* |
 | `ASSET_STORE_SECRET_KEY` | Secret key for the bucket | *(none)* |
+| `ASSET_STORE_FROZEN_SNAPSHOT_CACHE_MAX_ENTRIES` | Maximum process-local frozen export snapshots retained before least-recently-used eviction | `256` |

@@ -6,11 +6,11 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.gamedesign.config.AssetStoreProperties;
 import net.firedevops.firemud.gamedesign.entity.GameAsset;
 import net.firedevops.firemud.gamedesign.entity.Version;
@@ -35,7 +35,7 @@ public class AssetExportServiceImpl implements AssetExportService {
 
   private final GameAssetRepository repository;
   private final VersionRepository versionRepository;
-  private final Map<VersionScope, FrozenAssetSnapshot> frozenSnapshots = new ConcurrentHashMap<>();
+  private final Map<VersionScope, FrozenAssetSnapshot> frozenSnapshots;
 
   @SuppressFBWarnings(value = "EI_EXPOSE_REP2", justification = "S3Client is thread-safe")
   private final S3Client s3Client;
@@ -54,6 +54,16 @@ public class AssetExportServiceImpl implements AssetExportService {
     this.s3Client = s3Client;
     this.properties = copyProperties(properties);
     this.objectMapper = objectMapper;
+    this.frozenSnapshots =
+        Collections.synchronizedMap(
+            new LinkedHashMap<>(16, 0.75f, true) {
+              @Override
+              protected boolean removeEldestEntry(
+                  Map.Entry<VersionScope, FrozenAssetSnapshot> eldest) {
+                return size()
+                    > AssetExportServiceImpl.this.properties.getFrozenSnapshotCacheMaxEntries();
+              }
+            });
   }
 
   private static AssetStoreProperties copyProperties(AssetStoreProperties source) {
@@ -63,6 +73,7 @@ public class AssetExportServiceImpl implements AssetExportService {
     copy.setRegion(source.getRegion());
     copy.setAccessKey(source.getAccessKey());
     copy.setSecretKey(source.getSecretKey());
+    copy.setFrozenSnapshotCacheMaxEntries(source.getFrozenSnapshotCacheMaxEntries());
     return copy;
   }
 

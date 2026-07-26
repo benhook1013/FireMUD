@@ -385,7 +385,7 @@ Key principles:
   - All coordination and cache keys include a `tenantId` component.
   - Region-scoped coordination keys include both `gameInstanceId` and `regionId` so tick workloads and timers are scoped to the complete tick-region identity.
   - Human‑readable values (character names, room titles) are **never** embedded directly in keys; only stable identifiers (numeric IDs, UUIDs) appear in key components.
-  - Explicit exception: the shared Gateway replay domain (`gateway:connect-token:jti:<jti>` markers and its `replayAdmissionFence`) is intentionally not tenant- or region-tagged. These keys are shared security authority, remain outside tenant/region key-tagging rules, and are untouched by region- or tenant-scoped coordination resets.
+  - Explicit exceptions: the shared Gateway replay domain (`gateway:connect-token:jti:<jti>` markers and its `replayAdmissionFence`) and Account-owned exact-token registry records (`session:auth:token:<tokenHash>`) are intentionally not tenant- or region-tagged. These keys remain outside tenant/region key-tagging rules and are untouched by region- or tenant-scoped coordination resets.
 
 - **`{tenantRegionTag}` hash tag**
   - Tick‑region coordination keys use a canonical hash tag placeholder `{tenantRegionTag}` derived from the complete `<tenantId, gameInstanceId, regionId>` scope. The projection must remain collision-safe; callers treat the concrete encoding as opaque.
