@@ -106,11 +106,9 @@ public class AssetExportServiceImpl implements AssetExportService {
 
   private VersionResolution resolveVersionScope(String tenantId, int versionNumber) {
     Version version =
-        versionRepository.findByTenantIdAndVersionNumber(tenantId, versionNumber).orElse(null);
-    if (version == null) {
-      return new VersionResolution(
-          new VersionScope(tenantId, null, versionNumber), VersionLifecycleState.DRAFT);
-    }
+        versionRepository
+            .findByTenantIdAndVersionNumber(tenantId, versionNumber)
+            .orElseThrow(() -> new IllegalArgumentException(REPAIR_VERSION_SCOPE_UNAVAILABLE));
     return new VersionResolution(
         new VersionScope(tenantId, version.getId(), versionNumber), version.getVersionState());
   }
@@ -130,14 +128,17 @@ public class AssetExportServiceImpl implements AssetExportService {
   }
 
   private FrozenAssetSnapshot freeze(List<GameAsset> assets) {
-    List<FrozenAsset> frozenAssets = new ArrayList<>();
+    Map<String, FrozenAsset> frozenByUsageKey = new LinkedHashMap<>();
     for (GameAsset asset : assets) {
       byte[] data = asset.getData();
-      frozenAssets.add(
+      FrozenAsset frozen =
           new FrozenAsset(
-              asset.getId(), asset.getFileName(), asset.getContentType(), data, sha256(data)));
+              asset.getId(), asset.getFileName(), asset.getContentType(), data, sha256(data));
+      if (frozenByUsageKey.putIfAbsent(asset.getFileName(), frozen) != null) {
+        throw new IllegalStateException("ASSET_USAGE_KEY_COLLISION");
+      }
     }
-    return new FrozenAssetSnapshot(List.copyOf(frozenAssets));
+    return new FrozenAssetSnapshot(List.copyOf(frozenByUsageKey.values()));
   }
 
   @Override

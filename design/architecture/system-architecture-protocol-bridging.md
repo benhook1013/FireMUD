@@ -2,7 +2,11 @@
 
 This document describes how FireMUD supports **both modern and traditional MUD clients** by bridging two distinct communication protocols: **WebSocket** and **TCP/Telnet**. Both are routed into a unified backend session service for shared logic and scalability.
 
-This design is the **canonical specification** for gameplay command flows through the edge: it defines ordering and delivery guarantees, backpressure and slow-client behaviour, Telnet and WebSocket reconnection and buffering rules, and the Telnet disconnect reason taxonomy. Service-specific designs such as the TCP Proxy Service README describe implementation details and configuration but must remain consistent with the invariants in this document. **Target flow:** first public-production credential-bearing text entry is `LOGIN` -> conditional in-band `JOIN` -> `PLAY`; returning members skip `JOIN`. Browser and other first-party WebSocket clients use HTTP `Join & Play` before connect-token issuance, then complete in-band `LOGIN` -> `PLAY` without an in-band `JOIN`. **Current implementation status:** explicit `JOIN`/`Join & Play` is not implemented, and current connect-token/`PLAY` paths may still create membership implicitly. That is implementation drift, not an alternate flow.
+This design is the **canonical specification** for gameplay command flows through the edge: it defines ordering and delivery guarantees, backpressure and slow-client behaviour, Telnet and WebSocket reconnection and buffering rules, and the Telnet disconnect reason taxonomy. Service-specific designs such as the TCP Proxy Service README describe implementation details and configuration but must remain consistent with the invariants in this document. **Target flow:** first public-production credential-bearing text entry is `LOGIN` -> conditional in-band `JOIN` -> `PLAY`; returning members skip `JOIN`. Browser and other first-party WebSocket clients use HTTP `Join & Play` before connect-token issuance, then complete in-band `LOGIN` -> `PLAY` without an in-band `JOIN`.
+
+## Implementation Status
+
+The target flow and delivery contracts below remain normative. Explicit `JOIN`/`Join & Play` is not implemented in the current runtime, and current connect-token/`PLAY` paths may still create public-production membership implicitly. That is implementation drift, not an alternate flow; it does not relax the at-most-once delivery, authentication, admission, reconnect, or close-taxonomy requirements.
 
 ---
 
@@ -38,7 +42,7 @@ Despite their differences, both protocols are normalized into the same internal 
 - `/ws/game/**` is the only gameplay WebSocket route.
 - Non-proxy gameplay clients must present a valid connect token; missing/invalid token returns HTTP `403`.
 - TCP Proxy bridge traffic is admitted without connect token only when the gateway authenticates the proxy identity over the internal mTLS listener and header-trust checks pass.
-- All gameplay sessions require in-band `LOGIN` and `PLAY` before gameplay commands. Credential-bearing text clients use conditional in-band `JOIN` for first public-production membership; browser and other first-party WebSocket clients complete the equivalent HTTP `Join & Play` operation before connect-token issuance and do not send `JOIN` in-band. Returning members skip the join operation; the current direct `LOGIN` -> `PLAY` implicit-membership path is implementation drift.
+- All gameplay sessions require in-band `LOGIN` and `PLAY` before gameplay commands. Credential-bearing text clients use conditional in-band `JOIN` for first public-production membership; browser and other first-party WebSocket clients complete the equivalent HTTP `Join & Play` operation before connect-token issuance and do not send `JOIN` in-band. Returning members skip the join operation.
 
 ---
 

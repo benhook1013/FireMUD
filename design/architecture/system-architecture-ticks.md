@@ -302,8 +302,10 @@ Region split/merge operations interact directly with tick idempotency, Redis key
    - Do not hand-edit `tick:*`, `timer:*`, `retry:*`, or lease/lock keys.
 5. **Handle cross-region follow-ups explicitly**
    - Durable follow-up rows in PostgreSQL are the source of truth for cross-region work. Topology changes must ensure follow-ups are either:
-     - Rewritten to target the new region mapping, or
-     - Converged to `ABANDONED` with a topology-change reason when replaying them under the new mapping is not valid.
+     - **Target state:** Rewritten through an atomic durable rollover that creates and durably links the new target-leg/follow-up identity before marking the old identity `ABANDONED`.
+     - **Target-state fallback:** If one transaction cannot cover the records, persist a fenced durable rollover intent containing the old/new identities, desired mapping, and sealed follow-up context; recovery retries/reconciles that intent until the new identity and link are durable before marking the old identity `ABANDONED`.
+     - Converged to `ABANDONED` with a topology-change reason when replaying it under the new mapping is not valid and no new target identity is required.
+   - **Current drift:** The current follow-up path does not yet claim the complete atomic or recoverable rollover boundary. Until it is proven, a mapping-changing operation remains paused/fenced and must not mark an old follow-up `ABANDONED` solely because the mapping changed.
 6. **Resume**
    - Re-enable tick scheduling and command intake once the new mapping is in place and the region(s) are healthy.
 

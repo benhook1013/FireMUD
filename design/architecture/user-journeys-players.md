@@ -147,7 +147,7 @@ OK PLAY Entered Emberfall / Live Realm as Mara
 ```
 
 After this first successful join, the player's account now has normal `player` membership for Emberfall, so later discovery no longer depends on public-production visibility alone.
-The player-facing character-creation call in this sequence is the Account-owned `POST /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters` facade backed by Entity Management's internal `CreateCharacter` contract. It requires the signed discovery `connectScopeId`, is permitted only for that still-admissible realm target, and must complete before the new character is admissible through `PLAY`. The currently resolved backend substrate covers realm scope and creation policy; the remaining product contract is a richer character-creation descriptor that tells first-party clients which template/race/class/options to render for a given published game version.
+The player-facing character-creation call in this sequence is the Account-owned `POST /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters` facade backed by Entity Management's internal `CreateCharacter` contract. It requires the opaque server-issued discovery `connectScopeId`, is permitted only for that still-admissible realm target, and must complete before the new character is admissible through `PLAY`. The currently resolved backend substrate covers realm scope and creation policy; the remaining product contract is a richer character-creation descriptor that tells first-party clients which template/race/class/options to render for a given published game version.
 Any non-production realm shown in fork/playtest examples is assumed to already be grant-visible to that caller; non-public realms are not publicly discoverable by default.
 
 ---

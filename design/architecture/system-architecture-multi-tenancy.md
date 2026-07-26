@@ -5,6 +5,10 @@ It complements the [System Architecture Overview](./system-architecture-overview
 the multi-tenant requirements in the
 [Core Requirements](../project-management/core-requirements.md).
 
+## Implementation Status
+
+The realm-catalog, admission-pointer, realm-local character, and explicit first-join contracts below are normative target behavior. Current runtime proof is partial: `IssueConnectToken` and text `PLAY` can still invoke implicit public-production membership creation, the membership-generation live reread at connect-token issuance is not implemented, and pointer updates still use a read-then-write check with separate pointer/audit/prepared-execution writes. These are implementation gaps only; they do not weaken tenant isolation, the distinct `tenantSlug` and tenant-scoped authored-world `worldSlug` selectors, or the required `GetAdmissionPointer(tenantId, worldSlug, realmSlug)` contract.
+
 ---
 
 ## Identity & Tenant Model
@@ -14,6 +18,7 @@ FireMUD separates **global identity** from **per-game state** so that one person
 - **Platform account (`accountId`)** – A global identity record managed by the Account Service. Each human player has a single platform account, which is the subject of authentication and JWT issuance.
 - **Tenant (`tenantId`)** – A hosted game world or project. Each tenant represents one game created on the platform and may have one or more running game instances. The Game Design Service owns `tenantId` issuance.
 - **Tenant slug (`tenantSlug`)** – A stable, human-friendly identifier owned by the Game Design Service. Slugs are used only as **player-facing selectors** in the post-login lobby flow (`WORLDS` / `REALMS` / `CHARS` / `PLAY`) and are resolved server-side to `tenantId`; services and persistence models continue to use `tenantId` as the authoritative tenant identifier. See [ADR 0005: Tenant Identifiers in Gameplay Protocol](./decisions/adr-0005-tenant-identifiers-in-gameplay-protocol.md) for the required slug stability rules.
+- **World slug (`worldSlug`)** – A stable tenant-scoped selector for one authored world inside the tenant/game. It is resolved only together with `tenantId` and is paired with `realmSlug` by the realm catalog and admission-pointer contract. It is not an alias for `tenantSlug`, does not identify a tenant across the platform, and must not be inferred from display metadata, `realmSlug`, or `gameInstanceId`.
 - **Game instance (`gameInstanceId`)** – A specific running instance of a tenant’s world, keyed as described in [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#version-activation--rollback). Persistence models, APIs, and key formats must include `gameInstanceId` explicitly rather than overloading `tenantId`.
   - A tenant may expose one or more **player-addressable realms**. Each realm is explicitly `OPEN` on exactly one admissible `gameInstanceId` or `CLOSED` with none through the authoritative realm-routing contract owned by Game Session.
   - Exactly one visible, player-addressable realm must be flagged `publicProduction=true` in the separately revisioned Game Session catalog/policy record for each tenant. Zero or multiple public-production realms are invalid catalog state: public discovery, first join, connect-token issuance, and `PLAY` must fail closed rather than selecting a fallback. The admission pointer contains only `OPEN(gameInstanceId)` or `CLOSED` routing authority plus its `pointerVersion`; callers consume the catalog/policy flag rather than inferring public-production behavior from a slug.
@@ -91,6 +96,7 @@ Minimum realm-catalog facts for one visible realm are:
 
 - `tenantId`
 - `tenantSlug`
+- `worldSlug`
 - `realmSlug`
 - bounded player-facing display metadata
 - whether the realm is visible
@@ -135,7 +141,7 @@ Pointer freshness and cutover rules:
 - Connect-token issuance and other admission-critical flows must fail closed if the selected realm target no longer resolves to the same admissible `pointerVersion` and `catalogRevision` they were issued against. Bootstrap bundles and connect tokens carry both references; a catalog/policy revision change cannot be hidden behind an unchanged runtime pointer version.
 - Realm cutover must therefore look like a control-plane pointer move, not a client-side reinterpretation of slugs or instance names.
 - **Target transaction boundary:** the persistence key and uniqueness constraint are `{tenantId, worldSlug, realmSlug}`. Existing-route mutations require an expected positive version and use one atomic database conditional write; checking a version in memory before an unconditional update is not compare-and-set.
-- In that target, the pointer, append-only audit event, and idempotent request outcome commit atomically when held in the Game Session database. A replacement cutover that changes `gameInstanceId` additionally commits its prepared-cutover execution state in that transaction; ordinary `OPEN` or `CLOSED` updates do not require a prepared upgrade. The current implementation still performs a read-then-write version check and separate pointer, audit, and prepared-execution writes; that gap is tracked in [Versioning and Runtime Configuration](./system-architecture-versioning-runtime.md#implementation-status).
+- In that target, the pointer, append-only audit event, and idempotent request outcome commit atomically when held in the Game Session database. A replacement cutover that changes `gameInstanceId` additionally commits its prepared-cutover execution state in that transaction; ordinary `OPEN` or `CLOSED` updates do not require a prepared upgrade.
 - The pointer governs new or renewed bindings. An already connected player remains authorized by the bound game instance and its runtime fences until the explicit bounded source drain ends; ordinary actions do not re-read pointer authority or eject the player merely because the pointer advanced.
 
 ## Account-to-Game Relationships

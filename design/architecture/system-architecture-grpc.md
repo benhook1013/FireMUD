@@ -2,6 +2,10 @@
 
 These guidelines define how FireMUD microservices design and document their gRPC APIs. Following a consistent structure makes it easier for teams to evolve services over time and share tooling.
 
+## Implementation Status
+
+The normative contract below remains mTLS for internal gRPC outside intentionally relaxed local development. Hosted preview may temporarily use plaintext while the Spring gRPC `1.0.x` SSL-bundle migration and preview re-proof are in flight; this is preview-only and does not create a second target transport. The remaining hardening path is CI/static checking that rejects legacy or ignored server-TLS property usage. These current caveats do not weaken the workload identity, exact method allowlist, or canonical Spring SSL-bundle requirements.
+
 ## Service and RPC Naming
 
 - Use **PascalCase** for all service names (e.g., `PlayerService`).
@@ -168,13 +172,6 @@ The bundle material still comes from the same file paths, but the supported serv
 The [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) guide describes how these values are provided. The shared library includes a `GrpcServerTlsReloader` component to hot reload server certificates, and services use it to reload credentials automatically.
 
 Adopting these conventions helps keep FireMUD services consistent and makes it easier for new contributors to work with the APIs. See [Security Architecture](./system-architecture-security.md#cross-service-trust) for mTLS design.
-
-## Implementation Notes
-
-- The canonical target state remains: internal gRPC uses mTLS everywhere outside intentionally relaxed local development.
-- The canonical server-TLS contract is now Spring Boot SSL bundles plus Spring gRPC server SSL bundle binding (`spring.ssl.bundle.*` and `spring.grpc.server.ssl.*`).
-- Preview-only plaintext internal gRPC is an explicit temporary exception, not a second long-lived transport model.
-- New runtime or preview work should not introduce additional bespoke transport patterns. The remaining hardening path is to add CI/static checks that reject legacy or ignored gRPC server TLS property usage.
 
 ## Related Documentation
 

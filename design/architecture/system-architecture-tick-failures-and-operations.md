@@ -109,6 +109,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
 - `created_at` and `updated_at` are audit/age fields only. They are never members of the canonical work-order tuple or a replay tie-breaker. If a legacy source exposes only a timestamp, the scheduler must normalize it once into the persisted `due_point_normalized` plus deterministic `enqueue_seq`/identity tie-breakers before selection; it must not sort directly by wall-clock insertion time.
 - Recovery that observes multiple durable rows for the same coordinates treats the region as inconsistent, pauses it, and requires reconcile tooling before normal ticks resume.
 - Current live boundary note: gameplay commands do not yet use the fuller target-state `BOUND_TO_BATCH` vocabulary. Instead, the command ledger exposes `enqueueSeq`, `STAGED`, `DRAINED`, and later terminal/requeue outcomes, while the sealed batch manifest digest is used to ensure replay reuses only matching staged batches instead of silently mutating an older batch contract.
+- **Target-state authority:** The durable `tick_batch` record, `tick_effects` ledger, and immutable sealed execution context are authoritative for selected work, execution identity, and replay. The sealed context includes the complete batch coordinates, executor fence, selected-work manifest/digest, effect identities, and pinned execution inputs/version/script patch. Redis `pending`/event streams plus external metrics, logs, traces, and audit streams are projections or diagnostics; they cannot prove a commit or justify replay on their own.
 - For any `(tenant_id, game_instance_id, playable_state_scope, region_id, region_epoch, tick_id, effect_key, target_aggregate_type, target_aggregate_id)` there must eventually be **exactly one terminal state**:
   - `status = APPLIED` – effect successfully committed to domain state.
   - `status = ABANDONED` – effect intentionally skipped or judged unrecoverable.
@@ -159,7 +160,33 @@ Replay of a tick is driven from ledger state:
 - When reprocessing a tick, the executor loads ledger rows for that `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId>` with `status = SCHEDULED` and:
   - Re-queues/re-runs effects whose domain targets do not yet reflect `APPLIED`, then marks those rows `APPLIED`.
   - Marks effects `ABANDONED` with a precise reason when replay determines they are no longer valid (expired session, entity gone, descheduled tick, and so on).
-  - When idempotency evidence proves that the effect was already applied, verifies the relevant durable state, transitions `SCHEDULED -> APPLIED`, and records replay-verification audit metadata before skipping the duplicate domain call. This must not create a replay-specific ledger status.
+  - When idempotency evidence proves that the effect was already applied, replay verification binds the evidence and the `SCHEDULED -> APPLIED` transition in one fenced/CAS transaction (conceptual shape):
+
+    ```sql
+    BEGIN;
+    UPDATE tick_effects AS e
+    SET status = 'APPLIED',
+        replay_verification_evidence_digest = :evidenceDigest,
+        replay_verification_recorded_at = :now
+    FROM tick_batch AS b
+    WHERE e.tick_batch_id = b.tick_batch_id
+      AND e.effect_id = :effectId
+      AND e.status = 'SCHEDULED'
+      AND b.executor_fence = :executorFence
+      AND b.sealed_execution_context_digest = :contextDigest
+      AND EXISTS (
+        SELECT 1
+        FROM durable_domain_evidence AS d
+        WHERE d.effect_id = :effectId
+          AND d.evidence_digest = :evidenceDigest
+          AND d.executor_fence = :executorFence
+          AND d.sealed_execution_context_digest = :contextDigest
+      );
+    -- Require exactly one affected row; otherwise ROLLBACK and reject/retry.
+    COMMIT;
+    ```
+
+    The evidence check, fence check, status CAS, and replay-verification metadata commit together. A stale fence/context, missing evidence, or concurrent winner affects zero rows and must roll back and reject or retry; an audit/log write without this CAS is not proof and must not be used to skip the domain call. This remains the target-state transaction; the current live path has the ledger and manifest-digest boundary but does not yet claim the full sealed-context CAS.
 - Every Lua script that stages effects is required to include the `effect_key` used in the ledger so Redis `pending` entries can always be correlated with ledger rows; staging scripts that cannot be tied back to a ledger identity are rejected.
 - Recovery rules for Redis/SQL mismatch are explicit:
   - durable tick-batch + `SCHEDULED` ledger rows exist, Redis `pending` missing:
@@ -583,8 +610,10 @@ Cross-region follow-ups are durable PostgreSQL records owned by Game Session (or
   - Origin-side reconciliation claims that row idempotently and advances the coordinator only after the correlation matches the durable coordinator record. A transient message, target-only `gameInstanceId`, or mutable command payload is not sufficient correlation.
 - **Topology changes**
   - Mapping-changing split/merge operations must bump `regionEpoch` for affected source/target regions before follow-up draining resumes (see required topology protocol in `system-architecture-ticks.md`).
+  - **Target-state rollover invariant:** If a topology change needs a new target leg, the old follow-up identity and the new identity must be handled atomically: one durable transaction creates and links the new target record, then marks the old identity `ABANDONED` only after that new record is durable. If the records cannot share a transaction, persist a fenced durable rollover intent containing both identities, the desired mapping, and the sealed follow-up context; recovery retries that intent until the new record and link are durable before terminalizing the old identity.
+  - **Current drift:** The current cross-region follow-up path has durable rows and epoch/mapping checks but does not yet claim this atomic or recoverable rollover boundary. Until it is implemented and proven, topology tooling must remain paused/fenced and must not mark an old identity `ABANDONED` merely because its mapping changed.
   - If region split/merge changes which region owns the target entity, topology-change tooling must either:
-    - Mark the old follow-up identity `ABANDONED` with a topology-change reason before creating a new target-leg/follow-up identity for the new `(target_game_instance_id, target_region_id, target_region_epoch)`. The new record must carry a fresh `target_effect_id` and `due_tick_id`, linked to the old identity by durable audit correlation; updating only the target instance, region, or epoch on the old record is forbidden.
+    - Complete the atomic or durable-intent rollover above, creating a new target-leg/follow-up identity for the new `(target_game_instance_id, target_region_id, target_region_epoch)` before marking the old identity `ABANDONED` with a topology-change reason. The new record must carry a fresh `target_effect_id` and `due_tick_id`, linked to the old identity by durable correlation; updating only the target instance, region, or epoch on the old record is forbidden.
     - Mark it `ABANDONED` with a topology-change reason when replaying it under the new mapping is not valid.
 
 ## Remote Hint Markers and Resets

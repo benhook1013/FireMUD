@@ -20,10 +20,12 @@ Leaving the gameplay protocol ambiguous creates interoperability problems for cl
 
 FireMUD uses a single shared gameplay entrypoint for many worlds. The gameplay text protocol must therefore support a player-friendly world selection flow without requiring humans to type opaque internal identifiers.
 
-The gameplay protocol uses two distinct identifier layers:
+The gameplay protocol uses distinct identifier layers:
 
 - **Internal identifiers (authoritative):** `tenantId` and `characterId`.
-- **Player-facing selectors (lobby only):** `tenantSlug` (stable, human-friendly) plus numbered menu indices returned by `WORLDS`/`CHARS`.
+- **Tenant selector (lobby only):** `tenantSlug`, the stable human-friendly selector that resolves to one `tenantId`.
+- **Tenant-scoped world and realm selectors:** `worldSlug` identifies one authored world only inside the resolved tenant, and `realmSlug` identifies one realm in that world. They are routing selectors rather than tenant identity.
+- **Menu selectors:** numbered indices returned by `WORLDS`/`REALMS`/`CHARS`.
 
 The canonical lobby flow after `LOGIN` is:
 

@@ -232,10 +232,20 @@ To associate assets with specific published versions while still allowing reuse 
   - `tenant_id` – owning game
   - `version_id` – published version identifier
   - `asset_id` – foreign key to `game_assets.id`
+  - `usage_key` – canonical manifest key. For ordinary binary assets in the current
+    first slice, this is the persisted `game_assets.file_name` value verbatim; target
+    Draft mapping writers persist the same key and must not derive it from row order,
+    `asset_id`, or an object-store URL.
   - `usage_type` – optional classifier such as `logo`, `icon`, or `audio`
   - `created_at` – mapping creation timestamp
 
-The target combination `(tenant_id, version_id, asset_id)` is unique so the same asset can be referenced by multiple versions without duplicating the binary row. Once the target authoring path exists and a mapping belongs to a version in the Published or Active state described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md), the referenced asset must be treated as immutable; replacing the binary requires creating a new `game_assets` row and a new `version_asset` mapping.
+The target combinations `(tenant_id, version_id, asset_id)` and
+`(tenant_id, version_id, usage_key)` are unique. If two mappings in one version resolve
+to the same `usage_key`, the Draft mapping write or publish gate must reject the
+collision deterministically; it must not suffix the key or use last-write-wins behavior.
+The same asset can be referenced by multiple versions without duplicating the binary
+row. Once the target authoring path exists and a mapping belongs to a version in the
+Published or Active state described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md), the referenced asset must be treated as immutable; replacing the binary requires creating a new `game_assets` row and a new `version_asset` mapping.
 
 Artifact lifecycle state for each exported prefix must be persisted in a dedicated state table:
 
@@ -250,7 +260,14 @@ Artifact lifecycle state for each exported prefix must be persisted in a dedicat
   - `last_error_code` / `last_error_message` (nullable; set on failed transitions)
   - `updated_at`
 
-Before the first byte is exported for a version, the workflow must freeze an immutable per-version export snapshot. The target shape is a `version_asset_export_item` projection keyed by `(tenant_id, version_id, usage_key)` with the selected `asset_id`, the source-row identity, and the computed source `content_hash` (plus size/type metadata when needed for verification). Same-version retries and exact-bytes repair must use this snapshot, never re-select the current tenant asset list or mutable draft mappings. The snapshot is frozen before `ExportAssets` writes bytes and is retained for every non-Retired or design-history-reachable release.
+Before the first byte is exported for a version, the target workflow must freeze an
+immutable durable per-version export snapshot. The target shape is a
+`version_asset_export_item` projection keyed by `(tenant_id, version_id, usage_key)`
+with the selected `asset_id`, source-row identity, and computed source `content_hash`
+(plus size/type metadata when needed for verification). Same-version retries and
+exact-bytes repair must use this snapshot, never re-select the current tenant asset
+list or mutable draft mappings. This durable projection is deferred target
+convergence and is not implemented by the current first slice.
 
 `(tenant_id, version_id)` is unique in `version_asset_artifact`. This enum list is the canonical schema contract for both persistence and API validation. All lifecycle transitions must use compare-and-set on `state_epoch` so concurrent publish/repair/purge workflows cannot race.
 

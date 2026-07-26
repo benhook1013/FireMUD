@@ -36,6 +36,14 @@ REQUIRED_DELEGATED_ENTITLEMENT_CHECKS = {
 }
 REQUIRED_TRUSTED_PROXY_CHECKS = {"trusted_proxy_identity"}
 REQUIRED_CONNECT_TOKEN_REVOKE_CHECKS = {"browser_origin", "csrf"}
+REQUIRED_FIRST_PARTY_WS_APPLICABILITY = {
+    "connection_mode": "first_party_web",
+    "operation": "websocket_upgrade",
+}
+REQUIRED_REVOKE_APPLICABILITY = {
+    "connection_mode": "first_party_web",
+    "operation": "connect_token_cookie_revoke",
+}
 
 
 def route_key(route: dict[str, Any]) -> str | None:
@@ -106,6 +114,17 @@ def route_live_checks(route: dict[str, Any], label: str, errors: list[str]) -> s
     return set(string_list(route.get("required_live_checks"), f"{label} required_live_checks", errors))
 
 
+def validate_applicability(
+    route: dict[str, Any], label: str, expected: dict[str, str], errors: list[str]
+) -> None:
+    for key, expected_value in expected.items():
+        actual_value = applicability_value(route, key, label, errors)
+        if actual_value != expected_value:
+            errors.append(
+                f"{label} must declare applicability {key}={expected_value!r}"
+            )
+
+
 def validate_ws_game_routes(routes: list[Any], errors: list[str]) -> None:
     ws_routes = matching_routes(routes, "spring-cloud-gateway", "/ws/game/**")
     by_mode: dict[str, list[dict[str, Any]]] = {}
@@ -123,6 +142,12 @@ def validate_ws_game_routes(routes: list[Any], errors: list[str]) -> None:
         )
     else:
         first_party = by_mode["first_party_web"][0]
+        validate_applicability(
+            first_party,
+            "/ws/game/** first_party_web",
+            REQUIRED_FIRST_PARTY_WS_APPLICABILITY,
+            errors,
+        )
         missing_first_party = sorted(
             REQUIRED_WS_GAME_CHECKS
             - route_live_checks(first_party, "/ws/game/** first_party_web", errors)
@@ -160,6 +185,12 @@ def validate_ws_game_routes(routes: list[Any], errors: list[str]) -> None:
         REQUIRED_CONNECT_TOKEN_REVOKE_CHECKS
         - route_live_checks(revoke_routes[0], "POST /ws/game/connect-token/revoke", errors)
     )
+    validate_applicability(
+        revoke_routes[0],
+        "POST /ws/game/connect-token/revoke",
+        REQUIRED_REVOKE_APPLICABILITY,
+        errors,
+    )
     if missing_revoke:
         errors.append(
             "POST /ws/game/connect-token/revoke is missing required live checks: "
@@ -181,7 +212,7 @@ def validate_issue_connect_token(routes: list[Any], errors: list[str]) -> None:
 
 
 def validate_join_routes(routes: list[Any], errors: list[str]) -> None:
-    for service, name in JOIN_ROUTES_REQUIRING_POINTER_ERROR:
+    for service, name in sorted(JOIN_ROUTES_REQUIRING_POINTER_ERROR):
         matches = matching_routes(routes, service, name)
         if len(matches) != 1:
             errors.append(f"matrix must contain exactly one {service} {name} route")
@@ -199,7 +230,12 @@ def validate_delegated_entitlements(routes: list[Any], errors: list[str]) -> Non
             "matrix must contain exactly one account-service GetTenantEntitlementsForRuntime route"
         )
         return
-    caller_policies = entitlement_routes[0].get("caller_policies", [])
+    caller_policies = entitlement_routes[0].get("caller_policies")
+    if not isinstance(caller_policies, list):
+        errors.append(
+            "GetTenantEntitlementsForRuntime caller_policies must be a list"
+        )
+        return
     game_session_policies = [
         policy
         for policy in caller_policies
@@ -265,9 +301,10 @@ def validate_route_variants(
             errors.append(f"routes[{index}] must declare string service and route")
         else:
             route_variants.setdefault(key, []).append((index, route.get("applicability")))
-        if route.get("classification") not in allowed_classifications:
+        classification = route.get("classification")
+        if not isinstance(classification, str) or classification not in allowed_classifications:
             errors.append(
-                f"routes[{index}] uses unknown classification: {route.get('classification')!r}"
+                f"routes[{index}] uses unknown classification: {classification!r}"
             )
 
     for key, variants in route_variants.items():

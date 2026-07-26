@@ -56,6 +56,8 @@ class AssetExportServiceImplTest {
 
   @Test
   void exportUploadsAssetsAndManifest() {
+    when(versionRepository.findByTenantIdAndVersionNumber("t", 1))
+        .thenReturn(Optional.of(version(VersionLifecycleState.DRAFT)));
     GameAsset asset = gameAsset("logo.png", "data");
     when(repository.findByTenantId("t")).thenReturn(List.of(asset));
 
@@ -74,6 +76,10 @@ class AssetExportServiceImplTest {
 
   @Test
   void sameVersionRetryReusesFrozenSnapshot() {
+    Version draft = version(VersionLifecycleState.DRAFT);
+    Version published = version(VersionLifecycleState.PUBLISHED);
+    when(versionRepository.findByTenantIdAndVersionNumber("t", 1))
+        .thenReturn(Optional.of(draft), Optional.of(published));
     GameAsset original = gameAsset("logo.png", "original");
     GameAsset changed = gameAsset("changed.png", "changed");
     when(repository.findByTenantId("t")).thenReturn(List.of(original), List.of(changed));
@@ -82,7 +88,33 @@ class AssetExportServiceImplTest {
     ExportedAssetManifest retry = service.exportAssets("t", 1);
 
     assertEquals(first, retry);
+    verify(versionRepository, times(2)).findByTenantIdAndVersionNumber("t", 1);
     verify(repository, times(1)).findByTenantId("t");
+  }
+
+  @Test
+  void unknownVersionIsRejectedWithoutSelectingTenantAssets() {
+    when(versionRepository.findByTenantIdAndVersionNumber("t", 99)).thenReturn(Optional.empty());
+
+    IllegalArgumentException thrown =
+        assertThrows(IllegalArgumentException.class, () -> service.exportAssets("t", 99));
+
+    assertEquals("REPAIR_VERSION_SCOPE_UNAVAILABLE", thrown.getMessage());
+    verifyNoInteractions(repository, s3Client);
+  }
+
+  @Test
+  void duplicateUsageKeysAreRejectedBeforeWritingAssets() {
+    when(versionRepository.findByTenantIdAndVersionNumber("t", 1))
+        .thenReturn(Optional.of(version(VersionLifecycleState.DRAFT)));
+    when(repository.findByTenantId("t"))
+        .thenReturn(List.of(gameAsset("logo.png", "one"), gameAsset("logo.png", "two")));
+
+    IllegalStateException thrown =
+        assertThrows(IllegalStateException.class, () -> service.exportAssets("t", 1));
+
+    assertEquals("ASSET_USAGE_KEY_COLLISION", thrown.getMessage());
+    verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
   }
 
   @ParameterizedTest
@@ -103,18 +135,20 @@ class AssetExportServiceImplTest {
 
   @Test
   void publishedRetryReusesSnapshotFrozenBeforePublication() {
-    Version version = version(VersionLifecycleState.DRAFT);
-    when(versionRepository.findByTenantIdAndVersionNumber("t", 1)).thenReturn(Optional.of(version));
+    Version draft = version(VersionLifecycleState.DRAFT);
+    Version published = version(VersionLifecycleState.PUBLISHED);
+    when(versionRepository.findByTenantIdAndVersionNumber("t", 1))
+        .thenReturn(Optional.of(draft), Optional.of(published));
 
     GameAsset original = gameAsset("logo.png", "original");
     GameAsset changed = gameAsset("changed.png", "changed");
     when(repository.findByTenantId("t")).thenReturn(List.of(original), List.of(changed));
 
     ExportedAssetManifest first = service.exportAssets("t", 1);
-    version.setVersionState(VersionLifecycleState.PUBLISHED);
     ExportedAssetManifest retry = service.exportAssets("t", 1);
 
     assertEquals(first, retry);
+    verify(versionRepository, times(2)).findByTenantIdAndVersionNumber("t", 1);
     verify(repository, times(1)).findByTenantId("t");
   }
 
