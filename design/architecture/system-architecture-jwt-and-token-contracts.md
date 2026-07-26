@@ -105,15 +105,15 @@ To keep trust boundaries clear, FireMUD has exactly these JWT profile categories
   - Lifetime: short (for example 15–30 minutes) and not automatically refreshed; when a `control-ui` JWT expires or is revoked, UIs must treat this as a hard logout condition and require re-authentication.
 
 - **Player-bootstrap JWTs**
-- Issued via the `/auth/player-bootstrap` HTTP endpoint on the Account Service as the first step of the first-party gameplay bootstrap flow, before discovery, `POST /auth/bootstrap/join`, bootstrap-authenticated character creation, connect-token issuance, and gameplay `LOGIN`.
+  - Issued via the `/auth/player-bootstrap` HTTP endpoint on the Account Service as the first step of the first-party gameplay bootstrap flow, before discovery, `POST /auth/bootstrap/join`, bootstrap-authenticated character creation, connect-token issuance, and gameplay `LOGIN`.
   - Intended audience: bootstrap-only gameplay surfaces (for example an `aud` claim exactly `player-bootstrap`).
-- Carried only by first-party gameplay SPAs or mobile clients, stored in memory only, and used only for bootstrap discovery, `POST /auth/bootstrap/join`, bootstrap-authenticated character creation, and `POST /auth/connect-token`.
+  - Carried only by first-party gameplay SPAs or mobile clients, stored in memory only, and used only for bootstrap discovery, `POST /auth/bootstrap/join`, bootstrap-authenticated character creation, and `POST /auth/connect-token`.
   - Lifetime: intentionally short (target <= 5 minutes). Expiry or revocation requires the first-party gameplay client to obtain a fresh bootstrap token before continuing gameplay bootstrap.
   - Full-page reload or process restart is treated the same way as token loss: the client re-enters the bootstrap flow from `POST /auth/player-bootstrap` (or an equivalent future explicit bootstrap-restoration endpoint if one is added). The architecture does not currently define a hidden refresh token or silent bootstrap-restoration mechanism.
 
 - **Gameplay-connect JWTs**
   - Issued by Account after bootstrap discovery and current membership, entitlement, and admission checks with profile and audience `gameplay-connect`.
-- Carried exactly once to the Gateway gameplay WebSocket handshake through the approved HttpOnly cookie carrier or the explicitly classified non-first-party/public non-browser header carrier and consumed under the replay contract in [ADR 0029](./decisions/adr-0029-single-use-gameplay-connect-token-carriage.md).
+  - Carried exactly once to the Gateway gameplay WebSocket handshake through the approved HttpOnly cookie carrier or the explicitly classified non-first-party/public non-browser header carrier and consumed under the replay contract in [ADR 0029](./decisions/adr-0029-single-use-gameplay-connect-token-carriage.md).
   - Gateway validates and consumes this token, strips its carrier, and forwards only the signed connect context. Gameplay commands and backend services never accept it as authorization.
   - This profile is an explicit bounded revocation-freshness exception: one atomic exact-`jti` consume marker, a signed lifetime no longer than 30 seconds, and configured clock skew no greater than 5 seconds. A hard Account or security revocation may leave only that bounded pre-consumption window; neither the `player-bootstrap` lifetime nor `FIREMUD_AUTH_SESSION_EXPIRATION_MS=300000` extends Gateway replay or revocation freshness.
 

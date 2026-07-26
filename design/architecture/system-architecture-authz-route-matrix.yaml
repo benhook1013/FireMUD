@@ -130,7 +130,7 @@ routes:
     realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED]
+      any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED]
   - service: game-session-service
     route: JOIN
     scope: tenant
@@ -142,7 +142,7 @@ routes:
     membership_authority_generation_applies: false
     required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
     canonical_errors:
-      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE]
+      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, TENANT_BILLING_BLOCKED]
     mutation_contract: explicit_public_membership_atomic
   - service: game-session-service
     route: PLAY
@@ -267,6 +267,8 @@ routes:
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match]
+    canonical_errors:
+      any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH]
   - service: account-service
     route: POST /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters
     scope: tenant
@@ -280,6 +282,8 @@ routes:
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match]
+    canonical_errors:
+      any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH]
     delegates_to: entity-management-service/CreateCharacter
   - service: game-session-service
     route: StartSession
@@ -328,12 +332,16 @@ routes:
     classification: public
     issued_token_profile: control-ui
     issued_token_audience: control-ui
+    implementation_status:
+      known_drift: current_issuance_uses_legacy_scope_duplicated_session_keys_instead_of_single_token_registry
   - service: account-service
     route: PlayerBootstrapLogin
     scope: public
     classification: public
     issued_token_profile: player-bootstrap
     issued_token_audience: player-bootstrap
+    implementation_status:
+      known_drift: current_issuance_uses_legacy_scope_duplicated_session_keys_instead_of_single_token_registry
   - service: account-service
     route: POST /auth/bootstrap/join
     scope: tenant
@@ -346,8 +354,10 @@ routes:
     membership_authority_generation_applies: false
     required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer, connect_scope_match]
     canonical_errors:
-      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE]
+      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, TENANT_BILLING_BLOCKED]
     mutation_contract: explicit_public_membership_atomic
+    implementation_status:
+      target_only: true
   - service: account-service
     route: EnsurePublicProductionPlayerMembership
     target_route: JoinPublicProductionMembership
@@ -366,8 +376,10 @@ routes:
     membership_authority_generation_applies: false
     required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
     canonical_errors:
-      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE]
+      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, TENANT_BILLING_BLOCKED]
     mutation_contract: explicit_public_membership_atomic
+    implementation_status:
+      known_drift: current_membership_seam_may_be_invoked_implicitly_by_connect_token_or_play
   - service: account-service
     route: DELETE /tenants/{tenantId}/memberships/me
     scope: tenant
@@ -388,6 +400,8 @@ routes:
       control-ui: control-ui
       player-bootstrap: player-bootstrap
     idempotent_retry_contract: exact_token_noop_after_durable_committed_tombstone
+    implementation_status:
+      known_drift: legacy_session_key_runtime_lacks_durable_logout_retry_proof
   - service: account-service
     route: AuthLogoutAll
     scope: account
@@ -398,6 +412,8 @@ routes:
       control-ui: control-ui
       player-bootstrap: player-bootstrap
     idempotent_retry_contract: superseded_token_noop_after_durable_logout_all_proof
+    implementation_status:
+      known_drift: legacy_session_key_runtime_lacks_durable_logout_all_retry_proof
   - service: account-service
     route: GetProfile
     scope: account

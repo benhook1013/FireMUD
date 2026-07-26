@@ -323,7 +323,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     membership_authority_generation_applies: false
     required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
     canonical_errors:
-      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE]
+      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, TENANT_BILLING_BLOCKED]
     mutation_contract: explicit_public_membership_atomic""",
                 """  - service: game-session-service
     route: JOIN

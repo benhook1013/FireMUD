@@ -54,16 +54,7 @@ public class AssetExportServiceImpl implements AssetExportService {
     this.s3Client = s3Client;
     this.properties = copyProperties(properties);
     this.objectMapper = objectMapper;
-    this.frozenSnapshots =
-        Collections.synchronizedMap(
-            new LinkedHashMap<>(16, 0.75f, true) {
-              @Override
-              protected boolean removeEldestEntry(
-                  Map.Entry<VersionScope, FrozenAssetSnapshot> eldest) {
-                return size()
-                    > AssetExportServiceImpl.this.properties.getFrozenSnapshotCacheMaxEntries();
-              }
-            });
+    this.frozenSnapshots = Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, true));
   }
 
   private static AssetStoreProperties copyProperties(AssetStoreProperties source) {
@@ -134,8 +125,24 @@ public class AssetExportServiceImpl implements AssetExportService {
         || versionState == VersionLifecycleState.ACTIVE) {
       throw new IllegalStateException(REPAIR_VERSION_SCOPE_UNAVAILABLE);
     }
-    return frozenSnapshots.computeIfAbsent(
-        scope, ignored -> freeze(repository.findByTenantId(scope.tenantId())));
+    FrozenAssetSnapshot candidate = freeze(repository.findByTenantId(scope.tenantId()));
+    synchronized (frozenSnapshots) {
+      FrozenAssetSnapshot concurrent = frozenSnapshots.get(scope);
+      if (concurrent != null) {
+        return concurrent;
+      }
+      VersionResolution current = resolveVersionScope(scope.tenantId(), scope.versionNumber());
+      if (!scope.equals(current.scope())
+          || current.versionState() == VersionLifecycleState.PUBLISHED
+          || current.versionState() == VersionLifecycleState.ACTIVE) {
+        throw new IllegalStateException(REPAIR_VERSION_SCOPE_UNAVAILABLE);
+      }
+      if (frozenSnapshots.size() >= properties.getFrozenSnapshotCacheMaxEntries()) {
+        throw new IllegalStateException(REPAIR_VERSION_SCOPE_UNAVAILABLE);
+      }
+      frozenSnapshots.put(scope, candidate);
+      return candidate;
+    }
   }
 
   private FrozenAssetSnapshot freeze(List<GameAsset> assets) {

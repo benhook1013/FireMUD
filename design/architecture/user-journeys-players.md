@@ -139,7 +139,7 @@ GET /auth/bootstrap/worlds/emberfall/realms
 POST /auth/bootstrap/join { connectScopeId=cs_emberfall_production_v1, requestId=req-join-1 }
 GET /auth/bootstrap/worlds/emberfall/realms/production/characters?connectScopeId=cs_emberfall_production_v1
 POST /auth/bootstrap/worlds/emberfall/realms/production/characters { connectScopeId=cs_emberfall_production_v1, name=Mara, template=human-fighter }
-POST /auth/connect-token { connectScopeId=cs_emberfall_production_v1 }
+POST /auth/connect-token { connectScopeId=cs_emberfall_production_v1, requestId=req-connect-1 }
 GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 LOGIN
 PLAY emberfall production Mara

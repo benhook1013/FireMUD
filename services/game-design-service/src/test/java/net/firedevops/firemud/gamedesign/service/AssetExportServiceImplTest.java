@@ -83,7 +83,7 @@ class AssetExportServiceImplTest {
     Version draft = version(VersionLifecycleState.DRAFT);
     Version published = version(VersionLifecycleState.PUBLISHED);
     when(versionRepository.findByTenantIdAndVersionNumber("t", 1))
-        .thenReturn(Optional.of(draft), Optional.of(published));
+        .thenReturn(Optional.of(draft), Optional.of(draft), Optional.of(published));
     GameAsset original = gameAsset("logo.png", "original");
     GameAsset changed = gameAsset("changed.png", "changed");
     when(repository.findByTenantId("t")).thenReturn(List.of(original), List.of(changed));
@@ -92,7 +92,7 @@ class AssetExportServiceImplTest {
     ExportedAssetManifest retry = service.exportAssets("t", 1);
 
     assertEquals(first, retry);
-    verify(versionRepository, times(2)).findByTenantIdAndVersionNumber("t", 1);
+    verify(versionRepository, times(3)).findByTenantIdAndVersionNumber("t", 1);
     verify(repository, times(1)).findByTenantId("t");
   }
 
@@ -142,7 +142,7 @@ class AssetExportServiceImplTest {
     Version draft = version(VersionLifecycleState.DRAFT);
     Version published = version(VersionLifecycleState.PUBLISHED);
     when(versionRepository.findByTenantIdAndVersionNumber("t", 1))
-        .thenReturn(Optional.of(draft), Optional.of(published));
+        .thenReturn(Optional.of(draft), Optional.of(draft), Optional.of(published));
 
     GameAsset original = gameAsset("logo.png", "original");
     GameAsset changed = gameAsset("changed.png", "changed");
@@ -152,17 +152,15 @@ class AssetExportServiceImplTest {
     ExportedAssetManifest retry = service.exportAssets("t", 1);
 
     assertEquals(first, retry);
-    verify(versionRepository, times(2)).findByTenantIdAndVersionNumber("t", 1);
+    verify(versionRepository, times(3)).findByTenantIdAndVersionNumber("t", 1);
     verify(repository, times(1)).findByTenantId("t");
   }
 
   @Test
-  void evictedPublishedSnapshotFailsClosedInsteadOfGrowingCacheWithoutBound() {
+  void fullSnapshotCacheFailsClosedInsteadOfEvictingRetryEvidence() {
     service = newService(1);
     when(versionRepository.findByTenantIdAndVersionNumber("t", 1))
-        .thenReturn(
-            Optional.of(version(7L, 1, VersionLifecycleState.DRAFT)),
-            Optional.of(version(7L, 1, VersionLifecycleState.PUBLISHED)));
+        .thenReturn(Optional.of(version(7L, 1, VersionLifecycleState.DRAFT)));
     when(versionRepository.findByTenantIdAndVersionNumber("t", 2))
         .thenReturn(Optional.of(version(8L, 2, VersionLifecycleState.DRAFT)));
     when(repository.findByTenantId("t"))
@@ -170,11 +168,24 @@ class AssetExportServiceImplTest {
             List.of(gameAsset("first.png", "first")), List.of(gameAsset("second.png", "second")));
 
     service.exportAssets("t", 1);
-    service.exportAssets("t", 2);
+    IllegalStateException thrown =
+        assertThrows(IllegalStateException.class, () -> service.exportAssets("t", 2));
+    assertEquals("REPAIR_VERSION_SCOPE_UNAVAILABLE", thrown.getMessage());
+  }
+
+  @Test
+  void publicationRacingSnapshotCreationFailsBeforeObjectStoreWrites() {
+    Version draft = version(VersionLifecycleState.DRAFT);
+    Version published = version(VersionLifecycleState.PUBLISHED);
+    when(versionRepository.findByTenantIdAndVersionNumber("t", 1))
+        .thenReturn(Optional.of(draft), Optional.of(published));
+    when(repository.findByTenantId("t")).thenReturn(List.of(gameAsset("logo.png", "data")));
 
     IllegalStateException thrown =
         assertThrows(IllegalStateException.class, () -> service.exportAssets("t", 1));
+
     assertEquals("REPAIR_VERSION_SCOPE_UNAVAILABLE", thrown.getMessage());
+    verifyNoInteractions(s3Client);
   }
 
   @Test

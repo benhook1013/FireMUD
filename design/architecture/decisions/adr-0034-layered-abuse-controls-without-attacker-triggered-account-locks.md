@@ -60,7 +60,7 @@ A simple failed-password threshold that durably locks an account lets an attacke
 - A known username cannot be trivially denied service through repeated bad passwords.
 - New login availability depends on shared abuse enforcement in player-facing environments, while an outage does not eject already authenticated players.
 - Ordinary gameplay avoids a synchronous Redis increment and rate-limit-store availability dependency on every command.
-- A process handoff can temporarily lose fine-grained token-bucket history, but conservative initialization and optional coarse shared backstops bound that weakness. Exact global command-rate consistency is deliberately not promised.
+- A process handoff may lose sub-command refill timing, but it consumes from the binding's externalized cumulative replacement budget and cannot reset the remaining allowance. Exact global command-rate consistency is deliberately not promised.
 - Trusted source propagation, generic public failures, recovery, tuning, privacy, and multi-replica proof add implementation and release-test obligations.
 
 ## Alternatives Considered
