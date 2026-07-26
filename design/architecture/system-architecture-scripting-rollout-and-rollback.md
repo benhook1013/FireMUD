@@ -14,7 +14,7 @@ For mutating workflow calls, `actor` is the authenticated operator principal and
 6. Call `PurgeQueuedTickCommandsForScriptPatch` for the previous patch (and plugin equivalents when plugin version changes are coupled with the promotion); keep the admission barrier active.
 7. Automation & Scripting must reconcile durable schedules and timers for the newly pinned patch before timer admission resumes:
    - schedules absent from the newly pinned patch are removed or tombstoned;
-   - schedules that still exist may be carried forward only through explicit reconciliation to the new version identity;
+   - schedules that still exist may be carried forward only through explicit reconciliation when `scheduleDefinitionId`, `playableStateScope`, and `scheduleSemanticsHash` all match; a changed definition, semantics digest, or playable-state namespace requires a new schedule identity and due state;
    - reconciliation creates only replacement schedule identities; a due candidate must pass admission before the scheduler creates its firing claim or `scriptEventId`;
    - displaced patch or plugin versions must not be able to generate new `scriptEventId` values after promotion.
 8. Wait for pin-convergence acknowledgments from both Automation & Scripting and Game Session for the requested `controlPlaneRequestId`.
@@ -31,7 +31,7 @@ For mutating workflow calls, `actor` is the authenticated operator principal and
 3. Call `RollbackScriptPatchVersion` (or `SetPinnedScriptPatchVersion`) with `controlPlaneRequestId`, `actor`, and `reason` to repin to the target known-good patch.
 4. Automation & Scripting must perform and durably complete schedule/timer reconciliation immediately after repin and before cancel or purge while the admission barrier remains active; the system-owned mutation records the same `controlPlaneRequestId`, `requestedBy`, and `reason`, plus `executedBy=system:automation`:
    - timers owned by the displaced patch or plugin version are retired only after their target replacement identity is durable, or tombstoned when no target schedule exists;
-   - only schedules present in the rollback target may survive reconciliation;
+   - only schedules present in the rollback target with matching `scheduleDefinitionId`, `playableStateScope`, and `scheduleSemanticsHash` may carry due state forward;
    - replacement creation and retirement are one atomic durable result, or a resumable and idempotent operation that creates or confirms the target schedule identity before retiring the displaced row; an interrupted rollback must not lose a schedule;
    - reconciliation creates no firing claim or `scriptEventId`; those are deferred until a due candidate passes admission;
    - cancellation of outbox work alone is not sufficient rollback cleanup.
@@ -40,8 +40,8 @@ For mutating workflow calls, `actor` is the authenticated operator principal and
 7. Call `PurgeQueuedTickCommandsForScriptPatch` (and, if applicable, `PurgeQueuedTickCommandsForPluginVersion`) with `controlPlaneRequestId`, `actor`, and `reason` so mismatched queued entries do not accumulate after repin.
 8. Wait for pin-convergence acknowledgments from both Automation & Scripting and Game Session for the new pin (`controlPlaneRequestId` must match).
 9. Wait for `GetAutomationDrainStatus` to report `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` for the rollback scope under the current `admissionEpoch`.
-10. Call `SetAutomationAdmissionMode(..., mode=NORMAL, controlPlaneRequestId, actor, reason)` only once schedule reconciliation, cancellation, purge, convergence, and cleanup complete.
-11. Resume ticks with `ResumeTicks(controlPlaneRequestId, actor, reason)`.
+10. Resume ticks with `ResumeTicks(controlPlaneRequestId, actor, reason)` while Automation admission remains paused.
+11. After `ResumeTicks` succeeds, call `SetAutomationAdmissionMode(..., mode=NORMAL, controlPlaneRequestId, actor, reason)`. Only then may the workflow complete.
 
 Concrete example:
 
@@ -49,15 +49,15 @@ Concrete example:
 - Step 1: `PauseTicks(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
 - Step 2: `SetAutomationAdmissionMode(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
 - Step 3: `RollbackScriptPatchVersion(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, targetScriptPatchVersion=P21, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
-- Step 4: Run the system-owned durable schedule/timer reconciliation for target `P21` immediately after repin while the admission barrier remains active; replacement creation and `P22` retirement are one atomic durable result, or a resumable idempotent operation that creates or confirms the `P21` schedule identity before retiring `P22`. It carries due state only for matching `scheduleDefinitionId` values, creates no firing claim or `scriptEventId`, and records `controlPlaneRequestId=RB-42`, `requestedBy=operator:alice`, `executedBy=system:automation`, and `reason="rollback RB-42"`.
+- Step 4: Run the system-owned durable schedule/timer reconciliation for target `P21` immediately after repin while the admission barrier remains active; replacement creation and `P22` retirement are one atomic durable result, or a resumable idempotent operation that creates or confirms the `P21` schedule identity before retiring `P22`. It carries due state only when `scheduleDefinitionId`, `playableStateScope`, and `scheduleSemanticsHash` all match, creates no firing claim or `scriptEventId`, and records `controlPlaneRequestId=RB-42`, `requestedBy=operator:alice`, `executedBy=system:automation`, and `reason="rollback RB-42"`.
 - Step 5: Run patch-scoped cancellation for displaced `P22` work with `controlPlaneRequestId=RB-42`, `actor=operator:alice`, and `reason="rollback RB-42"`; if plugin versions are also rolled back, run the corresponding plugin-scoped cancellation.
 - Step 6: Purge queued tick commands for displaced `P22` patch and plugin versions with the same request, actor, and reason.
 - Step 7: Poll `GetAutomationPinConvergence(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444)` and `GetGameSessionPinConvergence(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444)` until both report `observedPinnedScriptPatchVersion=P21` and `lastObservedControlPlaneRequestId=RB-42`.
 - Step 8: Poll `GetAutomationDrainStatus(11111111-1111-4111-8111-111111111111, 44444444-4444-4444-8444-444444444444)` until active executions and cancelable pending work are both zero.
-- Step 9: `SetAutomationAdmissionMode(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, mode=NORMAL, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
-- Step 10: `ResumeTicks(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
+- Step 9: `ResumeTicks(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` while Automation admission remains paused.
+- Step 10: After `ResumeTicks` succeeds, `SetAutomationAdmissionMode(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, mode=NORMAL, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
 
-Ordering is intentional: the admission barrier precedes repin and remains active through reconciliation, cancellation, and purge; Automation admission returns to `NORMAL` only after convergence and drain complete, and ticks resume last.
+Ordering is intentional: the admission barrier precedes repin and remains active through reconciliation, cancellation, purge, convergence, and drain; `ResumeTicks` runs while admission is still paused, and Automation returns to `NORMAL` only after `ResumeTicks` succeeds.
 
 ## Rollback Orchestration State Machine (Required)
 
@@ -71,15 +71,15 @@ Ownership and source-of-truth requirements:
 
 Required states:
 
-- `PAUSING` -> `REPINNING` -> `RECONCILING_SCHEDULES` -> `CANCELING` -> `PURGING` -> `CONVERGING` -> `DRAINING` -> `RESUMING` -> `COMPLETED`
+- `PAUSING` -> `REPINNING` -> `RECONCILING_SCHEDULES` -> `CANCELING` -> `PURGING` -> `CONVERGING` -> `DRAINING` -> `RESUMING` (invoke `ResumeTicks`, then set admission `NORMAL`) -> `COMPLETED`
 - Terminal failure state: `ROLLBACK_CONVERGENCE_TIMEOUT`
 
 State rules:
 
 - Each transition must be idempotent and keyed by `controlPlaneRequestId`.
 - Re-running a request in the same state must return current state, not restart from scratch.
-- `RECONCILING_SCHEDULES` must complete before timer admission, normal admission, or tick resumption can proceed. Replacement creation and displaced-row retirement must be one atomic durable result or a resumable, idempotent operation keyed by `controlPlaneRequestId`; retries must create or confirm only target-version schedule identities before retiring displaced rows, so an interrupted rollback cannot lose a schedule. Reconciliation must not create firing claims or `scriptEventId`; those are deferred until a due candidate passes admission.
-- Failures in `CANCELING` or `PURGING` must not auto-resume admission or ticks.
+- `RECONCILING_SCHEDULES` must complete before timer admission, normal admission, or tick resumption can proceed. Replacement creation and displaced-row retirement must be one atomic durable result or a resumable, idempotent operation keyed by `controlPlaneRequestId`; retries must create or confirm only target-version schedule identities with matching `scheduleDefinitionId`, `playableStateScope`, and `scheduleSemanticsHash` before retiring displaced rows, so an interrupted rollback cannot lose a schedule. Reconciliation must not create firing claims or `scriptEventId`; those are deferred until a due candidate passes admission.
+- Failures in `CANCELING`, `PURGING`, or `RESUMING` must not auto-resume admission or ticks; admission remains paused until `ResumeTicks` succeeds and the `NORMAL` transition succeeds.
 - Operator retries must continue from the last durable state.
 - `ROLLBACK_CONVERGENCE_TIMEOUT` keeps admission and ticks paused until explicit operator action.
 - `DRAINING` is required. Rollback must not resume admission or ticks until the current rollback-scope `admissionEpoch` has no active pre-pause executions and no remaining cancelable outbox work according to `GetAutomationDrainStatus`.

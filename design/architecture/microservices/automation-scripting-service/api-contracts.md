@@ -38,7 +38,7 @@ Domain services such as Game Session and Game Logic deliver automation events th
 - `tenantId`, `gameInstanceId`, `regionId`, and `entityId` for the target runtime context.
 - resolved `playableStateScope` for gameplay-originated events so shared versus isolated realm state stays explicit through durable trigger identity, timer follow-up work, and operator read models.
 - `regionEpoch` for gameplay/runtime triggers and scheduler triggers so Trigger Identity is fenced across scoped coordination resets.
-- `scriptEventId` as one required field of the applicable Trigger Identity, following endpoint ownership rules; it is not a complete idempotency key by itself.
+- `scriptEventId` is always present in the normalized applicable Trigger Identity, but its wire requirement follows endpoint ownership: live external ingress requires the caller to provide it, scheduler/timer ingress may omit it because the scheduler derives it, and dry-run/test ingress may omit it because the service generates it. It is not a complete idempotency key by itself.
 - `isDryRun` so live and dry-run/test traffic are always in separate idempotency namespaces.
 - `eventType` and versioning metadata such as `scriptPatchVersion`.
 - `eventSchemaVersion` for custom or service-specific events governed by the event registry.
@@ -68,9 +68,9 @@ Direct script upload and update APIs such as `UpdateScript` are limited to boots
 
 `scriptEventId` ownership is endpoint-specific:
 
-- Live external ingress (`TriggerScriptEvent`): caller must supply `scriptEventId` and reuse it on retries.
-- Scheduler and timer ingress (`onInterval`, `onTimerExpire`): scheduler generates deterministic `scriptEventId` from due-point identity, including `gameInstanceId`.
-- Dry-run and test ingress: service generates by default; caller-supplied IDs are optional and must pass dry-run namespace collision validation.
+- Live external ingress (`TriggerScriptEvent`): the wire request must supply `scriptEventId`, and the caller must reuse it on retries.
+- Scheduler and timer ingress (`onInterval`, `onTimerExpire`): the wire request may omit `scriptEventId`; the scheduler generates a deterministic value from due-point identity, including `gameInstanceId`.
+- Dry-run and test ingress: the wire request may omit `scriptEventId`; the service generates it by default. Caller-supplied IDs are optional and must pass dry-run namespace collision validation.
 
 Only the full applicable Trigger Identity, as defined by the normative Trigger Identity table and including plugin-, scheduler-, timer-, or lifecycle-specific fields when applicable, is the canonical idempotency key for event ingress. No partial tuple, due point, or `scriptEventId` alone is a canonical key.
 

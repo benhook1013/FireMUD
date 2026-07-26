@@ -12,6 +12,7 @@ The current implemented baseline is narrower than the full target-state observab
 - Raw runtime or gameplay identifiers such as `serviceInstanceId`, `tenantId`, `sessionId`, `characterId`, and `script_patch_version` are not approved as ordinary Prometheus metric labels. These identifiers belong in structured logs and traces unless a future architecture update records a narrow low-cardinality exception.
 - The player-experience SLI catalog below is a target-state metric contract. It describes the operator-visible SLO surface FireMUD wants, but it is not fully implemented by the current services. Before implementing any metric that needs tenant, game-instance, or region scoping, reconcile the label shape with the cardinality policy, for example through a bounded environment-specific scope label or an explicitly documented exception.
 - Synthetic player-flow canaries, the independent deadman/heartbeat mirror, and the related canonical canary alert families now have a canonical operator-run runtime harness in `dev-tools/observability/run-player-experience-smoke.py`. The authoritative external pager deployment remains environment-specific, but the repo now provides the shared runner, retained-evidence validator, and mirrored metric vocabulary required for prod-like observability smoke.
+- The current smoke harness still accepts configurable endpoint labels for evidence output; those labels are not approved target-state Prometheus values until normalized to the bounded `playerflow` target enum defined below. Hosts, URLs, deployment identifiers, and runtime identifiers remain configuration/evidence details rather than metric labels.
 - Routine backup dashboards and alert snippets use artifact freshness, lineage, integrity/readability, and current recovery-convergence signals. Tick-pause panels remain maintenance/reset views only and are not routine backup health signals.
 
 ---
@@ -169,7 +170,8 @@ Pre-gameplay metrics such as login success and entry-path availability must use 
 In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines, FireMUD tracks a small set of player-centric SLIs. These are target-state Prometheus metrics with environment-specific SLO targets. The current services emit narrower gameplay and edge metrics; do not treat the metric names in this section as implemented until producers and smoke checks exist.
 
 - **Login success ratio**
-  - SLI: fraction of successful login attempts over total login attempts, for example `login_requests_total{scope="environment",outcome="success"}` vs `login_requests_total{scope="environment"}`.
+  - SLI: fraction of successful login attempts over total login attempts, aggregated over the same 15-minute window per bounded `scope` and canonical ingress `service`: `sum by (scope, service) (rate(login_requests_total{outcome="success"}[15m])) / sum by (scope, service) (rate(login_requests_total[15m]))`.
+  - The primary ratio must not sum duplicate observations from multiple hops. A deployment-wide rollup may aggregate only disjoint canonical ingress emitters after their path ownership is defined; service-specific ratios remain the diagnostic source of truth.
   - SLO (production starting point): ≥ 99.5% success over a 15-minute rolling window, evaluated per documented bounded `scope`.
   - Instrumentation: target-state instrumentation should be emitted by Spring Cloud Gateway (and any protocol-bridging entry points such as the TCP Proxy) for login-related routes, with bounded labels for outcome and canonical bounded `scope`. The pre-gameplay baseline is `scope="environment"`; do not add raw `tenantId`, `gameInstanceId`, or `regionId` labels.
 - **Command end-to-end latency**
@@ -215,7 +217,7 @@ Grafana dashboards under `design/observability/grafana` include:
 The metrics below are the desired Prometheus-facing shapes for player experience SLIs/SLOs under the bounded `scope` contract. They are not the current implemented service metric set. Services may emit additional bounded drilldown metrics, but dashboards and alerts should prefer these names once producers exist and their labels have been reconciled with the metrics-cardinality policy:
 
 - Login:
-  - `login_requests_total{scope,outcome}` where the pre-gameplay `scope` baseline is `environment` and `outcome` is a bounded enum (for example `success`, `invalid_credentials`, `rate_limited`, `upstream_error`, `timeout`, `unknown`).
+  - `login_requests_total{service,scope,outcome}` where `service` is the canonical ingress emitter, the pre-gameplay `scope` baseline is `environment`, and `outcome` is a bounded enum (for example `success`, `invalid_credentials`, `rate_limited`, `upstream_error`, `timeout`, `unknown`).
 - Commands:
   - `command_end_to_end_latency_ms_bucket{scope,command,le}` with `scope` drawn from the metric family's documented bounded values and `command` drawn from a documented, bounded command set for core SLO coverage.
     - Starting bounded set for SLO coverage (normalize synonyms/aliases in instrumentation): `move`, `look`, `combat`.
@@ -224,8 +226,8 @@ The metrics below are the desired Prometheus-facing shapes for player experience
 - Entry-path availability:
   - `entrypath_connection_attempts_total{scope,path,outcome}` with the pre-gameplay `scope` baseline `environment` and bounded enums for `path` and `outcome` as described above.
 - Synthetic player-flow canaries:
-  - `playerflow_canary_success{flow,path,target}` for the mirrored result of the most recent synthetic login or representative-command run.
-  - `playerflow_canary_latency_ms{flow,path,target}` for the mirrored latency of the same synthetic run in milliseconds.
+  - `playerflow_canary_success{flow,path,target}` for the mirrored result of the most recent synthetic login or representative-command run, for example `playerflow_canary_success{flow="login",path="websocket",target="gateway"}`.
+  - `playerflow_canary_latency_ms{flow,path,target}` for the mirrored latency of the same synthetic run in milliseconds, for example `playerflow_canary_latency_ms{flow="command",path="telnet",target="tcp_proxy"}`.
 - Chat:
   - `chat_delivery_latency_ms_bucket{scope,channel_type,le}` with `scope` drawn from the metric family's documented bounded values and `channel_type` drawn from a bounded enum (global/zone/party/system, etc.).
 
@@ -240,11 +242,11 @@ Live-traffic SLIs remain the authoritative compliance view for player experience
   - `path="websocket"` for the browser/Gateway path.
   - `path="telnet"` for the TCP Proxy path when that path is exposed in the environment.
 - Metric mirror contract:
-  - `playerflow_canary_success{flow,path,target}` – boolean-like result for the most recent synthetic run as mirrored into Prometheus.
-  - `playerflow_canary_latency_ms{flow,path,target}` – latency of the synthetic run in milliseconds, mirrored into Prometheus as a gauge or histogram-derived recording.
+  - `playerflow_canary_success{flow,path,target}` – boolean-like result for the most recent synthetic run as mirrored into Prometheus; `target="gateway"` is used for the WebSocket/Gateway path and `target="tcp_proxy"` for the Telnet/TCP Proxy path.
+  - `playerflow_canary_latency_ms{flow,path,target}` – latency of the synthetic run in milliseconds, mirrored into Prometheus as a gauge or histogram-derived recording, using the same target enum.
 - Cardinality constraints:
   - `flow` and `path` are bounded enums.
-  - `target` identifies the monitored environment endpoint and must remain low-cardinality.
+  - `target` is a bounded logical enum, currently `{gateway, tcp_proxy}`; it identifies the canonical ingress surface, never a host, URL, deployment/runtime ID, tenant, or player identity.
   - Do not label these metrics with canary account IDs, character IDs, tenant IDs, or trace IDs.
 - Operational contract:
   - The canary must use a dedicated non-player identity and data set that is safe to exercise continuously.
@@ -271,7 +273,7 @@ To keep synthetic canaries actionable instead of merely visible, prod-like envir
   - `PlayerFlowCanaryLatencyHigh` should use `severity="P1"` because it indicates sustained player-visible degradation on a monitored public path without requiring a total failure.
 - Detection requirements:
   - Success/failure alerts must evaluate on short windows suitable for outage detection and must not rely on live-traffic volume.
-  - Latency alerts must evaluate `playerflow_canary_latency_ms{flow,path,target}` using millisecond thresholds and preserve the bounded `flow` and `path` labels.
+  - Latency alerts must evaluate `playerflow_canary_latency_ms{flow,path,target}` using millisecond thresholds and preserve the bounded `flow`, `path`, and `target` labels.
   - Controlled non-production failure injection for each required canary path must be testable without paging production destinations.
 - Relationship to live-traffic SLIs:
   - Canary alerts complement, but do not replace, the live-traffic SLO alerts for `login_requests_total` and `command_end_to_end_latency_ms_bucket`.
@@ -361,7 +363,7 @@ When Alertmanager is unavailable but Prometheus is still accessible, Logging & A
 - **Tick execution safety ratios**
   - Recording rule that exposes `tick_execution_time_ms_p99 / tick_lock_ttl_ms` per approved bounded `scope`, using the recording rules defined in the Redis operations metrics catalog. Exact region drilldown belongs on control-plane/runtime-health reads and must not be added as a raw metric label in this fallback path.
 - **Login success ratio**
-  - Recording rules mirroring `LoginSuccessRatioLowGateway` and `LoginSuccessRatioLowTcpProxy`, scoped by `service` and bounded `scope`, and based on `login_requests_total{scope="environment",outcome="success"}` vs `login_requests_total{scope="environment"}`.
+  - Recording rules mirroring `LoginSuccessRatioLowGateway` and `LoginSuccessRatioLowTcpProxy`, scoped by `service` and bounded `scope`, and based on the explicit same-window ratio `sum by (scope, service) (rate(login_requests_total{outcome="success"}[15m])) / sum by (scope, service) (rate(login_requests_total[15m]))`.
 - **Command p99 latency**
   - Recording rules mirroring `CommandLatencyP99HighGateway` and `CommandLatencyP99HighTcpProxy`, scoped by `service` and preserving the bounded `command` label for the core-command SLO set, based on `command_end_to_end_latency_ms_bucket`.
 - **Entry-path availability**

@@ -114,13 +114,15 @@ The control-plane migration should follow explicit phases:
 
 1. **Phase A**: require `tenant_id + game_instance_id`, accept optional `region_id`, emit incomplete-scope metrics, and log warnings when region scope must be resolved.
 2. **Phase B**: keep game-instance-wide acceptance but require dashboards and alerts for omitted-region usage.
-3. **Phase C**: reject any pause/resume request that omits either `game_instance_id` or `region_id` with `INVALID_ARGUMENT`.
+3. **Phase C entry gate**: enter Phase C only after the Phase B metric records zero attempted omitted-region requests for one complete release window.
+4. **Phase C**: reject any pause/resume request that omits either `game_instance_id` or `region_id` with `INVALID_ARGUMENT`.
 
 Exit criteria for Phase C:
 
 - all prod-like region maintenance, reset, migration, and future scoped-recovery tools use `tenant_id + game_instance_id + region_id`
 - incident tooling and runbooks no longer rely on game-instance-wide region resolution
-- omitted-region usage is zero for a full release window
+- the Phase C entry gate was satisfied by zero attempted omitted-region requests during Phase B for one full release window
+- after Phase C begins, rejected omitted-region requests remain monitored as client/tooling drift but are not treated as a migration failure or as a reason to reopen the Phase C entry gate
 
 ## Redis Persistence
 

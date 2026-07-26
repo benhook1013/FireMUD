@@ -137,7 +137,8 @@ class RemoteFollowupRuntimeServiceImplTest {
                         && "demo".equals(followup.getWorldSlug())
                         && "production".equals(followup.getRealmSlug())
                         && Long.valueOf(17L).equals(followup.getPointerVersion())));
-    verify(valueOperations).set("remote:1:entity-9", "1", java.time.Duration.ofMillis(60_000L));
+    verify(valueOperations)
+        .set("remote:{tenant:1:instance:8}:entity-9", "1", java.time.Duration.ofMillis(60_000L));
   }
 
   @Test

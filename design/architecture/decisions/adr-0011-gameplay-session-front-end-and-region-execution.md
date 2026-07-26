@@ -29,6 +29,8 @@ FireMUD adopts a **session front-end + lease-owner execution** model inside the 
 - The session front-end pod must not mutate tick-owned gameplay coordination state for a region it does not own.
 - When command execution or tick-owned mutation targets a region leased by another pod, the session front-end forwards the request over internal gRPC to the current **lease owner**.
 - Only the lease owner may stage or commit Redis coordination changes for that region.
+- `playableStateScope` is part of the forwarded request identity and must be preserved and validated end to end because it distinguishes the gameplay state/effect scope being acted on.
+- `playableStateScope` is not an additional lease-ownership dimension. Lease ownership remains keyed by `<tenantId, gameInstanceId, regionId>`; the current owner and its fence apply to the region, while the owner validates the forwarded playable-state scope against the authoritative gameplay binding.
 
 ## Consequences
 
@@ -42,7 +44,7 @@ FireMUD adopts a **session front-end + lease-owner execution** model inside the 
 
 Any session front-end to lease-owner forwarding path must implement one canonical contract:
 
-- Every forwarded request carries `tenantId`, `gameInstanceId`, `sessionId`, `characterId`, target `regionId`, command or action identifier, and a monotonic per-session sequencing token so the lease owner can preserve session-local ordering.
+- Every forwarded request carries `tenantId`, `gameInstanceId`, `playableStateScope`, `sessionId`, `characterId`, target `regionId`, command or action identifier, and a monotonic per-session sequencing token so the lease owner can preserve session-local ordering.
 - Every forwarded request carries the lease/epoch fence for the target region. A lease owner must reject requests with a stale or missing fence using an application-level stale-lease error.
 - The session front-end may retry only idempotent forwarded operations and must not create duplicate tick-owned mutations when a response is ambiguous.
 - If lease ownership changes before execution starts, the front-end must refresh ownership and retry against the new lease owner. If ownership changes after execution has begun, the in-flight attempt is owned by the executor that accepted the fenced request and later attempts must use the new fence.

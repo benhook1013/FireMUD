@@ -229,6 +229,7 @@ Normative examples:
     "generationConfigRevision": "genrev-42a1",
     "versionStateEpoch": 17,
     "remapSetId": null,
+    "releaseBundleId": 7,
     "publishedReleaseBundleRef": "prb:11111111-1111-4111-8111-111111111111:42:7"
   }
 }
@@ -257,6 +258,7 @@ Normative examples:
     "generationConfigRevision": "genrev-43b7",
     "versionStateEpoch": 3,
     "remapSetId": "remap-v42-v43-r1",
+    "releaseBundleId": 8,
     "publishedReleaseBundleRef": "prb:11111111-1111-4111-8111-111111111111:43:8"
   }
 }

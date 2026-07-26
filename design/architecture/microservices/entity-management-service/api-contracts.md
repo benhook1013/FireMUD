@@ -69,17 +69,26 @@ Publish gating must fail closed if Entity Management cannot attest a digest cons
 
 ## LOOK Entity Listing Contract
 
-`ListRoomEntities` is the dedicated endpoint for `LOOK` to discover which characters, items, and NPCs occupy a room. The response includes:
+`ListRoomEntities` is the dedicated endpoint for `LOOK` to discover which characters, items, and NPCs occupy a room. The current and target fence contracts are intentionally separate.
+
+### Current room-entity contract
+
+The current `ListRoomEntitiesRequest` carries `tenantId`, `RoomInstanceRef`, and `sessionAttestation`; it does not carry a caller-provided read-fence field. The current `entitySnapshotId` response value is a deterministic room-scope marker derived from the request scope, not proof that Entity Management observed a committed mutation version. The current adapter therefore does not claim exact caller-fence satisfaction.
+
+The current response includes:
 
 - `tenantId`, `gameInstanceId`, and `roomInstanceId` (a `RoomInstanceRef`) so consumers can unambiguously scope the entity list to a running instance.
-- `entitySnapshotId` so consumers can cache or invalidate entity lists deterministically. The current adapter derives a scope marker; the target contract carries the committed `roomSnapshotVersion` value supplied by the room-read composition.
-- the room-read fence value for this entity list. The target live-protocol meaning of `entitySnapshotId` is the exact same opaque or epoch-bearing committed fence emitted by World Management as `worldSnapshotId`, advanced after every durable mutation included in the room view. Future tick-ledger work may add an `asOfTickId` only through a coordinated proto and architecture update.
+- `entitySnapshotId` so consumers can identify the room scope in responses. In the current adapter this is only the scope marker described above and is not a mutation-freshness or invalidation proof.
 - `entities[]`, each with `entityId`, `displayName`, `entityType` (`PLAYER`, `NPC`, `ITEM`), and optional `role`/`affiliation`.
 - `stateFlags` such as `isHidden`, `isInCombat`, or `isQuestTarget` so Game Logic can mask stealthy entities or highlight objectives.
 - `visionPriority` to help sort players before NPCs and list visible items at the end, keeping `LOOK` render ordering consistent.
 - `reloadHint` (enum) that signals whether the list is stable or dynamic, allowing Game Logic to decorate the `LOOK` output.
 
-Game Logic treats the satisfied `entitySnapshotId` as the participant echo of the canonical committed `roomSnapshotVersion` for LOOK-relevant entity presence for a specific `RoomInstanceRef`. When composing a full LOOK view, Game Logic combines:
+### Target same-fence contract
+
+The target protocol will let the room-read composition propagate the World Management-owned committed `roomSnapshotVersion` to Entity Management without inventing a parallel entity-local version. The exact request-field shape is intentionally deferred to the coordinated proto/design change; this document must not imply that the current request already carries it.
+
+After that protocol exists, Entity Management will return the exact satisfied fence as `entitySnapshotId` for the same `RoomInstanceRef`. When composing a full LOOK view, Game Logic combines:
 
 - `worldSnapshotId` from World Management’s `GetRoomSnapshot`; and
 - the identical `entitySnapshotId` returned by `ListRoomEntities`,
@@ -93,7 +102,7 @@ Room-entity data is derived from runtime entity state plus authoritative world l
 - `ListRoomEntities` must return an Entity Management read fence (`entitySnapshotId`) for the same room scope; when Game Logic cannot align it with the World Management `worldSnapshotId`, composition must fail instead of returning mixed-tick data.
 - The read fence is satisfied only by durable post-commit state. Redis-staged containment changes that have not yet committed the effect guard and container/item row updates for that fence are not eligible to satisfy the room-read fence.
 
-Illustrative `ListRoomEntities` fragments:
+Illustrative target-state `ListRoomEntities` fragments:
 
 - Success:
 
@@ -126,7 +135,9 @@ Illustrative `ListRoomEntities` fragments:
 
 Entity Management must not maintain a competing room-occupancy index that can drift from World Management’s location tables. Visibility and filtering rules are applied after aggregation so LOOK output remains player-correct.
 
-When the requested fence is missing, stale, or cannot be satisfied from durable post-commit state, Entity Management returns `STALE_READ_FENCE` or `READ_FENCE_UNAVAILABLE`. A participant fence difference is a caller-side composition retry condition, not a separate service error from this API: Game Logic must obtain a fresh World Management snapshot and retry the same-scope composition, or fail the room view explicitly if the fresh read cannot be materialized.
+In the target protocol, when the propagated fence is missing, stale, or cannot be satisfied from durable post-commit state, Entity Management returns `STALE_READ_FENCE` or `READ_FENCE_UNAVAILABLE`. A participant fence difference is a caller-side composition retry condition, not a separate service error from this API: Game Logic must obtain a fresh World Management snapshot and retry the same-scope composition, or fail the room view explicitly if the fresh read cannot be materialized. These target errors are not claims about the current request path.
+
+The unresolved target work is tracked in [World Runtime and Movement](../../../project-management/implementation-tracking/world-runtime-and-movement.md#active-gaps), including allocation of the World-owned fence after Entity-owned LOOK-visible mutations, propagation, participant acknowledgement, and durable commit ordering.
 
 Concrete per-effect required writes and reconciliation rules live in [`system-architecture-spatial-and-ambient-effects-catalog.md`](../../system-architecture-spatial-and-ambient-effects-catalog.md).
 

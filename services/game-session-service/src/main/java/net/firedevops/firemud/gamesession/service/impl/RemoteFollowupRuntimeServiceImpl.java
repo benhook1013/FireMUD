@@ -142,7 +142,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     existingFollowup.ifPresent(existing -> validateExistingFollowup(existing, request));
     populateFollowup(followup, request, command, now);
     remoteFollowupRepository.save(followup);
-    writeRemoteHint(request.tenantId(), request.targetEntityId());
+    writeRemoteHint(request.tenantId(), request.targetGameInstanceId(), request.targetEntityId());
     remoteFollowupScheduledCounter.increment();
 
     logger.info(
@@ -1369,14 +1369,16 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     gameplayCommandRepository.save(command);
   }
 
-  private void writeRemoteHint(long tenantId, String targetEntityId) {
+  private void writeRemoteHint(long tenantId, long gameInstanceId, String targetEntityId) {
     if (targetEntityId == null || targetEntityId.isBlank()) {
       return;
     }
     redisTemplate
         .opsForValue()
         .set(
-            "remote:" + tenantId + ":" + targetEntityId, "1", java.time.Duration.ofMillis(60_000L));
+            "remote:{tenant:" + tenantId + ":instance:" + gameInstanceId + "}:" + targetEntityId,
+            "1",
+            java.time.Duration.ofMillis(60_000L));
   }
 
   private static String claimTargetAggregate(String targetEntityId, long targetGameInstanceId) {

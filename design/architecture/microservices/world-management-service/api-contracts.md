@@ -121,10 +121,16 @@ Illustrative responses:
 
 ## LOOK Snapshot Contract
 
-`GetRoomSnapshot` is the canonical endpoint feeding Game Logic's `ResolveLook`. It returns:
+`GetRoomSnapshot` is the canonical endpoint feeding Game Logic's `ResolveLook`. The current and target fence contracts are intentionally separate.
+
+### Current room-snapshot contract
+
+The current `GetRoomSnapshotRequest` carries `tenantId`, `RoomInstanceRef`, locale, and session attestation; it does not carry a caller-provided read-fence field. The current `worldSnapshotId` response value is a deterministic room-scope marker, not proof of a committed mutation version.
+
+The current response returns:
 
 - `tenantId`, `gameInstanceId`, and `roomInstanceId`, together forming the `RoomInstanceRef`;
-- a `worldSnapshotId` for LOOK-relevant world data. In the current adapter it is a deterministic room-scope marker. The target contract maps this field to the committed `roomSnapshotVersion` authority: one opaque or epoch-bearing fence that advances after every durable mutation included in the room view. The live proto uses this field for transport; future tick-ledger work may add an `asOfTickId` only through a coordinated proto and architecture update;
+- a `worldSnapshotId` for LOOK-relevant world data. In the current adapter this is only the scope marker described above;
 - `roomName` and optional slug;
 - `shortDescription` and `longDescription`, with truncation rules governed by `LOOK_MAX_DESCRIPTION_CHARS`;
 - `exits`, including label, `targetRoomInstanceId`, and human-friendly direction text;
@@ -133,12 +139,16 @@ Illustrative responses:
 
 Room snapshots deliberately exclude live entities, items, and inventory contents. Those are fetched from Entity Management using room- and instance-scoped queries.
 
-Game Logic may memoize snapshots for the duration of a tick but must refresh them after movement. World Management publishes room-mutation change events so the target committed `roomSnapshotVersion` can advance after every relevant durable mutation rather than relying on time-based guesswork. The current scope-derived adapter value does not prove that freshness rule, and FireMUD must not treat it as authoritative mutation versioning or treat stale rendered `LOOK` output as room truth.
+Game Logic may memoize snapshots for the duration of a tick but must refresh them after movement. The current scope-derived adapter value does not prove mutation freshness, and FireMUD must not treat it as authoritative mutation versioning or treat stale rendered `LOOK` output as room truth.
 
-Cross-service LOOK read consistency is fence-based:
+### Target same-fence contract
+
+The target protocol maps `worldSnapshotId` to a World Management-owned committed `roomSnapshotVersion`: one opaque or epoch-bearing fence that advances after every durable mutation included in the room view. World Management will publish the relevant room-mutation changes so that this committed value can advance rather than relying on time-based guesswork. The exact-fence propagation protocol is target-only; the current request does not have a named requested-fence field and the current implementation does not claim this behavior complete.
+
+Once that target protocol is designed and implemented, cross-service LOOK read consistency is fence-based:
 
 - Game Logic must compare the logical `roomSnapshotVersion` carried as `worldSnapshotId` from `GetRoomSnapshot` with the identical `entitySnapshotId` returned by Entity Management `ListRoomEntities` for the same room scope.
-- Entity Management must either answer with that exact committed same-scope fence token after satisfying it, or return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`; it must not mint a competing entity-local fence.
+- Entity Management must either answer with that exact committed same-scope fence token after satisfying it, or return target-state `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`; it must not mint a competing entity-local fence.
 - If a participant cannot satisfy the requested fence or the returned participant fence differs, Game Logic treats that as a caller-side retry condition, obtains a fresh World Management snapshot, and retries the same-scope composition. It must not return mixed-state output or require a separate mismatch service error.
 
 Current World Management runtime room identity notes:
@@ -146,7 +156,7 @@ Current World Management runtime room identity notes:
 - World Management emits canonical runtime room ids as opaque text in the form `R-<roomInstanceRowId>`.
 - World Management gameplay bridge readers fail closed on legacy `room-1021` or `1021` request forms; callers must send the canonical opaque runtime room id and must not infer row-id semantics from its shape.
 
-Illustrative `GetRoomSnapshot` fragments:
+Illustrative target-state `GetRoomSnapshot` fragments:
 
 ```json
 {
@@ -167,7 +177,9 @@ Illustrative `GetRoomSnapshot` fragments:
 }
 ```
 
-`worldSnapshotId` carries the canonical committed `roomSnapshotVersion` for LOOK-relevant world data for a specific `RoomInstanceRef`. The target value is opaque or epoch-bearing, changes after every relevant durable mutation, and is emitted by World Management as the single logical fence. Entity Management must return the identical satisfied value as `entitySnapshotId`; it must not derive an independent entity-only version. Game Logic combines the equal transport fields to produce the final `lookSnapshotId` returned to Game Session. The current scope-derived adapter value is documented as incomplete until the committed version is implemented.
+`worldSnapshotId` carries the canonical committed `roomSnapshotVersion` for LOOK-relevant world data for a specific `RoomInstanceRef` only in the target contract. The target value is opaque or epoch-bearing, changes after every relevant durable mutation, and is emitted by World Management as the single logical fence. Entity Management must return the identical satisfied value as `entitySnapshotId`; it must not derive an independent entity-only version. Game Logic combines the equal transport fields to produce the final `lookSnapshotId` returned to Game Session. The current scope-derived adapter value remains incomplete until the committed version and its propagation protocol are implemented.
+
+The unresolved target work is tracked in [World Runtime and Movement](../../../project-management/implementation-tracking/world-runtime-and-movement.md#active-gaps): World-owned fence allocation after Entity-owned LOOK-visible mutations, propagation to the participant read, participant acknowledgement, and durable commit ordering are not yet defined or live.
 
 ## Instance Termination Contract
 

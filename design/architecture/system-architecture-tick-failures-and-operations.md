@@ -78,7 +78,8 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - `created_at`, `updated_at`
 - Target-state requires one durable tick-batch record per `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)`, owned by Game Session, and stores at minimum:
   - `tick_batch_id`
-  - `lease_token` (or equivalent fencing token captured at batch allocation time)
+  - `executor_fence` (or equivalent opaque durable fence captured at batch allocation time); this is the canonical durable fence used for compare-and-match protection.
+  - `lease_token` may be retained as lease-acquisition trace/audit metadata, but it is not an authoritative durable fence and must not authorize batch allocation, commit, cleanup, or recovery writes.
   - `expected_effect_count`
   - `status`
   - selected-work manifest entries for the batch
@@ -99,7 +100,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
 - Any service-level schema or storage doc that introduces the concrete `tick_batch` / manifest tables must mirror these minimum fields explicitly rather than redefining a narrower contract locally.
 - The current live tick-batch table enforces uniqueness only on its durable `tick_batch_id` key (`tick_batch_tick_batch_id_key` / `idx_tick_batch_tick_batch_id`); it does not yet enforce the coordinate tuple.
 - Completing the target-state invariant requires a migration that audits and reconciles duplicate coordinate tuples, then adds and proves a unique PostgreSQL constraint/index on `(tenant_id, game_instance_id, region_id, region_epoch, tick_id)`. Until then, the recorded `tick_batch_id`, lease/fence checks, and application duplicate detection are the current safeguards but do not provide database-level tuple uniqueness.
-- Batch allocation is lease-fenced using the recorded `lease_token` (or equivalent fencing token).
+- Batch allocation and every durable tick-control mutation are fenced using the recorded canonical `executor_fence` (or equivalent opaque durable fence). A `lease_token` is trace/audit context only and cannot substitute for the durable fence.
 - Recovery that observes multiple durable rows for the same coordinates treats the region as inconsistent, pauses it, and requires reconcile tooling before normal ticks resume.
 - Current live boundary note: gameplay commands do not yet use the fuller target-state `BOUND_TO_BATCH` vocabulary. Instead, the command ledger exposes `enqueueSeq`, `STAGED`, `DRAINED`, and later terminal/requeue outcomes, while the sealed batch manifest digest is used to ensure replay reuses only matching staged batches instead of silently mutating an older batch contract.
 - For any `(tenant_id, game_instance_id, playable_state_scope, region_id, region_epoch, tick_id, effect_key, target_aggregate_type, target_aggregate_id)` there must eventually be **exactly one terminal state**:
@@ -310,7 +311,7 @@ Common scenarios and invariants:
 - **GC pause > `lease_ttl_ms` (lease lost)**
   - Redis: lease may move to a new executor; `pending` and queues are preserved subject to the AOF window.
   - PostgreSQL: effects applied by the old executor before losing the lease remain consistent; the new executor replays the same effects with idempotent handlers.
-  - Invariants: no double-apply; at-most-one active executor per region enforced by lease tokens.
+  - Invariants: no double-apply; Redis lease liveness plus the durable `executor_fence` prevents an old executor from remaining an authorized writer.
   - Action: work the old executor attempts to perform after lease loss is discarded; the new executor drives recovery; the region may be degraded until behavior stabilizes.
 - **Redis coordination cluster outage**
   - Redis: coordination keys temporarily unavailable; a tail window of recent `pending`/lock/queue state may be lost depending on failure and AOF configuration.
@@ -580,7 +581,7 @@ Cross-region flows may use best-effort Redis hint markers such as `remote:{tenan
 - The marker key must be TTL-bounded so the hint keyspace cannot grow without bound:
   - Canonical write form: `SET remote:{tenantInstanceTag}:<entityId> 1 PX remote_hint_ttl_ms` with default `remote_hint_ttl_ms = 60_000`.
   - TTL refresh happens when new durable follow-ups are recorded for that target entity (and optionally while backlog remains due); expiry is treated as normal and must not be interpreted as “no work exists”.
-- Region-level coordination resets do not attempt to delete `remote:*` keys because these keys are tenant-scoped rather than region-scoped.
+- Region-level coordination resets do not attempt to delete `remote:*` keys because these keys are instance-scoped rather than region-scoped.
 - Tenant- and cluster-scoped coordination resets may drop `remote:*` keys alongside other coordination state for the affected tenant; losing them remains safe because they only affect how quickly remote follow-ups are noticed, not whether those follow-ups eventually apply.
 - After a region reset, the next tick executor:
   - Resumes draining due follow-ups from PostgreSQL into its normal tick pipeline.

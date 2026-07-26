@@ -532,6 +532,9 @@ The `PLAY` flow:
 - Resolves the selected realm's gameplay-admissible instance and records that `gameInstanceId` in the gameplay binding.
   - First-party `/ws/game/**` contract: if a validated connect token is present, resolved `tenantId` and `gameInstanceId` must match token claims. On mismatch, reject admission with `CONNECT_SCOPE_MISMATCH` and do not bind session scope.
   - Runtime control-plane and admission flows use the realm-routing contract from [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#realm-routing-contract-for-player-addressable-realms) as the source of truth for which concrete `gameInstanceId` is admissible for the selected realm.
+- Before committing gameplay binding, resolves the authoritative current `regionId` and lease owner/fence for the selected `{tenantId, gameInstanceId}` runtime target from the Game Session control plane. The binding and any forwarded request preserve the selected `playableStateScope`, but that scope does not create a separate lease owner.
+  - Missing or ambiguous region ownership fails closed with `OWNERSHIP_UNAVAILABLE`.
+  - A stale or mismatched region, `regionEpoch`, lease fence, or verified routing target fails closed with `STALE_TIMELINE` or the applicable `CONNECT_SCOPE_MISMATCH`; `PLAY` must not bind from cached ownership, raw transport headers, or a stale discovery result.
 - On successful admission, runtime must return the resolved realm bundle identity at minimum as `versionId`, optional `scriptPatchVersion`, and manifest location/hash (or a stable bundle token that resolves to those fields) so clients can apply realm-specific branding and assets.
 - Binds the socket to a gameplay session key for the chosen world/instance/character identity under `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model) and [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding).
 - Ensures the gameplay session binding is consistent with the tick/lease ownership model for the character’s current `<tenantId, gameInstanceId, regionId>`. Per `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`, `/ws/game/**` is routed to a stable Game Session service endpoint and the edge does not implement a lease-aware shard routing plane.
@@ -547,6 +550,8 @@ The `PLAY` flow:
 - `CONNECT_SCOPE_MISMATCH` – first-party `/ws/game/**` reconnect/admission attempted `PLAY` scope that does not match the connect-token `{tenantId, gameInstanceId}`.
 - `ACCOUNT_MISMATCH` – bootstrap-backed `LOGIN` resolved to an account different from the validated connect-context subject, so no gameplay scope may be bound.
 - `ADMISSION_POINTER_UNAVAILABLE` – realm-routing state is unavailable or ambiguous for the selected realm; admission is denied until routing reconciliation succeeds.
+- `OWNERSHIP_UNAVAILABLE` – the selected runtime region or current lease owner/fence cannot be resolved authoritatively; no gameplay binding is created.
+- `STALE_TIMELINE` – the selected region, epoch, or lease fence no longer matches current runtime authority; the client must rediscover/retry rather than being rebound implicitly.
 - `PLAY_REQUIRED` – a gameplay command requiring admitted gameplay scope was issued before `PLAY` completed successfully.
 - `CHARACTER_REQUIRED` – the selected realm requires an explicit character choice because zero or multiple visible characters exist for the caller.
 - `CHARACTER_CREATION_NOT_ALLOWED` – the selected realm has no visible character for the caller and current realm or fork policy forbids creating a new one; clients must surface this as a hard deny rather than as a generic selection prompt.

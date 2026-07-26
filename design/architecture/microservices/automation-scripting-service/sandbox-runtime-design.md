@@ -118,6 +118,7 @@ CPU and time limits are derived from three layers:
 - **Automation tick configuration**
   - `AUTOMATION_TICK_BUDGET_MS` defines the **aggregate soft execution budget** for all live automation runs admitted during one tick window for one runtime scope (`tenantId`, `gameInstanceId`, and `regionId` where applicable); it is not a separate allowance for each script.
   - The scheduler subdivides that scope budget into per-run reservations across eligible scripts when deciding how many runs to start. The sum of reservations across all runtime scopes remains subject to the cluster-wide execution ceiling, so scope-level allocation cannot expand total container or cluster capacity.
+  - `playableStateScope` is not a separate budget partition. Shared and isolated playable-state namespaces within the same runtime scope consume the same aggregate capacity budget, while per-script quotas, per-tenant tier budgets, priority ordering, and cluster ceilings provide fairness. The scope remains mandatory in Trigger Identity and fencing so capacity sharing cannot cause state or deduplication collisions.
 
 - **Cluster policies**
   - Cluster-level policies define absolute ceilings per container (for example, 100 ms per run, 500 ms per tick window) to protect overall latency and resource usage.
