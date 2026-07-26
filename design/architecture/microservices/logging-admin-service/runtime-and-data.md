@@ -6,6 +6,27 @@ This document defines the Logging & Admin Service runtime model, availability pa
 
 Logging & Admin uses the common stack outlined in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and exposes admin endpoints for reviewing logs, managing coordination health, and applying moderation actions. It consumes Kibana and Grafana APIs to embed existing dashboards within the admin interface.
 
+## Target-State Runtime Contract
+
+Logging & Admin is the operator-facing policy, audit, and observability coordination plane. It owns moderation policy definitions, operator intent, audit history, quota/limit override UX, control-plane inspection, and the availability boundary between core operator actions and observability-backed experiences. It does not own gameplay coordination state, runtime feature-flag truth, entity state, or another service's persistence, and it must invoke those owning services through their canonical contracts.
+
+The target service preserves two independently degradable partitions:
+
+- core control-plane actions remain usable when search, metrics, tracing, dashboards, or alerting backends are unavailable;
+- observability-backed searches, dashboards, traces, and alert investigations degrade explicitly without taking the core control plane down.
+
+Tick and coordination remediation remains a Game Session responsibility. Logging & Admin may display health, choose an allowed operation, request a bounded remediation, and record audit evidence, but Game Session remains the authority for region leases, pause/resume, reset, and coordination mutation. Any regional or aggregate operation must carry the owning service's explicit scope and fencing evidence rather than being inferred from an operator UI selection.
+
+## Implementation Status
+
+The current shipped scope is narrower than this target contract:
+
+- The service exposes core admin/moderation, report, saga-inspection, and coordination-health surfaces, plus observability-backed integrations; it does not yet provide the complete target control-plane workflow for every recovery, regional, or aggregate operation.
+- Current tick pause/resume support is the shipped `<tenantId, gameInstanceId>` boundary. Regional pause/resume and the explicit aggregate scope/fencing contract remain target-state work tracked in [Game Session runtime and tick coordination](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status).
+- Logging & Admin consumes Game Session health and requests Game Session-owned control APIs; it does not directly mutate Redis or runtime coordination state.
+- Moderation policy, audit data, quota/limit override intent, and operator history remain owned here, while Account, Game Session, and Social & Groups own enforcement and runtime mutation.
+- The core/observability availability split is a design contract; exact independent deployment and pool isolation remain implementation obligations rather than a claim that every backend integration is already isolated in production.
+
 In addition to log and moderation tooling, the service acts as a control-plane coordinator for tick and coordination health:
 
 - Consumes metrics and health information published by the Game Session Service (for example, per-region status such as `HEALTHY`, `DEGRADED`, or `COORDINATION_UNTRUSTWORTHY`).

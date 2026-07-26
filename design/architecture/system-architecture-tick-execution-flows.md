@@ -13,6 +13,7 @@ This document describes the target execution model. The current live runtime is 
 - the durable owner/status surface is currently `{tenantId, gameInstanceId}`-scoped rather than true region-scoped;
 - `GetGameplayCommandStatus` is the canonical command-status API, but its live fields and state vocabulary are narrower than the accepted lifecycle described below;
 - the live batch/effect substrate exists with the current gameplay-command selected-work manifest on `tick_batch`, but timer/retry/remote-follow-up source-claim manifests, cross-region result-return plumbing, and some richer command-status fields are still target-state follow-through.
+- the live gameplay-command staging path still uses its current `commandId`/deterministic text-and-slot fallback when a complete authored handoff identity is unavailable. The target path is fail-closed: Game Session must reject or terminalize an item that cannot receive a complete canonical `EffectId`, rather than allowing a participant to invent identity. The target wording below is not a claim that the fallback has already been removed from code.
 
 Naming convention: API, workflow, and EffectId prose uses `regionEpoch`. Snake-case forms such as `region_epoch`, `target_region_epoch`, and `due_tick_id` are reserved for explicitly identified SQL/storage fields, Redis payloads/keys, or schema examples.
 
@@ -59,10 +60,10 @@ Within a region’s tick, each command proceeds through several phases:
        - Writers must persist `target_region_epoch` and `due_tick_id` from the same status read so retries and failover cannot shift eligibility non-deterministically.
      - Optionally writes a best-effort Redis hint marker such as `remote:{tenantInstanceTag}:<entityId>` (for the target entity, with the tag derived from the target `<tenantId, gameInstanceId>`) to reduce latency when the target region drains follow-ups.
      - If the command needs to wait for remote completion, the origin region creates or updates a separate durable cross-region coordinator record. This waiting state is **not** kept as a non-terminal row inside the origin tick batch.
-       - Minimum coordinator fields include coordinator identity (`tenantId`, `gameInstanceId`, `commandId`), origin scope (`originRegionId`, `originRegionEpoch`, `originTickId`), target scope (`targetRegionId`, `targetRegionEpoch`, `dueTickId`), lifecycle state (`PENDING_REMOTE`, `REMOTE_APPLIED`, `REMOTE_ABANDONED`, `REMOTE_TIMEOUT_ABANDONED`, `LATE_RESULT_IGNORED`, `LATE_RESULT_RECONCILED`), origin-timeline deadline (`originDeadlineRegionEpoch`, `originDeadlineTickId`; storage may use names such as `remote_deadline_region_epoch` / `remote_deadline_tick_id`), final player-facing/result-facing projection fields when applicable (`executionOutcome`, `gameplayResult`), and `updatedAt`.
+       - Minimum coordinator fields include durable `coordinatorId`, `tenantId`, `originCommandId`, `originGameInstanceId`, `originRegionId`, `originRegionEpoch`, `originTickId`, target scope (`targetGameInstanceId`, `targetRegionId`, `targetRegionEpoch`, `dueTickId`), the originating and target leg EffectId projections, lifecycle state (`PENDING_REMOTE`, `REMOTE_APPLIED`, `REMOTE_ABANDONED`, `REMOTE_TIMEOUT_ABANDONED`, `LATE_RESULT_IGNORED`, `LATE_RESULT_RECONCILED`), origin-timeline deadline (`originDeadlineRegionEpoch`, `originDeadlineTickId`; storage may use names such as `remote_deadline_region_epoch` / `remote_deadline_tick_id`), final player-facing/result-facing projection fields when applicable (`executionOutcome`, `gameplayResult`), and `updatedAt`.
        - Target completion is returned through one durable origin-owned result path, not an unspecified transient message:
-         - the target leg writes an origin-addressed result or inbox row keyed to the coordinator identity (for example `commandId` plus origin/target scope),
-         - the row records the target terminal outcome, target ledger identity, and any command-specific result payload needed by origin reconciliation,
+         - the target leg writes an origin-addressed result or inbox row keyed to `coordinatorId` and repeats `originCommandId`, `originGameInstanceId`, origin region/epoch/tick, target region/epoch, and target ledger/EffectId identity,
+         - the row records the target terminal outcome and any command-specific result payload needed by origin reconciliation; it is not correlated only by the target `gameInstanceId` or a transient message ID,
          - origin-side processing claims and applies that result idempotently when advancing the coordinator lifecycle.
    - The target region later drains these follow-ups into its own tick pipeline and applies them under its lease and locks.
 5. **Completion / Finalization (optional)**
@@ -245,7 +246,7 @@ At each tick for a `<tenantId, gameInstanceId, regionId>`, the executor:
    - Aggregates all candidate work items per entity (queued commands, due timers, retries, and remote follow-ups) and selects **at most one** work item per entity for the current tick; any additional due work for that entity is deferred to future ticks according to the retry/timer scheduling rules.
    - Orders per-entity selections using a deterministic ordering function:
      - Primary: policy-defined priority (low-cardinality).
-     - Then: stable enqueue/due ordering based only on persisted fields (for example `dueTickId`, `dueAt`, `enqueue_seq`, or `created_at` captured into Redis/PostgreSQL at enqueue time).
+     - Then: stable enqueue/due ordering based only on persisted canonical fields (for example `dueTickId`, `dueAt` normalized into `due_point_normalized`, and `enqueue_seq`). `created_at` may support diagnostics, but it is not an ordering field unless it has been deterministically normalized into the canonical tuple.
      - Tie-breakers (must be deterministic): `entityId`, then `commandId`/`effectKey`.
    - Each work item type (queued command, timer, retry, remote follow-up) must expose the same canonical ordering tuple so the sort is reproducible across retries and failover:
      - `(priority, due_point_normalized, enqueue_seq, source_kind, entityId, commandId_or_effectKey)`
@@ -281,6 +282,7 @@ Every selected work item must provide the tuple
   - Final deterministic tie-breaker; value must be stable across replay and failover.
 
 No source-specific tie-break fields are allowed beyond this tuple. If a new work source cannot be mapped without adding fields, the design must update this section first.
+`created_at`, `updated_at`, Redis insertion order, and wall-clock arrival order are not members of the tuple and must not be used as implicit tie-breakers. A legacy timestamp may influence ordering only after it has been deterministically normalized into the persisted `due_point_normalized` and the item has a stable `enqueue_seq`/identity tie-breaker.
 
 ### Commit Point and Replay Semantics (Conceptual)
 
@@ -297,7 +299,8 @@ Conceptually, tick commit proceeds through these phases:
      - The current live schema enforces uniqueness only on the durable `tick_batch_id` key (`tick_batch_tick_batch_id_key` / `idx_tick_batch_tick_batch_id`); it does not yet enforce uniqueness on the coordinate tuple.
      - A required schema migration must audit existing duplicate coordinate tuples, remediate or terminalize any duplicates through the recovery path, and add a PostgreSQL unique constraint/index on `(tenant_id, game_instance_id, region_id, region_epoch, tick_id)`. The migration and its duplicate-audit proof are part of completing this target-state invariant.
      - Until that migration is deployed, lease/fence checks and application-level duplicate detection are required safeguards but are not a database uniqueness guarantee.
-     - Batch allocation is lease-fenced by the current-live `GetRuntimeOwnershipStatus.executorFence` opaque token; the creating transaction reads and records that token on the batch row while the corresponding Redis lease is still valid. A `RegionStatus.executorFence` value is target-state only unless the live ownership surface explicitly projects it.
+     - Batch allocation is an atomic CAS-fenced durable operation. The creating transaction reads the authoritative current epoch and current-live `GetRuntimeOwnershipStatus.executorFence` opaque token, conditionally inserts or adopts the coordinate row only while both match, writes the manifest/ledger allocation, and commits before Redis staging. A `RegionStatus.executorFence` value is target-state only unless the live ownership surface explicitly projects it.
+     - If the epoch changes, the fence is stale/lost, the mapping generation changes, or a competing owner wins, the transaction must allocate no new batch and fail closed. Redis `pending` cannot be used to repair an allocation that failed this durable CAS.
      - Winner rule:
        - The target-state winner is the transaction that successfully creates the tuple-unique `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` row while holding the currently valid Redis lease and the latest live opaque `executorFence`.
        - If a competing executor finds the existing row carries the same current `executorFence`, it must reuse that row as authoritative state for replay/continuation.
@@ -431,7 +434,7 @@ Remote follow-ups (work created in one region but owned by entities in another) 
     - `remote_followups_due_total`
     - `remote_followups_drain_lag_ms`
     - `remote_followups_backlog_over_budget_total`
-  - Those Prometheus metrics are aggregate process signals only. Region-specific diagnosis comes from the durable runtime ownership/control-plane reads, not raw `tenantId` / `gameInstanceId` / `regionId` metric labels.
+  - Those Prometheus metrics are aggregate process signals only and may use only bounded labels such as `source_kind`, `status`, or `scope_class`. Region-specific diagnosis comes from the durable runtime ownership/control-plane reads and follow-up records, not raw `tenantId` / `gameInstanceId` / `regionId` metric labels.
   - The executor may temporarily bias part of the per-tick budget toward draining remote follow-ups (within the configured caps) to reduce cross-region lag.
   - Admission control applies at the origin: when the target region is degraded or backlog is high, new cross-region actions may be delayed, rate-limited, or rejected with a clear error so the system sheds load instead of accumulating an unbounded remote backlog.
     - The current-live signal for “target region degraded / unhealthy” combines `GetRuntimeOwnershipStatus` with `ObserveRuntimeTickProgress`; the target-state equivalent is `GetRegionTickStatus` backed by `RegionStatus`. Neither deployment may use best-effort Redis hint keys such as `remote:*` as admission authority.
@@ -521,7 +524,7 @@ To illustrate how cross-region flows compose from the phases above, consider a *
    - In the next tick for `<tenantId, gameInstanceId, regionB>`, the target region’s executor:
      - Computes the damage amount as a percentage of the target’s authoritative current HP.
      - Acquires the target’s lock (`tick:{tenantRegionTag}:lock:<entityId>` for the target entity) and applies damage via Entity Management using the complete `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)` EffectId.
-     - Writes a durable origin-addressed result row for region A containing `casterEntityId`, the actual `damageApplied`, and the target terminal outcome keyed to the coordinator identity.
+   - Writes a durable origin-addressed result row for region A containing `coordinatorId`, `originGameInstanceId`, `originRegionId`, `originRegionEpoch`, the target leg identity, `casterEntityId`, the actual `damageApplied`, and the target terminal outcome. Origin reconciliation verifies those fields against its durable coordinator row before applying the result.
 4. **Heal Leg (origin region)**
    - When region A receives the lifesteal result, it enqueues a local “apply lifesteal heal” command for the caster.
    - In a subsequent tick for `<tenantId, gameInstanceId, regionA>`, the executor:

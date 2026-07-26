@@ -150,12 +150,12 @@ Additional non-committing terminal outcome rules:
 
 Supplementary post-handoff correlation rule:
 
-- Execution-time version/plugin fence drops that happen after tick handoff must not be left as metrics-only signals. They must be exposed on the affected per-command handoff disposition keyed by `automationDispatchId`, with the parent Trigger Identity retained for correlation, using bounded reasons such as `script_patch_mismatch` or `plugin_version_mismatch`.
+- Execution-time version/plugin fence drops that happen after tick handoff must not be left as metrics-only signals. They must be exposed on the affected per-command handoff disposition keyed by `(automationDispatchId, commandOrdinal)`, with the parent Trigger Identity retained for correlation, using bounded reasons such as `script_patch_mismatch` or `plugin_version_mismatch`.
 
 Per-command handoff correlation rule:
 
 - `script_event_audit` remains one handler record per Trigger Identity, even when that handler emits multiple gameplay commands. It must not contain a single command dispatch field or a single post-handoff outcome for the whole Trigger Identity.
-- Handoff and later execution dispositions are represented as a child/collection surface with one record per emitted command. Each record is keyed by its command-level `automationDispatchId` and retains the parent `outboxWorkItemId` and Trigger Identity for correlation. `ListScriptHandoffEvents` is the canonical query surface for these records.
+- Handoff and later execution dispositions are represented as a child/collection surface with one record per emitted command. Each record is keyed by `(automationDispatchId, commandOrdinal)` and retains the parent `outboxWorkItemId` and Trigger Identity for correlation. `ListScriptHandoffEvents` is the canonical query surface for these records.
 - A handler may therefore have zero, one, or many command-handoff records; a later version-fence drop on one command must not overwrite or summarize the handler audit row or the dispositions of sibling commands.
 
 ### Canonical `finalOutcome` Values (Normative)

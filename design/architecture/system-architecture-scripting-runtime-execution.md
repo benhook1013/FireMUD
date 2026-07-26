@@ -73,10 +73,9 @@ Each persisted script work item must include:
 
 When a work item is handed to Game Session, the handoff identity must be explicit:
 
-- Every gameplay command emitted from one outbox work item must derive a stable `automationDispatchId`.
-- If one work item emits exactly one gameplay command, `automationDispatchId` may be derived directly from `outboxWorkItemId`.
-- If one work item emits multiple gameplay commands, each emitted command must use a deterministic suffix or ordinal under the same stable parent identity (for example `<outboxWorkItemId>#<commandOrdinal>`), so duplicate handoff retries remain idempotent per gameplay command rather than only per work item.
-- Game Session dedupe, stale-timeline rejection, replay/no-op outcomes, and later execution-fence reporting must key off that per-command `automationDispatchId`, while operator tooling must still be able to correlate those outcomes back to the parent `outboxWorkItemId` and Trigger Identity.
+- Every outbox work item that emits gameplay commands creates one stable `automationDispatchId` and persists it before the first handoff attempt. Retries reuse that value rather than minting another dispatch identity.
+- Each emitted gameplay command receives a deterministic `commandOrdinal` under that dispatch, including the single-command case.
+- Game Session dedupe, stale-timeline rejection, replay/no-op outcomes, and later execution-fence reporting key each command by `(automationDispatchId, commandOrdinal)`, while operator tooling retains the parent `outboxWorkItemId` and complete Trigger Identity for correlation.
 - Before handoff is reported as accepted, Game Session must atomically validate the applicable runtime scope and epoch/fence (`regionEpoch`, the current `executorFence`, and any active rollback `admissionEpoch`) together with per-command deduplication and tick-queue admission. If those operations cannot share one storage transaction, the downstream enqueue or execution fence must provide equivalent validation and reject stale commands. Automation must not record successful `TICK_HANDOFF` until that fenced downstream acceptance is confirmed.
 
 ### Minimum Status Model
@@ -116,7 +115,7 @@ The pointer/index format must be forward-compatible (versioned envelope) so it c
 
 ## `scriptEventId` Lifecycle and Deduplication
 
-`scriptEventId` is the canonical identifier for a single script trigger/run; it appears on automation queue entries, tick commands, and `script_event_audit` rows so behavior can be correlated end-to-end. It is not sufficient as the scripting idempotency key by itself: deduplication, retry, and handoff decisions must use every applicable field in the full Trigger Identity from the normative contract tables, plus `automationDispatchId` for an emitted command.
+`scriptEventId` is the caller- or scheduler-generated idempotency token within a complete script Trigger Identity; it appears on automation queue entries, tick commands, and `script_event_audit` rows so behavior can be correlated end to end. It is not a standalone identifier or idempotency key: deduplication and retry decisions use every applicable field in the full Trigger Identity from the normative contract tables, while emitted-command handoff uses `(automationDispatchId, commandOrdinal)`.
 
 - **Generation rules**
   - For external events, the event source that owns the trigger creates a `scriptEventId` when the event is first emitted and includes it in the `TriggerScriptEvent` payload. If the caller retries the gRPC call due to infrastructure errors, it must reuse the same full applicable Trigger Identity, including the same `scriptEventId`; changing any identity field is not a retry of the original trigger.
@@ -246,7 +245,7 @@ Rollback of a script patch must not allow previously queued work from the rolled
 
 - Script work items and tick commands carry the effective `scriptPatchVersion` used to produce them.
 - Game Session revalidates the admitted runtime scope and current pinned script patch immediately before durable effect execution. Plugin-backed commands also re-read the authoritative Automation & Scripting plugin status and require the same enabled version and runtime scope.
-- Any handoff or execution-time version-fence rejection must retain every applicable Trigger Identity field and command identity for diagnosis, including `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `eventType`, `eventSchemaVersion`, `scriptEventId`, `isDryRun`, and `scriptPatchVersion`; plugin handlers must also retain `pluginId`, `pluginVersionId`, and `bindingId`, while scheduler/timer handlers must retain `scheduleDefinitionId`, `triggerMode`, and the applicable due point. The command identity `automationDispatchId` and its parent `outboxWorkItemId` must remain available for correlation.
+- Any handoff or execution-time version-fence rejection must retain every applicable Trigger Identity field and command identity for diagnosis, including `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `eventType`, `eventSchemaVersion`, `scriptEventId`, `isDryRun`, and `scriptPatchVersion`; plugin handlers must also retain `pluginId`, `pluginVersionId`, and `bindingId`, while scheduler/timer handlers must retain `scheduleDefinitionId`, `triggerMode`, and the applicable due point. The command identity `(automationDispatchId, commandOrdinal)` and its parent `outboxWorkItemId` must remain available for correlation.
 - A version or runtime-scope mismatch terminalizes the command as not applied. Temporary inability to read the plugin authority leaves the durable effect retryable rather than executing without a fence.
 - Operational rollback flows include a drain/purge step for queued automation work items and staging entries that cannot satisfy the version fence.
 

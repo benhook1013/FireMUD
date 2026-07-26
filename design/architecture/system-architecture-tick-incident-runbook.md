@@ -26,6 +26,8 @@ Bounded metrics identify the operational bucket (for example, stalled, replay pr
 
 Canonical API and workflow scope names in this runbook use `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, and `regionEpoch`. SQL and storage examples may use `tenant_id`, `game_instance_id`, `playable_state_scope`, `region_id`, and `region_epoch`; these are aliases for the same fields, not different scopes.
 
+Prometheus labels in this runbook are bounded categories only. `scope_class` identifies a controlled bucket such as `region`, `game_instance`, `tenant`, or `cluster`; it never contains a raw identifier. Operators resolve the exact tuple and current epoch/fence from durable tick-batch/ledger and control-plane records before taking action. Metrics select the incident family; they do not establish which game instance or region is authoritative.
+
 ## Incident Types
 
 - **Stalled tick region** (lease held but no forward progress)
@@ -54,7 +56,7 @@ Normal incident escalation groups by `<tenantId, gameInstanceId>`; `regionId` re
 ### Detect (Stalled tick region)
 
 - Alerts fire on tick health, for example:
-  - `tick_status{scope,status="STALLED"}` or `tick_status{scope,status="DEGRADED"}` being `1` for a sustained window.
+  - `tick_status{scope_class,status="STALLED"}` or `tick_status{scope_class,status="DEGRADED"}` being `1` for a sustained window.
   - `tick_execution_time_ms_p95` / `tick_execution_time_ms_p99` ratios vs `tick_lock_ttl_ms` exceeding the degraded thresholds described in `system-architecture-tick-concepts-and-invariants.md`.
 - Redis coordination metrics and dashboards show:
   - A region holding `tick-executor-lease:{tenantRegionTag}` for longer than expected without advancing `tickId`.
@@ -67,9 +69,9 @@ Normal incident escalation groups by `<tenantId, gameInstanceId>`; `regionId` re
 
 - If the stall is brief and metrics already show recovery (status returns to `RUNNING`, queues drain, execution time ratios return to healthy ranges), continue to monitor without intervention.
 - If the region remains stalled or degraded long enough that the shared tick-health paging conditions would still be firing for that scope, plan a **region-scoped** coordination reset for the affected `<tenantId, gameInstanceId, regionId>` as described in `system-architecture-redis-reset-and-recovery.md`.
-  - In shared rulesets, this means the same conditions that would keep the finalized per-region tick-health paging alert active for that region, starting with sustained `tick_status{scope,status="STALLED"} == 1` and any environment overlay that pages on prolonged `DEGRADED` state.
-  - Treat `tick_status{scope,status="STALLED"} == 1` sustained through the environment’s alert hold time as an intervention threshold by itself.
-  - Also treat sustained `tick_status{scope,status="DEGRADED"} == 1` together with continued over-threshold `tick_execution_time_ms_p95` / `tick_execution_time_ms_p99` ratios versus `tick_lock_ttl_ms`, or continued growth in `tick_retry_queue_depth` / `tick_command_queue_depth`, as sufficient to intervene before the region flips fully to `STALLED`.
+  - In shared rulesets, this means the same conditions that would keep the finalized per-region tick-health paging alert active for that region, starting with sustained `tick_status{scope_class,status="STALLED"} == 1` and any environment overlay that pages on prolonged `DEGRADED` state.
+  - Treat `tick_status{scope_class,status="STALLED"} == 1` sustained through the environment’s alert hold time as an intervention threshold by itself.
+  - Also treat sustained `tick_status{scope_class,status="DEGRADED"} == 1` together with continued over-threshold `tick_execution_time_ms_p95` / `tick_execution_time_ms_p99` ratios versus `tick_lock_ttl_ms`, or continued growth in `tick_retry_queue_depth` / `tick_command_queue_depth`, as sufficient to intervene before the region flips fully to `STALLED`.
 - Only escalate to a **tenant-scoped** or **cluster-wide** reset if multiple regions for the same `<tenantId, gameInstanceId>` group show similar symptoms or if Redis incident runbooks indicate broader coordination corruption, and only after enumerating every affected game instance and region and passing the explicit blast-radius approval/gate required above.
 
 ### Act (Stalled tick region)
@@ -88,6 +90,7 @@ Normal incident escalation groups by `<tenantId, gameInstanceId>`; `regionId` re
      - `tick:{tenantRegionTag}:pending`
      - `tick:{tenantRegionTag}:queue:<entityId>`
      - `tick:{tenantRegionTag}:lock:<entityId>`
+     - `tick:{tenantRegionTag}:session-binding:<entityId>` (the narrow region-authoritative session-to-region bridge; preserved gameplay sessions must rebind after cleanup)
      - `timer:{tenantRegionTag}`
      - `retry:{tenantRegionTag}`
      - `tick-executor-lease:{tenantRegionTag}`
@@ -97,7 +100,7 @@ Normal incident escalation groups by `<tenantId, gameInstanceId>`; `regionId` re
 4. **Resume ticks and verify recovery**
    - Resume tick scheduling for the region only after both Game Session coordination cleanup and the Automation & Scripting cleanup/rebuild have completed, followed by the canonical post-reset smoke gate.
    - Confirm via dashboards that:
-     - `tick_status{scope,status="RUNNING"}` is `1`.
+     - `tick_status{scope_class,status="RUNNING"}` is `1`.
      - `tick_execution_time_ms_*` ratios fall back into healthy envelopes.
      - Command and retry queue depths stabilize.
    - Review `tick_effects_pending_total` for the region to ensure the ledger is draining and not accumulating new stuck rows.
@@ -238,12 +241,12 @@ Normal incident escalation groups by `<tenantId, gameInstanceId>`; `regionId` re
 ### Detect (Stuck tick effect ledger entries)
 
 - Dashboards and metrics show:
-  - `tick_effects_pending_total{scope}` remaining high for specific regions even after coordination and domain metrics suggest normal operation.
-  - `tick_effects_pending_oldest_age_seconds{scope}` exceeding `tick_effects_replay_convergence_budget_seconds{scope}`.
-  - `tick_effects_replay_slo_breached{scope}` indicating replay is outside the normative convergence budget.
+  - `tick_effects_pending_total{scope_class}` remaining high for an approved bounded scope bucket even after coordination and domain metrics suggest normal operation.
+  - `tick_effects_pending_oldest_age_seconds{scope_class}` exceeding `tick_effects_replay_convergence_budget_seconds{scope_class}`.
+  - `tick_effects_replay_slo_breached{scope_class}` indicating replay is outside the normative convergence budget.
   - Replay fairness signals distinguish two failure shapes:
-    - `tick_effects_pending_total > 0` while `tick_effects_replay_batches_total` does not advance for the same region, or `tick_effects_replay_starved{scope}` becomes `1`.
-    - `tick_effects_replay_scan_lag_ms{scope}` grows for a subset of regions even though the controller is still making progress elsewhere.
+    - `tick_effects_pending_total > 0` while `tick_effects_replay_batches_total` does not advance for the same region, or `tick_effects_replay_starved{scope_class}` becomes `1`.
+    - `tick_effects_replay_scan_lag_ms{scope_class}` grows for a subset of regions even though the controller is still making progress elsewhere.
 - Logs and optional workflow traces:
   - Game Session logs may show repeated attempts to process the same effects or gaps in processing for certain tick IDs.
   - When the Trace Preconditions are satisfied, traces for those tick IDs show missing or incomplete spans for expected domain calls.

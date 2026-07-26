@@ -221,16 +221,16 @@ Per-trigger output is also part of the quota model even when the run itself was 
 
 ## Auditability & Metrics
 
-Every scheduler decision emits an audit record stored in a lightweight `script_event_audit` table in PostgreSQL. `scriptEventId` uniquely identifies the trigger instance so retries, replays, and downstream side effects can be correlated across audit queries, logs, and traces (not as a metric label). The authoritative audit field and stage model is defined in `design/architecture/system-architecture-scripting-observability-contract.md`.
+Every scheduler decision emits an audit record stored in a lightweight `script_event_audit` table in PostgreSQL. `scriptEventId` is one field within the full applicable Trigger Identity; it must never be treated as unique on its own because runtime scope, handler, event, patch, and other conditional identity fields can distinguish otherwise equal tokens. Retries, replays, and downstream side effects must be correlated using the complete identity (not as a metric label). The authoritative audit field and stage model is defined in `design/architecture/system-architecture-scripting-observability-contract.md`.
 
 Normative tables for Trigger Identity fields and metric label sets are centralized in `design/architecture/system-architecture-scripting-normative-contract-tables.md` so this document does not drift from other design docs.
 
 The canonical `script_event_audit` schema includes:
 
 - **Core identifiers**
-  - `scriptEventId` – unique identifier for a single trigger/run.
+  - `scriptEventId` – idempotency token within the full applicable Trigger Identity; it is not a standalone unique audit key.
   - `tenantId` – tenant/game owning the script.
-  - `gameInstanceId` – running game instance that emitted the trigger (required for multi-instance tenants).
+  - `gameInstanceId` – running game instance that emitted a gameplay/runtime trigger; absent for tenant-readiness `onLoad`.
   - `regionId` – region (where applicable) associated with the trigger.
   - `scriptId` – script definition that handled the trigger.
   - `eventType` – logical event key (for example, `onEnterRegion`, `onInterval`, `inventory.item_added`).
@@ -238,6 +238,8 @@ The canonical `script_event_audit` schema includes:
   - `versionId` – optional internal compiled script version identifier used by the Automation & Scripting Service for engine-level debugging and migrations.
   - `sourceService` – producing service identity for custom/service-specific events so operators can diagnose routing and authorization problems.
   - `tickId` – canonical tick identifier associated with the trigger when the trigger is tick-aligned or once commands are accepted into the tick system.
+
+For tenant-readiness `onLoad` triggers, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, and `entityId` are omitted; they must not be populated with sentinel values. Gameplay/runtime triggers include those fields when applicable according to the normative Trigger Identity table.
 
 - **Stage-aware outcome**
   - `finalStage` – the last stage reached for the trigger (for example `ADMISSION`, `DSL_EVAL`, `WORK_ITEM_PERSIST`, `TICK_HANDOFF`).
@@ -253,7 +255,7 @@ The canonical `script_event_audit` schema includes:
 During rollback draining, operators should also expect a bounded number of old-epoch rows whose runs started before pause but were fenced before persistence or handoff. Those rows should appear as non-success canceled outcomes for the original Trigger Identity, not as silently dropped work. A typical example is `finalStage=WORK_ITEM_PERSIST`, `finalOutcome=canceled`, `finalReason=rollback_epoch_advanced`, paired with rollback/drain metrics for the same scope.
 At the metric layer, these rows should contribute to the same bounded rollback/drain visibility used for the paused scope rather than disappearing into generic infrastructure noise. Use `automation_rollback_drain_canceled_total{scope, operation, finalStage, reason}` as defined in the canonical observability contract so operators can confirm that draining work was fenced intentionally rather than lost unexpectedly.
 
-`script_event_audit` remains the authoritative record for Automation-owned stages through `TICK_HANDOFF`, but it is not the sole post-handoff surface. The complete per-command handoff diagnostics below are **target-state**: the live Game Session proto carries `automationDispatchId`, command id/text, and selected provenance fields, but not `commandOrdinal` or the full Trigger Identity. Current live status/readback therefore remains narrower. In the target state, per-command handoff and execution-time version-fence results are queried through `ListScriptHandoffEvents` and composed as `commandHandoffDispositions[]`, with one child keyed by the complete command identity:
+`script_event_audit` remains the authoritative record for Automation-owned stages through `TICK_HANDOFF`, but it is not the sole post-handoff surface. The complete per-command handoff diagnostics below are **target-state**: the live Game Session proto carries `automationDispatchId`, command id/text, and selected provenance fields, but not `commandOrdinal` or the full Trigger Identity. Current live status/readback therefore remains narrower. In the target state, per-command handoff and execution-time version-fence results are queried through `ListScriptHandoffEvents` and composed as `commandHandoffDispositions[]`, with one child keyed by `(automationDispatchId, commandOrdinal)` and correlated to the complete parent Trigger Identity:
 
 - If Game Session later drops a handed-off command because its embedded `scriptPatchVersion` or plugin version no longer matches the instance's active pin, operator tooling must be able to locate that drop directly from the originating Trigger Identity.
 - The target-state mechanism is the per-command handoff contract in `design/architecture/system-architecture-scripting-observability-contract.md`: Game Session reports a bounded child handoff result through `ListScriptHandoffEvents`, retaining the parent Trigger Identity and `outboxWorkItemId` while keying the command record by `(automationDispatchId, commandOrdinal)`.
@@ -265,7 +267,7 @@ Concrete rollback-visibility example:
 
 - Trigger Identity `T123` reaches `finalStage=TICK_HANDOFF`, `finalOutcome=success` after Automation & Scripting hands off its commands to Game Session.
 - Before the queued command executes, operators roll the instance back to an older `scriptPatchVersion`.
-- Game Session rejects only `(automationDispatchId=work-9#1, commandOrdinal=1)` on its execution-time version fence; `ListScriptHandoffEvents` returns that target-state child with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, and `sourceService=game-session`, while the sibling command remains a separate result.
+- Game Session rejects only `(automationDispatchId=work-9, commandOrdinal=1)` on its execution-time version fence; `ListScriptHandoffEvents` returns that target-state child with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, and `sourceService=game-session`, while the sibling command `(automationDispatchId=work-9, commandOrdinal=2)` remains a separate result.
 - Operator tooling for `T123` must therefore show `finalStage=TICK_HANDOFF`/`finalOutcome=success` together with the complete `commandHandoffDispositions[]` collection, rather than overwriting the handler result or collapsing the commands into one disposition.
 
 Retention and sizing are governed by environment variables described below and in the Automation & Scripting Service README; in particular, `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` and `SCRIPT_EVENT_AUDIT_MAX_ROWS` control how long audit rows are retained and how large the table is allowed to grow (current defaults are 30 days and 1,000,000 rows, but the README remains the authoritative source).
@@ -319,7 +321,7 @@ Script execution spans several services (Game Design, Game Session, Automation &
 - `regionEpoch` – fences triggers and tick effects across scoped coordination resets.
 - `entityId` – identifies the target entity for script-driven work.
 - `scriptId` and `scriptPatchVersion` – identify the script definition and patch.
-- `scriptEventId` – uniquely identifies a particular trigger from the caller’s perspective.
+- `scriptEventId` – caller-scoped idempotency token within the full applicable Trigger Identity; it is not a standalone execution identity.
 - `tickId` – identifies the authoritative game tick in which commands execute (paired with `regionEpoch`).
 - `correlationId` – optional cross-service correlation token for Sagas and user-visible flows.
 

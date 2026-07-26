@@ -172,7 +172,8 @@ Required ordering:
 1. Read `GetTemplateReferencePhase(tenantId)` and fail fast unless the phase is `ENFORCED`.
 2. Call `ResolveLaunchDescriptor(...)` in Game Design and receive immutable resolved values.
 3. Read `GetPublishedReleaseBundle(tenantId, versionId)` and verify the attested release matches the resolved descriptor before any instance row is created:
-   - Reconstruct the current implementation's attestation identity as `prb:<tenantId>:<versionId>:<bundleId>` from the request scope, resolved `versionId`, and returned bundle `id`, then compare it byte-for-byte with the descriptor's `publishedReleaseBundleRef`. The returned bundle `id` is one attestation component, not a substitute for `publishedReleaseBundleRef`; comparing only that component, or merely checking that either value is present, is insufficient.
+   - First require the returned bundle's `tenantId` to equal the request `tenantId` and its `versionId` to equal the resolved descriptor `versionId`. Reject the response before reconstructing any reference if either returned scope field differs or is absent.
+   - Only after that scope validation, reconstruct the current implementation's attestation identity as `prb:<tenantId>:<versionId>:<bundleId>` from the validated scope and returned bundle `id`, then compare it byte-for-byte with the descriptor's `publishedReleaseBundleRef`. The returned bundle `id` is one attestation component, not a substitute for `publishedReleaseBundleRef`; comparing only that component, or merely checking that either value is present, is insufficient.
    - Compare the descriptor's `generationConfigRevision` byte-for-byte with the returned bundle's `generationConfigRevision` and reject a missing or different value.
 4. Only after steps 1-3 succeed may the orchestrator create any persistent `gameInstanceId` row or request World Management to create `PREPARING` instance state.
 5. World creation then executes using only the resolved descriptor values and must not re-resolve template JSON, patch defaults, or release metadata mid-flight.
@@ -296,6 +297,7 @@ The examples below intentionally use numeric `versionId` values because the curr
     "publishedReleaseBundleRef": "prb:11111111-1111-4111-8111-111111111111:42:7"
   },
   "releaseBundle": {
+    "id": 7,
     "tenantId": "11111111-1111-4111-8111-111111111111",
     "versionId": 42,
     "generationConfigRevision": "genrev-42b9"

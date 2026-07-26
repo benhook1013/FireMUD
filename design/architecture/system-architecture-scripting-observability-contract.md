@@ -150,7 +150,7 @@ During rollback, operator views must show the handler's `finalStage`/`finalOutco
 Concrete example:
 
 - `script_event_audit` row for Trigger Identity `T123` ends with `finalStage=TICK_HANDOFF`, `finalOutcome=success`.
-- The handler emitted two commands. Later, Game Session rejects only `(automationDispatchId=work-9#1, commandOrdinal=1)` during rollback convergence and appends a child disposition with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, `sourceService=game-session`, and `recordedAt=...`; `(work-9#0, 0)` remains a separate sibling record.
+- The handler emitted two commands. Later, Game Session rejects only `(automationDispatchId=work-9, commandOrdinal=1)` during rollback convergence and appends a child disposition with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, `sourceService=game-session`, and `recordedAt=...`; `(automationDispatchId=work-9, commandOrdinal=0)` remains a separate sibling record.
 - Queries for `T123` must surface the handler row plus both command-handoff records so operators can tell that Automation succeeded and which gameplay command was later fenced.
 
 Illustrative record shape:

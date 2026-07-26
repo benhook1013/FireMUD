@@ -359,17 +359,19 @@ Minimal canonical Game Session PostgreSQL write split examples:
 - Entity Management is the sole owner of inventories, containment, and room-ground containers keyed by `RoomInstanceRef`.
 - Game Session orchestrates movement and other tick-owned actions, but it must not maintain a competing authoritative occupancy index.
 - The execution-region pointer held by the session front-end is session-local coordination metadata for fenced routing; it is not an authoritative source of room occupancy or world state.
-- World Management emits the canonical room-read fence value on `GetRoomSnapshot`, currently as `worldSnapshotId` / `world_snapshot_id`, and Game Logic owns same-fence room-view composition for `ResolveLook`. The live adapter currently emits a deterministic scope marker; the target implementation must emit the committed `roomSnapshotVersion` token instead.
-- World Management and Entity Management must either serve the requested fence and echo it in their responses or reject the read as unsatisfied; they must not silently downgrade to best-effort snapshots.
-- If either dependency rejects the fence, Game Logic may retry with a fresh world snapshot when doing so preserves caller ordering semantics; otherwise it must fail the room-view refresh explicitly. Mixed-tick best-effort joins are not allowed for canonical room state.
+- World Management emits the room-read correlation value on `GetRoomSnapshot`, currently as a deterministic scope marker represented by `worldSnapshotId` / `world_snapshot_id`; Game Logic owns the `ResolveLook` composition. The target implementation must replace that marker with the committed `roomSnapshotVersion` token once the cross-service commit protocol exists.
+- Target-state World Management and Entity Management must either serve the allocated committed fence and echo it in their responses or reject the read as unsatisfied; they must not silently downgrade a target committed-fence read to best-effort snapshots.
+- Once the target protocol exists, if either dependency rejects the committed fence, Game Logic may retry with a fresh room snapshot when doing so preserves caller ordering semantics; otherwise it must fail the room-view refresh explicitly. Mixed-tick best-effort joins are not allowed for canonical room state.
+
+Committed-fence room reads are target-state behavior, not a claim about the current adapter. The committed `roomSnapshotVersion` contract is deferred until the platform has a defined protocol for fence allocation, propagation to every participating room/entity read, acknowledgement of the requested fence, and commit/publication of the resulting snapshot. Until that allocation/propagation/acknowledgement/commit protocol exists, current reads retain their deterministic scope markers and must be documented and tested as scope-marker behavior rather than as committed-fence proof. No caller may infer committed room consistency from the current marker.
 
 Minimal canonical room-read sequence:
 
 1. Game Session receives `LOOK` and delegates the gameplay read to Game Logic `ResolveLook`.
-2. Game Logic requests `GetRoomSnapshot` from World Management and receives `worldSnapshotId`.
+2. Game Logic requests `GetRoomSnapshot` from World Management and receives the current scope marker; the target protocol will allocate and return a committed `worldSnapshotId`/`roomSnapshotVersion` fence.
 3. Game Logic calls Entity Management `ListRoomEntities` for the same room scope and receives `entitySnapshotId`.
-4. World Management and Entity Management either return matching fence values or Game Logic rejects the mixed read as a room-fence failure.
-5. Game Logic composes one `LookResult` only when both downstream reads align on the same fence, then Game Session renders and caches the transcript.
+4. Under the current implementation, the marker remains a scope/read correlation value. Under the target protocol, World Management and Entity Management either acknowledge and return the allocated committed fence or Game Logic rejects the mixed read as a room-fence failure.
+5. The current adapter composes according to the aligned scope-marker contract and does not claim committed-fence proof. Under the target protocol, Game Logic composes one `LookResult` only when both downstream reads acknowledge the same committed fence, then Game Session renders and caches the transcript.
 
 Rendered room-view caching is intentionally a Game Session concern rather than a World or Game Logic responsibility:
 

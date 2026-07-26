@@ -80,11 +80,13 @@ The scripting pipeline uses a small set of terms repeatedly; the table below sum
 
 Normative Trigger Identity required fields (including `gameInstanceId` and when `regionEpoch` is required) are defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields`.
 
+Trigger Identity is conditional on the binding target scope: `entityId` is required only for an entity-targeted handler. Global, region, and other non-entity target scopes omit `entityId` rather than carrying a synthetic or stale value; their target-scope identity is represented by the applicable binding and selector fields.
+
 | Step | Term | Description | Stored as / example |
 | --- | --- | --- | --- |
 | 1 | **Trigger** | A concrete event such as `onEnterRegion`, `onCommand`, or a custom event emitted by a service. | gRPC `TriggerScriptEvent` call, tick heartbeat, or internal scheduler event. |
 | 2 | **DSL run** | Execution of a script handler in the sandboxed DSL for a single trigger. Produces domain commands, not direct state changes. | In-memory execution in the Automation & Scripting Service; results summarized as script work items. |
-| 3 | **Script work item** | A post-DSL, per-entity descriptor of what should happen (domain commands plus the full applicable Trigger Identity, including `scriptEventId`, `playableStateScope` and `regionEpoch` when applicable, and version metadata) persisted durably (outbox). | Indexed via `automation:queue:{tenantInstanceTag}:<entityId>` and later claimed by Automation's durable executor for Game Session handoff. |
+| 3 | **Script work item** | A post-DSL, per-trigger descriptor of what should happen (domain commands plus the full applicable Trigger Identity, including `scriptEventId`, `playableStateScope` and `regionEpoch` when applicable, and version metadata) persisted durably (outbox). | Indexed via `automation:queue:{tenantInstanceTag}:<entityId>` when the work targets an entity, and later claimed by Automation's durable executor for Game Session handoff. |
 | 4 | **Tick command** | A concrete command that the Game Session Service executes during game ticks under its normal locking and idempotency rules. | Enqueued into `tick:{tenantRegionTag}:queue:<entityId>` for consumption by the tick loop. |
 
 Triggers lead to DSL runs, which produce durable script work items plus queue-pointer projection entries, and Automation's execution loop turns those work items into tick commands for the Game Session Service.
@@ -94,6 +96,8 @@ Triggers lead to DSL runs, which produce durable script work items plus queue-po
 ## Work Item Outbox Contract (Normative)
 
 The authoritative outbox, queue-pointer contract, and drain/handoff semantics now live in [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#work-item-outbox-contract-normative). This DSL reference keeps the anchor so existing readers can jump to the runtime owner without losing the lifecycle overview.
+
+The firing transition must leave one durable handler-level `script_event_audit` row for the applicable Trigger Identity. Command-level outcomes do not create additional handler audit rows: each logical emitted command has a persisted `automationDispatchId` and its attempts/outcomes live in the `ListScriptHandoffEvents` child records keyed by that ID. The dispatch ID is created once when the logical command is persisted and is reused across claims, retries, and downstream reconciliation.
 
 ---
 
@@ -160,7 +164,7 @@ Concrete supersession example:
 - Any not-yet-started `onLoad` work for `P21` is canceled. If an already-running `P21` `onLoad` handler finishes later, that completion may be recorded in audit history for its own Trigger Identity but must not advance patch `P21` back to `READY`.
 - Only `P22` remains eligible to progress through `ONLOAD_RUNNING` to `READY`.
 
-### `scheduleDefinitionId` Reconciliation Example
+## `scheduleDefinitionId` Reconciliation Example
 
 Implementers should treat `scheduleDefinitionId` as the canonical answer to "is this the same logical schedule?":
 
@@ -209,7 +213,7 @@ Domain services can define **custom events** that feed into the scripting pipeli
 - Service-specific events follow the same trigger → DSL run → automation queue → tick command flow as built-in events.
 - Event schemas are versioned so scripts can be migrated when payloads change.
 
-Custom events must follow the same determinism and idempotency rules as built-in events; they are keyed by the full applicable Trigger Identity plus tick context when producing commands (for example including `tenantId`, `gameInstanceId`, `playableStateScope`, `entityId`, `eventType`, `eventSchemaVersion`, `scriptPatchVersion`, `scriptEventId`, and `tickId`/`regionEpoch` where applicable).
+Custom events must follow the same determinism and idempotency rules as built-in events; they are keyed by the full applicable Trigger Identity plus tick context when producing commands (for example including `tenantId`, `gameInstanceId`, `playableStateScope`, `eventType`, `eventSchemaVersion`, `scriptPatchVersion`, `scriptEventId`, and `tickId`/`regionEpoch` where applicable, with `entityId` added only when the event binding targets an entity).
 
 Custom events also require an explicit trust and ownership contract:
 
@@ -347,7 +351,7 @@ The canonical states are:
 
 - `PENDING_VALIDATION` – the Game Design Service has published a script-only patch version and the Automation & Scripting Service has accepted the compiled graphs and bindings, but `onLoad` initialization has not yet completed for the tenant.
 - `ONLOAD_RUNNING` – `onLoad` handlers for scripts in the patch are executing for the tenant. These at-most-once DSL executions are keyed by the full applicable onLoad identity, `<tenantId, scriptId, eventSchemaVersion, scriptPatchVersion, eventType=onLoad, scriptEventId, isDryRun=false>`; only independently idempotent external infrastructure steps may be retried.
-- `READY` – all `onLoad` handlers for the patch have completed successfully for the tenant. The patch is eligible to become the `activePatchVersion` for games in that tenant, and Game Session may pin it as the current `scriptPatchVersion`.
+- `READY` – all `onLoad` handlers for the patch have completed successfully for the tenant. The patch is eligible for instance-scoped pinning by games in that tenant; `READY` does not create or mutate a tenant-wide active patch, require all instances to switch, or replace an instance's observed pin. Game Session may explicitly pin it as the current `scriptPatchVersion` for an individual instance.
 - `FAILED` – one or more `onLoad` handlers for the patch have failed for the tenant with a logical or sandbox error, or an independently idempotent external infrastructure step has exhausted its bounded retries. The at-most-once DSL evaluation is not retried. The previous instance-observed pin remains in use for running games, and the failed patch is not eligible to be pinned.
 - `SUPERSEDED` – a newer publish for the same tenant was accepted while this patch was still non-terminal (`PENDING_VALIDATION` or `ONLOAD_RUNNING`). The superseded patch remains visible for audit/history but is no longer eligible for pinning or further readiness progression.
 
@@ -439,11 +443,11 @@ message GetNearbyEntitiesRequest {
 
 In this shape, Automation captures `read_snapshot_token` once from ingress and forwards the same byte-for-byte token on every authoritative read made during that handler-scoped run. The resolved `playable_state_scope` also travels as first-class trigger identity for gameplay-originated events so shared-state and isolated-state realms do not collide in durable work, timer follow-up rows, or operator read models. A downstream service may decode the snapshot token internally into fields such as `regionEpoch=14` and `tickId=981223`, but the calling contract remains "one run, one committed snapshot."
 
-Crucially, **script handlers are not re-executed during tick replay or recovery**. The Automation & Scripting Service evaluates each trigger at most once, produces a set of commands annotated with `scriptEventId` and a deterministic per-command `automationDispatchId`, and hands those commands to the tick system. Tick-level crash recovery and retries reapply those commands idempotently in the Game Session and domain services without re-entering the DSL graph for the same trigger. Determinism for scripting therefore depends on this **“no re-execution per trigger”** guarantee plus the seeded RNG and time constraints.
+Crucially, **script handlers are not re-executed during tick replay or recovery**. The Automation & Scripting Service evaluates each trigger at most once, persists each logical emitted command with `scriptEventId` and one deterministic per-command `automationDispatchId`, and hands those commands to the tick system. Tick-level crash recovery and retries reuse the persisted dispatch ID and reapply commands idempotently in the Game Session and domain services without re-entering the DSL graph for the same trigger. Determinism for scripting therefore depends on this **“no re-execution per trigger”** guarantee plus the seeded RNG and time constraints.
 
 Script executions are treated as **at-most-once per trigger** at the scheduler level, but the resulting commands participate in the same **idempotent replay model** as other tick actions:
 
-- Script-generated commands must be **idempotent with respect to the region-scoped tick timeline, the full applicable Trigger Identity, and command identity**: `(regionEpoch, tickId)`, all applicable Trigger Identity fields including `scriptEventId`, and `automationDispatchId`. These identifiers travel with the command payload and are recorded alongside `scriptId` and `tenantId` in `script_event_audit` records and logs so operators can correlate replays and ensure side effects remain consistent even when ticks are retried or a reset bumps `regionEpoch`.
+- Script-generated commands must be **idempotent with respect to the region-scoped tick timeline, the full applicable Trigger Identity, and command identity**: `(regionEpoch, tickId)`, all applicable Trigger Identity fields including `scriptEventId`, and `automationDispatchId`. The Trigger Identity travels with the command payload and remains on the single handler-level `script_event_audit` row; command-level dispatch and retry outcomes are recorded in the handoff child records keyed by `automationDispatchId`. This lets operators correlate replays and keeps sibling fan-out commands distinct when ticks are retried or a reset bumps `regionEpoch`.
 - When commands cause database writes or cross-service calls, domain services should derive the canonical `EffectId` from `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId>`. For script-originated fan-out, the command identity is the command-level `automationDispatchId` and it must be an explicit component of `effectKey` (for example `<baseEffectKey>:<automationDispatchId>`, or an equivalent deterministic encoding). `scriptEventId` alone is not sufficient because sibling commands from one handler must derive distinct EffectIds. This follows the patterns in `design/architecture/system-architecture-transactions.md` and the tick idempotency rules described in `design/architecture/system-architecture-ticks.md#domain-idempotency-rules-region-epoch--tickid-in-postgresql`.
 - Conceptually, `scriptEventId` identifies the handler trigger while `automationDispatchId` identifies one emitted gameplay command:
   - For purely tick-driven logic, idempotency guards use `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)`.

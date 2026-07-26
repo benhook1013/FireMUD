@@ -95,9 +95,14 @@ Pause-budget alerts remain valid for maintenance/reset workflows but are not rou
 
 Tick pause/resume APIs support multiple ways to identify scope for maintenance, reset, migration, and future scoped recovery, but the long-term canonical region scope is `tenant_id + game_instance_id + region_id`.
 
+- Scope class is explicit and must not be inferred from a missing field:
+  - a **region operation** targets one exact `tenant_id + game_instance_id + region_id` tuple;
+  - an **aggregate operation** targets an explicitly named tenant, game instance, or Coordination Redis cluster and must resolve and validate its complete affected region set before mutation;
+  - an **environment-wide recovery** operation is the separate `cold_start_restore` contract and is not represented as a region pause request.
+- An aggregate operation is not a region request with `region_id=null`. If one API supports both classes, it must carry an explicit operation/scope type and the resulting complete-set evidence; otherwise they use separate control-plane operations. Aggregate scope never permits silently acting on the first, partial, or stale region mapping.
 - The canonical region scope is `tenant_id + game_instance_id + region_id`; region identity is never interpreted outside its owning game instance.
-- Before Phase C, current requests may set `tenant_id + game_instance_id` without `region_id` only when the game instance maps cleanly to the complete affected region set. The operation must resolve that set from the authoritative mapping source, bind it to the source's mapping generation or a maintenance lease, and keep that lease held through the complete operation. Where a lease cannot be held, every mutating step must carry a compare-and-set check against the captured mapping generation and complete set. Revalidate the generation/lease and complete set immediately before execution and at each CAS-fenced step; if the generation changes, the lease expires or is lost, or the set no longer matches, fail closed without executing any further action against the stale set.
-- From Phase C onward, every pause/resume request must provide non-empty `tenant_id + game_instance_id + region_id`; any request that omits any member of that complete triple, including a request that otherwise identifies only a game instance, is rejected with `INVALID_ARGUMENT`.
+- Before Phase C, current aggregate requests may set `tenant_id + game_instance_id` without `region_id` only when the game instance maps cleanly to the complete affected region set. The operation must resolve that set from the authoritative mapping source, bind it to the source's mapping generation or a maintenance lease, and keep that lease held through the complete operation. Where a lease cannot be held, every mutating step must carry a compare-and-set check against the captured mapping generation and complete set. Revalidate the generation/lease and complete set immediately before execution and at each CAS-fenced step; if the generation changes, the lease expires or is lost, or the set no longer matches, fail closed without executing any further action against the stale set.
+- From Phase C onward, every **region-scoped** pause/resume request must provide non-empty `tenant_id + game_instance_id + region_id`; a region request that omits any member of that complete triple is rejected with `INVALID_ARGUMENT`. Aggregate tenant/game-instance/cluster operations remain a distinct scope class and must use the explicit aggregate contract and the same complete-set generation/lease safeguards; they must not be coerced into a region request or bypass full-set validation.
 - Routine online backups do not invoke this contract and do not use pause scope as recovery evidence.
 - Until Phase C is complete, game-instance-scoped pause/resume is allowed only for non-player-facing maintenance drills, quarantined staging rehearsals, and manual operator workflows that record explicit scope-resolution evidence; it is never player-facing restore evidence.
 - Manual game-instance-scoped maintenance operations must write an audit record showing the requested scope, the resolved `tenant_id`, `game_instance_id`, and `region_id` set, the mapping generation or maintenance-lease identity that remained held or was CAS-revalidated through execution, actor identity, and start/end timestamps. The record is valid only for the version-validated complete set that was actually executed.
@@ -114,14 +119,14 @@ The control-plane migration should follow explicit phases:
 
 1. **Phase A**: require `tenant_id + game_instance_id`, accept optional `region_id`, emit incomplete-scope metrics, and log warnings when region scope must be resolved.
 2. **Phase B**: keep game-instance-wide acceptance but require dashboards and alerts for omitted-region usage.
-3. **Phase C entry gate**: enter Phase C only after the Phase B metric records zero attempted omitted-region requests for one complete release window.
-4. **Phase C**: reject any pause/resume request that omits `tenant_id`, `game_instance_id`, or `region_id` with `INVALID_ARGUMENT`.
+3. **Phase C entry gate**: enter Phase C only after the Phase B metric records zero attempted omitted-region requests from region-scoped callers, or zero unclassified requests that should have been region-scoped, for one complete release window. Explicit aggregate operations are not counted as omitted-region drift.
+4. **Phase C**: reject any **region-scoped** pause/resume request that omits `tenant_id`, `game_instance_id`, or `region_id` with `INVALID_ARGUMENT`; keep aggregate tenant/game-instance/cluster requests on their explicit aggregate contract with validated complete-set evidence.
 
 Exit criteria for Phase C:
 
 - all prod-like region maintenance, reset, migration, and future scoped-recovery tools use `tenant_id + game_instance_id + region_id`
-- incident tooling and runbooks no longer rely on game-instance-wide region resolution
-- the Phase C entry gate was satisfied by zero attempted omitted-region requests during Phase B for one full release window
+- region-scoped incident tooling and runbooks no longer rely on implicit game-instance-wide region resolution; aggregate tooling names its aggregate scope and records validated complete-set evidence
+- the Phase C entry gate was satisfied by zero attempted omitted-region or unclassified region requests during Phase B for one full release window; explicit aggregate operations were classified and evidenced separately
 - after Phase C begins, rejected omitted-region requests remain monitored as client/tooling drift but are not treated as a migration failure or as a reason to reopen the Phase C entry gate
 
 ## Redis Persistence

@@ -540,6 +540,17 @@ The `PLAY` flow:
 - Binds the socket to a gameplay session key for the chosen world/instance/character identity under `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model) and [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding).
 - Target-state admission must ensure the gameplay session binding is consistent with the tick/lease ownership model for the character’s current `<tenantId, gameInstanceId, regionId>`. Per `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`, `/ws/game/**` is routed to a stable Game Session service endpoint and the edge does not implement a lease-aware shard routing plane.
 
+### PLAY Current and Target Failure Boundaries
+
+The current shipped `PLAY` path resolves the selected realm to its admissible `{tenantId, gameInstanceId}`, validates caller-bound gameplay access and entitlement state, resolves the character, and binds `{tenantId, gameInstanceId, characterId}`. It does not claim that the live path already resolves or commits the target region, region epoch, lease owner, or lease fence. Those ownership and timeline checks are target-state responsibilities described above and must not be reported as current behavior merely because their failure codes are already reserved.
+
+`CONNECT_SCOPE_MISMATCH` and `STALE_TIMELINE` are intentionally disjoint:
+
+- `CONNECT_SCOPE_MISMATCH` means the verified first-party connect context or connect-token scope does not match the `{tenantId, gameInstanceId}` selected by `PLAY`. It is an admission-scope/issuance drift and requires fresh bootstrap, token issuance, and connection establishment.
+- `STALE_TIMELINE` means the selected runtime target was valid, but its authoritative region, epoch, lease fence, or equivalent runtime timeline no longer matches at the ownership check. It requires rediscovery and explicit retry; it must never be repaired by silently rebinding to a different target.
+
+The target ownership checks may produce `OWNERSHIP_UNAVAILABLE` when authority cannot be read at all, but they must not relabel a verified connect-scope mismatch as a stale timeline or relabel a stale runtime fence as a connect-scope mismatch.
+
 `PLAY` returns canonical, stable error codes so clients can recover deterministically:
 
 - `WORLD_NOT_FOUND` – the supplied world selection cannot be resolved to a tenant.

@@ -24,7 +24,7 @@ curl http://localhost:8080/ping
 - `ListRoomEntities(ListRoomEntitiesRequest) returns (ListRoomEntitiesResponse)` – returns players, NPCs, and visible items present in a room, scoped by `RoomInstanceRef`.
 - `GetDraftDesignDigest` – returns publish-gating digest for Draft entity templates using typed scope request `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`. Entity Management supports `versionId` scope only and must return `UNSUPPORTED_SCOPE` for `scriptPatchVersion`. Minimum response fields are `{tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion}`. `appliedCommitId` means the highest Game Design commit whose full revision set has been durably applied to the target Draft entity scope. `contentDigest` must cover only version-scoped entity template/binding rows and must exclude live runtime entities and audit/history metadata.
 
-Gameplay mutation RPCs that change item, equipment, or container state accept an optional `effectId` supplied by Game Session durable effect execution. When present, Entity Management treats `{tenantId, effectId}` as the operation-level idempotency key and returns the stored applied response for duplicate delivery instead of applying the mutation again. Read-only query RPCs do not require an `effectId`.
+Target-state gameplay mutation RPCs that change item, equipment, or container state accept the canonical `effectId` and its complete structured identity supplied by Game Session durable effect execution. Entity Management validates the `{tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId}` projection before applying the mutation; `{tenantId, effectId}` alone is not a sufficient substitute for the scoped identity. Duplicate delivery returns the stored applied/no-op response instead of applying the mutation again. Read-only query RPCs do not require an `effectId`. Current live mutation surfaces may still expose an optional or narrower effect field; that is an implementation gap, not permission to define a competing idempotency contract.
 
 ```bash
 grpcurl -plaintext localhost:6565 entity_management.v1.EntityManagementService/Ping
@@ -69,7 +69,7 @@ Publish gating must fail closed if Entity Management cannot attest a digest cons
 
 ## LOOK Entity Listing Contract
 
-`ListRoomEntities` is the dedicated endpoint for `LOOK` to discover which characters, items, and NPCs occupy a room. The current and target fence contracts are intentionally separate.
+`ListRoomEntities` is the dedicated endpoint for `LOOK` to discover which characters, items, and NPCs occupy a room. The current and target fence contracts are intentionally separate. The logical fence name is `roomReadFence`; the transport names `worldSnapshotId` and `entitySnapshotId` are aliases defined in the identifier glossary, not independent service-local versions.
 
 ### Current room-entity contract
 
@@ -86,20 +86,20 @@ The current response includes:
 
 ### Target same-fence contract
 
-The target protocol will let the room-read composition propagate the World Management-owned committed `roomSnapshotVersion` to Entity Management without inventing a parallel entity-local version. The exact request-field shape is intentionally deferred to the coordinated proto/design change; this document must not imply that the current request already carries it.
+The target protocol will let the room-read composition propagate the World Management-owned committed `roomReadFence` (wire field `worldSnapshotId`) to Entity Management without inventing a parallel entity-local version. The exact request-field shape is intentionally deferred to the coordinated proto/design change; this document must not imply that the current request already carries it.
 
 After that protocol exists, Entity Management will return the exact satisfied fence as `entitySnapshotId` for the same `RoomInstanceRef`. When composing a full LOOK view, Game Logic combines:
 
-- `worldSnapshotId` from World Management’s `GetRoomSnapshot`; and
-- the identical `entitySnapshotId` returned by `ListRoomEntities`,
+- `worldSnapshotId`/`roomReadFence` from World Management’s `GetRoomSnapshot`; and
+- the identical `entitySnapshotId`/`roomReadFence` returned by `ListRoomEntities`,
 
 then returns a `lookSnapshotId` alongside the rendered `LookResult` so Game Session can cache the final transcript deterministically. The target contract does not concatenate independent service versions; equality of the two transport fields proves that both reads satisfied one committed fence. The current scope-derived adapter value is not sufficient proof of mutation freshness.
 
 Room-entity data is derived from runtime entity state plus authoritative world location. Ground items are discovered by querying items contained by the synthetic room-ground container for the target `RoomInstanceRef`. Characters and NPCs are included when their current location (owned by World Management) matches the target `RoomInstanceRef`:
 
-- The caller obtains the authoritative room snapshot and committed read fence from World Management before invoking `ListRoomEntities`. The target request/response evolution must carry enough information for Entity Management to prove satisfaction of that fence; the current proto/request path does not yet claim this behavior complete.
+- The caller obtains the authoritative room snapshot and committed `roomReadFence` from World Management before invoking `ListRoomEntities`. The target request/response evolution must carry enough information for Entity Management to prove satisfaction of that fence; the current proto/request path does not yet claim this behavior complete.
 - `ListRoomEntities` materializes display data plus room-ground inventory state owned by Entity Management for the same `RoomInstanceRef`.
-- `ListRoomEntities` must return an Entity Management read fence (`entitySnapshotId`) for the same room scope; when Game Logic cannot align it with the World Management `worldSnapshotId`, composition must fail instead of returning mixed-tick data.
+- `ListRoomEntities` must return the exact Entity Management echo (`entitySnapshotId`) for the same room scope; when Game Logic cannot align it byte-for-byte with the World Management `worldSnapshotId`/`roomReadFence`, composition must fail instead of returning mixed-tick data.
 - The read fence is satisfied only by durable post-commit state. Redis-staged containment changes that have not yet committed the effect guard and container/item row updates for that fence are not eligible to satisfy the room-read fence.
 
 Illustrative target-state `ListRoomEntities` fragments:

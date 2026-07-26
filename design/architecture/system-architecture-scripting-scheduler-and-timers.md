@@ -17,7 +17,9 @@ The current implementation provides the following substrate:
 
 ## Target-State Design
 
-## Script Timers vs Tick Timers
+The sections below define the target-state scheduler contract. Current behavior remains limited to the implementation facts listed above unless a bullet explicitly identifies a target-state requirement.
+
+### Script Timers vs Tick Timers
 
 Script timers are layered on top of the core tick model and always express cadence in terms of the authoritative game tick timeline, not raw wall-clock seconds:
 
@@ -25,7 +27,7 @@ Script timers are layered on top of the core tick model and always express caden
 - Missed firings are handled in a bounded, deterministic way:
   - When leaders change, the new leader walks forward from its last persisted `tickId` to the current `tickId` and enqueues at most one synthetic firing for each cadence boundary crossed in that gap.
   - After a due candidate passes admission, and before enqueueing that firing, the scheduler must claim or insert a durable trigger-instance row keyed by an instance-aware uniqueness projection so failover or duplicate consumers cannot create duplicate logical triggers.
-  - The projection must include the applicable Trigger Identity fields, including `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `eventType`, `eventSchemaVersion`, `scriptPatchVersion`, `isDryRun`, `scheduleDefinitionId`, the persisted due point (`dueTickId` or `dueAt`), and `triggerMode`; plugin-owned claims must additionally include `pluginId`, `pluginVersionId`, and `bindingId`. Globally unique schedule IDs do not replace runtime scope, version, dry-run namespace, plugin binding, or timeline fencing.
+  - The projection must include the applicable Trigger Identity fields, including `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `scriptId`, `eventType`, `eventSchemaVersion`, `scriptPatchVersion`, `isDryRun`, `scheduleDefinitionId`, the persisted due point (`dueTickId` or `dueAt`), and `triggerMode`; include `entityId` only when the binding's target scope is entity-scoped. Plugin-owned claims must additionally include `pluginId`, `pluginVersionId`, and `bindingId`. Globally unique schedule IDs do not replace runtime scope, version, dry-run namespace, plugin binding, or timeline fencing.
   - Missed firings due to quotas, budgets, disabled scripts, or failed or unknown versions are not replayed later; they are recorded in `script_event_audit` and associated metrics as dropped or skipped triggers.
 
 Within that model:
@@ -36,7 +38,7 @@ Within that model:
 
 From the tick system’s perspective, script timers are just another source of work that ultimately enqueues commands into tick queues. The determinism rules in the DSL reference apply equally to timer-driven triggers.
 
-### Timer Resume Rule (Normative)
+#### Timer Resume Rule (Normative)
 
 When reload, rollback, or schedule preservation keeps a logical timer alive across a version transition, the scheduler must recalculate its next due point using the same explicit rule:
 
@@ -54,7 +56,7 @@ When reload, rollback, or schedule preservation keeps a logical timer alive acro
   - reload and rollback preservation and leader-failover catch-up remain distinct behaviors. The resume rule governs preserved timers after a version transition; bounded catch-up rules govern missed firings after scheduler downtime within the same logical schedule and version.
 - Equivalent wall-clock timers must define an analogous formula over `nextRunAt` and `resumeAt`, but gameplay-facing cadence remains specified in ticks and must reduce to the same tick-boundary behavior when tick-aligned.
 
-## End-to-End `onInterval` Timer Lifecycle
+### End-to-End `onInterval` Timer Lifecycle
 
 This section summarizes how a single `onInterval` timer behaves across normal operation, leader changes, and script reloads, and which Redis keys are authoritative at each step.
 
@@ -64,7 +66,7 @@ All durable timer identity and scheduler checkpoints must be instance-aware even
 - If a Redis key name omits `gameInstanceId`, the stored timer or checkpoint payload must still include it, and rebuild logic must treat instance mismatches as corruption rather than as reusable timer state.
 - Plugin timers must additionally carry `pluginId`, `pluginVersionId`, and `bindingId` in their durable identity so sibling bindings and plugin rollback, disablement, or revocation cannot cross-contaminate interval state.
 
-### Interval-Entry Identity and Due-Point Persistence
+#### Interval-Entry Identity and Due-Point Persistence
 
 A durable interval has two identities that must not be conflated.
 
@@ -75,15 +77,17 @@ Stable schedule-instance row identity:
 - `scheduleInstanceId` is the stable durable row identity, whether represented by this natural key or by a surrogate row ID. It excludes the mutable runtime scope and due point. `runtimeRegionId`, `runtimeRegionEpoch`, `nextDueTickId`/`nextDueAt`, and last-observed progress are schedule state that may advance on heartbeat or reconciliation without creating a new schedule row.
 - `scheduleDefinitionId` is the stable logical schedule identity within its patch or plugin owner, not the firing claim identity. `scriptPatchVersion` is the current definition owner, plugin-owned entries additionally carry `pluginId`, `pluginVersionId`, and `bindingId`, and `isDryRun` separates test execution from live scheduling. Live durable interval entries persist `isDryRun=false`.
 - `duePoint` is exactly one mutable persisted value: `dueTickId` for tick-aligned schedules or `dueAt` for wall-clock timers. `nextTick` and `nextRunAt` are projections of that stored due point, not substitutes for it.
-- Each firing has a separate durable claim keyed by the schedule-instance identity plus the applicable runtime scope (`regionId`, `regionEpoch`), target entity, trigger mode, and tagged due point. The deterministic `scriptEventId` must be derived from that complete firing-claim tuple, including the due point and plugin owner fields when applicable. Advancing the schedule due point must never rewrite a prior claim or reuse its `scriptEventId`.
+- Each firing has a separate durable claim keyed by the schedule-instance identity plus the applicable runtime scope (`regionId`, `regionEpoch`), target selector identity (`entityId` only for an entity target scope), trigger mode, and tagged due point. The deterministic `scriptEventId` must be derived from that complete firing-claim tuple, including the due point and plugin owner fields when applicable. Advancing the schedule due point must never rewrite a prior claim or reuse its `scriptEventId`.
 
-### Normal Operation
+#### Normal Operation
 
 - When an instance first observes a pinned patch, Automation materializes the patch-owned schedules for that `(tenantId, gameInstanceId)` scope into durable `script_schedule_instances` rows keyed by the stable schedule-instance identity above, with plugin owner metadata and binding target identity. Each row stores `scriptPatchVersion`, `isDryRun`, `scheduleDefinitionId`, cadence, unit, scheduler priority tag, normalized schedule metadata hash, `controlPlaneRequestId` from the pin observation, and exactly one mutable due-point field (`dueTickId` or `dueAt`). Wall-clock timers may initialize `dueAt` from the observed pin timestamp; tick-aligned schedules remain persisted but `PENDING_RUNTIME_PROGRESS` until Game Session's `ObserveRuntimeTickProgress` input supplies the current runtime region epoch and tick id from Game Session's durable runtime ownership row. At that point Automation records the runtime region fields and derives the first future `dueTickId` as `observedTickId + cadenceValue`; later observations that reach or pass it admit the due candidate before creating a firing claim containing the current due point and its deterministic `scriptEventId`, then use the same durable work-item, audit, and queue projection path as other admitted script events. Plugin-owned schedules are materialized only for the plugin version currently enabled in Automation's runtime registry for that instance; other published or previously active plugin versions must not keep durable schedule ownership. Region-scoped Redis indexes such as `automation:timer:{tenantRegionTag}` remain a derived coordination layer above those durable rows rather than the first source of schedule identity.
-- Leaders track these interval entries alongside other automation timers, using bounded scans and the automation tick budget (for example, `AUTOMATION_TICK_DURATION_MS`, `AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) to decide which `onInterval` triggers should fire in each automation tick.
+- Leaders track these interval entries alongside other automation timers, using bounded scans and the automation tick budget (for example, `AUTOMATION_TICK_DURATION_MS`, `AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) to decide which `onInterval` triggers should fire in each automation tick. `AUTOMATION_TICK_BUDGET_MS` is an aggregate admission capacity for the tick window, not a per-run timeout: the scheduler reserves capacity before sandbox execution, settles actual use afterward, and accounts for abandoned reservations during recovery.
 - When an interval becomes due, the scheduler evaluates the candidate through the same admission, quota, cadence, and budgeting layers described in [Scripting Quotas and Operations](./system-architecture-scripting-quotas-and-operations.md). Before admission it derives a deterministic `scheduleCandidateId` from the stable schedule-row identity, applicable runtime region and epoch, and tagged due point for event-scope audit and retry-safe candidate consumption. Only an admitted candidate receives a durable firing claim, handler Trigger Identity, and deterministic `scriptEventId`. A skipped candidate must be durably consumed in the same transaction as its `scheduleCandidateId`-keyed skip/audit outcome: advance the canonical due point according to the cadence, or quarantine/tombstone the schedule when safe advancement is impossible. A skipped candidate must never create a firing claim or `scriptEventId`, and must not be rediscovered on the next scan. Admitted candidates are enqueued for sandbox execution and advance the interval entry’s next due point.
 
-### Leader Changes
+An admitted firing must use one crash-safe durable transition. The transition atomically creates or claims the firing, persists the work item, writes the handler-level `script_event_audit` outcome, updates the rebuildable `automation:queue:*` projection, and advances the canonical due point. If the storage boundary cannot provide one transaction, it must persist a resumable idempotent reconciliation keyed by the firing claim and `scheduleCandidateId`; recovery must link or complete every missing projection and due-point update before the firing is considered committed, without re-running the DSL or minting a second `scriptEventId`/`automationDispatchId`. A crash may leave the operation resumable, but must not leave a durable claim that can be rediscovered as new work or a due point advanced without the corresponding durable work item and audit.
+
+#### Leader Changes
 
 - Leaders advance a per-region notion of time by consuming the tick heartbeat stream and tracking how far they have progressed. In addition to the current heartbeat `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)`, schedulers maintain a derived discovery hint such as `script-scheduler:{tenantRegionTag}:lastTickId`. The opaque `{tenantRegionTag}` physically carries the full `<tenantId, gameInstanceId, regionId>` scope, while the payload stores `regionEpoch` and `latestTickId`. Consumers must compare the stored epoch with the authoritative current epoch before reusing the progress value. The separate `tick-events-offset:{tenantRegionTag}` record is the sole owner of `streamOffset`.
 - When leadership changes, the new leader:
@@ -100,7 +104,7 @@ Stable schedule-instance row identity:
 - If a per-script index is used, it is reconciled against the region index as needed; discrepancies are treated as projection bugs and corrected, not as new timers.
 - Because the authoritative schedule configuration lives in PostgreSQL and Redis holds only coordination state (timer indexes and checkpoints), leader changes do not reset cadences; they only introduce a bounded delay before the new leader catches up.
 
-### Script Reload
+#### Script Reload
 
 - During reload, leaders set `reloadState=RELOADING` for the affected runtime scope after observing that Game Session has pinned a tenant-`READY` patch for that instance. `onLoad` is not part of this instance reload path; it has already completed as part of tenant patch readiness. Existing timer entries in the region index `automation:timer:{tenantRegionTag}` and any derived per-script projections remain in Redis but are treated as pending until reconciliation completes.
 - Once reload succeeds and `activePatchVersion` is switched, the leader:
@@ -131,7 +135,7 @@ Plugin example:
 
 Under this model, durable script schedules, quotas, and firing-claim de-duplication live in PostgreSQL, while `automation:timer:{tenantRegionTag}`, `script-scheduler:{tenantRegionTag}:lastTickId`, and related coordination keys form a reset-tolerant coordination layer for interval state. Stored entries and reconciliation logic remain instance-aware even though the Redis keys are region-scoped for slotting. The combination of tick heartbeat, durable firing claims, epoch-validated checkpoints, and script patch versioning preserves both correctness and determinism across failures and leader changes: losing or resetting these Redis keys may delay or slightly reshuffle timer firings within the tail-loss envelope but must not change which scripts are eventually scheduled according to their stored configurations or cause duplicate logical trigger creation.
 
-## Scheduler Leadership & Coordination
+### Scheduler Leadership & Coordination
 
 Scheduler leadership and coordination ensure that script timers and Automation-owned scheduling windows are processed safely in a distributed environment:
 
@@ -144,7 +148,7 @@ Scheduler leadership and coordination ensure that script timers and Automation-o
 
 See [Tick System and Runtime Design](./system-architecture-ticks.md) and [`automation-scripting-service/README.md`](./microservices/automation-scripting-service/README.md) for the current leadership and sharding model.
 
-## Hot Reload & Resume Behavior
+### Hot Reload & Resume Behavior
 
 - Scripts are versioned and published via the Game Design Service; the Game Session Service pins an active `scriptPatchVersion` per game.
 - When a new script patch is published, the Automation & Scripting Service:

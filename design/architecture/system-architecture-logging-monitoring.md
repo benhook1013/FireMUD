@@ -191,7 +191,7 @@ In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines,
       - `outcome` is a bounded enum (for example `success`, `limit_exceeded`, `auth_failed`, `upstream_unreachable`, `timeout`, `protocol_error`, `unknown`).
     - The SLI should be computed as `sum by (service, scope, path) (rate(entrypath_connection_attempts_total{outcome="success"}[...])) / sum by (service, scope, path) (rate(entrypath_connection_attempts_total[...]))`.
     - Auxiliary meters such as `tcpproxy_connections_limit_exceeded_total` remain useful drilldowns but are not sufficient to define availability by themselves.
-    - Prod-like environments must also run **independent synthetic probes** from outside the gameplay ingress boundary and export a low-cardinality metric such as `entrypath_blackbox_probe_success{path,target}`. These probes are the authoritative detection source for total entry-path outages that prevent traffic from ever reaching Gateway or TCP Proxy (for example LB, DNS, TLS, or ingress policy failures), while `entrypath_connection_attempts_total` remains the authoritative in-service breakdown for `outcome` analysis once traffic reaches the edge.
+    - Prod-like environments must also run **independent synthetic probes** from outside the gameplay ingress boundary and export a low-cardinality metric such as `entrypath_blackbox_probe_success{path,target}`. `path` is the bounded enum `websocket` or `telnet`; `target` is the bounded logical enum `gateway` or `tcp_proxy`, never a host, URL, deployment, or runtime identifier. These probes are the authoritative detection source for total entry-path outages that prevent traffic from ever reaching Gateway or TCP Proxy (for example LB, DNS, TLS, or ingress policy failures), while `entrypath_connection_attempts_total` remains the authoritative in-service breakdown for `outcome` analysis once traffic reaches the edge.
   - Alert routing:
     - Entry-path alerts should preserve `service` from the emitting series and include `component="entrypath"` so Telnet-path and WebSocket-path incidents can route and page independently.
   - Detection model:
@@ -503,7 +503,7 @@ To keep overlays, smoke tests, dashboards, and runbooks aligned, prod-like envir
 - `entrypath_blackbox_probe_success{path,target}`:
   - Required as the Prometheus-facing mirror for each public player entry path.
   - `path` is a bounded enum and must use `websocket` for the browser/Gateway path and `telnet` for the TCP Proxy path.
-  - `target` identifies the externally probed endpoint or monitor target and must remain low-cardinality.
+  - `target` is a bounded logical enum: `gateway` for the WebSocket/Gateway path or `tcp_proxy` for the Telnet/TCP Proxy path. It must never contain a host, URL, deployment, runtime ID, tenant, or player identity.
   - Values are boolean-like: `1` when the synthetic probe can complete the target handshake and `0` when it cannot.
   - Canonical alerts and dashboards may aggregate across `target`, but must preserve `path`.
 - `observability_deadman_heartbeat_timestamp_seconds{source}`:

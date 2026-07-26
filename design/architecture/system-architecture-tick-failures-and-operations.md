@@ -14,6 +14,7 @@ This document describes the full target-state recovery and operator model. The c
 - the live owner/status API is `GetRuntimeOwnershipStatus`, not yet a full region-scoped status surface;
 - the live fence token is opaque and compare-and-match based;
 - the live `tick_batch` / `tick_effect` ledger is real and now carries the current gameplay-command selected-work manifest on `tick_batch`, including current-boundary `enqueueSeq`, source metadata, and digest-checked replay reuse for surviving staged batches. The live `enqueueSeq` is allocated by one database-wide sequence; the region-scoped, cross-source allocator defined below is target-state. Timer/retry/remote-follow-up source-claim manifests, region-scoped replay controller breadth, and cross-region result-return semantics also remain target-state follow-through.
+- the live gameplay-command staging path does not yet provide the complete target automation handoff identity: it derives `effectKey` from `commandId` and uses a deterministic text/slot fallback when no command ID is available. The target fail-closed contract below requires the full admitted identity and rejects an effect that cannot be assigned a complete `EffectId`; this document does not claim that target behavior is already live.
 
 Naming convention: API, workflow, and EffectId prose uses `regionEpoch`. Snake-case forms such as `region_epoch`, `last_region_epoch`, and `target_region_epoch` are reserved for explicitly identified SQL/storage fields, Redis payloads/keys, or schema examples.
 
@@ -71,7 +72,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - `tick_batch_id`
   - `effect_key` (stable, human-readable descriptor passed through from staging)
   - `target_aggregate_type`, `target_aggregate_id` (required target aggregate identity)
-  - `automation_dispatch_id` (required for script-generated effects; nullable for non-scripting commands)
+  - `automation_dispatch_id`, `command_ordinal` (both required for script-generated effects; nullable for non-scripting commands)
   - `command_id`
   - `status` ∈ {`SCHEDULED`, `APPLIED`, `ABANDONED`}
   - `reason` / `outcome`
@@ -103,6 +104,8 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
 - The current live tick-batch table enforces uniqueness only on its durable `tick_batch_id` key (`tick_batch_tick_batch_id_key` / `idx_tick_batch_tick_batch_id`); it does not yet enforce the coordinate tuple.
 - Completing the target-state invariant requires a migration that audits and reconciles duplicate coordinate tuples, then adds and proves a unique PostgreSQL constraint/index on `(tenant_id, game_instance_id, region_id, region_epoch, tick_id)`. Until then, the recorded `tick_batch_id`, lease/fence checks, and application duplicate detection are the current safeguards but do not provide database-level tuple uniqueness.
 - Batch allocation and every durable tick-control mutation are fenced using the recorded canonical `executor_fence` (or equivalent opaque durable fence). A `lease_token` is trace/audit context only and cannot substitute for the durable fence.
+- Target-state batch allocation is one atomic, CAS-fenced durable operation: the transaction reads the authoritative current `regionEpoch` and `executorFence`, conditionally creates or adopts the coordinate-unique batch only when both still match, writes the batch manifest and initial ledger rows, and commits the durable allocation before any Redis `pending` staging. A changed epoch, lost lease, stale fence, or competing owner causes the transaction to affect no batch and fail closed; it must not allocate first and validate later. The current live lease/fence checks are the available guard, but do not yet claim this complete database CAS/uniqueness behavior.
+- `created_at` and `updated_at` are audit/age fields only. They are never members of the canonical work-order tuple or a replay tie-breaker. If a legacy source exposes only a timestamp, the scheduler must normalize it once into the persisted `due_point_normalized` plus deterministic `enqueue_seq`/identity tie-breakers before selection; it must not sort directly by wall-clock insertion time.
 - Recovery that observes multiple durable rows for the same coordinates treats the region as inconsistent, pauses it, and requires reconcile tooling before normal ticks resume.
 - Current live boundary note: gameplay commands do not yet use the fuller target-state `BOUND_TO_BATCH` vocabulary. Instead, the command ledger exposes `enqueueSeq`, `STAGED`, `DRAINED`, and later terminal/requeue outcomes, while the sealed batch manifest digest is used to ensure replay reuses only matching staged batches instead of silently mutating an older batch contract.
 - For any `(tenant_id, game_instance_id, playable_state_scope, region_id, region_epoch, tick_id, effect_key, target_aggregate_type, target_aggregate_id)` there must eventually be **exactly one terminal state**:
@@ -115,14 +118,14 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
 
 To keep replay-controller alerting and runbooks deterministic, the replay path uses an explicit convergence budget:
 
-- `tick_effects_replay_convergence_budget_seconds{scope}` is the canonical emitted budget for each active region-sized gameplay scope.
+- `tick_effects_replay_convergence_budget_seconds{scope_class}` is the canonical emitted budget for each active region-sized gameplay scope.
 - Default formula:
   - `replay_convergence_budget_seconds = max(60, ceil(20 * tick_interval_ms / 1000))`
   - For common tick cadences, this yields a practical minimum budget of `60s`.
 - Prometheus recording rules should also expose:
-  - `tick_effects_pending_oldest_age_seconds{scope}` = `time() - tick_effects_pending_oldest_scheduled_timestamp_seconds`
-  - `tick_effects_replay_slo_breached{scope}` when oldest pending age exceeds the emitted convergence budget
-  - `tick_effects_replay_starved{scope}` when `tick_effects_pending_total > 0` but replay batches do not advance for longer than the emitted convergence budget
+  - `tick_effects_pending_oldest_age_seconds{scope_class}` = `time() - tick_effects_pending_oldest_scheduled_timestamp_seconds`
+  - `tick_effects_replay_slo_breached{scope_class}` when oldest pending age exceeds the emitted convergence budget
+  - `tick_effects_replay_starved{scope_class}` when `tick_effects_pending_total > 0` but replay batches do not advance for longer than the emitted convergence budget
 - Alerting guidance:
   - Warning/P1 when `tick_effects_replay_slo_breached` is sustained beyond one budget window for an otherwise running region.
   - Escalate the region to `DEGRADED` or `STALLED` and require scoped remediation when the oldest pending age exceeds multiple budget windows or when `tick_effects_replay_starved` remains true.
@@ -213,7 +216,7 @@ Minimum command-status surface for operators and clients:
 
 ### EffectId, Ledger Rows, and Guard Keys
 
-The canonical `EffectId` described in `system-architecture-transactions.md` (a stable identity derived from `tenantId`, `gameInstanceId`, resolved `playableStateScope`, `regionId`, `regionEpoch`, `tickId`, `effectKey`, `targetAggregateType`, and `targetAggregateId`) is the logical key that ties together:
+The canonical `EffectId` described in the identifier glossary and `system-architecture-transactions.md` (a stable identity derived from `tenantId`, `gameInstanceId`, resolved `playableStateScope`, `regionId`, `regionEpoch`, `tickId`, `effectKey`, `targetAggregateType`, and `targetAggregateId`) is the logical key that ties together:
 
 - Tick coordination in Redis.
 - Tick effect ledger rows in PostgreSQL.
@@ -223,25 +226,25 @@ In schema terms:
 
 - The tick effect ledger’s primary or unique key is a projection of `EffectId`:
   - At minimum `(tenant_id, game_instance_id, playable_state_scope, region_id, region_epoch, tick_id, effect_key, target_aggregate_type, target_aggregate_id)`; the gameplay-state namespace and target aggregate fields are part of the logical identity, whether the physical schema also encodes target identity in `effect_key` or stores it separately.
-  - Additional columns such as `command_id` or `automation_dispatch_id` may exist for queryability and scripting correlation, but they do not remove target aggregate identity from `EffectId`.
+  - Additional columns such as `command_id`, `automation_dispatch_id`, or `command_ordinal` may exist for queryability and scripting correlation, but they do not remove target aggregate identity from `EffectId`.
 - Guard tables such as `tick_effect_guard` implement the same identity for multi-effect operations:
   - Their primary key `(tenant_id, game_instance_id, playable_state_scope, region_id, region_epoch, tick_id, effect_key, target_aggregate_type, target_aggregate_id)` is the guard-side projection of `EffectId` for the logical effect being protected.
   - Handlers must not invent alternative idempotency keys for tick-driven effects; they should derive their guard keys directly from the same components used to compute `EffectId`.
 
 The ledger makes replay visible operationally via metrics such as:
 
-- `tick_effects_pending_total{scope}`
-- `tick_effects_applied_total{scope}`
-- `tick_effects_abandoned_total{scope,reason}`
-- `tick_effects_replayed_total{scope}` (or, where available, `tick_effect_outcome_total{outcome="replay_ok"}` for service-level detail)
-- `tick_effects_pending_oldest_scheduled_timestamp_seconds{scope}` – helper metric tracking the oldest `created_at` among SCHEDULED rows for each approved bounded gameplay scope.
-- `tick_effects_pending_oldest_age_seconds{scope}` – recording rule for the current age of the oldest `SCHEDULED` row.
-- `tick_effects_replay_convergence_budget_seconds{scope}` – emitted budget for how long replay may take before the scope is considered unhealthy.
-- `tick_effects_replay_slo_breached{scope}` – recording rule indicating oldest pending age has exceeded the emitted budget.
-- `tick_effects_replay_starved{scope}` – recording rule indicating replay batches are not advancing despite pending work.
-- `tick_durable_commit_total{scope}` – count of ticks that reached the durable commit boundary.
-- `tick_coordination_cleared_total{scope}` – count of ticks whose Redis coordination state reached the in-flight clearance boundary.
-- `tick_cleanup_lag_ms{scope}` – lag from durable commit to coordination-cleared for each tick.
+- `tick_effects_pending_total{scope_class}`
+- `tick_effects_applied_total{scope_class}`
+- `tick_effects_abandoned_total{scope_class,reason}`
+- `tick_effects_replayed_total{scope_class}` (or, where available, `tick_effect_outcome_total{outcome="replay_ok"}` for service-level detail)
+- `tick_effects_pending_oldest_scheduled_timestamp_seconds{scope_class}` – helper metric tracking the oldest `created_at` among SCHEDULED rows for each approved bounded gameplay scope; `created_at` is diagnostic age input only, never an ordering key.
+- `tick_effects_pending_oldest_age_seconds{scope_class}` – recording rule for the current age of the oldest `SCHEDULED` row.
+- `tick_effects_replay_convergence_budget_seconds{scope_class}` – emitted budget for how long replay may take before the scope is considered unhealthy.
+- `tick_effects_replay_slo_breached{scope_class}` – recording rule indicating oldest pending age has exceeded the emitted budget.
+- `tick_effects_replay_starved{scope_class}` – recording rule indicating replay batches are not advancing despite pending work.
+- `tick_durable_commit_total{scope_class}` – count of ticks that reached the durable commit boundary.
+- `tick_coordination_cleared_total{scope_class}` – count of ticks whose Redis coordination state reached the in-flight clearance boundary.
+- `tick_cleanup_lag_ms{scope_class}` – lag from durable commit to coordination-cleared for each tick.
 
 Alerts fire when:
 
@@ -269,7 +272,7 @@ Responsibility for driving ledger rows to a terminal outcome lies with the Game 
   - Enforces bounded fairness across active scopes so replay does not starve smaller tenants/regions behind one hot backlog:
     - Scans and replays in bounded batches per `<tenantId, gameInstanceId, regionId>`.
     - Uses round-robin (or weighted-fair) scheduling across regions rather than draining one region completely before touching others.
-    - Emits `tick_effects_replay_scan_lag_ms{scope}` and `tick_effects_replay_batches_total{scope}` so starvation is visible without reintroducing raw tenant/game-instance/region labels to Prometheus.
+    - Emits `tick_effects_replay_scan_lag_ms{scope_class}` and `tick_effects_replay_batches_total{scope_class}` so starvation is visible without reintroducing raw tenant/game-instance/region labels to Prometheus.
 - The controller also runs on service startup for each region to converge any lingering `SCHEDULED` rows before normal tick processing resumes; an inconclusive old-epoch row instead follows the [Inconclusive Old-Epoch Reconciliation Policy](#inconclusive-old-epoch-reconciliation-policy) and cannot be hidden by normal startup replay.
 - For incident handling, the same replay logic is exposed via coordination tooling (for example, an admin CLI or maintenance API) so operators can explicitly drive convergence for a selected `(tenantId, gameInstanceId, regionId, regionEpoch)` when guided by runbooks in the Redis operations docs.
 - Convergence SLO contract (required):
@@ -278,14 +281,14 @@ Responsibility for driving ledger rows to a terminal outcome lies with the Game 
 
 ### Inconclusive Old-Epoch Reconciliation Policy
 
-The same policy applies whenever a region-, tenant-, or cluster-scoped reset or epoch fence leaves an old-epoch effect in `SCHEDULED` and normal domain inspection cannot yet prove whether the effect was applied. Recovery must use a bounded, out-of-band attestation under the original `EffectId`. The attestation:
+The same policy applies whenever a region-, tenant-, or cluster-scoped reset or epoch fence leaves an old-epoch effect in `SCHEDULED` and normal domain inspection cannot yet prove whether the effect was applied. Recovery must use a bounded, out-of-band attestation under the original `EffectId`; reset scope alone is never evidence for terminalization. The attestation:
 
 - retains the original `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)` and the maintenance/recovery fence that authorized the reset;
 - reads the authoritative domain guard/state and any existing `APPLIED` reflection without invoking current-epoch staging or replay;
 - records an auditable attestation outcome and retries only within the emitted replay-convergence budget; and
-- terminalizes the original ledger row as `APPLIED` when durable state proves the effect occurred, or as `ABANDONED` with an explicit reset/reconciliation reason only when durable state proves the effect was unapplied and it cannot be safely re-driven across the reset.
+- permits exactly these outcomes: `APPLIED` when durable domain state or the authoritative guard proves the effect occurred; `ABANDONED` with an explicit reset/reconciliation reason only when durable state proves it was unapplied and cannot be safely re-driven; or an explicit reconciliation-required non-terminal state while the evidence remains inconclusive.
 
-If the bounded attestation remains inconclusive, the original effect remains non-terminal under an explicit reconciliation-required marker. It is not an `ABANDONED` outcome, is never sent through normal current-epoch replay, and blocks the affected reset scope from declaring convergence until an authority-fenced worker records a terminal decision or an explicitly approved, auditable exception.
+If the bounded attestation remains inconclusive, the original effect remains non-terminal under an explicit reconciliation-required marker. It is not an `ABANDONED` outcome, is never sent through normal current-epoch replay, and blocks the affected reset scope from declaring convergence until an authority-fenced worker records a terminal decision or an explicitly approved, auditable exception. A later epoch must not reuse the old row as though it were a new current-epoch effect.
 
 Current-epoch executors must never re-drive the old `EffectId`. Any feature that needs to carry work across the epoch boundary requires separately designed maintenance or saga/outbox tooling that creates a new current-epoch identity.
 
@@ -433,8 +436,8 @@ Tick-driven domain calls use a **canonical effect identity** and a shared contra
   - `effectKey` (stable descriptor such as `damage:entity:<id>:command:<commandId>`; for scripting effects it incorporates `automationDispatchId`)
   - `targetAggregateType` (for example `ENTITY`, `INVENTORY`, `ROOM_STATE`, `QUEST`, `ACHIEVEMENT`)
   - `targetAggregateId`
-  - Optional `domainScope` when needed to avoid collisions across independently owned domains.
-- Game Session derives this identity while computing tick outcomes and passes it to each tick-invoked handler; handlers must not generate fresh random IDs for idempotency in tick paths.
+  - No optional participant-defined scope. If a domain needs an additional distinction, it must be represented by the canonical target aggregate identity or a deterministic `effectKey` discriminator and documented before implementation; it must not create a second EffectId dialect.
+- Game Session derives this identity while computing tick outcomes and passes the same opaque serialized `effectId` plus structured tuple fields to each tick-invoked handler. Handlers validate and project that identity into their own guards; they must not generate fresh random IDs, re-derive from mutable payload, or silently drop `gameInstanceId` or `playableStateScope`.
 
 Every gRPC endpoint that can be invoked from tick execution must document and implement:
 
@@ -450,6 +453,8 @@ Endpoints participating in tick-driven effects should also emit a small, standar
   - `outcome` – `first_apply`, `replay_ok`, or `guard_error` (for unexpected failures at the idempotency boundary).
 
 This metric provides a cross-service view of how often replay paths are exercised and highlights handlers that are not honoring the canonical idempotency contract.
+
+All tick metrics use bounded labels only. `scope_class` is a controlled enum such as `region`, `game_instance`, `tenant`, or `cluster`; it is not a serialized scope or an identifier. `service`, `effect_type`, `outcome`, and `reason` are also controlled vocabularies. Exact `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId>` diagnosis comes from the durable tick-batch/ledger and runtime control-plane records, joined by `tick_batch_id`, `executor_fence`, `EffectId`, or an approved trace/correlation ID. Prometheus labels must never carry those raw tuple values.
 
 ### Side-Effect Categories and Idempotency Strategies
 
@@ -488,11 +493,12 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
 
 - **Tenant-scoped reset**
   - Timeline impact:
-    - All regions for a given `tenantId` have their region-scoped tick coordination keys cleared and `regionEpoch` bumped.
+    - A tenant reset is an orchestration over every running or recoverable `gameInstanceId` belonging to the tenant, not a single tenant-only key scan or epoch. The reset first snapshots the authoritative game-instance inventory and mapping generation under the reset lease, then enumerates every `<gameInstanceId, regionId>` pair and reads each region's current `regionEpoch` and executor fence.
+    - For every enumerated game instance and every one of its regions, the region-scoped coordination keys are cleared and that instance-region's `regionEpoch` is bumped independently. A changed mapping generation, missing instance/region, lost lease, or fence mismatch fails closed before the next mutation; it must not reset only the regions visible in Redis.
     - Cross-region flows (for example follow-ups) resume only under the new epochs; stale follow-ups from previous epochs are ignored or reconciled.
     - Session and authentication keys follow the canonical reset-policy matrix: a tenant reset always invalidates `session:auth:*`; gameplay/session-context records are preserved only when the explicit `--preserve-sessions` policy is recorded, and preserved sessions must rebind after auth validation.
   - Ledger behavior:
-    - Tick effect ledger rows for the tenant with `status = SCHEDULED` follow the [Inconclusive Old-Epoch Reconciliation Policy](#inconclusive-old-epoch-reconciliation-policy): inspect durable domain state and any existing `APPLIED` reflection first, mark confirmed reflections `APPLIED`, and mark `ABANDONED` with a tenant-scoped reset reason such as `RESET_TENANT_SCOPED` only when domain state confirms the effect was unapplied and cannot be safely re-driven across the reset.
+    - Tick effect ledger rows for each enumerated instance-region scope with `status = SCHEDULED` follow the [Inconclusive Old-Epoch Reconciliation Policy](#inconclusive-old-epoch-reconciliation-policy): inspect durable domain state and any existing `APPLIED` reflection first, mark confirmed reflections `APPLIED`, and mark `ABANDONED` with a tenant-scoped reset reason such as `RESET_TENANT_SCOPED` only when domain state confirms the effect was unapplied and cannot be safely re-driven across the reset.
     - Re-scheduling across epochs is allowed only for features that explicitly document this requirement and provide dedicated tooling.
   - Player impact:
     - The tenant experiences a “clean slate” for tick coordination: timers, retries, and queued commands are cleared.
@@ -550,23 +556,27 @@ Designs that genuinely need to carry cross-region work across region resets or e
 
 ### Cross-Region Follow-Up Record Contract (Required)
 
-Cross-region follow-ups are durable PostgreSQL records owned by Game Session (or another explicitly designated tick coordinator) that represent “work created in one region but owned by entities in another”. To keep cross-region correctness independent of best-effort Redis hints, follow-up records must satisfy a minimal, explicit contract:
+Cross-region follow-ups are durable PostgreSQL records owned by Game Session (or another explicitly designated tick coordinator) that represent “work created in one region but owned by entities in another”. To keep cross-region correctness independent of best-effort Redis hints, follow-up records must satisfy a minimal, explicit contract. A result-return follow-up carries its origin and coordinator correlation durably; the target must never infer origin identity from its own target scope.
 
 - **Identity and scoping**
   - Each follow-up is tied to a specific target region timeline and effect identity, including at minimum:
+    - `coordinator_id` (the durable origin-owned coordinator identity), `origin_command_id`, `origin_game_instance_id`, `origin_region_id`, `origin_region_epoch`, and `origin_tick_id`;
     - `tenant_id`, `target_game_instance_id`, resolved `playable_state_scope`, `target_region_id`, `target_region_epoch`
     - `due_tick_id` in the target region timeline (preferred; do not use wall-clock due-time fields for cross-region follow-up eligibility)
-    - `effect_key` (stable, deterministic), `target_aggregate_type`, `target_aggregate_id`, and any additional EffectId projection fields needed for traceability.
+    - `origin_effect_id` for the originating leg and `target_effect_id`/the target `EffectId` projection for the target leg, plus `effect_key` (stable, deterministic), `target_aggregate_type`, and `target_aggregate_id`.
   - `due_tick_id` is computed from the target region’s durable status surface (for example `GetRegionTickStatus` / `RegionStatus.lastCommittedTickId`), not from Redis hint keys:
     - Canonical baseline: `due_tick_id = target_last_committed_tick_id + delta_ticks` (for immediate eligibility, `delta_ticks = 1`).
     - The writer must persist `target_region_epoch` and `due_tick_id` together from the same read so eligibility is deterministic across retries and failover.
 - **Uniqueness / de-duplication**
-  - The follow-up table must prevent duplicate scheduling of the same logical follow-up for the same target timeline and state namespace (for example via a unique key that includes `(tenant_id, target_game_instance_id, playable_state_scope, target_region_id, target_region_epoch, effect_key, target_aggregate_type, target_aggregate_id)` or an equivalent projection that matches the feature’s semantics).
+  - The follow-up table must prevent duplicate scheduling of the same logical follow-up for the same origin coordinator, target timeline, and state namespace (for example via a unique key that includes `(coordinator_id, origin_effect_id, tenant_id, target_game_instance_id, playable_state_scope, target_region_id, target_region_epoch, effect_key, target_aggregate_type, target_aggregate_id)` or an equivalent projection that matches the feature’s semantics).
 - **Claiming and concurrency**
   - Draining follow-ups into a tick must use database-side concurrency control (for example `FOR UPDATE SKIP LOCKED` or an atomic “claim” update) so that only one executor can claim a follow-up at a time, even during failover or when multiple workers are racing around lease changes.
 - **Epoch boundaries**
   - Follow-ups must never silently “carry over” to a new epoch:
     - When `target_region_epoch` changes, old-epoch follow-ups converge to terminal outcomes (typically `ABANDONED` with a reset/topology reason) unless explicit maintenance tooling re-schedules them into the new epoch.
+- **Result return**
+  - A target result row or inbox entry repeats `coordinator_id`, `origin_command_id`, `origin_game_instance_id`, `origin_region_id`, `origin_region_epoch`, `origin_tick_id`, and the target follow-up identity before recording the target terminal outcome.
+  - Origin-side reconciliation claims that row idempotently and advances the coordinator only after the correlation matches the durable coordinator record. A transient message, target-only `gameInstanceId`, or mutable command payload is not sufficient correlation.
 - **Topology changes**
   - Mapping-changing split/merge operations must bump `regionEpoch` for affected source/target regions before follow-up draining resumes (see required topology protocol in `system-architecture-ticks.md`).
   - If region split/merge changes which region owns the target entity, topology-change tooling must either:

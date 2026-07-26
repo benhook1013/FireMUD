@@ -15,6 +15,8 @@ Synthetic canary identities used in this runbook should be treated as operationa
 
 Metrics in this runbook use the bounded `scope` contract from [Logging & Monitoring](./system-architecture-logging-monitoring.md#canonical-bounded-metrics-scope): pre-gameplay flows use `scope="environment"`, while each gameplay metric family documents any narrower bounded operational buckets it supports. Resolve an exact `<tenantId, gameInstanceId, regionId>` runtime scope through Game Session/control-plane runtime-health reads and structured logs before taking gameplay-scope action; do not infer exact runtime ownership from ordinary metric labels.
 
+Log searches in this runbook must preserve the emitting `service` and `traceId` as the primary correlation fields, with `correlationId` when available. Add `tenantId`, `gameInstanceId`, `regionId`, and `characterId` only when those gameplay fields are present and expected by the affected record's logging contract; pre-gameplay records must not be forced to carry them.
+
 ## Trace Preconditions (For Latency/Tick Root Cause)
 
 Trace-driven triage is optional but often decisive for command-latency incidents. Before relying on Jaeger as a primary diagnostic:
@@ -122,11 +124,11 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 5. **Verify recovery**
    - Ensure command p99 latency returns under the SLO threshold across core commands.
    - Confirm tick health metrics return to normal envelopes.
-   - Use the `player-incident-drilldown.json` and `tick-region-logs.json` Kibana saved searches to correlate any remaining slow commands with the fields those saved objects actually expose, such as `tenantId`, `regionId`, `tickId`, `traceId`, and `correlationId`, and to verify that logs no longer show systemic timeouts or retries for hot commands. Resolve the exact `<tenantId, gameInstanceId, regionId>` runtime scope through Game Session/control-plane runtime-health reads and structured logs rather than inferring `gameInstanceId` from these saved-object filters.
+   - Use the `player-incident-drilldown.json` and `tick-region-logs.json` Kibana saved searches to correlate any remaining slow commands by `service` and `traceId`, adding `correlationId` and the applicable `tenantId`, `gameInstanceId`, `regionId`, `characterId`, and `tickId` fields only when those saved objects and affected records expose them. Resolve the exact `<tenantId, gameInstanceId, regionId>` runtime scope through Game Session/control-plane runtime-health reads and structured logs rather than inferring `gameInstanceId` from these saved-object filters.
 6. **Degraded-mode branch (if observability backends are unavailable)**
    - If Grafana is down: run direct PromQL checks for command p99 latency, synthetic command-canary success/latency, tick safety ratio, Redis tail-loss, and queue depth per affected gameplay `scope`.
    - If Jaeger is down or sampling is insufficient: skip span-based narrowing and classify bottlenecks from metrics + structured logs only.
-   - If Kibana is down: inspect Game Session and hot domain-service logs directly for timeout/retry spikes by `tenantId`/`gameInstanceId`/`regionId`.
+   - If Kibana is down: inspect Game Session and hot domain-service logs directly by `service` and `traceId`, adding `correlationId` and conditional gameplay identity fields (`tenantId`, `gameInstanceId`, `regionId`, `characterId`) only when present in the affected records.
 
 ## Chat Delivery Latency Above SLO
 
@@ -162,10 +164,10 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 4. **Verify recovery**
    - Confirm chat p99 latency returns below the SLO for active channels.
    - Ensure the alert clears and player reports improve.
-   - Use the `player-incident-drilldown.json` Kibana saved search to validate that chat-related errors or delays in logs have subsided for affected players and channels.
+   - Use the `player-incident-drilldown.json` Kibana saved search to validate that chat-related errors or delays have subsided by `service` and `traceId`, adding `correlationId` and conditional gameplay identity fields only when present in the affected records.
 5. **Degraded-mode branch (if observability backends are unavailable)**
    - If Grafana is down: query Prometheus directly for `chat_delivery_latency_ms_bucket` p99 by `scope` / `channel_type`.
-   - If Kibana is down: inspect Social/Groups service logs directly using `tenantId` and correlation identifiers.
+   - If Kibana is down: inspect Social/Groups service logs directly using `service` and `traceId`, adding `correlationId` and conditional `tenantId`/`gameInstanceId`/`regionId`/`characterId` fields when present.
    - If Prometheus is down: use service health + queue/dependency indicators from application logs and reduce chat feature pressure (throttle or temporary feature disable) if needed.
 
 ## Telnet and WebSocket Path Availability Below SLO
@@ -212,5 +214,5 @@ Trace-driven triage is optional but often decisive for command-latency incidents
    - Confirm the 1-day compliance view trends back toward SLO after the acute incident is resolved.
 4. **Degraded-mode branch (if observability backends are unavailable)**
    - If Grafana is down: query Prometheus directly for both `entrypath_connection_attempts_total` success/total ratios by `{service,scope,path}`, the external synthetic-probe metric for each public path, and the mirrored login/command canary metrics where relevant.
-   - If Kibana is down: use Gateway/TCP Proxy logs directly to classify failures (`limit_exceeded`, `protocol_error`, `upstream_unreachable`, `auth_failed`).
+   - If Kibana is down: use Gateway/TCP Proxy logs directly, preserving `service` and `traceId` and adding conditional gameplay identity fields only when present, to classify failures (`limit_exceeded`, `protocol_error`, `upstream_unreachable`, `auth_failed`).
    - If Prometheus is down: rely on edge health, pod events, and direct ingress error logs to guide rollback/scale/cap actions.
