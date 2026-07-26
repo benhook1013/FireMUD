@@ -126,6 +126,8 @@ routes:
     delegated_subject: authenticated_session_account
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
+    realm_grant_authority: account_owned_when_non_public
+    realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements]
     canonical_errors:
       any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED]
@@ -151,6 +153,8 @@ routes:
     delegated_subject: authenticated_session_account
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
+    realm_grant_authority: account_owned_when_non_public
+    realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
     canonical_errors:
       any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE]
@@ -259,6 +263,8 @@ routes:
     target_binding: signed_connect_scope_id_matches_route
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
+    realm_grant_authority: account_owned_when_non_public
+    realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
   - service: account-service
     route: POST /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters
@@ -270,6 +276,8 @@ routes:
     target_binding: signed_connect_scope_id_matches_route
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
+    realm_grant_authority: account_owned_when_non_public
+    realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
     delegates_to: entity-management-service/CreateCharacter
   - service: game-session-service
@@ -444,6 +452,8 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
     target_binding: signed_connect_scope_id_matches_route
+    realm_grant_authority: account_owned_when_non_public
+    realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, membership_generation, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match, replay_protection_available, replay_admission_fence_match]
     canonical_errors:
       any_of: [JOIN_REQUIRED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, CONNECT_REPLAY_PROTECTION_UNAVAILABLE, ENTITLEMENT_UNAVAILABLE]

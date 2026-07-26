@@ -83,7 +83,17 @@ require_ordered_sequence() {
       count = split(sequence, expected, "\034") - 1
       current = 1
     }
-    current <= count && index($0, expected[current]) { current++ }
+    {
+      remainder = $0
+      while (current <= count) {
+        matched_at = index(remainder, expected[current])
+        if (!matched_at) {
+          break
+        }
+        remainder = substr(remainder, matched_at + length(expected[current]))
+        current++
+      }
+    }
     END { exit !(current > count) }
   ' "$path"; then
     echo "$path must contain the required sequence in order: $*" >&2
@@ -101,7 +111,14 @@ import sys
 from pathlib import Path
 
 
+RETURN_STATEMENT_RE = re.compile(
+    r"(?<![A-Za-z0-9_$])return(?![A-Za-z0-9_$])\s*;"
+)
+
+
 def mask_non_code(source: str) -> str:
+    # This lightweight scanner does not parse JavaScript regex literals. Braces
+    # inside regex literals can therefore affect branch-depth tracking.
     masked = list(source)
     state = "code"
     escaped = False
@@ -217,7 +234,7 @@ for index in range(branch_open, len(masked)):
         depth -= 1
         if depth == 0:
             raise SystemExit(0 if found_return else 1)
-    elif depth == 1 and re.match(r"return\s*;", masked[index:]):
+    elif depth == 1 and RETURN_STATEMENT_RE.match(masked, index):
         found_return = True
 
 raise SystemExit(1)
@@ -370,6 +387,15 @@ require_contains "$image_wait_path" 'local publisher_deadline=$((SECONDS + publi
 
 image_wait_fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$image_wait_fixture_dir"' EXIT
+cat >"$image_wait_fixture_dir/ordered-sequence.txt" <<'EOF'
+prefix first second suffix
+third
+EOF
+require_ordered_sequence "$image_wait_fixture_dir/ordered-sequence.txt" first second third
+if (require_ordered_sequence "$image_wait_fixture_dir/ordered-sequence.txt" second first) 2>/dev/null; then
+  echo "require_ordered_sequence must preserve within-line ordering" >&2
+  exit 1
+fi
 cat >"$image_wait_fixture_dir/branch-return.js" <<'EOF'
 if (
   examplePredicate ||
@@ -383,6 +409,15 @@ if (
 }
 EOF
 require_branch_return "$image_wait_fixture_dir/branch-return.js" 'examplePredicate ||'
+cat >"$image_wait_fixture_dir/branch-non-return.js" <<'EOF'
+if (examplePredicate) {
+  notreturn;
+}
+EOF
+if (require_branch_return "$image_wait_fixture_dir/branch-non-return.js" examplePredicate) 2>/dev/null; then
+  echo "require_branch_return must match return as a complete token" >&2
+  exit 1
+fi
 cat >"$image_wait_fixture_dir/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail

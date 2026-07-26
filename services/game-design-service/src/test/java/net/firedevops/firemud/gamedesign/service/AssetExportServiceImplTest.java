@@ -56,11 +56,7 @@ class AssetExportServiceImplTest {
 
   @Test
   void exportUploadsAssetsAndManifest() {
-    GameAsset asset = new GameAsset();
-    asset.setTenantId("t");
-    asset.setFileName("logo.png");
-    asset.setContentType("image/png");
-    asset.setData("data".getBytes(StandardCharsets.UTF_8));
+    GameAsset asset = gameAsset("logo.png", "data");
     when(repository.findByTenantId("t")).thenReturn(List.of(asset));
 
     ExportedAssetManifest manifest = service.exportAssets("t", 1);
@@ -78,17 +74,8 @@ class AssetExportServiceImplTest {
 
   @Test
   void sameVersionRetryReusesFrozenSnapshot() {
-    GameAsset original = new GameAsset();
-    original.setTenantId("t");
-    original.setFileName("logo.png");
-    original.setContentType("image/png");
-    original.setData("original".getBytes(StandardCharsets.UTF_8));
-
-    GameAsset changed = new GameAsset();
-    changed.setTenantId("t");
-    changed.setFileName("changed.png");
-    changed.setContentType("image/png");
-    changed.setData("changed".getBytes(StandardCharsets.UTF_8));
+    GameAsset original = gameAsset("logo.png", "original");
+    GameAsset changed = gameAsset("changed.png", "changed");
     when(repository.findByTenantId("t")).thenReturn(List.of(original), List.of(changed));
 
     ExportedAssetManifest first = service.exportAssets("t", 1);
@@ -103,11 +90,7 @@ class AssetExportServiceImplTest {
       value = VersionLifecycleState.class,
       names = {"PUBLISHED", "ACTIVE"})
   void publishedAndActiveRetryFailsWithoutFrozenSnapshot(VersionLifecycleState state) {
-    Version version = new Version();
-    version.setId(7L);
-    version.setTenantId("t");
-    version.setVersionNumber(1);
-    version.setVersionState(state);
+    Version version = version(state);
     when(versionRepository.findByTenantIdAndVersionNumber("t", 1)).thenReturn(Optional.of(version));
 
     IllegalStateException thrown =
@@ -120,23 +103,11 @@ class AssetExportServiceImplTest {
 
   @Test
   void publishedRetryReusesSnapshotFrozenBeforePublication() {
-    Version version = new Version();
-    version.setId(7L);
-    version.setTenantId("t");
-    version.setVersionNumber(1);
-    version.setVersionState(VersionLifecycleState.DRAFT);
+    Version version = version(VersionLifecycleState.DRAFT);
     when(versionRepository.findByTenantIdAndVersionNumber("t", 1)).thenReturn(Optional.of(version));
 
-    GameAsset original = new GameAsset();
-    original.setTenantId("t");
-    original.setFileName("logo.png");
-    original.setContentType("image/png");
-    original.setData("original".getBytes(StandardCharsets.UTF_8));
-    GameAsset changed = new GameAsset();
-    changed.setTenantId("t");
-    changed.setFileName("changed.png");
-    changed.setContentType("image/png");
-    changed.setData("changed".getBytes(StandardCharsets.UTF_8));
+    GameAsset original = gameAsset("logo.png", "original");
+    GameAsset changed = gameAsset("changed.png", "changed");
     when(repository.findByTenantId("t")).thenReturn(List.of(original), List.of(changed));
 
     ExportedAssetManifest first = service.exportAssets("t", 1);
@@ -155,5 +126,23 @@ class AssetExportServiceImplTest {
         .deleteObject(argThat((DeleteObjectRequest r) -> r.key().equals("t/1/logo.png")));
     verify(s3Client)
         .deleteObject(argThat((DeleteObjectRequest r) -> r.key().equals("t/1/manifest.json")));
+  }
+
+  private static Version version(VersionLifecycleState state) {
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("t");
+    version.setVersionNumber(1);
+    version.setVersionState(state);
+    return version;
+  }
+
+  private static GameAsset gameAsset(String fileName, String data) {
+    GameAsset asset = new GameAsset();
+    asset.setTenantId("t");
+    asset.setFileName(fileName);
+    asset.setContentType("image/png");
+    asset.setData(data.getBytes(StandardCharsets.UTF_8));
+    return asset;
   }
 }

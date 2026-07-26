@@ -261,6 +261,22 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
                 "unexpected secondary capabilities",
             )
 
+    def test_duplicate_adr_secondary_capability_is_rejected(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.TOP_ALLOCATION
+            replace_in_line(
+                path,
+                "adr-0001-scripting-event-ingress-idempotency-identity.md",
+                "| `SF-1`, `SF-2` |",
+                "| `SF-1`, `SF-1`, `SF-2` |",
+            )
+            expect_call_failure(
+                "duplicate ADR secondary capability",
+                lambda: self.validator.validate(root),
+                "duplicate capability IDs",
+            )
+
     def test_empty_expected_secondary_matches_no_parsed_handoff(self) -> None:
         root = Path("/fixture")
         self.validator.validate_expected_allocation(

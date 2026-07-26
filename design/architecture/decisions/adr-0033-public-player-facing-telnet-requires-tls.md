@@ -84,12 +84,12 @@ This avoids sending a durable password and can preserve more TLS-incapable clien
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-security.md`
-- `design/architecture/system-architecture-authentication.md`
-- `design/architecture/system-architecture-protocol-bridging.md`
-- `design/architecture/microservices/tcp-proxy-service/README.md`
-- `design/architecture/microservices/tcp-proxy-service/configuration.md`
-- `design/project-management/implementation-tracking/platform-operations-and-delivery.md`
+- [Security architecture](../system-architecture-security.md)
+- [Authentication architecture](../system-architecture-authentication.md)
+- [Protocol bridging](../system-architecture-protocol-bridging.md)
+- [TCP Proxy Service architecture](../microservices/tcp-proxy-service/README.md)
+- [TCP Proxy Service configuration](../microservices/tcp-proxy-service/configuration.md)
+- [Platform operations and delivery tracker](../../project-management/implementation-tracking/platform-operations-and-delivery.md)
 
 ## Reversibility and Revisit Triggers
 

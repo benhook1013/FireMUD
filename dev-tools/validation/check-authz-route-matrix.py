@@ -53,17 +53,18 @@ def string_list(value: Any, field: str, errors: list[str]) -> list[str]:
     return value
 
 
-def collect_live_checks(value: Any) -> list[Any]:
-    checks: list[Any] = []
+def collect_live_checks(value: Any, field: str, errors: list[str]) -> list[str]:
+    checks: list[str] = []
     if isinstance(value, dict):
         for key, child in value.items():
+            child_field = f"{field}.{key}" if field else key
             if key == "required_live_checks":
-                checks.extend(child if isinstance(child, list) else [child])
+                checks.extend(string_list(child, child_field, errors))
             else:
-                checks.extend(collect_live_checks(child))
+                checks.extend(collect_live_checks(child, child_field, errors))
     elif isinstance(value, list):
-        for child in value:
-            checks.extend(collect_live_checks(child))
+        for index, child in enumerate(value):
+            checks.extend(collect_live_checks(child, f"{field}[{index}]", errors))
     return checks
 
 
@@ -236,14 +237,12 @@ def validate_live_check_vocabulary(document: dict[str, Any], errors: list[str]) 
         if len(allowed_checks) != len(vocabulary):
             errors.append("required_live_check_vocabulary must not contain duplicates")
 
-    live_checks = collect_live_checks(document)
-    if any(not isinstance(check, str) for check in live_checks):
-        errors.append("every required_live_checks value must be a string")
+    live_checks = collect_live_checks(document, "matrix", errors)
     unknown_checks = sorted(
         {
             check
             for check in live_checks
-            if isinstance(check, str) and check not in allowed_checks
+            if check not in allowed_checks
         }
     )
     if unknown_checks:

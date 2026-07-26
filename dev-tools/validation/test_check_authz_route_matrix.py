@@ -68,6 +68,46 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors = self.validator.validate(path)
         self.assertTrue(any("outside the closed vocabulary" in error for error in errors))
 
+    def test_route_live_checks_must_be_a_list(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            text = replace_or_fail(
+                MATRIX.read_text(encoding="utf-8"),
+                """    response_profile: public_production_catalog_only
+    required_live_checks: [public_production_visibility, runtime_entitlements]""",
+                """    response_profile: public_production_catalog_only
+    required_live_checks: public_production_visibility""",
+            )
+            path.write_text(text, encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(
+            any(
+                error.startswith("matrix.routes[")
+                and error.endswith("required_live_checks must be a list of strings")
+                for error in errors
+            )
+        )
+
+    def test_route_live_check_entries_must_be_strings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            text = replace_or_fail(
+                MATRIX.read_text(encoding="utf-8"),
+                """    response_profile: public_production_catalog_only
+    required_live_checks: [public_production_visibility, runtime_entitlements]""",
+                """    response_profile: public_production_catalog_only
+    required_live_checks: [public_production_visibility, 7]""",
+            )
+            path.write_text(text, encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(
+            any(
+                error.startswith("matrix.routes[")
+                and error.endswith("required_live_checks must be a list of strings")
+                for error in errors
+            )
+        )
+
     def test_ws_game_live_checks_are_required(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"

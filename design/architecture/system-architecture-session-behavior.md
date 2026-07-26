@@ -38,7 +38,7 @@ Membership changes that affect tenant access follow a stricter contract than ord
 2. Game Session compares the event against active gameplay bindings for `{accountId, tenantId}`.
 3. Losing tenant membership or losing gameplay-admission authority (for example removal of `player` or a required private-realm grant) immediately revokes the affected gameplay sessions. Planned realm or playtest closure uses the owning close-and-drain workflow before grants are revoked; grant revocation itself is not a graceful-drain mechanism.
 4. For caller-bound tenant control-plane access, the Account Service must also advance the `{accountId, tenantId}` membership authority generation when membership or tenant-role changes invalidate previously issued tenant authority for that caller.
-5. Non-gameplay role changes may be handled by in-session token refresh for gameplay state, but reconnect/resume must compare current membership authority to the stored `membershipVersion` before restoring gameplay.
+5. Non-gameplay role changes may be handled by in-session token refresh for gameplay state, but reconnect/resume must compare like-for-like authoritative fields before restoring gameplay: stored `membershipVersion` must equal the current Account-owned `membershipVersion`, and stored `membershipAuthorityGeneration` must equal the current Account-owned `membershipAuthorityGeneration`. Missing, unavailable, or unequal current values fail closed; neither field substitutes for the other.
 6. `PLAY` and reconnect/resume must obtain `membershipVersion` from authoritative membership reads rather than inferring it from JWT claims or local caches.
 
 Membership-change event delivery semantics are required, not best-effort folklore:
@@ -120,7 +120,7 @@ Each gameplay session binding must store the server-side auth token identity it 
 On reconnect/resume (after the client re-`LOGIN`s and re-`PLAY`s), Game Session must load the gameplay session binding and confirm:
 
 - The newly authenticated caller `accountId` matches the stored gameplay binding subject.
-- Current tenant membership and role authority still permits gameplay admission for the target tenant; reconnect compares both the stored `membershipVersion` and the current `membershipAuthorityGeneration` authority fence, rejecting older, mismatched, or unavailable authority.
+- Current tenant membership and role authority still permits gameplay admission for the target tenant; reconnect separately requires stored `membershipVersion == current authoritative membershipVersion` and stored `membershipAuthorityGeneration == current authoritative membershipAuthorityGeneration`. An older or newer mismatch, a missing value, or unavailable authoritative state rejects resume, and consumers must not compare one field to the other.
 - The gameplay session key remains logically resumable (key present, `continuityBindingExpiresAt` has not passed, the current `resumeDeadline` has not passed, and the uniqueness key is unchanged).
 - Current revocation state does not block the account or tenant for gameplay admission.
 - Current entitlement authority is fresh for a new binding. Only resume of the same still-resumable binding may use an eligible positive last-known-good snapshot no older than five minutes when refresh is unavailable; the snapshot must be authoritative for the same target and authority tuple. New joins, fresh bindings, expansion, target changes, and any uncertain, missing, stale, negative, revoked, or gapped authority fail closed.

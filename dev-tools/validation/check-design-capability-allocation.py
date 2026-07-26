@@ -394,7 +394,13 @@ def clean_cell(cell: str) -> str:
 
 
 def capability_set_from_cell(cell: str, context: str, groups: set[str]) -> frozenset[str]:
-    values = frozenset(clean_cell(value) for value in cell.split(",") if value.strip())
+    parsed_values = [clean_cell(value) for value in cell.split(",") if value.strip()]
+    duplicates = sorted(
+        value for value, count in Counter(parsed_values).items() if count > 1
+    )
+    if duplicates:
+        fail(f"{context}: duplicate capability IDs: {duplicates}")
+    values = frozenset(parsed_values)
     if not values or any(value not in groups for value in values):
         fail(f"{context}: expected comma-separated capability IDs, got {cell!r}")
     return values
