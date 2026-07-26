@@ -223,6 +223,8 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - One workflow owns one deployment maintenance lock from `coordination-maintenance pause` until either `coordination-maintenance resume` or `coordination-maintenance release-lock` completes.
   - Later subcommands in that workflow refresh the lock TTL with the same `maintenanceLockToken`; they do not acquire independent locks.
   - If a command loses the lock, every later mutating command must fail closed until an operator explicitly releases or restarts the workflow.
+  - A `replay_first` workflow starts with compatibility class `cleanup`. Escalation to `reset_first` must atomically compare-and-match that same token and upgrade the class to `reset` without releasing or reacquiring the lock. The upgrade audit record, including scope, old/new class, token/workflow lineage, actor, reason, and resulting epoch transition, must be durable before the epoch bump or reset-key mutation is allowed.
+  - If the same-token upgrade or its audit write cannot complete, the workflow remains paused and no reset mutation may proceed; the operator must use the explicit failure/abort path. A second lock cannot be used to bypass the failed upgrade.
 
 Canonical epoch-map examples:
 

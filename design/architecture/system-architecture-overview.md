@@ -385,7 +385,7 @@ Minimal interoperability requirements for the fence token:
 - The current scope marker and the target committed fence are valid only within one `(tenantId, gameInstanceId, roomInstanceId)` room-read scope.
 - World Management is the canonical producer of the fence token for room snapshots.
 - In the target contract, `roomSnapshotVersion` is one opaque or epoch-bearing committed token. Entity Management must return that exact token as `entitySnapshotId` after proving its durable entity state satisfies it; it must not mint or substitute an independent local version.
-- The target token advances after every durable mutation included in the room view. The current scope-derived adapter value does not yet provide that guarantee and is therefore not sufficient as authoritative freshness proof.
+- The target token advances after every durable mutation included in the room view. The cross-service allocation, propagation, acknowledgment, and commit-ordering protocol for Entity Management-owned mutations is not yet selected; this target is not implementation-ready until one canonical protocol and focused failure/retry proof are defined. The current scope-derived adapter value does not provide mutation freshness and is therefore not sufficient as authoritative freshness proof.
 - `STALE_READ_FENCE` and `READ_FENCE_UNAVAILABLE` are the canonical service rejection shapes for an unsatisfied fence; a participant fence difference is a caller-side retry condition, not a separate service error. Services must not silently upgrade to a newer snapshot.
 - A retry obtains a fresh room snapshot and therefore a fresh fence value; an older fence is not reused across later room-refresh attempts.
 

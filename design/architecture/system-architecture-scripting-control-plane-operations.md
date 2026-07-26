@@ -385,7 +385,7 @@ At a minimum, rollback consists of:
 4. Drain or purge queued script work items and staging entries that carry the rolled-back patch.
 5. If plugin versions are also being rolled back, disabled, or revoked, cancel pending work for those `pluginVersionId` values before queue purge.
 6. Verify pin convergence and drain completion before resuming normal admission.
-7. Resume ticks only after the workflow state machine reaches a terminal completed state.
+7. Invoke `ResumeTicks` as the `RESUMING` action. Persist `COMPLETED` only after that action succeeds; a failed resume leaves ticks paused and the workflow retryable rather than falsely marking rollback complete.
 
 Concrete rollback sequence example:
 
@@ -417,7 +417,7 @@ Ownership and source-of-truth requirements:
 
 Required states:
 
-- `PAUSING` -> `REPINNING` -> `RECONCILING_SCHEDULES` -> `CANCELING` -> `PURGING` -> `CONVERGING` -> `DRAINING` -> `RESUMING` -> `COMPLETED`
+- `PAUSING` -> `REPINNING` -> `RECONCILING_SCHEDULES` -> `CANCELING` -> `PURGING` -> `CONVERGING` -> `DRAINING` -> `RESUMING` (invoke `ResumeTicks`) -> `COMPLETED` (only after `ResumeTicks` succeeds)
 - Terminal failure state: `ROLLBACK_CONVERGENCE_TIMEOUT`
 
 State rules:
@@ -426,6 +426,7 @@ State rules:
 - Re-running a request in the same state must return current state, not restart from scratch.
 - `RECONCILING_SCHEDULES` must complete before timer admission, normal admission, or tick resumption can proceed. Replacement creation and displaced-row retirement must be one atomic durable result or a resumable idempotent operation keyed by `controlPlaneRequestId`; retries create or confirm only target-version rows before retiring displaced rows. Reconciliation creates no firing claim or `scriptEventId`.
 - Failures in `CANCELING` or `PURGING` must not auto-resume admission or ticks.
+- `RESUMING` represents the in-flight `ResumeTicks` action. Only a successful `ResumeTicks` result may transition the workflow to `COMPLETED`; failures leave ticks paused and `RESUMING` retryable.
 - Operator retries must continue from the last durable state.
 - `ROLLBACK_CONVERGENCE_TIMEOUT` keeps admission and ticks paused until explicit operator action.
 - `DRAINING` is required. Rollback must not resume admission or ticks until the current rollback-scope `admissionEpoch` has no active pre-pause executions and no remaining cancelable outbox work according to `GetAutomationDrainStatus`.

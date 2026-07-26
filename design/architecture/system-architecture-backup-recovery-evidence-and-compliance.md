@@ -12,7 +12,7 @@ The artifact-integrity, recovery-participant, and reopen-attempt metrics in this
 
 ## Backup Observability and Alerts
 
-Backup and verification jobs must emit simple metrics with an `environment` label on every signal that feeds readiness or alerting. The environment label identifies the deployment boundary, not a tenant, game instance, or region; convergence signals retain the bounded participant-family dimension defined below:
+Every readiness or alerting signal is environment-scoped with an `environment` label, except the explicitly global `recovery_participant_convergence_source_missing{source_family}` monitoring-gap signal. That exception has no environment label because it detects total disappearance of a required source family; all other signals below retain the environment label. The environment label identifies the deployment boundary, not a tenant, game instance, or region; convergence signals retain the bounded participant-family dimension defined below:
 
 - `backup_last_success_timestamp_seconds{environment}`
 - `backup_verify_last_success_timestamp_seconds{environment}`

@@ -125,7 +125,7 @@ Automation & Scripting Service instances typically:
 - In the current live deployment, consume `ObserveRuntimeTickProgress` with the same complete runtime scope instead of assuming `StreamTickHeartbeats` is available.
 - Maintain per-region scheduler state in Redis (for example `script-scheduler:{tenantRegionTag}:lastTickId`) only as a checkpoint/hint. The physical value must store `{regionEpoch, latestTickId, streamOffset}`; callers must reject and rebuild it when its epoch differs from the authoritative current epoch. Its logical checkpoint key is `(tenantId, gameInstanceId, regionId, regionEpoch)`, while `tickId` and offsets are never key dimensions.
 - After a due candidate passes the applicable schedule-admission checks, claim or insert a durable PostgreSQL trigger-instance/outbox row keyed by an **instance-aware** uniqueness projection before enqueueing any `onInterval` or other tick-derived trigger so duplicate heartbeat consumers or failover cannot create duplicate logical gameplay actions. Discovery of a due candidate alone does not create a firing claim or `scriptEventId`.
-  - At minimum this uniqueness projection includes the applicable scheduler Trigger Identity fields: `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `eventType`, `eventSchemaVersion`, `scriptPatchVersion`, `isDryRun`, `scheduleDefinitionId`, the tagged due point, and `triggerMode`; plugin triggers also include `pluginId` and `pluginVersionId`. A globally unique `scheduleId` does not replace runtime scope, version, dry-run namespace, or timeline fencing. The tagged due point is exactly `dueTickId:<value>` or `dueAt:<epochMillis>`; when storage uses nullable `dueTickId`/`dueAt` columns, the alternate field is explicitly `NULL` (`dueTickId=<value>, dueAt=NULL` or `dueTickId=NULL, dueAt=<epochMillis>`), never an empty/zero substitute, and both fields may not be null or populated together.
+  - At minimum this uniqueness projection includes the applicable scheduler Trigger Identity fields: `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `eventType`, `eventSchemaVersion`, `scriptPatchVersion`, generated `scriptEventId`, `isDryRun`, `scheduleDefinitionId`, the tagged due point, and `triggerMode`; plugin triggers also include `pluginId` and `pluginVersionId`. A globally unique `scheduleId` does not replace runtime scope, version, dry-run namespace, or timeline fencing. The tagged due point is exactly `dueTickId:<value>` or `dueAt:<epochMillis>`; when storage uses nullable `dueTickId`/`dueAt` columns, the alternate field is explicitly `NULL` (`dueTickId=<value>, dueAt=NULL` or `dueTickId=NULL, dueAt=<epochMillis>`), never an empty/zero substitute, and both fields may not be null or populated together. `automationDispatchId` plus `commandOrdinal` remains the per-command child handoff identity and is not a replacement for the parent Trigger Identity.
 
 ### Bootstrap vs Stream (Authoritative Timeline Source)
 
@@ -196,10 +196,21 @@ This durable fence is the canonical protection against stale executors that lost
 
 Canonical ownership sequence:
 
-1. The executor acquires or renews the Redis region lease.
-2. On successful ownership acquisition, Game Session publishes one fresh opaque `RuntimeOwnershipStatus.executorFence` token for that ownership generation.
+1. The executor acquires or renews the Redis region lease. A renewal retains the current generation; a new acquisition must complete the fence replacement below before it may write durable tick state.
+2. On successful new ownership acquisition, Game Session compare-and-matches the authoritative ownership row and atomically replaces the previous `RuntimeOwnershipStatus.executorFence` with one fresh opaque token for the new generation. That replacement invalidates every old-fence writer before the new executor may stage or commit.
 3. The executor creates `tick_batch` rows and other durable tick-control state using that new `executorFence`.
 4. Any later durable write under that live instance ownership generation must compare-and-match the current `executorFence` and its expected region/timeline fields; stale writers fail closed and do not advance commit state.
+
+### Lease and Fence Ownership Handoff
+
+Ownership handoff is ordered so a new executor cannot overlap a still-valid persisted fence:
+
+1. The outgoing executor stops renewing the Redis lease and drains, abandons, or recovers its in-flight work to the documented safe boundary.
+2. After the old lease expires or is relinquished, the successor acquires the Redis lease but remains unable to stage or commit durable work.
+3. The successor compare-and-matches the authoritative ownership row and atomically replaces the old persisted `executorFence` with a fresh opaque fence for the new ownership generation. From that commit, every durable stage/commit/recovery write carrying the old fence fails closed; lease acquisition alone is not proof that the old SQL writer is harmless.
+4. The successor may stage or commit only after its fresh fence is visible in the authoritative ownership record, and every write must compare-and-match that fence plus the expected region/timeline fields.
+
+Fence replacement is one serialized control-plane transaction. The externally observable contract remains that the old fence is no longer valid before the new generation can stage or commit. A failed or ambiguous replacement leaves the successor unable to write and the region paused; it does not permit either generation to continue.
 
 ---
 
@@ -254,7 +265,7 @@ Ownership changes (moving a region between executors) follow the lease rules:
 - To rebalance load, the current executor:
   - Stops renewing the region lease for selected regions.
   - Drains in-flight work to a safe boundary (for example, after the current `pending` tick is committed or recovered).
-- Another instance then acquires the lease and continues tick processing from the existing Redis and PostgreSQL state for that region.
+- Another instance acquires the released or expired lease, atomically replaces the old persisted fence with its fresh generation, and only then continues tick processing from the existing Redis and PostgreSQL state for that region.
 
 Normal lease handoff/rebalancing does **not** bump `regionEpoch`: `regionEpoch` is reserved for scoped coordination resets and explicit maintenance operations that intentionally sever the old region timeline. Lease tokens provide fencing between executors within the same epoch.
 

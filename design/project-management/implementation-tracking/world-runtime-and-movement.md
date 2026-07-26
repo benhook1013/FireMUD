@@ -100,6 +100,7 @@ This tracker is the permanent reader-facing implementation record for world runt
 - The World digest response has no explicit row-family manifest, so the publish gate cannot independently detect an omitted applicable family even though the six current families are hashed.
 - Game Logic enforces equal World and Entity LOOK fences, but the final `lookSnapshotId` is still the World component identity rather than a combined identity for both component snapshots.
 - Game Logic still exposes the legacy `READ_FENCE_MISMATCH` application code for participant `FAILED_PRECONDITION`; it must converge on target-state service rejection codes and keep returned-fence differences in the caller retry path.
+- The target same-fence contract does not yet define how Entity Management-owned LOOK-visible mutations allocate or request a World Management-owned `roomSnapshotVersion`, how that token is propagated and acknowledged, or how durable commit ordering prevents either service from exposing a partially advanced fence. This protocol needs an explicit design decision plus focused mutation-visibility, equality, retry, and stale-read proof before the target fence is implementation-ready.
 - The authoritative World occupant-reference read is declared but not implemented; the current LOOK aggregator bypasses it and treats Entity-derived visible rows as the occupant source.
 - Room-view overlays such as hazards or combat state, richer visibility policy, and nested-container inspection remain later work. Any overlay must extend the authoritative `LookResult` and same-fence model rather than introduce an independent room view.
 - `worldTopology` provides the settings home for scope-sensitive actions such as `SHOUT`; those actions are not implemented here.
@@ -110,6 +111,7 @@ This tracker is the permanent reader-facing implementation record for world runt
 
 No competing implementation state is recorded for the current runtime-room identity, same-fence `LOOK`, directional movement, lifecycle, or Draft-mutation boundaries. Future decisions are limited to:
 
+- the cross-service allocation, propagation, acknowledgment, and commit-ordering protocol for advancing the World-owned room-read fence after Entity Management-owned LOOK-visible mutations;
 - a new room-view overlay or visibility fact that changes the authoritative `LookResult` composition contract;
 - new topology-sensitive player actions beyond the settings homes already in place;
 - travel or pathfinding semantics that cannot be expressed as an ordinary authoritative exit transition; or

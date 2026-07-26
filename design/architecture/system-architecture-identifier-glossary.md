@@ -40,7 +40,7 @@ World Management may still keep an internal numeric storage key for room topolog
 
 Tick-driven, cross-service mutations are at-least-once and must be idempotent.
 
-- `EffectId` – the canonical idempotency identity derived from region-scoped tick context (`tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `tickId`, `effectKey`) plus the target aggregate identity. All services participating in a tick-driven effect must use projections of the same complete `EffectId`, including `playableStateScope`, for idempotency guards, tick-effect ledger rows, outbox records, and reconciliation; omitting that scope can collide shared and isolated gameplay state.
+- `EffectId` – the canonical target-specific idempotency identity derived from region-scoped tick context (`tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `tickId`, `effectKey`) plus `targetAggregateType` and `targetAggregateId`. A multi-aggregate operation carries one stable operation `effectKey` and one deterministic expected target set, then projects one complete `EffectId` for each affected aggregate; it does not reuse one target's terminal outcome for another target. Replay or reconciliation evaluates the complete expected set while preserving each target-specific `EffectId`. All services participating in a tick-driven effect must preserve these fields, including `playableStateScope`, for idempotency guards, tick-effect ledger rows, outbox records, and reconciliation; omitting that scope can collide shared and isolated gameplay state.
 
 ## Cross-Service Read Fence Identity
 

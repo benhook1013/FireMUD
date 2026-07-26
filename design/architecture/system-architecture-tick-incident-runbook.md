@@ -22,6 +22,8 @@ When applying scope substitution, use a deterministic mapping source (control-pl
 
 If regional pause or reset controls are unavailable and a broader tenant/game-instance control is proposed as a substitute, the operator must first enumerate every affected region from the deterministic mapping source and record the expected blast radius. The broader action requires an explicit blast-radius impact approval/gate before execution; the incident record must retain the approval identity, control request, resolved region set, reason, and timing. Never silently substitute a broader pause or reset merely because a regional control is unavailable.
 
+Bounded metrics identify the operational bucket (for example, stalled, replay pressure, or cleanup divergence); they do not by themselves authorize an exact region action. Before pausing or resetting a specific region, the operator must obtain current control-plane/runtime-health evidence and resolve the exact `<tenantId, gameInstanceId, regionId, regionEpoch>` through the deterministic mapping source. If that evidence or mapping is unavailable, keep the scope paused and use the broader-scope approval gate rather than guessing from metric labels or Redis keys.
+
 Canonical API and workflow scope names in this runbook use `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, and `regionEpoch`. SQL and storage examples may use `tenant_id`, `game_instance_id`, `playable_state_scope`, `region_id`, and `region_epoch`; these are aliases for the same fields, not different scopes.
 
 ## Incident Types
@@ -80,7 +82,10 @@ All trace-specific guidance in this runbook is conditional on the environment ad
    - When the Trace Preconditions are satisfied, use Jaeger to inspect `tick_execute` spans for this region to verify whether the stall is due to downstream services, coordination, or domain logic. Otherwise, use the correlated metrics and Game Session logs.
 3. **Apply a region-scoped coordination reset**
    - Follow the **Per-region reset** flow in `system-architecture-redis-reset-and-recovery.md`, scoping the Job to:
-     - `tick:{tenantRegionTag}:*`
+     - `tick:{tenantRegionTag}:meta`
+     - `tick:{tenantRegionTag}:pending`
+     - `tick:{tenantRegionTag}:queue:<entityId>`
+     - `tick:{tenantRegionTag}:lock:<entityId>`
      - `timer:{tenantRegionTag}`
      - `retry:{tenantRegionTag}`
      - `tick-executor-lease:{tenantRegionTag}`
