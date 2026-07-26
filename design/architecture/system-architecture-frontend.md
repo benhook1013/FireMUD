@@ -6,7 +6,7 @@ Other UIs include a role-based admin interface and a game design editor. See [Ro
 
 ## Implementation Status
 
-Explicit `JOIN`/`Join & Play` and removal of implicit membership creation are target behavior, not implemented in the current runtime. Current connect-token and text `PLAY` paths may still create membership implicitly; the target flow below must not be read as runtime completion.
+Explicit `JOIN`/`Join & Play` and removal of implicit membership creation are target behavior, not implemented in the current runtime. Current connect-token and text `PLAY` paths may still create membership implicitly; the target flow below must not be read as runtime completion. Gateway `POST /ws/game/connect-token/revoke` and the dependent canonical logout/revocation step described below are also target-only and are not implemented in the current runtime.
 
 ## Implementation Notes
 

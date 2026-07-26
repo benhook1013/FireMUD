@@ -162,7 +162,7 @@ Implementation drift: the current runtime loads and immediately replaces one sha
 | -------- | ------- | ------- |
 | `FIREMUD_AUTH_JWT_SECRET` | Inline JWT signing key material for local/dev and ephemeral stacks only (legacy compatibility mode) | *(none)* |
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Account-only path to a versioned JWT signing bundle in player-facing environments; a watcher may detect changes, but Account promotes only a complete bundle whose key and `kid` match a converged published JWK. Current code still treats this as one HMAC secret. | *(none)* |
-| `FIREMUD_AUTH_JWKS_PATH` | Account-only filesystem path to the published `jwks.json` used by the Account JWKS endpoint; in player-facing environments it must point into the read-only `jwt-jwks` mount | *(unset; target-state `classpath:jwks.json` fallback is local/test only)* |
+| `FIREMUD_AUTH_JWKS_PATH` | Target-state filesystem path to the published `jwks.json` consumed by Account Service and JWT validators; in player-facing environments it must point into the read-only `jwt-jwks` mount. The private signing path remains Account-only. | *(unset; target-state `classpath:jwks.json` fallback is local/test only)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
 | `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Cleanup margin added to each token's remaining lifetime for issued-token registry retention only | `300000` |
 | `FIREMUD_AUTH_SESSION_EXPIRATION_MS` | Initial gameplay-continuity retention; target range is `1..300000` ms and target default is five minutes | `300000` (target; current Game Session default is `3600000`) |

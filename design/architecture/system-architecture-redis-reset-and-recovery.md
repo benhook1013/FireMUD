@@ -130,14 +130,14 @@ Worked example: tenant-scoped reset for `<tenantId=7b3b074e-d597-4e9b-b96f-4f594
 
 Worked example: cluster-scoped reset
 
-1. `PauseTicks(--scope cluster)` rejects new command intake and stops all new batch creation.
+1. `CloseProtectedAdmission(--scope cluster)` and `PauseTicks(--scope cluster)` reject new protected traffic, command intake, and batch creation; protected admission remains closed through the cutover and proof steps.
 2. Control plane bumps `region_epoch` for every region in PostgreSQL.
-3. The maintenance workflow wipes Coordination Redis for the cluster, including any remaining leases, queues, timers, retries, remote follow-up hints, and observer streams.
-4. `ReconcileTickLedger(--scope cluster --old-region-epoch-map ...)` converges old-epoch `SCHEDULED` rows cluster-wide, and `ConvergeCommandRecords(--scope cluster)` terminates accepted-but-unbound command records with `executionOutcome = LOST_BEFORE_STAGING` and default `gameplayResult = NOT_APPLIED`.
-5. `InitializeRegionMeta(--scope cluster --region-epoch-map ... --current-tick-id -1 --current-tick-state APPLIED --current-tick-terminal-at-ms <resetTimeMs>)` re-establishes the full per-region Redis meta baseline from PostgreSQL baselines.
-6. If an explicitly documented cluster-preserve session policy is used, `RebindRegionSessions(--scope cluster --region-epoch-map ...)` runs before smoke checks; the default cluster reset invalidates gameplay sessions and skips this step.
-7. `RunPostResetSmokeCheck(--scope cluster)` samples at least one representative region per executor/shard group before reopening traffic.
-8. `ResumeTicks(--scope cluster)` resumes normal scheduling on the new epochs.
+3. `AccountRepairResetCutover(--scope cluster --maintenance-lock-token <token>)` completes the Account issuer-generation repair/reset cutover and advances the durable issuer authority generation. If it fails, token cleanup does not start and protected admission remains closed.
+4. The maintenance workflow wipes Coordination Redis for the cluster, including old Account-issued token registry records, replay markers, remaining leases, queues, timers, retries, remote follow-up hints, and observer streams; this is physical cleanup after the Account cutover, not the authorization boundary.
+5. `ReconcileTickLedger(--scope cluster --old-region-epoch-map ...)` converges old-epoch `SCHEDULED` rows cluster-wide, and `ConvergeCommandRecords(--scope cluster)` terminates accepted-but-unbound command records with `executionOutcome = LOST_BEFORE_STAGING` and default `gameplayResult = NOT_APPLIED`.
+6. `RebuildAndProveAccountIssuerGenerationProjection(--scope cluster --maintenance-lock-token <token>)` rebuilds the current issuer-generation projection from the durable Account cutover and proves it, then `InitializeRegionMeta(--scope cluster --region-epoch-map ... --current-tick-id -1 --current-tick-state APPLIED --current-tick-terminal-at-ms <resetTimeMs>)` re-establishes the full per-region Redis meta baseline.
+7. If an explicitly documented cluster-preserve session policy is used, `RebindRegionSessions(--scope cluster --region-epoch-map ...)` runs before smoke checks; the default cluster reset invalidates gameplay sessions and skips this step. `RunPostResetSmokeCheck(--scope cluster)` samples at least one representative region per executor/shard group and must pass before protected admission can reopen.
+8. `ResumeTicks(--scope cluster)` resumes normal scheduling on the new epochs, and protected admission reopens only after the Account projection proof and post-reset smoke check succeed.
 
 ### Reset Ordering Is Normative
 
@@ -147,6 +147,7 @@ The eight-step handshake above is the authoritative order for all scoped resets 
 - Storage-level wipes, PVC deletion, `FLUSH*`, or prefix deletion that happen before epoch fencing are treated as an invalid reset sequence because stale executors could repopulate empty coordination state under the old epoch.
 - Full-wipe runbooks in `system-architecture-redis-operations.md` are required to embed this same order rather than defining an alternate sequence.
 - Any reset scope that preserves gameplay sessions but clears region-local `tick:{tenantRegionTag}:session-binding:*` keys must complete the rebind phase before normal command intake resumes.
+- A cluster reset must keep protected admission closed through the Account issuer-generation repair/reset cutover, token cleanup, current-projection rebuild/proof, and post-reset smoke check.
 
 ### Failover vs Cold Start vs Reset
 

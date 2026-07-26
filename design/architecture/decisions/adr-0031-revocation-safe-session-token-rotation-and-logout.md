@@ -105,14 +105,14 @@ This has one simpler logout meaning but unexpectedly terminates other devices an
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-authentication.md`
-- `design/architecture/system-architecture-session-behavior.md`
-- `design/architecture/system-architecture-redis.md`
-- `design/architecture/microservices/account-service/api-contracts.md`
-- `design/architecture/microservices/account-service/runtime-and-data.md`
-- `design/architecture/microservices/game-session-service/runtime-and-data.md`
-- `design/architecture/decisions/adr-0030-risk-based-active-session-revocation.md`
-- `design/project-management/implementation-tracking/player-access-and-session.md`
+- [Authentication architecture](../system-architecture-authentication.md)
+- [Session behavior](../system-architecture-session-behavior.md)
+- [Redis architecture](../system-architecture-redis.md)
+- [Account Service API contracts](../microservices/account-service/api-contracts.md)
+- [Account Service runtime and data](../microservices/account-service/runtime-and-data.md)
+- [Game Session Service runtime and data](../microservices/game-session-service/runtime-and-data.md)
+- [ADR 0030: Risk-Based Active-Session Revocation](./adr-0030-risk-based-active-session-revocation.md)
+- [Player access and session implementation tracker](../../project-management/implementation-tracking/player-access-and-session.md)
 
 ## Reversibility and Revisit Triggers
 

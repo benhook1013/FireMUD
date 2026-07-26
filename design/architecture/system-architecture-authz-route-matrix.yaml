@@ -103,7 +103,7 @@ routes:
     accepted_token_profiles: []
     delegated_subject: authenticated_session_account
     visibility_contract: membership_or_public_production_visibility
-    required_live_checks: [membership, public_production_visibility, runtime_entitlements]
+    required_live_checks: [public_production_visibility, runtime_entitlements]
   - service: game-session-service
     route: REALMS
     scope: tenant
@@ -140,7 +140,7 @@ routes:
     membership_authority_generation_applies: false
     required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
     canonical_errors:
-      any_of: [ADMISSION_POINTER_UNAVAILABLE]
+      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE]
     mutation_contract: explicit_public_membership_atomic
   - service: game-session-service
     route: PLAY
@@ -235,7 +235,7 @@ routes:
     accepted_token_profiles: [player-bootstrap]
     subject_binding: caller_account_id
     visibility_contract: membership_or_public_production_visibility
-    required_live_checks: [membership, public_production_visibility, runtime_entitlements]
+    required_live_checks: [public_production_visibility, runtime_entitlements]
   - service: account-service
     route: GET /auth/bootstrap/worlds/{worldSlug}/realms
     scope: tenant
@@ -337,7 +337,7 @@ routes:
     membership_authority_generation_applies: false
     required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
     canonical_errors:
-      any_of: [ADMISSION_POINTER_UNAVAILABLE]
+      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE]
     mutation_contract: explicit_public_membership_atomic
   - service: account-service
     route: EnsurePublicProductionPlayerMembership
@@ -357,7 +357,7 @@ routes:
     membership_authority_generation_applies: false
     required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
     canonical_errors:
-      any_of: [ADMISSION_POINTER_UNAVAILABLE]
+      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE]
     mutation_contract: explicit_public_membership_atomic
   - service: account-service
     route: DELETE /tenants/{tenantId}/memberships/me

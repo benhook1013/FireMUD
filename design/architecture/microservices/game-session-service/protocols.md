@@ -86,7 +86,7 @@ If a client attempts gameplay commands before `LOGIN` succeeds, the service shou
 
 ### Login and world-selection examples
 
-Illustrative world-selection transcript showing public browsing plus slug and index equivalence:
+Target-state/unimplemented world-selection transcript showing public browsing plus slug and index equivalence:
 
 ```text
 WORLDS

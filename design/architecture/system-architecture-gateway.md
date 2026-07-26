@@ -106,7 +106,7 @@ After applying strip/authentication rules, the gateway sets or forwards the down
   - Otherwise derive `X-Client-IP` from the trusted load balancer forwarded headers (for example `X-Forwarded-For`) using the gateway’s configured trusted-proxy rules.
 - `X-Proxy-Connection-Id` – forwarded only when the upstream hop is authenticated as the TCP Proxy Service so downstream services can correlate lifecycle signals.
 - `X-Game-Instance-Id` / `X-Tenant-Id` – forwarded only when the upstream hop is authenticated as the TCP Proxy Service and the corresponding `X-Proxy-Game-Instance-Id` / `X-Proxy-Tenant-Id` inputs were provided. These remain advisory admission hints; the Game Session Service validates any game-instance/tenant claims against Redis, entitlements, and authenticated session state.
-- `X-Firemud-Connect-Context` – for first-party `/ws/game/**` handshakes that pass connect-token validation, gateway emits a short-lived signed context payload containing verified connect scope (`accountId`, `tenantId`, `gameInstanceId`, `connectTokenJti`, `verifiedAt`, `expiresAt`, `gatewayRequestId`). Game Session must validate signature and expiry before using this context; replay protection for `connectTokenJti` remains Gateway-owned and is not re-implemented as a second authority in Game Session.
+- `X-Firemud-Connect-Context` – for non-proxy `/ws/game/**` handshakes that pass connect-token validation, gateway emits a short-lived signed context payload containing verified connect scope (`accountId`, `tenantId`, `gameInstanceId`, `pointerVersion`, `catalogRevision`, `replayAdmissionFence`, `connectTokenJti`, `verifiedAt`, `expiresAt`, `gatewayRequestId`). Game Session must validate signature and expiry before using this context; replay protection for `connectTokenJti` remains Gateway-owned and is not re-implemented as a second authority in Game Session.
 - `X-Firemud-Connection-Mode` – gateway-owned marker identifying the gameplay admission path. Supported values are `first_party_web` and `trusted_tcp_proxy`. The current `first_party_web` value means any public non-proxy WebSocket admitted through verified connect-token bootstrap, including the protected browser cookie and explicitly classified non-browser header carriers; it does not authorize a tokenless generic WebSocket path. Game Session must treat this header as meaningful only when produced by the gateway after trust/canonicalization filters run, and must reject `/ws/game/**` admissions that present neither supported mode.
 - `X-Session-Id` is not part of the canonical header contract and must not be emitted or consumed for gameplay/session binding decisions.
 
@@ -271,7 +271,7 @@ This pattern ensures all real-time gameplay is unified through WebSocket on the 
 
 Spring Cloud Gateway provides centralized management of client traffic, offering:
 
-- JWTs presented on admin or REST endpoints are validated by the consuming service. Gameplay protocol clients do not provide JWTs; all non-proxy `/ws/game/**` WebSocket clients must provide a short-lived connect token for handshake-time edge policy as described below.
+- JWTs presented on admin or REST endpoints are validated by the consuming service. The `gameplay-connect` JWT is the exception: Gateway validates it during the `/ws/game/**` handshake. Gameplay protocol clients do not otherwise provide JWTs; all non-proxy `/ws/game/**` WebSocket clients must provide this short-lived connect token for handshake-time edge policy as described below.
 - Cross-cutting filters (e.g., rate limiting, logging, CORS)
 
 > **Redis topology guidance:** Coordination Redis and Cache/Rate‑Limit Redis are
@@ -318,6 +318,7 @@ This section is the canonical source of truth for connect-token enforcement and 
   - `worldSlug`
   - `realmSlug`
   - `pointerVersion`
+  - `catalogRevision`
   - `connectScopeId`
   - `requestId`
   - `iat` (absolute issuance time)
@@ -330,6 +331,7 @@ This section is the canonical source of truth for connect-token enforcement and 
   - Gateway must reject expired tokens and tokens whose `jti` has already been observed within the replay window.
   - After signature, issuer/audience, lifetime, required-claim, and request-scope validation succeeds, Gateway requires shared replay readiness to be `OPEN` and the signed `replayAdmissionFence` to equal the current fence, then atomically repeats those checks while consuming `jti` before opening the upstream WebSocket. The token is spent even if the subsequent upgrade or backend connection fails; a retry obtains a newly issued token.
   - Replay cache entries must expire automatically at `exp + firemud.gateway.connectTokenClockSkewMs`. The replay marker covers the complete token acceptance window and must not be shortened to a fixed 30 seconds from consumption.
+  - Account owns `session:connect-token:*` as an exact-input issuance-result cache for idempotent `/auth/connect-token` retries. It stores the same token payload or deterministic failure for the same issuance inputs and is not admission replay authority. Gateway alone owns `gateway:connect-token:jti:<jti>` as the single-use admission replay marker; an issuance-result cache entry and an admission replay marker never substitute for each other.
   - Replay cache ownership is Gateway-only; downstream services do not participate in connect-token replay checks.
   - Replay checks must be backed by the player-facing Coordination Redis deployment (not Cache/Rate-Limit Redis or per-pod memory) so `jti` replay decisions are consistent across horizontally scaled gateway pods and cannot be selectively evicted. The deployment requires Redis 7.2+ with AOF enabled, `noeviction`, replay-key ACL isolation, and admission-blocking capacity thresholds. The atomic marker script is followed by `WAITAOF requiredLocalAofCount requiredReplicaAofCount timeout`; `DURABLE_REPLAY_CONSUME_ACK` succeeds only when the reported AOF-fsync counts meet the configured thresholds, with at least one local AOF acknowledgement. `WAIT`, read-back, or a successful client write is not a substitute, and this contract does not claim protection from disk or hardware destruction.
   - Replay cache keys use `gateway:connect-token:jti:<jti>` and bounded cardinality with deterministic expiry at `exp + firemud.gateway.connectTokenClockSkewMs`.
@@ -357,9 +359,9 @@ This token is an edge admission/rate-limiting hint only. It does not replace `LO
 - **Verified context handoff (Gateway -> Game Session)**
   - After successful connect-token validation, Gateway must emit a signed, short-lived connect context (`X-Firemud-Connect-Context`) for the upgraded `/ws/game/**` connection.
   - Gateway strips every external connect-token carrier before forwarding. The raw header or cookie token never reaches Game Session or another upstream service.
-  - Context payload must include at least: `accountId`, `tenantId`, `gameInstanceId`, `connectTokenJti`, `verifiedAt`, `expiresAt`, `gatewayRequestId`.
+  - Context payload must include at least: `accountId`, `tenantId`, `gameInstanceId`, `pointerVersion`, `catalogRevision`, `replayAdmissionFence`, `connectTokenJti`, `verifiedAt`, `expiresAt`, `gatewayRequestId`.
   - Game Session validates signature (`kid` aware) and expiry bounds before using scope for `CONNECT_SCOPE_MISMATCH` enforcement. Replay protection for `connectTokenJti` is performed only at Gateway handshake time.
-  - Missing/invalid/expired context on first-party handshakes that required connect-token validation must be rejected by Game Session admission with canonical error `CONNECT_CONTEXT_INVALID` before `PLAY` (no scope fallback to raw headers).
+  - Missing/invalid/expired context on non-proxy handshakes that required connect-token validation must be rejected by Game Session admission with canonical error `CONNECT_CONTEXT_INVALID` before `PLAY` (no scope fallback to raw headers).
   - Gateway must also emit `X-Firemud-Connection-Mode: first_party_web` for these connect-token-validated handshakes, including explicitly classified non-browser header clients.
   - Key ownership and rotation contract:
     - Gateway signs context with a dedicated asymmetric key set identified by stable issuer and `kid`.

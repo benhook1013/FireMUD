@@ -113,29 +113,29 @@ def validate_ws_game_routes(routes: list[Any], errors: list[str]) -> None:
             "matrix must contain exactly one first_party_web and one trusted_tcp_proxy "
             "spring-cloud-gateway /ws/game/** route"
         )
-        return
-
-    first_party = by_mode["first_party_web"][0]
-    missing_first_party = sorted(
-        REQUIRED_WS_GAME_CHECKS - route_live_checks(first_party, "/ws/game/** first_party_web", errors)
-    )
-    if missing_first_party:
-        errors.append(f"/ws/game/** is missing required live checks: {missing_first_party}")
-    handshake_classes = first_party.get("handshake_error_classes", {})
-    outcomes = handshake_classes.get("any_of", []) if isinstance(handshake_classes, dict) else []
-    if "POLICY_PRESSURE" not in outcomes:
-        errors.append("/ws/game/** handshake outcomes must include POLICY_PRESSURE")
-
-    trusted_proxy = by_mode["trusted_tcp_proxy"][0]
-    missing_trusted_proxy = sorted(
-        REQUIRED_TRUSTED_PROXY_CHECKS
-        - route_live_checks(trusted_proxy, "/ws/game/** trusted_tcp_proxy", errors)
-    )
-    if missing_trusted_proxy:
-        errors.append(
-            "/ws/game/** trusted_tcp_proxy is missing required live checks: "
-            f"{missing_trusted_proxy}"
+    else:
+        first_party = by_mode["first_party_web"][0]
+        missing_first_party = sorted(
+            REQUIRED_WS_GAME_CHECKS
+            - route_live_checks(first_party, "/ws/game/** first_party_web", errors)
         )
+        if missing_first_party:
+            errors.append(f"/ws/game/** is missing required live checks: {missing_first_party}")
+        handshake_classes = first_party.get("handshake_error_classes", {})
+        outcomes = handshake_classes.get("any_of", []) if isinstance(handshake_classes, dict) else []
+        if "POLICY_PRESSURE" not in outcomes:
+            errors.append("/ws/game/** handshake outcomes must include POLICY_PRESSURE")
+
+        trusted_proxy = by_mode["trusted_tcp_proxy"][0]
+        missing_trusted_proxy = sorted(
+            REQUIRED_TRUSTED_PROXY_CHECKS
+            - route_live_checks(trusted_proxy, "/ws/game/** trusted_tcp_proxy", errors)
+        )
+        if missing_trusted_proxy:
+            errors.append(
+                "/ws/game/** trusted_tcp_proxy is missing required live checks: "
+                f"{missing_trusted_proxy}"
+            )
 
     revoke_routes = matching_routes(
         routes,

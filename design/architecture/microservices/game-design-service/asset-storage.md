@@ -374,10 +374,19 @@ Transition enforcement contract:
   - Fails the workflow step if any asset referenced in `version_asset` for the target
     `(tenantId, versionId)` is missing, so partially published versions cannot be
     marked as Published.
-- The step is **idempotent**: rerunning `ExportAssets` for the same
-  `(tenantId, versionId)` reuses the frozen export snapshot, overwrites the same
-  prefix and manifest, and leaves the version metadata consistent. It must not
-  re-select assets after the snapshot is frozen.
+- **Target-state retry behavior:** Once the frozen export snapshot exists, rerunning
+  `ExportAssets` for the same `(tenantId, versionId)` reuses that snapshot,
+  overwrites the same prefix and manifest, and leaves the version metadata
+  consistent. It must not re-select assets after the snapshot is frozen, so the
+  retry is bit-for-bit deterministic.
+- **Current implementation boundary:** `AssetExportServiceImpl` currently calls
+  `GameAssetRepository.findByTenantId` on every invocation and does not persist a
+  version-scoped export snapshot. A same-version rerun therefore re-reads the
+  mutable tenant-wide asset list and is not guaranteed to be bit-for-bit
+  identical; the current `ExportAssets` path does not fail closed merely because
+  snapshot evidence is unavailable. Published/Active exact-bytes repair remains
+  fail-closed with `REPAIR_VERSION_SCOPE_UNAVAILABLE` until the target snapshot
+  exists, rather than guessing from the current asset list.
 - A later `FinalizePublishedRelease` step must read the computed `manifestHash`,
   write `published_release_bundle`, and only then transition
   `version_asset_artifact` from `EXPORTED_UNATTESTED` to `PUBLISHED`. If the

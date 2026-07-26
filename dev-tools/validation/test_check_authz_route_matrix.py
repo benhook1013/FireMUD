@@ -23,6 +23,13 @@ def load_validator():
     return module
 
 
+def replace_or_fail(text: str, old: str, new: str) -> str:
+    occurrences = text.count(old)
+    if occurrences != 1:
+        raise AssertionError(f"expected exactly one occurrence of {old!r}, found {occurrences}")
+    return text.replace(old, new, 1)
+
+
 class AuthzRouteMatrixValidationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -34,10 +41,28 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_unknown_live_check_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
-            text = MATRIX.read_text(encoding="utf-8").replace(
-                "required_live_checks: [runtime_entitlements]",
-                "required_live_checks: [unknown_check]",
-                1,
+            text = replace_or_fail(
+                MATRIX.read_text(encoding="utf-8"),
+                """  - service: game-session-service
+    route: WORLDS_PUBLIC
+    transport_command: WORLDS
+    scope: public
+    classification: public
+    applicability:
+      all_of:
+        - authentication_state: unauthenticated
+    response_profile: public_production_catalog_only
+    required_live_checks: [public_production_visibility, runtime_entitlements]""",
+                """  - service: game-session-service
+    route: WORLDS_PUBLIC
+    transport_command: WORLDS
+    scope: public
+    classification: public
+    applicability:
+      all_of:
+        - authentication_state: unauthenticated
+    response_profile: public_production_catalog_only
+    required_live_checks: [unknown_check]""",
             )
             path.write_text(text, encoding="utf-8")
             errors = self.validator.validate(path)
@@ -46,10 +71,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_ws_game_live_checks_are_required(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
-            text = MATRIX.read_text(encoding="utf-8").replace(
+            text = replace_or_fail(
+                MATRIX.read_text(encoding="utf-8"),
                 "required_live_checks: [connect_token_single_use_consume, replay_protection_available, replay_admission_fence_match, connect_scope_match]",
                 "required_live_checks: [connect_token_single_use_consume, replay_protection_available, connect_scope_match]",
-                1,
             )
             path.write_text(text, encoding="utf-8")
             errors = self.validator.validate(path)
@@ -58,7 +83,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_ws_game_policy_pressure_outcome_is_required(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
-            text = MATRIX.read_text(encoding="utf-8").replace("        - POLICY_PRESSURE\n", "", 1)
+            text = replace_or_fail(
+                MATRIX.read_text(encoding="utf-8"), "        - POLICY_PRESSURE\n", ""
+            )
             path.write_text(text, encoding="utf-8")
             errors = self.validator.validate(path)
         self.assertTrue(any("POLICY_PRESSURE" in error for error in errors))
@@ -66,22 +93,36 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_trusted_tcp_proxy_route_is_required(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
-            text = MATRIX.read_text(encoding="utf-8").replace(
+            text = replace_or_fail(
+                MATRIX.read_text(encoding="utf-8"),
                 "        - connection_mode: trusted_tcp_proxy",
                 "        - connection_mode: missing_trusted_proxy",
-                1,
             )
             path.write_text(text, encoding="utf-8")
             errors = self.validator.validate(path)
         self.assertTrue(any("trusted_tcp_proxy" in error for error in errors))
 
+    def test_trusted_tcp_proxy_live_checks_are_required(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            text = replace_or_fail(
+                MATRIX.read_text(encoding="utf-8"),
+                "    required_live_checks: [trusted_proxy_identity]",
+                "    required_live_checks: []",
+            )
+            path.write_text(text, encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(
+            any("/ws/game/** trusted_tcp_proxy is missing required live checks" in error for error in errors)
+        )
+
     def test_connect_token_revoke_checks_are_required(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
-            text = MATRIX.read_text(encoding="utf-8").replace(
+            text = replace_or_fail(
+                MATRIX.read_text(encoding="utf-8"),
                 "    required_live_checks: [browser_origin, csrf]",
                 "    required_live_checks: [browser_origin]",
-                1,
             )
             path.write_text(text, encoding="utf-8")
             errors = self.validator.validate(path)
@@ -89,13 +130,31 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             any("POST /ws/game/connect-token/revoke is missing" in error for error in errors)
         )
 
+    def test_malformed_ws_game_route_counts_do_not_suppress_revoke_checks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            text = replace_or_fail(
+                MATRIX.read_text(encoding="utf-8"),
+                "        - connection_mode: trusted_tcp_proxy",
+                "        - connection_mode: malformed_route",
+            )
+            text = replace_or_fail(
+                text,
+                "    required_live_checks: [browser_origin, csrf]",
+                "    required_live_checks: [browser_origin]",
+            )
+            path.write_text(text, encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(any("exactly one first_party_web and one trusted_tcp_proxy" in error for error in errors))
+        self.assertTrue(any("POST /ws/game/connect-token/revoke is missing" in error for error in errors))
+
     def test_issue_connect_token_replay_fence_checks_are_required(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
-            text = MATRIX.read_text(encoding="utf-8").replace(
+            text = replace_or_fail(
+                MATRIX.read_text(encoding="utf-8"),
                 "admission_pointer, replay_protection_available, replay_admission_fence_match]",
                 "admission_pointer, replay_protection_available]",
-                1,
             )
             path.write_text(text, encoding="utf-8")
             errors = self.validator.validate(path)
@@ -104,10 +163,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_malformed_classification_vocabulary_is_reported(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
-            text = MATRIX.read_text(encoding="utf-8").replace(
+            text = replace_or_fail(
+                MATRIX.read_text(encoding="utf-8"),
                 "classifications:\n  - public",
                 "classifications:\n  - {invalid: value}",
-                1,
             )
             path.write_text(text, encoding="utf-8")
             errors = self.validator.validate(path)
@@ -118,7 +177,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             path = Path(directory) / "matrix.yaml"
             text = MATRIX.read_text(encoding="utf-8")
             route = "\n  - service: duplicate-service\n    route: GET /duplicate\n    classification: public\n"
-            text = text.replace("\nroutes:\n", f"\nroutes:{route}{route}", 1)
+            text = replace_or_fail(text, "\nroutes:\n", f"\nroutes:{route}{route}")
             path.write_text(text, encoding="utf-8")
             errors = self.validator.validate(path)
         self.assertTrue(any("duplicate route entries require explicit applicability" in error for error in errors))
@@ -126,10 +185,32 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_join_routes_require_admission_pointer_error(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
-            text = MATRIX.read_text(encoding="utf-8").replace(
-                "    canonical_errors:\n      any_of: [ADMISSION_POINTER_UNAVAILABLE]\n",
-                "",
-                1,
+            text = replace_or_fail(
+                MATRIX.read_text(encoding="utf-8"),
+                """  - service: game-session-service
+    route: JOIN
+    scope: tenant
+    classification: public_production_onboarding
+    auth_path: game_session_authenticated_context
+    accepted_token_profiles: []
+    delegated_subject: authenticated_session_account
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
+    required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
+    canonical_errors:
+      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE]
+    mutation_contract: explicit_public_membership_atomic""",
+                """  - service: game-session-service
+    route: JOIN
+    scope: tenant
+    classification: public_production_onboarding
+    auth_path: game_session_authenticated_context
+    accepted_token_profiles: []
+    delegated_subject: authenticated_session_account
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
+    required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
+    mutation_contract: explicit_public_membership_atomic""",
             )
             path.write_text(text, encoding="utf-8")
             errors = self.validator.validate(path)
@@ -138,10 +219,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_delegated_entitlement_checks_require_account_cutoffs(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
-            text = MATRIX.read_text(encoding="utf-8").replace(
+            text = replace_or_fail(
+                MATRIX.read_text(encoding="utf-8"),
                 "required_live_checks: [issuer_generation, account_generation, current_token_generation, tenant_generation, membership_generation, membership, runtime_entitlements, conditional_realm_access_grant, grant_version]",
                 "required_live_checks: [current_token_generation, tenant_generation, membership_generation, membership, runtime_entitlements, conditional_realm_access_grant, grant_version]",
-                1,
             )
             path.write_text(text, encoding="utf-8")
             errors = self.validator.validate(path)

@@ -18,16 +18,16 @@ Gateway currently accepts one header or cookie, rejects simultaneous carriers, p
 
 ## Context
 
-The browser authentication sequence established by ADR 0021 uses a short-lived connect token to admit a gameplay WebSocket before Game Session performs bare `LOGIN` and `PLAY`. Browser WebSocket APIs cannot attach an arbitrary authentication header, while non-browser clients can. The edge therefore needs a narrowly defined carrier contract that does not expose bearer values in URLs, silently choose among conflicting credentials, or permit the same token to be replayed against another Gateway pod.
+The browser authentication sequence established by ADR 0021 uses a short-lived connect token to admit a gameplay WebSocket before Game Session performs bare `LOGIN` and `PLAY`. Browser WebSocket APIs cannot attach an arbitrary authentication header, and the contract reserves the header carrier for explicitly classified non-first-party/public clients. The edge therefore needs a narrowly defined carrier contract that does not expose bearer values in URLs, silently choose among conflicting credentials, or permit the same token to be replayed against another Gateway pod.
 
-The existing target already requires a dedicated header or HttpOnly cookie, shared replay state, verified routing scope, and a positively authenticated TCP Proxy exception. The review retains that design and makes the lifetime, ambiguity, consumption, and retry boundaries exact.
+The existing target already requires a dedicated HttpOnly cookie for first-party gameplay clients and a dedicated header only for explicitly classified non-first-party/public clients, along with shared replay state, verified routing scope, and a positively authenticated TCP Proxy exception. The review retains that design and makes the lifetime, ambiguity, consumption, and retry boundaries exact.
 
 ## Decision
 
 ### Supported Carriers
 
-- First-party browsers receive the token only as the `Secure`, `HttpOnly`, `SameSite=Strict`, `/ws/game`-scoped `Firemud-Connect-Token` cookie. Browser-readable response data contains only non-secret connection metadata.
-- Explicitly classified non-browser WebSocket clients use the dedicated `X-Firemud-Connect-Token` handshake header. This is the public generic-WebSocket admission contract and supersedes ADR 0021's earlier credential-bearing generic-WebSocket wording; in-band credential login remains limited to Telnet and other non-WebSocket text transports.
+- First-party gameplay clients receive the token only as the `Secure`, `HttpOnly`, `SameSite=Strict`, `/ws/game`-scoped `Firemud-Connect-Token` cookie. This includes first-party browser and non-browser clients using a cookie jar; the Account API response body contains only non-secret connection metadata and provides no header fallback.
+- Explicitly classified non-first-party/public WebSocket clients may use the dedicated `X-Firemud-Connect-Token` handshake header. This is the public generic-WebSocket admission contract and is not a first-party carrier; it supersedes ADR 0021's earlier credential-bearing generic-WebSocket wording. In-band credential login remains limited to Telnet and other non-WebSocket text transports.
 - A public gameplay handshake must contain exactly one non-empty, single-valued supported carrier. Duplicate header values, duplicate token cookies, or both carrier types are rejected; no precedence rule applies.
 - Query parameters are not a connect-token carrier. Gateway does not promote or accept a query-carried token in player-facing environments.
 - Gateway removes all external token carriers before forwarding and emits only the verified signed connect context.
@@ -64,7 +64,7 @@ For browser logout, Gateway exposes exactly `POST /ws/game/connect-token/revoke`
 - Horizontally scaled Gateway pods make one consistent replay decision. This costs one shared atomic Redis operation per non-proxy WebSocket handshake, not per WebSocket frame or gameplay action.
 - Coordination Redis replay-state availability and continuity become dependencies for new player-facing connections. Existing admitted WebSockets continue, while new handshakes fail closed until protection recovers and any required quarantine completes.
 - A transient upstream failure spends the token and requires one new issuance request. This is a deliberate bounded retry cost that avoids conditional un-consume semantics and replay races.
-- Browser and non-browser clients use different carriers but converge on the same verified context, `LOGIN`, and `PLAY` state machine.
+- First-party and non-first-party/public clients use their respective cookie or header carrier but converge on the same verified context, `LOGIN`, and `PLAY` state machine.
 
 ## Alternatives Considered
 
@@ -91,7 +91,7 @@ Failing open improves connection availability during Redis incidents but turns a
 - Prove validation and scope comparison occur before atomic consumption, consumption occurs before upstream connection, and retries after post-consumption failure require a new token.
 - Prove the Redis 7.2+ replay deployment's supported topology, AOF configuration, same-connection marker-script/`WAITAOF` sequencing, exact RESP2/RESP3 reply parsing, validated `WAITAOF` local/replica thresholds, `noeviction`, ACL, capacity, and readiness controls; prove Account refuses issuance while replay readiness is absent or quarantined, every issued token carries the exact observed `replayAdmissionFence`, and Gateway plus the atomic consume path reject an earlier or racing fence. Prove the shared persisted `quarantineCutoffIat` is compared to signed token `iat` before admission and again by the fenced consume path across repeated Redis loss, recovery, and reopen, that missing readiness state starts a new full quarantine with a new cutoff, the cutoff is preserved until `OPEN`, the atomic marker script plus threshold-satisfying `WAITAOF` acknowledgement is the only successful `DURABLE_REPLAY_CONSUME_ACK`, and record promotion/recovery evidence establishes AOF load, continuity epoch, acknowledged write position, replay-marker-prefix preservation, and readiness-fence preservation before reopening. Replay decisions must remain atomic across Gateway instances, and issuance plus admission must remain unavailable through the full reset/failover/eviction quarantine whenever that evidence is absent or marker continuity is uncertain.
 - The proof must also verify that every marker write retains the default `redis.REPL_ALL` propagation and that the script never selects an AOF-only, replication-suppressed, or other mode excluded from the replication offset used by `WAITAOF`.
-- Strip the raw header and named cookie before upstream forwarding; prove Game Session accepts only the signed connect context on first-party handshakes.
+- Strip the raw header and named cookie before upstream forwarding; prove Game Session accepts only the signed connect context on first-party and non-first-party/public handshakes.
 - Prove the proxy exception depends on the internal listener, exact authenticated TCP Proxy workload identity, trusted header promotion, and positive `trusted_tcp_proxy` mode.
 - Complete dedicated asymmetric connect-context signing, verification-key overlap, unknown-key refresh, and fail-closed rotation proof.
 
