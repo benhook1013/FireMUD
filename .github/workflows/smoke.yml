@@ -244,13 +244,39 @@ jobs:
             const started = Date.now();
             const timeoutMs = 25 * 60 * 1000;
             const sleepMs = 15000;
+            const retryableStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+            async function withTransientGitHubRetry(label, operation) {
+              const maxAttempts = 4;
+              let retryDelayMs = 1000;
+              for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+                try {
+                  return await operation();
+                } catch (error) {
+                  const status = error?.status ?? error?.response?.status;
+                  const retryable = status == null || retryableStatuses.has(status);
+                  if (!retryable || attempt === maxAttempts) {
+                    throw error;
+                  }
+                  core.warning(
+                    `${label} failed transiently (status=${status ?? "network"}); retrying in ${retryDelayMs}ms`
+                  );
+                  await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+                  retryDelayMs *= 2;
+                }
+              }
+              throw new Error(`${label} retry loop exited unexpectedly`);
+            }
 
             while (Date.now() - started < timeoutMs) {
-              const { data: currentPullRequest } = await github.rest.pulls.get({
-                owner,
-                repo,
-                pull_number: Number(prNumber),
-              });
+              const { data: currentPullRequest } = await withTransientGitHubRetry(
+                "current pull request lookup",
+                () => github.rest.pulls.get({
+                  owner,
+                  repo,
+                  pull_number: Number(prNumber),
+                })
+              );
               if (
                 currentPullRequest.state !== "open" ||
                 currentPullRequest.head.sha !== headSha ||
@@ -263,16 +289,19 @@ jobs:
                 return;
               }
 
-              const runs = await github.paginate(
-                github.rest.actions.listWorkflowRuns,
-                {
-                  owner,
-                  repo,
-                  workflow_id: "runtime-images.yml",
-                  event: "pull_request",
-                  head_sha: headSha,
-                  per_page: 100,
-                }
+              const runs = await withTransientGitHubRetry(
+                "runtime-images workflow lookup",
+                () => github.paginate(
+                  github.rest.actions.listWorkflowRuns,
+                  {
+                    owner,
+                    repo,
+                    workflow_id: "runtime-images.yml",
+                    event: "pull_request",
+                    head_sha: headSha,
+                    per_page: 100,
+                  }
+                )
               );
 
               const matching = runs.find((run) => {
@@ -297,20 +326,29 @@ jobs:
                   continue;
                 }
 
-                const jobs = await github.paginate(
-                  github.rest.actions.listJobsForWorkflowRun,
-                  {
-                    owner,
-                    repo,
-                    run_id: matching.id,
-                    per_page: 100,
+                const jobs = await withTransientGitHubRetry(
+                  "runtime-images job lookup",
+                  () => github.paginate(
+                    github.rest.actions.listJobsForWorkflowRun,
+                    {
+                      owner,
+                      repo,
+                      run_id: matching.id,
+                      per_page: 100,
+                    }
+                  )
+                );
+                const { data: completedPullRequest } = await withTransientGitHubRetry(
+                  "completed pull request lookup",
+                  async () => {
+                    const { data: completedPullRequest } = await github.rest.pulls.get({
+                      owner,
+                      repo,
+                      pull_number: Number(prNumber),
+                    });
+                    return { data: completedPullRequest };
                   }
                 );
-                const { data: completedPullRequest } = await github.rest.pulls.get({
-                  owner,
-                  repo,
-                  pull_number: Number(prNumber),
-                });
                 if (
                   completedPullRequest.state !== "open" ||
                   completedPullRequest.head.sha !== headSha ||

@@ -175,17 +175,18 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "POST /ws/game/connect-token/revoke",
             ),
         ):
-            with self.subTest(expected_label=expected_label), tempfile.TemporaryDirectory() as directory:
-                path = Path(directory) / "matrix.yaml"
-                text = replace_or_fail(MATRIX.read_text(encoding="utf-8"), old, new)
-                path.write_text(text, encoding="utf-8")
-                errors = self.validator.validate(path)
-            self.assertTrue(
-                any(
-                    f"{expected_label} must declare applicability operation" in error
-                    for error in errors
+            with self.subTest(expected_label=expected_label):
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "matrix.yaml"
+                    text = replace_or_fail(MATRIX.read_text(encoding="utf-8"), old, new)
+                    path.write_text(text, encoding="utf-8")
+                    errors = self.validator.validate(path)
+                self.assertTrue(
+                    any(
+                        f"{expected_label} must declare applicability operation" in error
+                        for error in errors
+                    )
                 )
-            )
 
     def test_trusted_tcp_proxy_live_checks_are_required(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -263,19 +264,20 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
       all_of:
         - authentication_state: unauthenticated"""
         for malformed in ("[public]", "{name: public}"):
-            with self.subTest(malformed=malformed), tempfile.TemporaryDirectory() as directory:
-                path = Path(directory) / "matrix.yaml"
-                text = replace_or_fail(
-                    MATRIX.read_text(encoding="utf-8"),
-                    old,
-                    f"""    classification: {malformed}
+            with self.subTest(malformed=malformed):
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "matrix.yaml"
+                    text = replace_or_fail(
+                        MATRIX.read_text(encoding="utf-8"),
+                        old,
+                        f"""    classification: {malformed}
     applicability:
       all_of:
         - authentication_state: unauthenticated""",
-                )
-                path.write_text(text, encoding="utf-8")
-                errors = self.validator.validate(path)
-            self.assertTrue(any("uses unknown classification" in error for error in errors))
+                    )
+                    path.write_text(text, encoding="utf-8")
+                    errors = self.validator.validate(path)
+                self.assertTrue(any("uses unknown classification" in error for error in errors))
 
     def test_unknown_route_classification_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -358,50 +360,53 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_caller_policies_null_and_mapping_values_are_reported(self):
         for malformed in (None, {"caller": "game-session-service"}):
-            with self.subTest(malformed=malformed), tempfile.TemporaryDirectory() as directory:
+            with self.subTest(malformed=malformed):
+                with tempfile.TemporaryDirectory() as directory:
+                    document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+                    route = next(
+                        route
+                        for route in document["routes"]
+                        if route.get("route") == "GetTenantEntitlementsForRuntime"
+                    )
+                    route["caller_policies"] = malformed
+                    path = Path(directory) / "matrix.yaml"
+                    path.write_text(
+                        self.validator.yaml.safe_dump(document, sort_keys=False),
+                        encoding="utf-8",
+                    )
+                    errors = self.validator.validate(path)
+                self.assertIn(
+                    "GetTenantEntitlementsForRuntime caller_policies must be a list",
+                    errors,
+                )
+
+    def test_game_session_caller_policy_count_remains_exactly_one(self):
+        for policy_count in (0, 2):
+            with self.subTest(policy_count=policy_count):
                 document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
                 route = next(
                     route
                     for route in document["routes"]
                     if route.get("route") == "GetTenantEntitlementsForRuntime"
                 )
-                route["caller_policies"] = malformed
-                path = Path(directory) / "matrix.yaml"
-                path.write_text(
-                    self.validator.yaml.safe_dump(document, sort_keys=False),
-                    encoding="utf-8",
+                game_policy = next(
+                    policy
+                    for policy in route["caller_policies"]
+                    if policy.get("caller") == "game-session-service"
                 )
-                errors = self.validator.validate(path)
-            self.assertIn(
-                "GetTenantEntitlementsForRuntime caller_policies must be a list",
-                errors,
-            )
-
-    def test_game_session_caller_policy_count_remains_exactly_one(self):
-        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        route = next(
-            route
-            for route in document["routes"]
-            if route.get("route") == "GetTenantEntitlementsForRuntime"
-        )
-        game_policy = next(
-            policy
-            for policy in route["caller_policies"]
-            if policy.get("caller") == "game-session-service"
-        )
-        for policies in ([], [game_policy, dict(game_policy)]):
-            with self.subTest(policy_count=len(policies)), tempfile.TemporaryDirectory() as directory:
+                policies = [] if policy_count == 0 else [game_policy, dict(game_policy)]
                 route["caller_policies"] = policies
-                path = Path(directory) / "matrix.yaml"
-                path.write_text(
-                    self.validator.yaml.safe_dump(document, sort_keys=False),
-                    encoding="utf-8",
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "matrix.yaml"
+                    path.write_text(
+                        self.validator.yaml.safe_dump(document, sort_keys=False),
+                        encoding="utf-8",
+                    )
+                    errors = self.validator.validate(path)
+                self.assertIn(
+                    "GetTenantEntitlementsForRuntime must contain exactly one game-session-service caller policy",
+                    errors,
                 )
-                errors = self.validator.validate(path)
-            self.assertIn(
-                "GetTenantEntitlementsForRuntime must contain exactly one game-session-service caller policy",
-                errors,
-            )
 
     def test_join_route_errors_are_emitted_in_sorted_order(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
