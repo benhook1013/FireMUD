@@ -227,15 +227,15 @@ Each environment catalog entry must advertise one of the four ADR 0017 levels an
 | `1` | Baseline observability | Metrics and structured logs are available; generic spans/export and trace-log correlation remain best-effort unless separately proved. |
 | `2` | Workflow tracing | A named workflow's semantic spans, bounded attributes, context propagation, collector ingestion, and supported queries are proved end to end. |
 | `3` | Service-scoped incident sampling | Level 2 coverage plus wired sampler controls and a successful increase/observe/revert drill. |
-| `4` | Tenant/region-scoped incident sampling | Candidate traces survive upstream sampling, scope attributes propagate, bounded collector tail sampling can be safely enabled/reverted, and increased visibility plus return to baseline are proved. |
+| `4` | Tenant/game-instance/region-scoped incident sampling | Candidate traces survive upstream sampling, scope attributes propagate, bounded collector tail sampling can be safely enabled/reverted, and increased visibility plus return to baseline are proved. |
 
 | Environment class | Current advertised level | Proved workflow coverage |
 | --- | --- | --- |
 | Local/dev/test | `1` baseline observability | Metrics and structured logs only; no named workflow or scoped-sampling guarantee. |
 | Preview/dev-demo | `1` baseline observability | Metrics and structured logs only; generic spans are best-effort and no named workflow is proved. |
-| Hobby/self-hosted, staging, production | `1` baseline observability | Metrics and structured logs only; no level-2 workflow coverage, level-3 service escalation, or level-4 tenant/region sampling is currently proved. |
+| Hobby/self-hosted, staging, production | `1` baseline observability | Metrics and structured logs only; no level-2 workflow coverage, level-3 service escalation, or level-4 tenant/game-instance/region sampling is currently proved. |
 
-The advertisement must be lowered or the environment kept fail-closed for any runbook step that requires a higher level. Scoped incident sampling support (matching by `tenantId` / `regionId`) depends on OpenTelemetry Collector policy configuration and cannot be inferred from environment variables, example manifests, or the collector endpoint alone.
+The advertisement must be lowered or the environment kept fail-closed for any runbook step that requires a higher level. Scoped incident sampling support (matching by `tenantId` / `gameInstanceId` / `regionId`) depends on OpenTelemetry Collector policy configuration and cannot be inferred from environment variables, example manifests, or the collector endpoint alone.
 
 Legacy sampling labels must not be treated as capability advertisements. If deployment metadata retains either label, it must also carry the numeric ADR 0017 level and the corresponding proof; a label alone cannot authorize a higher-level runbook step.
 

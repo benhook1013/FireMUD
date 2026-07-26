@@ -12,7 +12,8 @@ Bulk JSON import/export remains deferred. Current creator workflows use service-
 - At publish time, assets are pushed to an object store (e.g., S3, MinIO, or a CDN) under a `tenantId`/`version` path. A `manifest.json` mapping asset keys to public URLs is stored alongside them.
 - Runtime clients fetch this manifest using the URL recorded in the published version metadata and load assets directly from the CDN or through the gateway's `/assets/**` route when a local MinIO instance is used. The Game Design Service is never queried during gameplay.
 - A playtest fork uses the branding/assets for the published bundle it is actually launched against. If a fork targets a new `versionId`, it loads that target version's manifest; if it reproduces the source realm's current build, it uses the source build's published manifest. Forks do not create a third independent asset-selection mode.
-- Example: if production is running `v42` with the current live logo and a playtest fork is launched on `v43` with a new theme manifest, testers in the fork see the `v43` branding while public players in production continue to see the `v42` branding.
+- The UUID-shaped `versionId` values in the examples in this document are explicitly target-state identifiers. Current Game Design transport examples must use numeric `int64` `versionId` values until the related contracts are migrated together.
+- Example: if production is running the published bundle whose canonical `versionId` is `22222222-2222-4222-8222-222222222222` and a playtest fork is launched on the published bundle whose canonical `versionId` is `33333333-3333-4333-8333-333333333333`, testers in the fork see the second bundle's branding while public players in production continue to see the first bundle's branding. Human labels such as `v42` and `v43` are not `versionId` aliases.
 - A `manifest.json` is generated for every published version, even when no assets are supplied, so version metadata remains consistent.
 - If the manifest is empty or missing fields, the default platform branding is applied.
 - The manifest can be extended with optional assets such as tutorial images, UI overlays, or CSS snippets.
@@ -20,18 +21,18 @@ Bulk JSON import/export remains deferred. Current creator workflows use service-
 
 Concrete realm-swap example:
 
-- Production realm admission resolves `{ versionId: "v42", scriptPatchVersion: "v42-script.1", manifestUrl: ".../tenant123/v42/manifest.json" }`, so the client keeps the live `v42` theme.
-- A tester then switches to `playtest-docks`, and `PLAY` resolves `{ versionId: "v43", scriptPatchVersion: "v43-script.2", manifestUrl: ".../tenant123/v43/manifest.json" }`.
-- The client must treat the changed bundle identity as a hard theme boundary: load the `v43` manifest, swap logos/theme overrides, and render the fork with the `v43` look without mutating the production realm's active theme state.
-- If the player returns to production, the next `PLAY` or reconnect resume re-resolves the production bundle and the client switches back to `v42`.
+- Production realm admission resolves `{ versionId: "22222222-2222-4222-8222-222222222222", scriptPatchVersion: "v42-script.1", manifestUrl: ".../11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/manifest.json" }`, so the client uses the first bundle's manifest.
+- A tester then switches to `playtest-docks`, and `PLAY` resolves `{ versionId: "33333333-3333-4333-8333-333333333333", scriptPatchVersion: "v43-script.2", manifestUrl: ".../11111111-1111-4111-8111-111111111111/33333333-3333-4333-8333-333333333333/manifest.json" }`.
+- The client must treat the changed canonical `versionId` as a hard theme boundary: load the second bundle's manifest, swap logos/theme overrides, and render the fork with that bundle's look without mutating the production realm's active theme state.
+- If the player returns to production, the next `PLAY` or reconnect resume re-resolves `versionId: "22222222-2222-4222-8222-222222222222"` and the client switches back to the first bundle's manifest.
 
-Example `manifest.json`:
+Example `manifest.json` for the production `versionId` above:
 
 ```json
 {
-  "logo": "https://cdn.example.com/tenant123/v1/logo.png",
-  "favicon": "https://cdn.example.com/tenant123/v1/favicon.ico",
-  "theme": "https://cdn.example.com/tenant123/v1/theme.json"
+  "logo": "https://cdn.example.com/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/logo.png",
+  "favicon": "https://cdn.example.com/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/favicon.ico",
+  "theme": "https://cdn.example.com/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/theme.json"
 }
 ```
 

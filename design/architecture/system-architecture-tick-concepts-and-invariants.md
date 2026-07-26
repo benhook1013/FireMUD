@@ -36,7 +36,7 @@ When designing new tick-driven features, keep these invariants in mind:
 - **No cross-region locks** – cross-region interactions are modeled as messages, not shared locks or multi-region transactions.
 - **Idempotent side effects** – the region-scoped tick timeline `(region_epoch, tickId)` and effect guards must be used so that replays after failure do not double-apply mutations.
 
-The canonical `EffectId` for a tick-driven mutation is the collision-safe identity tuple `(tenantId, gameInstanceId, regionId, regionEpoch, tickId, effectKey, targetAggregateIdentity)`. `targetAggregateIdentity` identifies the aggregate or aggregate set being mutated. It may be stored as explicit target-type/target-id columns, or it must be encoded into `effectKey` with an enforceable collision-safe representation. A bare tick tuple or a bare `effectKey` is not a complete `EffectId` unless that encoding proof is documented.
+The canonical `EffectId` for a tick-driven mutation is the complete collision-safe identity tuple `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)`. The ADR-level `targetAggregateIdentity` is represented by the target aggregate type and ID (or an equivalent explicitly proven collision-safe encoding). A bare tick tuple or a bare `effectKey` is not a complete `EffectId` unless that encoding proof is documented.
 
 The tick system adopts the same **coordination timeline** concept as the Redis architecture: for each `<tenantId, gameInstanceId, regionId>` there is a canonical timeline defined by `(region_epoch, tickId)`. Within a given `region_epoch`:
 
@@ -49,6 +49,8 @@ The tick system adopts the same **coordination timeline** concept as the Redis a
 - Tenant-scoped coordination such as gameplay session keys (`session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`) live on Coordination Redis but are **not** bound to a single region epoch; they follow the authentication/reconnection contracts and reset behavior described in the Redis hub and usage/profile docs rather than the per-region epoch model.
 - When a scoped coordination reset occurs (or a topology/maintenance operation explicitly severs the old region timeline), the tick control plane bumps `region_epoch` and ensures that subsequent tick work for that `<tenantId, gameInstanceId, regionId>` is scheduled only on the new timeline; survivors from older epochs in region-scoped Redis keys are treated as stale and either ignored or explicitly reconciled via the tick effect ledger and reset tooling.
 
+The canonical `tenantRegionTag` used in coordination keys is an opaque encoding of the complete `<tenantId, gameInstanceId, regionId>` scope. In particular, a tick event stream or offset must never use a tenant-plus-region tag that omits `gameInstanceId`; two game instances of one tenant must have disjoint coordination and observer-hint namespaces.
+
 The main tick document contains the detailed rules and Redis key shapes behind each of these points.
 
 ### Fairness Under Tail-Loss and Resets
@@ -56,10 +58,13 @@ The main tick document contains the detailed rules and Redis key shapes behind e
 Fairness and the “one action per entity per tick” rule apply to steady-state execution within a stable `region_epoch`. Around the coordination tail-loss window and explicit resets:
 
 - Redis tail-loss and scoped coordination resets may cause some actions near the tail of the timeline to be dropped, replayed, or slightly re-ordered.
-- In these cases, the system prioritizes **EffectId convergence** (each canonical `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey, targetAggregateIdentity)` ends up durably APPLIED or ABANDONED without double-apply) over strict per-entity fairness across the reset boundary.
+- In these cases, the system prioritizes **EffectId convergence** (each `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)` ends up durably APPLIED or ABANDONED without double-apply) over strict per-entity fairness across the reset boundary.
 - Designers should treat fairness guarantees as strong within a healthy epoch and best-effort across failures and resets; if a feature requires stronger guarantees around resets, that requirement must be called out explicitly in its design and validated against the Redis tail-loss SLOs.
 
-Conceptually, domain services treat Redis locks and leases as **opaque tick-engine concerns**: handlers receive the complete `EffectId` `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey, targetAggregateIdentity)` plus their own idempotency state. They never read `tick:{tenantRegionTag}:lock:<entityId>` or `tick-executor-lease:{tenantRegionTag}` to make application-level decisions, nor do they depend on Cache/Rate-Limit Redis keys (for example `inventory:*`, `view:*`, `ratelimit:*`) for correctness or ordering. Cache usage, when present, is encapsulated inside domain services and affects only latency, not the tick engine’s notion of “what happened” or “in which order”.
+Conceptually, domain services treat Redis locks and leases as **opaque tick-engine concerns**: handlers see only `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)` plus their own idempotency state. Handlers never read `tick:{tenantRegionTag}:lock:<entityId>` or `tick-executor-lease:{tenantRegionTag}` to make application-level decisions, nor do they depend on Cache/Rate-Limit Redis keys (for example `inventory:*`, `view:*`, `ratelimit:*`) for correctness or ordering. Cache usage, when present, is encapsulated inside domain services and affects only latency, not the tick engine’s notion of “what happened” or “in which order”.
+
+- **Target-state automation identity:** For script-generated commands, `effectKey` must incorporate the command-level `(automationDispatchId, commandOrdinal)`; `scriptEventId` alone cannot distinguish fan-out commands.
+- **Current-live fallback:** The Game Session handoff does not yet carry `commandOrdinal` or the full Trigger Identity. `TickStagingService` currently derives `effectKey` from `commandId`, falling back to a hash of command text plus the staging slot when no command id is available. This fallback is not the target-state automation identity and must not be documented as though `(automationDispatchId, commandOrdinal)` were enforced live.
 
 ### Tail-Loss and Tick Replay Window
 
@@ -75,7 +80,7 @@ Redis coordination state is subject to a bounded tail-loss envelope (see `system
 
 The tick system and Redis tail-loss SLOs combine into a simple contract:
 
-- For each canonical `EffectId` `(tenantId, gameInstanceId, regionId, region_epoch, tickId, effectKey, targetAggregateIdentity)` there must eventually be exactly one **terminal** outcome in PostgreSQL (`APPLIED` or `ABANDONED`), even if:
+- For each `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)` there must eventually be exactly one **terminal** outcome in PostgreSQL (`APPLIED` or `ABANDONED`), even if:
   - The last few ticks for that region are dropped or replayed within the tail-loss envelope, or
   - Executors crash and re-acquire leases under the same `region_epoch`.
 - Any work that cannot be safely replayed after Redis loss or tick re-execution must be:

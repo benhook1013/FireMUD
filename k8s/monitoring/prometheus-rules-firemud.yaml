@@ -134,7 +134,7 @@ spec:
           expr: |
             histogram_quantile(
               0.99,
-              sum by (scope, command, le) (
+              sum by (service, scope, command, le) (
                 rate(command_end_to_end_latency_ms_bucket{service="spring-cloud-gateway",command=~"move|look|combat"}[5m])
               )
             )
@@ -142,7 +142,7 @@ spec:
           expr: |
             histogram_quantile(
               0.99,
-              sum by (scope, command, le) (
+              sum by (service, scope, command, le) (
                 rate(command_end_to_end_latency_ms_bucket{service="tcp-proxy-service",command=~"move|look|combat"}[5m])
               )
             )
@@ -155,30 +155,30 @@ spec:
         - record: entrypath_availability_gateway_1d
           expr: |
             (
-              sum by (scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway",outcome="success"}[1d]))
+              sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway",outcome="success"}[1d]))
                 /
-              sum by (scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[1d]))
+              sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[1d]))
             )
         - record: entrypath_availability_gateway_5m
           expr: |
             (
-              sum by (scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway",outcome="success"}[5m]))
+              sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway",outcome="success"}[5m]))
                 /
-              sum by (scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[5m]))
+              sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[5m]))
             )
         - record: entrypath_availability_tcpproxy_1d
           expr: |
             (
-              sum by (scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service",outcome="success"}[1d]))
+              sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service",outcome="success"}[1d]))
                 /
-              sum by (scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[1d]))
+              sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[1d]))
             )
         - record: entrypath_availability_tcpproxy_5m
           expr: |
             (
-              sum by (scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service",outcome="success"}[5m]))
+              sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service",outcome="success"}[5m]))
                 /
-              sum by (scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[5m]))
+              sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[5m]))
             )
 
     - name: firemud.alerts.redis

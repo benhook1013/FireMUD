@@ -182,17 +182,20 @@ final class TickRuntimeProgressService {
   }
 
   void observeRemoteFollowupBacklog(
-      Long tenantId, TickQueueControlService.OwnershipSnapshot ownership) {
+      Long tenantId, Long gameInstanceId, TickQueueControlService.OwnershipSnapshot ownership) {
     long dueCount =
-        remoteFollowupRepository.countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
-            tenantId,
-            ownership.regionId(),
-            RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
-            ownership.lastCommittedTickId() + 1L);
+        remoteFollowupRepository
+            .countByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
+                tenantId,
+                gameInstanceId,
+                ownership.regionId(),
+                RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
+                ownership.lastCommittedTickId() + 1L);
     long drainLagMs =
         remoteFollowupRepository
-            .findFirstByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
+            .findFirstByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
                 tenantId,
+                gameInstanceId,
                 ownership.regionId(),
                 RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
                 ownership.lastCommittedTickId() + 1L)

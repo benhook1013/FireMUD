@@ -42,7 +42,7 @@ These example rules enforce the target-state player-centric SLOs defined in the 
 - alert: CommandLatencyP99HighGateway
   expr: histogram_quantile(
           0.99,
-          sum by (scope, command, le) (
+          sum by (service, scope, command, le) (
             rate(command_end_to_end_latency_ms_bucket{service="spring-cloud-gateway", command=~"move|look|combat"}[5m])
           )
         ) > 250
@@ -59,7 +59,7 @@ These example rules enforce the target-state player-centric SLOs defined in the 
 - alert: CommandLatencyP99HighTcpProxy
   expr: histogram_quantile(
           0.99,
-          sum by (scope, command, le) (
+          sum by (service, scope, command, le) (
             rate(command_end_to_end_latency_ms_bucket{service="tcp-proxy-service", command=~"move|look|combat"}[5m])
           )
         ) > 250
@@ -90,9 +90,9 @@ These example rules enforce the target-state player-centric SLOs defined in the 
 
 - alert: EntryPathAvailabilityLowGateway
   expr: (
-    sum by (scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway", outcome="success"}[5m]))
+    sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway", outcome="success"}[5m]))
       /
-    sum by (scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[5m]))
+    sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[5m]))
   ) < 0.995
   for: 10m
   labels:
@@ -107,9 +107,9 @@ These example rules enforce the target-state player-centric SLOs defined in the 
 
 - alert: EntryPathAvailabilityLowGatewayCompliance
   expr: (
-    sum by (scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway", outcome="success"}[1d]))
+    sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway", outcome="success"}[1d]))
       /
-    sum by (scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[1d]))
+    sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[1d]))
   ) < 0.999
   for: 30m
   labels:
@@ -124,9 +124,9 @@ These example rules enforce the target-state player-centric SLOs defined in the 
 
 - alert: EntryPathAvailabilityLowTcpProxy
   expr: (
-    sum by (scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service", outcome="success"}[5m]))
+    sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service", outcome="success"}[5m]))
       /
-    sum by (scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[5m]))
+    sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[5m]))
   ) < 0.995
   for: 10m
   labels:
@@ -141,9 +141,9 @@ These example rules enforce the target-state player-centric SLOs defined in the 
 
 - alert: EntryPathAvailabilityLowTcpProxyCompliance
   expr: (
-    sum by (scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service", outcome="success"}[1d]))
+    sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service", outcome="success"}[1d]))
       /
-    sum by (scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[1d]))
+    sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[1d]))
   ) < 0.999
   for: 30m
   labels:

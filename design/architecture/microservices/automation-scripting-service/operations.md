@@ -32,7 +32,7 @@ Rollback orchestration rules:
 - Pinning must satisfy base-version cohesion (`patch.baseVersionId == runtimeVersionId` for the instance).
 - Rollback convergence waiting is bounded. If `GetAutomationPinConvergence` plus Game Session convergence checks do not match the expected `controlPlaneRequestId` before the configured timeout, rollback enters terminal timeout state (`ROLLBACK_CONVERGENCE_TIMEOUT`) and admission and ticks remain paused until explicit operator action.
 - Timeout transition must emit `ScriptRollbackConvergenceTimedOut` and increment `automation_rollback_convergence_timeout_total{scope, operation, reason}`.
-- Rollback orchestration should be implemented as an explicit durable state machine (`PAUSING`, `REPINNING`, `CANCELING`, `PURGING`, `CONVERGING`, `DRAINING`, `RESUMING`, `COMPLETED`, terminal `ROLLBACK_CONVERGENCE_TIMEOUT`) so partial failures can resume from last durable state instead of restarting or accidentally unpausing.
+- Rollback orchestration must be implemented as an explicit durable state machine (`PAUSING`, `REPINNING`, `RECONCILING_SCHEDULES`, `CANCELING`, `PURGING`, `CONVERGING`, `DRAINING`, `RESUMING`, `COMPLETED`, terminal `ROLLBACK_CONVERGENCE_TIMEOUT`) so partial failures can resume from last durable state instead of restarting or accidentally unpausing.
 - `DRAINING` remains active until `GetAutomationDrainStatus` confirms that the current rollback-scope `admissionEpoch` has no active pre-pause executions and no remaining cancelable outbox work.
 
 ## Metrics and Audit Guidance
@@ -52,7 +52,7 @@ Queue and quota behavior must be observable either through the canonical `cache.
 
 When diagnosing sandbox-related or automation-runtime issues in production, operators should:
 
-- Check `script_event_audit` records for `finalStage`, `finalOutcome`, `finalReason`, and associated scope fields such as `tenantId`, `scriptId`, `gameInstanceId`, and `tickId`.
+- Check `script_event_audit` records for `finalStage`, `finalOutcome`, `finalReason`, and associated scope fields such as `tenantId`, `scriptId`, `gameInstanceId`, `regionId`, `regionEpoch`, `tickId`, resolved `playableStateScope` (`shared` or `isolated`), and `sourceService` when present. For emitted commands, inspect the supplementary command-handoff records for `automationDispatchId`, Game Session command id, and handoff outcome/reason; inspect rendered command text/shape only when required by the canonical command-handoff schema, so shared-state and isolated-state work can be distinguished without treating one handler audit row as one command.
 - Inspect sandbox and runtime metrics such as `automation_script_sandbox_failures_total`, `automation_script_runtime_seconds`, and queue delay metrics.
 - Verify patch and pin convergence using `GetScriptPatchStatus`, `GetScriptPatchInstanceRolloutStatus`, and `GetAutomationPinConvergence`.
 - Verify plugin policy/runtime convergence using `GetPluginStatus`, `ListPluginRuntimeEvents`, and `GetPluginPolicyConvergence` together with the design-time publication reads from Game Design.

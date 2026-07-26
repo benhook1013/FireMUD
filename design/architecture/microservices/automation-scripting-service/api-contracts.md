@@ -38,14 +38,14 @@ Domain services such as Game Session and Game Logic deliver automation events th
 - `tenantId`, `gameInstanceId`, `regionId`, and `entityId` for the target runtime context.
 - resolved `playableStateScope` for gameplay-originated events so shared versus isolated realm state stays explicit through durable trigger identity, timer follow-up work, and operator read models.
 - `regionEpoch` for gameplay/runtime triggers and scheduler triggers so Trigger Identity is fenced across scoped coordination resets.
-- `scriptEventId` as an idempotency identifier following endpoint ownership rules.
+- `scriptEventId` is always present in the normalized applicable Trigger Identity, but its wire requirement follows endpoint ownership: live external ingress requires the caller to provide it, scheduler/timer ingress may omit it because the scheduler derives it, and dry-run/test ingress may omit it because the service generates it. It is not a complete idempotency key by itself.
 - `isDryRun` so live and dry-run/test traffic are always in separate idempotency namespaces.
 - `eventType` and versioning metadata such as `scriptPatchVersion`.
 - `eventSchemaVersion` for custom or service-specific events governed by the event registry.
 - `readSnapshotToken` when the canonical event-registry entry for that `eventType` requires an authoritative gameplay snapshot selector; it must be absent for events whose registry entry explicitly marks snapshot authority as `NONE`.
 - An envelope for the event payload, including any domain-specific fields.
 
-Event ingress is idempotent with respect to Trigger Identity and the resolved script handler. Repeated calls with the same Trigger Identity must not cause the DSL body to run twice. The Automation & Scripting Service implements this in accordance with the `scriptEventId` lifecycle and deduplication rules in [Scripting DSL Reference & Event Lifecycle](../../system-architecture-scripting-dsl-reference-and-lifecycle.md#scripteventid-lifecycle-and-deduplication).
+Event ingress is idempotent with respect to the event-scope Trigger Identity and each resolved handler. Repeated calls with the same applicable Trigger Identity must not cause a resolved DSL handler to run twice. After binding resolution, a plugin handler's identity includes `pluginId`, `pluginVersionId`, and the signed-bundle `bindingId`; those fields are required to distinguish multiple handlers contributed by one plugin version and are retained in handler-scoped dedupe, `script_event_audit`, quota attribution, and downstream handoff records. The Automation & Scripting Service implements this in accordance with the `scriptEventId` lifecycle and deduplication rules in [Scripting DSL Reference & Event Lifecycle](../../system-architecture-scripting-dsl-reference-and-lifecycle.md#scripteventid-lifecycle-and-deduplication).
 
 Admission must also enforce pin consistency for `<tenantId, gameInstanceId>`:
 
@@ -68,25 +68,25 @@ Direct script upload and update APIs such as `UpdateScript` are limited to boots
 
 `scriptEventId` ownership is endpoint-specific:
 
-- Live external ingress (`TriggerScriptEvent`): caller must supply `scriptEventId` and reuse it on retries.
-- Scheduler and timer ingress (`onInterval`, `onTimerExpire`): scheduler generates deterministic `scriptEventId` from due-point identity, including `gameInstanceId`.
-- Dry-run and test ingress: service generates by default; caller-supplied IDs are optional and must pass dry-run namespace collision validation.
+- Live external ingress (`TriggerScriptEvent`): the wire request must supply `scriptEventId`, and the caller must reuse it on retries.
+- Scheduler and timer ingress (`onInterval`, `onTimerExpire`): the wire request may omit `scriptEventId`; the scheduler generates a deterministic value from due-point identity, including `gameInstanceId`.
+- Dry-run and test ingress: the wire request may omit `scriptEventId`; the service generates it by default. Caller-supplied IDs are optional and must pass dry-run namespace collision validation.
 
-These identifiers are the canonical idempotency keys for event ingress:
+Only the full applicable Trigger Identity, as defined by the normative Trigger Identity table and including plugin-, scheduler-, timer-, or lifecycle-specific fields when applicable, is the canonical idempotency key for event ingress. No partial tuple, due point, or `scriptEventId` alone is a canonical key.
 
-- Any RPC that accepts `scriptEventId` is idempotent with respect to Trigger Identity.
-- For entity-scoped external events, the idempotency key is at least `<tenantId, gameInstanceId, regionId, regionEpoch, entityId, scriptId, eventType, scriptPatchVersion, scriptEventId, isDryRun>` for gameplay/runtime triggers.
-- For gameplay/runtime triggers, the resolved `playableStateScope` is part of the admitted trigger identity even when the surrounding runtime target is already keyed by `gameInstanceId`, so shared-state and isolated-state realms do not collide in durable ingress/work-item/audit rows.
-- For scheduler events, the idempotency key also includes a due point (`dueTickId` / `dueAt`) in deterministic `scriptEventId` derivation.
-- Re-sending the same request with the same idempotency key must not cause the DSL body to run twice.
-- The service records at most one `script_event_audit` row per handler-scoped idempotency key, meaning one row per resolved Trigger Identity after fan-out to a specific `scriptId` or plugin handler.
+- Any RPC that accepts `scriptEventId` is idempotent with respect to the full applicable Trigger Identity.
+- For a resolved entity-scoped gameplay/runtime handler, that full identity includes `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, entityId, scriptId, eventType, eventSchemaVersion, scriptPatchVersion, scriptEventId, isDryRun>`, plus `pluginId`, `pluginVersionId`, and `bindingId` for plugin handlers.
+- For scheduler/timer handlers, the full identity additionally includes `scheduleDefinitionId`, `triggerMode`, and exactly one due point (`dueTickId` or `dueAt`); the scheduler derives `scriptEventId` from all non-generated applicable identity fields, never from a preimage that includes `scriptEventId` itself.
+- Tenant-readiness `onLoad` uses its distinct full applicable identity and intentionally omits runtime fields such as `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, and `entityId`, as defined by the normative table.
+- Re-sending the same full applicable Trigger Identity must not cause the DSL body to run twice.
+- The service records at most one `script_event_audit` row per full handler-scoped Trigger Identity after fan-out to a specific `scriptId` or plugin binding; for plugin handlers, `(pluginId, pluginVersionId, bindingId)` is part of that uniqueness key.
 
 Downstream calls made from DSL components must carry a stable idempotency token derived from Trigger Identity plus tick context when applicable so infrastructure-level retries do not duplicate side effects.
 
 Transport-level retries:
 
-- Unary event-ingress calls are safe to retry at the gRPC transport layer only if they reuse the same `scriptEventId`.
-- Timer and scheduler internals may retry infrastructure operations such as Redis writes but never re-execute the DSL body for the same `scriptEventId`; they replay only idempotent downstream operations.
+- Unary event-ingress calls are safe to retry at the gRPC transport layer only if they reuse the same full applicable Trigger Identity, including the same `scriptEventId`.
+- Timer and scheduler internals may retry infrastructure operations such as Redis writes but never re-execute the DSL body for the same full applicable Trigger Identity; they replay only idempotent downstream operations.
 
 ## Dry-Run and Test Execution Contract
 
@@ -127,7 +127,7 @@ Event-scope admission outcomes are intentionally limited to ingress-time fences 
 
 For retry behavior:
 
-- Low-rate external events may retry with the same `scriptEventId` using bounded exponential backoff and jitter with explicit `maxAttempts` and `maxElapsedMs`.
+- Low-rate external events may retry with the same full applicable Trigger Identity, including the same `scriptEventId`, using bounded exponential backoff and jitter with explicit `maxAttempts` and `maxElapsedMs`.
 - Timer-derived scheduler events use best-effort timer semantics; triggers not admitted during reload are not backfilled unless explicitly covered by a bounded catch-up rule.
 - Event-ingress response fields (`admitted`, `admissionOutcome`, `admissionReason`, `retryAfterMs`) and enum values are normative API contract and must align with [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md).
 
@@ -140,7 +140,7 @@ The service exposes control-plane read and lifecycle surfaces for script patch v
 - `ScriptPatchTenantStatusChanged` – emitted whenever `<tenantId, scriptPatchVersion>` transitions between tenant readiness lifecycle states.
 - `ScriptPatchInstanceRolloutChanged` – consumed as the authoritative instance rollout history stream produced by Game Session (`PINNED`, `ROLLED_BACK`, `REPINNED`) and projected into read APIs.
 - `GetScriptPatchInstanceRolloutStatus(tenantId, gameInstanceId, scriptPatchVersion)` and `ListScriptPatchInstanceRollouts(...)` – read APIs for instance-scoped rollout history and correlation.
-- `ListScriptHandoffEvents(tenantId, gameInstanceId?, scriptPatchVersion?, workItemId?, handoffOutcome?, targetGameInstanceId?, targetRegionId?, targetRegionEpoch?, remoteCoordinatorId?, remoteFollowupId?, scriptId?, pluginId?, automationDispatchId?, changedAfterMs?, changedBeforeMs?, limit?)` – returns durable per-command handoff history, including `automationDispatchId`, target entity, resolved `playableStateScope`, rendered emitted command text, Game Session command id, and handoff outcome/reason for one emitted gameplay command attempt, and now supports direct remote-scope / remote-id / origin-identity filtering so operators do not have to scrape one mixed history stream client-side.
+- `ListScriptHandoffEvents(tenantId, gameInstanceId?, scriptPatchVersion?, workItemId?, handoffOutcome?, changedAfterMs?, changedBeforeMs?, limit?, targetGameInstanceId?, targetRegionId?, targetRegionEpoch?, remoteCoordinatorId?, remoteFollowupId?, scriptId?, pluginId?, automationDispatchId?, gameSessionCommandId?, targetEntityId?, playableStateScope?, worldSlug?, realmSlug?, pointerVersion?, sourceKind?, sourceState?)` – returns durable per-command handoff history, including `automationDispatchId`, `commandOrdinal`, target entity, resolved `playableStateScope`, plugin version when applicable, rendered emitted command text, Game Session command id, and handoff outcome/reason for one emitted gameplay command attempt. The target response also returns `bindingId` when the parent handler is plugin-backed. The actual proto/client filters map as follows: remote scope is `targetGameInstanceId`, `targetRegionId`, `targetRegionEpoch`, `playableStateScope`, `worldSlug`, `realmSlug`, and `pointerVersion`; remote IDs are `remoteCoordinatorId` and `remoteFollowupId`; origin identity is `gameInstanceId`, `scriptPatchVersion`, `workItemId`, `scriptId`, `pluginId`, `automationDispatchId`, and `gameSessionCommandId`; target identity is `targetEntityId`; source metadata is `sourceKind` and `sourceState`. `pluginVersionId` and applicable `bindingId` are response metadata, not request filters; the current proto exposes no `bindingId` field on this RPC, so `bindingId` remains target-state follow-through rather than a claimed live field.
 - `GetScriptEventDefinition(eventType, eventSchemaVersion)` and `ListScriptEventDefinitions(ownerService?)` – expose the canonical event registry used by ingress admission. These reads include allowed producers, required Trigger Identity fields, snapshot authority, consistency class, quota class, replay semantics, allowed binding scopes, dry-run support, and deprecation status.
 - `CancelPendingWorkItemsForPatch(tenantId, scriptPatchVersion, gameInstanceId?, regionId?, controlPlaneRequestId, actorPrincipal, reason)` – cancels pending durable `script_work_items` for a script patch so rollback/drain workflows can prove displaced work will not be evaluated later. The operation transitions only pending work to `CANCELED`, records `cancelReason`, and updates the corresponding handler-scoped `script_event_audit` row with `finalStage=ADMISSION`, `finalOutcome=canceled`, and the bounded cancellation reason.
 - `ListScriptDeadLetters(tenantId, gameInstanceId?, scriptPatchVersion?, limit?)` – returns bounded, newest-first `DEAD_LETTERED` work-item rows with trigger identity, resolved `playableStateScope`, script patch, event identity, reason, and timestamps so operators can inspect failed scripting work without raw table access.

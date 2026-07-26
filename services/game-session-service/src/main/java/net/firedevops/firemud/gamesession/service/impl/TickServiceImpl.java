@@ -291,7 +291,8 @@ public class TickServiceImpl implements TickService {
         boolean tickSucceeded = false;
         RuntimeRegionStatus tickProgressToPublish = null;
         try {
-          tickRuntimeProgressService.observeRemoteFollowupBacklog(normalizedTenantId, ownership);
+          tickRuntimeProgressService.observeRemoteFollowupBacklog(
+              normalizedTenantId, normalizedQueueTargetId, ownership);
           if (tickQueueControlService.isPaused(normalizedQueueTargetId, ownership.paused())) {
             tickRuntimeProgressService.reconcilePausedRemoteFollowupResults(
                 normalizedTenantId, ownership);

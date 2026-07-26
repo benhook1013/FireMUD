@@ -28,7 +28,7 @@ The documents linked from this overview describe the target-state design, but th
 - **Coordination Redis ownership boundary:** Coordination Redis prefixes are owner-governed (Game Session for gameplay coordination prefixes such as `session:game:*`, `tick:*`, `timer:*`, `retry:*`, and `tick-executor-lease:*`; Account Service for `session:auth:*`; Automation & Scripting for `automation:*`), and non-owner participation is allowed only through documented shared-helper contracts. See `design/architecture/decisions/adr-0009-coordination-redis-ownership-boundary.md`.
 - **TCP Proxy identity canonicalization:** For Gateway header trust on the TCP Proxy → Gateway mTLS hop, URI SAN identity is canonical in production; DNS SAN is transitional and fingerprint pinning is break-glass only. See `design/architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md`.
 - **Canonical room-read fence:** Canonical room-state reads that combine occupancy from World Management with containment/entity presentation from Entity Management must be served under a shared tick/read fence emitted by World Management on `GetRoomSnapshot` and propagated unchanged by Game Logic during same-fence room-view composition. World and Entity responses must echo the fence token they satisfied; if either side cannot satisfy the requested fence, Game Logic must retry with a new world snapshot or fail the room-view refresh explicitly rather than composing mixed-tick state. See [Canonical Room Runtime Contract](#canonical-room-runtime-contract).
-- **Canonical room-read fence interoperability minimum:** `LOOK` and same-fence room reads use one logical read-fence value for the room scope. The current live proto seam carries that value as World Management `worldSnapshotId` / `world_snapshot_id` and Entity Management `entitySnapshotId` / `entity_snapshot_id`; both values must compare equal for Game Logic to compose a canonical room view. Future tick-ledger work may rename or replace this with `asOfTickId` only through a proto and architecture update that keeps the single-fence invariant. Services must not silently substitute a newer or best-effort snapshot.
+- **Canonical room-read fence interoperability minimum:** `LOOK` and same-fence room reads use one logical read-fence value for the room scope. The current live proto seam carries that logical value as World Management `worldSnapshotId` / `world_snapshot_id` and Entity Management `entitySnapshotId` / `entity_snapshot_id`; both values must compare equal for Game Logic to compose a canonical room view. The current adapter implementation still derives these fields from the room scope alone, so that live value is a scope marker rather than a committed mutation-advancing fence and must not be described as complete target-state behavior. The target contract uses the existing `roomSnapshotVersion` authority as one opaque or epoch-bearing committed fence: World Management emits it, and Entity Management returns the identical value only when its durable room-visible entity state satisfies that fence. The value advances after every durable mutation included in the room view, not only after cache expiry or a read. Future tick-ledger work may expose `asOfTickId` only through a coordinated proto and architecture update that preserves this single-fence invariant. Services must not silently substitute a newer or best-effort snapshot.
 - **Game Session region-transition contract:** The session front-end owns connection-local sequencing and the character’s current execution-region pointer, while the lease owner owns region-scoped mutation rights. Cross-region actions are serialized by the session front-end under a monotonically increasing per-session sequence; region transition commits are atomic from the caller’s perspective only after the old region owner has acknowledged release, the new region owner has accepted the fenced command, and the session front-end has durably updated the execution-region pointer. Multi-region effects must designate one primary execution region or be decomposed into ordered fenced sub-operations; they must not issue concurrent unfenced writes to multiple region owners. See [Session Sharding & Routing](#session-sharding--routing).
 
 ## Core Architecture Principles
@@ -359,17 +359,19 @@ Minimal canonical Game Session PostgreSQL write split examples:
 - Entity Management is the sole owner of inventories, containment, and room-ground containers keyed by `RoomInstanceRef`.
 - Game Session orchestrates movement and other tick-owned actions, but it must not maintain a competing authoritative occupancy index.
 - The execution-region pointer held by the session front-end is session-local coordination metadata for fenced routing; it is not an authoritative source of room occupancy or world state.
-- World Management emits the canonical room-read fence value on `GetRoomSnapshot`, currently as `worldSnapshotId` / `world_snapshot_id`, and Game Logic owns same-fence room-view composition for `ResolveLook`.
-- World Management and Entity Management must either serve the requested fence and echo it in their responses or reject the read as unsatisfied; they must not silently downgrade to best-effort snapshots.
-- If either dependency rejects the fence, Game Logic may retry with a fresh world snapshot when doing so preserves caller ordering semantics; otherwise it must fail the room-view refresh explicitly. Mixed-tick best-effort joins are not allowed for canonical room state.
+- World Management emits the room-read correlation value on `GetRoomSnapshot`, currently as a deterministic scope marker represented by `worldSnapshotId` / `world_snapshot_id`; Game Logic owns the `ResolveLook` composition. The target implementation must replace that marker with the committed `roomSnapshotVersion` token once the cross-service commit protocol exists.
+- Target-state World Management and Entity Management must either serve the allocated committed fence and echo it in their responses or reject the read as unsatisfied; they must not silently downgrade a target committed-fence read to best-effort snapshots.
+- Once the target protocol exists, if either dependency rejects the committed fence, Game Logic may retry with a fresh room snapshot when doing so preserves caller ordering semantics; otherwise it must fail the room-view refresh explicitly. Mixed-tick best-effort joins are not allowed for canonical room state.
+
+Committed-fence room reads are target-state behavior, not a claim about the current adapter. The committed `roomSnapshotVersion` contract is deferred until the platform has a defined protocol for fence allocation, propagation to every participating room/entity read, acknowledgement of the requested fence, and commit/publication of the resulting snapshot. Until that allocation/propagation/acknowledgement/commit protocol exists, current reads retain their deterministic scope markers and must be documented and tested as scope-marker behavior rather than as committed-fence proof. No caller may infer committed room consistency from the current marker.
 
 Minimal canonical room-read sequence:
 
 1. Game Session receives `LOOK` and delegates the gameplay read to Game Logic `ResolveLook`.
-2. Game Logic requests `GetRoomSnapshot` from World Management and receives `worldSnapshotId`.
+2. Game Logic requests `GetRoomSnapshot` from World Management and receives the current scope marker; the target protocol will allocate and return a committed `worldSnapshotId`/`roomSnapshotVersion` fence.
 3. Game Logic calls Entity Management `ListRoomEntities` for the same room scope and receives `entitySnapshotId`.
-4. World Management and Entity Management either return matching fence values or Game Logic rejects the mixed read as a room-fence failure.
-5. Game Logic composes one `LookResult` only when both downstream reads align on the same fence, then Game Session renders and caches the transcript.
+4. Under the current implementation, the marker remains a scope/read correlation value. Under the target protocol, World Management and Entity Management either acknowledge and return the allocated committed fence or Game Logic rejects the mixed read as a room-fence failure.
+5. The current adapter composes according to the aligned scope-marker contract and does not claim committed-fence proof. Under the target protocol, Game Logic composes one `LookResult` only when both downstream reads acknowledge the same committed fence, then Game Session renders and caches the transcript.
 
 Rendered room-view caching is intentionally a Game Session concern rather than a World or Game Logic responsibility:
 
@@ -382,19 +384,20 @@ Rendered room-view caching is intentionally a Game Session concern rather than a
 
 Minimal interoperability requirements for the fence token:
 
-- The current snapshot-id fence is valid only within one `(tenantId, gameInstanceId, roomInstanceId)` room-read scope.
+- The current scope marker and the target committed fence are valid only within one `(tenantId, gameInstanceId, roomInstanceId)` room-read scope.
 - World Management is the canonical producer of the fence token for room snapshots.
-- Entity Management must return a matching fence for the same room scope or the composition fails; it must not silently substitute unrelated snapshot state.
-- `READ_FENCE_MISMATCH`, `STALE_READ_FENCE`, or `READ_FENCE_UNAVAILABLE` are the canonical rejection shapes for missed or mixed fences; services must not silently upgrade to a newer snapshot.
+- In the target contract, `roomSnapshotVersion` is one opaque or epoch-bearing committed token. Entity Management must return that exact token as `entitySnapshotId` after proving its durable entity state satisfies it; it must not mint or substitute an independent local version.
+- The target token advances after every durable mutation included in the room view. The cross-service allocation, propagation, acknowledgment, and commit-ordering protocol for Entity Management-owned mutations is not yet selected; this target is not implementation-ready until one canonical protocol and focused failure/retry proof are defined. The current scope-derived adapter value does not provide mutation freshness and is therefore not sufficient as authoritative freshness proof.
+- `STALE_READ_FENCE` and `READ_FENCE_UNAVAILABLE` are the canonical service rejection shapes for an unsatisfied fence; a participant fence difference is a caller-side retry condition, not a separate service error. Services must not silently upgrade to a newer snapshot.
 - A retry obtains a fresh room snapshot and therefore a fresh fence value; an older fence is not reused across later room-refresh attempts.
 
 Operator-facing command convergence reads must use the durable `GetGameplayCommandStatus` surface after replay/reset/remediation. Redis queue inspection is diagnostic only and must not be treated as the canonical post-remediation status answer.
 
 Minimal canonical room-read example:
 
-1. Game Session handling `LOOK` for `{tenantId=T1, gameInstanceId=G1, characterId=C7}` calls Game Logic `ResolveLook`.
-2. Game Logic calls World Management with `{tenantId:T1, gameInstanceId:G1, roomInstanceRef:R44}` and receives `worldSnapshotId=T1:G1:R44`.
-3. Game Logic calls Entity Management with `{tenantId:T1, gameInstanceId:G1, roomInstanceRef:R44}` and receives `entitySnapshotId=T1:G1:R44`.
+1. Game Session handling `LOOK` for `{tenantId=42, gameInstanceId=7, roomInstanceId=R-44, characterId=71}` calls Game Logic `ResolveLook`.
+2. Game Logic calls World Management with `{tenantId:42, gameInstanceId:7, roomInstanceId:R-44}` and receives the target committed fence `worldSnapshotId=room-snapshot-epoch-17`.
+3. Game Logic asks Entity Management to satisfy that same room fence and receives `entitySnapshotId=room-snapshot-epoch-17`.
 4. Success path: both downstream reads return the same fence value, and only then may Game Logic compose canonical room state for Game Session to render.
 5. Rejection path: if Entity Management returns a missing or different fence, Game Logic retries with a fresh world snapshot or returns an explicit room-view failure, but it must not join one fence value with another.
 
@@ -426,7 +429,7 @@ This model avoids single-node bottlenecks for ticks or session handling; see [Ti
 
 ### Session Sharding & Routing
 
-Game Session Service instances are deployed as a **pool of identical workers**. Ownership of tick work and live gameplay session execution is partitioned by `<tenantId, gameInstanceId, regionId>` using Coordination Redis leases as described in [Tick System and Runtime Design](./system-architecture-ticks.md).
+Game Session Service instances are deployed as a **pool of identical workers**. Ownership of region-scoped tick/gameplay execution is partitioned by `<tenantId, gameInstanceId, regionId>` using Coordination Redis leases as described in [Tick System and Runtime Design](./system-architecture-ticks.md). Connected gameplay sessions remain attached to stable session front-ends rather than being partitioned by region ownership.
 
 Per `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`, shard/lease ownership remains internal to the Game Session layer: the edge does not implement lease-aware admission or a client-visible shard handoff signal. `/ws/game/**` is routed to a stable Game Session service surface and relies on the Game Session coordination model to respect tick ownership invariants.
 
@@ -563,7 +566,7 @@ Game Session Service is an **orchestrator**, not a business-logic owner. To avoi
 - Gameplay commands are represented as **coarse-grained operations** (for example, “execute command for character in region X”) rather than many fine-grained calls.
 - Game Session may issue a small, bounded number of synchronous gRPC calls per command (for example, a single call to Game Logic plus at most one read-model fetch). If a feature would require more than this, the design must introduce read models, projections, or caching instead of adding further fan-out.
 - Game Logic Service owns deterministic mechanics (combat, movement, progression). Game Session is responsible for ordering, conflict resolution, and deciding when to invoke Logic and when to defer or drop commands based on tick and quota state.
-- Horizontal scaling is based on **tenant + tick-region** sharding. Redis keys for **region-local coordination** (for example, `tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`) must be designed so that all state needed for a tick region can be executed locally on a single Game Session shard. Gameplay session bindings are not region-hash-scoped; they are tenant/instance scoped (for example, `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`) and follow authentication/reconnection lifecycles rather than region epochs.
+- Horizontal scaling for region-owned work is based on the complete **`<tenantId, gameInstanceId, regionId>` tick-region scope**. The canonical opaque `{tenantRegionTag}` in region-local Redis keys (for example, `tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`) is derived from that complete tuple so all coordination for one tick region can execute locally on a single Game Session shard without colliding across game instances. Gameplay session bindings are not region-hash-scoped; they are tenant/instance scoped (for example, `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`) and follow authentication/reconnection lifecycles rather than region epochs.
 - Session front-end to lease-owner forwarding is itself a coarse-grained Game Session internal call. It must use fenced identity, preserve per-session ordering, and must not devolve into ad hoc fan-out from front-end pods directly to multiple gameplay-domain services.
 
 New APIs and Redis keys should be reviewed with this orchestration model in mind: Game Session should be able to drive gameplay using a small number of deterministic calls and region-local Redis operations for each tick, rather than building deep, ad hoc call graphs at runtime.
@@ -643,7 +646,7 @@ World and room data flows through two distinct phases:
 - **Design-time authoring (Game Design Service):** Creators edit rooms, zones, and world graphs using the Game Design Service and its web-based tools. All edits are versioned, and draft configurations can be validated and tested in isolation.
 - **Published runtime topology (World Management Service):** When a version is published, the Game Design Service performs a copy/publish step that materializes the topology and region layout into World Management as read-optimized, immutable structures (per game version). World Management owns this published topology and any derived navigation data such as navmeshes.
 
-Game Session Service controls **which published version is active** per tenant and region. Game Design Service can request or schedule version changes, but activation ultimately happens via Game Session and runtime configuration flows (see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md)).
+Game Session Service controls **which published version is active** per tenant and game instance; region execution inherits that instance's pinned version. Game Design Service can request or schedule version changes, but activation ultimately happens via Game Session and runtime configuration flows (see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md)).
 
 ---
 
@@ -653,7 +656,7 @@ Multi-tenant isolation is enforced both at the data layer and at specific enforc
 
 - **Entitlements and quotas source of truth** – Subscription entitlements and plan-driven quota values are owned by the Account Service (for example via `GetTenantEntitlements(tenantId)`). Operator overrides are surfaced and audited in Logging & Admin and represented as an overlay merged into the Account entitlement contract so enforcement points consume one canonical view.
 - **Gateway enforcement (edge-safety)** – Spring Cloud Gateway enforces per-IP and per-connection request/handshake limits for HTTP and WebSocket traffic using Cache/Rate-Limit Redis and shared rate-limit helpers. For gameplay WebSockets, Gateway does not attempt to infer tenant identity from post-login traffic; tenant-aware limits are enforced by Game Session after `LOGIN` binds the session.
-- **Game Session enforcement** – Game Session Service enforces per-tenant caps on active gameplay sessions and tick-region load, rejecting or deferring new logins when quotas are exceeded for a tenant or region.
+- **Game Session enforcement** – Game Session Service enforces a tenant-scoped cap on active gameplay sessions keyed by `tenantId` and a tick-region load cap keyed by the complete `<tenantId, gameInstanceId, regionId>` tuple. New logins are rejected or deferred when the tenant session cap or the selected region's load cap is exceeded; the active-session cap is not region-scoped.
 - **Downstream services** – Where additional quotas are needed (for example, chat message volume in Social & Groups), services reuse the same quota configuration and Cache/Rate-Limit Redis helpers rather than introducing ad hoc mechanisms.
 
 ## Related Documentation

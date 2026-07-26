@@ -567,9 +567,24 @@ The `PLAY` flow:
 - Resolves the selected realm's gameplay-admissible instance and records that `gameInstanceId` in the gameplay binding.
   - First-party `/ws/game/**` contract: if a validated connect token is present, resolved `tenantId` and `gameInstanceId` must match token claims. On mismatch, reject admission with `CONNECT_SCOPE_MISMATCH` and do not bind session scope.
   - Runtime control-plane and admission flows use the realm-routing contract from [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#realm-routing-contract-for-player-addressable-realms) as the source of truth for which concrete `gameInstanceId` is admissible for the selected realm.
+- **Current live admission boundary:** `PLAY` is authoritative at the selected `{tenantId, gameInstanceId}` runtime target and binds the gameplay identity under `{tenantId, gameInstanceId, characterId}`. The current first slice resolves the admissible `gameInstanceId` from realm routing but does not claim that `PLAY` already performs authoritative `regionId`, `regionEpoch`, or lease-fence resolution.
+- **Target authoritative admission:** before committing gameplay binding, resolve the current `regionId` and lease owner/fence for the selected `{tenantId, gameInstanceId}` runtime target from the Game Session control plane. The binding and any forwarded request preserve the selected `playableStateScope`, but that scope does not create a separate lease owner.
+  - Missing or ambiguous region ownership fails closed with `OWNERSHIP_UNAVAILABLE`.
+  - A stale or mismatched region, `regionEpoch`, lease fence, or verified routing target fails closed with `STALE_TIMELINE` or the applicable `CONNECT_SCOPE_MISMATCH`; `PLAY` must not bind from cached ownership, raw transport headers, or a stale discovery result.
 - On successful admission, runtime must return the resolved realm bundle identity at minimum as `versionId`, optional `scriptPatchVersion`, and manifest location/hash (or a stable bundle token that resolves to those fields) so clients can apply realm-specific branding and assets.
 - Binds the socket to a gameplay session key for the chosen world/instance/character identity under `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model) and [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding).
-- Ensures the gameplay session binding is consistent with the tick/lease ownership model for the character’s current `<tenantId, gameInstanceId, regionId>`. Per `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`, `/ws/game/**` is routed to a stable Game Session service endpoint and the edge does not implement a lease-aware shard routing plane.
+- Target-state admission must ensure the gameplay session binding is consistent with the tick/lease ownership model for the character’s current `<tenantId, gameInstanceId, regionId>`. Per `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`, `/ws/game/**` is routed to a stable Game Session service endpoint and the edge does not implement a lease-aware shard routing plane.
+
+### PLAY Current and Target Failure Boundaries
+
+The current shipped `PLAY` path resolves the selected realm to its admissible `{tenantId, gameInstanceId}`, validates caller-bound gameplay access and entitlement state, resolves the character, and binds `{tenantId, gameInstanceId, characterId}`. It does not claim that the live path already resolves or commits the target region, region epoch, lease owner, or lease fence. Those ownership and timeline checks are target-state responsibilities described above and must not be reported as current behavior merely because their failure codes are already reserved.
+
+`CONNECT_SCOPE_MISMATCH` and `STALE_TIMELINE` are intentionally disjoint:
+
+- `CONNECT_SCOPE_MISMATCH` means the verified first-party connect context or connect-token scope does not match the `{tenantId, gameInstanceId}` selected by `PLAY`. It is an admission-scope/issuance drift and requires fresh bootstrap, token issuance, and connection establishment.
+- `STALE_TIMELINE` means the selected runtime target was valid, but its authoritative region, epoch, lease fence, or equivalent runtime timeline no longer matches at the ownership check. It requires rediscovery and explicit retry; it must never be repaired by silently rebinding to a different target.
+
+The target ownership checks may produce `OWNERSHIP_UNAVAILABLE` when authority cannot be read at all, but they must not relabel a verified connect-scope mismatch as a stale timeline or relabel a stale runtime fence as a connect-scope mismatch.
 
 `PLAY` returns canonical, stable error codes so clients can recover deterministically:
 
@@ -583,6 +598,8 @@ The `PLAY` flow:
 - `ACCOUNT_MISMATCH` – bootstrap-backed `LOGIN` resolved to an account different from the validated connect-context subject, so no gameplay scope may be bound.
 - `ADMISSION_POINTER_UNAVAILABLE` – realm-routing state is unavailable or ambiguous for the selected realm; admission is denied until routing reconciliation succeeds.
 - `REALM_UNAVAILABLE` – the selected realm is deliberately closed and has no current admissible gameplay target.
+- `OWNERSHIP_UNAVAILABLE` – the selected runtime region or current lease owner/fence cannot be resolved authoritatively; no gameplay binding is created.
+- `STALE_TIMELINE` – the selected region, epoch, or lease fence no longer matches current runtime authority; the client must rediscover/retry rather than being rebound implicitly.
 - `PLAY_REQUIRED` – a gameplay command requiring admitted gameplay scope was issued before `PLAY` completed successfully.
 - `CHARACTER_REQUIRED` – the selected realm requires an explicit character choice because zero or multiple visible characters exist for the caller.
 - `CHARACTER_CREATION_NOT_ALLOWED` – the selected realm has no visible character for the caller and current realm or fork policy forbids creating a new one; clients must surface this as a hard deny rather than as a generic selection prompt.
@@ -605,7 +622,9 @@ First-party gameplay admission and reconnect clients should treat the following 
 | `LOGIN` on first-party `/ws/game/**` | `ACCOUNT_MISMATCH` | Bootstrap-backed login resolved to an account different from the validated connect-context subject | Treat as a hard auth failure for the current socket; clear the gameplay bootstrap/connect flow and require a fresh authenticated bootstrap. |
 | `PLAY` | `WORLD_ACCESS_DENIED` | Caller-bound membership authority does not allow gameplay admission for the resolved tenant | Keep auth state, surface an authorization error, and do not infer hidden-tenant existence beyond the canonical code. |
 | `PLAY` | `TENANT_BILLING_BLOCKED` | Tenant entitlement state is `suspended` or `canceled` for gameplay | Keep auth state, surface a billing-blocked state for that tenant, and disable gameplay admission flows. |
-| New commitment or ineligible continuity operation | `ENTITLEMENT_UNAVAILABLE` | Fresh entitlement authority is unavailable and no operation-eligible last-known-good snapshot exists | Keep auth state, retry with bounded backoff, and never use grace after hard denial, revocation, or sequence uncertainty. |
+| `PLAY`, new admission, restart/rollback, another new commitment, or ineligible continuity operation | `ENTITLEMENT_UNAVAILABLE` | Fresh entitlement authority is unavailable and no operation-eligible last-known-good snapshot exists; strict new commitments require a snapshot fresh enough for the 15-second admission SLA | Keep auth state, retry with bounded backoff, never admit a strict commitment from stale entitlement state, and never use grace after hard denial, revocation, or sequence uncertainty. |
+| `PLAY` | `OWNERSHIP_UNAVAILABLE` | The selected runtime region or current lease owner/fence cannot be resolved authoritatively | Keep auth state, create no gameplay binding, rediscover runtime ownership with bounded backoff, and retry admission only after fresh authority is available. |
+| `PLAY` | `STALE_TIMELINE` | The selected region, epoch, or lease fence no longer matches current runtime authority | Keep auth state, create no gameplay binding, rediscover the realm and runtime timeline, and retry admission explicitly; never accept an implicit rebind. |
 | Gameplay command before `PLAY` | `PLAY_REQUIRED` | Client issued a world-scoped gameplay command before lobby admission completed | Keep auth state and route the client back through `PLAY`, `REALMS`, or `CHARS` as appropriate. |
 
 Clients re-authenticate **only after disconnecting** (TCP or WebSocket loss) or when server-side auth state has expired or been revoked. After a reconnect, clients always issue a fresh `LOGIN` and then complete lobby selection again (`PLAY <world> [realm] [character]`). If a resumable gameplay session exists for the selected `{tenantId, gameInstanceId, characterId}`, the Game Session Service resumes it; otherwise it creates a fresh gameplay session binding.

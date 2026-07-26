@@ -107,7 +107,7 @@ Plugins executed via the modding framework share the same underlying quota and s
   - Per-plugin quotas enforced by `ScriptQuotaService`.
   - Per-tenant budgets, including priority tiers (for example, `high`, `normal`, `background`).
   - Cluster-wide ceilings and automation tick budgets.
-- From an observability perspective, plugin executions are recorded in `script_event_audit` alongside other script runs, with additional tags such as `pluginId` and `pluginVersionId` so operators can distinguish plugin activity from core automation.
+- From an observability perspective, plugin executions are recorded in `script_event_audit` alongside other script runs, with `pluginId`, `pluginVersionId`, and the resolved `bindingId` so operators can distinguish individual plugin handlers from core automation and from sibling bindings in the same plugin version.
 - Plugin enforcement also respects a centrally managed component policy. When a plugin references a component that is disallowed by the current environment policy, its triggers are rejected at admission with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=plugin_component_blocked`, and a `finalReason` that identifies the blocked component/policy, and corresponding metrics (for example, `automation_plugin_policy_violations_total`) so operators can distinguish policy violations from quota or sandbox failures. Current Automation runtime also records `lastPolicyCheckedAt` for enabled plugin states and rejects plugin triggers with `signer_policy_unavailable` when signer/component-policy evidence is older than `SCRIPT_PLUGIN_POLICY_STALE_THRESHOLD_SECONDS`.
 
 This alignment ensures that plugin code cannot bypass or weaken the resource-isolation guarantees of the scripting system; operational tooling and metrics apply uniformly to both plugins and regular scripts. For the structural lifecycle of plugins (versioning, enable/disable states, and rollback), see `design/architecture/microservices/game-design-service/modding-framework.md`; Logging & Admin APIs provide the control plane for changing `pluginState` and `activeVersionId` while the Automation & Scripting Service enforces quotas, budgets, sandbox rules, and component policy at runtime.
@@ -122,6 +122,8 @@ Per-script scheduling knobs control how often scripts are allowed to run and how
   - `concurrencyPolicy=drop_new` skips new triggers while the script is already running, favoring bounded concurrency over backlog growth.
   - Queued triggers still count toward the script’s quota window; once quota limits are exceeded, additional triggers are dropped with `script_event_audit.finalStage=ADMISSION` and `finalOutcome=quota_denied` (or a more specific quota/concurrency outcome) and matching metrics.
 - **`priorityTag`** – assigns a priority tier (`high`, `normal`, `background`) that interacts with per-tenant budgets and cluster ceilings. When capacity is tight, the scheduler continues to admit `high`-priority work preferentially and defers or drops lower-priority triggers according to budget and quota rules.
+
+Timer and interval limits are evaluated against the canonical runtime scope tuple `<tenantId, gameInstanceId, regionId>`. A per-tenant or per-game-instance timer limit must not substitute for that tuple and accidentally couple unrelated instances or regions; any broader aggregate ceiling is an additional explicitly named safety limit. `playableStateScope` remains part of trigger identity and handler/work fencing, but it does not replace the scheduler's runtime scope tuple for these timer-capacity limits.
 
 ### `onLoad` Initialization Capacity
 
@@ -219,16 +221,16 @@ Per-trigger output is also part of the quota model even when the run itself was 
 
 ## Auditability & Metrics
 
-Every scheduler decision emits an audit record stored in a lightweight `script_event_audit` table in PostgreSQL. `scriptEventId` uniquely identifies the trigger instance so retries, replays, and downstream side effects can be correlated across audit queries, logs, and traces (not as a metric label). The authoritative audit field and stage model is defined in `design/architecture/system-architecture-scripting-observability-contract.md`.
+Every scheduler decision emits an audit record stored in a lightweight `script_event_audit` table in PostgreSQL. `scriptEventId` is one field within the full applicable Trigger Identity; it must never be treated as unique on its own because runtime scope, handler, event, patch, and other conditional identity fields can distinguish otherwise equal tokens. Retries, replays, and downstream side effects must be correlated using the complete identity (not as a metric label). The authoritative audit field and stage model is defined in `design/architecture/system-architecture-scripting-observability-contract.md`.
 
 Normative tables for Trigger Identity fields and metric label sets are centralized in `design/architecture/system-architecture-scripting-normative-contract-tables.md` so this document does not drift from other design docs.
 
 The canonical `script_event_audit` schema includes:
 
 - **Core identifiers**
-  - `scriptEventId` – unique identifier for a single trigger/run.
+  - `scriptEventId` – idempotency token within the full applicable Trigger Identity; it is not a standalone unique audit key.
   - `tenantId` – tenant/game owning the script.
-  - `gameInstanceId` – running game instance that emitted the trigger (required for multi-instance tenants).
+  - `gameInstanceId` – running game instance that emitted a gameplay/runtime trigger; absent for tenant-readiness `onLoad`.
   - `regionId` – region (where applicable) associated with the trigger.
   - `scriptId` – script definition that handled the trigger.
   - `eventType` – logical event key (for example, `onEnterRegion`, `onInterval`, `inventory.item_added`).
@@ -236,6 +238,8 @@ The canonical `script_event_audit` schema includes:
   - `versionId` – optional internal compiled script version identifier used by the Automation & Scripting Service for engine-level debugging and migrations.
   - `sourceService` – producing service identity for custom/service-specific events so operators can diagnose routing and authorization problems.
   - `tickId` – canonical tick identifier associated with the trigger when the trigger is tick-aligned or once commands are accepted into the tick system.
+
+For tenant-readiness `onLoad` triggers, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, and `entityId` are omitted; they must not be populated with sentinel values. Gameplay/runtime triggers include those fields when applicable according to the normative Trigger Identity table.
 
 - **Stage-aware outcome**
   - `finalStage` – the last stage reached for the trigger (for example `ADMISSION`, `DSL_EVAL`, `WORK_ITEM_PERSIST`, `TICK_HANDOFF`).
@@ -251,20 +255,20 @@ The canonical `script_event_audit` schema includes:
 During rollback draining, operators should also expect a bounded number of old-epoch rows whose runs started before pause but were fenced before persistence or handoff. Those rows should appear as non-success canceled outcomes for the original Trigger Identity, not as silently dropped work. A typical example is `finalStage=WORK_ITEM_PERSIST`, `finalOutcome=canceled`, `finalReason=rollback_epoch_advanced`, paired with rollback/drain metrics for the same scope.
 At the metric layer, these rows should contribute to the same bounded rollback/drain visibility used for the paused scope rather than disappearing into generic infrastructure noise. Use `automation_rollback_drain_canceled_total{scope, operation, finalStage, reason}` as defined in the canonical observability contract so operators can confirm that draining work was fenced intentionally rather than lost unexpectedly.
 
-`script_event_audit` remains the authoritative record for Automation-owned stages through `TICK_HANDOFF`, but post-handoff execution-time version fences must also be correlated back to the same trigger:
+`script_event_audit` remains the authoritative record for Automation-owned stages through `TICK_HANDOFF`, but it is not the sole post-handoff surface. The complete per-command handoff diagnostics below are **target-state**: the live Game Session proto carries `automationDispatchId`, command id/text, and selected provenance fields, but not `commandOrdinal` or the full Trigger Identity. Current live status/readback therefore remains narrower. In the target state, per-command handoff and execution-time version-fence results are queried through `ListScriptHandoffEvents` and composed as `commandHandoffDispositions[]`, with one child keyed by `(automationDispatchId, commandOrdinal)` and correlated to the complete parent Trigger Identity:
 
 - If Game Session later drops a handed-off command because its embedded `scriptPatchVersion` or plugin version no longer matches the instance's active pin, operator tooling must be able to locate that drop directly from the originating Trigger Identity.
-- The canonical mechanism is the supplementary execution-disposition contract in `design/architecture/system-architecture-scripting-observability-contract.md`: Game Session reports a bounded post-handoff disposition keyed by Trigger Identity rather than forcing operators to infer the relationship from metrics alone.
+- The target-state mechanism is the per-command handoff contract in `design/architecture/system-architecture-scripting-observability-contract.md`: Game Session reports a bounded child handoff result through `ListScriptHandoffEvents`, retaining the parent Trigger Identity and `outboxWorkItemId` while keying the command record by `(automationDispatchId, commandOrdinal)`.
 - Dashboards and incident tooling should therefore show both:
   - Automation pipeline completion (`finalStage`, `finalOutcome`) and
-  - any later execution-time fence rejection (`executionDisposition.outcome=version_fence_dropped`, bounded reason).
+  - the later per-command handoff result in `commandHandoffDispositions[]` (for example `outcome=version_fence_dropped`, with a bounded reason).
 
 Concrete rollback-visibility example:
 
 - Trigger Identity `T123` reaches `finalStage=TICK_HANDOFF`, `finalOutcome=success` after Automation & Scripting hands off its commands to Game Session.
 - Before the queued command executes, operators roll the instance back to an older `scriptPatchVersion`.
-- Game Session rejects the queued command on its execution-time version fence and publishes `executionDisposition={ outcome=version_fence_dropped, reason=script_patch_mismatch, sourceService=game-session }` for Trigger Identity `T123`.
-- Operator tooling for `T123` must therefore show both the successful Automation pipeline result and the later execution-time fence drop, rather than overwriting one with the other.
+- Game Session rejects only `(automationDispatchId=work-9, commandOrdinal=1)` on its execution-time version fence; `ListScriptHandoffEvents` returns that target-state child with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, and `sourceService=game-session`, while the sibling command `(automationDispatchId=work-9, commandOrdinal=2)` remains a separate result.
+- Operator tooling for `T123` must therefore show `finalStage=TICK_HANDOFF`/`finalOutcome=success` together with the complete `commandHandoffDispositions[]` collection, rather than overwriting the handler result or collapsing the commands into one disposition.
 
 Retention and sizing are governed by environment variables described below and in the Automation & Scripting Service README; in particular, `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` and `SCRIPT_EVENT_AUDIT_MAX_ROWS` control how long audit rows are retained and how large the table is allowed to grow (current defaults are 30 days and 1,000,000 rows, but the README remains the authoritative source).
 Dead-letter stores used for rejected queue entries or non-progressing outbox work must also define explicit `maxAge`, `maxRows`, cleanup cadence, and alert thresholds; unbounded dead-letter growth is not an acceptable operational mode. These controls should be exposed as operator knobs (for example, `SCRIPT_DEAD_LETTER_MAX_ROWS`, `SCRIPT_DEAD_LETTER_MAX_AGE_SECONDS`, `SCRIPT_DEAD_LETTER_CLEANUP_INTERVAL_SECONDS`, `SCRIPT_DEAD_LETTER_ALERT_THRESHOLD_ROWS`) rather than implicit defaults.
@@ -317,7 +321,7 @@ Script execution spans several services (Game Design, Game Session, Automation &
 - `regionEpoch` – fences triggers and tick effects across scoped coordination resets.
 - `entityId` – identifies the target entity for script-driven work.
 - `scriptId` and `scriptPatchVersion` – identify the script definition and patch.
-- `scriptEventId` – uniquely identifies a particular trigger from the caller’s perspective.
+- `scriptEventId` – caller-scoped idempotency token within the full applicable Trigger Identity; it is not a standalone execution identity.
 - `tickId` – identifies the authoritative game tick in which commands execute (paired with `regionEpoch`).
 - `correlationId` – optional cross-service correlation token for Sagas and user-visible flows.
 
@@ -331,7 +335,7 @@ A typical troubleshooting flow for a problematic script or plugin is:
 
 1. Start from a player-visible issue or a game tick log that includes `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `entityId`, and `tickId`.
 2. Use the tick log’s `scriptEventId` (or a derived `correlationId`) to locate matching entries in `script_event_audit` and in logs/traces. Do not rely on `scriptEventId` as a metric label; use metrics to understand aggregate rates by bounded `scope` / `script_category` / `eventType` dimensions and use audit/log queries for per-event correlation.
-3. From those records, identify the responsible `scriptId`, `scriptPatchVersion`, and, where applicable, `pluginId`/`pluginVersionId`.
+3. From those records, identify the responsible `scriptId`, `scriptPatchVersion`, and, where applicable, `pluginId`/`pluginVersionId`/`bindingId`.
 4. Cross-reference the associated publish or plugin enable/disable actions in Game Design and Logging & Admin using the same identifiers.
 
 By consistently tagging metrics and audits with these identifiers, operators can follow a single script event across authoring, publishing, execution, and downstream effects without needing ad hoc joins or heuristics.
@@ -401,7 +405,7 @@ The **authoritative, up-to-date list of environment variables and defaults** liv
 
 - **Quota knobs** – control per-script and per-tenant quota windows and budgets used by `ScriptQuotaService` and the multi-level budgeting model (for example, limits on how many triggers a script or tenant may execute per window).
 - **Execution batch knobs** – bound how much automation work the durable executor performs per scheduling window, including batch sizes, per-window budgets, and cluster-wide ceilings on automation events.
-- **Timer and scheduling knobs** – influence `onInterval` / `onTimerExpire` behavior, including cadence, maximum timers per tenant or region, and any backoff or delay settings applied when regions are degraded.
+- **Timer and scheduling knobs** – influence `onInterval` / `onTimerExpire` behavior, including cadence and maximum timers evaluated per canonical runtime scope tuple `<tenantId, gameInstanceId, regionId>`, plus any backoff or delay settings applied when regions are degraded.
 - **Audit and retention knobs** – govern how long `script_event_audit` and related records remain available for troubleshooting, and how large those tables are allowed to grow before automated cleanup; retention is typically controlled via `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` and `SCRIPT_EVENT_AUDIT_MAX_ROWS`, with exact defaults and semantics documented in the Automation & Scripting Service README.
 
 For the exact variable names, defaults, and any future additions, always refer to the Automation & Scripting Service README rather than this document.

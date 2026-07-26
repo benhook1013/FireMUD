@@ -4,7 +4,7 @@ This document defines the machine-checkable evidence, metrics, and compliance re
 
 ## Implementation Notes
 
-Backup-pause metrics are maintenance/reset observability, not player-facing PostgreSQL-recovery proof. They may retain bounded `region`/`tenant` scope labels and alias-usage migration signals for those maintenance workflows, but accepted recovery readiness is proved by one environment-wide recovery-controller lineage. Exact tenant and region identities belong in retained maintenance evidence and control-plane reads, not in the accepted backup-recovery gate.
+Backup-pause metrics are maintenance/reset observability, not player-facing PostgreSQL-recovery proof. They may retain bounded `tenant`/`game-instance`/`region` scope labels and incomplete-scope migration signals for those maintenance workflows, but accepted recovery readiness is proved by one environment-wide recovery-controller lineage. Exact tenant, game-instance, and region identities belong in retained maintenance evidence and control-plane reads, not in the accepted backup-recovery gate.
 
 Backup readiness is an evidence chain, not an artifact-shaped timestamp record. The scheduled dump, restore controller, and preflight must retain complete environment/schema/service/tool lineage and dereference the backup-readiness, baseline, and actual-recovery records independently. `verify-backups.sh` contributes only existence/reachability evidence; immutable lineage, artifact readability, restore-tool compatibility, erasure replay, and player-facing readiness require separate evidence. Player-facing readiness remains blocked until backup-under-write, inventory convergence, hardening, smoke, and controlled-reopen proof is available.
 
@@ -20,7 +20,7 @@ The `jwt-rotation` Job/CronJob never creates or requests a second transition. It
 
 ## Backup Observability and Alerts
 
-Backup and verification jobs must emit simple metrics with an `environment` label on every signal that feeds readiness or alerting. The environment label identifies the deployment boundary, not a tenant or region; convergence signals retain participant dimensions where they are available:
+Every readiness or alerting signal is environment-scoped with an `environment` label, except the explicitly global `recovery_participant_convergence_source_missing{source_family}` monitoring-gap signal. That exception has no environment label because it detects total disappearance of a required source family; all other signals below retain the environment label. The environment label identifies the deployment boundary, not a tenant, game instance, or region; convergence signals retain the bounded participant-family dimension defined below:
 
 - `backup_last_success_timestamp_seconds{environment}`
 - `backup_verify_last_success_timestamp_seconds{environment}`
@@ -29,8 +29,8 @@ Backup and verification jobs must emit simple metrics with an `environment` labe
 - `backup_artifact_lineage_valid{environment}`
 - `backup_artifact_restore_readable{environment}`
 - `recovery_participant_convergence_total{environment,participant,result}`
-- `recovery_participant_convergence_state{environment,participant,state}` – current participant state gauge; this is the readiness signal, not the historical event counter
-- `recovery_required_participant_inventory{environment,participant}` – controller projection of the authoritative required-participant set
+- `recovery_participant_convergence_state{environment,participant,state}` – current participant-family state gauge; this is the readiness signal, not the historical event counter
+- `recovery_required_participant_inventory{environment,participant}` – controller projection of the authoritative required participant-family set
 - `recovery_required_participant_inventory_complete{environment}` – `0` while an environment projection is being refreshed and `1` only when the complete authoritative set is visible
 - `recovery_oldest_unresolved_age_seconds{environment,participant}`
 - `recovery_environment_convergence_total{environment,result}`
@@ -44,12 +44,24 @@ Prometheus should also publish derived breach indicators:
 - `backup_pipeline_recent_restore_drill_slo_breached{environment,mode}`
 - `backup_artifact_lineage_invalid{environment}`
 - `backup_artifact_restore_unreadable{environment}`
-- `recovery_participant_convergence_blocked{environment,participant,state}`
+- `recovery_participant_convergence_blocked{environment,participant,state}` – a derived recording/alert, not a controller-owned source series
 - `recovery_environment_convergence_blocked{environment}`
-- `recovery_participant_convergence_coverage_missing{environment,participant}` – preserves the affected environment and participant, using the reserved `participant="__environment__"` sentinel for environment-level inventory-completeness failures; it never represents global source disappearance
+- `recovery_participant_convergence_coverage_missing{environment,participant}` – preserves the affected participant family; environment-level inventory-completeness failures use the reserved `participant="__environment__"` sentinel
 - `recovery_participant_convergence_source_missing{source_family}` – global monitoring-gap signal for total disappearance of a required inventory source family; it is not readiness state for any particular environment
 
-The controller publishes each environment's required-participant inventory as one all-or-nothing projection. It sets the completeness marker to `0` before changing participant series, exposes the entire authoritative set, and sets the marker to `1` only after that set is complete; a partial projection must never carry `complete=1`. Derived coverage indicators and alerts preserve these labels and group by `environment`; participant convergence alerts must not reduce an environment-wide failure to an unlabeled boolean or discard the failing `participant` or current `state`. The cumulative `recovery_participant_convergence_total` event counter is audit history only and must not drive an active blocked alert; the alert must clear when the current state converges. Global `absent(...)` conditions feed only the separate `recovery_participant_convergence_source_missing{source_family}` monitoring-gap recording. Because a missing family has no remaining environment label, that recording cannot replace environment-specific source health or readiness proof.
+The `participant` metric label is a closed participant-family enum, not a service instance, plugin, tenant-defined name, workflow ID, or other free-form inventory identity. The initial allowed values are:
+
+- `gameplay_commands`
+- `tick_effects`
+- `remote_followups`
+- `automation_work_items`
+- `external_effects`
+
+`__environment__` is reserved solely for environment-level inventory-completeness failures. Adding another participant-family value requires an architecture and observability-contract update; exact participant or integration identities within a family remain in the durable recovery-controller inventory, retained evidence, and structured audit/log records.
+
+The `state` label on `recovery_participant_convergence_state` is a closed enum: `blocked`, `converged`, `terminalized`, `invalidated`, or `fenced_disabled_backlog_retained`. The derived `recovery_participant_convergence_blocked` series is restricted to `state="blocked"` and is produced from the current source state, not written as independent controller state. The `source_family` label on `recovery_participant_convergence_source_missing` is also closed; the current values are `inventory_complete` and `participant_inventory`. These labels must not carry arbitrary participant, service, workflow, or inventory-source identities.
+
+The controller owns only the source projection: it publishes each environment's required participant-family inventory and current participant state as one all-or-nothing projection. It sets the completeness marker to `0` before changing source series, reconciles the full authoritative family set by removing or explicitly tombstoning every family absent from that inventory, including stale `recovery_required_participant_inventory` and `recovery_participant_convergence_state` series, and exposes the complete current set before setting the marker to `1`; a partial projection must never carry `complete=1`. It does not independently write the derived coverage, blocked, or source-missing recordings. The `recovery_participant_convergence_coverage_missing` recording intentionally has only `environment` and `participant` labels: it identifies missing coverage and has no `state` label. The blocked recording preserves `environment`, `participant`, and its bounded `state` while the corresponding current source state is `blocked`; it clears when that source series is removed or no longer blocked, including when the source disappears. The global source-missing recording is derived separately from bounded `absent(...)` conditions and carries only `source_family`; because a missing source family has no remaining environment label, it cannot replace environment-specific source health or readiness proof. The cumulative `recovery_participant_convergence_total` event counter is audit history only and must not drive an active blocked alert.
 
 Alerting policy:
 
@@ -119,9 +131,9 @@ Validation rules:
 - `restoreRecoveryRecordRef` must point to a finalized exported projection of a `production-equivalent-drill` controller state with `trafficExposure=isolated-drill` that completed quarantine, post-restore hardening, external credential validation, smoke verification, and the isolated controlled-reopen transition
 - `backupReadinessRef` is a backup-readiness artifact, not a recovery record. Preflight must dereference it and separately dereference and validate its `restoreRecoveryRecordRef`; that restore record does not replace validation of `baselineRecoveryRecordRef`
 - the recovery record must prove `cold_start_restore`, empty Coordination Redis, environment-wide session and epoch/fence invalidation, safe durable-participant and external-effect dispositions, and controlled reopen
-- `recoveryControllerLineage` must dereference the finalized environment-wide controller state and its immutable backup, restore-tool, participant, hardening, confidentiality, and smoke evidence; tenant/region backup-pause proof is not required or sufficient
+- `recoveryControllerLineage` must dereference the finalized environment-wide controller state and its immutable backup, restore-tool, participant, hardening, confidentiality, and smoke evidence; tenant/game-instance/region backup-pause proof is not required or sufficient
 - `backupConfidentialityEvidence` must prove encrypted transport and storage, environment-scoped least-privilege access and audit, and retention/secure deletion. Whenever production-origin data is exercised outside production, it must also prove quarantine, sanitization, validation, and deletion
-- `backupCoverage` must be `environment-wide-postgresql`; a tenant/region pair cannot stand in for the whole database
+- `backupCoverage` must be `environment-wide-postgresql`; a tenant/game-instance/region scope cannot stand in for the whole database
 - `backupToolDigest` must match the tool that produced the source artifact and its source lineage; `recoveryToolDigest` and the recovery-contract fingerprint must match the candidate proved by the drill
 - `sourceServiceDigests` and the backup artifact lineage identify the snapshot-time production source; `candidateServiceDigests` and `candidateMigrationPathRef` identify the exact recovery candidate proved through controlled reopen
 

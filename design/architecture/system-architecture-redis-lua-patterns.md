@@ -212,7 +212,7 @@ Registry and ops expectations for this category:
 
 #### Maintenance and non-lease scripts
 
-Some maintenance or dev-tools scripts may operate on coordination prefixes outside the normal tick/session flow (for example, inspecting or cleaning up keys for a paused tenant/region). These scripts:
+Some maintenance or dev-tools scripts may operate on coordination prefixes outside the normal tick/session flow (for example, inspecting or cleaning up keys for a paused tenant/game-instance/region). These scripts:
 
 - Run only in **maintenance contexts** (for example, dev-tools jobs or coordination reset tooling) and must not be invoked from hot-path gameplay.
 - Must respect the same shard-local and key-shape rules as tick scripts (for example, operate on one `{tenantRegionTag}` at a time).
@@ -227,13 +227,13 @@ Scripts that do not clearly fit one of these categories should be refactored unt
 Automation-related Redis operations follow stricter slotting rules to avoid `CROSSSLOT` errors and keep coordination boundaries clear:
 
 - Scripts that operate on `automation:queue:{tenantInstanceTag}:*` keys:
-  - Use only `automation:queue:{tenantInstanceTag}:*` keys for a single runtime instance scope in `KEYS`.
+  - Use only `automation:queue:{tenantInstanceTag}:*` keys for a single runtime instance scope in `KEYS`; all such keys must share the same `{tenantInstanceTag}` hash tag and Redis Cluster slot.
   - Must not include `tick:*` keys in the same invocation.
 - Cross-boundary rules:
   - Automation scripts **never** perform multi-key operations that span both `automation:*` and `tick:*` prefixes in one `EVAL`/`EVALSHA` call.
   - Automation work is projected under `automation:queue:*` and handed off to Game Session via gRPC; only Game Session scripts mutate `tick:*` prefixes.
-  - Fairness-critical automation handoff is idempotent on a durable dispatch identity (for example `(scheduleId, gameInstanceId, regionEpoch, dueTickId, entityId, commandKind)` or an equivalent derived `automationDispatchId`) and must not depend on Redis queue contents as the sole dedupe record.
-  - Before invoking the Redis enqueue script, Game Session must insert or confirm a durable admission row keyed by `(tenantId, gameInstanceId, regionId, regionEpoch, automationDispatchId)` in its command/admission ledger. Redis enqueue scripts may treat the dispatch identity as an idempotent member key for hot-path dedupe, but the durable admission row is the authority used after resets, gRPC retries, and failover.
+  - Current live timer rows may expose an optional `dueTickId` alongside the existing due-state fields and derived projections; live Redis scripts must not assume that the tagged `duePoint` migration shape is already present. In target state, fairness-critical automation handoff is idempotent on the full scheduler Trigger Identity: `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, entityId, scriptId, eventType, eventSchemaVersion, scriptPatchVersion, scriptEventId, scheduleDefinitionId, duePoint, isDryRun, triggerMode)`, plus `pluginId` and `pluginVersionId` when applicable. `scriptEventId` is the generated stable identity for the trigger occurrence; it is part of the trigger identity even when a schedule definition also exists. Scheduled rows require exactly one tagged `duePoint`, either `dueTickId:<value>` or `dueAt:<epochMillis>`; both forms, neither form, empty values, and zero placeholders are invalid. Immediate event rows use the distinct event-driven identity branch, omit scheduler-only fields and `duePoint`, and have both physical `dueTickId` and `dueAt` columns explicitly `NULL`. A versioned migration must translate live due fields before enforcing the target tagged form. The per-command `automationDispatchId` plus `commandOrdinal` is a child handoff identity derived from that trigger and must not be replaced by `scriptEventId` or `commandKind` alone.
+  - Before invoking the Redis enqueue script, Game Session must insert or confirm a durable admission row whose uniqueness key is the complete applicable Trigger Identity, the target runtime timeline, and the child handoff identity `(automationDispatchId, commandOrdinal)`. The applicable Trigger Identity includes the source runtime scope and event/scheduler fields defined by the event branch; the target runtime timeline includes the target `(gameInstanceId, regionId, regionEpoch)` and, when the command is tick-aligned, its target `dueTickId`. Scheduled rows retain exactly one tagged due point (`dueTickId:<value>` or `dueAt:<epochMillis>`); immediate event rows use the separate immediate branch and keep scheduler-only fields and both physical due columns `NULL`. Redis enqueue scripts may project the dispatch-plus-ordinal identity into an idempotent member key for hot-path dedupe, but the durable admission row and durable trigger-instance uniqueness projection are the authorities used after resets, gRPC retries, and failover.
 
 CI must reject automation Lua scripts that:
 
@@ -244,7 +244,7 @@ From a correctness perspective, `automation:queue:*` and related automation cach
 
 - Scripts and callers must assume that queued items can be lost, duplicated, or reordered within the bounds described in the Redis hub doc.
 - Any automation contract that requires “exactly once” semantics or durable ordering must record its authoritative state in PostgreSQL or another durable store and use `automation:queue:*` only as a convenience layer for scheduling, not as the sole record of work.
-- For gameplay-equivalent automation, Automation & Scripting's authoritative due-work record is a durable PostgreSQL trigger-instance or outbox row keyed by the dispatch identity. Game Session's authoritative admission record is its own durable command/admission row keyed by the same `automationDispatchId` plus the target runtime timeline. Game Session treats the same identity as the Redis member-level dedupe key when enqueueing into `tick:{tenantRegionTag}:queue:<entityId>`, but Redis is only the materialized coordination buffer.
+- For gameplay-equivalent automation, Automation & Scripting's authoritative due-work record is a durable PostgreSQL trigger-instance or outbox row keyed by the applicable Trigger Identity branch. Game Session's target authoritative admission record is its own durable command/admission row keyed by the complete applicable Trigger Identity, target runtime timeline, and `(automationDispatchId, commandOrdinal)`. The immediate and scheduled branches remain distinct: scheduled admission includes exactly one tagged due point, while immediate admission omits scheduler-only fields and due point columns. Game Session treats the dispatch-plus-ordinal child identity as the Redis member-level dedupe key when enqueueing into `tick:{tenantRegionTag}:queue:<entityId>`, but Redis is only the materialized coordination buffer. The live enqueue proto is narrower and must not be described as satisfying this target contract until it carries the missing fields.
 - The Redis operations docs and metrics catalog should name stale automation-dispatch outcomes explicitly (for example duplicate-dispatch no-op, stale epoch rejection, stale due-tick rejection) so on-call operators can separate healthy idempotent suppression from broken automation admission.
 
 ### Script Complexity and Runtime Limits
@@ -391,7 +391,7 @@ All coordination-related Lua scripts live in a **Lua Script Registry** in the sh
 - Reset and tail-loss metadata:
   - `reset_sensitivity` describing which reset scopes (region, tenant, cluster) must be considered when changing script behavior or key shape.
   - `tail_loss_behavior` describing what is expected to happen if the script’s writes are lost or replayed within the tail-loss envelope (for example “pure lease; safe to lose”, “can enqueue duplicates; relies on domain idempotency”, “must not silently drop without a corresponding ledger row”).
-- Shard-locality metadata for multi-key scripts, including whether all `KEYS` must share the same `{tenantRegionTag}` hash tag and slot.
+  - Shard-locality metadata for multi-key scripts, including whether all `KEYS` must share the same `{tenantRegionTag}`, `{tenantInstanceTag}`, or `{tenantGameplayTag}` hash tag and slot.
 
 The registry descriptors are sufficient to **drive a generic test harness**: any coordination script must be invokable in isolation using only the registry metadata (script identifier, expected `KEYS`/`ARGV`, and allowed prefixes). Callers must not hard-code key names or slots that diverge from the registry.
 

@@ -16,9 +16,17 @@ Redis coordination behavior and reset flows are defined in:
 
 ## Implementation Notes
 
-This runbook is written for the target tick/region model (`tenantId` + `gameInstanceId` + `regionId`). Incident queries must carry `tenantId`, `gameInstanceId`, `regionId`, and `regionEpoch` together, using exact storage projections such as `game_instance_id` and `region_epoch` where applicable. If your current deployment only exposes coarser tick pause controls, follow the same decision logic at the closest available scope and record the scope mismatch in the incident timeline for follow-up.
+This runbook is written for the target tick/region model (`tenantId` + `gameInstanceId` + `regionId`). Incident queries must carry `tenantId`, `gameInstanceId`, `regionId`, and `regionEpoch` together, using exact storage projections such as `game_instance_id` and `region_epoch` where applicable. If your current deployment only exposes coarser tick pause controls (for example pausing by `tenantId` + `gameInstanceId`), follow the same decision logic but apply it at the closest available scope and record the scope mismatch in the incident timeline for follow-up.
 
-When applying scope substitution, use a deterministic mapping source (control-plane lookup or game-instance registry), record the resolved region set, and include the mapping evidence in the incident notes so post-incident reconciliation is auditable.
+When applying scope substitution, use a deterministic authoritative mapping source (control-plane lookup or game-instance registry) to resolve region IDs, bind the resolved region set to that source's mapping generation or a maintenance lease, and keep that lease held through the complete operation. Where a lease cannot be held, every mutating step must use a CAS check against the captured mapping generation and complete set. Revalidate the generation/lease and complete set immediately before execution and at each CAS-fenced step. If the generation changes, the lease expires or is lost, or the set no longer matches, fail closed without executing any further stale substitution. Record the version-validated region set and mapping evidence in the incident notes so post-incident reconciliation is auditable. Resolve each region's current `regionEpoch` and lease fence separately from authoritative control-plane/runtime-health evidence.
+
+If regional pause or reset controls are unavailable and a broader tenant/game-instance control is proposed as a substitute, the operator must first enumerate every affected game instance and region from the deterministic mapping source, bind that enumeration to its mapping generation or maintenance lease, and record the expected blast radius. Keep the lease held through the broader action or CAS-fence every mutating step to that generation and complete set. Revalidate the generation/lease and complete region set immediately before execution and at each CAS-fenced step; a changed, expired, lost, or mismatched binding fails the operation. The broader action requires an explicit blast-radius impact approval/gate before execution; the incident record must retain the approval identity, control request, version-validated resolved instance/region set, reason, and timing. Never silently substitute a broader pause or reset merely because a regional control is unavailable.
+
+Bounded metrics identify the operational bucket (for example, stalled, replay pressure, or cleanup divergence); they do not by themselves authorize an exact region action. Before pausing or resetting a specific region, the operator must resolve the exact `<tenantId, gameInstanceId, regionId>` through the deterministic mapping source, then obtain the current `regionEpoch` and lease fence from authoritative control-plane/runtime-health evidence. If the mapping, health evidence, epoch, or fence is unavailable, stale, or mismatched, keep the scope paused and use the broader-scope approval gate rather than guessing from metric labels or Redis keys.
+
+Canonical API and workflow scope names in this runbook use `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, and `regionEpoch`. SQL and storage examples may use `tenant_id`, `game_instance_id`, `playable_state_scope`, `region_id`, and `region_epoch`; these are aliases for the same fields, not different scopes.
+
+Prometheus labels in this runbook are bounded categories only. `scope_class` identifies a controlled bucket such as `region`, `game_instance`, `tenant`, or `cluster`; it never contains a raw identifier. Operators resolve the exact tuple and current epoch/fence from durable tick-batch/ledger and control-plane records before taking action. Metrics select the incident family; they do not establish which game instance or region is authoritative.
 
 ## Incident Types
 
@@ -35,6 +43,8 @@ Tick incidents often benefit from trace-level diagnosis, but mitigation must not
 
 All trace-specific guidance in this runbook is conditional on the environment advertising and proving the named workflow-tracing capability. Without that proof, use metrics and structured logs for detection, diagnosis, and mitigation.
 
+Normal incident escalation groups by `<tenantId, gameInstanceId>`; `regionId` remains a diagnostic and reset-selection dimension within that group. Any wider tenant or cluster escalation must first enumerate the affected game instances and their regions from the authoritative mapping source and carry that exact version-validated blast radius through approval and execution.
+
 - Metrics and structured logs are the dependable baseline in every environment; mitigation must proceed without traces.
 - Use `tick_execute` / `tick_apply_effect` traces only when the environment advertises and proves the named workflow-tracing capability.
 - Apply temporary service-scoped sampling escalation only when that control is advertised and proved, and record start/end times.
@@ -46,7 +56,7 @@ All trace-specific guidance in this runbook is conditional on the environment ad
 ### Detect (Stalled tick region)
 
 - Alerts fire on tick health, for example:
-  - `tick_status{scope,status="STALLED"}` or `tick_status{scope,status="DEGRADED"}` being `1` for a sustained window.
+  - `tick_status{scope_class,status="STALLED"}` or `tick_status{scope_class,status="DEGRADED"}` being `1` for a sustained window.
   - `tick_execution_time_ms_p95` / `tick_execution_time_ms_p99` ratios vs `tick_lock_ttl_ms` exceeding the degraded thresholds described in `system-architecture-tick-concepts-and-invariants.md`.
 - Redis coordination metrics and dashboards show:
   - A region holding `tick-executor-lease:{tenantRegionTag}` for longer than expected without advancing `tickId`.
@@ -59,10 +69,10 @@ All trace-specific guidance in this runbook is conditional on the environment ad
 
 - If the stall is brief and metrics already show recovery (status returns to `RUNNING`, queues drain, execution time ratios return to healthy ranges), continue to monitor without intervention.
 - If the region remains stalled or degraded long enough that the shared tick-health paging conditions would still be firing for that scope, plan a **region-scoped** coordination reset for the affected `<tenantId, gameInstanceId, regionId>` as described in `system-architecture-redis-reset-and-recovery.md`.
-  - In shared rulesets, this means the same conditions that would keep the finalized per-region tick-health paging alert active for that region, starting with sustained `tick_status{scope,status="STALLED"} == 1` and any environment overlay that pages on prolonged `DEGRADED` state.
-  - Treat `tick_status{scope,status="STALLED"} == 1` sustained through the environment’s alert hold time as an intervention threshold by itself.
-  - Also treat sustained `tick_status{scope,status="DEGRADED"} == 1` together with continued over-threshold `tick_execution_time_ms_p95` / `tick_execution_time_ms_p99` ratios versus `tick_lock_ttl_ms`, or continued growth in `tick_retry_queue_depth` / `tick_command_queue_depth`, as sufficient to intervene before the region flips fully to `STALLED`.
-- Only escalate to a **tenant-scoped** or **cluster-wide** reset if multiple regions for the same tenant show similar symptoms or if Redis incident runbooks indicate broader coordination corruption.
+  - In shared rulesets, this means the same conditions that would keep the finalized per-region tick-health paging alert active for that region, starting with sustained `tick_status{scope_class,status="STALLED"} == 1` and any environment overlay that pages on prolonged `DEGRADED` state.
+  - Treat `tick_status{scope_class,status="STALLED"} == 1` sustained through the environment’s alert hold time as an intervention threshold by itself.
+  - Also treat sustained `tick_status{scope_class,status="DEGRADED"} == 1` together with continued over-threshold `tick_execution_time_ms_p95` / `tick_execution_time_ms_p99` ratios versus `tick_lock_ttl_ms`, or continued growth in `tick_retry_queue_depth` / `tick_command_queue_depth`, as sufficient to intervene before the region flips fully to `STALLED`.
+- Only escalate to a **tenant-scoped** or **cluster-wide** reset if multiple regions for the same `<tenantId, gameInstanceId>` group show similar symptoms or if Redis incident runbooks indicate broader coordination corruption, and only after enumerating every affected game instance and region and passing the explicit blast-radius approval/gate required above.
 
 ### Act (Stalled tick region)
 
@@ -76,15 +86,21 @@ All trace-specific guidance in this runbook is conditional on the environment ad
    - When the Trace Preconditions are satisfied, use Jaeger to inspect `tick_execute` spans for this region to verify whether the stall is due to downstream services, coordination, or domain logic. Otherwise, use the correlated metrics and Game Session logs.
 3. **Apply a region-scoped coordination reset**
    - Follow the **Per-region reset** flow in `system-architecture-redis-reset-and-recovery.md`, scoping the Job to:
-     - `tick:{tenantRegionTag}:*`
+     - `tick:{tenantRegionTag}:meta`
+     - `tick:{tenantRegionTag}:pending`
+     - `tick:{tenantRegionTag}:queue:<entityId>`
+     - `tick:{tenantRegionTag}:lock:<entityId>`
+     - `tick:{tenantRegionTag}:session-binding:<entityId>` (the narrow region-authoritative session-to-region bridge; preserved gameplay sessions must rebind after cleanup)
      - `timer:{tenantRegionTag}`
      - `retry:{tenantRegionTag}`
      - `tick-executor-lease:{tenantRegionTag}`
+     - After Game Session cleanup, invoke an Automation & Scripting-scoped cleanup/rebuild for `automation:timer:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId`; Automation & Scripting owns those prefixes and rebuilds them from durable schedules, trigger-instance rows, and the active status/progress adapter.
+     - `tick-events-lease:{tenantRegionTag}`, `tick-events:{tenantRegionTag}`, and `tick-events-offset:{tenantRegionTag}` as reset-tolerant observer hints; consumers reacquire leases and re-establish baselines from the active status/progress adapter and durable domain state.
    - Do not delete domain data or non-coordination prefixes.
 4. **Resume ticks and verify recovery**
-   - Resume tick scheduling for the region.
+   - Resume tick scheduling for the region only after both Game Session coordination cleanup and the Automation & Scripting cleanup/rebuild have completed, followed by the canonical post-reset smoke gate.
    - Confirm via dashboards that:
-     - `tick_status{scope,status="RUNNING"}` is `1`.
+     - `tick_status{scope_class,status="RUNNING"}` is `1`.
      - `tick_execution_time_ms_*` ratios fall back into healthy envelopes.
      - Command and retry queue depths stabilize.
    - Review `tick_effects_pending_total` for the region to ensure the ledger is draining and not accumulating new stuck rows.
@@ -225,12 +241,12 @@ All trace-specific guidance in this runbook is conditional on the environment ad
 ### Detect (Stuck tick effect ledger entries)
 
 - Dashboards and metrics show:
-  - `tick_effects_pending_total{scope}` remaining high for specific regions even after coordination and domain metrics suggest normal operation.
-  - `tick_effects_pending_oldest_age_seconds{scope}` exceeding `tick_effects_replay_convergence_budget_seconds{scope}`.
-  - `tick_effects_replay_slo_breached{scope}` indicating replay is outside the normative convergence budget.
+  - `tick_effects_pending_total{scope_class}` remaining high for an approved bounded scope bucket even after coordination and domain metrics suggest normal operation.
+  - `tick_effects_pending_oldest_age_seconds{scope_class}` exceeding `tick_effects_replay_convergence_budget_seconds{scope_class}`.
+  - `tick_effects_replay_slo_breached{scope_class}` indicating replay is outside the normative convergence budget.
   - Replay fairness signals distinguish two failure shapes:
-    - `tick_effects_pending_total > 0` while `tick_effects_replay_batches_total` does not advance for the same region, or `tick_effects_replay_starved{scope}` becomes `1`.
-    - `tick_effects_replay_scan_lag_ms{scope}` grows for a subset of regions even though the controller is still making progress elsewhere.
+    - `tick_effects_pending_total > 0` while `tick_effects_replay_batches_total` does not advance for the same region, or `tick_effects_replay_starved{scope_class}` becomes `1`.
+    - `tick_effects_replay_scan_lag_ms{scope_class}` grows for a subset of regions even though the controller is still making progress elsewhere.
 - Logs and optional workflow traces:
   - Game Session logs may show repeated attempts to process the same effects or gaps in processing for certain tick IDs.
   - When the Trace Preconditions are satisfied, traces for those tick IDs show missing or incomplete spans for expected domain calls.
@@ -245,9 +261,11 @@ All trace-specific guidance in this runbook is conditional on the environment ad
 
 ### Act (Stuck tick effect ledger entries)
 
+Normal replay and re-enqueue in this section apply only to effects from the current authoritative `regionEpoch`. An old-epoch effect is never replayed through the current-epoch handlers merely because it remains `SCHEDULED`.
+
 1. **Inspect ledger and domain state**
-   - Use SQL or service-level admin APIs to query `tick_effects` (or the equivalent ledger table) for the affected `<tenantId, gameInstanceId, regionId, region_epoch>`:
-     - Identify the oldest `SCHEDULED` entries and their associated `gameInstanceId`, `region_epoch`, `tickId`, `effectKey`, and target aggregate identity.
+   - Use SQL or service-level admin APIs to query `tick_effects` (or the equivalent ledger table) for the exact affected `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch>` scope; do not mix rows from another `playableStateScope` or `regionEpoch`:
+     - Identify the oldest `SCHEDULED` entries and carry each complete `EffectId` tuple: `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId>`. `effectKey` is part of the identity, not a replacement for the other tuple fields.
    - Compare `tick_effects_pending_oldest_age_seconds` with `tick_effects_replay_convergence_budget_seconds` to distinguish “brief replay delay” from “budget breach that requires active remediation”.
    - For a small sample, inspect domain state (for example entity HP, inventory, room state) to determine whether the effects have already been applied.
 2. **Classify outcomes**
@@ -263,14 +281,15 @@ All trace-specific guidance in this runbook is conditional on the environment ad
 3. **Apply targeted remediation**
    - For “applied but not marked” rows:
      - Do not update ledger rows directly to `APPLIED` from ad hoc SQL, a generic admin endpoint, or a one-off script.
-     - Run the service-owned verifier/reconcile path for the affected `EffectId` so the owning domain can prove the effect is already reflected in authoritative state or in its durable replay guard, then let that path transition the ledger row to `APPLIED` with replay-verification audit metadata.
+     - For a current-epoch row, run the service-owned verifier/reconcile path selected by the effect family using that exact `EffectId` tuple as its input, including `effectKey` and target aggregate identity, within the exact `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch>` scope. The owning domain must prove the effect is already reflected in authoritative state or in its durable replay guard, then let that path transition the ledger row to `APPLIED` with an audit/`tick_effect_outcome_total{outcome="replay_ok"}` record when the domain call is a replay no-op. Replay no-op is an attempt outcome, not a third ledger status. Do not reconcile the same effect identity across region epochs.
      - If no verifier exists for that effect family, treat the row as not safely proven and choose re-run or `ABANDONED` remediation instead of inventing a manual `APPLIED` correction.
-   - For genuinely stuck rows:
+   - For genuinely stuck current-epoch rows:
      - If it is safe to re-run the effects, enqueue follow-up commands or trigger replay using the same idempotent handlers that tick execution uses.
      - If effects are no longer valid, mark rows `ABANDONED` with precise reasons (for example `EXPIRED`, `INVALID_TARGET`, `REGION_RESET_SCOPED`) so they stop appearing as pending.
+   - For old-epoch rows, use the authority-fenced attestation under the original `EffectId` described in [Inconclusive Old-Epoch Reconciliation Policy](./system-architecture-tick-failures-and-operations.md#inconclusive-old-epoch-reconciliation-policy). Any business continuation across the epoch boundary must use an explicitly approved maintenance or saga/outbox path that creates a new current-epoch identity; it must not re-drive the original effect through normal replay.
    - For replay-controller starvation:
      - Reduce per-region replay batch monopolization or other hot-region pressure first.
-     - If the region remains starved, run scoped replay-controller remediation for the affected `<tenantId, gameInstanceId, regionId>` before escalating to broader reset actions.
+     - If the region remains starved, run scoped replay-controller remediation for the affected `<tenantId,gameInstanceId,regionId,regionEpoch>` before escalating to broader reset actions.
 4. **Prevent recurrence**
    - Review Game Session and domain handlers to ensure:
      - Ledger status transitions happen atomically with domain commits where required.
@@ -281,7 +300,7 @@ All trace-specific guidance in this runbook is conditional on the environment ad
 
 For all of the scenarios above, workflow traces are optional diagnostics rather than the operational baseline:
 
-- Only when the environment advertises and proves the named workflow-tracing capability, use Jaeger to search for spans representing tick scheduling and execution (for example `tick_schedule`, `tick_execute`) filtered by `tenantId`, `gameInstanceId`, `regionId`, `region_epoch`, and, where available, `tickId`.
+- Only when the environment advertises and proves the named workflow-tracing capability, use Jaeger to search for spans representing tick scheduling and execution (for example `tick_schedule`, `tick_execute`) filtered by `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, and, where available, `tickId`.
 - When that capability is proved, inspect stalled regions for long-running or repeated spans for the same tick IDs and cross-reference domain service spans to identify downstream bottlenecks.
 - When that capability is proved, search replay storms by canonical effect identity attributes (for example `gameInstanceId`, `region_epoch`, `effectKey`, `targetAggregateIdentity`, `effect_type`) and verify how often the same identity appears in recent traces.
 - If the capability is absent or unproved, use metrics and structured logs for each of these investigations and do not delay mitigation for trace collection.

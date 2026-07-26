@@ -57,6 +57,8 @@ Illustrative producer API for derived artifacts:
 
 Illustrative `GetPublishableDerivedArtifact` fragments:
 
+The UUID-shaped `tenantId` and `versionId` values in these illustrative artifact responses are target-state identifiers. Current transport examples must use the numeric `int64` `versionId` contract until the related APIs are migrated together.
+
 - `NOT_READY`:
 
 ```json
@@ -109,8 +111,11 @@ Required-artifact attestation contract:
 
 Illustrative `GetPublishedReleaseBundle` fragment:
 
+This target-state attestation example uses a UUID-shaped `versionId`. Current Game Design transport examples must use numeric `int64` `versionId` values until the related protobuf fields are migrated together.
+
 ```json
 {
+  "id": 7,
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
   "versionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "manifestHash": "sha256:2d4b2e...",

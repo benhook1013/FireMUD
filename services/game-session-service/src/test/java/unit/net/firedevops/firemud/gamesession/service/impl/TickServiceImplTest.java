@@ -244,14 +244,15 @@ class TickServiceImplTest {
     when(tickEffectRepository.findByTickBatchId(any())).thenReturn(List.of());
     when(tickEffectRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(remoteFollowupRepository
-            .countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
-                anyLong(), any(), any(), anyLong()))
+            .countByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
+                anyLong(), anyLong(), any(), any(), anyLong()))
         .thenReturn(0L);
     when(remoteFollowupRepository
-            .findFirstByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
-                anyLong(), any(), any(), anyLong()))
+            .findFirstByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
+                anyLong(), anyLong(), any(), any(), anyLong()))
         .thenReturn(Optional.empty());
-    when(remoteFollowupDrainService.claimDueFollowups(anyLong(), any(), anyLong(), any(), anyInt()))
+    when(remoteFollowupDrainService.claimDueFollowups(
+            anyLong(), anyLong(), any(), anyLong(), any(), anyInt()))
         .thenReturn(
             new net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService.ClaimOutcome(
                 List.of(), 0));
@@ -484,8 +485,8 @@ class TickServiceImplTest {
     when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(remoteFollowupRepository
-            .countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
-                1L, "2", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 1L))
+            .countByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
+                1L, 2L, "2", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 1L))
         .thenReturn(25L);
 
     service.processTick(1L, 2L);
@@ -499,15 +500,15 @@ class TickServiceImplTest {
     when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(remoteFollowupRepository
-            .countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
-                1L, "2", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 1L))
+            .countByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
+                1L, 2L, "2", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 1L))
         .thenReturn(2L);
     net.firedevops.firemud.gamesession.entity.RemoteFollowup oldestDue =
         new net.firedevops.firemud.gamesession.entity.RemoteFollowup();
     oldestDue.setDueTickId(0L);
     when(remoteFollowupRepository
-            .findFirstByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
-                1L, "2", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 1L))
+            .findFirstByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
+                1L, 2L, "2", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 1L))
         .thenReturn(Optional.of(oldestDue));
 
     service.processTick(1L, 2L);
@@ -523,7 +524,7 @@ class TickServiceImplTest {
     when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     when(remoteFollowupDrainService.claimDueFollowups(
-            eq(1L), eq("2"), eq(1L), any(String.class), eq(16)))
+            eq(1L), eq(2L), eq("2"), eq(1L), any(String.class), eq(16)))
         .thenReturn(
             new net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService.ClaimOutcome(
                 List.of("followup-1"), 1));
@@ -579,7 +580,7 @@ class TickServiceImplTest {
     service.processTick(1L, 2L);
 
     verify(remoteFollowupDrainService)
-        .claimDueFollowups(eq(1L), eq("2"), eq(1L), any(String.class), eq(16));
+        .claimDueFollowups(eq(1L), eq(2L), eq("2"), eq(1L), any(String.class), eq(16));
     ArgumentCaptor<java.util.List<net.firedevops.firemud.gamesession.entity.TickEffect>>
         effectListCaptor = ArgumentCaptor.forClass(java.util.List.class);
     verify(tickEffectRepository).saveAll(effectListCaptor.capture());
@@ -1802,7 +1803,7 @@ class TickServiceImplTest {
     followup.setRequiresSoloTick(true);
     followup.setPayloadJson("{\"kind\":\"noop\"}");
     when(remoteFollowupDrainService.claimDueFollowups(
-            eq(1L), eq("2"), eq(1L), any(String.class), eq(16)))
+            eq(1L), eq(2L), eq("2"), eq(1L), any(String.class), eq(16)))
         .thenReturn(
             new net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService.ClaimOutcome(
                 List.of("followup-1"), 1));

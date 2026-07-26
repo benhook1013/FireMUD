@@ -54,17 +54,20 @@ public class RemoteFollowupDrainServiceImpl implements RemoteFollowupDrainServic
   @Transactional
   public ClaimOutcome claimDueFollowups(
       long tenantId,
+      long targetGameInstanceId,
       String targetRegionId,
       long dueTickIdInclusive,
       String tickBatchId,
       int limit) {
     requirePositive(tenantId, "tenant_id");
+    requirePositive(targetGameInstanceId, "target_game_instance_id");
     requireNotBlank(targetRegionId, "target_region_id");
     requireNotBlank(tickBatchId, "tick_batch_id");
     requirePositive(limit, "limit");
 
     List<RemoteFollowup> followups =
-        fairSelectedCandidates(tenantId, targetRegionId, dueTickIdInclusive, limit);
+        fairSelectedCandidates(
+            tenantId, targetGameInstanceId, targetRegionId, dueTickIdInclusive, limit);
     if (followups.isEmpty()) {
       return new ClaimOutcome(List.of(), 0);
     }
@@ -165,15 +168,20 @@ public class RemoteFollowupDrainServiceImpl implements RemoteFollowupDrainServic
   }
 
   private List<RemoteFollowup> fairSelectedCandidates(
-      long tenantId, String targetRegionId, long dueTickIdInclusive, int limit) {
+      long tenantId,
+      long targetGameInstanceId,
+      String targetRegionId,
+      long dueTickIdInclusive,
+      int limit) {
     int pageSize = candidateWindow(limit);
     ArrayList<RemoteFollowup> selected = new ArrayList<>(limit);
     Set<String> claimedEntityKeys = new LinkedHashSet<>();
     for (int page = 0; selected.size() < limit; page++) {
       List<RemoteFollowup> candidates =
           remoteFollowupRepository
-              .findByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAscIdAsc(
+              .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAscIdAsc(
                   tenantId,
+                  targetGameInstanceId,
                   targetRegionId,
                   RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
                   dueTickIdInclusive,
