@@ -39,7 +39,7 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
 2. **`onEnterRegion` event is emitted**
    - After the move is committed and the player is now in the new region, the Game Session Service emits an `onEnterRegion` **script event** to the Automation & Scripting Service over gRPC.
    - Conceptually this is a unary `TriggerScriptEvent` call on the Automation & Scripting Service that carries:
-     - `tenantId`, `gameInstanceId`, and `regionId`.
+     - `tenantId`, `gameInstanceId`, `playableStateScope`, and `regionId`.
      - Target `entityId` (for example, an NPC guarding the room).
      - `eventType=onEnterRegion`.
      - The currently pinned `scriptPatchVersion` for that game.
@@ -53,7 +53,7 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
 
 4. **Sandboxed DSL execution**
    - For each allowed script, the Automation & Scripting Service executes the `onEnterRegion` handler inside the sandboxed DSL runtime, walking the graph of condition, timer, and action nodes for the current event payload.
-   - All gameplay-affecting reads in that handler use the same run snapshot token captured at admission for the trigger's committed `(gameInstanceId, regionId, regionEpoch, tick/read-version)` view; the handler must not silently mix fresher state mid-run.
+   - All gameplay-affecting reads in that handler use the same run snapshot token captured at admission for the trigger's committed `(gameInstanceId, playableStateScope, regionId, regionEpoch, tick/read-version)` view; the handler must not silently mix fresher state mid-run.
    - Typical patterns include:
      - Checking player or NPC state (faction, health, quest flags).
      - Branching into dialogue, combat, or flavor events.
@@ -61,7 +61,7 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
 
 5. **Automation queue staging**
    - Actions produced by the handler are converted into domain commands and persisted as a durable script work item (outbox), then indexed into `automation:queue:{tenantInstanceTag}:<entityId>` for the affected entity.
-   - Each work item carries the originating `scriptEventId`, `scriptId`, `gameInstanceId`, version metadata, and region context. Each emitted gameplay command also carries its deterministic `automationDispatchId`; one handler's fan-out commands must not share only the trigger identity. Automation records each attempted command in a separate `ListScriptHandoffEvents` child record keyed by that dispatch ID, while retaining one handler audit row.
+   - Each work item carries the originating `scriptEventId`, `scriptId`, `gameInstanceId`, `playableStateScope`, version metadata, and region context. Each emitted gameplay command also carries its deterministic `automationDispatchId`; one handler's fan-out commands must not share only the trigger identity. Automation records each attempted command in a separate `ListScriptHandoffEvents` child record keyed by that dispatch ID, while retaining one handler audit row. The complete command-level handoff identity remains target-state until Game Session carries `commandOrdinal` and the full Trigger Identity end to end.
 
 6. **Automation ticks and tick command enqueue**
    - Automation's durable execution loop claims pending work items and hands emitted commands to Game Session.
@@ -70,7 +70,7 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
 7. **Execution, audit, and observability**
    - On subsequent ticks, the Game Session Service executes at most one command per entity per tick, so `onEnterRegion` effects follow the same fairness and conflict-resolution rules as player actions.
    - Metrics such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total` are updated throughout this flow; see the metrics glossary in `design/architecture/system-architecture-scripting-quotas-and-operations.md` for names and label conventions.
-   - An audit record is written to `script_event_audit` for each resolved handler Trigger Identity, with identifiers such as `scriptEventId`, `scriptId`, `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, and `tickId`, plus stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`) so operators can distinguish “DSL evaluated” from “accepted into tick queues”, enabling replay and troubleshooting as described in the same quotas and operations document.
+   - An audit record is written to `script_event_audit` for each resolved handler Trigger Identity, with identifiers such as `scriptEventId`, `scriptId`, `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, and `tickId`, plus stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`) so operators can distinguish “DSL evaluated” from “accepted into tick queues”, enabling replay and troubleshooting as described in the same quotas and operations document.
 
 ### Mixed Fan-Out Example
 
@@ -128,7 +128,7 @@ This example shows how a script that runs on a fixed cadence (for example, an NP
    - Automation later claims the durable work items, uses `automation:queue` only as a rebuildable pointer index, and hands the resulting commands to the Game Session Service over internal gRPC so Game Session can enqueue them into the appropriate `tick:{tenantRegionTag}:queue:<entityId>`.
    - On subsequent ticks, the Game Session Service executes at most one command per entity per tick, so patrol movements and emotes follow the same fairness and conflict-resolution rules as player actions.
    - Each fired interval contributes to `automation_script_triggers_total` (tagged with `eventType=onInterval`) and, if it produces work that is accepted into tick queues, increases `automation_tick_events_enqueued_total`. An audit record is written to `script_event_audit` so missed or delayed intervals can be debugged using stage-aware fields (`finalStage`, `finalOutcome`, `finalReason`) alongside identifiers like `scriptEventId`, `scriptId`, `scheduleDefinitionId`, the persisted due point, and `tickId`.
-   - The separate `ListScriptHandoffEvents` records carry each emitted command's `automationDispatchId` and later handoff/execution dispositions; the handler audit does not carry a single dispatch ID. See the metrics and audit sections in `design/architecture/system-architecture-scripting-quotas-and-operations.md` for interpretation.
+   - The current `ListScriptHandoffEvents` read carries Automation-owned per-command `automationDispatchId` and handoff fields; the handler audit does not carry a single dispatch ID. A combined downstream execution-disposition view keyed by the complete Trigger Identity remains target-state until the Game Session handoff is widened. See the metrics and audit sections in `design/architecture/system-architecture-scripting-quotas-and-operations.md` for interpretation.
 
 As with `onEnterRegion`, reload failures or version issues are surfaced via specific outcomes (for example, `skipped_reloading`, `rollback_paused`, `version_unavailable`) and corresponding metrics, detailed in the quotas and operations document.
 

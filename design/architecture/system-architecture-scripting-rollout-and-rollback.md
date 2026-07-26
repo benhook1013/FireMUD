@@ -26,8 +26,8 @@ For mutating workflow calls, `actor` is the authenticated operator principal and
 
 ## Patch Rollback (Operator-Driven, Required)
 
-1. Call `PauseTicks` for the affected scope with `controlPlaneRequestId`, `actor`, and `reason`.
-2. Call `SetAutomationAdmissionMode(..., mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId, actor, reason)` for the same scope. This explicitly pauses external, scheduler, and timer admission before repin; keep it active through reconciliation, cancellation, purge, convergence, and drain.
+1. Call `SetAutomationAdmissionMode(..., mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId, actor, reason)` for the affected scope. This pauses external, scheduler, and timer admission before any tick barrier is acquired; keep it active through reconciliation, cancellation, purge, convergence, and drain.
+2. After the Automation admission barrier is acknowledged, call `PauseTicks` for the same scope with `controlPlaneRequestId`, `actor`, and `reason`. A future operation may acquire both barriers atomically, but it must not pause ticks first while Automation admission remains open.
 3. Call `RollbackScriptPatchVersion` (or `SetPinnedScriptPatchVersion`) with `controlPlaneRequestId`, `actor`, and `reason` to repin to the target known-good patch.
 4. Automation & Scripting must perform and durably complete schedule/timer reconciliation immediately after repin and before cancel or purge while the admission barrier remains active; the system-owned mutation records the same `controlPlaneRequestId`, `requestedBy`, and `reason`, plus `executedBy=system:automation`:
    - timers owned by the displaced patch or plugin version are retired only after their target replacement identity is durable, or tombstoned when no target schedule exists;
@@ -46,8 +46,8 @@ For mutating workflow calls, `actor` is the authenticated operator principal and
 Concrete example:
 
 - `tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, current pin `P22`, rollback target `P21`, `controlPlaneRequestId=RB-42`.
-- Step 1: `PauseTicks(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
-- Step 2: `SetAutomationAdmissionMode(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
+- Step 1: `SetAutomationAdmissionMode(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
+- Step 2: after the admission barrier is acknowledged, `PauseTicks(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
 - Step 3: `RollbackScriptPatchVersion(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, targetScriptPatchVersion=P21, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
 - Step 4: Run the system-owned durable schedule/timer reconciliation for target `P21` immediately after repin while the admission barrier remains active; replacement creation and `P22` retirement are one atomic durable result, or a resumable idempotent operation that creates or confirms the `P21` schedule identity before retiring `P22`. It carries due state only when `scheduleDefinitionId`, `playableStateScope`, and `scheduleSemanticsHash` all match, creates no firing claim or `scriptEventId`, and records `controlPlaneRequestId=RB-42`, `requestedBy=operator:alice`, `executedBy=system:automation`, and `reason="rollback RB-42"`.
 - Step 5: Run patch-scoped cancellation for displaced `P22` work with `controlPlaneRequestId=RB-42`, `actor=operator:alice`, and `reason="rollback RB-42"`; if plugin versions are also rolled back, run the corresponding plugin-scoped cancellation.

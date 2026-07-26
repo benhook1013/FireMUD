@@ -186,7 +186,8 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `coordination-maintenance init-meta`
     - accepts the scope grammar above.
     - requires `--maintenance-lock-token <token>`.
-    - accepts either `--region-epoch <epoch> --current-tick-id <tickId>` for `--scope region` or `--region-epoch-map <path> --current-tick-id <tickId>` for tenant/cluster scopes.
+    - accepts either `--region-epoch <epoch>` for `--scope region` or `--region-epoch-map <path>` for tenant/cluster scopes, together with `--current-tick-id <tickId>`, `--current-tick-state <STAGED|RESOLVING|APPLIED|ABANDONED>`, and `--current-tick-terminal-at-ms <epochMillis>`.
+    - For reset initialization, `--current-tick-id` defaults to `-1`, `--current-tick-state` defaults to `APPLIED`, and `--current-tick-terminal-at-ms` defaults to the init-meta write time. A terminal timestamp is `NULL` for `STAGED` or `RESOLVING`; callers may override the reset defaults only with a state/timestamp combination accepted by the control-plane signature. The CLI passes these normalized values to `InitializeRegionMeta(scope, regionEpoch | regionEpochMap, currentTickId, currentTickState, currentTickTerminalAtMs)` and must not invent a separate default or argument shape.
   - `coordination-maintenance rebind-sessions`
     - accepts the scope grammar above.
     - requires `--maintenance-lock-token <token>` from the same paused reset workflow.
