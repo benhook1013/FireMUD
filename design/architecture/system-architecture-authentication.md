@@ -228,7 +228,7 @@ Admission-routing convergence rule:
 
 ### WebSocket Connect Token Contract (`/ws/game/**`)
 
-For every public non-proxy WebSocket client, the control plane issues a short-lived connect token used only for handshake-time edge policy (for example tenant-aware rate limiting before `LOGIN` completes).
+For every public non-proxy WebSocket client, the control plane issues a short-lived connect token carrying the verified identity, realm, runtime-target, pointer, and replay-fence claims from which Gateway creates the signed Gateway-to-Game Session connect context. The same token also supports handshake-time edge policy such as tenant-aware rate limiting before `LOGIN` completes.
 
 FireMUD standardizes a dedicated **player bootstrap** contract for first-party gameplay web/mobile clients:
 

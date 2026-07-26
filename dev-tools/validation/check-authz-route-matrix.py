@@ -217,18 +217,11 @@ def validate_delegated_entitlements(routes: list[Any], errors: list[str]) -> Non
         )
 
 
-def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
-    errors: list[str] = []
-    try:
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as error:
-        return [f"cannot read matrix {path}: {error}"], set()
-
-    if not isinstance(document, dict):
-        return ["matrix root must be a mapping"], set()
-
+def validate_live_check_vocabulary(document: dict[str, Any], errors: list[str]) -> set[str]:
     vocabulary = document.get("required_live_check_vocabulary")
-    if not isinstance(vocabulary, list) or not vocabulary or any(not isinstance(item, str) for item in vocabulary):
+    if not isinstance(vocabulary, list) or not vocabulary or any(
+        not isinstance(item, str) for item in vocabulary
+    ):
         errors.append("required_live_check_vocabulary must be a non-empty list of strings")
         allowed_checks: set[str] = set()
     else:
@@ -239,18 +232,24 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     live_checks = collect_live_checks(document)
     if any(not isinstance(check, str) for check in live_checks):
         errors.append("every required_live_checks value must be a string")
-    unknown_checks = sorted({check for check in live_checks if isinstance(check, str) and check not in allowed_checks})
+    unknown_checks = sorted(
+        {
+            check
+            for check in live_checks
+            if isinstance(check, str) and check not in allowed_checks
+        }
+    )
     if unknown_checks:
-        errors.append(f"required_live_checks contains values outside the closed vocabulary: {unknown_checks}")
+        errors.append(
+            f"required_live_checks contains values outside the closed vocabulary: {unknown_checks}"
+        )
+    return allowed_checks
 
-    routes = document.get("routes")
-    if not isinstance(routes, list):
-        errors.append("routes must be a list")
-        routes = []
 
+def validate_route_variants(
+    routes: list[Any], allowed_classifications: set[str], errors: list[str]
+) -> set[str]:
     route_variants: dict[str, list[tuple[int, Any]]] = {}
-    classifications = string_list(document.get("classifications"), "classifications", errors)
-    allowed_classifications = set(classifications)
     for index, route in enumerate(routes):
         if not isinstance(route, dict):
             errors.append(f"routes[{index}] must be a mapping")
@@ -261,7 +260,9 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
         else:
             route_variants.setdefault(key, []).append((index, route.get("applicability")))
         if route.get("classification") not in allowed_classifications:
-            errors.append(f"routes[{index}] uses unknown classification: {route.get('classification')!r}")
+            errors.append(
+                f"routes[{index}] uses unknown classification: {route.get('classification')!r}"
+            )
 
     for key, variants in route_variants.items():
         if len(variants) == 1:
@@ -273,12 +274,35 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
         if len(serialized) != len(set(serialized)):
             errors.append(f"duplicate route applicability: {key}")
 
+    return set(route_variants)
+
+
+def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
+    errors: list[str] = []
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as error:
+        return [f"cannot read matrix {path}: {error}"], set()
+
+    if not isinstance(document, dict):
+        return ["matrix root must be a mapping"], set()
+
+    validate_live_check_vocabulary(document, errors)
+
+    routes = document.get("routes")
+    if not isinstance(routes, list):
+        errors.append("routes must be a list")
+        routes = []
+
+    classifications = string_list(document.get("classifications"), "classifications", errors)
+    route_keys = validate_route_variants(routes, set(classifications), errors)
+
     validate_ws_game_routes(routes, errors)
     validate_issue_connect_token(routes, errors)
     validate_join_routes(routes, errors)
     validate_delegated_entitlements(routes, errors)
 
-    return errors, set(route_variants)
+    return errors, route_keys
 
 
 def validate(matrix_path: Path = DEFAULT_MATRIX) -> list[str]:
