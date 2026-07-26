@@ -91,9 +91,10 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - `entity_id`
   - the canonical ordering tuple used when the batch was formed
   - source-claim/removal state
+- Every replayable timer manifest entry must also carry exactly one tagged durable due point, `dueAt:<epochMillis>` or `dueTickId:<value>`, plus the normalized due-tick value used for deterministic ordering and replay. `due_ms` is permitted only as an explicitly derived Redis timer projection; it is never the required durable manifest field or authority.
 - Per-source minimum fields are:
   - `command`: `command_id`, queue family, enqueue sequence
-  - `timer`: timer member ID, `due_ms`, normalized due-tick value used for ordering
+  - `timer`: timer member ID, exactly one tagged durable due point (`dueAt` or `dueTickId`), and the normalized due-tick value used for ordering; any `due_ms` value is an explicitly derived Redis projection only
   - `retry`: retry member/effect identity, `retry_count`, `next_eligible_tick_id`
   - `remote_followup`: durable follow-up row ID, `target_region_epoch`, `due_tick_id`
 - Recovery tooling may store and inspect richer per-source payloads, but deterministic replay and cleanup must remain possible from the documented fields above.

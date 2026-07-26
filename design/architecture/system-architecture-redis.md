@@ -99,7 +99,7 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
       - `current_tick_state` – the Redis-side execution state for `current_tick_id`. Allowed values are:
         - `STAGED` – Redis `pending`/queue state exists for this tick and hot-path scripts may continue to add idempotent entries for the same tick.
         - `RESOLVING` – durable domain/application work for this tick is in progress or being reconciled; no newer tick may be staged yet.
-        - `APPLIED` – all required effects for this tick have reached durable `APPLIED` ledger state in PostgreSQL-backed handlers or the reconciliation backlog; handler-level replay/no-op results are recorded separately as `replay_ok` outcomes.
+        - `APPLIED` – every required participant for this tick has explicit durable terminal evidence: its participant outcome is `APPLIED` or `ABANDONED` in the PostgreSQL-backed ledger or an equivalent durable terminal record. The mere presence of a reconciliation-backlog item is not evidence of a terminal outcome. Handler-level replay/no-op results are recorded separately as `replay_ok` attempt outcomes and do not satisfy this requirement by themselves.
         - `ABANDONED` – the tick was intentionally terminated for the current epoch (for example due to reset/recovery) and no more work for that `(region_epoch, tickId)` may be staged through hot-path scripts.
       - `current_tick_terminal_at_ms` – caller-supplied timestamp marking when `current_tick_state` first entered `APPLIED` or `ABANDONED`; used for observability and bounded cleanup only, never for correctness decisions inside Lua.
     - Illustrative Redis hash contents:
@@ -119,7 +119,7 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
         - The first script or caller that hands staged effects to durable domain/application processing flips the state to `RESOLVING`.
         - Replays for the same tick must treat `STAGED` and `RESOLVING` as the same logical in-flight tick and may only add idempotent effect entries for that same `current_tick_id`.
       - `RESOLVING -> APPLIED`:
-        - Only after the durable tick ledger and/or reconciliation backlog for `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId)` shows all required participants at `APPLIED` or `ABANDONED` terminal outcomes; replay/no-op is an attempt outcome, not a ledger status.
+        - Only after the durable tick ledger or equivalent durable terminal records for `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId)` contain explicit `APPLIED` or `ABANDONED` evidence for every required participant. A reconciliation-backlog item may identify work still needing reconciliation, but its presence alone cannot establish `APPLIED`; replay/no-op is a handler attempt outcome, recorded as `replay_ok`, not a ledger status.
       - `RESOLVING -> ABANDONED`:
         - Only after the control plane or recovery tooling has made an explicit terminal decision to abandon the tick for the current epoch.
       - `APPLIED` or `ABANDONED` for tick `T`:
@@ -135,7 +135,7 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
     - Schedulers and operators:
       - Obtain their authoritative baseline for `(region_epoch, tickId)` from PostgreSQL RegionStatus/tick effect ledger and heartbeats, not from `current_tick_id`.
       - On a normal cold start with empty Coordination Redis, the next winning tick executor initializes or recreates `tick:{tenantRegionTag}:meta` during hot-path staging from PostgreSQL `RegionStatus`; schedulers and operators do not treat missing `meta` as a manual pre-seeding task.
-      - Treat Redis `pending` contents as an implementation detail of the hot path, not as proof of durable convergence. The durable proof that a tick is safe to move past lives in PostgreSQL-ledger and reconciliation state, after which the caller records `APPLIED` or `ABANDONED` in `tick:{tenantRegionTag}:meta`.
+      - Treat Redis `pending` contents as an implementation detail of the hot path, not as proof of durable convergence. The durable proof that a tick is safe to move past is explicit terminal `APPLIED` or `ABANDONED` evidence for every required participant in the PostgreSQL ledger or equivalent durable terminal records; reconciliation-backlog presence and `replay_ok` attempt outcomes are insufficient by themselves. Only after that proof does the caller record `APPLIED` or `ABANDONED` in `tick:{tenantRegionTag}:meta`.
       - Recovery after tail loss or reset does **not** reconstruct old ticks by silently restaging them through normal hot-path scripts. Recovery completes or abandons older work from durable manifests, ledger rows, and reconciliation backlog state, then records the resulting terminal meta state before allowing newer ticks to stage.
 - Split‑brain detection, replay, and reset handling treat this timeline as the arbiter of “which work is valid”:
   - If multiple executors attempt to own the same `<tenantId, gameInstanceId, regionId>` with different `region_epoch` values, the highest epoch wins and lower epochs are treated as stale.
