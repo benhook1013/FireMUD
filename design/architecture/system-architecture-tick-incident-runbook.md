@@ -300,9 +300,11 @@ Normal replay and re-enqueue in this section apply only to effects from the curr
 
 For all of the scenarios above, workflow traces are optional diagnostics rather than the operational baseline:
 
+The only exact replay correlation key is the complete canonical `EffectId` tuple: `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId>`. `effectKey`, `targetAggregateType`, and the exact `targetAggregateId` are part of the identity; `effect_type` and other trace attributes are exploratory filters only and cannot establish an exact match, authorize reconciliation, or justify a ledger transition.
+
 - Only when the environment advertises and proves the named workflow-tracing capability, use Jaeger to search for spans representing tick scheduling and execution (for example `tick_schedule`, `tick_execute`) filtered by `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, and, where available, `tickId`.
 - When that capability is proved, inspect stalled regions for long-running or repeated spans for the same tick IDs and cross-reference domain service spans to identify downstream bottlenecks.
-- When that capability is proved, search replay storms by canonical effect identity attributes (for example `gameInstanceId`, `region_epoch`, `effectKey`, `targetAggregateIdentity`, `effect_type`) and verify how often the same identity appears in recent traces.
+- When that capability is proved, use trace attributes such as `effect_type`, `effectKey`, and target fields only to find candidate spans, then verify every candidate against the full durable `EffectId` tuple before correlating or reconciling it.
 - If the capability is absent or unproved, use metrics and structured logs for each of these investigations and do not delay mitigation for trace collection.
 
 The Tracing architecture doc (`system-architecture-tracing.md`) includes example Jaeger queries and attribute conventions to make these investigations repeatable.

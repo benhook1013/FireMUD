@@ -78,6 +78,7 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
 - Durable history for tick-driven outcomes (for example, “which effects were applied or abandoned for a given `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)`”) lives in PostgreSQL via the tick effect ledger and domain idempotency tables described in `system-architecture-tick-failures-and-operations.md` and `system-architecture-transactions.md`.
 - Coordination Redis holds volatile structures such as tick queues, `pending` sets, timers, region leases, tick event streams, and scheduler offsets; these structures are expected to be subject to bounded tail-loss and scoped resets as defined in this document and the Redis reset/runbook docs.
 - Application and ops designs must not treat AOF contents or Redis key history as the primary log for audits, analytics, or long-term effect replay; those concerns belong in PostgreSQL-backed ledgers and domain stores.
+- `session:auth:token:<tokenHash>` is a narrow security exception: its exact-token registry record is authoritative for runtime protected admission and per-token revocation. A cryptographically valid JWT is denied when its exact active, permitted registry record is absent or revoked. This runtime authority is distinct from Account's durable issuer, account, tenant, and membership generations; those generations remain Account-owned, and Redis must not advance or recreate them.
 - Spring Cloud Gateway has one narrow Coordination Redis authority: one-use connect-token replay consumption under `gateway:connect-token:jti:*` plus its replay-readiness fence. The Gateway fails closed when that replay authority is unavailable, owns the key TTL and reset contract, and must not expand this exception into ownership of gameplay sessions, Account auth state, or general coordination policy.
 
 - **Coordination timeline = `(regionEpoch, tickId)`**
@@ -308,7 +309,7 @@ Session revocation actions (for example “kick all sessions for tenant X” on 
 - Publishing a tenant-scoped billing/security event that Game Session consumes promptly, and
 - Closing affected sockets and removing the corresponding per-session keys using in-memory registries and/or purpose-built, bounded indexes.
 
-Issued-token registry records (`session:auth:token:<tokenHash>`) use each record's actual JWT `exp` plus the cleanup margin rather than gameplay's global `session_expiration_ms` derivation. Their reset policy is independent of gameplay-session preservation: region- and tenant-scoped coordination resets preserve these Account-owned records, while a cluster reset must close protected admission, complete the Account repair/reset cutover, and then drop them as physical cleanup, forcing reauthentication/reissuance. The `--preserve-sessions` option applies only to gameplay session and bootstrap-context records; it never preserves or deletes issued-token registry records. They are documented in detail in `system-architecture-jwt-and-token-contracts.md` and the Account Service design, and live on Coordination Redis so a cluster reset can force re-authentication in a controlled way.
+Issued-token registry records (`session:auth:token:<tokenHash>`) use each record's actual JWT `exp` plus the cleanup margin rather than gameplay's global `session_expiration_ms` derivation. The exact-token record is authoritative for runtime admission and per-token revocation, but it is not the durable Account generation authority. Their reset policy is independent of gameplay-session preservation: region- and tenant-scoped coordination resets preserve these Account-owned records, while a cluster reset must close protected admission, complete the Account repair/reset cutover and durable issuer-generation advance, rebuild and prove the current generation projection, and then drop the records as physical cleanup, forcing reauthentication/reissuance. The `--preserve-sessions` option applies only to gameplay session and bootstrap-context records; it never preserves or deletes issued-token registry records. They are documented in detail in `system-architecture-jwt-and-token-contracts.md` and the Account Service design, and live on Coordination Redis so a cluster reset can force re-authentication in a controlled way.
 
 ### Gateway Connect-Token Replay Markers
 
@@ -346,7 +347,7 @@ Environments (local, CI, staging, production) are mapped to these profiles and t
 
 ## Redis as a Volatile State Layer
 
-Redis is used **exclusively** for non‑authoritative, transient data, including:
+Redis is used primarily for non‑authoritative, transient data. The exact-token registry below is the narrow runtime security exception:
 
 - In‑flight command queues and tick staging structures.
 - Tick locks and executor leases.
@@ -354,10 +355,11 @@ Redis is used **exclusively** for non‑authoritative, transient data, including
 - Gameplay session state and live coordination (session bindings, queue participation).
 - Best‑effort caches for hot‑path aggregates and chat history in Cache/Rate‑Limit Redis.
 - Automation queues and coordination hints that can be reconstructed from durable domain state.
+- Exact-token runtime admission and per-token revocation records under `session:auth:token:<tokenHash>`; these are authoritative for that token only, while Account's durable issuer/account/tenant/membership generations remain authoritative for generation advancement.
 
 Implications:
 
-- Losing keys within the tail‑loss envelope must behave like lost/reordered messages or delayed timers, not permanent data corruption.
+- Losing ordinary coordination keys within the tail‑loss envelope must behave like lost/reordered messages or delayed timers, not permanent data corruption. Losing an exact-token registry record fails closed for that token's protected runtime admission; it does not advance or replace Account's durable generations.
 - Designs must **never** put the only record of a critical effect (for example, a currency transfer) exclusively in Redis.
 - Every new use of Redis must explicitly state:
   - Which role it targets (Coordination vs Cache/Rate‑Limit).

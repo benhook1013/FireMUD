@@ -6,13 +6,17 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.gamedesign.config.AssetStoreProperties;
 import net.firedevops.firemud.gamedesign.entity.GameAsset;
+import net.firedevops.firemud.gamedesign.entity.Version;
+import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameAssetRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import org.springframework.stereotype.Service;
@@ -27,7 +31,11 @@ import tools.jackson.databind.ObjectMapper;
     value = "EI_EXPOSE_REP2",
     justification = "Injected collaborators remain internal service dependencies")
 public class AssetExportServiceImpl implements AssetExportService {
+  private static final String REPAIR_VERSION_SCOPE_UNAVAILABLE = "REPAIR_VERSION_SCOPE_UNAVAILABLE";
+
   private final GameAssetRepository repository;
+  private final VersionRepository versionRepository;
+  private final Map<VersionScope, FrozenAssetSnapshot> frozenSnapshots = new ConcurrentHashMap<>();
 
   @SuppressFBWarnings(value = "EI_EXPOSE_REP2", justification = "S3Client is thread-safe")
   private final S3Client s3Client;
@@ -39,8 +47,10 @@ public class AssetExportServiceImpl implements AssetExportService {
       GameAssetRepository repository,
       S3Client s3Client,
       AssetStoreProperties properties,
-      ObjectMapper objectMapper) {
+      ObjectMapper objectMapper,
+      VersionRepository versionRepository) {
     this.repository = repository;
+    this.versionRepository = versionRepository;
     this.s3Client = s3Client;
     this.properties = copyProperties(properties);
     this.objectMapper = objectMapper;
@@ -59,22 +69,23 @@ public class AssetExportServiceImpl implements AssetExportService {
   @Override
   @Timed("gamedesign.asset.export")
   public ExportedAssetManifest exportAssets(String tenantId, int version) {
+    VersionResolution resolution = resolveVersionScope(tenantId, version);
+    FrozenAssetSnapshot snapshot = resolveSnapshot(resolution.scope(), resolution.versionState());
     String prefix = tenantId + "/" + version + "/";
-    List<GameAsset> assets = repository.findByTenantId(tenantId);
-    Map<String, String> manifest = new HashMap<>();
+    Map<String, String> manifest = new LinkedHashMap<>();
     ArrayList<String> requiredManifestAssetKeys = new ArrayList<>();
-    for (GameAsset asset : assets) {
-      String key = prefix + asset.getFileName();
+    for (FrozenAsset asset : snapshot.assets()) {
+      String key = prefix + asset.fileName();
       s3Client.putObject(
           PutObjectRequest.builder()
               .bucket(properties.getBucket())
               .key(key)
-              .contentType(asset.getContentType())
+              .contentType(asset.contentType())
               .build(),
-          RequestBody.fromBytes(asset.getData()));
+          RequestBody.fromBytes(asset.data()));
       String url = properties.getEndpoint() + "/" + properties.getBucket() + "/" + key;
-      manifest.put(asset.getFileName(), url);
-      requiredManifestAssetKeys.add(asset.getFileName());
+      manifest.put(asset.fileName(), url);
+      requiredManifestAssetKeys.add(asset.fileName());
     }
     try {
       String manifestJson = objectMapper.writeValueAsString(manifest);
@@ -93,6 +104,42 @@ public class AssetExportServiceImpl implements AssetExportService {
     }
   }
 
+  private VersionResolution resolveVersionScope(String tenantId, int versionNumber) {
+    Version version =
+        versionRepository.findByTenantIdAndVersionNumber(tenantId, versionNumber).orElse(null);
+    if (version == null) {
+      return new VersionResolution(
+          new VersionScope(tenantId, null, versionNumber), VersionLifecycleState.DRAFT);
+    }
+    return new VersionResolution(
+        new VersionScope(tenantId, version.getId(), versionNumber), version.getVersionState());
+  }
+
+  private FrozenAssetSnapshot resolveSnapshot(
+      VersionScope scope, VersionLifecycleState versionState) {
+    FrozenAssetSnapshot existing = frozenSnapshots.get(scope);
+    if (existing != null) {
+      return existing;
+    }
+    if (versionState == VersionLifecycleState.PUBLISHED
+        || versionState == VersionLifecycleState.ACTIVE) {
+      throw new IllegalStateException(REPAIR_VERSION_SCOPE_UNAVAILABLE);
+    }
+    return frozenSnapshots.computeIfAbsent(
+        scope, ignored -> freeze(repository.findByTenantId(scope.tenantId())));
+  }
+
+  private FrozenAssetSnapshot freeze(List<GameAsset> assets) {
+    List<FrozenAsset> frozenAssets = new ArrayList<>();
+    for (GameAsset asset : assets) {
+      byte[] data = asset.getData();
+      frozenAssets.add(
+          new FrozenAsset(
+              asset.getId(), asset.getFileName(), asset.getContentType(), data, sha256(data)));
+    }
+    return new FrozenAssetSnapshot(List.copyOf(frozenAssets));
+  }
+
   @Override
   @Timed("gamedesign.asset.delete")
   public void deleteExportedAssets(String tenantId, int version, List<String> manifestAssetKeys) {
@@ -107,9 +154,13 @@ public class AssetExportServiceImpl implements AssetExportService {
   }
 
   private String sha256(String value) {
+    return sha256(value.getBytes(StandardCharsets.UTF_8));
+  }
+
+  private String sha256(byte[] value) {
     try {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
-      byte[] bytes = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+      byte[] bytes = digest.digest(value);
       StringBuilder builder = new StringBuilder(bytes.length * 2);
       for (byte current : bytes) {
         builder.append(String.format("%02x", current));
@@ -117,6 +168,28 @@ public class AssetExportServiceImpl implements AssetExportService {
       return builder.toString();
     } catch (NoSuchAlgorithmException ex) {
       throw new IllegalStateException("SHA-256 unavailable", ex);
+    }
+  }
+
+  private record VersionResolution(VersionScope scope, VersionLifecycleState versionState) {}
+
+  private record VersionScope(String tenantId, Long versionId, int versionNumber) {}
+
+  private record FrozenAssetSnapshot(List<FrozenAsset> assets) {
+    private FrozenAssetSnapshot {
+      assets = List.copyOf(assets);
+    }
+  }
+
+  private record FrozenAsset(
+      Long sourceAssetId, String fileName, String contentType, byte[] data, String contentHash) {
+    private FrozenAsset {
+      data = data == null ? null : data.clone();
+    }
+
+    @Override
+    public byte[] data() {
+      return data == null ? null : data.clone();
     }
   }
 }

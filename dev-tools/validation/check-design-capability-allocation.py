@@ -523,7 +523,7 @@ def validate_expected_allocation(
             f"{document.relative_to(root)}:{source_path}: unexpected source classification "
             f"{classification!r}; expected {expected_classification!r}"
         )
-    expected_secondary = expected[2] if len(expected) == 3 else None
+    expected_secondary = (expected[2] or None) if len(expected) == 3 else None
     if expected_secondary is not None and secondary != expected_secondary:
         fail(
             f"{document.relative_to(root)}:{source_path}: unexpected secondary capabilities "

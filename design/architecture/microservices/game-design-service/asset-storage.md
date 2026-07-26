@@ -1,16 +1,8 @@
 # Asset Storage Setup
 
-Game assets such as icons or sound files are uploaded through the Game Design
-Service at design time. In the current first implementation slice, ordinary uploaded asset bytes are persisted in the Game Design database as `game_assets.data`; that row is the immutable repair source for ordinary binary assets referenced by a Published/Active release. Published asset bytes live in object storage alongside the version manifest. A future metadata-only draft asset model may move draft bytes out of PostgreSQL, but it must first introduce an equivalent immutable repair source, such as a retained object version plus content digest, before removing `game_assets.data` as the exact-bytes repair source. When a version is published, the service uploads or promotes these assets to
-tenant- and version-scoped object storage (e.g., S3, MinIO, or a CDN) and
-generates a `manifest.json` that maps asset keys to public URLs. A manifest is
-produced for every published version, even if no assets are present. The manifest is
-stored alongside the assets and its URL is recorded in the published version
-metadata so runtime clients can retrieve it. Each manifest includes an explicit
-`schemaVersion` field so clients and tooling can distinguish between manifest
-formats over time. The Game Design Service is not queried during gameplay. Each
-record remains tied to a `tenantId` so icons, UI images, and audio files are
-isolated per game.
+Game assets such as icons or sound files are uploaded through the Game Design Service at design time. In the current first implementation slice, ordinary uploaded asset bytes are persisted in the Game Design database as `game_assets.data`; that row is the immutable repair source for ordinary binary assets referenced by a Published/Active release. Published asset bytes live in object storage alongside the version manifest. A future metadata-only draft asset model may move draft bytes out of PostgreSQL, but it must first introduce an equivalent immutable repair source, such as a retained object version plus content digest, before removing `game_assets.data` as the exact-bytes repair source. When a version is published, the service uploads or promotes these assets to tenant- and version-scoped object storage and generates a `manifest.json` that maps asset keys to public URLs. A manifest is produced for every published version, even if no assets are present. The manifest is stored alongside the assets and its URL is recorded in the published version metadata so runtime clients can retrieve it. Each manifest includes an explicit `schemaVersion` field so clients and tooling can distinguish between manifest formats over time. The Game Design Service is not queried during gameplay. Each record remains tied to a `tenantId` so icons, UI images, and audio files are isolated per game.
+
+The CDN is the runtime branding/theme byte data plane, including delivery of the published manifest and asset bytes. Game Design is the control-plane and attestation authority: `GetPublishedReleaseBundle(tenantId, versionId)` and its attested `manifestHash` establish which release the CDN bytes belong to. Runtime clients fetch bytes from the CDN using that attested release data and must not treat CDN availability or object paths as release authority.
 
 ## Identifier Implementation Status
 
@@ -216,9 +208,9 @@ Fail-closed reader rule:
 
 Published asset delivery uses the canonical external `/assets/**` family:
 
-- `/assets/**` is a read-only release-artifact surface, not a creator/control-plane write path.
-- The canonical object-store or CDN URL exported in `manifest.json` represents stable published bytes for that release.
-- Runtime consumers and clients must resolve published assets through the attested manifest/release metadata rather than inventing bucket paths or treating Game Design upload routes as runtime-read surfaces.
+- `/assets/**` is the read-only branding/theme byte data plane for published release artifacts, not a creator/control-plane write path.
+- The canonical object-store or CDN URL exported in `manifest.json` represents stable published bytes for that release, but the CDN is not the release authority.
+- `GetPublishedReleaseBundle(tenantId, versionId)` and its attested `manifestHash` are the Game Design control-plane authority; runtime consumers and clients must resolve published assets through that release metadata rather than inventing bucket paths or treating Game Design upload routes as runtime-read surfaces.
 - Any future authenticated or signed-read variant must still preserve `/assets/**` as a delivery family separate from Game Design creator APIs under `/api/design/**`.
 
 ## Table Structure
@@ -296,24 +288,15 @@ Implementation notes:
 A basic repository (`GameAssetRepository`) and service implementation
 (`GameAssetServiceImpl`) persist uploads using Spring Data JPA.
 
-At publish time, the current implementation reads asset bytes from `game_assets.data`, exports them into version-scoped published prefixes in object storage, and references them in the generated `manifest.json`. Runtime clients load branding and theme resources directly from the CDN using this manifest; the Game Design Service is not involved. A future metadata-only storage model may use retained immutable object-store draft keys, but those keys are target-only and are not the current upload or repair source. See [Game Design Service Architecture](README.md) for how these assets fit into published versions.
+At publish time, the current implementation reads asset bytes from `game_assets.data`, freezes a process-local selection for the version, exports those bytes into version-scoped published prefixes in object storage, and references them in the generated `manifest.json`. Runtime clients load branding and theme resources directly from the CDN data plane using the manifest; the Game Design Service is not involved in byte delivery, but its `GetPublishedReleaseBundle` response and attested `manifestHash` remain the control-plane authority. A future metadata-only storage model may use retained immutable object-store draft keys, but those keys are target-only and are not the current upload or repair source. See [Game Design Service Architecture](README.md) for how these assets fit into published versions.
 
-The `published_release_bundle` attestation must reference the final asset state
-for the version by including `manifestHash` (and optionally per-asset
-`contentHash` values) exposed through Game Design’s `GetPublishedReleaseBundle`
-API. Activation, cutover preflight, and repair tooling must consume the API
-instead of reconstructing asset state from `version_asset_artifact` and version
-metadata separately.
+The `published_release_bundle` attestation must reference the final asset state for the version by including `manifestHash` (and optionally per-asset `contentHash` values) exposed through Game Design’s `GetPublishedReleaseBundle` API. Activation, cutover preflight, and repair tooling must consume the API instead of reconstructing asset state from `version_asset_artifact` and version metadata separately.
 
-`published_release_bundle` is persisted in the Game Design Service schema. Game
-Design owns the table shape, Flyway migrations, and attestation writes for that
-record; other services consume the attestation only through
-`GetPublishedReleaseBundle(tenantId, versionId)` and must not treat it as a
-shared-schema artifact.
+`published_release_bundle` is persisted in the Game Design Service schema. Game Design owns the table shape, Flyway migrations, and attestation writes for that record; other services consume the attestation only through `GetPublishedReleaseBundle(tenantId, versionId)` and must not treat it as a shared-schema artifact.
 
 ### Interaction with Script-Only Patches
 
-Script-only patches (see `system-architecture-versioning-runtime.md`) do not change assets or any data stored in `game_assets` / `version_asset`. In the target contract, published asset selection is bound to `(tenantId, versionId)` and exported during full `PublishVersion` flows. The current first slice does not yet enforce that binding: `AssetExportServiceImpl` exports every tenant asset and the `version_asset` authoring path is absent. Asset changes therefore belong in a new `versionId` in the target state, while the current tenant-wide export remains an implementation gap to be corrected before version-bound export can be treated as proven.
+Script-only patches (see `system-architecture-versioning-runtime.md`) do not change assets or any data stored in `game_assets` / `version_asset`. In the target contract, published asset selection is bound to `(tenantId, versionId)` and exported during full `PublishVersion` flows. The current first slice does not yet persist that binding: `AssetExportServiceImpl` initially selects every tenant asset, freezes the selection only in process-local memory, and has no `version_asset` authoring path. A same-runtime rerun reuses the frozen selection; a Published/Active retry fails with `REPAIR_VERSION_SCOPE_UNAVAILABLE` when that selection is unavailable instead of reselecting the tenant-wide list. Asset changes therefore belong in a new `versionId` in the target state, while the current tenant-wide selection remains an implementation gap to be corrected before persisted version-bound export can be treated as proven.
 
 ### Asset Lifecycle and Publish Workflow
 
@@ -358,41 +341,16 @@ Transition enforcement contract:
 - `PUBLISHED` is the only success state that may be treated as launchable. Object-store bytes in `STAGED` or `EXPORTED_UNATTESTED` are not publish-complete on their own.
 
 - For each `(tenantId, versionId)` the durable publish workflow runs an `ExportAssets` step that:
-  - **Current implementation:** selects every `game_assets` row for `tenantId`
-    through `GameAssetRepository.findByTenantId`, including assets with no
-    `version_asset` mapping, and reads the export bytes from `game_assets.data`.
-    The `version_asset` table and a Draft-version authoring action that creates
-    or removes those mappings are not implemented yet.
-  - **Target convergence:** selects only assets obtained by joining
-    `version_asset` to `game_assets` for the target `(tenantId, versionId)`;
-    unmapped tenant assets are excluded from that version's export.
-  - Copies the selected ordinary asset bytes from `game_assets.data` into a deterministic published prefix such as
-    `<tenantId>/<versionId>/` in object storage. Future metadata-only storage may instead copy/promote from an immutable source referenced by asset metadata, but not from mutable draft keys.
+  - **Current implementation:** initially selects every `game_assets` row for `tenantId` through `GameAssetRepository.findByTenantId`, including assets with no `version_asset` mapping, and reads the export bytes from `game_assets.data`. It freezes that selection in process-local memory before writing bytes. The `version_asset` table and a Draft-version authoring action that creates or removes those mappings are not implemented yet.
+  - **Target convergence:** freezes a persisted selection from `version_asset` joined to `game_assets` for the target `(tenantId, versionId)`; unmapped tenant assets are excluded from that version's export.
+  - Copies the selected ordinary asset bytes from `game_assets.data` into a deterministic published prefix such as `<tenantId>/<versionId>/` in object storage. Future metadata-only storage may instead copy/promote from an immutable source referenced by asset metadata, but not from mutable draft keys.
   - Writes or overwrites the version-scoped `manifest.json` in the same prefix.
   - Updates version metadata with the manifest location.
   - Transitions `version_asset_artifact` from `STAGED` to `EXPORTED_UNATTESTED`.
-  - Fails the workflow step if any asset referenced in `version_asset` for the target
-    `(tenantId, versionId)` is missing, so partially published versions cannot be
-    marked as Published.
-- **Target-state retry behavior:** Once the frozen export snapshot exists, rerunning
-  `ExportAssets` for the same `(tenantId, versionId)` reuses that snapshot,
-  overwrites the same prefix and manifest, and leaves the version metadata
-  consistent. It must not re-select assets after the snapshot is frozen, so the
-  retry is bit-for-bit deterministic.
-- **Current implementation boundary:** `AssetExportServiceImpl` currently calls
-  `GameAssetRepository.findByTenantId` on every invocation and does not persist a
-  version-scoped export snapshot. A same-version rerun therefore re-reads the
-  mutable tenant-wide asset list and is not guaranteed to be bit-for-bit
-  identical; the current `ExportAssets` path does not fail closed merely because
-  snapshot evidence is unavailable. Published/Active exact-bytes repair remains
-  fail-closed with `REPAIR_VERSION_SCOPE_UNAVAILABLE` until the target snapshot
-  exists, rather than guessing from the current asset list.
-- A later `FinalizePublishedRelease` step must read the computed `manifestHash`,
-  write `published_release_bundle`, and only then transition
-  `version_asset_artifact` from `EXPORTED_UNATTESTED` to `PUBLISHED`. If the
-  attestation write fails, the artifact must remain `EXPORTED_UNATTESTED` or
-  move to `FAILED`; implementations must not expose launchable `PUBLISHED`
-  assets without a matching release attestation.
+  - Fails the workflow step if any asset referenced in `version_asset` for the target `(tenantId, versionId)` is missing, so partially published versions cannot be marked as Published.
+- **Target-state retry behavior:** Once the frozen export snapshot exists, rerunning `ExportAssets` for the same `(tenantId, versionId)` reuses that snapshot, overwrites the same prefix and manifest, and leaves the version metadata consistent. It must not re-select assets after the snapshot is frozen, so the retry is bit-for-bit deterministic.
+- **Current implementation boundary:** `AssetExportServiceImpl` freezes a process-local version-scoped snapshot and reuses it for same-runtime reruns, but it does not persist `version_asset_export_item` evidence. A Published/Active retry reuses that frozen snapshot when it is still available and fails closed with `REPAIR_VERSION_SCOPE_UNAVAILABLE` when it is absent, rather than calling `GameAssetRepository.findByTenantId` again. After process loss, exact repair therefore remains unavailable until the target persisted snapshot exists.
+- A later `FinalizePublishedRelease` step must read the computed `manifestHash`, write `published_release_bundle`, and only then transition `version_asset_artifact` from `EXPORTED_UNATTESTED` to `PUBLISHED`. If the attestation write fails, the artifact must remain `EXPORTED_UNATTESTED` or move to `FAILED`; implementations must not expose launchable `PUBLISHED` assets without a matching release attestation.
 - Once a version is in the **Published** or **Active** state, immutability rules apply:
   - `version_asset` rows for `(tenantId, versionId)` must be treated as immutable mappings.
   - Referenced `game_assets` binaries must not be modified in place; replacing bytes requires a new `game_assets` row and (for Draft versions only) an updated mapping.
@@ -413,7 +371,7 @@ Exact-bytes repair rule:
 
 - Repair of a Published/Active version must begin by reading `GetPublishedReleaseBundle(tenantId, versionId)`.
 - Repair must also read `GetVersionAssetArtifactState(tenantId, versionId)` and prove the expected `artifactState`, `stateEpoch`, and `manifestHash` before any bytes are rewritten.
-- Repair must read and verify the immutable per-version export snapshot, including every exported source-row ID and content hash. If the current implementation cannot provide a version-scoped snapshot because it exported from the tenant-wide asset list, Published/Active repair must fail closed with `REPAIR_VERSION_SCOPE_UNAVAILABLE` rather than guessing from current draft assets; recovery then requires publishing a new `versionId`.
+- Repair must read and verify the immutable per-version export snapshot, including every exported source-row ID and content hash. In the current implementation, the process-local frozen selection is the only available snapshot evidence; if it is absent because the service restarted or the version was exported without that evidence, Published/Active repair must fail closed with `REPAIR_VERSION_SCOPE_UNAVAILABLE` rather than guessing from current draft assets. Recovery then requires publishing a new `versionId` until the target persisted snapshot exists.
 - Once version-scoped selection and its frozen snapshot exist, the repair workflow may regenerate ordinary object-store bytes from the immutable `game_assets.data` rows recorded by that snapshot. Those rows must not be modified in place after they are referenced by a Published/Active release.
 - If a future storage model replaces `game_assets.data` with metadata plus object-store handles, the replacement repair source must be immutable and retained for every non-Retired or design-history-reachable release. A mutable draft object key by itself is not a valid repair source.
 - The repair workflow may only regenerate object-store bytes that hash to the existing attested `manifestHash` (and optional per-asset hashes if recorded).

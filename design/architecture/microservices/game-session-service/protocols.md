@@ -15,7 +15,7 @@ The canonical player-facing paths are:
 - Telnet via TCP Proxy and Gateway
 - first-party web via `/ws/game/**` through Gateway
 
-Direct generic WebSocket access to Game Session remains useful as an internal/test seam, but it is not a separate public authentication path. Public non-browser WebSocket clients use Gateway `/ws/game/**`, obtain a connect token through the bootstrap/authentication control plane, and present it through the dedicated non-browser header. Real end-to-end client-path verification should prefer Gateway or TCP Proxy rather than relying only on direct Game Session WebSocket coverage.
+Direct generic WebSocket access to Game Session remains useful as an internal/test seam, but it is not a separate public authentication path. Public clients use Gateway `/ws/game/**`, obtain a connect token through the bootstrap/authentication control plane, and use the canonical carrier split: first-party browser/mobile/server clients use the protected `Firemud-Connect-Token` cookie, while only an explicitly classified non-first-party generic WebSocket client may use the dedicated handshake header. An unclassified generic WebSocket header is rejected. Real end-to-end client-path verification should prefer Gateway or TCP Proxy rather than relying only on direct Game Session WebSocket coverage.
 
 At the protocol level, commands are split into two groups:
 
@@ -64,7 +64,7 @@ Selector rules for `PLAY` match the lobby helpers: `<world>` accepts a stable wo
 Telnet and WebSocket clients share the line-based syntax, but transport context determines which `LOGIN` form is valid:
 
 - For Telnet and other non-WebSocket text clients, bare `LOGIN` or `LOGON` is intended to start a prompt flow, while `LOGIN <username> <secret>` performs an immediate authentication attempt.
-- For public non-proxy `/ws/game/**` sessions that already carry a validated Gateway connect context, bare `LOGIN` completes gameplay authentication from the pre-established bootstrap identity instead of prompting for credentials. First-party browsers use the protected connect-token cookie and explicitly classified non-browser clients use the dedicated connect-token header. This bootstrap identity must not quietly reintroduce gameplay binding into `LOGIN`; `PLAY` remains the sole gameplay-admission and gameplay-scope binding step.
+- For public non-proxy `/ws/game/**` sessions that already carry a validated Gateway connect context, bare `LOGIN` completes gameplay authentication from the pre-established bootstrap identity instead of prompting for credentials. First-party browser/mobile/server clients use the protected connect-token cookie; only explicitly classified non-first-party generic WebSocket clients use the dedicated connect-token handshake header. This bootstrap identity must not quietly reintroduce gameplay binding into `LOGIN`; `PLAY` remains the sole gameplay-admission and gameplay-scope binding step.
 - The same `OK <COMMAND>` and `ERROR <CODE> <message>` response format applies to all transports so clients can react consistently.
 
 Prompt-based exchanges are planned but not implemented in this slice for Telnet and non-bootstrap clients. On those transports, bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <secret>.` First-party `/ws/game/**` sessions with a validated connect context are the exception: bare `LOGIN` consumes the bootstrap-backed context and must not ask the browser to resend credentials.
@@ -73,7 +73,7 @@ After `LOGIN` succeeds, an existing member normally issues `PLAY <world> [realm]
 
 Handshake failures such as HTTP `403` `CONNECT_TOKEN_REJECTED` or `POLICY_DENY` happen before the gameplay protocol is established and therefore are not emitted as text-protocol `ERROR <CODE>` frames. The command examples below begin only after a socket is already open and the line-based gameplay protocol is active.
 
-For first-party `/ws/game/**` sessions, the player supplies only the stable world/realm/character `PLAY` selector. Game Session resolves the current admissible `tenantId` and `gameInstanceId` server-side, then requires that resolved scope to match the gateway-signed connect context carried in `X-Firemud-Connect-Context`; raw forwarded headers or client-selected runtime IDs are never routing authority. Missing, invalid, expired, or replayed context where connect-token validation was required must fail admission with `CONNECT_CONTEXT_INVALID`. Mismatched validated scope fails with `CONNECT_SCOPE_MISMATCH`.
+For first-party `/ws/game/**` sessions, the player supplies only the stable world/realm/character `PLAY` selector. Game Session resolves the current admissible `tenantId` and `gameInstanceId` server-side, then requires that resolved scope to match the Gateway-signed connect context carried in `X-Firemud-Connect-Context`; raw forwarded headers or client-selected runtime IDs are never routing authority. Missing, invalid, expired, or replayed context where connect-token validation was required must fail admission with `CONNECT_CONTEXT_INVALID`. Mismatched validated scope fails with `CONNECT_SCOPE_MISMATCH`.
 
 Canonical first-party `PLAY` scope errors on `/ws/game/**`:
 

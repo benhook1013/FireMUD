@@ -203,10 +203,9 @@ jobs:
     name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Gate)' || 'Smoke Gate' }}
     runs-on: ubuntu-latest
     permissions:
-      # This job reads the current PR plus workflow/job results for the matching runtime-image run.
-      contents: read
-      actions: read
-      pull-requests: read
+      contents: read # Read repository metadata used by the workflow context.
+      actions: read # Inspect matching runtime-image workflow and job results.
+      pull-requests: read # Re-read the current PR head and base before accepting smoke.
     needs: [changes]
     if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     timeout-minutes: 30

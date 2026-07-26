@@ -102,6 +102,26 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors = self.validator.validate(path)
         self.assertTrue(any("trusted_tcp_proxy" in error for error in errors))
 
+    def test_conflicting_ws_game_connection_modes_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            text = replace_or_fail(
+                MATRIX.read_text(encoding="utf-8"),
+                """      all_of:
+        - connection_mode: trusted_tcp_proxy""",
+                """      all_of:
+        - connection_mode: trusted_tcp_proxy
+        - connection_mode: first_party_web""",
+            )
+            path.write_text(text, encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(
+            any(
+                "/ws/game/** has conflicting applicability values for connection_mode" in error
+                for error in errors
+            )
+        )
+
     def test_trusted_tcp_proxy_live_checks_are_required(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
@@ -153,8 +173,8 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             path = Path(directory) / "matrix.yaml"
             text = replace_or_fail(
                 MATRIX.read_text(encoding="utf-8"),
-                "admission_pointer, replay_protection_available, replay_admission_fence_match]",
-                "admission_pointer, replay_protection_available]",
+                "admission_pointer, connect_scope_match, replay_protection_available, replay_admission_fence_match]",
+                "admission_pointer, connect_scope_match, replay_protection_available]",
             )
             path.write_text(text, encoding="utf-8")
             errors = self.validator.validate(path)
@@ -171,6 +191,24 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             path.write_text(text, encoding="utf-8")
             errors = self.validator.validate(path)
         self.assertTrue(any("classifications must be a list of strings" in error for error in errors))
+
+    def test_unknown_route_classification_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            text = replace_or_fail(
+                MATRIX.read_text(encoding="utf-8"),
+                """    route: WORLDS_PUBLIC
+    transport_command: WORLDS
+    scope: public
+    classification: public""",
+                """    route: WORLDS_PUBLIC
+    transport_command: WORLDS
+    scope: public
+    classification: not_a_real_classification""",
+            )
+            path.write_text(text, encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(any("uses unknown classification" in error for error in errors))
 
     def test_duplicate_route_requires_applicability(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -95,41 +95,134 @@ require_branch_return() {
   local path="$1"
   local predicate="$2"
 
-  if ! awk -v predicate="$predicate" '
-    function brace_delta(line, opens, closes) {
-      opens = line
-      closes = line
-      gsub(/[^{]/, "", opens)
-      gsub(/[^}]/, "", closes)
-      return length(opens) - length(closes)
-    }
+  if ! python3 - "$path" "$predicate" <<'PY'
+import re
+import sys
+from pathlib import Path
 
-    !found_predicate && index($0, predicate) {
-      found_predicate = 1
-      in_branch = 1
-      brace_depth = 0
-      awaiting_scope = 1
-    }
 
-    in_branch {
-      brace_depth += brace_delta($0)
-      if (awaiting_scope) {
-        if (brace_depth > 0) {
-          awaiting_scope = 0
-        }
-        next
-      }
-      if (brace_depth == 1 && /^[[:space:]]*return;[[:space:]]*$/) {
-        found_return = 1
-      }
-      if (brace_depth == 0) {
-        found_close = 1
-        in_branch = 0
-      }
-    }
+def mask_non_code(source: str) -> str:
+    masked = list(source)
+    state = "code"
+    escaped = False
+    block_comment = False
+    syntax_depth = 0
+    template_resume_depths: list[int] = []
+    index = 0
 
-    END { exit !(found_predicate && found_return && found_close) }
-  ' "$path"; then
+    while index < len(source):
+        char = source[index]
+        next_char = source[index + 1] if index + 1 < len(source) else ""
+
+        if block_comment:
+            if char == "*" and next_char == "/":
+                masked[index] = masked[index + 1] = " "
+                block_comment = False
+                index += 2
+                continue
+            if char != "\n":
+                masked[index] = " "
+            index += 1
+            continue
+
+        if state in {"single", "double"}:
+            if char != "\n":
+                masked[index] = " "
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif (state == "single" and char == "'") or (
+                state == "double" and char == '"'
+            ):
+                state = "code"
+            index += 1
+            continue
+
+        if state == "template":
+            if char == "\\":
+                masked[index] = " "
+                if index + 1 < len(source):
+                    if source[index + 1] != "\n":
+                        masked[index + 1] = " "
+                    index += 2
+                    continue
+            if char == "`":
+                masked[index] = " "
+                state = "code"
+                index += 1
+                continue
+            if char == "$" and next_char == "{":
+                masked[index] = " "
+                template_resume_depths.append(syntax_depth)
+                syntax_depth += 1
+                index += 2
+                state = "code"
+                continue
+            if char != "\n":
+                masked[index] = " "
+            index += 1
+            continue
+
+        if char == "/" and next_char == "/":
+            while index < len(source) and source[index] != "\n":
+                masked[index] = " "
+                index += 1
+            continue
+        if char == "/" and next_char == "*":
+            masked[index] = masked[index + 1] = " "
+            block_comment = True
+            index += 2
+            continue
+        if char == "'":
+            masked[index] = " "
+            state = "single"
+        elif char == '"':
+            masked[index] = " "
+            state = "double"
+        elif char == "`":
+            masked[index] = " "
+            state = "template"
+        elif char == "{":
+            syntax_depth += 1
+        elif char == "}":
+            syntax_depth -= 1
+            if template_resume_depths and syntax_depth == template_resume_depths[-1]:
+                template_resume_depths.pop()
+                state = "template"
+        index += 1
+
+    return "".join(masked)
+
+
+path = Path(sys.argv[1])
+predicate = sys.argv[2]
+source = path.read_text(encoding="utf-8")
+predicate_index = source.find(predicate)
+if predicate_index < 0:
+    raise SystemExit(1)
+
+masked = mask_non_code(source[predicate_index:])
+branch_open = masked.find("{")
+if branch_open < 0:
+    raise SystemExit(1)
+
+depth = 0
+found_return = False
+for index in range(branch_open, len(masked)):
+    char = masked[index]
+    if char == "{":
+        depth += 1
+    elif char == "}":
+        depth -= 1
+        if depth == 0:
+            raise SystemExit(0 if found_return else 1)
+    elif depth == 1 and re.match(r"return\s*;", masked[index:]):
+        found_return = True
+
+raise SystemExit(1)
+PY
+  then
     echo "$path must return within the branch containing: $predicate" >&2
     exit 1
   fi
@@ -277,6 +370,19 @@ require_contains "$image_wait_path" 'local publisher_deadline=$((SECONDS + publi
 
 image_wait_fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$image_wait_fixture_dir"' EXIT
+cat >"$image_wait_fixture_dir/branch-return.js" <<'EOF'
+if (
+  examplePredicate ||
+  otherPredicate
+) {
+  const quoted = "{";
+  const message = `template text } {
+    ${JSON.stringify({ nested: "}" })}
+  `;
+  return;
+}
+EOF
+require_branch_return "$image_wait_fixture_dir/branch-return.js" 'examplePredicate ||'
 cat >"$image_wait_fixture_dir/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail

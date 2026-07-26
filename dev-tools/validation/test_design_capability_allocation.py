@@ -261,6 +261,24 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
                 "unexpected secondary capabilities",
             )
 
+    def test_empty_expected_secondary_matches_no_parsed_handoff(self) -> None:
+        root = Path("/fixture")
+        self.validator.validate_expected_allocation(
+            root,
+            root / "allocation.md",
+            "design/architecture/decisions/adr-empty-secondary.md",
+            "AA-1",
+            "Accepted",
+            {
+                "design/architecture/decisions/adr-empty-secondary.md": (
+                    "AA-1",
+                    "Accepted",
+                    frozenset(),
+                )
+            },
+            None,
+        )
+
     def test_exempt_adr_secondary_handoff_drift(self) -> None:
         with fixture_root() as directory:
             root = Path(directory)

@@ -174,8 +174,10 @@ Session scripts operate only on gameplay session keys that share one `{tenantGam
 
 - `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`
 - `session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>`
-- `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>`
+- canonical tenant-scoped account index: `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>`
 - `session:game:index:tenant:{tenantGameplayTag}`
+
+`session:game:index:account-tenant:{tenantGameplayTag}:<accountId>` is the canonical tenant-scoped account index key. It must not be shortened to `session:game:index:account:<accountId>`; that is a separate cross-tenant discovery index and is never part of a shard-local Lua invocation.
 
 These scripts must instead validate session-specific invariants:
 

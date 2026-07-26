@@ -17,8 +17,8 @@ FireMUD targets seamless gameplay recovery across network interruptions, client 
 | Layer | Responsibility |
 | --- | --- |
 | **TCP Proxy Service** | Parses Telnet input and clears buffered commands; emits a best-effort disconnect notification to Game Session over an internal-only gRPC event sink |
-| **Spring Cloud Gateway** | Stateless WebSocket router; enforces the close-code taxonomy (for example `1013/backend_unavailable` for sustained outages) and resumes routing once clients reconnect |
-| **Game Session Service** | Restores session from Redis; rebinds socket, region, and timers when the edge connection remains healthy |
+| **Spring Cloud Gateway** | Stateless WebSocket router that owns the client-facing WebSocket close frame and close-code taxonomy (for example `1013/backend_unavailable` for sustained outages); translates classified upstream outcomes and resumes routing once clients reconnect |
+| **Game Session Service** | Restores session from Redis; rebinds socket, region, and timers when the edge connection remains healthy; emits classified upstream session/protocol errors to Gateway and does not own the client-facing close frame |
 
 Each layer handles fault tolerance independently.
 Reauthentication is required after loss of the client-facing edge transport (the client-to-Gateway WebSocket or Telnet socket/serving TCP Proxy edge path), or when the active binding's receiver token expires/refresh fails or Account authority is revoked. A retained-edge upstream rebind, including a qualifying hidden Game Session restart, preserves the existing session and does not repeat `LOGIN` or `PLAY`.

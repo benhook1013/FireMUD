@@ -81,7 +81,9 @@ def matching_routes(
     ]
 
 
-def applicability_value(route: dict[str, Any], key: str) -> Any:
+def applicability_value(
+    route: dict[str, Any], key: str, label: str, errors: list[str]
+) -> Any:
     applicability = route.get("applicability")
     if not isinstance(applicability, dict):
         return None
@@ -91,7 +93,12 @@ def applicability_value(route: dict[str, Any], key: str) -> Any:
     if not isinstance(clauses, list):
         return None
     values = [clause[key] for clause in clauses if isinstance(clause, dict) and key in clause]
-    return values[0] if len(values) == 1 else None
+    if not values:
+        return None
+    if any(value != values[0] for value in values[1:]):
+        errors.append(f"{label} has conflicting applicability values for {key}: {values!r}")
+        return None
+    return values[0]
 
 
 def route_live_checks(route: dict[str, Any], label: str, errors: list[str]) -> set[str]:
@@ -102,7 +109,7 @@ def validate_ws_game_routes(routes: list[Any], errors: list[str]) -> None:
     ws_routes = matching_routes(routes, "spring-cloud-gateway", "/ws/game/**")
     by_mode: dict[str, list[dict[str, Any]]] = {}
     for route in ws_routes:
-        mode = applicability_value(route, "connection_mode")
+        mode = applicability_value(route, "connection_mode", "/ws/game/**", errors)
         if isinstance(mode, str):
             by_mode.setdefault(mode, []).append(route)
 

@@ -63,7 +63,7 @@ Critical-domain inventory artifacts (required):
 
 ## Classification Rules
 
-| Classification | Required issued-token state | Authority generations applied? | Notes |
+| Classification | Required issued-token state | Tenant/Membership authority generations applied? | Notes |
 | --- | --- | --- | --- |
 | `public` | none | No | No JWT required |
 | `account_scoped` | One matching token record for the exact profile declared by the route | No | Account-level control-plane routes with subject binding (`accountId == caller`), plus explicit route-level admin overrides |
