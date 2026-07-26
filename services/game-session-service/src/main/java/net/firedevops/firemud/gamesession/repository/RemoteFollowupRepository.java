@@ -83,26 +83,38 @@ public class RemoteFollowupRepository {
         .fetchOptional(this::toEntity);
   }
 
-  public long countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
-      Long tenantId, String targetRegionId, String status, long dueTickId) {
+  public long
+      countByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
+          Long tenantId,
+          Long targetGameInstanceId,
+          String targetRegionId,
+          String status,
+          long dueTickId) {
     return dsl.fetchCount(
         REMOTE_FOLLOWUP,
         REMOTE_FOLLOWUP
             .TENANT_ID
             .eq(tenantId)
+            .and(REMOTE_FOLLOWUP.TARGET_GAME_INSTANCE_ID.eq(targetGameInstanceId))
             .and(REMOTE_FOLLOWUP.TARGET_REGION_ID.eq(targetRegionId))
             .and(REMOTE_FOLLOWUP.STATUS.eq(status))
             .and(REMOTE_FOLLOWUP.DUE_TICK_ID.le(dueTickId)));
   }
 
   public List<RemoteFollowup>
-      findByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAscIdAsc(
-          Long tenantId, String targetRegionId, String status, long dueTickId, Pageable pageable) {
+      findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAscIdAsc(
+          Long tenantId,
+          Long targetGameInstanceId,
+          String targetRegionId,
+          String status,
+          long dueTickId,
+          Pageable pageable) {
     return dsl.selectFrom(REMOTE_FOLLOWUP)
         .where(
             REMOTE_FOLLOWUP
                 .TENANT_ID
                 .eq(tenantId)
+                .and(REMOTE_FOLLOWUP.TARGET_GAME_INSTANCE_ID.eq(targetGameInstanceId))
                 .and(REMOTE_FOLLOWUP.TARGET_REGION_ID.eq(targetRegionId))
                 .and(REMOTE_FOLLOWUP.STATUS.eq(status))
                 .and(REMOTE_FOLLOWUP.DUE_TICK_ID.le(dueTickId)))
@@ -113,13 +125,15 @@ public class RemoteFollowupRepository {
         .fetch(this::toEntity);
   }
 
-  public List<RemoteFollowup> findByTenantIdAndTargetRegionIdAndStatusOrderByDueTickIdAscIdAsc(
-      Long tenantId, String targetRegionId, String status) {
+  public List<RemoteFollowup>
+      findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusOrderByDueTickIdAscIdAsc(
+          Long tenantId, Long targetGameInstanceId, String targetRegionId, String status) {
     return dsl.selectFrom(REMOTE_FOLLOWUP)
         .where(
             REMOTE_FOLLOWUP
                 .TENANT_ID
                 .eq(tenantId)
+                .and(REMOTE_FOLLOWUP.TARGET_GAME_INSTANCE_ID.eq(targetGameInstanceId))
                 .and(REMOTE_FOLLOWUP.TARGET_REGION_ID.eq(targetRegionId))
                 .and(REMOTE_FOLLOWUP.STATUS.eq(status)))
         .orderBy(REMOTE_FOLLOWUP.DUE_TICK_ID.asc(), REMOTE_FOLLOWUP.ID.asc())
@@ -127,13 +141,18 @@ public class RemoteFollowupRepository {
   }
 
   public Optional<RemoteFollowup>
-      findFirstByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
-          Long tenantId, String targetRegionId, String status, long dueTickId) {
+      findFirstByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
+          Long tenantId,
+          Long targetGameInstanceId,
+          String targetRegionId,
+          String status,
+          long dueTickId) {
     return dsl.selectFrom(REMOTE_FOLLOWUP)
         .where(
             REMOTE_FOLLOWUP
                 .TENANT_ID
                 .eq(tenantId)
+                .and(REMOTE_FOLLOWUP.TARGET_GAME_INSTANCE_ID.eq(targetGameInstanceId))
                 .and(REMOTE_FOLLOWUP.TARGET_REGION_ID.eq(targetRegionId))
                 .and(REMOTE_FOLLOWUP.STATUS.eq(status))
                 .and(REMOTE_FOLLOWUP.DUE_TICK_ID.le(dueTickId)))
@@ -142,13 +161,15 @@ public class RemoteFollowupRepository {
         .fetchOptional(this::toEntity);
   }
 
-  public List<RemoteFollowup> findByTenantIdAndTargetRegionIdOrderByDueTickIdAsc(
-      Long tenantId, String targetRegionId) {
+  public List<RemoteFollowup>
+      findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdOrderByDueTickIdAsc(
+          Long tenantId, Long targetGameInstanceId, String targetRegionId) {
     return dsl.selectFrom(REMOTE_FOLLOWUP)
         .where(
             REMOTE_FOLLOWUP
                 .TENANT_ID
                 .eq(tenantId)
+                .and(REMOTE_FOLLOWUP.TARGET_GAME_INSTANCE_ID.eq(targetGameInstanceId))
                 .and(REMOTE_FOLLOWUP.TARGET_REGION_ID.eq(targetRegionId)))
         .orderBy(REMOTE_FOLLOWUP.DUE_TICK_ID.asc(), REMOTE_FOLLOWUP.ID.asc())
         .fetch(this::toEntity);
@@ -212,6 +233,10 @@ public class RemoteFollowupRepository {
       String targetCommandExecutionOutcome,
       String targetCommandGameplayResult,
       Pageable pageable) {
+    if (targetRegionId != null && !targetRegionId.isBlank() && targetGameInstanceId == null) {
+      throw new IllegalArgumentException(
+          "target_game_instance_id is required when target_region_id is set");
+    }
     var followup = REMOTE_FOLLOWUP.as("followup");
     var currentOrigin = RUNTIME_REGION_STATUS.as("currentOrigin");
     var currentTarget = RUNTIME_REGION_STATUS.as("currentTarget");

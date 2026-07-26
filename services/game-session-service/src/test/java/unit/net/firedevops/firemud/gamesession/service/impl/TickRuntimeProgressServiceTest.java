@@ -85,18 +85,18 @@ class TickRuntimeProgressServiceTest {
     TickQueueControlService.OwnershipSnapshot ownership =
         new TickQueueControlService.OwnershipSnapshot("region-a", 4L, "fence-a", false, 7L);
     when(remoteFollowupRepository
-            .countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
-                1L, "region-a", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 8L))
+            .countByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
+                1L, 2L, "region-a", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 8L))
         .thenReturn(2L);
     net.firedevops.firemud.gamesession.entity.RemoteFollowup oldestDue =
         new net.firedevops.firemud.gamesession.entity.RemoteFollowup();
     oldestDue.setDueTickId(6L);
     when(remoteFollowupRepository
-            .findFirstByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
-                1L, "region-a", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 8L))
+            .findFirstByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
+                1L, 2L, "region-a", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 8L))
         .thenReturn(Optional.of(oldestDue));
 
-    service.observeRemoteFollowupBacklog(1L, ownership);
+    service.observeRemoteFollowupBacklog(1L, 2L, ownership);
 
     org.junit.jupiter.api.Assertions.assertEquals(
         2.0, meterRegistry.get("remote_followups_due_total").gauge().value());
@@ -109,15 +109,15 @@ class TickRuntimeProgressServiceTest {
     TickQueueControlService.OwnershipSnapshot ownership =
         new TickQueueControlService.OwnershipSnapshot("region-a", 4L, "fence-a", false, 7L);
     when(remoteFollowupRepository
-            .countByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
-                1L, "region-a", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 8L))
+            .countByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqual(
+                1L, 2L, "region-a", RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, 8L))
         .thenReturn(17L);
     when(remoteFollowupRepository
-            .findFirstByTenantIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
-                anyLong(), any(), any(), anyLong()))
+            .findFirstByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndStatusAndDueTickIdLessThanEqualOrderByDueTickIdAsc(
+                anyLong(), anyLong(), any(), any(), anyLong()))
         .thenReturn(Optional.empty());
 
-    service.observeRemoteFollowupBacklog(1L, ownership);
+    service.observeRemoteFollowupBacklog(1L, 2L, ownership);
 
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0, meterRegistry.get("remote_followups_backlog_over_budget_total").counter().count());

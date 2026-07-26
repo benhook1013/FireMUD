@@ -150,12 +150,13 @@ Additional non-committing terminal outcome rules:
 
 Supplementary post-handoff correlation rule:
 
-- Execution-time version/plugin fence drops that happen after tick handoff must not be left as metrics-only signals. They must be exposed on the affected per-command handoff disposition keyed by `(automationDispatchId, commandOrdinal)`, with the parent Trigger Identity retained for correlation, using bounded reasons such as `script_patch_mismatch` or `plugin_version_mismatch`.
+- **Target-state command-ordinal contract:** execution-time version/plugin fence drops that happen after tick handoff must not be left as metrics-only signals. They must be exposed on the affected per-command handoff disposition keyed by `(automationDispatchId, commandOrdinal)`, with the parent Trigger Identity retained for correlation, using bounded reasons such as `script_patch_mismatch` or `plugin_version_mismatch`.
+- **Current live fallback:** the Game Session handoff currently carries `automationDispatchId`, command id/text, selected provenance fields, and parent work-item correlation, but not `commandOrdinal` or the complete Trigger Identity. Current diagnostics use those fields and must be labeled as the narrower fallback rather than as proof of the target-state contract.
 
 Per-command handoff correlation rule:
 
 - `script_event_audit` remains one handler record per Trigger Identity, even when that handler emits multiple gameplay commands. It must not contain a single command dispatch field or a single post-handoff outcome for the whole Trigger Identity.
-- Handoff and later execution dispositions are represented as a child/collection surface with one record per emitted command. Each record is keyed by `(automationDispatchId, commandOrdinal)` and retains the parent `outboxWorkItemId` and Trigger Identity for correlation. `ListScriptHandoffEvents` is the canonical query surface for these records.
+- **Target-state:** handoff and later execution dispositions are represented as a child/collection surface with one record per emitted command. One stable `automationDispatchId` identifies the persisted handoff/work item, and `commandOrdinal` distinguishes each emitted command under that dispatch. Each record is keyed by `(automationDispatchId, commandOrdinal)` and retains the parent `outboxWorkItemId` and complete Trigger Identity for correlation. `ListScriptHandoffEvents` is the canonical query surface for these records.
 - A handler may therefore have zero, one, or many command-handoff records; a later version-fence drop on one command must not overwrite or summarize the handler audit row or the dispositions of sibling commands.
 
 ### Canonical `finalOutcome` Values (Normative)
@@ -237,7 +238,7 @@ This formula advances to the first valid cadence boundary at or after resume wit
 ### Version-Owned Durable Schedule Migration (Normative)
 
 - `scheduleDefinitionId` is the stable logical identity used to decide whether old and new definitions represent the same schedule. It is not the durable row or trigger-claim identity.
-- A change to `scriptPatchVersion`, `playableStateScope`, or, for a plugin-owned schedule, `pluginId`/`pluginVersionId`/`bindingId` is a schedule/runtime migration fence. Reconciliation must create or confirm the new owner/scope entry before retiring the old entry, as one atomic durable result or a resumable idempotent operation. The new entry may carry forward cadence only through the canonical resume formula; the old entry's owner fields and claim history are immutable.
+- A change to `scriptPatchVersion`, `playableStateScope`, target scope, or, for a plugin-owned schedule, `pluginId`/`pluginVersionId`/`bindingId` is a schedule/runtime migration fence. Reconciliation must create or confirm the new owner/scope entry before retiring the old entry, as one atomic durable result or a resumable idempotent operation. The new entry may carry forward due state only when the complete immutable reconciliation identity matches the requested mapping: `<tenantId, gameInstanceId, playableStateScope, targetScopeType, targetScopeId, scriptId, eventType, eventSchemaVersion, isDryRun, scheduleDefinitionId, scheduleSemanticsHash, pluginId?, displacedScriptPatchVersion, replacementScriptPatchVersion?, displacedPluginVersionId?, replacementPluginVersionId?, bindingId?>`. Both displaced and replacement owner identities must be retained and matched explicitly; any mismatch receives fresh due state. The old entry's owner fields and claim history are immutable.
 - The new version/scope-owned entry must derive a new scheduler trigger claim and `scriptEventId`; a matching `scheduleDefinitionId`, due point, handler, or old `playableStateScope` must never be used to reuse a Trigger Identity across the migration.
 
 ## Table 4: Metrics Label Matrix

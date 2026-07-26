@@ -98,6 +98,7 @@ final class TickStagingService {
     RemoteFollowupDrainService.ClaimOutcome claimOutcome =
         remoteFollowupDrainService.claimDueFollowups(
             tenantId,
+            gameInstanceId,
             ownership.regionId(),
             ownership.lastCommittedTickId() + 1L,
             tickBatchId,

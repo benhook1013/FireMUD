@@ -155,7 +155,7 @@ For any consumer or operator that needs to locate “where a region is” on the
       "regionId": "room:starter-village",
       "regionEpoch": 14,
       "lastCommittedTickId": 9284,
-      "executorFence": "fence-51",
+      "executorFence": "7f4a1f1e-5bf5-4cc4-9a52-81e79fd6f2ab",
       "status": "RUNNING",
       "retryQueueDepth": 2,
       "remoteFollowupOldestAgeMs": 180,

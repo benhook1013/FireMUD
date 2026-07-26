@@ -10,7 +10,7 @@ Effects described here are **not** optional guidance: any new implementation tha
 - Every effect must be scoped by instance identifiers. For room-scoped effects, this is `RoomInstanceRef = (tenantId, gameInstanceId, roomInstanceId)`. See `design/architecture/system-architecture-identifier-glossary.md`.
 - Every participating service must implement a **durable idempotency guard** keyed by `EffectId` so retries become no-ops rather than double-application.
 - The default reconciliation policy is **retry until convergence using the same `EffectId`**. Do not generate compensating deletes inside the tick loop.
-- For cross-service room reads used to render player-visible outcomes (for example `LOOK`), participants must support one same-scope read fence token. In the current adapter seam, World Management `worldSnapshotId` / `world_snapshot_id` and Entity Management `entitySnapshotId` / `entity_snapshot_id` are deterministic scope markers, not proof of mutation freshness. The target contract maps the World Management marker to a committed `roomSnapshotVersion` freshness fence and propagates that exact token to participants; it is not present in the current request/proto path. Future tick-ledger work may introduce an `asOfTickId` field only by updating the proto and architecture contracts together. Canonical scope/comparison semantics are defined in `design/architecture/system-architecture-identifier-glossary.md`. A participant that cannot satisfy the target requested fence returns `STALE_READ_FENCE` or `READ_FENCE_UNAVAILABLE`; a returned fence difference is a caller-side fresh-snapshot retry condition, never permission to mix data from different fences.
+- For cross-service room reads used to render player-visible outcomes (for example `LOOK`), participants must support one same-scope read fence token. In the current adapter seam, World Management `worldSnapshotId` / `world_snapshot_id` and Entity Management `entitySnapshotId` / `entity_snapshot_id` are deterministic scope markers, not proof of mutation freshness. The target-state contract maps the World Management marker to a committed `roomSnapshotVersion` freshness fence and propagates that exact token to participants; it is not present in the current request/proto path. Future tick-ledger work may introduce an `asOfTickId` field only by updating the proto and architecture contracts together. Canonical scope/comparison semantics are defined in `design/architecture/system-architecture-identifier-glossary.md`. Participants return an observed/echoed fence when available; a returned fence difference is a caller-side fresh-snapshot retry condition. A participant fails only with `STALE_READ_FENCE` or `READ_FENCE_UNAVAILABLE`; the difference never permits mixing data from different fences.
 
 ## Spatial Effects
 
@@ -94,7 +94,7 @@ Required writes:
 
 - **World Management**
   - Apply the door state mutation under an idempotency guard keyed by `EffectId`.
-  - Advance `worldSnapshotId` for the room/instance so LOOK caching can invalidate.
+  - **Target-state only:** advance the committed `roomSnapshotVersion` for the room/instance so LOOK caching can invalidate. The current `worldSnapshotId` scope marker provides no freshness proof and is not a cache-invalidation authority.
 
 Reconciliation:
 
@@ -130,12 +130,12 @@ Required writes:
 
 - **World Management**
   - Persist hazard state as typed ambient room state under an idempotency guard keyed by `EffectId`.
-  - Advance `worldSnapshotId` for the room instance so downstream LOOK/gameplay caches invalidate deterministically.
+  - **Target-state only:** advance the committed `roomSnapshotVersion` for the room instance so downstream LOOK/gameplay caches invalidate deterministically. The current `worldSnapshotId` scope marker provides no freshness proof and is not a cache-invalidation authority.
 
 Read/API contract:
 
 - Hazard state used by gameplay is authoritative in World Management and exposed via typed ambient fields in `GetRoomSnapshot`.
-- Game Logic must treat `worldSnapshotId` as the cache validator for hazard reads; when it changes, cached hazard state is stale.
+- **Target-state only:** Game Logic must treat committed `roomSnapshotVersion` (carried by the target `worldSnapshotId` alias) as the cache validator for hazard reads; when it advances, cached hazard state is stale. The current scope-derived `worldSnapshotId` marker is not freshness proof and must not validate a cache.
 - Game Logic and Automation & Scripting must not maintain independent authoritative hazard tables or map-only hazard interpretations.
 
 Reconciliation:

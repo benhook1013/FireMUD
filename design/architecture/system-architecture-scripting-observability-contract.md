@@ -6,7 +6,7 @@ Document conflict resolution order is defined in `design/architecture/system-arc
 
 ## Live Versus Target-State Handoff Diagnostics
 
-The complete per-command handoff diagnostic model below is **target-state**. The live Game Session proto carries `automationDispatchId`, command id/text, and selected provenance fields, but it does not yet carry `commandOrdinal` or the full Trigger Identity needed for the target-state child record. Current live command status/readbacks therefore expose a narrower diagnostic surface; the examples below must not be read as evidence that the full target-state handoff contract is already implemented.
+The complete per-command handoff diagnostic model below is **target-state**. The live `EnqueueAutomationCommandIfAbsent` contract currently carries the narrower scope, dispatch/work-item, script/plugin provenance, target-command, routing, and origin-source fields listed in [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#work-item-outbox-contract-normative), plus the returned Game Session `commandId`/admission outcome. It does not yet carry `commandOrdinal` or the full applicable Trigger Identity, including fields such as `bindingId`, `eventType`, `eventSchemaVersion`, `scriptEventId`, `isDryRun`, and scheduler identity. Current live command status/readbacks therefore expose only that narrower fallback surface; the examples below must not be read as evidence that the full target-state handoff contract is already implemented.
 
 ## Correlation Rules (High Cardinality)
 
@@ -130,7 +130,7 @@ Stage semantics:
 
 When a downstream service reports a later handoff or execution result, the target-state command-handoff surface must expose or update a child disposition keyed to the affected `(automationDispatchId, commandOrdinal)` pair with:
 
-- `automationDispatchId` – the stable identity of the emitted gameplay command.
+- `automationDispatchId` – the stable handoff/work-item identity shared by the emitted gameplay commands; `commandOrdinal` distinguishes each command under it.
 - `commandOrdinal` – the deterministic ordinal of that emitted command within the handler handoff.
 - `outcome` – bounded enum. Minimum required value: `version_fence_dropped`.
 - `reason` – bounded reason such as `script_patch_mismatch` or `plugin_version_mismatch`.
@@ -212,7 +212,7 @@ Illustrative record shape:
       "scriptEventId": "evt-7f4c",
       "isDryRun": false,
       "commandOrdinal": 0,
-      "automationDispatchId": "work-9#0",
+      "automationDispatchId": "work-9",
       "outboxWorkItemId": "work-9",
       "playableStateScope": "isolated",
       "outcome": "accepted",
@@ -233,7 +233,7 @@ Illustrative record shape:
       "scriptEventId": "evt-7f4c",
       "isDryRun": false,
       "commandOrdinal": 1,
-      "automationDispatchId": "work-9#1",
+      "automationDispatchId": "work-9",
       "outboxWorkItemId": "work-9",
       "playableStateScope": "isolated",
       "outcome": "version_fence_dropped",

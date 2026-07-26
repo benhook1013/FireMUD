@@ -109,9 +109,7 @@ Normalized reference storage is only safe if it is operationally enforced:
 
 > **Note**
 
-Templates are **versioned** like any other design asset. Publishing a
-version does **not** copy a separate design database into the domain
-services. Instead:
+Templates are **versioned** like any other design asset. Publishing a version does **not** copy a separate design database into the domain services. Instead:
 
 - The Game Design Service persists `game_templates` rows and their revision history as design-time artifacts.
 - World Management, Entity Management, and related domain services already own the authoritative versioned templates keyed by `(tenantId, versionId)`; publish finalizes those Draft templates via the `version_id` workflow described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
