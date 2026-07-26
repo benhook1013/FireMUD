@@ -69,8 +69,8 @@
       "title": "Telnet/WebSocket Path Availability (5m Trend)",
       "targets": [
         {
-          "expr": "sum by (scope, path) (rate(entrypath_connection_attempts_total{outcome=\"success\"}[5m])) / sum by (scope, path) (rate(entrypath_connection_attempts_total[5m]))",
-          "legendFormat": "{{scope}} {{path}}",
+          "expr": "sum by (service, scope, path) (rate(entrypath_connection_attempts_total{outcome=\"success\"}[5m])) / sum by (service, scope, path) (rate(entrypath_connection_attempts_total[5m]))",
+          "legendFormat": "{{service}} {{scope}} {{path}}",
           "refId": "A"
         }
       ],
@@ -81,8 +81,8 @@
       "title": "Telnet/WebSocket Path Availability (1d SLO)",
       "targets": [
         {
-          "expr": "sum by (scope, path) (increase(entrypath_connection_attempts_total{outcome=\"success\"}[1d])) / sum by (scope, path) (increase(entrypath_connection_attempts_total[1d]))",
-          "legendFormat": "{{scope}} {{path}}",
+          "expr": "sum by (service, scope, path) (increase(entrypath_connection_attempts_total{outcome=\"success\"}[1d])) / sum by (service, scope, path) (increase(entrypath_connection_attempts_total[1d]))",
+          "legendFormat": "{{service}} {{scope}} {{path}}",
           "refId": "A"
         }
       ],

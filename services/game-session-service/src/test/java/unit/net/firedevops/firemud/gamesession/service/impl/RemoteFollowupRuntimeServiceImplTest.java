@@ -162,6 +162,10 @@ class RemoteFollowupRuntimeServiceImplTest {
             1L, 9L, "region-b", 8L, "effect-1");
     verify(followupRepository)
         .save(argThat(followup -> Long.valueOf(9L).equals(followup.getTargetGameInstanceId())));
+    verify(valueOperations)
+        .set("remote:{tenant:1:instance:9}:entity-9", "1", java.time.Duration.ofMillis(60_000L));
+    verify(valueOperations, never())
+        .set("remote:{tenant:1:instance:8}:entity-9", "1", java.time.Duration.ofMillis(60_000L));
   }
 
   @Test

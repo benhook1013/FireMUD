@@ -96,11 +96,11 @@ Pause-budget alerts remain valid for maintenance/reset workflows but are not rou
 Tick pause/resume APIs support multiple ways to identify scope for maintenance, reset, migration, and future scoped recovery, but the long-term canonical region scope is `tenant_id + game_instance_id + region_id`.
 
 - The canonical region scope is `tenant_id + game_instance_id + region_id`; region identity is never interpreted outside its owning game instance.
-- Before Phase C, current requests may set `tenant_id + game_instance_id` without `region_id` only when the game instance maps cleanly to the complete affected region set; the operation must resolve and record that set before execution.
+- Before Phase C, current requests may set `tenant_id + game_instance_id` without `region_id` only when the game instance maps cleanly to the complete affected region set. The operation must resolve that set from the authoritative mapping source, bind it to the source's mapping generation or a maintenance lease, and revalidate the generation/lease and complete set immediately before execution; if the generation changes, the lease expires or is lost, or the set no longer matches, the operation must fail closed without executing against the stale set.
 - From Phase C onward, every pause/resume request must provide non-empty `tenant_id + game_instance_id + region_id`; any request that omits any member of that complete triple, including a request that otherwise identifies only a game instance, is rejected with `INVALID_ARGUMENT`.
 - Routine online backups do not invoke this contract and do not use pause scope as recovery evidence.
 - Until Phase C is complete, game-instance-scoped pause/resume is allowed only for non-player-facing maintenance drills, quarantined staging rehearsals, and manual operator workflows that record explicit scope-resolution evidence; it is never player-facing restore evidence.
-- Manual game-instance-scoped maintenance operations must write an audit record showing the requested scope, the resolved `tenant_id`, `game_instance_id`, and `region_id` set, actor identity, and start/end timestamps.
+- Manual game-instance-scoped maintenance operations must write an audit record showing the requested scope, the resolved `tenant_id`, `game_instance_id`, and `region_id` set, the mapping generation or maintenance-lease identity that was revalidated, actor identity, and start/end timestamps. The record is valid only for the version-validated complete set that was actually executed.
 
 Evidence schema versions referenced by this workflow:
 

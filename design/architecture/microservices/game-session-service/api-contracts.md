@@ -28,9 +28,9 @@ Game Session deliberately separates socket ownership from region execution owner
 
 ### Forwarding contract
 
-The internal front-end to lease-owner path is a fenced gameplay contract, not a best-effort proxy hop:
+The internal front-end to lease-owner path is a target-state fenced gameplay contract, not a best-effort proxy hop. The live proto and Game Session implementation do not yet expose this forwarding RPC; [GR-1.1](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md) tracks that gap.
 
-- Forwarded requests include `tenantId`, `gameInstanceId`, `sessionId`, `characterId`, target `regionId`, command/action identifier, and a monotonic per-session sequencing token.
+- Forwarded requests include `tenantId`, `gameInstanceId`, `playableStateScope`, `sessionId`, `characterId`, target `regionId`, command/action identifier, and a monotonic per-session sequencing token.
 - Forwarded requests include the current region lease/epoch fence. Lease owners reject stale or missing fences with an application-level stale-lease response rather than silently executing.
 - The session front-end preserves per-connection FIFO when emitting forwarded work. Cross-connection ordering remains undefined during takeovers as described in the reconnection and protocol-bridging docs.
 - If the lease owner rejects a stale fence before execution, the front-end refreshes ownership and may retry the request once against the new lease owner when the request is still valid.

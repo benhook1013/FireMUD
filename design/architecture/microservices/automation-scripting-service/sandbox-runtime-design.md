@@ -55,7 +55,7 @@ Sandboxing for scripts is implemented as a **multi-layer model**:
 
 2. **Execution sandbox**
    - Scripts run inside a **dedicated executor** within the Automation & Scripting Service.
-   - Each script run receives a **budget token** derived from `AUTOMATION_TICK_BUDGET_MS`, per-script quotas, and per-tenant budgets.
+   - In the target-state execution model, each script run receives a **budget token** derived from `AUTOMATION_TICK_BUDGET_MS`, per-script quotas, and per-tenant budgets. Current live enforcement remains the aggregate per-tenant, priority-tier reservation described below.
    - Charge points are fixed by the lifecycle contract:
      - per-script quota is charged once per handler-scoped admission,
      - tenant and cluster execution budgets are charged when the run is reserved onto sandbox capacity,
@@ -95,7 +95,7 @@ Each script run follows a consistent lifecycle:
 4. **Command staging**
    - Successful runs emit a list of commands which are persisted as part of a durable work item (outbox) and then indexed into the rebuildable `automation:queue:*` projection for later durable execution.
    - Before persistence, the engine must enforce explicit output budgets such as `maxCommandsPerRun`, `maxCommandsPerEntityPerTrigger`, and `maxSerializedWorkItemBytes`; exceeding those ceilings is a non-success outcome and must not partially commit an oversized work item.
-   - Handoff is subject to automation execution limits (`AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) and uses only documented `automation:*` Redis prefixes for projection and quotas. The Automation & Scripting Service never writes `tick:*` keys directly; it hands off commands to Game Session over internal gRPC so Game Session can enqueue tick commands under its own tick and locking model.
+   - Target-state handoff is subject to automation execution limits (`AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) and uses only documented `automation:*` Redis prefixes for projection and quotas. The Automation & Scripting Service never writes `tick:*` keys directly; it hands off commands to Game Session over internal gRPC so Game Session can enqueue tick commands under its own tick and locking model. Current live capacity enforcement is the aggregate per-tenant, priority-tier reservation described below.
 
 5. **Outcome recording**
    - The engine records a **stage-aware outcome** for the run in `script_event_audit`:
@@ -115,9 +115,12 @@ CPU and time limits are derived from three layers:
   - Scripts define scheduling hints (`intervalTicks`, `maxConcurrent`, `priorityTag`).
   - These hints produce a **per-run budget** so that high-priority scripts can consume more time per run than background scripts, while still respecting global caps.
 
-- **Automation tick configuration**
-  - `AUTOMATION_TICK_BUDGET_MS` defines the **aggregate soft execution budget** for all live automation runs admitted during one tick window for one runtime scope (`tenantId`, `gameInstanceId`, and `regionId` where applicable); it is not a separate allowance for each script.
-  - The scheduler subdivides that scope budget into per-run reservations across eligible scripts when deciding how many runs to start. The sum of reservations across all runtime scopes remains subject to the cluster-wide execution ceiling, so scope-level allocation cannot expand total container or cluster capacity.
+- **Current live enforcement**
+  - Live execution reserves aggregate capacity through per-tenant, priority-tier budgets (`SCRIPT_TENANT_BUDGET_*`) before definition evaluation. This is not a per-trigger allowance and does not create separate `gameInstanceId` or `regionId` capacity buckets.
+
+- **Target-state automation tick configuration**
+  - `AUTOMATION_TICK_BUDGET_MS` defines the **aggregate soft execution budget** for all automation runs admitted during one target-state tick window. It is not a separate allowance for each script or trigger. Any allocation by runtime instance or region is target-state and must not be read as the current live enforcement model.
+  - The target-state scheduler subdivides that budget into per-run reservations across eligible scripts when deciding how many runs to start. The sum of reservations across all runtime scopes remains subject to the cluster-wide execution ceiling, so scope-level allocation cannot expand total container or cluster capacity.
   - `playableStateScope` is not a separate budget partition. Shared and isolated playable-state namespaces within the same runtime scope consume the same aggregate capacity budget, while per-script quotas, per-tenant tier budgets, priority ordering, and cluster ceilings provide fairness. The scope remains mandatory in Trigger Identity and fencing so capacity sharing cannot cause state or deduplication collisions.
 
 - **Cluster policies**
@@ -227,7 +230,7 @@ Sandbox limits do not replace existing quotas and scheduling policies; they **la
 
 - **Tick alignment**
   - Script runs are scheduled using the tick heartbeat stream as described in the tick architecture.
-  - Sandbox-enforced timeouts ensure that runaway scripts do not cause automation work to exceed the configured `AUTOMATION_TICK_BUDGET_MS` per tick window.
+  - In the target-state model, sandbox-enforced timeouts ensure that runaway scripts do not cause automation work to exceed the configured `AUTOMATION_TICK_BUDGET_MS` per tick window.
 
 The combined effect is that noisy or buggy scripts are throttled or disabled quickly, while well-behaved scripts continue to run at their configured cadence.
 
@@ -239,10 +242,10 @@ Sandbox behavior is shaped by a combination of in-code defaults and environment 
 
 - `AUTOMATION_TICK_DURATION_MS` – bounds the wall-clock duration of an automation tick. This, together with the scheduler’s batching strategy, constrains how often sandboxed runs are admitted.
 - `AUTOMATION_TICK_MAX_EVENTS` – caps how many automation events (including script runs) are staged from `automation:queue` per automation tick.
-- `AUTOMATION_TICK_BUDGET_MS` – provides a soft execution budget for script work performed inside a single automation tick; it informs the per-run budget tokens allocated to sandboxed evaluations.
+- `AUTOMATION_TICK_BUDGET_MS` – **target-state** soft execution budget for script work performed inside a single automation tick; it informs the target-state per-run budget tokens allocated to sandboxed evaluations. It is not the current live per-trigger or per-region enforcement bucket.
 - `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` / `SCRIPT_EVENT_AUDIT_MAX_ROWS` – control how long sandbox outcomes (for example, `sandbox_error` with `cpu_budget_exceeded` or `memory_budget_exceeded`) remain queryable in `script_event_audit`.
 
-Per-script and per-tenant quotas (for example, `SCRIPT_QUOTA_LIMIT`, `SCRIPT_QUOTA_WINDOW_SECONDS`, and `SCRIPT_TENANT_BUDGET_NORMAL_RUNS_PER_MINUTE`) are documented in the service configuration and operations docs and in `design/architecture/system-architecture-scripting-quotas-and-operations.md`; they work in tandem with the sandbox budgets to determine whether a run is admitted and how much CPU and memory it can consume.
+Per-script and per-tenant quotas (for example, `SCRIPT_QUOTA_LIMIT`, `SCRIPT_QUOTA_WINDOW_SECONDS`, and `SCRIPT_TENANT_BUDGET_NORMAL_RUNS_PER_MINUTE`) are documented in the service configuration and operations docs and in `design/architecture/system-architecture-scripting-quotas-and-operations.md`; they determine current live admission, while the target-state sandbox budgets describe how future tick-window capacity and per-run limits may be layered on top.
 
 Additional resource-related environment variables may be introduced over time. New knobs should be documented first in the Automation & Scripting Service configuration doc and, where they materially affect sandbox semantics, referenced from this section so operators and implementers can correlate configuration changes with the behavior described above.
 

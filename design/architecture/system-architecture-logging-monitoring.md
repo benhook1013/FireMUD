@@ -184,11 +184,12 @@ In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines,
   - SLI: fraction of successful connection attempts over total attempts for each entry path (Telnet and WebSocket). This SLI must be computed from an explicit attempts counter so it captures all failure modes, not just cap rejections.
   - SLO: ≥ 99.9% of connection attempts succeed over a 1-day window, evaluated per approved scope and `path`; sustained deviations are treated as P0 incidents for the affected entry path.
   - Instrumentation:
-    - Edge services (TCP Proxy and Gateway) must emit a bounded attempts counter such as `entrypath_connection_attempts_total{scope,path,outcome}` where:
+    - Edge services (TCP Proxy and Gateway) must emit a bounded attempts counter such as `entrypath_connection_attempts_total{service,scope,path,outcome}` where:
+      - `service` is the bounded emitting service identity (for example `spring-cloud-gateway` or `tcp-proxy-service`) and must be retained by recording rules, alerts, and dashboards.
       - `scope` is canonical bounded scope, using `scope="environment"` before gameplay scope exists, not a raw unbounded identifier.
       - `path` is a bounded enum (for example `telnet` or `websocket`).
       - `outcome` is a bounded enum (for example `success`, `limit_exceeded`, `auth_failed`, `upstream_unreachable`, `timeout`, `protocol_error`, `unknown`).
-    - The SLI should be computed as `sum(rate(entrypath_connection_attempts_total{outcome="success"}[...])) / sum(rate(entrypath_connection_attempts_total[...]))` per `{scope,path}`.
+    - The SLI should be computed as `sum by (service, scope, path) (rate(entrypath_connection_attempts_total{outcome="success"}[...])) / sum by (service, scope, path) (rate(entrypath_connection_attempts_total[...]))`.
     - Auxiliary meters such as `tcpproxy_connections_limit_exceeded_total` remain useful drilldowns but are not sufficient to define availability by themselves.
     - Prod-like environments must also run **independent synthetic probes** from outside the gameplay ingress boundary and export a low-cardinality metric such as `entrypath_blackbox_probe_success{path,target}`. These probes are the authoritative detection source for total entry-path outages that prevent traffic from ever reaching Gateway or TCP Proxy (for example LB, DNS, TLS, or ingress policy failures), while `entrypath_connection_attempts_total` remains the authoritative in-service breakdown for `outcome` analysis once traffic reaches the edge.
   - Alert routing:
@@ -224,7 +225,7 @@ The metrics below are the desired Prometheus-facing shapes for player experience
     - Alert rules and dashboards may filter to this bounded set (for example `command=~"move|look|combat"`) while retaining `service` so the SLO signal stays stable and service-specific even when new commands are introduced.
   - `command_latency_stage_ms_bucket{service,scope,command,stage,le}` for bounded stage-level drilldown. Required `stage` values are `edge_queue`, `dispatch`, `tick_wait`, and `domain_commit`; environment overlays may add a small number of additional bounded stages only with a design update here.
 - Entry-path availability:
-  - `entrypath_connection_attempts_total{scope,path,outcome}` with the pre-gameplay `scope` baseline `environment` and bounded enums for `path` and `outcome` as described above.
+  - `entrypath_connection_attempts_total{service,scope,path,outcome}` with the bounded emitting `service`, pre-gameplay `scope` baseline `environment`, and bounded enums for `path` and `outcome` as described above. Recording rules, alerts, and dashboards must retain `service` rather than aggregating it away.
 - Synthetic player-flow canaries:
   - `playerflow_canary_success{flow,path,target}` for the mirrored result of the most recent synthetic login or representative-command run, for example `playerflow_canary_success{flow="login",path="websocket",target="gateway"}`.
   - `playerflow_canary_latency_ms{flow,path,target}` for the mirrored latency of the same synthetic run in milliseconds, for example `playerflow_canary_latency_ms{flow="command",path="telnet",target="tcp_proxy"}`.

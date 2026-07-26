@@ -251,6 +251,7 @@ At each tick for a `<tenantId, gameInstanceId, regionId>`, the executor:
      - `(priority, due_point_normalized, enqueue_seq, source_kind, entityId, commandId_or_effectKey)`
    - New work sources are not allowed to define custom tie-breakers; they must map into this canonical tuple.
 3. Stages effects:
+   - This step is allowed only after Game Session has created the durable PostgreSQL `tick_batch` row and its `SCHEDULED` ledger rows for the complete `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` scope. Redis `pending` is staging/acceleration coordination only; it is never the authoritative record or a prerequisite that can precede durable batch creation.
    - Under the region lease and entity locks, calls Lua scripts to write intended effects into `tick:{tenantRegionTag}:pending`.
 4. Applies and commits:
    - Invokes domain services to apply effects under idempotent rules.
@@ -269,7 +270,8 @@ Every selected work item must provide the tuple
   - A timer using `dueAt` must be deterministically normalized to a due tick under the active scheduler contract before ordering; its wall-clock value remains available for firing-time evaluation and diagnostics. A timer using `dueTickId` uses that persisted tick directly.
   - Lower normalized value wins.
 - `enqueue_seq`:
-  - Monotonic per region across all candidate work sources; assigned by one region-scoped ordering allocator at ingress or scheduling time and persisted with the item.
+  - Strictly increasing across all candidate work sources within the complete `<tenantId, gameInstanceId, regionId>` allocation scope; one region-scoped allocator must assign it at ingress or scheduling time and persist it with the item. It is not a global, tenant-only, game-instance-only, or cross-region counter.
+  - A reset bumps `regionEpoch` and restarts `tickId` at `0`, but does not reset or reuse `enqueue_seq` within the same `<tenantId, gameInstanceId, regionId>` scope. New-epoch work therefore remains ordered by the continuing allocator, while `regionEpoch` keeps old-epoch replay identities distinct.
   - Lower value wins.
 - `source_kind`:
   - Fixed, low-cardinality tie-break enum (`command`, `retry`, `timer`, `remote_followup`), used only after the region-wide `enqueue_seq` if earlier fields are equal.
@@ -309,6 +311,7 @@ Conceptually, tick commit proceeds through these phases:
      - the selected-work manifest for this batch
      - a correlation field that Redis `pending` can carry back (for example `tick_batch_id`)
    - The selected-work manifest is the authoritative record of which source items were chosen for the tick before Redis staging. At minimum, each selected item records:
+     - the batch scope `(tenantId, gameInstanceId, regionId, regionEpoch)`; `enqueue_seq` values are allocated from the complete `<tenantId, gameInstanceId, regionId>` scope and are not reused after a `regionEpoch` reset
      - `source_kind` (`command`, `timer`, `retry`, `remote_followup`)
      - source item identity (`commandId`, timer member ID, retry member ID, or follow-up row ID)
      - `entityId`

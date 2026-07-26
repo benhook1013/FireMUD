@@ -18,9 +18,9 @@ Redis coordination behavior and reset flows are defined in:
 
 This runbook is written for the target tick/region model (`tenantId` + `gameInstanceId` + `regionId`). If your current deployment only exposes coarser tick pause controls (for example pausing by `tenantId` + `gameInstanceId`), follow the same decision logic but apply it at the closest available scope and record the scope mismatch in the incident timeline for follow-up.
 
-When applying scope substitution, use a deterministic mapping source (control-plane lookup or game-instance registry) to resolve region IDs, record the resolved region set, and include the mapping evidence in the incident notes so post-incident reconciliation is auditable. Resolve each region's current `regionEpoch` and lease fence separately from authoritative control-plane/runtime-health evidence.
+When applying scope substitution, use a deterministic authoritative mapping source (control-plane lookup or game-instance registry) to resolve region IDs, bind the resolved region set to that source's mapping generation or a maintenance lease, and revalidate the generation/lease and complete set immediately before execution. If the generation changes, the lease expires or is lost, or the set no longer matches, fail closed without executing the stale substitution. Record the version-validated region set and mapping evidence in the incident notes so post-incident reconciliation is auditable. Resolve each region's current `regionEpoch` and lease fence separately from authoritative control-plane/runtime-health evidence.
 
-If regional pause or reset controls are unavailable and a broader tenant/game-instance control is proposed as a substitute, the operator must first enumerate every affected region from the deterministic mapping source and record the expected blast radius. The broader action requires an explicit blast-radius impact approval/gate before execution; the incident record must retain the approval identity, control request, resolved region set, reason, and timing. Never silently substitute a broader pause or reset merely because a regional control is unavailable.
+If regional pause or reset controls are unavailable and a broader tenant/game-instance control is proposed as a substitute, the operator must first enumerate every affected region from the deterministic mapping source, bind that enumeration to its mapping generation or maintenance lease, and record the expected blast radius. Revalidate the generation/lease and complete region set immediately before execution; a changed, expired, lost, or mismatched binding fails the operation. The broader action requires an explicit blast-radius impact approval/gate before execution; the incident record must retain the approval identity, control request, version-validated resolved region set, reason, and timing. Never silently substitute a broader pause or reset merely because a regional control is unavailable.
 
 Bounded metrics identify the operational bucket (for example, stalled, replay pressure, or cleanup divergence); they do not by themselves authorize an exact region action. Before pausing or resetting a specific region, the operator must resolve the exact `<tenantId, gameInstanceId, regionId>` through the deterministic mapping source, then obtain the current `regionEpoch` and lease fence from authoritative control-plane/runtime-health evidence. If the mapping, health evidence, epoch, or fence is unavailable, stale, or mismatched, keep the scope paused and use the broader-scope approval gate rather than guessing from metric labels or Redis keys.
 
@@ -89,11 +89,11 @@ All trace-specific guidance in this runbook is conditional on the environment ad
      - `timer:{tenantRegionTag}`
      - `retry:{tenantRegionTag}`
      - `tick-executor-lease:{tenantRegionTag}`
-     - `automation:timer:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId` as reset-tolerant scheduler metadata; Automation rebuilds them from durable schedules and the active status/progress adapter.
+     - After Game Session cleanup, invoke an Automation & Scripting-scoped cleanup/rebuild for `automation:timer:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId`; Automation & Scripting owns those prefixes and rebuilds them from durable schedules, trigger-instance rows, and the active status/progress adapter.
      - `tick-events-lease:{tenantRegionTag}`, `tick-events:{tenantRegionTag}`, and `tick-events-offset:{tenantRegionTag}` as reset-tolerant observer hints; consumers reacquire leases and re-establish baselines from the active status/progress adapter and durable domain state.
    - Do not delete domain data or non-coordination prefixes.
 4. **Resume ticks and verify recovery**
-   - Resume tick scheduling for the region.
+   - Resume tick scheduling for the region only after both Game Session coordination cleanup and the Automation & Scripting cleanup/rebuild have completed, followed by the canonical post-reset smoke gate.
    - Confirm via dashboards that:
      - `tick_status{scope,status="RUNNING"}` is `1`.
      - `tick_execution_time_ms_*` ratios fall back into healthy envelopes.

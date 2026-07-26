@@ -13,7 +13,7 @@ This document describes the full target-state recovery and operator model. The c
 - the live durable ownership row is currently `{tenantId, gameInstanceId}`-scoped;
 - the live owner/status API is `GetRuntimeOwnershipStatus`, not yet a full region-scoped status surface;
 - the live fence token is opaque and compare-and-match based;
-- the live `tick_batch` / `tick_effect` ledger is real and now carries the current gameplay-command selected-work manifest on `tick_batch`, including current-boundary `enqueueSeq`, source metadata, and digest-checked replay reuse for surviving staged batches, but timer/retry/remote-follow-up source-claim manifests, region-scoped replay controller breadth, and cross-region result-return semantics described below remain target-state follow-through.
+- the live `tick_batch` / `tick_effect` ledger is real and now carries the current gameplay-command selected-work manifest on `tick_batch`, including current-boundary `enqueueSeq`, source metadata, and digest-checked replay reuse for surviving staged batches. The live `enqueueSeq` is allocated by one database-wide sequence; the region-scoped, cross-source allocator defined below is target-state. Timer/retry/remote-follow-up source-claim manifests, region-scoped replay controller breadth, and cross-region result-return semantics also remain target-state follow-through.
 
 Naming convention: API, workflow, and EffectId prose uses `regionEpoch`. Snake-case forms such as `region_epoch`, `last_region_epoch`, and `target_region_epoch` are reserved for explicitly identified SQL/storage fields, Redis payloads/keys, or schema examples.
 
@@ -38,7 +38,7 @@ When implementing new failure-handling flows or adding operational procedures, e
 
 ## Crash Recovery and Replay
 
-Tick recovery is driven by durable PostgreSQL tick state plus domain-level idempotency rules, with Redis acting only as a volatile coordination layer:
+Tick recovery is driven by durable PostgreSQL tick state plus domain-level idempotency rules, with Redis acting only as a volatile coordination layer. Game Session creates the durable PostgreSQL `tick_batch` and `SCHEDULED` ledger rows first; only then may it stage the batch in Redis `pending`. Redis `pending` is staging/acceleration coordination only and is never authoritative for tick intent or recovery.
 
 - On executor crash or failover, a new worker acquires the region lease, re-establishes the authoritative recovery baseline from the durable tick-batch, tick effect ledger, follow-up tables, and the active status/progress surface: current live uses `GetRuntimeOwnershipStatus` plus `ObserveRuntimeTickProgress` for the owner, opaque `executorFence`, and committed `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` progress; target-state uses `RegionStatus`/`GetRegionTickStatus`. It then inspects any surviving `tick:{tenantRegionTag}:pending`, `retry:{tenantRegionTag}`, and timer keys only as optional coordination hints while replay converges from durable state.
 - Redis is treated as a volatile coordination layer with **at-least-once** semantics; network retries, executor failover, and AOF replay can all cause the same logical effect to be attempted more than once.
@@ -86,6 +86,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - optional `pending_digest` or equivalent integrity field
   - `created_at`, `updated_at`
 - The selected-work manifest is required for deterministic replay and source cleanup. At minimum it records, per selected source item:
+  - the batch scope `(tenantId, gameInstanceId, regionId, regionEpoch)`; its `enqueue_seq` is allocated from the complete `<tenantId, gameInstanceId, regionId>` scope and is not reset or reused when a reset bumps `regionEpoch` and restarts `tickId` at `0`
   - `source_kind`
   - source item identity
   - `entity_id`

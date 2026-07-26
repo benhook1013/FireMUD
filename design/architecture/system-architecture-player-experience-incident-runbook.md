@@ -174,7 +174,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 
 - Player reports: failed or flaky connections on one entry path (Telnet or WebSocket/HTTPS).
 - Metrics:
-  - Player Experience dashboard shows a drop in availability computed from `entrypath_connection_attempts_total{scope,path,outcome}` for one or more approved bounded `scope` buckets. Resolve an exact tenant/game-instance/region through control-plane/runtime-health reads and structured logs only when the affected connection record has gameplay identity; otherwise use the environment, entry `path`, and external/synthetic `probe target` as the operational scope.
+  - Player Experience dashboard shows a drop in availability computed from `entrypath_connection_attempts_total{service,scope,path,outcome}` for one or more approved bounded `service` and `scope` buckets. Resolve an exact tenant/game-instance/region through control-plane/runtime-health reads and structured logs only when the affected connection record has gameplay identity; otherwise use the emitting service, environment, entry `path`, and external/synthetic `probe target` as the operational scope.
   - External synthetic probes show whether the public Telnet or WebSocket path is reachable at all when traffic may not be reaching Gateway or TCP Proxy.
   - TCP Proxy dashboards show whether `tcpproxy_connections_limit_exceeded` or `tcpproxy_telnet_discarded` are elevated (Telnet path), and Gateway dashboards show whether WebSocket upgrade failures are elevated (WebSocket path).
 
@@ -183,7 +183,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 - Determine scope:
   - Single approved bounded `scope` bucket vs the deployment-wide baseline.
   - Single `path` vs multiple (`path="telnet"` vs `path="websocket"`).
-- Determine dominant failure outcomes by inspecting `entrypath_connection_attempts_total{scope,path,outcome}` broken down by `outcome`:
+- Determine dominant failure outcomes by inspecting `entrypath_connection_attempts_total{service,scope,path,outcome}` broken down by `service` and `outcome`:
   - `limit_exceeded` suggests caps or abusive clients.
   - `protocol_error` suggests client/edge parsing problems.
   - `upstream_unreachable` suggests Gateway or downstream availability issues.
@@ -211,6 +211,6 @@ Trace-driven triage is optional but often decisive for command-latency incidents
    - Confirm the short-window detection view recovers quickly for affected `{scope,path}` combinations and the dominant failure outcomes subside. Use control-plane/runtime-health reads and structured logs for exact runtime scope only when gameplay identity is present; otherwise verify the environment, entry path, and probe target.
    - Confirm the 1-day compliance view trends back toward SLO after the acute incident is resolved.
 4. **Degraded-mode branch (if observability backends are unavailable)**
-   - If Grafana is down: query Prometheus directly for both `entrypath_connection_attempts_total` success/total ratios by `{scope,path}`, the external synthetic-probe metric for each public path, and the mirrored login/command canary metrics where relevant.
+   - If Grafana is down: query Prometheus directly for both `entrypath_connection_attempts_total` success/total ratios by `{service,scope,path}`, the external synthetic-probe metric for each public path, and the mirrored login/command canary metrics where relevant.
    - If Kibana is down: use Gateway/TCP Proxy logs directly to classify failures (`limit_exceeded`, `protocol_error`, `upstream_unreachable`, `auth_failed`).
    - If Prometheus is down: rely on edge health, pod events, and direct ingress error logs to guide rollback/scale/cap actions.

@@ -121,10 +121,10 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `ResumeTicks(scope)`
   - `GetRegionTickStatus(scope)`
   - `RunScopedCoordinationReset(scope)`
-  - `ReconcileTickLedger(scope, oldRegionEpoch)`
-  - `ConvergeCommandRecords(scope, oldRegionEpoch)`
-  - `InitializeRegionMeta(scope, regionEpoch, currentTickId, currentTickState, currentTickTerminalAtMs)`
-  - `RebindRegionSessions(scope, regionEpoch)`
+  - `ReconcileTickLedger(scope, oldRegionEpoch | oldRegionEpochMap)`
+  - `ConvergeCommandRecords(scope, oldRegionEpoch | oldRegionEpochMap)`
+  - `InitializeRegionMeta(scope, regionEpoch | regionEpochMap, currentTickId, currentTickState, currentTickTerminalAtMs)`
+  - `RebindRegionSessions(scope, regionEpoch | regionEpochMap)`
   - `RunPostResetSmokeCheck(scope)`
 - Required CLI verbs:
   - `coordination-maintenance pause`
@@ -150,6 +150,7 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - Cluster scope includes every active, paused, degraded, stalled, or draining region assigned to the Coordination Redis deployment at the inventory snapshot.
   - Redis `SCAN` is used only to enumerate keys for deletion/inspection after the durable scope has been established; it must not decide which regions exist.
   - Commands that auto-discover epoch maps must derive them from the same durable affected-region snapshot and emit that snapshot in audit output.
+- Epoch arguments are scope-dependent and use one typed contract across the control plane and CLI: region scope accepts scalar `oldRegionEpoch`/`regionEpoch`; tenant and cluster scopes accept `oldRegionEpochMap`/`regionEpochMap` containing one entry for every region in the durable affected-region snapshot. `RunScopedCoordinationReset(scope)` does not accept a caller-supplied epoch; it must return the corresponding scalar old/new epoch evidence for region scope or complete old/new epoch maps for tenant/cluster scope, and all downstream reconcile, command-convergence, metadata-initialization, and session-rebind calls consume that exact evidence. A map must never be collapsed to one scalar, and a scalar must never be reused for multiple regions.
 - Required argument contract:
   - `coordination-maintenance pause`
     - accepts only the scope grammar above.
