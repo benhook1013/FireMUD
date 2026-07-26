@@ -121,7 +121,7 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 - Use Kubernetes pod logs and service logs directly for the affected service(s).
 - Prefer structured log fields (`service`, `tenantId`, `gameInstanceId`, `regionId`, `correlationId`, `traceId`) when manually filtering logs.
-- If logs are unavailable, treat tracing as unreliable as well (trace-log correlation will fail) and pivot to metrics/health endpoints.
+- Loss of Elasticsearch/Kibana indexing removes trace-to-log correlation and log-based drilldown, but does not by itself make healthy Jaeger/OpenTelemetry tracing unreliable. Continue using Jaeger traces when the collector and Jaeger query path are healthy; pivot to metrics/health endpoints only when tracing is also unavailable or insufficient for the incident.
 
 ### Elasticsearch/Kibana recovery and verification
 
@@ -174,7 +174,7 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 - Pivot to metrics and logs:
   - Use SLI/SLO panels and alert conditions only to identify an impacted deployment or approved bounded `scope` bucket.
   - Resolve the exact `<tenantId, gameInstanceId, regionId>` runtime scope through control-plane/runtime-health reads and structured logs before taking scope-specific action.
-  - Use logs filtered by `tenantId`, `gameInstanceId`, `regionId`, and `correlationId` to follow the flow.
+  - Use logs filtered by `traceId`, `correlationId`, and gameplay identity fields (`tenantId`, `gameInstanceId`, `regionId`) when those fields are present in the affected record to follow the flow.
 
 ### Jaeger/collector recovery and verification
 

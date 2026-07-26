@@ -42,6 +42,7 @@ Examples:
   - treats a guard conflict as a replay only after verifying the complete effect and target state, and otherwise reconciles or fails closed with the original EffectId. Damage does not assume an at-most-one-damage-per-aggregate-per-tick invariant, so the per-aggregate `entity_tick_state` watermark is not sufficient for this path.
 
 - **Trade between two entities** – when a tick performs a trade between `fromEntityId` and `toEntityId`:
-  - the handler computes a deterministic `effectKey` such as `trade:<fromEntityId>:<toEntityId>:<itemId>`;
+  - the handler carries a stable logical trade operation or admitted command sequence and computes a deterministic `effectKey` such as `trade:<tradeOperationId>:<fromEntityId>:<toEntityId>:<itemId>`; the operation/sequence component must remain stable across retries and distinguish two legitimate trades with the same participants and item in one tick;
+  - no canonical one-trade-per-`(fromEntityId,toEntityId,itemId)`-per-tick invariant exists, so the handler must not use the participant/item tuple alone as the effect key;
   - it inserts one complete `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType=INVENTORY, targetAggregateId)` guard row for each affected inventory aggregate before moving items between inventories; and
   - on any primary-key conflict, it verifies that guard rows for both affected inventories and the corresponding inventory state are complete and consistent; only then is the trade an already-applied no-op. A partial guard set is reconciled with the original EffectId rather than accepted as completion.

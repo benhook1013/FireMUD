@@ -1,6 +1,6 @@
 # FireMUD Scripting & Automation: Observability Contract
 
-This document defines the observability contract for scripting and automation: what is recorded in `script_event_audit`, what is emitted as metrics, and which identifiers may be used for correlation.
+This document defines the observability contract for scripting and automation: what is recorded in `script_event_audit`, what is returned by `ListScriptHandoffEvents`, what is emitted as metrics, and which identifiers may be used for correlation.
 
 Document conflict resolution order is defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#document-precedence-normative`. This document is authoritative for observability details not fully enumerated in the normative tables.
 
@@ -120,9 +120,9 @@ Stage semantics:
 - Quota denials must use `finalStage=ADMISSION` unless quotas are evaluated inside the DSL runtime for a given trigger (rare; avoid mixing).
 - Intentional rollback/control-plane fencing after admission must stay visible as `finalOutcome=canceled` at the last attempted live stage, with bounded `finalReason` values such as `rollback_epoch_advanced`, `superseded_by_newer_patch`, `operator_canceled`, or `operator_purged`.
 
-### Supplementary Per-Command Post-Handoff Outcomes (Required When Present)
+### Per-Command Handoff and Post-Handoff Outcomes (Required When Present)
 
-`script_event_audit` is the canonical lifecycle record through `TICK_HANDOFF`, but Game Session may later reject handed-off commands at execution-time version fences during rollback or plugin version changes. Tooling must not rely on metrics alone to correlate those drops back to the original trigger.
+`script_event_audit` is the canonical Automation-owned lifecycle record through `TICK_HANDOFF`, but it is not the sole post-handoff surface and it must not contain a single disposition for a fan-out trigger. Game Session may later accept or reject individual handed-off commands at execution-time version fences during rollback or plugin version changes. `ListScriptHandoffEvents` is the canonical durable query for those per-command records, and a combined trigger read must expose them as `commandHandoffDispositions[]`, with one element per emitted command keyed by its `automationDispatchId`. Tooling must not rely on metrics alone to correlate those results back to the original trigger.
 
 When a downstream service reports such a post-handoff rejection, the command-handoff surface must expose a child disposition keyed to the affected `automationDispatchId` with:
 
@@ -132,11 +132,15 @@ When a downstream service reports such a post-handoff rejection, the command-han
 - `recordedAt` – timestamp.
 - `sourceService` – producer of the disposition (for example `game-session`).
 
+Each returned child retains the parent `outboxWorkItemId` and applicable Trigger Identity fields needed for correlation; `automationDispatchId` is the command-level key and must not be replaced with the parent `scriptEventId`.
+
 Rules:
 
 - A command-handoff disposition does **not** replace `finalStage` / `finalOutcome`; those fields remain the Automation-owned handler pipeline result.
 - A handler may therefore show `finalStage=TICK_HANDOFF`, `finalOutcome=success`, while one child command disposition has `outcome=version_fence_dropped` and sibling command dispositions remain successful.
 - When present, UI/query surfaces must return both views together so operators can distinguish “accepted into tick queues” from “later fenced before execution.”
+
+During rollback, operator views must show the handler's `finalStage`/`finalOutcome` beside the `commandHandoffDispositions[]` returned from `ListScriptHandoffEvents`. A successful `TICK_HANDOFF` therefore remains visible even when one or more individual commands later receive `version_fence_dropped`; a child result must never overwrite the handler result or collapse sibling command records.
 
 Concrete example:
 
@@ -156,6 +160,7 @@ Illustrative record shape:
   "entityId": "npc-guard-9",
   "scriptId": "guard-on-enter",
   "eventType": "onEnterRegion",
+  "eventSchemaVersion": 1,
   "scriptPatchVersion": "P22",
   "scriptEventId": "evt-7f4c",
   "isDryRun": false,
@@ -194,7 +199,14 @@ Illustrative record shape:
       "gameInstanceId": "44444444-4444-4444-8444-444444444444",
       "regionId": "R2",
       "regionEpoch": 14,
+      "entityId": "npc-guard-9",
+      "scriptId": "guard-on-enter",
+      "eventType": "onEnterRegion",
+      "eventSchemaVersion": 1,
+      "scriptPatchVersion": "P22",
       "scriptEventId": "evt-7f4c",
+      "isDryRun": false,
+      "commandOrdinal": 0,
       "automationDispatchId": "work-9#0",
       "outboxWorkItemId": "work-9",
       "playableStateScope": "isolated",
@@ -208,7 +220,14 @@ Illustrative record shape:
       "gameInstanceId": "44444444-4444-4444-8444-444444444444",
       "regionId": "R2",
       "regionEpoch": 14,
+      "entityId": "npc-guard-9",
+      "scriptId": "guard-on-enter",
+      "eventType": "onEnterRegion",
+      "eventSchemaVersion": 1,
+      "scriptPatchVersion": "P22",
       "scriptEventId": "evt-7f4c",
+      "isDryRun": false,
+      "commandOrdinal": 1,
       "automationDispatchId": "work-9#1",
       "outboxWorkItemId": "work-9",
       "playableStateScope": "isolated",

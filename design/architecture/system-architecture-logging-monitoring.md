@@ -169,7 +169,7 @@ Pre-gameplay metrics such as login success and entry-path availability must use 
 In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines, FireMUD tracks a small set of player-centric SLIs. These are target-state Prometheus metrics with environment-specific SLO targets. The current services emit narrower gameplay and edge metrics; do not treat the metric names in this section as implemented until producers and smoke checks exist.
 
 - **Login success ratio**
-  - SLI: fraction of successful login attempts over total login attempts, for example `login_requests_total{outcome="success"}` vs `login_requests_total`.
+  - SLI: fraction of successful login attempts over total login attempts, for example `login_requests_total{scope="environment",outcome="success"}` vs `login_requests_total{scope="environment"}`.
   - SLO (production starting point): ≥ 99.5% success over a 15-minute rolling window, evaluated per documented bounded `scope`.
   - Instrumentation: target-state instrumentation should be emitted by Spring Cloud Gateway (and any protocol-bridging entry points such as the TCP Proxy) for login-related routes, with bounded labels for outcome and canonical bounded `scope`. The pre-gameplay baseline is `scope="environment"`; do not add raw `tenantId`, `gameInstanceId`, or `regionId` labels.
 - **Command end-to-end latency**
@@ -359,13 +359,13 @@ When Alertmanager is unavailable but Prometheus is still accessible, Logging & A
 - **Redis coordination tail-loss SLO breaches**
   - Recording rules based on canonical bounded-scope series such as `redis_coordination_tail_loss_ms{scope}` that expose both `redis_coordination_tail_loss_budget_ms{scope}` and a derived breach indicator such as `redis_coordination_tail_loss_slo_breached{scope}` using the canonical envelope (`tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)`). Exact tenant/game-instance/region drilldown belongs on the durable control-plane and runtime-health surfaces, not ordinary Prometheus labels.
 - **Tick execution safety ratios**
-  - Recording rule that exposes `tick_execution_time_ms_p99 / tick_lock_ttl_ms` per region, using the recording rules defined in the Redis operations metrics catalog.
+  - Recording rule that exposes `tick_execution_time_ms_p99 / tick_lock_ttl_ms` per approved bounded `scope`, using the recording rules defined in the Redis operations metrics catalog. Exact region drilldown belongs on control-plane/runtime-health reads and must not be added as a raw metric label in this fallback path.
 - **Login success ratio**
-  - Recording rules mirroring `LoginSuccessRatioLowGateway` and `LoginSuccessRatioLowTcpProxy`, scoped by `service` and based on `login_requests_total{outcome="success"}` vs `login_requests_total`.
+  - Recording rules mirroring `LoginSuccessRatioLowGateway` and `LoginSuccessRatioLowTcpProxy`, scoped by `service` and bounded `scope`, and based on `login_requests_total{scope="environment",outcome="success"}` vs `login_requests_total{scope="environment"}`.
 - **Command p99 latency**
   - Recording rules mirroring `CommandLatencyP99HighGateway` and `CommandLatencyP99HighTcpProxy`, scoped by `service` and preserving the bounded `command` label for the core-command SLO set, based on `command_end_to_end_latency_ms_bucket`.
 - **Entry-path availability**
-  - Recording rules mirroring both the short-window detection view and the 1-day compliance view for `EntryPathAvailabilityLowGateway` and `EntryPathAvailabilityLowTcpProxy`, scoped by `service` and `path`, based on `entrypath_connection_attempts_total`.
+  - Recording rules mirroring both the short-window detection view and the 1-day compliance view for `EntryPathAvailabilityLowGateway` and `EntryPathAvailabilityLowTcpProxy`, scoped by bounded `scope`, `service`, and `path`, based on `entrypath_connection_attempts_total`.
 - **Chat delivery latency**
   - Recording rule mirroring `ChatDeliveryLatencyP99High`, based on `chat_delivery_latency_ms_bucket` with approved scope and channel dimensions preserved.
 - **Backup health**

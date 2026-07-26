@@ -40,7 +40,7 @@ World Management may still keep an internal numeric storage key for room topolog
 
 Tick-driven, cross-service mutations are at-least-once and must be idempotent.
 
-- `EffectId` – the canonical idempotency identity derived from region-scoped tick context (`tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`) plus the target aggregate identity. All services participating in a tick-driven effect must use projections of the same `EffectId` for idempotency guards and reconciliation.
+- `EffectId` – the canonical idempotency identity derived from region-scoped tick context (`tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `tickId`, `effectKey`) plus the target aggregate identity. All services participating in a tick-driven effect must use projections of the same complete `EffectId`, including `playableStateScope`, for idempotency guards, tick-effect ledger rows, outbox records, and reconciliation; omitting that scope can collide shared and isolated gameplay state.
 
 ## Cross-Service Read Fence Identity
 
@@ -51,7 +51,7 @@ Cross-service read composition (for example `LOOK` world + entity joins) must us
 - Monotonicity: future tick-ledger-backed values must be non-decreasing for a given scope as observed by a caller; the current live snapshot-id fence is an equality token for same-scope composition.
 - Comparison contract:
   - Downstream services must either return a matching same-scope fence, or
-  - Fail with `READ_FENCE_MISMATCH`, `STALE_READ_FENCE`, or `READ_FENCE_UNAVAILABLE`.
+  - Fail with `STALE_READ_FENCE` or `READ_FENCE_UNAVAILABLE`; a returned participant fence difference is handled by the composition caller as a fresh-snapshot retry.
 - Composition contract: callers must reject mixed-fence payloads; retries must preserve requested scope and fence semantics.
 
 ## Short Synchronous Saga Identity

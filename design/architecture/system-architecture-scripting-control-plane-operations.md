@@ -92,7 +92,7 @@ Semantics:
 
 ### Automation & Scripting: Admission Pause/Resume (Rollback Support)
 
-Rollback requires an Automation-side admission barrier in addition to tick pause so new triggers are not admitted while control-plane cleanup is in progress.
+Rollback requires an Automation-side admission barrier in addition to tick pause so new triggers are not admitted while control-plane cleanup is in progress. For mutating control-plane requests, `actor` identifies the authenticated requesting principal and is persisted in audit as `requestedBy`; it must not be reused for the worker that executes a system-owned step. Audit records for such steps use `executedBy=system:automation` as a separate field.
 
 #### `SetAutomationAdmissionMode`
 
@@ -109,7 +109,7 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- `PAUSED_FOR_ROLLBACK` prevents admission of new external and scheduler triggers for the scope while allowing already-admitted work to be drained or canceled.
+- `PAUSED_FOR_ROLLBACK` prevents admission of new external, scheduler, and timer triggers for the scope while allowing already-admitted work to be drained or canceled.
 - During pause, ingress calls return explicit rollback backpressure outcomes and remain audit-visible.
 - Entering `PAUSED_FOR_ROLLBACK` must also advance a scope-local **admission epoch**. Every already-admitted execution carries the epoch under which it was accepted, and any later outbox-persist or tick-handoff attempt must re-check that epoch before committing side effects.
 - If an execution admitted under an earlier epoch reaches persist or handoff after the scope has advanced to a newer rollback epoch, it must not create new live work. The execution transitions to `finalOutcome=canceled` with a bounded `finalReason` such as `rollback_epoch_advanced` and remains visible in `script_event_audit`.
@@ -379,9 +379,9 @@ Rollback orchestration must prevent previously queued work from a rolled-back `s
 
 At a minimum, rollback consists of:
 
-1. Fence new evaluation by pausing ticks and setting Automation admission to rollback-pause mode for the affected scope.
+1. Fence new evaluation by pausing ticks and setting Automation admission to rollback-pause mode for the affected scope. The admission barrier must cover external, scheduler, and timer triggers before repin and must remain active through schedule reconciliation, cancellation, purge, convergence, and drain.
 2. Repin the affected game instance(s) to the target `scriptPatchVersion` using the Game Session control-plane API.
-3. Reconcile durable schedule entries before timer admission resumes: create or confirm every target-version entry, then retire displaced version-owned entries as one atomic durable result or a resumable idempotent operation. This is a required mutating rollback phase and records the same `controlPlaneRequestId`, `actor`, and `reason` as the surrounding operator workflow. Preserve `scheduleDefinitionId` only as the stable logical schedule identity; do not rewrite old entries or reuse their trigger claims or `scriptEventId` values.
+3. Reconcile durable schedule entries before timer admission resumes: create or confirm every target-version entry, then retire displaced version-owned entries as one atomic durable result or a resumable idempotent operation. This is a required mutating rollback phase and records the same `controlPlaneRequestId`, `requestedBy`, and `reason` as the surrounding operator workflow, with `executedBy=system:automation` for the worker. Never record `actor=system:automation` or replace the operator's `requestedBy` value. Preserve `scheduleDefinitionId` only as the stable logical schedule identity; do not rewrite old entries or reuse their trigger claims or `scriptEventId` values.
 4. Drain or purge queued script work items and staging entries that carry the rolled-back patch.
 5. If plugin versions are also being rolled back, disabled, or revoked, cancel pending work for those `pluginVersionId` values before queue purge.
 6. Verify pin convergence and drain completion before resuming normal admission.
@@ -390,9 +390,9 @@ At a minimum, rollback consists of:
 Concrete rollback sequence example:
 
 1. Call `PauseTicks(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` so Game Session stops new tick scheduling and command intake for that instance.
-2. Call `SetAutomationAdmissionMode(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` so new external and scheduler triggers are rejected with rollback backpressure.
+2. Call `SetAutomationAdmissionMode(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` so new external, scheduler, and timer triggers are rejected with rollback backpressure.
 3. Call `RollbackScriptPatchVersion(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, targetScriptPatchVersion=P21, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` to repin the instance to the known-good patch.
-4. Run the system-owned durable schedule/timer reconciliation for `tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, and target `P21` across every region of that instance; it records `controlPlaneRequestId=RB-42`, `actor=system:automation` as the executing principal, and the same `reason="rollback RB-42"`, creates or confirms only target-version rows before retiring displaced `P22` rows as one atomic durable result or a resumable idempotent operation, and creates no firing claim or `scriptEventId` before timer admission resumes.
+4. Run the system-owned durable schedule/timer reconciliation for `tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, and target `P21` across every region of that instance while the admission barrier remains active. The audit record carries `controlPlaneRequestId=RB-42`, `requestedBy=operator:alice`, `executedBy=system:automation`, and `reason="rollback RB-42"`; it does not overload `actor` with the executing principal. It creates or confirms only target-version rows before retiring displaced `P22` rows as one atomic durable result or a resumable idempotent operation, and creates no firing claim or `scriptEventId` before timer admission resumes.
 5. Call `CancelPendingWorkItemsForPatch(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, scriptPatchVersion=P22, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` and `PurgeQueuedTickCommandsForScriptPatch(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, scriptPatchVersion=P22, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`. The optional `regionId` is deliberately omitted so this instance-wide repin cleans every affected region. When plugin versions are displaced, invoke the separate plugin-version cancel and queued-command purge operations with their `pluginId` and `pluginVersionId`.
 6. Poll `GetAutomationPinConvergence(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444)` and `GetGameSessionPinConvergence(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444)` until both report `observedPinnedScriptPatchVersion=P21` and `lastObservedControlPlaneRequestId=RB-42`.
 7. Poll `GetAutomationDrainStatus(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444)` until `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` for the current rollback-scope `admissionEpoch`.

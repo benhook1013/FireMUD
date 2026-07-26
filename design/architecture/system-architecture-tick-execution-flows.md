@@ -291,11 +291,13 @@ Conceptually, tick commit proceeds through these phases:
 
 1. **Durable batch creation**
    - Before Redis `pending` is treated as authoritative for a tick, Game Session creates a durable tick-batch record in PostgreSQL for `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)`.
-   - Exactly one durable tick batch may exist for a given `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)`:
-     - PostgreSQL enforces a unique key on the corresponding storage columns `(tenant_id, game_instance_id, region_id, region_epoch, tick_id)`.
+   - Target-state requires exactly one durable tick batch for a given `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)`:
+     - The current live schema enforces uniqueness only on the durable `tick_batch_id` key (`tick_batch_tick_batch_id_key` / `idx_tick_batch_tick_batch_id`); it does not yet enforce uniqueness on the coordinate tuple.
+     - A required schema migration must audit existing duplicate coordinate tuples, remediate or terminalize any duplicates through the recovery path, and add a PostgreSQL unique constraint/index on `(tenant_id, game_instance_id, region_id, region_epoch, tick_id)`. The migration and its duplicate-audit proof are part of completing this target-state invariant.
+     - Until that migration is deployed, lease/fence checks and application-level duplicate detection are required safeguards but are not a database uniqueness guarantee.
      - Batch allocation is lease-fenced by the current-live `GetRuntimeOwnershipStatus.executorFence` opaque token; the creating transaction reads and records that token on the batch row while the corresponding Redis lease is still valid. A `RegionStatus.executorFence` value is target-state only unless the live ownership surface explicitly projects it.
      - Winner rule:
-       - The winner is the transaction that successfully creates the unique `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` row while holding the currently valid Redis lease and the latest live opaque `executorFence`.
+       - The target-state winner is the transaction that successfully creates the tuple-unique `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` row while holding the currently valid Redis lease and the latest live opaque `executorFence`.
        - If a competing executor finds the existing row carries the same current `executorFence`, it must reuse that row as authoritative state for replay/continuation.
        - If a competing executor finds the existing row carries an older or newer `executorFence`, it must not continue that batch on the hot path. The first implementation abandons stale-owner unfinished batches and requeues still-unapplied commands for a fresh fenced batch; any future in-place adoption of an old-fence batch requires a dedicated reconcile transaction that explicitly transfers ownership before work continues.
    - The tick-batch record stores at minimum:
@@ -341,7 +343,7 @@ Conceptually, tick commit proceeds through these phases:
      - Normal replay must not continue. The region is paused and explicit reconcile tooling chooses one survivor batch and converges the others to an audited terminal state before ticks resume.
    - Worked allocation-race example:
      - Executor `E1` and executor `E2` both attempt `(tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120, gameInstanceId=9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, regionId=R7, regionEpoch=13, tickId=42)`.
-     - `E1` successfully inserts the unique batch row while holding Redis lease token `L9001` and durable `executorFence=27`; that row becomes the only valid durable batch for `(7b3b074e-d597-4e9b-b96f-4f5946d26120, 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, R7, 13, 42)`.
+     - `E1` inserts a batch row while holding Redis lease token `L9001` and durable `executorFence=27`. Under the current schema, application allocation checks treat it as the candidate winner for `(7b3b074e-d597-4e9b-b96f-4f5946d26120, 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, R7, 13, 42)` but cannot claim database-enforced tuple uniqueness; after the required migration, the tuple-unique constraint makes it the only insertable row.
      - `E2` then reads the existing row.
        - If `E2` is acting under the same current `executorFence=27`, it may continue/replay from that row.
        - If `E2` now holds a later lease acquisition with `executorFence=28`, it must stop and treat the existing row as belonging to an older ownership generation. First implementation recovery abandons stale-owner unfinished work and requeues unapplied commands rather than continuing that batch in place.
@@ -394,10 +396,11 @@ The **TickScheduler** in Game Session enforces a **single in-flight tick per reg
 - The scheduler obtains the current `(regionEpoch, tickId)` baseline for each region from the live ownership/status surface and durable ledger; target-state examples may use a `RegionStatus` table, but the current live fence is the opaque `GetRuntimeOwnershipStatus.executorFence`, not `tick:{tenantRegionTag}:meta.current_tick_id`.
 - The scheduler and recovery tooling treat the current-live opaque `executorFence` as the owner generation; any batch or commit attempt that carries an older fence must stop rather than trying to race the new owner.
 - Additional work enqueued for the same region while a tick is in flight is modeled as retries or follow-up work for a later `tickId`, not as a second concurrent tick.
-- On a non-reset cold start where Coordination Redis is empty but PostgreSQL `RegionStatus` remains authoritative:
-  - The next winning executor derives the next requested tick from `RegionStatus.lastCommittedTickId + 1`.
-  - The first successful hot-path staging script for that tick initializes `tick:{tenantRegionTag}:meta.current_tick_id` to that requested tick as a Redis-side guard only.
-  - Schedulers and operators continue to treat PostgreSQL `RegionStatus` as authoritative for baseline tick selection.
+- On a non-reset cold start where Coordination Redis is empty:
+  - In the current-live deployment, the next winning executor bootstraps owner, selected region, opaque `executorFence`, and the committed tick baseline from `GetRuntimeOwnershipStatus`, then observes `ObserveRuntimeTickProgress` to confirm the active `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` progress before deriving the next requested tick.
+  - In the target-state deployment, the equivalent baseline comes from `GetRegionTickStatus` backed by `RegionStatus.lastCommittedTickId`; this target-state surface must not be treated as live before it is shipped.
+  - The first successful hot-path staging script for the derived tick initializes `tick:{tenantRegionTag}:meta.current_tick_id` to that requested tick as a Redis-side guard only. It must not override the active deployment's ownership/progress adapter or become the source of truth for the baseline.
+  - Schedulers and operators continue to treat the active deployment's status/progress surface as authoritative for cold-start baseline selection.
 
 If FireMUD later introduces limited intra-region parallelism (for example by sharding a single region into buckets of entities), this model will evolve to use **per-bucket pending keys** such as `tick:{tenantRegionTag}:bucket:<bucketId>:pending` plus matching idempotency and locking rules. Until such a change is explicitly designed, the invariant remains one `pending` entry and one in-flight tick per `<tenantId, gameInstanceId, regionId>`.
 

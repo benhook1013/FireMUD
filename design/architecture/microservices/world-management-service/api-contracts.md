@@ -139,7 +139,7 @@ Cross-service LOOK read consistency is fence-based:
 
 - Game Logic must compare the logical `roomSnapshotVersion` carried as `worldSnapshotId` from `GetRoomSnapshot` with the identical `entitySnapshotId` returned by Entity Management `ListRoomEntities` for the same room scope.
 - Entity Management must either answer with that exact committed same-scope fence token after satisfying it, or return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`; it must not mint a competing entity-local fence.
-- If fences do not match, Game Logic retries composition instead of returning mixed-state output.
+- If a participant cannot satisfy the requested fence or the returned participant fence differs, Game Logic treats that as a caller-side retry condition, obtains a fresh World Management snapshot, and retries the same-scope composition. It must not return mixed-state output or require a separate mismatch service error.
 
 Current World Management runtime room identity notes:
 

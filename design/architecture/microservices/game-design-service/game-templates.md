@@ -171,7 +171,9 @@ Required ordering:
 
 1. Read `GetTemplateReferencePhase(tenantId)` and fail fast unless the phase is `ENFORCED`.
 2. Call `ResolveLaunchDescriptor(...)` in Game Design and receive immutable resolved values.
-3. Read `GetPublishedReleaseBundle(tenantId, versionId)` and verify the attested release matches the resolved descriptor, including `generationConfigRevision` and attestation identity.
+3. Read `GetPublishedReleaseBundle(tenantId, versionId)` and verify the attested release matches the resolved descriptor before any instance row is created:
+   - Reconstruct the current implementation's attestation identity as `prb:<tenantId>:<versionId>:<bundleId>` from the request scope, resolved `versionId`, and returned bundle `id`, then compare it byte-for-byte with the descriptor's `publishedReleaseBundleRef`. Comparing only `releaseBundleId`, or merely checking that either reference is present, is insufficient.
+   - Compare the descriptor's `generationConfigRevision` byte-for-byte with the returned bundle's `generationConfigRevision` and reject a missing or different value.
 4. Only after steps 1-3 succeed may the orchestrator create any persistent `gameInstanceId` row or request World Management to create `PREPARING` instance state.
 5. World creation then executes using only the resolved descriptor values and must not re-resolve template JSON, patch defaults, or release metadata mid-flight.
 
@@ -199,7 +201,7 @@ The exact transport schema may evolve, but every implementation must preserve th
 
 - request fields identify the template, the launch attempt identity, and any caller-supplied runtime overrides that are allowed to participate in deterministic resolution;
 - response fields are the immutable resolved values consumed by launch-time workflows;
-- `publishedReleaseBundleRef` is the exact attestation identity emitted by the current implementation in the form `prb:<tenantId>:<versionId>:<bundleId>`. Downstream workflows must compare the exact reference and verify it against `GetPublishedReleaseBundle(tenantId, versionId)` together with the attested `generationConfigRevision`; callers must not treat it as a raw UUID or invent a different release alias.
+- `publishedReleaseBundleRef` is the exact attestation identity emitted by the current implementation in the form `prb:<tenantId>:<versionId>:<bundleId>`. Because `GetPublishedReleaseBundle` currently returns the bundle `id` and `generationConfigRevision` rather than a separate reference field, downstream workflows must reconstruct that identity from the request scope, resolved `versionId`, and returned `bundle.id`, compare it byte-for-byte with the descriptor reference, and separately compare the attested `generationConfigRevision`; callers must not compare only `releaseBundleId`, treat the reference as a raw UUID, or invent a different release alias.
 - A request with the same `(tenantId, gameTemplateId, controlPlaneRequestId)` and the same input fields must return the same descriptor values; a request with a different `controlPlaneRequestId` is a new launch attempt and may resolve against newer valid state.
 - Idempotent retries that previously produced a deterministic business failure must return the same failure code and resolved context (where applicable) rather than re-evaluating against newer publish, patch, or template state.
 - If callers change any semantically relevant input field while reusing the same `controlPlaneRequestId`, the request must fail deterministically as an idempotency-key misuse rather than silently creating a second descriptor record.

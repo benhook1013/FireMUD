@@ -41,7 +41,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 
 - Determine scope:
   - Use metrics only to classify deployment-wide degradation versus an approved bounded `scope` bucket.
-  - Resolve any exact tenant/game-instance/region and ingress path through control-plane/runtime-health reads and structured logs.
+  - When the affected record carries gameplay identity, resolve the exact tenant/game-instance/region and ingress path through control-plane/runtime-health reads and structured logs. For pre-gameplay login failures without gameplay identity, classify the deployment-wide environment, ingress path, and synthetic probe target instead; do not infer a game instance or region.
 - Decide if the incident is primarily:
   - **Edge-related** (TCP Proxy/Gateway/Cloud LB).
   - **Auth-related** (Account Service, JWT, database).
@@ -75,7 +75,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
    - Use the `player-incident-drilldown.json` Kibana saved search to spot-check representative logs by `service` and `traceId`, adding `tenantId` or `characterId` only when those fields are present, to confirm that errors have returned to normal levels.
 6. **Degraded-mode branch (if observability backends are unavailable)**
    - If Grafana is down: query Prometheus directly for `login_requests_total` success ratio by its available `scope`, `service`, and `outcome` labels, using the deployment-wide `scope="environment"` baseline. Use `playerflow_canary_success{flow="login",path=...,target=...}` to distinguish ingress paths; `login_requests_total` itself has no `path` label. Do not require `gameInstanceId` or `regionId`: login occurs before gameplay scope is selected.
-   - If Kibana is down: use service logs from Gateway/TCP Proxy/Account pods filtered by `tenantId` and `correlationId`.
+   - If Kibana is down: use service logs from Gateway/TCP Proxy/Account pods filtered by `service`, `traceId`, and `correlationId`; do not require gameplay identity fields for this pre-gameplay login path.
    - If Prometheus is down: prioritize service health endpoints and dependency health (Postgres/Redis), and use conservative ingress mitigation (rollback/scale) based on authoritative service signals.
 
 ## Command Latency Above SLO
@@ -174,7 +174,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 
 - Player reports: failed or flaky connections on one entry path (Telnet or WebSocket/HTTPS).
 - Metrics:
-  - Player Experience dashboard shows a drop in availability computed from `entrypath_connection_attempts_total{scope,path,outcome}` for one or more approved bounded `scope` buckets; resolve exact tenants through control-plane/runtime-health reads and structured logs.
+  - Player Experience dashboard shows a drop in availability computed from `entrypath_connection_attempts_total{scope,path,outcome}` for one or more approved bounded `scope` buckets. Resolve an exact tenant/game-instance/region through control-plane/runtime-health reads and structured logs only when the affected connection record has gameplay identity; otherwise use the environment, entry `path`, and external/synthetic `probe target` as the operational scope.
   - External synthetic probes show whether the public Telnet or WebSocket path is reachable at all when traffic may not be reaching Gateway or TCP Proxy.
   - TCP Proxy dashboards show whether `tcpproxy_connections_limit_exceeded` or `tcpproxy_telnet_discarded` are elevated (Telnet path), and Gateway dashboards show whether WebSocket upgrade failures are elevated (WebSocket path).
 
@@ -208,7 +208,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
      - Scale or roll back Gateway/TCP Proxy if a recent change correlates with the incident.
      - Validate downstream dependencies (Redis/Postgres) and tick health for player-facing regions.
 3. **Verify recovery**
-   - Confirm the short-window detection view recovers quickly for affected `{scope,path}` combinations and the dominant failure outcomes subside; use control-plane/runtime-health reads and structured logs for exact runtime scope.
+   - Confirm the short-window detection view recovers quickly for affected `{scope,path}` combinations and the dominant failure outcomes subside. Use control-plane/runtime-health reads and structured logs for exact runtime scope only when gameplay identity is present; otherwise verify the environment, entry path, and probe target.
    - Confirm the 1-day compliance view trends back toward SLO after the acute incident is resolved.
 4. **Degraded-mode branch (if observability backends are unavailable)**
    - If Grafana is down: query Prometheus directly for both `entrypath_connection_attempts_total` success/total ratios by `{scope,path}`, the external synthetic-probe metric for each public path, and the mirrored login/command canary metrics where relevant.

@@ -386,15 +386,15 @@ Minimal interoperability requirements for the fence token:
 - World Management is the canonical producer of the fence token for room snapshots.
 - In the target contract, `roomSnapshotVersion` is one opaque or epoch-bearing committed token. Entity Management must return that exact token as `entitySnapshotId` after proving its durable entity state satisfies it; it must not mint or substitute an independent local version.
 - The target token advances after every durable mutation included in the room view. The current scope-derived adapter value does not yet provide that guarantee and is therefore not sufficient as authoritative freshness proof.
-- `READ_FENCE_MISMATCH`, `STALE_READ_FENCE`, or `READ_FENCE_UNAVAILABLE` are the canonical rejection shapes for missed or mixed fences; services must not silently upgrade to a newer snapshot.
+- `STALE_READ_FENCE` and `READ_FENCE_UNAVAILABLE` are the canonical service rejection shapes for an unsatisfied fence; a participant fence difference is a caller-side retry condition, not a separate service error. Services must not silently upgrade to a newer snapshot.
 - A retry obtains a fresh room snapshot and therefore a fresh fence value; an older fence is not reused across later room-refresh attempts.
 
 Operator-facing command convergence reads must use the durable `GetGameplayCommandStatus` surface after replay/reset/remediation. Redis queue inspection is diagnostic only and must not be treated as the canonical post-remediation status answer.
 
 Minimal canonical room-read example:
 
-1. Game Session handling `LOOK` for `{tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120, gameInstanceId=9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, characterId=71be6f1e-83b9-4ce0-a75c-14b18a74f0f0}` calls Game Logic `ResolveLook`.
-2. Game Logic calls World Management with `{tenantId:7b3b074e-d597-4e9b-b96f-4f5946d26120, gameInstanceId:9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, roomInstanceRef:R44}` and receives the target committed fence `worldSnapshotId=room-snapshot-epoch-17`.
+1. Game Session handling `LOOK` for `{tenantId=42, gameInstanceId=7, roomInstanceId=R-44, characterId=71}` calls Game Logic `ResolveLook`.
+2. Game Logic calls World Management with `{tenantId:42, gameInstanceId:7, roomInstanceId:R-44}` and receives the target committed fence `worldSnapshotId=room-snapshot-epoch-17`.
 3. Game Logic asks Entity Management to satisfy that same room fence and receives `entitySnapshotId=room-snapshot-epoch-17`.
 4. Success path: both downstream reads return the same fence value, and only then may Game Logic compose canonical room state for Game Session to render.
 5. Rejection path: if Entity Management returns a missing or different fence, Game Logic retries with a fresh world snapshot or returns an explicit room-view failure, but it must not join one fence value with another.

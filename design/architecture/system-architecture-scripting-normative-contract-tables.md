@@ -183,7 +183,7 @@ Taxonomy governance rule:
 | `script_disabled` | `ADMISSION` | Script disabled or draining due to operator action. |
 | `sandbox_error` | `DSL_EVAL` | Runtime or guard failure; reason required. |
 | `validation_error` | `DSL_EVAL` | Static/semantic validation failure before effect persistence. |
-| `canceled` | `WORK_ITEM_PERSIST` or `TICK_HANDOFF` | Already admitted execution was intentionally fenced before producing live work or before handoff completed. Use bounded `finalReason` values such as `rollback_epoch_advanced`, `superseded_by_newer_patch`, `operator_canceled`, or `operator_purged`. |
+| `canceled` | `ADMISSION`, `WORK_ITEM_PERSIST`, or `TICK_HANDOFF` | A scheduler candidate fenced before admission, or an already admitted execution intentionally fenced before producing live work or before handoff completed. Use bounded `finalReason` values such as `runtime_scope_changed`, `playable_state_scope_changed`, `rollback_epoch_advanced`, `superseded_by_newer_patch`, `operator_canceled`, or `operator_purged`. |
 | `infrastructure_error` | Any non-success stage | Transport/storage/runtime infrastructure failure. |
 | `disabled_due_to_errors` | `ADMISSION` | Script disabled by failure-rate policy. |
 | `rollback_convergence_timeout` | `ADMISSION` | Admission remains paused because rollback convergence timeout is active for scope. |

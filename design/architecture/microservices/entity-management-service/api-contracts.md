@@ -113,18 +113,20 @@ Illustrative `ListRoomEntities` fragments:
 }
 ```
 
-- Fence mismatch:
+- Requested fence cannot be satisfied:
 
 ```json
 {
   "error": {
-    "code": "READ_FENCE_MISMATCH",
-    "message": "Entity state did not align with the requested room read fence."
+    "code": "STALE_READ_FENCE",
+    "message": "Entity state could not satisfy the requested room read fence."
   }
 }
 ```
 
 Entity Management must not maintain a competing room-occupancy index that can drift from World Management’s location tables. Visibility and filtering rules are applied after aggregation so LOOK output remains player-correct.
+
+When the requested fence is missing, stale, or cannot be satisfied from durable post-commit state, Entity Management returns `STALE_READ_FENCE` or `READ_FENCE_UNAVAILABLE`. A participant fence difference is a caller-side composition retry condition, not a separate service error from this API: Game Logic must obtain a fresh World Management snapshot and retry the same-scope composition, or fail the room view explicitly if the fresh read cannot be materialized.
 
 Concrete per-effect required writes and reconciliation rules live in [`system-architecture-spatial-and-ambient-effects-catalog.md`](../../system-architecture-spatial-and-ambient-effects-catalog.md).
 

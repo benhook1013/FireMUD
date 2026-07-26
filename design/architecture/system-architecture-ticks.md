@@ -356,10 +356,10 @@ See `system-architecture-tick-concepts-and-invariants.md` and the Entity Managem
 Isolation and replay guarantees rely on:
 
 - Per-region leases and locks in Redis.
-- A shared coordination timeline `(region_epoch, tickId)` per `<tenantId, gameInstanceId, regionId>` as described in the Redis architecture docs.
-- Domain-level idempotency rules keyed by `(region_epoch, tickId)` and effect identifiers.
+- A shared coordination timeline `(regionEpoch, tickId)` per `<tenantId, gameInstanceId, regionId>` as described in the Redis architecture docs.
+- Domain-level idempotency rules keyed by `(regionEpoch, tickId)` and effect identifiers.
 
-Crash recovery replays staged ticks safely by re-invoking domain handlers; replays must not double-apply logical effects. Even when Redis loses or replays up to a few ticks within the tail-loss envelope, the combination of the coordination timeline, the tick effect ledger, and per-service idempotency guards ensures that each `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)` converges to a single terminal outcome (`APPLIED` or `ABANDONED`). See `system-architecture-tick-failures-and-operations.md` for the detailed story.
+Crash recovery replays staged ticks safely by re-invoking domain handlers; replays must not double-apply logical effects. Even when Redis loses or replays up to a few ticks within the tail-loss envelope, the combination of the coordination timeline, the tick effect ledger, and per-service idempotency guards ensures that each `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)` converges to a single terminal outcome (`APPLIED` or `ABANDONED`). See `system-architecture-tick-failures-and-operations.md` for the detailed story.
 
 ---
 
@@ -386,11 +386,11 @@ Automation & Scripting uses the tick heartbeat plus durable PostgreSQL schedules
 - On startup or after a reset:
   - The scheduler uses the active deployment's canonical bootstrap/progress surface and the corresponding durable due point from PostgreSQL: current-live recovery uses `GetRuntimeOwnershipStatus` for owner/status and `ObserveRuntimeTickProgress` for `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` progress, while target-state recovery uses `GetRegionTickStatus`.
   - If a persisted scheduler checkpoint has a different `regionEpoch` than the current status, the scheduler rejects it, records `checkpoint_region_epoch_mismatch` in scheduler audit, increments `automation_script_timer_runtime_fence_dropped_total{scope, script_category, eventType, reason="checkpoint_region_epoch_mismatch"}`, discards the stale checkpoint and stream offset, and rebuilds the checkpoint from authoritative current-epoch status before reconciling durable due points under the bounded catch-up policy.
-  - If `duePoint = dueTickId:<value>` and the due tick is at or before `currentTickId`, the scheduler may fire at most one **tick catch-up trigger** per script (for example “you missed one interval while down”) and then advances the tick due point by whole intervals until it is strictly greater than `currentTickId`.
-  - If `duePoint = dueAt:<epochMillis>` and the due time is at or before the reconciliation's captured current wall-clock time, the scheduler may fire at most one **wall-clock catch-up trigger** per script and then advances the wall-clock due point by whole intervals until it is strictly greater than that current time. A wall-clock due point is never compared with `currentTickId`.
-  - Very old missed intervals are not replayed one-by-one; the system guarantees that **future intervals fire correctly** and, at most, a bounded catch-up occurs after downtime.
+  - If `duePoint = dueTickId:<value>` and the due tick is at or before `currentTickId`, the scheduler may fire at most one **tick catch-up trigger** for each eligible schedule instance and full Trigger Identity (for example “you missed one interval while down”) and then advances that schedule instance's tick due point by whole intervals until it is strictly greater than `currentTickId`.
+  - If `duePoint = dueAt:<epochMillis>` and the due time is at or before the reconciliation's captured current wall-clock time, the scheduler may fire at most one **wall-clock catch-up trigger** for each eligible schedule instance and full Trigger Identity and then advances that schedule instance's wall-clock due point by whole intervals until it is strictly greater than that current time. A wall-clock due point is never compared with `currentTickId`.
+  - Very old missed intervals are not replayed one-by-one; each due point advances independently, the system guarantees that **future intervals fire correctly**, and at most one bounded catch-up occurs per eligible schedule instance/Trigger Identity after downtime.
 - After recovery, the scheduler:
-  - Tracks tick-aligned progression from the active canonical progress source (target-state heartbeat, current-live `ObserveRuntimeTickProgress`) and updates `next_due_tickId` in PostgreSQL; wall-clock schedules use wall-clock observations and update `next_due_at`. The scheduler does not infer one due-point type from the other.
+  - Tracks tick-aligned progression from the active canonical progress source (target-state heartbeat, current-live `ObserveRuntimeTickProgress`) and updates `nextDueTickId` in API/workflow prose; the PostgreSQL field is `next_due_tick_id`. Wall-clock schedules use wall-clock observations and update `next_due_at` in storage-facing prose. The scheduler does not infer one due-point type from the other.
   - Uses Redis coordination keys such as `script-scheduler:{tenantRegionTag}:lastTickId` as hints/checkpoints only; losing them affects when work is next discovered, not which durably-configured schedules eventually execute, because durable trigger-instance uniqueness remains the de-duplication boundary.
 
 Details of timer key shapes and scaling strategies live in `system-architecture-tick-concepts-and-invariants.md` and `system-architecture-scripting-scheduler-and-timers.md`.
@@ -402,7 +402,7 @@ Details of timer key shapes and scaling strategies live in `system-architecture-
 On executor crash or failover, a new worker:
 
 - Acquires the region lease.
-- Reads the durable tick-batch, tick effect ledger, and follow-up tables plus the active deployment's authoritative status surface for the affected `(tenantId, gameInstanceId, regionId, region_epoch)`: target-state `RegionStatus`/`GetRegionTickStatus`, or current-live `GetRuntimeOwnershipStatus` with `ObserveRuntimeTickProgress` progress.
+- Reads the durable tick-batch, tick effect ledger, and follow-up tables plus the active deployment's authoritative status surface for the affected `(tenantId, gameInstanceId, regionId, regionEpoch)`: target-state `RegionStatus`/`GetRegionTickStatus`, or current-live `GetRuntimeOwnershipStatus` with `ObserveRuntimeTickProgress` progress.
 - Inspects any surviving Redis coordination state (`tick:{tenantRegionTag}:pending`, `retry:{tenantRegionTag}`, timers, leases) only as optional hints that may accelerate or narrow replay scope.
 - Replays or resumes work from the durable PostgreSQL record of staged or claimed work plus domain idempotency tables; Redis coordination state must not be treated as the sole persisted recovery basis.
 
