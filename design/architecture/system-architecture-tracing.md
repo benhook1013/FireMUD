@@ -70,8 +70,8 @@ To make traces consistently useful across services and runbooks, FireMUD uses a 
     - `gamesession_handle_command` – top-level span for handling a gameplay command, tagged with `command`, `tenantId`, `gameInstanceId`, `regionId`, `characterId`, and `instanceId`.
     - Domain-specific spans such as `entity_apply_damage`, `inventory_transfer`, `room_resolve_look`, and `quest_update_state`, tagged with `tenantId`, `gameInstanceId`, `regionId`, and any relevant aggregate identifiers.
 - **Tick executor and coordination**
-  - `tick_schedule` – scheduling of ticks for a `<tenantId, gameInstanceId, regionId>`, tagged with `tenantId`, `gameInstanceId`, `regionId`, `tickId`, and `region_epoch`.
-  - `tick_execute` – execution of a single tick, tagged with `tenantId`, `gameInstanceId`, `regionId`, `tickId`, `region_epoch`, and a `tick_phase` attribute for major phases (for example `load_effects`, `apply_effects`, `persist_ledger`, `drain_followups`).
+  - `tick_schedule` – scheduling of ticks for a `<tenantId, gameInstanceId, regionId>`, tagged with `tenantId`, `gameInstanceId`, `regionId`, `tickId`, and `regionEpoch`.
+  - `tick_execute` – execution of a single tick, tagged with `tenantId`, `gameInstanceId`, `regionId`, `tickId`, `regionEpoch`, and a `tick_phase` attribute for major phases (for example `load_effects`, `apply_effects`, `persist_ledger`, `drain_followups`).
   - `tick_apply_effect` – per-effect spans for calls into domain services, tagged with `tenantId`, `gameInstanceId`, `regionId`, `tickId`, `effectKey`, `effect_type`, and `targetAggregateType`.
 - **Telnet/TCP Proxy and WebSocket bridge**
   - `tcpproxy_connection` – lifecycle of a Telnet connection at the DMZ edge, tagged with `remote_ip_hash` (and optionally `remote_ip_prefix`), `tenantId`, and high-level `connection_outcome` (for example `ok`, `limit_exceeded`, `malformed`).
@@ -150,7 +150,7 @@ During incidents, Jaeger is a first-class tool alongside logs and metrics only f
 
 - **Stuck or degraded tick region**
   - Filter by `operation= "tick_execute"` (or the equivalent span name) and `tenantId`/`gameInstanceId`/`regionId`.
-  - Look for long-running spans or repeated spans for the same `tickId` and `region_epoch`.
+  - Look for long-running spans or repeated spans for the same `tickId` and `regionEpoch`.
   - Drill into child spans (`tick_apply_effect`, domain spans) to identify slow downstream services or guard failures.
 - **Replay storms and idempotency issues**
   - Filter by `operation = "tick_apply_effect"` and `effectKey` or `effect_type` for the hot effect categories.

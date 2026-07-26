@@ -69,7 +69,7 @@ Within a region’s tick, each command proceeds through several phases:
    - Many commands do not need global awareness of “all regions finished”; origin and target regions can operate independently with eventual consistency.
    - For flows that truly require end-to-end completion (for example, complex cross-region trades), the origin region tracks success/failure from participating regions in that separate coordinator record and later applies a final status (success, partial, failed) in a subsequent origin-region tick once all responses or timeouts are observed.
 
-Every phase must be idempotent with respect to `(regionEpoch, tickId)` and effect identity so replays after failure do not double-apply effects.
+Every phase must be idempotent with respect to the complete `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)` EffectId so replays after failure do not double-apply effects.
 
 ### Command Ingress Acknowledgement Contract (Required)
 
@@ -245,10 +245,10 @@ At each tick for a `<tenantId, gameInstanceId, regionId>`, the executor:
    - Aggregates all candidate work items per entity (queued commands, due timers, retries, and remote follow-ups) and selects **at most one** work item per entity for the current tick; any additional due work for that entity is deferred to future ticks according to the retry/timer scheduling rules.
    - Orders per-entity selections using a deterministic ordering function:
      - Primary: policy-defined priority (low-cardinality).
-     - Then: stable enqueue/due ordering based only on persisted fields (for example `due_tick_id`, `enqueue_seq`, or `created_at` captured into Redis/PostgreSQL at enqueue time).
+     - Then: stable enqueue/due ordering based only on persisted fields (for example `dueTickId`, `dueAt`, `enqueue_seq`, or `created_at` captured into Redis/PostgreSQL at enqueue time).
      - Tie-breakers (must be deterministic): `entityId`, then `commandId`/`effectKey`.
    - Each work item type (queued command, timer, retry, remote follow-up) must expose the same canonical ordering tuple so the sort is reproducible across retries and failover:
-     - `(priority, due_tick_id_or_due_ms_normalized, enqueue_seq, source_kind, entityId, commandId_or_effectKey)`
+     - `(priority, due_point_normalized, enqueue_seq, source_kind, entityId, commandId_or_effectKey)`
    - New work sources are not allowed to define custom tie-breakers; they must map into this canonical tuple.
 3. Stages effects:
    - Under the region lease and entity locks, calls Lua scripts to write intended effects into `tick:{tenantRegionTag}:pending`.
@@ -259,14 +259,14 @@ At each tick for a `<tenantId, gameInstanceId, regionId>`, the executor:
 ### Canonical Work Ordering Tuple (Normative Mapping)
 
 Every selected work item must provide the tuple
-`(priority, due_tick_id_or_due_ms_normalized, enqueue_seq, source_kind, entityId, commandId_or_effectKey)`.
+`(priority, due_point_normalized, enqueue_seq, source_kind, entityId, commandId_or_effectKey)`.
 
 - `priority`:
   - Integer where lower values win; allowed values are from a small global enum shared by all work sources.
-- `due_tick_id_or_due_ms_normalized`:
-  - Tick-based items (`queued command`, `retry`, `remote follow-up`) use `due_tick_id`.
-  - Timer items use a canonical persisted `due_tick_id` recorded when the timer is scheduled.
-  - If the runtime also stores `dueMs` for wall-clock evaluation, that value is advisory for firing-time comparisons and diagnostics only; ordering and replay always use the persisted `due_tick_id`.
+- `due_point_normalized`:
+  - Every scheduler/timer identity carries exactly one tagged persisted due point: `dueTickId` for tick-based scheduling or `dueAt` for wall-clock scheduling; it must carry neither both nor neither.
+  - Tick-based queued commands, retries, and remote follow-ups use `dueTickId`.
+  - A timer using `dueAt` must be deterministically normalized to a due tick under the active scheduler contract before ordering; its wall-clock value remains available for firing-time evaluation and diagnostics. A timer using `dueTickId` uses that persisted tick directly.
   - Lower normalized value wins.
 - `enqueue_seq`:
   - Monotonic per region across all candidate work sources; assigned by one region-scoped ordering allocator at ingress or scheduling time and persisted with the item.
@@ -312,7 +312,7 @@ Conceptually, tick commit proceeds through these phases:
      - `source_kind` (`command`, `timer`, `retry`, `remote_followup`)
      - source item identity (`commandId`, timer member ID, retry member ID, or follow-up row ID)
      - `entityId`
-     - the canonical ordering tuple `(priority, due_tick_id_or_due_ms_normalized, enqueue_seq, source_kind, entityId, commandId_or_effectKey)`
+     - the canonical ordering tuple `(priority, due_point_normalized, enqueue_seq, source_kind, entityId, commandId_or_effectKey)`
      - source-claim/removal state indicating whether the source entry still resides in Redis/PostgreSQL source structures or has been durably claimed elsewhere
    - Source-specific minimum manifest fields:
      - `command`:
@@ -321,7 +321,7 @@ Conceptually, tick commit proceeds through these phases:
        - enqueue sequence used for ordering
      - `timer`:
        - timer member ID
-       - `dueMs`
+       - exactly one of `dueAt` or `dueTickId`
        - normalized due tick value used for ordering
      - `retry`:
        - retry member ID or effect identity
@@ -431,7 +431,7 @@ Remote follow-ups (work created in one region but owned by entities in another) 
   - Those Prometheus metrics are aggregate process signals only. Region-specific diagnosis comes from the durable runtime ownership/control-plane reads, not raw `tenantId` / `gameInstanceId` / `regionId` metric labels.
   - The executor may temporarily bias part of the per-tick budget toward draining remote follow-ups (within the configured caps) to reduce cross-region lag.
   - Admission control applies at the origin: when the target region is degraded or backlog is high, new cross-region actions may be delayed, rate-limited, or rejected with a clear error so the system sheds load instead of accumulating an unbounded remote backlog.
-    - The canonical signal for “target region degraded / unhealthy” comes from Game Session’s durable/control-plane region status (for example `GetRegionTickStatus` / `RegionStatus`), not from best-effort Redis hint keys such as `remote:*`.
+    - The current-live signal for “target region degraded / unhealthy” combines `GetRuntimeOwnershipStatus` with `ObserveRuntimeTickProgress`; the target-state equivalent is `GetRegionTickStatus` backed by `RegionStatus`. Neither deployment may use best-effort Redis hint keys such as `remote:*` as admission authority.
 
 Best-effort hint markers (`remote:{tenantInstanceTag}:<entityId>`) are only allowed to influence latency. Correctness is derived solely from the durable follow-up records in PostgreSQL and the idempotent handling of those records in the target region’s tick pipeline.
 
@@ -532,6 +532,6 @@ To illustrate how cross-region flows compose from the phases above, consider a *
 
 Throughout this sequence:
 
-- Each leg is idempotent and keyed by `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` and effect identity in the domain services.
+- Each leg is idempotent and keyed by the complete `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)` EffectId in the domain services.
 - Region executors never hold cross-region locks; they coordinate via queued commands, durable follow-up records, and durable origin-addressed result rows.
 - Retries due to lock contention or transient failures are handled by the standard retry queues and idempotent handlers in each region without breaking the overall experience.

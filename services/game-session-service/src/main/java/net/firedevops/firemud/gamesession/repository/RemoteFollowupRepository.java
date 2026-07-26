@@ -64,13 +64,19 @@ public class RemoteFollowupRepository {
         .fetch(this::toEntity);
   }
 
-  public Optional<RemoteFollowup> findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
-      Long tenantId, String targetRegionId, long targetRegionEpoch, String effectKey) {
+  public Optional<RemoteFollowup>
+      findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+          Long tenantId,
+          Long targetGameInstanceId,
+          String targetRegionId,
+          long targetRegionEpoch,
+          String effectKey) {
     return dsl.selectFrom(REMOTE_FOLLOWUP)
         .where(
             REMOTE_FOLLOWUP
                 .TENANT_ID
                 .eq(tenantId)
+                .and(REMOTE_FOLLOWUP.TARGET_GAME_INSTANCE_ID.eq(targetGameInstanceId))
                 .and(REMOTE_FOLLOWUP.TARGET_REGION_ID.eq(targetRegionId))
                 .and(REMOTE_FOLLOWUP.TARGET_REGION_EPOCH.eq(targetRegionEpoch))
                 .and(REMOTE_FOLLOWUP.EFFECT_KEY.eq(effectKey)))

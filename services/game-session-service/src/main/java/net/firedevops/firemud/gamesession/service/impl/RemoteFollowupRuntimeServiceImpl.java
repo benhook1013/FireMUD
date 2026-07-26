@@ -132,11 +132,13 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     mirrorCoordinatorToCommand(coordinator, now);
 
     Optional<RemoteFollowup> existingFollowup =
-        remoteFollowupRepository.findByTenantIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
-            request.tenantId(),
-            request.targetRegionId(),
-            request.targetRegionEpoch(),
-            request.effectKey());
+        remoteFollowupRepository
+            .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+                request.tenantId(),
+                request.targetGameInstanceId(),
+                request.targetRegionId(),
+                request.targetRegionEpoch(),
+                request.effectKey());
     RemoteFollowup followup = existingFollowup.orElseGet(RemoteFollowup::new);
     boolean followupCreated = existingFollowup.isEmpty();
     existingFollowup.ifPresent(existing -> validateExistingFollowup(existing, request));

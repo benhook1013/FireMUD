@@ -143,11 +143,11 @@ Game Logic may memoize snapshots for the duration of a tick but must refresh the
 
 ### Target same-fence contract
 
-The target protocol maps `worldSnapshotId` to a World Management-owned committed `roomSnapshotVersion`: one opaque or epoch-bearing fence that advances after every durable mutation included in the room view. World Management will publish the relevant room-mutation changes so that this committed value can advance rather than relying on time-based guesswork. The exact-fence propagation protocol is target-only; the current request does not have a named requested-fence field and the current implementation does not claim this behavior complete.
+The target protocol maps `worldSnapshotId` to a World Management-owned committed `roomSnapshotVersion`: one opaque or epoch-bearing fence that advances after every durable mutation included in the room view. World Management will publish the relevant room-mutation changes so that this committed value can advance rather than relying on time-based guesswork. The exact-fence propagation protocol is explicitly deferred: the current request has no named requested-fence field and the current implementation does not claim this behavior complete. When the target protocol is implemented, it must carry the exact World Management committed same-scope fence into each participant read and require each participant to echo that exact satisfied token; a scope-local substitute or independently minted participant fence is not equivalent.
 
 Once that target protocol is designed and implemented, cross-service LOOK read consistency is fence-based:
 
-- Game Logic must compare the logical `roomSnapshotVersion` carried as `worldSnapshotId` from `GetRoomSnapshot` with the identical `entitySnapshotId` returned by Entity Management `ListRoomEntities` for the same room scope.
+- Game Logic must propagate the logical `roomSnapshotVersion` carried as `worldSnapshotId` from `GetRoomSnapshot` as the requested fence for the same-scope Entity Management read, then compare it with the identical `entitySnapshotId` returned by `ListRoomEntities`.
 - Entity Management must either answer with that exact committed same-scope fence token after satisfying it, or return target-state `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`; it must not mint a competing entity-local fence.
 - If a participant cannot satisfy the requested fence or the returned participant fence differs, Game Logic treats that as a caller-side retry condition, obtains a fresh World Management snapshot, and retries the same-scope composition. It must not return mixed-state output or require a separate mismatch service error.
 

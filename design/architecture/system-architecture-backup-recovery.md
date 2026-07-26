@@ -97,7 +97,7 @@ Tick pause/resume APIs support multiple ways to identify scope for maintenance, 
 
 - The canonical region scope is `tenant_id + game_instance_id + region_id`; region identity is never interpreted outside its owning game instance.
 - Before Phase C, current requests may set `tenant_id + game_instance_id` without `region_id` only when the game instance maps cleanly to the complete affected region set; the operation must resolve and record that set before execution.
-- From Phase C onward, every pause/resume request must provide the complete `tenant_id + game_instance_id + region_id` triple; any request that omits `game_instance_id` or `region_id`, including a request that otherwise identifies only a game instance, is rejected with `INVALID_ARGUMENT`.
+- From Phase C onward, every pause/resume request must provide non-empty `tenant_id + game_instance_id + region_id`; any request that omits any member of that complete triple, including a request that otherwise identifies only a game instance, is rejected with `INVALID_ARGUMENT`.
 - Routine online backups do not invoke this contract and do not use pause scope as recovery evidence.
 - Until Phase C is complete, game-instance-scoped pause/resume is allowed only for non-player-facing maintenance drills, quarantined staging rehearsals, and manual operator workflows that record explicit scope-resolution evidence; it is never player-facing restore evidence.
 - Manual game-instance-scoped maintenance operations must write an audit record showing the requested scope, the resolved `tenant_id`, `game_instance_id`, and `region_id` set, actor identity, and start/end timestamps.
@@ -115,7 +115,7 @@ The control-plane migration should follow explicit phases:
 1. **Phase A**: require `tenant_id + game_instance_id`, accept optional `region_id`, emit incomplete-scope metrics, and log warnings when region scope must be resolved.
 2. **Phase B**: keep game-instance-wide acceptance but require dashboards and alerts for omitted-region usage.
 3. **Phase C entry gate**: enter Phase C only after the Phase B metric records zero attempted omitted-region requests for one complete release window.
-4. **Phase C**: reject any pause/resume request that omits either `game_instance_id` or `region_id` with `INVALID_ARGUMENT`.
+4. **Phase C**: reject any pause/resume request that omits `tenant_id`, `game_instance_id`, or `region_id` with `INVALID_ARGUMENT`.
 
 Exit criteria for Phase C:
 

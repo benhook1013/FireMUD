@@ -42,7 +42,7 @@ These example rules enforce the target-state player-centric SLOs defined in the 
 - alert: CommandLatencyP99HighGateway
   expr: histogram_quantile(
           0.99,
-          sum by (scope, command, le) (
+          sum by (service, scope, command, le) (
             rate(command_end_to_end_latency_ms_bucket{service="spring-cloud-gateway", command=~"move|look|combat"}[5m])
           )
         ) > 250
@@ -59,7 +59,7 @@ These example rules enforce the target-state player-centric SLOs defined in the 
 - alert: CommandLatencyP99HighTcpProxy
   expr: histogram_quantile(
           0.99,
-          sum by (scope, command, le) (
+          sum by (service, scope, command, le) (
             rate(command_end_to_end_latency_ms_bucket{service="tcp-proxy-service", command=~"move|look|combat"}[5m])
           )
         ) > 250

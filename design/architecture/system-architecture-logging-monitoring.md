@@ -175,10 +175,10 @@ In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines,
   - SLO (production starting point): ≥ 99.5% success over a 15-minute rolling window, evaluated per documented bounded `scope`.
   - Instrumentation: target-state instrumentation should be emitted by Spring Cloud Gateway (and any protocol-bridging entry points such as the TCP Proxy) for login-related routes, with bounded labels for outcome and canonical bounded `scope`. The pre-gameplay baseline is `scope="environment"`; do not add raw `tenantId`, `gameInstanceId`, or `regionId` labels.
 - **Command end-to-end latency**
-  - SLI: gateway-to-domain command latency, measured from reception at Gateway or TCP Proxy through to domain commit, for example `command_end_to_end_latency_ms` histogram with labels such as `scope` and `command`.
+  - SLI: gateway-to-domain command latency, measured from reception at Gateway or TCP Proxy through to domain commit, for example `command_end_to_end_latency_ms` histogram with bounded labels `service`, `scope`, and `command`.
   - SLO: 99% of core gameplay commands (movement, look, combat) complete in < 250ms over a 5-minute window, per documented bounded `scope`.
-  - Instrumentation: target-state instrumentation should be emitted by Gateway (and optionally the TCP Proxy for Telnet) with bounded labels for command and a documented bounded `scope`. Core commands such as movement, LOOK, and combat should use a small, documented set of `command` label values so per-command latency panels remain low-cardinality.
-  - Recording rules and alerts for the bounded core-command SLO set must preserve the `command` label. An additional aggregate “all core commands” panel is allowed for high-level dashboards, but it must not be the sole paging signal because it can hide a single broken command behind healthy higher-volume commands.
+  - Instrumentation: target-state instrumentation should be emitted by Gateway (and optionally the TCP Proxy for Telnet) with bounded labels for `service`, command, and a documented bounded `scope`. Core commands such as movement, LOOK, and combat should use a small, documented set of `command` label values so per-service/per-command latency panels remain low-cardinality.
+  - Recording rules and alerts for the bounded core-command SLO set must preserve the bounded `service` and `command` labels. An additional aggregate “all core commands” panel is allowed for high-level dashboards, but it must not be the sole paging signal because it can hide a single broken command behind healthy higher-volume commands or another service.
   - Phase-split drilldown metrics must also be emitted for bounded command stages so operators can distinguish edge, dispatch, tick-wait, and domain-commit latency without depending entirely on traces. Use a histogram such as `command_latency_stage_ms_bucket{service,scope,command,stage,le}` where `scope` uses the metric family's documented bounded values and `stage` is a bounded enum such as `edge_queue`, `dispatch`, `tick_wait`, or `domain_commit`.
 - **Telnet and WebSocket path availability**
   - SLI: fraction of successful connection attempts over total attempts for each entry path (Telnet and WebSocket). This SLI must be computed from an explicit attempts counter so it captures all failure modes, not just cap rejections.
@@ -219,9 +219,9 @@ The metrics below are the desired Prometheus-facing shapes for player experience
 - Login:
   - `login_requests_total{service,scope,outcome}` where `service` is the canonical ingress emitter, the pre-gameplay `scope` baseline is `environment`, and `outcome` is a bounded enum (for example `success`, `invalid_credentials`, `rate_limited`, `upstream_error`, `timeout`, `unknown`).
 - Commands:
-  - `command_end_to_end_latency_ms_bucket{scope,command,le}` with `scope` drawn from the metric family's documented bounded values and `command` drawn from a documented, bounded command set for core SLO coverage.
+  - `command_end_to_end_latency_ms_bucket{service,scope,command,le}` with bounded `service`, `scope` drawn from the metric family's documented bounded values, and `command` drawn from a documented, bounded command set for core SLO coverage.
     - Starting bounded set for SLO coverage (normalize synonyms/aliases in instrumentation): `move`, `look`, `combat`.
-    - Alert rules and dashboards may filter to this bounded set (for example `command=~"move|look|combat"`) so the SLO signal stays stable even when new commands are introduced.
+    - Alert rules and dashboards may filter to this bounded set (for example `command=~"move|look|combat"`) while retaining `service` so the SLO signal stays stable and service-specific even when new commands are introduced.
   - `command_latency_stage_ms_bucket{service,scope,command,stage,le}` for bounded stage-level drilldown. Required `stage` values are `edge_queue`, `dispatch`, `tick_wait`, and `domain_commit`; environment overlays may add a small number of additional bounded stages only with a design update here.
 - Entry-path availability:
   - `entrypath_connection_attempts_total{scope,path,outcome}` with the pre-gameplay `scope` baseline `environment` and bounded enums for `path` and `outcome` as described above.
@@ -365,7 +365,7 @@ When Alertmanager is unavailable but Prometheus is still accessible, Logging & A
 - **Login success ratio**
   - Recording rules mirroring `LoginSuccessRatioLowGateway` and `LoginSuccessRatioLowTcpProxy`, scoped by `service` and bounded `scope`, and based on the explicit same-window ratio `sum by (scope, service) (rate(login_requests_total{outcome="success"}[15m])) / sum by (scope, service) (rate(login_requests_total[15m]))`.
 - **Command p99 latency**
-  - Recording rules mirroring `CommandLatencyP99HighGateway` and `CommandLatencyP99HighTcpProxy`, scoped by `service` and preserving the bounded `command` label for the core-command SLO set, based on `command_end_to_end_latency_ms_bucket`.
+  - Recording rules mirroring `CommandLatencyP99HighGateway` and `CommandLatencyP99HighTcpProxy` must retain bounded `service`, `scope`, and `command` dimensions in both the `histogram_quantile` aggregation and the resulting series, based on `command_end_to_end_latency_ms_bucket`. The corresponding alerts must evaluate those per-service/per-command series rather than aggregating `service` away.
 - **Entry-path availability**
   - Recording rules mirroring both the short-window detection view and the 1-day compliance view for `EntryPathAvailabilityLowGateway` and `EntryPathAvailabilityLowTcpProxy`, scoped by bounded `scope`, `service`, and `path`, based on `entrypath_connection_attempts_total`.
 - **Chat delivery latency**
