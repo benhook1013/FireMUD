@@ -44,7 +44,7 @@ PLAY <world> [realm] [character]
 | `LOGON <username> <secret>` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
 | `LOGOUT` / `LOGOFF` / `QUIT` | Ends the current session and closes the transport. `LOGOFF` and `QUIT` are exact aliases for canonical `LOGOUT`. | `LOGOUT` |
 | `WORLDS` | Lists worlds visible to the caller. Before `LOGIN`, this is a public browse/discovery command intended to let players explore the platform before signing up or logging in. After `LOGIN`, it may also include caller-specific membership or entitlement context. | `WORLDS` |
-| `REALMS <world>` | Lists visible realms for a world, where `<world>` is a world slug or a menu index from `WORLDS`. The default public production realm may be visible before membership exists; additional realms require explicit grants. | `REALMS demo` |
+| `REALMS <world>` | Lists visible realms for a world, where `<world>` is the stable selector or menu index returned by `WORLDS`. The default public production realm may be visible before membership exists; additional realms require explicit grants. | `REALMS demo` |
 | `JOIN <world>` | Explicitly joins the selected world's public production realm through the Account-owned idempotent membership writer. The resulting membership is durable and powers later return discovery. | `JOIN demo` |
 | `CHARS <world> [realm]` | Lists characters for a world and optional realm from the authoritative character store, filtered to `{accountId, tenantId, gameInstanceId}` ownership. | `CHARS demo production` |
 | `PLAY <world> [realm] [character]` | Binds the authenticated connection to a world, optional realm, and optional character after `LOGIN`, enforcing tenant authorization, realm routing, and entitlements. Players may omit `[realm]` or `[character]` when the resolved choice is unambiguous. A first-time public player must complete `JOIN <world>` first; a grant-backed non-public path may proceed only when its required durable membership already exists. `PLAY` returns `JOIN_REQUIRED` and never creates or substitutes membership implicitly. | `PLAY demo production Sora` |
@@ -57,7 +57,15 @@ PLAY <world> [realm] [character]
 | `WHISPER <character> <text>` | Standard directed in-room communication action. Targets one nearby character in the current room; baseline default is full content for sender and target, with observer handling controlled by communication-type and target rules. | `WHISPER Sora The forge smells of brimstone` |
 | `TELL <character> <text>` | Standard direct communication action. Targets one character directly, outside room scope by default, while still flowing through the shared communication model and Game Logic. | `TELL Sora Meet me at the forge` |
 
-Selector rules for `PLAY` match the lobby helpers: `<world>` accepts a stable world slug or a menu index from `WORLDS`, `[realm]` accepts a realm slug or a menu index from `REALMS`, and `[character]` is an optional name or index when the resolved realm exposes exactly one visible character choice. If `PLAY <world>` or `PLAY <world> <character>` is ambiguous, the response should guide the player toward `REALMS`, `CHARS`, or a more specific `PLAY` form rather than failing with a low-level backend-flavored error.
+Selector rules for `PLAY` match the lobby helpers. `WORLDS` returns both `tenantSlug` and
+tenant-scoped `worldSlug`; the canonical textual `<world>` form is
+`tenantSlug/worldSlug`, while a bare `tenantSlug` is shorthand only when that tenant exposes
+exactly one visible authored world. A bare `worldSlug` is never resolved across tenants. `<world>`
+may instead be a menu index from the exact `WORLDS` browse snapshot, `[realm]` accepts a
+`realmSlug` under the resolved world or an index from its exact `REALMS` snapshot, and
+`[character]` is an optional name or response-local index. If a selector is ambiguous or stale,
+the response guides the player toward `WORLDS`, `REALMS`, `CHARS`, or a more specific `PLAY` form
+rather than guessing or returning a backend-flavored error.
 
 ## Login and Play Flow
 
@@ -119,7 +127,12 @@ PLAY 1 production 2
 OK PLAY Entered world: Demo World / Live Realm as Sora
 ```
 
-The same resolution rules apply to `PLAY demo production 2` or `PLAY 1 1 Sora`: menu indices and stable world/realm slugs are equivalent player-facing selectors. Game Session resolves the current admissible runtime target and binds the internal `{tenantId, gameInstanceId, characterId}` identity; the player never selects `gameInstanceId` directly.
+The same resolution rules apply to `PLAY demo production 2`, where `demo` is the one-world
+tenant shorthand, `PLAY demo/main production 2`, or `PLAY 1 1 Sora`: response-local menu indices
+and stable qualified slug selectors identify the same player-facing choices. Game Session resolves
+the current admissible runtime target and binds the internal
+`{tenantId, gameInstanceId, characterId}` identity; the player never selects `gameInstanceId`
+directly.
 
 The Account Service returns canonical `AUTH_*` error codes such as `AUTH_INVALID_CREDENTIALS`, `AUTH_RETRY_LATER`, `AUTH_ACCOUNT_LOCKED`, and `AUTH_UPSTREAM_FAILURE`. Game Session translates them into protocol-level responses such as `ERROR INVALID_CREDENTIALS` and `ERROR RETRY_LATER` so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible. `AUTH_ACCOUNT_LOCKED` is reserved for verified compromise or an explicit account-security policy after sufficient identity proof; ordinary failed-login throttling uses `AUTH_RETRY_LATER`.
 

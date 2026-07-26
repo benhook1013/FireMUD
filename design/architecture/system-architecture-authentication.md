@@ -187,6 +187,13 @@ LOGIN <username> <secret>
 PLAY <world> [realm] [character]
 ```
 
+`<world>` is either an index from the caller's exact `WORLDS` browse snapshot or the stable
+`tenantSlug/worldSlug` selector carried by that response. A bare `tenantSlug` is accepted only
+when the tenant exposes exactly one visible authored world; a bare tenant-scoped `worldSlug` is
+never resolved globally. `[realm]` is a `realmSlug` under the resolved world or an index from the
+corresponding `REALMS` snapshot. Menu indices are response-local conveniences and are never stored
+or forwarded as durable identity.
+
 Before login, only `WORLDS_PUBLIC` is available, and it exposes bounded public-production catalog/availability metadata. `REALMS` and `CHARS` are authenticated post-login discovery commands; they must not be exposed as anonymous pre-login discovery surfaces. After login, authenticated `WORLDS`, `REALMS`, and `CHARS` may provide caller-bound membership/grant-aware discovery.
 
 `WORLDS` deliberately has two canonical modes rather than one replacing the other:
@@ -519,8 +526,12 @@ Players must never be asked to type platform-scope identifiers such as `tenantId
 
 After `LOGIN` succeeds, the Game Session Service requires an explicit lobby selection flow using these canonical commands:
 
-- `WORLDS` – list worlds the authenticated account can enter (a numbered menu plus a stable world slug for each entry).
-- `REALMS <world>` – list the visible realms for the selected world (`<world>` is a world index from `WORLDS` or a world slug). Responses include the default production realm plus any explicitly authorized additional realms such as playtest forks.
+- `WORLDS` – list worlds the authenticated account can enter (a numbered menu plus stable
+  `tenantSlug` and `worldSlug` values for each entry).
+- `REALMS <world>` – list the visible realms for the selected world (`<world>` is a response-local
+  world index or the stable tenant-qualified selector returned by `WORLDS`). Responses include the
+  default production realm plus any explicitly authorized additional realms such as playtest
+  forks.
 - `JOIN <world>` – explicitly create or return the caller's durable `player` membership for the world's public production realm. First-party clients expose the equivalent `Join & Play` action through Account bootstrap.
 - `CHARS <world> [realm]` – list characters for the selected world and optional realm.
 - `PLAY <world> [realm] [character]` – enter gameplay by selecting a world, an optional realm, and an optional character.
