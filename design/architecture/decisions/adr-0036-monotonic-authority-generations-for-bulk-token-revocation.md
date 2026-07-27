@@ -46,8 +46,18 @@ The Account domain already requires monotonic versions and durable ordered secur
 - A token containing tenant-scoped authority also captures the current tenant and membership generations for exactly the bounded tenant entries already present in its scoped claims. Generation metadata must not introduce scopes absent from those claims.
 - A global `platformAdmin` token does not acquire tenant claims or membership generations. For an explicitly allowed tenant-operational route, Account reads the current target-tenant generation while authorizing the request and binds it into the bounded operator authorization reference. The owner redeems that exact reference and rejects it if the target-tenant generation has changed; no tenant membership is invented or bypassed.
 - After cryptographic/profile validation and the issued-token registry check, a consumer compares the token's captured generations with the current applicable projections. Every generation required for the route must match exactly.
-- A mismatch revokes that token's authority at the mismatched scope. Tenant generation mismatch does not block explicitly billing-safe or support-safe route classes that do not apply tenant billing revocation; membership generation still applies where the route requires caller-bound membership authority.
+- A mismatch revokes that token's authority at the mismatched scope. Tenant-generation omission is not a general route exception: the only allowed route classifications are the closed allowlist below, and each still requires the listed issuer, account, global-role, or membership checks. A route is never exempt merely because a caller or service labels it billing-safe or support-safe.
 - JWT `iat` remains a required audit and lifetime claim but is not bulk-revocation ordering authority.
+
+### Explicit Route-Class Generation Allowlist
+
+Tenant generation applies by default. Only these canonical route classifications may omit the target tenant generation, and their other authority checks are mandatory:
+
+- `billing_safe_tenant`: require current issuer and account generations, the caller-bound `{accountId, tenantId}` membership generation, and a live `tenantAdmin` membership/role check. The route must validate the exact requested `tenantId`; it may remain reachable during a tenant gameplay billing suspension, but never after the caller's membership or role is revoked.
+- `cross_tenant_support_safe`: require current issuer and account generations, the live global `support` role or an explicitly allowed `platformAdmin` role, and global token scope. The target tenant is an input to the audited operation, not a membership or generation-map key. The `support` path does not require `privileged_control`; a `platformAdmin` path does.
+- `cross_tenant_billing_safe`: require current issuer and account generations, the live global `billingAdmin` role or an explicitly allowed `platformAdmin` role, global token scope, and `privileged_control` assurance. The target tenant is audited and independently resolved; no tenant membership or target-tenant generation is inferred.
+
+Every other tenant-bearing classification, including a newly introduced classification, requires tenant generation according to its route declaration. The allowlist is not inherited by route variants, internal callers, or operator references. Negative proof must demonstrate that a tenant-generation advance denies `tenant_regular` and gameplay/admission routes, while each allowlisted class is still denied when its issuer/account, membership, live role, exact target-tenant binding, global scope, or required assurance predicate is absent, stale, mismatched, or unavailable.
 
 ### Advancing Authority
 
@@ -95,7 +105,7 @@ Short expiry avoids revocation state but cannot meet immediate account-security,
 - Define bounded token claims and shared typed accessors for captured generations.
 - Replace `session:auth:revoked_after:*` timestamp projections and comparisons directly in this pre-v1 system; do not retain dual timestamp/generation authority.
 - Prove same-second issuance/revocation ordering, concurrent issuance and generation advancement, set-if-greater replay, missing state, reset/rebuild, and multi-tenant target-scope validation.
-- Prove route-class exceptions do not accidentally bypass applicable account, issuer, or membership generations.
+- Prove the closed route-class allowlist: tenant-generation advances deny every non-allowlisted route; `billing_safe_tenant` still requires issuer, account, membership generation, exact tenant binding, and live `tenantAdmin`; support-safe routes reject missing issuer/account/current global role and reject support's use of billing or data-bearing routes; billing-safe cross-tenant routes reject missing issuer/account/global billing role, wrong target scope, and missing `privileged_control`. Add negative tests proving a newly named class or route cannot inherit an allowlist entry.
 - Preserve the no-per-command gameplay-read boundary and prove the active-session 60-second reconciliation limit separately.
 
 ## Reversibility and Revisit Triggers

@@ -5,20 +5,21 @@ This document defines the Logging & Admin Service REST and gRPC surfaces, authen
 ## Implementation Notes
 
 - Admission-pointer workflows, feature-flag toggles, and scoped tick-remediation pause/resume forwarding are live in the current service.
+- The live operator surface is limited to those feature-flag, admission-pointer, and tick pause/resume families; moderation is currently persistence-only.
 - Admission-pointer reads, audit, preparation, cutover, and same-target mutation endpoints are part of the core operator/control-plane availability contract and must not depend on observability backends.
 - The canonical `SetAdmissionPointerRequest` REST schema omits `actorPrincipal`. `AdmissionPointerServiceImpl` derives the actor from the authenticated operator session or internal workload and writes that derived value to the internal control-plane request; `actorPrincipal` is response/audit data, not client-supplied write authority.
 - The target `POST /reports` route is caller-bound to the `player-bootstrap` subject and live tenant membership. The current OpenAPI/controller accepts caller-supplied `tenantId` and `reporterAccountId`, so the target route remains implementation drift.
-- `ApplyModerationAction` currently persists moderation policy input in Logging & Admin; no owner-side enforcement RPC is currently exposed. That missing owner call is coverage drift, not an implemented downstream contract.
-- Quota-override ingress remains target-state until Account exposes the canonical owner-side override mutation contract.
-- Broader tick-remediation `remediate` remains target-state until Game Session exposes the canonical owner-side remediation RPC.
+- `ApplyModerationAction` currently persists moderation policy input and audit in Logging & Admin; no owner-side enforcement RPC is currently exposed. That missing owner call is target coverage, not an implemented downstream contract.
+- Quota-override ingress is a hypothetical target family until Account exposes the canonical owner-side override mutation contract; no executable route exists today.
+- Broader tick-remediation `remediate` is a hypothetical target family until Game Session exposes the canonical owner-side remediation RPC; no executable route exists today.
 
 ## REST
 
 - `GET /ping` – basic health check returning `"pong"`.
 - `POST /reports` – target caller-bound abuse or bug report submission; reporter and tenant identity must come from the validated `player-bootstrap` session rather than the request body.
-- `POST /feature-flags/toggle` – enable or disable runtime flags.
+- `POST /feature-flags/toggle` – live enable or disable runtime flags.
 - `POST /logs/query` – search stored logs.
-- `POST /moderation/actions` – apply a moderation action.
+- `POST /moderation/actions` – persist moderation policy input and audit (current); target enforcement is a separate owner-propagation contract.
 - `GET /sagas` – list saga instances.
 - `GET /sagas/{id}/steps` – inspect steps for a saga instance.
 - `GET /admission-pointers` – list the caller-visible Game Session route records joined with their separately revisioned catalog/policy projection, including `OPEN`/`CLOSED`, the route version, and the explicit public-production policy used by admission and first-join membership creation.
@@ -28,16 +29,16 @@ This document defines the Logging & Admin Service REST and gRPC surfaces, authen
 - `POST /admission-pointers/cutover` – operator-facing canonical prepared-cutover operation that forwards one prepared-upgrade id, replacement instance id, and pointer CAS guard to Game Session so proof revalidation and pointer swap happen in one control-plane call.
 - `POST /admission-pointers/version-upgrades` – operator-facing preparation call that persists the Game Session `PrepareVersionUpgrade` compatibility proof for a source instance and target version under a caller-supplied idempotency key.
 - `GET /admission-pointers/version-upgrades/{tenantId}/{preparationId}` – read one durable prepared-version-upgrade proof, including participant attestations and execution state after a cutover has consumed the preparation.
-- `POST /tick-remediation/pause` – operator-facing scoped tick pause request that forwards to Game Session control-plane, records actor identity and reason, and never mutates Redis directly.
-- `POST /tick-remediation/resume` – operator-facing scoped tick resume request that forwards to Game Session control-plane with the same audit requirements.
+- `POST /tick-remediation/pause` – live operator-facing scoped tick pause request that forwards to Game Session control-plane, records actor identity and reason, and never mutates Redis directly.
+- `POST /tick-remediation/resume` – live operator-facing scoped tick resume request that forwards to Game Session control-plane with the same audit requirements.
 
-### Coverage Drift
+### Hypothetical/Target Coverage
 
-- Quota override has no current OpenAPI route and no current Account owner mutation contract. Do not add `/quota-overrides*` until the owner contract exists.
-- Moderation enforcement has no current Account, Game Session, or Social & Groups owner RPC behind `POST /moderation/actions`; the current route records policy input only.
-- Scoped remediation beyond pause/resume has no current OpenAPI route and no current Game Session owner RPC. Do not add `/tick-remediation/remediate` or a direct Redis mutation path.
+- Quota override is hypothetical target coverage: it has no current OpenAPI route and no current Account owner mutation contract. Do not add `/quota-overrides*` until the owner contract exists.
+- Moderation enforcement is target coverage: it has no current Account, Game Session, or Social & Groups owner RPC behind `POST /moderation/actions`; the current route records policy input and audit only.
+- Scoped remediation beyond pause/resume is hypothetical target coverage: it has no current OpenAPI route and no current Game Session owner RPC. Do not add `/tick-remediation/remediate` or a direct Redis mutation path.
 
-All target operator mutations use Account's canonical [`IssueOperatorAuthorization`](../account-service/api-contracts.md#operator-authorization-references) contract after Logging & Admin authenticates the `control-ui` actor and records durable intent. Logging & Admin forwards the opaque bounded reference, not the end-user JWT, to the owning service. The owner recomputes the request digest and redeems the reference directly with Account; Logging & Admin never becomes a second authorization authority.
+Human operator mutations use Account's canonical [`IssueOperatorAuthorization`](../account-service/api-contracts.md#operator-authorization-references) contract after Logging & Admin authenticates the current `control-ui` actor and records durable intent. Unattended automation uses the typed Account `IssueAutomationOperatorAuthorizationReference` path with `exact_mtls_workload_plus_versioned_automation_policy`, bound to the exact Logging and Admin workload mTLS identity and current `automation_policy_id`/`automation_policy_version`; it carries no human identity or end-user token. Logging & Admin forwards the opaque bounded reference to the owning service. The owner recomputes the request digest and redeems the reference directly with Account; Logging & Admin never becomes a second authorization authority.
 
 ### Canonical Admission State Operations
 
@@ -75,8 +76,8 @@ grpcurl -plaintext -d '{"tenant_id":1,"reporter_account_id":1,"target_account_id
 | --- | --- | --- | --- |
 | Public/infra health | `GET /ping`, `Ping` | Internal network + platform health policy | Not a user-authenticated business operation. |
 | Player report (HTTP) | `/reports` | Exact `player-bootstrap` profile plus caller-bound tenant membership and membership-generation applicability | Target reporter and tenant identity come from the validated session; the current OpenAPI/controller accepts caller-supplied `tenantId` and `reporterAccountId`, so the caller-bound route remains implementation drift and is not an operator authority path. |
-| Operator APIs (HTTP) | `/logs/query`, `/moderation/actions`, `/feature-flags/toggle`, `/sagas*`, `/admission-pointers*`, `/tick-remediation/pause`, `/tick-remediation/resume` | Exact `control-ui` profile, current role, role-appropriate assurance, and route classification | External tools enter through Gateway-allowlisted routes; Account issues the bounded operator authorization reference before owner forwarding. Tenant roles use current membership; global privileged roles use their required elevation. |
-| Owner mutation calls (gRPC internal) | Feature flag, admission, and tick owner RPCs | Exact Logging & Admin mTLS identity plus Account redemption of the opaque bounded operator authorization reference; no end-user JWT | The owner validates domain facts, fencing, and idempotency. Logging & Admin assertions alone are not authority. |
+| Operator APIs (HTTP) | `/logs/query`, `/moderation/actions`, `/feature-flags/toggle`, `/sagas*`, `/admission-pointers*`, `/tick-remediation/pause`, `/tick-remediation/resume` | Human: exact `control-ui` profile, current role, role-appropriate assurance, and route classification | External tools enter through Gateway-allowlisted routes; Account issues the bounded human authorization reference before owner forwarding. Unattended automation uses its separate typed Account policy authorization rather than a human profile. |
+| Owner mutation calls (gRPC internal) | Current feature flag, admission, and tick owner RPCs; target moderation, quota, and broader-remediation owner RPCs | Exact Logging & Admin mTLS identity plus Account redemption of the matching human or versioned automation authorization reference | The owner validates domain facts, fencing, and idempotency. Logging & Admin assertions alone are not authority. |
 | Service-to-service control/ingest (gRPC internal) | Internal lifecycle/event ingestion and trusted backend calls | mTLS caller identity + explicit service authorization checks | Never exposed at public ingress; use an exact receiver-specific private delegation profile only where the route declares one. |
 
 ## Availability Classes by Endpoint Family

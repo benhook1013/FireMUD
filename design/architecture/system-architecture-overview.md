@@ -2,6 +2,17 @@
 
 This document provides a high-level view of FireMUD’s system architecture, showing how major services, protocols, and data flows interact across the platform.
 
+## Implementation Status
+
+This overview is target-state canonical; implementation coverage is partial and must not be inferred from the target tables alone. The current operator-control boundary is:
+
+- Runtime feature-flag overrides, admission-pointer reads/audit/preparation/cutover/same-target mutations, and scoped tick `PauseTicks`/`ResumeTicks` are live through Logging & Admin, with Game Session retaining runtime and coordination mutation authority.
+- `POST /moderation/actions` currently persists moderation policy input and audit only; versioned propagation and Game Session/Social & Groups enforcement are target-state and no owner enforcement RPC is currently exposed.
+- Quota override is a hypothetical target overlay on Account entitlements; no current OpenAPI route or Account owner mutation contract exists.
+- Broader tick/coordination remediation beyond pause/resume is hypothetical target coverage; no current OpenAPI route or Game Session owner RPC exists.
+- Human operator authorization requires the current `control-ui` identity. Unattended automation uses Account's typed, versioned automation-policy authorization bound to the exact Logging & Admin workload mTLS identity, with no human identity or end-user token.
+- The Telnet edge chain (Telnet client -> Telnet edge proxy with PROXY protocol -> TCP Proxy Service -> Spring Cloud Gateway with mTLS) and related certificate wiring are being rolled out incrementally. For current rollout and configuration details, see the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md), [Telnet Path Degraded Runbook](./system-architecture-telnet-degraded-runbook.md), [Security Architecture](./system-architecture-security.md), and [Protocol Bridging](./system-architecture-protocol-bridging.md).
+
 ---
 
 ## Architecture Decisions (Canonical)
@@ -15,7 +26,7 @@ The documents linked from this overview describe the target-state design, but th
 - **Multi-cluster gameplay sharding scope:** FireMUD target state assumes single-cluster gameplay execution per deployment, with scale via lease-based in-cluster Game Session rebalancing. Cross-cluster gameplay sharding is out of scope until a dedicated end-to-end design package is accepted. See `design/architecture/decisions/adr-0008-multi-cluster-gameplay-sharding-scope.md`.
 - **Lease moves and reconnect behavior:** The platform favors **close-and-reconnect** over mid-connection migration at the edge contract. The edge contract does not define a distinct “shard handoff” close category; client-visible outcomes remain limited to the standard close taxonomy (for example `backend_unavailable` after the bounded non-edge recovery window). Ordinary lease moves remain internal and fenced, while an attached Game Session process loss uses ADR 0013's bounded upstream rebind whenever its qualifying conditions hold. If a future design introduces explicit handoff semantics at the edge, it must be defined as a dedicated design update and integrated into the gateway + protocol bridging contracts (see `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`).
 - **Quotas and entitlements source of truth:** Subscription entitlements and plan-driven quota values are owned by the Account Service (for example via `GetTenantEntitlements(tenantId)`). Logging & Admin provides dashboards, audit trails, and operator UX; any operator overrides must be represented as an overlay that is merged into the Account Service entitlement contract so enforcement points consume a single canonical view.
-- **Operator control-plane availability split:** Logging & Admin may depend on Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, and Alertmanager for observability-heavy experiences, but core operator actions such as moderation, feature-flag requests, quota overrides, admission control, and tick-remediation controls must remain available when those backends are degraded once their owner contracts exist. Logging & Admin owns the operator UX, request validation, and audit trail for these actions, while the owning domain services remain the only components allowed to mutate runtime or policy state. Quota override is currently coverage drift: no current OpenAPI or Account owner route exists.
+- **Operator control-plane availability split:** Logging & Admin may depend on Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, and Alertmanager for observability-heavy experiences, but core operator actions such as moderation, feature-flag requests, quota overrides, admission control, and tick-remediation controls must remain available when those backends are degraded once their owner contracts exist. Logging & Admin owns the operator UX, request validation, and audit trail for these actions, while the owning domain services remain the only components allowed to mutate runtime or policy state.
 - **Operator write ingress policy:** External operator-initiated mutating actions for moderation, runtime feature-flag overrides, quota overrides, admission control, and tick remediation must enter through Logging & Admin APIs via Gateway so validation and audit capture are uniform. Edge-routable admin APIs exposed directly by Account, Game Session, Social & Groups, and Game Design are limited to read operations plus narrowly scoped service-owned workflows that are explicitly documented as bypass-safe; absent that explicit designation, external writes must not bypass Logging & Admin.
 - **Bypass-safe workflow allowlist policy:** Service-level docs may not invent new classes of externally writable bypass-safe workflows on their own. A workflow is bypass-safe only when the overview or responsibility matrix explicitly names it as a bypass-safe class or explicitly delegates that class to a service-owned contract. Game Design creator writes for tenant-scoped assets and templates are delegated to the Game Design service contract as domain-local creator workflows. Otherwise, external writes are denied by default and require an architecture-doc update in the same change.
 - **Durable async contract:** Best-effort edge hints may use internal gRPC event sinks, but durable cross-service business events and saga updates must use the transactional outbox/background-worker pattern described in `design/architecture/system-architecture-transactions.md`. High-level docs must not imply an unspecified shared event bus.
@@ -85,7 +96,7 @@ Examples:
 - `GET /api/session/game-sessions/{id}` and `GET /api/account/accounts/{id}` are bypass-safe reads.
 - `POST /api/design/validation-runs/{runId}:cancel` is bypass-safe only if the owning service explicitly documents it as a domain-local operation that does not depend on Logging & Admin-owned policy or cross-domain write orchestration.
 - `POST /api/design/assets` and `POST /api/design/templates` are bypass-safe creator writes when implemented by Game Design as tenant-scoped domain-local asset/template workflows with Game Design-owned validation and audit behavior.
-- Quota override has no current route and is recorded as coverage drift; when an owner-backed route exists it must enter through Logging & Admin rather than becoming a direct bypass.
+- Quota override is a hypothetical target family and, when an owner-backed route exists, must enter through Logging & Admin rather than becoming a direct bypass.
 - `POST /api/session/tick-remediation/pause` is not bypass-safe and must enter through Logging & Admin.
 - `POST /api/session/game-sessions/{id}/feature-flags/{flagKey}:toggle` is not bypass-safe because runtime feature-flag overrides are operator writes governed by the canonical operator action contract.
 - `POST /api/account/accounts/{tenantId}/entitlements/overrides` is not bypass-safe because quota and entitlement overrides must remain canonical at Account through the Logging & Admin ingress path and audit workflow.
@@ -189,19 +200,16 @@ Under [ADR 0048](./decisions/adr-0048-durable-idempotent-operator-write-executio
 
 | Operator action | Operator-facing entry point | Runtime/policy owner | Required write path | Required durable store(s) for success | Observability dependency allowed for write success |
 | --- | --- | --- | --- | --- | --- |
-| Moderation action (`gameplay_ban`, `chat_mute`, `chat_ban`) | Logging & Admin HTTP(S) APIs via Gateway | Target: Logging & Admin defines policy; Game Session or Social & Groups enforce runtime scope | Target: Logging & Admin records audit and calls owning enforcement/policy APIs | Target: Logging & Admin PostgreSQL audit state plus owning service PostgreSQL/control-plane state | No |
+| Moderation action (`gameplay_ban`, `chat_mute`, `chat_ban`) | Logging & Admin HTTP(S) APIs via Gateway | Logging & Admin defines policy; Game Session or Social & Groups enforce runtime scope | Logging & Admin records audit and calls owning enforcement/policy APIs | Logging & Admin PostgreSQL audit state plus owning service PostgreSQL/control-plane state | No |
 | Runtime feature-flag override | Logging & Admin HTTP(S) APIs via Gateway | Game Session | Logging & Admin records audit and calls Game Session `ToggleFeatureFlag`/equivalent control API | Game Session PostgreSQL plus Logging & Admin PostgreSQL audit state | No |
-| Quota override (target-state coverage drift; no current route or Account owner contract) | Target: Logging & Admin HTTP(S) APIs via Gateway | Account Service canonical entitlement contract | Target: Logging & Admin records audit and calls the Account control-plane API so the merged entitlement view remains canonical at Account | Account PostgreSQL plus Logging & Admin PostgreSQL audit state | No |
+| Quota override (hypothetical target; no current route or Account owner contract) | Hypothetical target: Logging & Admin HTTP(S) APIs via Gateway | Account Service canonical entitlement contract | Hypothetical target: Logging & Admin records audit and calls the Account control-plane API so the merged entitlement view remains canonical at Account | Account PostgreSQL plus Logging & Admin PostgreSQL audit state | No |
 | Admission-pointer open, close, or retarget | Logging & Admin HTTP(S) APIs via Gateway | Game Session | Logging & Admin records durable intent with one `controlPlaneRequestId`; Game Session validates current catalog/runtime authority and compare-and-sets the pointer under the current version/fence | Game Session PostgreSQL admission-pointer state plus Logging & Admin PostgreSQL intent/audit state | No |
 | Tick remediation (`PauseTicks`, `ResumeTicks`) | Logging & Admin HTTP(S) APIs via Gateway | Game Session | Logging & Admin records audit and calls Game Session control APIs; direct Redis mutation is reserved for documented runbooks, not UI/API request handlers | Game Session PostgreSQL/control-plane state plus Logging & Admin PostgreSQL audit state | No |
-
-Broader scoped remediation beyond the live pause/resume endpoints is target-state coverage drift: no current OpenAPI route or Game Session owner RPC exists, so it is not part of the implemented availability contract and must not be represented as an executable route. The target owner-ingress and durable-audit architecture remains unchanged; only the broader route and owner contract are absent from current coverage.
-
-Current moderation behavior is narrower than the target row: `POST /moderation/actions` validates and persists policy input and audit data only. It does not expose or invoke an owner-side enforcement RPC; the target versioned policy-propagation path remains an implementation obligation.
+| Broader tick/coordination remediation (hypothetical target; no current route or Game Session owner RPC) | Hypothetical target: Logging & Admin HTTP(S) APIs via Gateway | Game Session | Hypothetical target: Logging & Admin records audit and calls a Game Session owner control API; no direct Redis mutation | Game Session PostgreSQL/control-plane state plus Logging & Admin PostgreSQL audit state | No |
 
 External admin tooling must not invoke alternate direct write routes for the actions in this table. If a future design allows a direct external mutation path for one of these actions, it must define equivalent audit, validation, and availability guarantees and update this table explicitly.
 
-Game Session control-plane APIs exposed behind the Gateway terminate on the stable Game Session service surface. In the current implementation they are ordinary service/control-plane handlers; in the target session-front-end plus lease-owner model, any control-plane request that mutates region-scoped coordination or tick-owned state must be forwarded to the current lease owner under the current gameplay fence and the same `controlPlaneRequestId`. A stale owner or stale fence rejects the write so that the same identifier can be safely reconciled or retried against the current owner. The externally routable API surface must not imply that a session front end can directly write region-owned coordination keys.
+Game Session control-plane APIs exposed behind the Gateway terminate on the stable Game Session service surface. In the current implementation they are ordinary service/control-plane handlers; in the target session-front-end plus lease-owner model, any control-plane request that mutates region-scoped coordination or tick-owned state must be forwarded to the current lease owner under the current gameplay fence and the same `controlPlaneRequestId`. A stale owner or stale fence rejects the write; the same identifier may be retried against the current owner only when that rejection is durable evidence that no owner mutation committed. An ambiguous outcome is reconciled read-only and is not replayed. The externally routable API surface must not imply that a session front end can directly write region-owned coordination keys.
 
 ### Authentication Modes and Boundaries
 
@@ -219,19 +227,11 @@ FireMUD uses two complementary authentication modes that share a common identity
 
 This split keeps gameplay session management and tick-sensitive orchestration in the Game Session Service while ensuring that account security, token issuance, and policy remain centralized in the Account Service. See [Authentication & Authorization](./system-architecture-authentication.md) for detailed flows.
 
+For operator writes, human issuance requires the current `control-ui` identity and Account validation. Unattended automation uses Account's typed `IssueAutomationOperatorAuthorizationReference` path with `exact_mtls_workload_plus_versioned_automation_policy`, bound to the exact Logging & Admin workload mTLS identity and policy version, and carries no human identity or end-user token.
+
 > 🔗 See [System Architecture Diagram](./system-architecture-diagram.md) and [System Context Diagram](./system-context-diagram.md).
 
 ---
-
-## Implementation Status
-
-Unless otherwise noted, this document describes the **target-state architecture** for FireMUD. The Telnet edge chain (Telnet client → Telnet edge proxy with PROXY protocol → TCP Proxy Service → Spring Cloud Gateway with mTLS) and related certificate wiring are being rolled out incrementally.
-
-For current rollout and configuration details, refer to:
-
-- The **Implementation Status** section in the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md)
-- The [Telnet Path Degraded Runbook](./system-architecture-telnet-degraded-runbook.md)
-- The relevant sections in [Security Architecture](./system-architecture-security.md) and [Protocol Bridging](./system-architecture-protocol-bridging.md)
 
 ## Reconnection Strategy
 
@@ -504,8 +504,6 @@ Implementations of Logging & Admin must preserve this separation with independen
 
 For gameplay/chat moderation specifically, the operator policy plane and enforcement plane must remain aligned under the canonical moderation propagation contract:
 
-The target propagation contract is not a claim about the current endpoint implementation: `POST /moderation/actions` currently persists policy input and audit only, without an owner-side enforcement RPC.
-
 - Logging & Admin emits versioned moderation policy snapshots and monotonic invalidations per `{tenantId, policyScope}` using durable outbox delivery for business-significant changes.
 - Game Session and Social & Groups maintain bounded-staleness caches keyed by `{tenantId, policyScope}` and must record the `policyVersion` used for each enforcement decision that reaches an audit trail.
 - When the bounded staleness window is exceeded and a fresh snapshot cannot be obtained, `gameplay_ban` and `chat_ban` decisions fail closed, while `chat_mute` may use the last valid snapshot only until the same window expires.
@@ -648,7 +646,7 @@ To remove ambiguity around “bans,” FireMUD uses the following canonical taxo
 Implementation notes:
 
 - Account Service remains the sole writer for auth authority generations and account-security lockout/ban state.
-- Logging & Admin defines moderation policy and audit trails for gameplay/chat moderation; the current route persists those inputs only, while enforcement services are the target consumers through the moderation propagation contract above.
+- Logging & Admin defines moderation policy and audit trails for gameplay/chat moderation; enforcement services consume those policies through the moderation propagation contract above.
 - “Bans” in docs and APIs must name the specific taxonomy type above instead of using an unqualified `ban` term.
 
 ### Design-Time vs Runtime World Data

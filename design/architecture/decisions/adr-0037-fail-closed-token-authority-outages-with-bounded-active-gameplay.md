@@ -43,7 +43,7 @@ The earlier design said control-plane and new admission fail closed but did not 
 ### Already-Admitted Gameplay
 
 - Ordinary gameplay commands do not consult the issued-token registry or auth generations per command.
-- If token-authority access alone is unavailable while gameplay coordination remains healthy, an already-admitted binding may continue only through the last successfully renewed ADR 0030 authority-freshness lease. The lease is never extended without fresh authority, new admission remains closed, and an unresolved binding terminates at the existing 60-second maximum.
+- If token-authority access alone is unavailable while gameplay coordination remains healthy, an already-admitted binding may continue only through the last successfully renewed ADR 0030 authority-freshness lease. A successful authoritative renewal at time `t` writes an absolute `authorityLeaseExpiresAt = t + 60 seconds` deadline into the binding; the deadline is measured from that renewal, not from the last command, socket activity, retry, reconnect attempt, or local heartbeat. No local operation may rewrite, postpone, or recreate that deadline. The lease is never extended without a new authoritative renewal, new admission remains closed, and an unresolved binding terminates at its stored absolute deadline.
 - A still-valid bounded lease is prior positive authority, not permission to infer or recreate authority from arbitrary local JWT claims or process memory.
 - If the complete Coordination Redis role is unavailable, Game Session does not execute gameplay mutations whose queues, locks, leases, session state, or tick coordination cannot be established. Transport/socket recovery may follow the existing bounded recovery and close contracts, but it does not authorize local-only gameplay processing.
 
@@ -51,7 +51,7 @@ The earlier design said control-plane and new admission fail closed but did not 
 
 - Control-plane and admission availability depend on Coordination Redis token authority, but outage handling never turns cryptographic validation alone into authorization.
 - Frontends can distinguish a retryable infrastructure incident from logout, password reset, ban, or another real revocation.
-- A registry-only incident does not add a lookup to gameplay commands and does not instantly eject established players; unresolved active authority remains bounded to 60 seconds.
+- A registry-only incident does not add a lookup to gameplay commands and does not instantly eject established players; unresolved active authority remains bounded by the absolute `authorityLeaseExpiresAt` set by the last authoritative renewal, at no more than 60 seconds.
 - A complete Coordination Redis outage already removes correctness-critical gameplay coordination, so halting mutations is not an additional token-policy outage.
 
 ## Alternatives Considered
@@ -74,7 +74,7 @@ This improves fault isolation but adds another security-critical datastore, rese
 - Prove unavailable registry/generation state preserves frontend auth state while missing/deleted/mismatched state causes hard reauthentication.
 - Prove Account never exposes a token whose registry/generation establishment failed.
 - Prove protected control-plane, sensitive mutations, admission, reconnect, and refresh fail closed without stale authority.
-- Prove registry-only outages add no per-command gameplay lookup, never renew the authority lease, and terminate unresolved bindings by 60 seconds.
+- Prove registry-only outages add no per-command gameplay lookup, never renew or reset the authority lease from commands, socket activity, retries, reconnect attempts, or local heartbeats, and terminate unresolved bindings at the absolute deadline set by the last authoritative renewal and no later than 60 seconds.
 - Prove complete Coordination Redis loss halts correctness-sensitive gameplay processing and uses existing bounded recovery/close behavior without inventing local authority.
 
 ## Reversibility and Revisit Triggers

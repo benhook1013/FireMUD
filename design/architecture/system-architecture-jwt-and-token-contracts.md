@@ -4,7 +4,7 @@ This document defines the JWT profiles, claim requirements, issued-token registr
 
 Each registry-backed revocable `control-ui`, `player-bootstrap`, or receiver-specific private player-delegation JWT has exactly one Account-owned Coordination Redis record: `session:auth:token:<tokenHash>`. The separate `gameplay-connect` profile is not registry-backed and uses its dedicated single-use replay contract.
 
-`tokenHash` is a fixed-length SHA-256 digest of the complete compact JWT. The bounded versioned record contains `accountId`, exact token profile/audience, `jti`, `iat`, `exp`, the JWT's `tokenGeneration`, active state, and the applicable Account-owned `issuerGeneration`, `accountAuthorityGeneration`, `tenantAuthorityGeneration`, `{accountId, tenantId}` `membershipAuthorityGeneration`, and grant-gated private-realm `grantVersion` snapshot. Non-applicable scope generations and grant versions are absent rather than wildcard values. It proves that Account issued this exact still-active token but does not duplicate tenant/global roles from its signed claims. Account creates the record before returning the token; registration failure means issuance failure.
+`tokenHash` is a fixed-length SHA-256 digest of the complete compact JWT. The bounded versioned record contains `accountId`, exact token profile/type/audience, the exact Account issuer, `jti`, `iat`, `exp`, the JWT's `tokenGeneration`, active state, and the applicable Account-owned `issuerGeneration`, `accountAuthorityGeneration`, `tenantAuthorityGeneration`, `{accountId, tenantId}` `membershipAuthorityGeneration`, and grant-gated private-realm `grantVersion` snapshot. Non-applicable scope generations and grant versions are absent rather than wildcard values. It proves that Account issued this exact still-active token but does not duplicate tenant/global roles from its signed claims. Account creates the record before returning the token; registration failure means issuance failure.
 
 The record's absolute cleanup deadline is derived from that token's own JWT `exp` claim plus the cleanup margin; it is not derived from a global session lifetime:
 
@@ -20,7 +20,7 @@ This document defines target-state token and revocation behavior. The current ru
 
 For registry-backed JWT profiles (`control-ui`, `player-bootstrap`, and receiver-specific private player-delegation profiles), token validity semantics are:
 
-- A registry-backed JWT must be cryptographically valid (signature, required claims `iss`, `sub`, `jti`, `accountId`, `aud`, `iat`, `nbf`, `exp`, `tokenGeneration`, and expected token profile audience) and must have one matching `session:auth:token:<tokenHash>` record in Coordination Redis whose account, profile, `jti`, `tokenGeneration`, and time fields agree with the verified claims.
+- A registry-backed JWT must be cryptographically valid (signature, required claims `iss`, `sub`, `jti`, `accountId`, `aud`, `iat`, `nbf`, `exp`, `tokenGeneration`, and expected token profile/type and audience) and must have one matching `session:auth:token:<tokenHash>` record in Coordination Redis whose account, issuer, profile/type, `jti`, `tokenGeneration`, and time fields agree with the verified claims.
 - The matching registry snapshot must compare every applicable issuer/account/tenant/membership authority generation and private-realm `grantVersion` with current Account-owned state and fail closed on any mismatch. `iat` remains required for chronology, bounded clock-skew handling, and audit, but is not an authorization or revocation authority and cannot replace generation or grant-version comparison.
 - For tenant or cross-tenant operations, the requested operation must then be authorized from the validated `scopedRoles` or `globalRoles` claims plus the applicable Account-owned authority-generation/version state. The issued-token record does not grant scope independently.
 - Coordination Redis therefore acts as a server-side issued-token registry and immediate per-token revocation surface: deleting the one record revokes a still-unexpired JWT; coordination resets that drop `session:auth:*` force re-authentication.
@@ -34,7 +34,15 @@ Bulk revocation (for example “logout all devices”, account bans, membership 
 - `session:auth:generation:tenant:<tenantId>` – regular tenant authority, advanced for tenant-wide gameplay/billing cutoff.
 - `session:auth:generation:membership:<accountId>:<tenantId>` – caller-bound tenant authority, advanced when membership or tenant roles change.
 
-Tenant-generation revocation applies only to regular and gameplay-affecting tenant authority. `billing_safe_tenant` remains authorized by the Account-owned caller-bound `{accountId, tenantId}` membership authority generation plus a live `tenantAdmin` check. `cross_tenant_support_safe` remains authorized by current Account-owned issuer/account authority, a live global `support` role, and global token scope. `cross_tenant_billing_safe` remains authorized by the corresponding Account-owned issuer/account authority, a live global `billingAdmin` role, global token scope, and the required `privileged_control` window. These routes do not use cached authorization.
+### Explicit Route-Class Generation Allowlist
+
+Tenant-generation revocation applies by default to every tenant-bearing route. Only these exact route classifications may omit the target tenant generation:
+
+- `billing_safe_tenant` requires current issuer and account generations, the caller-bound `{accountId, tenantId}` membership generation, exact target-tenant binding, and a live `tenantAdmin` membership/role check.
+- `cross_tenant_support_safe` requires current issuer and account generations, global token scope, and a live global `support` role or explicitly allowed `platformAdmin` role. Support does not require `privileged_control`; the platform-admin alternative does.
+- `cross_tenant_billing_safe` requires current issuer and account generations, global token scope, and a live global `billingAdmin` or explicitly allowed `platformAdmin` role with `privileged_control` assurance.
+
+Every other route class requires the tenant generation declared by its route entry. These exceptions are a closed route-class allowlist, not a string-match or service-level convention, and they do not permit cross-tenant entitlement inheritance. Negative proof must show a tenant-generation advance denies non-allowlisted routes and that each allowlisted route still denies missing issuer/account/membership authority, wrong target tenant, wrong global role, stale scope, or missing role assurance.
 
 Authority-generation contract requirements:
 
@@ -61,6 +69,18 @@ Coordination Redis outage behavior follows [ADR 0037](./decisions/adr-0037-fail-
 
 Account Service issues the exact JWT profiles defined below for control-plane UI calls, first-party player bootstrap, and receiver-specific private player delegation. Raw gameplay protocol clients (for example Telnet clients and gameplay WebSocket command streams after the socket is open) never carry gameplay authorization JWTs. First-party gameplay web/mobile clients may temporarily hold the short-lived `player-bootstrap` token defined in [Authentication & Authorization](./system-architecture-authentication.md) for caller-bound bootstrap calls including `POST /auth/bootstrap/join`, bootstrap-authenticated character creation, and `POST /auth/connect-token`, but that token is not sent as gameplay command auth and is not accepted by gameplay services. Control UIs may supply `control-ui` JWTs, which are validated by the consuming control-plane service. The Gateway forwards only non-consumed profiles; it does not consume or forward a profile whose route contract makes it an edge admission credential. Game Session may hold the private `game-session-account-delegation` JWT for Account calls, but gameplay-domain requests use concrete mTLS workload identity plus typed `PlayerExecutionContext`, not forwarded per-player JWT claims.
 
+### Mandatory Receiver Predicates
+
+Each receiving method has an explicit, conjunctive receiver predicate. A receiver must reject the request before authorization unless all applicable predicates pass:
+
+- **Token profile and type** – The exact registered profile and its registered type must match the route. The audience is not a substitute for the profile/type.
+- **Issuer** – A JWT-bearing route accepts only the exact Account issuer `firemud-account-service`; issuer validation is mandatory even when the signing key is trusted.
+- **Audience** – The exact audience registered for that profile and route must match; broad audiences and cross-profile reuse are forbidden.
+- **Concrete workload caller** – An internal method accepts only its declared concrete mTLS certificate identity, not a service-family label, forwarded header, or JWT subject.
+- **Per-method policy** – The method's exact route entry and caller policy must allow the operation. A caller allowed for one method is not allowed for another method by inheritance.
+
+Workload-only methods explicitly declare token profile, type, issuer, and audience as `none`; they still require the concrete mTLS caller and exact method policy. Private delegation methods require the exact profile/type, issuer, audience, concrete mTLS caller, and method policy together. Gameplay-domain methods additionally validate typed `PlayerExecutionContext` scope and do not add a JWT hot path.
+
 ### Gateway Token Forwarding Boundary
 
 - Gateway forwards a token profile only when the route contract declares that profile non-consumed; forwarding preserves the token for the named downstream validator and does not create gameplay authority.
@@ -78,8 +98,8 @@ Account Service issues the exact JWT profiles defined below for control-plane UI
 | `iat` | Issued-at timestamp (UTC epoch seconds), required for token lifetime validation and audit chronology but not revocation ordering |
 | `issuerAuthGeneration` | Current issuer authority generation captured at issuance |
 | `accountAuthGeneration` | Current account authority generation captured at issuance |
-| `tenantAuthGenerations` | Bounded map keyed by the exact tenant UUID entries in `scopedRoles` |
-| `membershipAuthGenerations` | Bounded map keyed by the exact tenant UUID entries in `scopedRoles` |
+| `tenantAuthGenerations` | Bounded map keyed by the exact tenant UUID entries in `scopedRoles`; for a private delegation, keyed only by the exact delegated binding `tenantId` |
+| `membershipAuthGenerations` | Bounded map keyed by the exact tenant UUID entries in `scopedRoles`; for a private delegation, the same key denotes the Account-owned `{accountId, tenantId}` membership generation for the delegated binding |
 | `nbf` | Not-before timestamp |
 | `exp` | Expiration timestamp |
 | `globalRoles` | Cross-tenant privileges (for example `platformAdmin`, `billingAdmin`, `support`) |
@@ -165,8 +185,8 @@ Services must enforce this claim contract before role/tenant authorization:
 | `tokenGeneration` | Required | Required | Not used | Required | Positive integer for issued-token-registry lineage; gameplay-connect instead uses its dedicated single-use replay contract |
 | `issuerAuthGeneration` | Required | Required | Absent | Required | Positive monotonic Account-owned issuer generation captured at issuance |
 | `accountAuthGeneration` | Required | Required | Absent | Required | Positive monotonic Account-owned account generation captured at issuance |
-| `tenantAuthGenerations` | Required when `scopedRoles` is non-empty; otherwise Empty map | Empty map | Absent | Required for the delegated tenant scope; otherwise Empty map | Bounded positive-generation map keyed by the exact tenant UUID entries in `scopedRoles`, while private delegation keys match its delegated binding scope |
-| `membershipAuthGenerations` | Required when `scopedRoles` is non-empty; otherwise Empty map | Empty map | Absent | Required for the delegated tenant scope; otherwise Empty map | Bounded positive-generation map keyed by the exact tenant UUID entries in `scopedRoles`, with the same alignment rules as `tenantAuthGenerations` |
+| `tenantAuthGenerations` | Required when `scopedRoles` is non-empty; otherwise Empty map | Empty map | Absent | Required for the delegated tenant scope; otherwise Empty map | Bounded positive-generation map keyed by the exact tenant UUID entries in `scopedRoles`; a private delegation has no end-user `scopedRoles`, so any entry is keyed by the exact `tenantId` in its Account-owned delegated binding and never by account, grant, token, or wildcard scope |
+| `membershipAuthGenerations` | Required when `scopedRoles` is non-empty; otherwise Empty map | Empty map | Absent | Required for the delegated tenant scope; otherwise Empty map | Same key as `tenantAuthGenerations`; for a private delegation the value is the Account-owned `{accountId, tenantId}` membership generation from the bound player identity, not a tenant-wide or account-wide substitute |
 | `tenantId` | Not required | Not required | Required | Not required | Gameplay-connect admission scope |
 | `gameInstanceId` | Not required | Not required | Required | Not required | Server-resolved gameplay-connect runtime target |
 | `worldSlug` | Not required | Not required | Required | Not required | Stable gameplay-connect world selector |
@@ -178,7 +198,7 @@ Services must enforce this claim contract before role/tenant authorization:
 | `globalRoles` | Optional | Optional | Absent | Optional | Empty list when none; gameplay-connect admission never authorizes from role claims |
 | `scopedRoles` | Optional; Empty map when none | Empty map | Absent | Optional; generation maps align to delegated binding scope rather than this claim | `control-ui` generation-map keys must equal the `scopedRoles` tenant UUID keys exactly; no generation map may introduce an unclaimed tenant |
 
-`Required` means the claim must be present with a valid positive value; `Empty map` means the claim must be present as `{}`; `Absent` means the claim must not be serialized. For `control-ui`, both tenant-generation maps are `{}` when `scopedRoles` is empty and otherwise have exactly the same canonical tenant UUID keys. `player-bootstrap` is tenant-free, so its tenant/membership-generation maps and `scopedRoles` are empty. The private player-delegation profile has no end-user role scope; when it carries tenant-generation maps, they are limited to the delegated binding scope.
+`Required` means the claim must be present with a valid positive value; `Empty map` means the claim must be present as `{}`; `Absent` means the claim must not be serialized. For `control-ui`, both tenant-generation maps are `{}` when `scopedRoles` is empty and otherwise have exactly the same canonical tenant UUID keys. `player-bootstrap` is tenant-free, so its tenant/membership-generation maps and `scopedRoles` are empty. The private player-delegation profile has no end-user role scope or `scopedRoles` key requirement; when it carries tenant-generation maps, Account derives their sole allowed key from the exact delegated gameplay binding `{accountId, tenantId}` and the receiver rejects any extra, missing, or differently keyed entry.
 
 Tokens that omit required claims, have malformed claim types, violate these empty/absent rules, or present an unexpected `aud` for the endpoint profile must be rejected before route classification.
 

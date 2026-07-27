@@ -482,6 +482,76 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors,
         )
 
+    def test_role_assurance_requires_one_applies_to_shape(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        requirement = document["role_assurance"]["privileged_control_when_global_role"]["requirements"]["support"]
+        requirement["allowed_classifications"] = requirement["applies_to"]["route_classifications"]
+        del requirement["applies_to"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(any("support.applies_to must be a mapping" in error for error in errors))
+        self.assertTrue(any("one applies_to shape" in error for error in errors))
+
+    def test_legacy_target_only_route_declaration_is_rejected(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route for route in document["routes"] if route.get("route") == "POST /auth/bootstrap/join"
+        )
+        route.pop("route_status")
+        route.setdefault("implementation_status", {})["target_only"] = True
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(any("route_status instead of implementation_status.target_only" in error for error in errors))
+
+    def test_unknown_route_status_is_rejected(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(route for route in document["routes"] if route.get("route") == "BillingArtifactsTenant")
+        route["route_status"] = "target_only"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(any("route_status must be one of" in error for error in errors))
+
+    def test_private_receiver_requires_exact_token_and_method_predicates(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(route for route in document["routes"] if route.get("route") == "RefreshGameplayServiceToken")
+        policy = route["caller_policies"][0]
+        policy["token_audience"] = "internal"
+        policy["token_issuer"] = "untrusted-service"
+        policy["mtls_identity"] = "game-session-service"
+        policy["method_policy"] = "all_methods"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(any("token predicates must exactly match profile" in error for error in errors))
+        self.assertTrue(any("must be a concrete spiffe:// identity" in error for error in errors))
+        self.assertTrue(any("must declare method_policy exact_declared_route" in error for error in errors))
+
+    def test_tenant_generation_exception_requires_class_checks(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(route for route in document["routes"] if route.get("route") == "GetTenantEntitlementsTenant")
+        route["required_live_checks"].remove("membership_generation")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(any("GetTenantEntitlementsTenant is missing route-class authority checks" in error for error in errors))
+
+    def test_entitlement_contract_is_exactly_tenant_bound(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        document["entitlement_contract"]["cross_tenant_inheritance"] = "allowed"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertIn("entitlement_contract.cross_tenant_inheritance must be forbidden", errors)
+
 
 if __name__ == "__main__":
     unittest.main()

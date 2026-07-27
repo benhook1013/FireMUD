@@ -26,7 +26,7 @@ Canonical public operation:
 
 `coordination-maintenance recover --mode reset --scope ... [--preserve-sessions]`
 
-This one public operation acquires the maintenance lock, fences the scope, and runs these ordered phases. The public `resume(...)` safety gate is required between the smoke check and the internal success release:
+This one public operation acquires the maintenance lock, fences the scope, and runs these ordered phases. The public `resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)` safety gate is required between the smoke check and the internal success release:
 
 1. internal pause-and-lock phase
 2. internal epoch-bump and coordination-reset phase
@@ -34,16 +34,17 @@ This one public operation acquires the maintenance lock, fences the scope, and r
 4. internal command-convergence phase
 5. internal metadata-initialization phase
 6. internal session-policy phase, including invalidation or preserved-session rebind according to the selected policy
-7. internal post-reset smoke-check phase
-8. public `resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)` safety gate, which records `RESUME_AUTHORIZED`
-9. internal resume-and-success-release phase
+7. internal Account authority and issued-token projection-rebuild phase for reset mode
+8. internal post-reset smoke-check phase
+9. public `resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)` safety gate, which records `RESUME_AUTHORIZED`
+10. internal resume-and-success-release phase
 
 The internal pause-and-lock phase is not a public command or a standalone operation. Only `recover` creates the durable `operationId` and maintenance-lock identity; an interrupted workflow resumes through that same operation or is explicitly abandoned through the audited maintenance-lock release control.
 
 Supported external controls use the following canonical API-to-CLI mapping:
 
 - `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` maps to the continuation control for retrying the same durable operation after a controller restart or an external infrastructure step. It may advance only the recorded next internal phase and must match the active operation, expected phase, lock, and evidence.
-- `resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)` is a separate post-recovery safety gate. Phase 7 atomically records `AWAITING_RESUME` only after recovery and smoke gates pass while retaining the maintenance lock and traffic fence. `resume` is valid only for that exact operation, phase, scope, and lock; it atomically records `RESUME_AUTHORIZED` but does not release the lock or reopen traffic.
+- `resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)` maps to `coordination-maintenance resume --operation-id <operationId> --expected-phase <expectedPhase> --scope <scope> ... --maintenance-lock-token <maintenanceLockToken> --evidence-ref <evidenceRef>` and is a separate post-recovery safety gate. Phase 8 atomically records `AWAITING_RESUME` only after recovery and smoke gates pass while retaining the maintenance lock and traffic fence. `resume` is valid only for that exact operation, phase, scope, lock, and evidence; it durably audits the authenticated actor and matching tuple, atomically records `RESUME_AUTHORIZED`, and does not release the lock or reopen traffic. Any mismatch or missing evidence fails closed.
 - `releaseMaintenanceLock(operationId, scope, maintenanceLockToken, reason, evidenceRef)` maps to `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason> --evidence-ref <evidenceRef>` for audited operator abandonment. It retains the paused/fenced state and never reopens the scope.
 
 No public command may select or invoke an internal phase. The CLI exposes the same controls as `continue-recovery`, `resume`, and `release-lock`; the API names above remain the canonical control-plane names.
@@ -59,8 +60,9 @@ Rules:
 - Internal ledger reconciliation and command convergence are required before traffic resumes; replay-first workflows use those same phases without a preceding epoch bump, but reset workflows must not skip them.
 - Internal metadata initialization re-establishes `tick:{tenantRegionTag}:meta` from the durable baseline after the reset phase; `{tenantRegionTag}` is the opaque full-scope tag for `<tenantId, gameInstanceId, regionId>`.
 - Internal session rebinding is conditional. Region-scoped resets preserve gameplay sessions by default, tenant-scoped resets do so only when `--preserve-sessions` is recorded, and cluster-scoped resets invalidate gameplay sessions by default.
-- The internal post-reset smoke-check phase proves the new epoch can acquire leases, stage work, converge, and clean up correctly, then atomically enters `AWAITING_RESUME` without dropping the maintenance lock or traffic fence.
-- The internal resume-and-success-release phase is unreachable until the public `resume(...)` control records `RESUME_AUTHORIZED` for the same operation, expected phase, scope, lock, and evidence. Its durable controller transition is atomic, but the external Game Session, Coordination Redis, ingress, affected-scope, and maintenance-lock effects are not one distributed transaction. The phase must idempotently apply and read back each required postcondition, and may record terminal `SUCCEEDED` only after every current observation succeeds; any failed, missing, stale, or ambiguous effect remains quarantined and fail-closed for retry or failure handling.
+- Reset-mode recovery must rebuild and verify the Account issuer, account, tenant, and membership generation projections from Account durable authority and rebuild and verify the affected `session:auth:token:<tokenHash>` issued-token projections before the smoke phase. Region- and tenant-scoped resets preserve those Account-owned records but still require an idempotent re-projection and exact-generation validation; a cluster reset verifies the Account repair/reset cutover that preceded physical cleanup, then registers and proves replacement issued-token records. The phase emits immutable projection evidence and fails closed on any missing, stale, malformed, or mismatched generation or token record.
+- The internal post-reset smoke-check phase proves the new epoch can acquire leases, stage work, converge, and clean up correctly, then atomically enters `AWAITING_RESUME` without dropping the maintenance lock or traffic fence. Its evidence must include the completed reset projection rebuild and any required session-schema-cleanup completion evidence.
+- The internal resume-and-success-release phase is unreachable until the public `resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)` control records `RESUME_AUTHORIZED` for the same operation, expected phase, scope, lock, and evidence. Its durable controller transition is atomic, but the external Game Session, Coordination Redis, ingress, affected-scope, and maintenance-lock effects are not one distributed transaction. The phase must durably audit the authorization, retain the fence and lock until each release postcondition is observed, idempotently apply and read back each required postcondition, and may record terminal `SUCCEEDED` only after every current observation succeeds; any failed, missing, stale, or ambiguous effect remains quarantined and fail-closed for retry or failure handling.
 - If the workflow aborts before terminal success, operators must use the audited `coordination-maintenance release-lock ...` control rather than inventing an alternate unlock sequence.
 
 ## Redis SLOs & Budgets
@@ -227,6 +229,8 @@ Canonical cleanup operation:
 `coordination-maintenance recover --mode session-schema-cleanup --scope tenant --tenant <tenantId> [--dry-run] [--resume-token <token>]`
 
 The bounded high-level `recover` operation owns the lock, internal session-cleanup phase, continuation, abort, and release behavior. Ad hoc cleanup Jobs must call this operation rather than encoding their own lock, continuation, or abort behavior. `session-cleanup` is an internal phase name, not a public command.
+
+When the cleanup workflow reaches `AWAITING_RESUME`, the public `resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)` gate must verify the immutable cleanup completion evidence for the exact tenant and operation, including visited prefixes, scanned/deleted counts, final cursor or continuation state, schema disposition, and completion reason. Missing, partial, ambiguous, or mismatched cleanup evidence retains the lock and fence and fails closed.
 
 Default runbooks should still prefer fixing deployments and relying on TTL over aggressive keyspace scrubbing.
 

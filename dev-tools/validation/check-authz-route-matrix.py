@@ -44,6 +44,40 @@ REQUIRED_REVOKE_APPLICABILITY = {
     "connection_mode": "first_party_web",
     "operation": "connect_token_cookie_revoke",
 }
+ROUTE_STATUS_VALUES = {
+    "current_openapi_operator_surface",
+    "target_not_currently_routable",
+}
+TOKEN_ISSUER = "firemud-account-service"
+REQUIRED_ROLE_ASSURANCE_ROLES = {"platformAdmin", "billingAdmin", "support"}
+REQUIRED_TENANT_GENERATION_EXCEPTIONS = {
+    "billing_safe_tenant": {
+        "target_tenant_generation": False,
+        "required_live_checks": {
+            "issuer_generation",
+            "account_generation",
+            "membership_generation",
+            "membership",
+        },
+    },
+    "cross_tenant_support_safe": {
+        "target_tenant_generation": False,
+        "required_live_checks": {
+            "issuer_generation",
+            "account_generation",
+            "current_global_role",
+        },
+    },
+    "cross_tenant_billing_safe": {
+        "target_tenant_generation": False,
+        "required_live_checks": {
+            "issuer_generation",
+            "account_generation",
+            "current_global_role",
+            "role_appropriate_assurance",
+        },
+    },
+}
 
 
 def route_key(route: dict[str, Any]) -> str | None:
@@ -112,6 +146,293 @@ def validate_auth_path_vocabulary(document: dict[str, Any], errors: list[str]) -
             f"{unknown_auth_paths!r}"
         )
     return allowed_auth_paths
+
+
+def validate_token_profiles(document: dict[str, Any], errors: list[str]) -> dict[str, dict[str, str]]:
+    raw_profiles = document.get("token_profiles")
+    if not isinstance(raw_profiles, list):
+        errors.append("token_profiles must be a list of mappings")
+        return {}
+
+    profiles: dict[str, dict[str, str]] = {}
+    for index, raw_profile in enumerate(raw_profiles):
+        label = f"token_profiles[{index}]"
+        if not isinstance(raw_profile, dict):
+            errors.append(f"{label} must be a mapping")
+            continue
+        values: dict[str, str] = {}
+        for field in ("profile", "type", "issuer", "audience"):
+            value = raw_profile.get(field)
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"{label}.{field} must be a non-empty string")
+            else:
+                values[field] = value
+        profile = values.get("profile")
+        if profile:
+            if profile in profiles:
+                errors.append(f"token_profiles must not contain duplicate profile {profile!r}")
+            profiles[profile] = values
+        if values.get("issuer") and values["issuer"] != TOKEN_ISSUER:
+            errors.append(f"{label}.issuer must be {TOKEN_ISSUER!r}")
+        if "kind" in raw_profile:
+            errors.append(f"{label} must use type instead of legacy kind")
+    return profiles
+
+
+def validate_role_assurance(document: dict[str, Any], errors: list[str]) -> set[str]:
+    raw_assurance = document.get("role_assurance")
+    if not isinstance(raw_assurance, dict):
+        errors.append("role_assurance must be a mapping")
+        return set()
+
+    predicates = set(raw_assurance)
+    predicate = raw_assurance.get("privileged_control_when_global_role")
+    if not isinstance(predicate, dict):
+        errors.append(
+            "role_assurance.privileged_control_when_global_role must be a mapping"
+        )
+        return predicates
+    requirements = predicate.get("requirements")
+    if not isinstance(requirements, dict):
+        errors.append(
+            "role_assurance.privileged_control_when_global_role.requirements must be a mapping"
+        )
+        return predicates
+    for role in sorted(REQUIRED_ROLE_ASSURANCE_ROLES):
+        requirement = requirements.get(role)
+        label = f"role_assurance.privileged_control_when_global_role.requirements.{role}"
+        if not isinstance(requirement, dict):
+            errors.append(f"{label} must be a mapping")
+            continue
+        legacy_keys = {"when", "when_scopes", "allowed_classifications"} & set(requirement)
+        if legacy_keys:
+            errors.append(
+                f"{label} must use one applies_to shape; legacy keys remain: {sorted(legacy_keys)}"
+            )
+        applies_to = requirement.get("applies_to")
+        if not isinstance(applies_to, dict):
+            errors.append(f"{label}.applies_to must be a mapping")
+            continue
+        route_classifications = applies_to.get("route_classifications")
+        if not isinstance(route_classifications, list) or any(
+            not isinstance(item, str) for item in route_classifications
+        ):
+            errors.append(
+                f"{label}.applies_to.route_classifications must be a list of strings"
+            )
+    return predicates
+
+
+def validate_route_statuses(routes: list[Any], errors: list[str]) -> None:
+    for index, route in enumerate(routes):
+        if not isinstance(route, dict):
+            continue
+        status = route.get("route_status")
+        if status is not None and status not in ROUTE_STATUS_VALUES:
+            errors.append(
+                f"routes[{index}] route_status must be one of {sorted(ROUTE_STATUS_VALUES)}"
+            )
+        implementation_status = route.get("implementation_status")
+        if isinstance(implementation_status, dict) and "target_only" in implementation_status:
+            errors.append(
+                f"routes[{index}] must use route_status instead of implementation_status.target_only"
+            )
+
+
+def validate_receiver_predicates(
+    routes: list[Any], token_profiles: dict[str, dict[str, str]], errors: list[str]
+) -> None:
+    def validate_token_fields(
+        entry: dict[str, Any], label: str, profiles: list[str]
+    ) -> None:
+        token_type = entry.get("token_type")
+        token_issuer = entry.get("token_issuer")
+        token_audience = entry.get("token_audience")
+        if not profiles:
+            if (token_type, token_issuer, token_audience) != ("none", "none", "none"):
+                errors.append(
+                    f"{label} must declare token_type/token_issuer/token_audience as none"
+                )
+            return
+        if len(profiles) != 1:
+            errors.append(f"{label} must declare exactly one token profile per receiver policy")
+            return
+        profile = token_profiles.get(profiles[0])
+        if profile is None:
+            return
+        expected = (profile.get("type"), profile.get("issuer"), profile.get("audience"))
+        if (token_type, token_issuer, token_audience) != expected:
+            errors.append(
+                f"{label} token predicates must exactly match profile {profiles[0]!r}"
+            )
+
+    for index, route in enumerate(routes):
+        if not isinstance(route, dict):
+            continue
+        profiles_value = route.get("accepted_token_profiles")
+        if profiles_value is not None:
+            profiles = string_list(profiles_value, f"matrix.routes[{index}] accepted_token_profiles", errors)
+            unknown_profiles = sorted(set(profiles) - set(token_profiles))
+            if unknown_profiles:
+                errors.append(
+                    f"matrix.routes[{index}] uses unknown token profiles: {unknown_profiles}"
+                )
+            audience_map = route.get("accepted_token_profile_audiences")
+            if len(profiles) > 1 and not isinstance(audience_map, dict):
+                errors.append(
+                    f"matrix.routes[{index}] multi-profile receiver requires accepted_token_profile_audiences"
+                )
+            if isinstance(audience_map, dict):
+                if set(audience_map) != set(profiles):
+                    errors.append(
+                        f"matrix.routes[{index}] accepted token audience keys must equal accepted profiles"
+                    )
+                for profile_name in profiles:
+                    expected_audience = token_profiles.get(profile_name, {}).get("audience")
+                    if audience_map.get(profile_name) != expected_audience:
+                        errors.append(
+                            f"matrix.routes[{index}] audience for {profile_name!r} must match token_profiles"
+                        )
+
+        if route.get("classification") != "internal_workload":
+            continue
+
+        label = f"{route.get('service')} {route.get('route')}"
+        if route.get("method_policy") != "exact_declared_route" and "caller_policies" not in route:
+            errors.append(f"{label} must declare method_policy exact_declared_route")
+        caller_policies = route.get("caller_policies")
+        if caller_policies is not None:
+            if not isinstance(caller_policies, list) or not caller_policies:
+                errors.append(f"{label} caller_policies must be a non-empty list")
+                continue
+            for policy_index, policy in enumerate(caller_policies):
+                policy_label = f"{label} caller_policies[{policy_index}]"
+                if not isinstance(policy, dict):
+                    errors.append(f"{policy_label} must be a mapping")
+                    continue
+                if not isinstance(policy.get("caller"), str) or not policy["caller"].strip():
+                    errors.append(f"{policy_label}.caller must be a non-empty string")
+                if (
+                    not isinstance(policy.get("mtls_identity"), str)
+                    or not policy["mtls_identity"].startswith("spiffe://")
+                    or "/sa/" not in policy["mtls_identity"]
+                ):
+                    errors.append(f"{policy_label}.mtls_identity must be a concrete spiffe:// identity")
+                if policy.get("method_policy") != "exact_declared_route":
+                    errors.append(f"{policy_label} must declare method_policy exact_declared_route")
+                policy_profiles = string_list(
+                    policy.get("accepted_token_profiles"),
+                    f"{policy_label} accepted_token_profiles",
+                    errors,
+                )
+                validate_token_fields(policy, policy_label, policy_profiles)
+            continue
+
+        allowed_callers = route.get("allowed_callers")
+        mtls_callers = route.get("mtls_callers")
+        for field, value in (("allowed_callers", allowed_callers), ("mtls_callers", mtls_callers)):
+            values = value.get("any_of") if isinstance(value, dict) else None
+            if not isinstance(values, list) or not values or any(
+                not isinstance(item, str) or not item.strip() for item in values
+            ):
+                errors.append(f"{label} {field}.any_of must be a non-empty list of strings")
+        if not isinstance(mtls_callers, dict) or any(
+            not isinstance(item, str)
+            or not item.startswith("spiffe://")
+            or "/sa/" not in item
+            for item in mtls_callers.get("any_of", [])
+        ):
+            errors.append(f"{label} mtls_callers.any_of must contain concrete spiffe:// identities")
+        profiles = string_list(
+            route.get("accepted_token_profiles"),
+            f"{label} accepted_token_profiles",
+            errors,
+        )
+        if route.get("method_policy") != "exact_declared_route":
+            errors.append(f"{label} must declare method_policy exact_declared_route")
+        validate_token_fields(route, label, profiles)
+
+
+def validate_tenant_generation_policy(document: dict[str, Any], routes: list[Any], errors: list[str]) -> None:
+    policy = document.get("tenant_generation_policy")
+    if not isinstance(policy, dict) or policy.get("applies_by_default") is not True:
+        errors.append("tenant_generation_policy must enable applies_by_default")
+        return
+    allowlist = policy.get("exception_allowlist")
+    if not isinstance(allowlist, dict):
+        errors.append("tenant_generation_policy.exception_allowlist must be a mapping")
+        return
+    if set(allowlist) != set(REQUIRED_TENANT_GENERATION_EXCEPTIONS):
+        errors.append("tenant_generation_policy.exception_allowlist must be exactly the closed route-class allowlist")
+    for classification, expected in REQUIRED_TENANT_GENERATION_EXCEPTIONS.items():
+        entry = allowlist.get(classification)
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("target_tenant_generation") is not expected["target_tenant_generation"]:
+            errors.append(f"tenant_generation_policy exception {classification} has the wrong target generation setting")
+        required_checks = set(string_list(
+            entry.get("required_authority"),
+            f"tenant_generation_policy.exception_allowlist.{classification}.required_authority",
+            errors,
+        ))
+        if required_checks != expected["required_live_checks"]:
+            errors.append(f"tenant_generation_policy exception {classification} has the wrong required authority checks")
+
+    for route in routes:
+        if not isinstance(route, dict):
+            continue
+        classification = route.get("classification")
+        if not isinstance(classification, str):
+            continue
+        expected = REQUIRED_TENANT_GENERATION_EXCEPTIONS.get(classification)
+        if expected is None:
+            continue
+        label = f"{route.get('service')} {route.get('route')}"
+        if route.get("tenant_billing_authority_generation_applies") is not False:
+            errors.append(f"{label} must explicitly disable target tenant generation for {classification}")
+        if classification == "billing_safe_tenant" and route.get("membership_authority_generation_applies") is not True:
+            errors.append(f"{label} must require membership generation for {classification}")
+        if classification != "billing_safe_tenant" and route.get("membership_authority_generation_applies") is not False:
+            errors.append(f"{label} must explicitly disable membership generation for {classification}")
+        checks = set(string_list(route.get("required_live_checks"), f"{label} required_live_checks", errors))
+        missing = sorted(expected["required_live_checks"] - checks)
+        if missing:
+            errors.append(f"{label} is missing route-class authority checks: {missing}")
+
+
+def validate_entitlement_contract(document: dict[str, Any], routes: list[Any], errors: list[str]) -> None:
+    contract = document.get("entitlement_contract")
+    if not isinstance(contract, dict):
+        errors.append("entitlement_contract must be a mapping")
+    else:
+        if contract.get("owner") != "account-service":
+            errors.append("entitlement_contract.owner must be account-service")
+        if contract.get("binding") != "exact_tenant_id":
+            errors.append("entitlement_contract.binding must be exact_tenant_id")
+        if contract.get("cross_tenant_inheritance") != "forbidden":
+            errors.append("entitlement_contract.cross_tenant_inheritance must be forbidden")
+        if contract.get("account_wide_fallback") != "forbidden":
+            errors.append("entitlement_contract.account_wide_fallback must be forbidden")
+    routes_for_entitlements = matching_routes(routes, "account-service", "GetTenantEntitlementsForRuntime")
+    if len(routes_for_entitlements) == 1:
+        route = routes_for_entitlements[0]
+        if route.get("entitlement_scope") != "account_owned_tenant_bound":
+            errors.append("GetTenantEntitlementsForRuntime must declare account_owned_tenant_bound entitlement_scope")
+        if route.get("cross_tenant_inheritance") != "forbidden":
+            errors.append("GetTenantEntitlementsForRuntime must forbid cross-tenant inheritance")
+
+
+def validate_role_assurance_references(
+    routes: list[Any], predicates: set[str], errors: list[str]
+) -> None:
+    for index, route in enumerate(routes):
+        if not isinstance(route, dict) or "role_assurance" not in route:
+            continue
+        assurance = route.get("role_assurance")
+        if not isinstance(assurance, str) or assurance not in predicates:
+            errors.append(
+                f"routes[{index}] role_assurance must reference a declared predicate"
+            )
 
 
 def validate_known_drift(value: Any, field: str, errors: list[str]) -> None:
@@ -389,6 +710,8 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
         return ["matrix root must be a mapping"], set()
 
     validate_auth_path_vocabulary(document, errors)
+    token_profiles = validate_token_profiles(document, errors)
+    role_assurance_predicates = validate_role_assurance(document, errors)
     validate_known_drift(document, "matrix", errors)
     validate_live_check_vocabulary(document, errors)
 
@@ -399,6 +722,11 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
 
     classifications = string_list(document.get("classifications"), "classifications", errors)
     route_keys = validate_route_variants(routes, set(classifications), errors)
+    validate_route_statuses(routes, errors)
+    validate_receiver_predicates(routes, token_profiles, errors)
+    validate_role_assurance_references(routes, role_assurance_predicates, errors)
+    validate_tenant_generation_policy(document, routes, errors)
+    validate_entitlement_contract(document, routes, errors)
 
     validate_ws_game_routes(routes, errors)
     validate_issue_connect_token(routes, errors)

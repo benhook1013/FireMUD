@@ -40,8 +40,8 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Game version activation at runtime | | | | ✔ | | | | | | | |
 | Replacement-instance compatibility preflight (`ValidateInstanceCutoverCompatibility`) | ✔ | ✔ | | ✔ | ✔ | | ✔ | | ✔ | | |
 | Authoritative owner: `versionStateEpoch` CAS enforcement | ✔ | | | | | | | | | | |
-| Version-state CAS APIs ownership/invocation for activation/rollback (`versionStateEpoch`) | ✔ | | | ✔ | | | | | ✔ | | |
-| Runtime feature flag overrides | | | | ✔ | | | | | | | |
+| Version-state CAS APIs ownership/invocation for activation/rollback (`versionStateEpoch`) (live admission-pointer control path) | ✔ | | | ✔ | | | | | ✔ | | |
+| Runtime feature flag overrides (live operator ingress; Game Session owns runtime truth) | | | | ✔ | | | | | | | |
 | Tick & coordination health metrics (diagnostic scope: `<tenantId, gameInstanceId, regionId>`) | | | | ✔ | | | | | | | |
 | Canonical room-state read fence production and same-fence room-view composition | | ✔ | | | ✔ | ✔ | | | | | |
 | Entity definition and persistence | | | | | ✔ | | | | | | |
@@ -64,19 +64,19 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Guilds and group discovery | | | | | | | | ✔ | | | |
 | Social network graph (friends/blocks/etc.) | | | | | | | | ✔ | | | |
 | Centralized observability dashboards and moderation analytics (logs/metrics/traces) | | | | | | | | | ✔ | | |
-| Admin panel UX and runtime feature-flag override workflow | | | | ✔ | | | | | ✔ | | |
-| Game moderation tools | | | | | | | | | ✔ | | |
-| Game moderation policy definition | | | | | | | | | ✔ | | |
-| Moderation policy propagation contract (versioning, invalidation, bounded staleness, and audit context) | | | | ✔ | | | | ✔ | ✔ | | |
+| Admin panel UX and runtime feature-flag override workflow (live) | | | | ✔ | | | | | ✔ | | |
+| Game moderation tools (live policy-input and audit surface) | | | | | | | | | ✔ | | |
+| Game moderation policy definition and audit (live persistence-only ingress) | | | | | | | | | ✔ | | |
+| Moderation policy propagation and enforcement contract (target; current route is persistence-only) | | | | ✔ | | | | ✔ | ✔ | | |
 | Subscription entitlements and plan-driven quota values (`GetTenantEntitlements`) | | | ✔ | | | | | | | | |
-| Operator quota overrides, auditing, and dashboards (target-state coverage drift; overlay on entitlements; no current Account owner route) | | | | | | | | | ✔ | | |
-| Enforcement of gameplay bans at login/command level | | | | ✔ | | | | | | | |
-| Enforcement of chat mutes/bans at message send time | | | | | | | | ✔ | | | |
-| Authoritative owner: gameplay-ban enforcement (policy remains Logging & Admin-owned) | | | | ✔ | | | | | | | |
-| Authoritative owner: chat mute/chat-ban enforcement (policy remains Logging & Admin-owned) | | | | | | | | ✔ | | | |
+| Operator quota overrides, auditing, and dashboards (hypothetical target; overlay on entitlements; no current Account owner route) | | | | | | | | | ✔ | | |
+| Enforcement of gameplay bans at login/command level (target; owner RPC not currently exposed) | | | | ✔ | | | | | | | |
+| Enforcement of chat mutes/bans at message send time (target; owner RPC not currently exposed) | | | | | | | | ✔ | | | |
+| Authoritative owner: gameplay-ban enforcement (target; policy remains Logging & Admin-owned) | | | | ✔ | | | | | | | |
+| Authoritative owner: chat mute/chat-ban enforcement (target; policy remains Logging & Admin-owned) | | | | | | | | ✔ | | | |
 | Movement/location write contract orchestration (effect identity, order, and replay safety) | | ✔ | | ✔ | ✔ | ✔ | | | | | |
 | Instance termination orchestration (`PREPARING/ACTIVE/TERMINATING/TERMINATED`) and cross-service cleanup | | ✔ | | ✔ | ✔ | | | | ✔ | | |
-| Automated tick/coordination remediation (live `PauseTicks`/`ResumeTicks`; broader reset/remediate is target-state coverage drift) | | | | ✔ | | | | | ✔ | | |
+| Automated tick/coordination remediation (live `PauseTicks`/`ResumeTicks`; broader reset/remediate is hypothetical target coverage) | | | | ✔ | | | | | ✔ | | |
 | Game asset publishing & object storage | ✔ | | | | | | | | | | |
 | Asset deletion eligibility oracle (`CanDeleteVersionAssets`) | ✔ | | | | | | | | ✔ | | |
 | Asset purge control-plane workflow (`BeginPurgeVersionAssets` / `FinalizePurgeVersionAssets`) | ✔ | | | | | | | | ✔ | | |
@@ -88,7 +88,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Dynamic route management and gateway configuration | | | | | | | | | | | ✔ |
 | Authoritative owner: edge admin/creator API allowlist policy | | | | | | | | | | | ✔ |
 | Admin/creator API participation (edge-routable domain APIs) | ✔ | | ✔ | ✔ | | | | ✔ | ✔ | | ✔ |
-| External operator write ingress for moderation, quota overrides, runtime feature flags, admission control, and tick remediation | | | | | | | | | ✔ | | ✔ |
+| External operator write ingress (live feature flags/admission/tick pause-resume; target moderation enforcement/quota/broader remediation) | | | | | | | | | ✔ | | ✔ |
 | API gateway rate limiting and abuse filters | | | | | | | | | | | ✔ |
 
 The `<tenantId, gameInstanceId, regionId>` tuple in the tick and coordination health metrics row is the diagnostic scope Game Session must support through control-plane status, structured logs, and audit records. It is not a Prometheus label tuple: metric series must use bounded `scope`, `scope_bucket`, `region_class`, or equivalent operational buckets under the cardinality policy, while exact identities remain in diagnostic records.
@@ -123,12 +123,13 @@ These ownership boundaries are normative per `design/architecture/decisions/adr-
 - **Movement hot-path exception** – The overview’s two-downstream-service ceiling has one explicit initial-slice exception for movement and region-transition orchestration: Game Session may synchronously coordinate Game Logic, World Management, and Entity Management under one fenced tick/effect contract. This exception is valid only with the overview’s documented budget/fallback contract and must not expand to additional participants without a new architecture decision.
 - **Canonical room-state read fence** – World Management emits the canonical room-read fence on `GetRoomSnapshot`; Game Logic orchestrates same-fence room-view composition by comparing the World fence with the Entity Management room-entity fence and composing the `LookResult` only when both reads align. Game Session owns request initiation, ordering, and transcript rendering/cache behavior, but it is not the downstream read orchestrator for `GetRoomSnapshot` plus `ListRoomEntities`. See the canonical room runtime contract in `design/architecture/system-architecture-overview.md`.
 - **Item command runtime split** – Game Session owns text-session ingress and transcript rendering for player item commands; Game Logic owns the gameplay-facing item command RPC seam; Entity Management remains authoritative for item/container/equipment persistence, holder mutation, validation, and transfer audit writes.
-- **Tick remediation split** – Logging & Admin owns the live operator-facing pause/resume ingress, future remediation APIs, automation policy, and audit trail; Game Session owns all tick/coordination state mutation. Broader reset/remediate actions remain target-state coverage drift until the owner APIs exist.
+- **Operator-action coverage split** – Runtime feature-flag overrides, admission-pointer operations, and scoped tick pause/resume are live Logging & Admin ingress families. The current moderation route persists policy input and audit only; enforcement propagation, quota override, and broader reset/remediate actions are hypothetical target families with no current owner mutation route.
+- **Tick remediation split** – Logging & Admin owns the live operator-facing pause/resume ingress, target-state remediation APIs, automation policy, and audit trail; Game Session owns all tick/coordination state mutation. Broader reset/remediate actions remain hypothetical until the owner APIs exist.
 - **Replacement-instance compatibility preflight** – Game Session owns `ValidateInstanceCutoverCompatibility` orchestration and result semantics; Game Design, World, Entity, Automation, and Logging/Admin participate as dependency and policy providers for checks.
-- **Moderation policy propagation** – Logging & Admin owns gameplay/chat moderation policy definition and audit trail; Game Session and Social & Groups enforce policy using versioned policy snapshots/events with monotonic invalidation per `{tenantId, policyScope}`, bounded cache staleness, pull-on-miss refresh, and fail-closed behavior for `gameplay_ban` and `chat_ban` when no fresh snapshot is available within the allowed window. See the canonical moderation propagation contract in `design/architecture/system-architecture-overview.md`.
+- **Moderation policy propagation** – Logging & Admin owns live gameplay/chat moderation policy definition and audit persistence; Game Session and Social & Groups are target enforcement owners using versioned policy snapshots/events with monotonic invalidation per `{tenantId, policyScope}`, bounded cache staleness, pull-on-miss refresh, and fail-closed behavior for `gameplay_ban` and `chat_ban` when no fresh snapshot is available within the allowed window. See the canonical moderation propagation contract in `design/architecture/system-architecture-overview.md`.
 - **Ban taxonomy** – Account owns account-security bans and auth authority-generation advances; Logging & Admin owns gameplay/chat moderation ban policy definitions; Game Session and Social & Groups are enforcement owners for gameplay and chat scopes respectively.
 - **Admin/creator API allowlist policy** – Gateway owns the edge-route allowlist policy; domain services own only the API contracts behind allowlisted routes.
-- **External operator write ingress** – Logging & Admin is the mandatory external ingress for operator writes covering moderation, quota overrides, runtime feature flags, admission control, and tick remediation; Gateway participates only as the edge routing and coarse protection layer for those writes.
+- **External operator write ingress** – Logging & Admin is the mandatory external ingress for live runtime feature flags, admission control, and scoped tick pause/resume, and the target ingress for moderation enforcement, hypothetical quota overrides, and broader tick remediation; Gateway participates only as the edge routing and coarse protection layer for those writes.
 - **Edge admin/creator protocol** – External admin/creator APIs are HTTP(S) only at the Gateway edge unless a dedicated design update explicitly adds an edge gRPC contract. Internal service-to-service gRPC remains direct. External mutating operator workflows defined in the overview’s canonical operator action table must enter through Logging & Admin rather than directly through another edge-routable service.
 - **Edge exposure default** – Unless a service is explicitly marked as participating in edge-routable domain APIs, its APIs are internal-only and reached through service-to-service contracts, not directly from external tools via Gateway.
 - **Gameplay hot path policy** – Service APIs used in steady-state gameplay must follow the overview’s canonical bounded fan-out rule. New hot-path designs needing synchronous calls to more than two downstream domain services require an architecture-level justification of latency budget, fallback behavior, and why pre-aggregation or a read model is insufficient.

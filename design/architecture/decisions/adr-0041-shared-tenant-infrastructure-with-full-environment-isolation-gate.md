@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-Partial. Shared multi-tenant services and tenant-qualified authorization and persistence are broadly implemented, but authoritative entitlement and quota freshness, complete owning-service quota enforcement, and the full negative-isolation and noisy-neighbour proof obligations remain incomplete. The decision below is the accepted target topology and isolation contract; acceptance does not imply those implementation and validation obligations are complete.
+Partial. Shared multi-tenant services and tenant-qualified authorization and persistence are broadly implemented, but Account-owned tenant-bound entitlement freshness, complete owning-service quota enforcement, and the full negative-isolation and noisy-neighbour proof obligations remain incomplete. The decision below is the accepted target topology and isolation contract; acceptance does not imply those implementation and validation obligations are complete.
 
 ## Decision Record
 
@@ -31,7 +31,7 @@ Selective dedication would add routing, provisioning, migration, backup, recover
 - Shared services, PostgreSQL, Coordination Redis, and Cache/Rate-Limit Redis are the only normal supported multi-tenant topology. Services scale horizontally for aggregate and region-partitioned load; FireMUD does not selectively dedicate services or data stores to individual tenants.
 - Tenant isolation is logical and mandatory. Tenant-scoped APIs, persistence, Redis keys, object-storage paths, authorization, audit context, entitlements, and quotas carry and validate the authoritative `tenantId` at every applicable boundary.
 - Global tables are an explicit exception to tenant-column rules. Platform-wide identity and other deliberately global authorities do not acquire a synthetic `tenantId`; relationships from global records to tenant-owned state use explicit tenant-scoped membership or ownership records.
-- Account-owned entitlements and plan limits define canonical tenant quotas. Gateway and TCP Proxy enforce edge-safety limits, while Game Session and other domain services enforce tenant-aware capacity, storage, and workload budgets at their owning boundaries.
+- Account Service owns the canonical entitlement and plan-limit records, but every entitlement is bound to exactly one `tenantId` and is returned with that target identity and authority/version context. Gateway and TCP Proxy enforce edge-safety limits, while Game Session and other domain services enforce tenant-aware capacity, storage, and workload budgets at their owning boundaries. An account's entitlement for one tenant, a global role, or a cross-tenant read never supplies quota or capacity for another tenant; there is no cross-tenant entitlement inheritance or account-wide fallback.
 - The operational blast radius of one environment is accepted. Infrastructure incidents, backup and restore, disaster recovery, platform maintenance, and environment-level security hardening may affect every tenant in that environment. The supported topology provides no tenant-local residency, disaster-recovery, restore, maintenance, or infrastructure-failure boundary.
 - FireMUD will not build a hybrid dedicated-data-plane mode. If a demonstrated legal, residency, security, scale, or contractual requirement later needs hard infrastructure isolation, the candidate boundary is a separate complete FireMUD environment reviewed as its own deployment and operating model. It is not a selectively dedicated database, Redis deployment, or service subset inside the shared environment.
 
@@ -62,7 +62,7 @@ Rely only on tenant identifiers and horizontal scaling. This is operationally si
 
 - Remove obsolete tenant columns from deliberately global tables and document the global-table exception in schema and tenancy checks.
 - Require tenant-qualified keys, constraints, repository methods, API contracts, authorization checks, audit fields, and object-storage paths for every tenant-owned resource.
-- Complete Account entitlement and quota response fields, authoritative freshness/versioning, event invalidation, and owning-service enforcement for sessions, ticks, commands, automation, storage, and other bounded resources.
+- Complete Account-owned, exact-`tenantId` entitlement and quota response fields, authoritative freshness/versioning, event invalidation, and owning-service enforcement for sessions, ticks, commands, automation, storage, and other bounded resources. Prove that cross-tenant reads, global roles, and missing target bindings cannot inherit or reuse another tenant's entitlement.
 - Prove cross-tenant denial for reads, writes, exports, billing-safe variants, gameplay admission, cache access, Redis coordination, and operator workflows.
 - Prove quota exhaustion contains load to the offending tenant while preserving platform invariants and bounded service health for other tenants.
 - Keep environment-wide backup, restore, maintenance, incident, and security-hardening documentation explicit about the accepted all-tenant blast radius.

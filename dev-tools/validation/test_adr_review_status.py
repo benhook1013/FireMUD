@@ -196,6 +196,65 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "completed human review is not backed",
             )
 
+    def test_duplicate_adr_number_is_rejected(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            reviewed = root / "design/architecture/decisions/adr-0012-reviewed.md"
+            duplicate = root / "design/architecture/decisions/adr-0012-duplicate.md"
+            duplicate.write_text(reviewed.read_text(encoding="utf-8"), encoding="utf-8")
+            expect_failure(
+                lambda: self.validator.validate(root),
+                "duplicate ADR number 0012",
+            )
+
+    def test_duplicate_human_review_field_is_rejected(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = root / "design/architecture/decisions/adr-0012-reviewed.md"
+            path.write_text(
+                path.read_text(encoding="utf-8")
+                + "\n- Human review status: Completed\n",
+                encoding="utf-8",
+            )
+            expect_failure(
+                lambda: self.validator.validate(root),
+                "duplicate ADR review field 'Human review status'",
+            )
+
+    def test_malformed_status_section_is_rejected(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = root / "design/architecture/decisions/adr-0013-pending.md"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "## Status\n\nProposed - Pending Human Review",
+                    "## Status\nProposed - Pending Human Review",
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                lambda: self.validator.validate(root),
+                "missing or malformed 'Status' section",
+            )
+
+    def test_checked_queue_entry_requires_matching_adr(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            queue = (
+                root
+                / "design/project-management/design-alignment/consequential-decision-inventory.md"
+            )
+            queue.write_text(
+                queue.read_text(encoding="utf-8")
+                + "\n- [x] `TEST-99` — `accepted` on 2026-07-27; "
+                "[ADR 0099](../../architecture/decisions/adr-0099-missing.md)\n",
+                encoding="utf-8",
+            )
+            expect_failure(
+                lambda: self.validator.validate(root),
+                r"checked review queue references missing ADRs: \[99\]",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

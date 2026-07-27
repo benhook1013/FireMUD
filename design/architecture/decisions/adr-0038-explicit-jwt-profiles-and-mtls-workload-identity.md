@@ -34,6 +34,7 @@ The target gameplay-domain delegation boundary uses concrete mTLS identity, exac
   - narrowly named private player-delegation profiles only for actual control-plane consumers, beginning with `game-session-account-delegation` and exact audience `account-service` for the Game Session to Account/control use case. Each declares its exact receiving service or purpose audience.
 - A private player-delegation token is not workload identity. A receiving endpoint requires both an approved concrete mTLS caller and the exact delegated-token audience/profile. Do not create profiles for consumers that have no demonstrated call path.
 - Generic Service JWT and `aud=internal` are not canonical workload authentication. Workload-only calls use certificate-derived mTLS identity and exact per-method caller policy.
+- Every receiving endpoint makes the token profile/type, exact Account issuer, exact audience, concrete mTLS caller identity, and method-level policy mandatory predicates. A matching audience without the registered profile/type, issuer, caller certificate, or method allowlist is insufficient. Workload-only methods declare profile/type/issuer/audience as `none` and still require the concrete mTLS identity and exact method policy; private delegation methods require all five predicates.
 - Gameplay-domain calls use mTLS plus typed `PlayerExecutionContext`; raw gameplay clients never receive or carry gameplay-command JWTs, and ordinary commands perform no token validation.
 - `gameplay-connect` remains a short-lived Account-signed, Gateway-only, single-use admission artifact. Gateway signed connect context remains a separate Gateway key family and assertion. Neither is an issued-token-registry auth session.
 - Player-facing and shared environments require asymmetric Account signing and JWKS validation. HMAC is allowed only for local/dev and explicitly ephemeral CI. Account is the only application workload with the Account JWT private key.
@@ -64,8 +65,8 @@ This exposes internal authority to raw clients and creates a per-command validat
 
 - Replace generic `internal` and locally minted workload JWT paths directly in this pre-v1 system.
 - Define exact profile/audience constants and route-matrix acceptance for every issuer and consumer.
-- Prove every cross-profile and wrong-receiver combination fails before authorization.
-- Prove workload-only calls use mTLS caller policy without JWTs and gameplay commands retain no JWT hot path.
+- Prove every cross-profile, wrong-type, wrong-issuer, wrong-audience, wrong-certificate-caller, and unallowlisted-method combination fails before authorization.
+- Prove workload-only calls use mTLS caller policy without JWTs, every receiver applies an exact per-method policy, and gameplay commands retain no JWT hot path.
 - Separate Account JWT, gameplay-connect, and Gateway connect-context key families and deployment mounts.
 - Prove asymmetric JWKS startup/readiness in player-facing environments and rejection of HMAC-only configuration.
 - Align secondary Account, service, frontend, deployment, and tracker documentation during implementation without treating current HMAC/generic-token code as target behavior.

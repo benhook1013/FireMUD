@@ -24,13 +24,13 @@ FireMUD needs cross-game friend presence without turning live sessions into a gl
 
 Game Session owns raw live and recent gameplay presence. Social & Groups projects the bounded friend-presence view, using current Account Service profile policy when deciding which fields may be returned.
 
-The view contains only mutual, accepted friends. Blocks override friendship and suppress presence. Results are paginated so no Account or Game Session request exceeds 100 account IDs.
+The view contains only mutual, accepted friends. Blocks override friendship and suppress presence. An initial request establishes an opaque, short-lived snapshot of the authorized friend set and bounded presence/policy read epoch in deterministic friend-ordinal/account-ID order. Continuation is bound to that snapshot, the authenticated viewer, filters, and page size, so no Account or Game Session request exceeds 100 account IDs and pagination cannot duplicate or skip subjects.
 
-`FRIENDS_ONLY` is the default profile policy. `PUBLIC` may broaden disclosure on an otherwise authorized social surface, but never permits global presence enumeration. `PRIVATE` exposes no presence fact: no online state, last-seen value, location, character, activity, disconnect information, or policy label. Unknown, missing, malformed, or unavailable policy is treated as `PRIVATE` with the same complete redaction.
+`FRIENDS_ONLY` is the default profile policy. `PUBLIC` is a disclosure policy, not authorization: Social derives the viewer identity from authenticated caller context and authorizes the viewer for the surface and each subject before evaluating the subject's policy. The friend-list surface may return only subjects in that viewer's mutual accepted-friend snapshot; any single-subject surface must use an exact subject reference and the same viewer/subject authorization check. `PUBLIC` never permits anonymous, arbitrary-account, wildcard, search, count, presence-sorted, or global presence enumeration. `PRIVATE` exposes no presence fact: no online state, last-seen value, location, character, activity, disconnect information, or policy label. Unknown, missing, malformed, legacy (including `HIDDEN_STAFF`), or unavailable policy is treated as `PRIVATE` with the same complete redaction.
 
 World or realm names for a non-public realm are disclosed only when the viewer can independently see that realm. Friendship does not grant realm discovery.
 
-`HIDDEN_STAFF` is removed. Staff concealment and game-authored invisibility are not account-profile presence policies.
+`HIDDEN_STAFF` is removed from the player-facing policy vocabulary. It and all other legacy or unknown values fail closed as `PRIVATE`; staff concealment and game-authored invisibility are not account-profile presence policies.
 
 Gameplay `WHO` remains a current-game-instance view. It is separate from Account profile privacy and from game-authored invisibility and perception mechanics, which must be applied by their owning gameplay policy before `WHO` renders its instance-local result. FireMUD has no current hidden-staff or observer presence mode.
 
@@ -42,7 +42,7 @@ Player-facing friend presence does not expose disconnect disposition. Internal o
 - A policy outage degrades presence to no disclosed fact instead of fabricating public or offline state.
 - Mutual acceptance, block checks, realm visibility, and policy redaction must occur before results leave the Social projection boundary.
 - `PUBLIC` supports future authorized social surfaces without creating a platform-wide online-player directory.
-- Pagination adds client and service continuation handling but preserves bounded Account and Game Session bulk reads.
+- Pagination adds client and service continuation handling but preserves bounded Account and Game Session bulk reads. Snapshot expiry returns no page data or continuation token, and any raw-presence, authorization, or chunk failure returns no partial page; an unavailable policy produces a complete private-redacted page instead.
 - Instance-local visibility and concealment cannot be implemented by reusing cross-game profile policy.
 
 ## Alternatives Considered
@@ -68,11 +68,11 @@ Rejected because `WHO` is an in-world instance view whose invisibility and perce
 Focused contract and integration proof must demonstrate that:
 
 - only mutual accepted friends appear and either party's block suppresses the result;
-- `FRIENDS_ONLY` is the persisted default, `HIDDEN_STAFF` is absent, and `PUBLIC` cannot enumerate arbitrary accounts;
+- the viewer is derived from authenticated caller context, every subject passes the applicable viewer/subject authorization check, `FRIENDS_ONLY` is the persisted default, `HIDDEN_STAFF` is absent from the player-facing vocabulary, and `PUBLIC` cannot enumerate arbitrary accounts;
 - `PRIVATE` and every missing, malformed, timeout, or unavailable policy result disclose no presence fact or policy label;
 - private world and realm labels are absent unless independent viewer visibility is proven;
 - player responses never include disconnect disposition;
-- Account and Game Session reads remain bounded to 100 IDs per page and continuation does not duplicate or skip entries; and
+- snapshot-bound Account and Game Session reads remain bounded to 100 IDs per chunk, expiry is terminal for that snapshot, and any raw-presence, authorization, or chunk failure produces no partial page or continuation token; and
 - `WHO` remains instance-local while applicable game-authored invisibility and perception policy is enforced independently before rendering.
 
 ## Reversibility and Revisit Triggers
