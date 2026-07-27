@@ -66,6 +66,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -220,6 +221,25 @@ class AccountServiceImplTest {
     service.requestEmailLoginOtp(7L, "unknown@example.com");
 
     verifyNoInteractions(emailService, accountEmailLoginChallengeRepository);
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = AccountLifecycleState.class,
+      names = {"SECURITY_LOCKED", "DEACTIVATED_PENDING_DELETE", "DELETED"})
+  void emailLoginOtpRequestIsNeutralForIneligibleLifecycleState(
+      AccountLifecycleState lifecycleState) {
+    Account account = new Account();
+    account.setId(9L);
+    account.setEmail("verified@example.com");
+    account.setEmailVerified(true);
+    account.setLifecycleState(lifecycleState);
+    when(accountRepository.findByEmail("verified@example.com")).thenReturn(Optional.of(account));
+
+    service.requestEmailLoginOtp(7L, "verified@example.com");
+
+    verifyNoInteractions(
+        accountTenantMembershipRepository, accountEmailLoginChallengeRepository, emailService);
   }
 
   @Test

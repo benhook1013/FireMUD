@@ -89,7 +89,7 @@ These RPCs and schemas are accepted target state but are not present in the curr
 | `GET` | `/accounts/{accountId}/deletion` | **Target-state only.** Read `pending_deletion_scoped` workflow status using the Account-owned pending-deletion credential. |
 | `POST` | `/accounts/{accountId}/deletion/cancel` | **Target-state only.** Cancel eligible pending deletion and establish a fresh normal account generation after the dedicated recovery proof. |
 | `POST` | `/accounts/{accountId}/deletion/billing-settlement` | **Target-state only.** Perform only the necessary billing-settlement action allowed by the pending-deletion workflow. |
-| `GET` | `/tenant-admin/tenants/{tenantId}/export` | Tenant-wide billing-safe export of tenant-owned data for a live `tenantAdmin`; no account subject selector |
+| `GET` | `/tenant-admin/tenants/{tenantId}/export` | **Target-state only; not currently routable.** Tenant-wide billing-safe export of tenant-owned data for a live `tenantAdmin`; no account subject selector. |
 | `DELETE` | `/accounts/{accountId}` | Delete the global account after billing-owner preconditions pass |
 | Provider-specific callback route (future) | Not yet routable | Link one server-verified provider identity after that provider's complete contract and proof exist; the caller-asserted `/accounts/{accountId}/external` route is unsupported |
 | `POST` | `/auth/player-bootstrap` | Current endpoint; **target registry-backed behavior:** return a short-lived `player-bootstrap` token for gameplay bootstrap only after Account has atomically established exactly one active issued-token registry record; registry failure fails issuance before the token is exposed, and the token is not the `/auth/login` control-ui session |

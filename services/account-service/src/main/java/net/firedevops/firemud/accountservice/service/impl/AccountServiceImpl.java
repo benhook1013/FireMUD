@@ -272,6 +272,7 @@ public class AccountServiceImpl implements AccountService {
     }
     Account resolvedAccount = account.orElseThrow();
     try {
+      requireAuthenticationEligible(resolvedAccount);
       requireGameplayMembership(resolvedAccount.getId(), tenantId, "Invalid credentials");
     } catch (AuthenticationException ex) {
       return;
