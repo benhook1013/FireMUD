@@ -6,9 +6,16 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 for smoke_script in \
   "$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh" \
   "$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"; do
-  grep -Fq \
+  if ! grep -Fq \
     "verify_smoke_account(account_api_base, username, password, timeout_seconds)" \
-    "$smoke_script"
+    "$smoke_script"; then
+    printf '%s\n' \
+      "Smoke contract missing required account verification:" \
+      "  script: $smoke_script" \
+      "  pattern: verify_smoke_account(account_api_base, username, password, timeout_seconds)" \
+      >&2
+    exit 1
+  fi
 done
 
 python3 - <<'PY' "$ROOT_DIR"

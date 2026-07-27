@@ -493,6 +493,8 @@ class AccountServiceImplTest {
     var claims = new JwtUtil(JWT_SECRET, 3600000L).parseToken(result.authToken()).getPayload();
     assertEquals("control-ui", claims.getAudience().iterator().next());
     assertEquals(1L, claims.get("accountId", Long.class));
+    assertEquals(java.util.List.of("player"), claims.get("globalRoles"));
+    assertNotNull(claims.get("jti"));
     assertFalse(claims.containsKey("tenantId"));
     org.mockito.Mockito.verify(sessionService)
         .storeAccountSession(1L, result.authToken(), 3600000L);
@@ -539,6 +541,8 @@ class AccountServiceImplTest {
     var claims = new JwtUtil(JWT_SECRET, 3600000L).parseToken(result.authToken()).getPayload();
     assertEquals("account-service", claims.getAudience().iterator().next());
     assertEquals(1L, claims.get("accountId", Long.class));
+    assertEquals(java.util.List.of("player"), claims.get("globalRoles"));
+    assertNotNull(claims.get("jti"));
     org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, result.authToken());
   }
 
