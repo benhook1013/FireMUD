@@ -74,12 +74,7 @@ public final class AccountClient
         return authenticationUnavailable();
       }
       logger.warn("Account Service authentication returned a terminal gRPC status", ex);
-      String description = ex.getStatus().getDescription();
-      return authenticationError(
-          statusCode.name(),
-          description == null || description.isBlank()
-              ? "Authentication request failed"
-              : description);
+      return authenticationError(statusCode.name(), "Authentication request failed");
     } catch (Exception ex) {
       logger.warn("Account Service authenticate failed before a response completed", ex);
       return authenticationUnavailable();

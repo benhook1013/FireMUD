@@ -87,17 +87,40 @@ class AccountClientTest {
         "UNAUTHENTICATED",
         "PERMISSION_DENIED"
       })
-  void authenticatePreservesTerminalGrpcStatus(String statusName) throws Exception {
+  void authenticatePreservesTerminalGrpcStatusAndUsesGenericMessage(String statusName)
+      throws Exception {
     AccountServiceGrpc.AccountServiceBlockingStub stub =
         mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     when(stub.authenticate(any(AuthenticateRequest.class)))
-        .thenThrow(new StatusRuntimeException(Status.fromCode(Status.Code.valueOf(statusName))));
+        .thenThrow(
+            new StatusRuntimeException(
+                Status.fromCode(Status.Code.valueOf(statusName))
+                    .withDescription("upstream credential details")));
     AccountClient client = newClient(stub);
 
     AuthenticateResponse response = client.authenticate("22", "demo@example.com", "swordfish");
 
     assertThat(response.getError().getCode()).isEqualTo(statusName);
+    assertThat(response.getError().getMessage()).isEqualTo("Authentication request failed");
+    verify(stub).authenticate(any(AuthenticateRequest.class));
+  }
+
+  @Test
+  void authenticateUsesGenericMessageWhenTerminalGrpcDescriptionIsBlank() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.authenticate(any(AuthenticateRequest.class)))
+        .thenThrow(
+            new StatusRuntimeException(
+                Status.fromCode(Status.Code.INVALID_ARGUMENT).withDescription("   ")));
+    AccountClient client = newClient(stub);
+
+    AuthenticateResponse response = client.authenticate("22", "demo@example.com", "swordfish");
+
+    assertThat(response.getError().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT.name());
+    assertThat(response.getError().getMessage()).isEqualTo("Authentication request failed");
     verify(stub).authenticate(any(AuthenticateRequest.class));
   }
 
