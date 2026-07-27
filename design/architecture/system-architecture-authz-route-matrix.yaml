@@ -64,7 +64,6 @@ required_live_check_vocabulary:
   - current_automation_policy
   - current_global_role
   - current_operator_authorization
-  - current_operator_role
   - current_operator_roles
   - current_session
   - current_token_generation
@@ -414,7 +413,7 @@ routes:
     operator_authorization_reference: required_and_redeemed_with_account
     required_live_checks: [current_operator_authorization, runtime_entitlements]
     mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
-    required_fields: [controlPlaneRequestId, actor, reason, tenant_id]
+    required_fields: [controlPlaneRequestId, actor, reason, tenant_id, mutationDigest]
   - service: game-session-service
     route: RestartSession
     transport: grpc
@@ -432,7 +431,7 @@ routes:
     operator_authorization_reference: required_and_redeemed_with_account
     required_live_checks: [current_operator_authorization, runtime_entitlements]
     mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
-    required_fields: [controlPlaneRequestId, actor, reason, session_id]
+    required_fields: [controlPlaneRequestId, actor, reason, session_id, mutationDigest]
   - service: game-session-service
     route: StopSession
     transport: grpc
@@ -450,7 +449,7 @@ routes:
     operator_authorization_reference: required_and_redeemed_with_account
     required_live_checks: [current_operator_authorization, runtime_entitlements]
     mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
-    required_fields: [controlPlaneRequestId, actor, reason, session_id]
+    required_fields: [controlPlaneRequestId, actor, reason, session_id, mutationDigest]
   - service: game-session-service
     route: RefreshRoles
     transport: grpc
@@ -474,6 +473,8 @@ routes:
     classification: tenant_regular
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     route_status: current_openapi_operator_surface
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
@@ -579,7 +580,7 @@ routes:
       any_of: [logging-admin-service]
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
-    required_live_checks: [current_account_generation, current_token_generation, current_operator_role, role_appropriate_assurance]
+    required_live_checks: [current_account_generation, current_token_generation, current_operator_roles, role_appropriate_assurance]
     required_fields: [tenant_scope, action_family, control_plane_request_id, mutation_digest]
     global_tenant_operation_binding: current_target_tenant_generation_without_membership
     mutation_contract: create_bounded_human_operator_authorization_reference

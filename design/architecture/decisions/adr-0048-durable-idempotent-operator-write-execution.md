@@ -46,10 +46,10 @@ Logging and Admin retains the original durable intent and reconciles through tha
 
 Operator-visible states must distinguish at least:
 
-- **not executed** — forwarding never occurred, or a terminal owner result durably proves rejection or `NOT_EXECUTED`;
+- **not executed** — forwarding never occurred, or a terminal owner result explicitly records `NOT_EXECUTED` before any owner execution;
 - **pending or indeterminate** — dispatch may have reached the owner but no terminal result proves its outcome; reconciliation remains read-only after authorization expiry;
 - **committed, response lost or outcome pending** — execution may have committed and the same identifier must be queried through the owner result-read contract rather than replaced; and
-- **failed** — a terminal, durable owner result proves no successful mutation for that request.
+- **failed** — the owner received or claimed the request and a terminal, durable owner result proves execution ended without a successful mutation. A terminal `NOT_EXECUTED` result is not `FAILED`; these outcomes are mutually exclusive.
 
 Clients and operators must not create a fresh request identifier merely because a response timed out. Retention of idempotency results must cover the documented retry and reconciliation window for that action family.
 
