@@ -813,7 +813,7 @@ class LoginCommandHandlerTest {
         AuthenticateResponse.newBuilder()
             .setError(
                 ErrorDetail.newBuilder()
-                    .setCode("UNAUTHENTICATED")
+                    .setCode(AuthenticationErrorCodes.INVALID_CREDENTIALS)
                     .setMessage("Invalid credentials")
                     .build())
             .build();
@@ -846,7 +846,7 @@ class LoginCommandHandlerTest {
         AuthenticateResponse.newBuilder()
             .setError(
                 ErrorDetail.newBuilder()
-                    .setCode("UNAUTHENTICATED")
+                    .setCode(AuthenticationErrorCodes.INVALID_CREDENTIALS)
                     .setMessage("Invalid credentials")
                     .build())
             .build();
@@ -1171,10 +1171,14 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void unauthenticatedWithoutRecognizedMessageUsesUnavailable() {
+  void unauthenticatedDoesNotInferCanonicalCodeFromMessage() {
     AuthenticateResponse authError =
         AuthenticateResponse.newBuilder()
-            .setError(ErrorDetail.newBuilder().setCode("UNAUTHENTICATED").build())
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("UNAUTHENTICATED")
+                    .setMessage("Invalid credentials")
+                    .build())
             .build();
     TextCommand command =
         new TextCommand(
