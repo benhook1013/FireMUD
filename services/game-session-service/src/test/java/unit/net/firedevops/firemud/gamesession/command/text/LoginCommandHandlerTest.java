@@ -1076,6 +1076,56 @@ class LoginCommandHandlerTest {
   }
 
   @Test
+  void unrecognizedNonblankAuthenticationCodeUsesUnavailable() {
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("INTERNAL")
+                    .setMessage("internal authentication detail")
+                    .build())
+            .build();
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR UNAVAILABLE Authentication service unavailable", joinedOutputText(result.outputs()));
+  }
+
+  @Test
+  void unauthenticatedWithoutRecognizedMessageUsesUnavailable() {
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(ErrorDetail.newBuilder().setCode("UNAUTHENTICATED").build())
+            .build();
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR UNAVAILABLE Authentication service unavailable", joinedOutputText(result.outputs()));
+  }
+
+  @Test
   void repeatedLoginStillStoresContext() {
     TextCommand command =
         new TextCommand(

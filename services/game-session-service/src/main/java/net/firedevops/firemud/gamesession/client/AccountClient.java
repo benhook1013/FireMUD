@@ -65,11 +65,21 @@ public final class AccountClient
     try {
       return callStub().authenticate(request);
     } catch (StatusRuntimeException ex) {
-      logger.warn(
-          "Account Service authenticate failed with an ambiguous transport outcome; not retrying "
-              + "credential-consuming authentication without an idempotency identity",
-          ex);
-      return authenticationUnavailable();
+      Status.Code statusCode = ex.getStatus().getCode();
+      if (statusCode == Status.Code.UNAVAILABLE || statusCode == Status.Code.DEADLINE_EXCEEDED) {
+        logger.warn(
+            "Account Service authentication transport failed with a retryable status; "
+                + "not retrying credential-consuming authentication without an idempotency identity",
+            ex);
+        return authenticationUnavailable();
+      }
+      logger.warn("Account Service authentication returned a terminal gRPC status", ex);
+      String description = ex.getStatus().getDescription();
+      return authenticationError(
+          statusCode.name(),
+          description == null || description.isBlank()
+              ? "Authentication request failed"
+              : description);
     } catch (Exception ex) {
       logger.warn("Account Service authenticate failed before a response completed", ex);
       return authenticationUnavailable();

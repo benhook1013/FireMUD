@@ -20,7 +20,7 @@ Explicit JWT profiles and mTLS workload identity remain target state and are not
 
 The previous JWT catalog used a generic Service JWT with an example `aud=internal` for both workload callers and private player-bearing delegation. That conflates two authorities: mTLS proves which service connected, while a delegated token proves which account authority the service is carrying. A broad internal audience also permits unnecessary lateral replay between consumers.
 
-Gameplay-domain delegation has already moved to concrete mTLS identity, exact per-method caller policy, and typed `PlayerExecutionContext`. The token catalog must follow that boundary without adding JWT work to ordinary gameplay commands.
+The target gameplay-domain delegation boundary uses concrete mTLS identity, exact per-method caller policy, and typed `PlayerExecutionContext`. The current implementation has not fully converged on that boundary, as recorded above; the token catalog must define the target without adding JWT work to ordinary gameplay commands.
 
 ## Decision
 

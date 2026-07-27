@@ -474,9 +474,6 @@ public final class LoginCommandHandler {
     if (rawCode.startsWith("AUTH_")) {
       return AUTHENTICATION_UNAVAILABLE_CODE;
     }
-    if (!rawCode.isBlank()) {
-      return rawCode;
-    }
     return AUTHENTICATION_UNAVAILABLE_CODE;
   }
 

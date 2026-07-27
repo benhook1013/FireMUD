@@ -57,18 +57,8 @@ class AccountClientTest {
   }
 
   @ParameterizedTest
-  @ValueSource(
-      strings = {
-        "UNAVAILABLE",
-        "DEADLINE_EXCEEDED",
-        "INTERNAL",
-        "RESOURCE_EXHAUSTED",
-        "UNKNOWN",
-        "INVALID_ARGUMENT",
-        "UNAUTHENTICATED",
-        "PERMISSION_DENIED"
-      })
-  void authenticateNormalizesPreResponseTransportFailuresToUnavailable(String statusName)
+  @ValueSource(strings = {"UNAVAILABLE", "DEADLINE_EXCEEDED"})
+  void authenticateNormalizesRetryableTransportFailuresToUnavailable(String statusName)
       throws Exception {
     AccountServiceGrpc.AccountServiceBlockingStub stub =
         mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
@@ -84,6 +74,30 @@ class AccountClientTest {
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Authentication service unavailable");
+    verify(stub).authenticate(any(AuthenticateRequest.class));
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "INTERNAL",
+        "RESOURCE_EXHAUSTED",
+        "UNKNOWN",
+        "INVALID_ARGUMENT",
+        "UNAUTHENTICATED",
+        "PERMISSION_DENIED"
+      })
+  void authenticatePreservesTerminalGrpcStatus(String statusName) throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.authenticate(any(AuthenticateRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.fromCode(Status.Code.valueOf(statusName))));
+    AccountClient client = newClient(stub);
+
+    AuthenticateResponse response = client.authenticate("22", "demo@example.com", "swordfish");
+
+    assertThat(response.getError().getCode()).isEqualTo(statusName);
     verify(stub).authenticate(any(AuthenticateRequest.class));
   }
 

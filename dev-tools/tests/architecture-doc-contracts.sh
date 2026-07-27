@@ -113,6 +113,7 @@ required_reset_contract = [
     "3. internal ledger-reconciliation phase",
     "4. internal command-convergence phase",
     "5. internal metadata-initialization phase",
+    "6. internal session-policy phase",
     "7. internal post-reset smoke-check phase",
     "8. internal resume-and-success-release phase",
     "durable control store outside the target Redis deployment",

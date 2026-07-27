@@ -88,16 +88,18 @@ Because ticks treat `(region_epoch, tickId)` as the canonical coordination timel
      - `current_tick_state` is initialized to the terminal baseline `APPLIED` for that sentinel `current_tick_id` so the next real tick may advance cleanly under the Lua state machine.
      - `current_tick_terminal_at_ms` is set to the reset/init-meta write timestamp for observability and bounded cleanup only; it is not a correctness input.
    - This keeps Lua monotonic guards (`region_epoch`, `current_tick_id`) in Redis consistent with the durable timeline used by schedulers and operators.
-6. **Rebind preserved gameplay sessions for the affected regions**
+6. **Apply the session-policy phase for the affected regions**
+   - The selected session policy either invalidates gameplay sessions or preserves them and requires the internal rebind flow below before traffic resumes.
    - Region-scoped resets preserve gameplay sessions by default, but clearing `tick:{tenantRegionTag}:*` also clears region-authoritative `tick:{tenantRegionTag}:session-binding:<entityId>` keys.
    - Before normal command intake resumes, Game Session runs the same session-to-region bridge flow used by reconnect/`PLAY` for any preserved authenticated session that still intends to control an entity in the reset region.
    - The rebind phase validates current account identity, membership authority, revocation state, and `binding_generation`; stale or unverifiable sessions remain connected but are not gameplay-admitted to that region until fresh `LOGIN` / `PLAY` succeeds.
    - During the gap between reset and successful rebind, command admission must fail closed with a non-applied outcome such as `"REGION_REBIND_REQUIRED"` rather than treating `session:game:*` or `sessionctx:*` advisory fields as region-local authority.
 7. **Run the post-reset smoke check**
-   - The internal post-reset smoke-check phase is required before normal traffic resumes.
+   - The internal post-reset smoke-check phase is required before normal traffic resumes. Passing it atomically records `AWAITING_RESUME` while retaining the maintenance lock and traffic fence.
    - The smoke check must satisfy the canonical checklist in `system-architecture-redis-ops-access.md`, including lease acquisition, exactly-one batch allocation, Redis staging correlation, ledger convergence, and cleanup.
 8. **Resume ticks on the new epoch**
-   - Once Coordination Redis is clean for the scope, old-epoch ledger rows have converged, and accepted-but-unbound command records have converged, the control plane resumes tick scheduling.
+   - The public `resume` safety control must first atomically move the matching operation from `AWAITING_RESUME` to `RESUME_AUTHORIZED` without releasing its lock or fence.
+   - The internal final phase then atomically resumes tick scheduling, releases the matching maintenance lock, and records terminal `SUCCEEDED`.
    - New ticks start from the **new (bumped) `region_epoch`** with first committable tick `tickId=0` for each affected region (`lastCommittedTickId` remains at the sentinel `-1` until tick `0` commits), and all subsequent coordination state is written under that new epoch.
 
 Heartbeat consumers that track progress or offsets must key their state by `(tenantId, gameInstanceId, regionId, regionEpoch)` (with `lastCommittedTickId` / offsets stored as values) and treat any observed epoch change on the stream as a reset boundary, rebuilding their own derived state from domain stores instead of assuming continuity of `tickId` alone.
@@ -108,19 +110,19 @@ Worked example: region-scoped reset for `<tenantId=7b3b074e-d597-4e9b-b96f-4f594
 
 1. `coordination-maintenance recover --mode reset --scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7` creates one durable operation, rejects new command intake, and runs the ordered internal phases. In this example those phases bump `region_epoch` from `12` to `13`, clear `tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, and `tick-executor-lease:{tenantRegionTag}`, converge old-epoch ledger and accepted-but-unbound command records, initialize the Redis metadata baseline, rebind still-valid preserved sessions, and pass the smoke gate before allowing `tickId=0` in epoch `13`.
 2. If the operation pauses for an external infrastructure step or controller restart, call `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` with the recorded operation and expected phase. It resumes only the next internal phase and cannot select or skip phases.
-3. If the operator aborts, call `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason>`. This records audited abandonment, retains the paused/fenced state, and does not reopen traffic.
+3. If the operator aborts, call `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason> --evidence-ref <evidenceRef>`. This records audited abandonment, retains the paused/fenced state, and does not reopen traffic.
 
 Worked example: tenant-scoped reset for `<tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120>` with `--preserve-sessions`
 
 1. `coordination-maintenance recover --mode reset --scope tenant --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --preserve-sessions` creates one durable operation and runs the ordered internal phases across the complete affected-region inventory. It bumps each `region_epoch`, clears tenant coordination prefixes except preserved `session:game:*` and current `sessionctx:*` records/indexes, including every `remote:{tenantInstanceTag}:*` pattern from the durable game-instance inventory, converges ledger and accepted-but-unbound command records, initializes metadata, rebinds preserved sessions, and samples the required representative regions before success release. Account-owned `session:auth:token:<tokenHash>` records and authority generations remain retained.
 2. If the operation pauses for an external infrastructure step or controller restart, call `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` with the recorded operation and expected phase. The operation retains its scope and session policy; the control cannot select or skip an internal phase.
-3. If the operator aborts, call `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason>`. The scope remains fenced and does not reopen.
+3. If the operator aborts, call `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason> --evidence-ref <evidenceRef>`. The scope remains fenced and does not reopen.
 
 Worked example: cluster-scoped reset
 
 1. `coordination-maintenance recover --mode reset --scope cluster` creates one durable operation that closes protected admission and command intake, bumps every `region_epoch`, completes the Account issuer-generation repair/reset cutover, and only then clears Coordination Redis. The wipe includes old Account-issued token registry records, replay markers, leases, queues, timers, retries, remote hints, and observer streams; physical deletion follows the Account cutover and is not the authorization boundary. The operation advances `replayAdmissionFence`, keeps the replay domain `QUARANTINED` through the required lifetime-plus-skew window and durable consume proof, and keeps Gateway from admitting first-party gameplay handshakes against absent or pre-reset replay readiness.
 2. The same operation internally converges old-epoch ledger rows and accepted-but-unbound command records, rebuilds and proves the current Account issuer-generation projection, initializes every region's Redis metadata baseline, and proves the required representative-region smoke gate. Only after those proofs may Account register replacement issued-token records and prove exact-token validation. The default cluster policy invalidates gameplay sessions; an explicitly documented preserve policy runs the internal preserved-session rebind before the smoke gate.
-3. If the operation pauses for an external infrastructure step or controller restart, call `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` with the recorded operation and expected phase. If the operator aborts, call `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason>`; it retains quarantine and the fence, and neither control can bypass the Account, replay, or smoke proofs.
+3. If the operation pauses for an external infrastructure step or controller restart, call `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` with the recorded operation and expected phase. If the operator aborts, call `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason> --evidence-ref <evidenceRef>`; it retains quarantine and the fence, and neither control can bypass the Account, replay, or smoke proofs.
 
 ### Reset Ordering Is Normative
 
@@ -166,7 +168,7 @@ Worked example: cold start for `<tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120, 
 
 1. Coordination Redis starts empty after loss of its data directory, while PostgreSQL still shows `RegionStatus(regionEpoch=13, lastCommittedTickId=41)` for `(7b3b074e-d597-4e9b-b96f-4f5946d26120, 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, R7)`.
 2. Operators invoke `coordination-maintenance recover --mode reset --scope region --tenant 7b3b074e-d597-4e9b-b96f-4f5946d26120 --game-instance 9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78 --region R7`. The one operation establishes `PAUSED`, bumps `region_epoch` from `13` to `14`, clears and rebuilds the Redis metadata baseline, converges old-epoch durable work and accepted-but-unbound commands, optionally rebinds still-valid preserved sessions, and proves a fresh tick can stage and clear before success release.
-3. If it pauses for an external step, operators call `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`; if they abort, they call the audited `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason>`. The first committable tick in epoch `14` begins only after the recover operation's internal success release.
+3. If it pauses for an external step, operators call `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`; if they abort, they call the audited `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason> --evidence-ref <evidenceRef>`. The first committable tick in epoch `14` begins only after the recover operation's internal success release.
 
 - **Reset** (intentional operational action)
   - A deliberate, scoped choice to discard volatile coordination state (region/tenant/cluster) and resume from PostgreSQL state plus new activity.
@@ -327,7 +329,7 @@ Symptoms:
 Recommended actions:
 
 - Plan a **cluster‑scoped reset** as part of a controlled maintenance window.
-- Execute the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) at cluster scope, with the storage-level wipe inserted between the canonical `reset` and `reconcile-ledger` steps as described in the operations runbook.
+- Execute the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) at cluster scope. The storage-level wipe is performed inside the recover operation's internal epoch-bump and coordination-reset phase, before its later internal reconciliation phases.
 - Communicate expected impact to tenants and players.
 
 Expected impact:

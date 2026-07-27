@@ -414,6 +414,8 @@ routes:
     required_live_checks: [current_operator_authorization, runtime_entitlements]
     mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
     required_fields: [controlPlaneRequestId, actor, reason, tenant_id, mutationDigest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
     route: RestartSession
     transport: grpc
@@ -432,6 +434,8 @@ routes:
     required_live_checks: [current_operator_authorization, runtime_entitlements]
     mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
     required_fields: [controlPlaneRequestId, actor, reason, session_id, mutationDigest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
     route: StopSession
     transport: grpc
@@ -450,6 +454,8 @@ routes:
     required_live_checks: [current_operator_authorization, runtime_entitlements]
     mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
     required_fields: [controlPlaneRequestId, actor, reason, session_id, mutationDigest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
     route: RefreshRoles
     transport: grpc
@@ -563,6 +569,7 @@ routes:
     route: EnterPrivilegedControlWindow
     scope: account
     classification: account_scoped
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     subject_binding: caller_account_id
     accepted_token_profiles: [control-ui]
     required_fields: [requestedGlobalRole]
@@ -576,6 +583,8 @@ routes:
     classification: internal_workload
     auth_path: exact_mtls_workload_plus_forwarded_control_ui
     accepted_token_profiles: [control-ui]
+    end_user_token_required: true
+    delegated_subject: forwarded_human_operator_control_ui_token
     allowed_callers:
       any_of: [logging-admin-service]
     mtls_callers:
@@ -707,8 +716,9 @@ routes:
     required_live_checks: [recent_account_authentication]
     response_profile: asynchronous_versioned_cross_owner_export_manifest
     response_contract: reports_owner_completion_retries_omissions_and_policy_retention
-    implementation_status: drift_found
-    drift_note: Current implementation returns synchronous Account/profile-local data rather than the versioned cross-owner manifest.
+    implementation_status:
+      known_drift:
+        - Current implementation returns synchronous Account/profile-local data rather than the versioned cross-owner manifest.
   - service: account-service
     route: DeleteAccount
     scope: account
@@ -942,6 +952,7 @@ routes:
     classification: cross_tenant_support_safe
     response_profile: high_level_only
     accepted_token_profiles: [control-ui]
+    role_assurance: privileged_control_when_global_role
     roles:
       any_of: [support, platformAdmin]
   - service: account-service
@@ -968,8 +979,9 @@ routes:
     required_live_checks: [membership]
     response_profile: tenant_wide_tenant_owned_export
     response_contract: tenant_owned_records_with_minimum_stable_subject_references_only
-    implementation_status: drift_found
-    drift_note: Current implementation and gRPC request still require an account target and return one subject's Account/profile rows; the target tenant-wide route has no compatibility alias.
+    implementation_status:
+      known_drift:
+        - Current implementation and gRPC request still require an account target and return one subject's Account/profile rows; the target tenant-wide route has no compatibility alias.
     roles:
       any_of: [tenantAdmin]
   - service: account-service
@@ -978,6 +990,7 @@ routes:
     classification: cross_tenant_support_safe
     response_profile: high_level_only
     accepted_token_profiles: [control-ui]
+    role_assurance: privileged_control_when_global_role
     roles:
       any_of: [support, platformAdmin]
   - service: account-service
@@ -997,6 +1010,7 @@ routes:
     classification: cross_tenant_support_safe
     response_profile: high_level_only
     accepted_token_profiles: [control-ui]
+    role_assurance: privileged_control_when_global_role
     roles:
       any_of: [support, platformAdmin]
   - service: account-service
@@ -1005,6 +1019,7 @@ routes:
     classification: cross_tenant_billing_safe
     response_profile: billing_reporting
     accepted_token_profiles: [control-ui]
+    role_assurance: privileged_control_when_global_role
     roles:
       any_of: [billingAdmin, platformAdmin]
   - service: account-service
@@ -1024,6 +1039,7 @@ routes:
     classification: cross_tenant_billing_safe
     response_profile: membership_reporting
     accepted_token_profiles: [control-ui]
+    role_assurance: privileged_control_when_global_role
     roles:
       any_of: [billingAdmin, platformAdmin]
   - service: account-service
@@ -1043,6 +1059,7 @@ routes:
     scope: cross_tenant
     classification: cross_tenant_billing_safe
     accepted_token_profiles: [control-ui]
+    role_assurance: privileged_control_when_global_role
     roles:
       any_of: [billingAdmin, platformAdmin]
   - service: logging-admin-service
@@ -1190,6 +1207,8 @@ routes:
     required_live_checks: [current_operator_authorization, runtime_entitlements]
     mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
     required_fields: [controlPlaneRequestId, actor, reason, tenant_id, flag_name, enabled, mutationDigest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
     route: PauseTicksForScope
     scope: tenant
@@ -1207,6 +1226,8 @@ routes:
     required_live_checks: [current_operator_authorization, runtime_ownership]
     mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
     required_fields: [controlPlaneRequestId, actor, reason, tenant_id, game_instance_id, mutationDigest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
     route: ResumeTicksForScope
     scope: tenant
@@ -1224,6 +1245,8 @@ routes:
     required_live_checks: [current_operator_authorization, runtime_ownership, recovery_resume_gate]
     mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
     required_fields: [controlPlaneRequestId, actor, reason, tenant_id, game_instance_id, mutationDigest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
     route: SetAdmissionPointer
     scope: tenant
@@ -1241,6 +1264,8 @@ routes:
     required_live_checks: [current_operator_authorization, expected_pointer_version, prepared_version_upgrade_when_target_changes]
     mutation_contract: owner_atomic_idempotent_compare_and_set_with_durable_result
     required_fields: [controlPlaneRequestId, actor, reason, mutationDigest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
     route: ExecutePreparedVersionCutover
     scope: tenant
@@ -1258,6 +1283,8 @@ routes:
     required_live_checks: [current_operator_authorization, expected_pointer_version, prepared_version_upgrade]
     mutation_contract: owner_atomic_idempotent_compare_and_set_with_durable_result
     required_fields: [controlPlaneRequestId, actor, reason, preparedVersionUpgradeId, mutationDigest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
     route: PrepareVersionUpgrade
     scope: tenant
@@ -1275,3 +1302,5 @@ routes:
     required_live_checks: [current_operator_authorization]
     mutation_contract: owner_atomic_idempotent_preparation_with_durable_result
     required_fields: [controlPlaneRequestId, actor, reason, mutationDigest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]

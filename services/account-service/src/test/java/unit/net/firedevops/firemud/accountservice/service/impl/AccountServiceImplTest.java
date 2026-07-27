@@ -33,6 +33,7 @@ import net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResul
 import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
 import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthMode;
 import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
@@ -62,6 +63,8 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -446,6 +449,9 @@ class AccountServiceImplTest {
     AuthenticationResult result = service.verifyEmailLoginOtp(7L, "verified@example.com", "123456");
 
     assertEquals(9L, result.accountId());
+    var claims = new JwtUtil(JWT_SECRET, 3600000L).parseToken(result.authToken()).getPayload();
+    assertEquals("account-service", claims.getAudience().iterator().next());
+    assertEquals(9L, claims.get("accountId", Long.class));
     org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(accountEmailLoginChallengeRepository);
     inOrder.verify(accountEmailLoginChallengeRepository).lockAccountChallenge(9L);
     inOrder.verify(accountEmailLoginChallengeRepository).findByAccountId(9L);
@@ -492,6 +498,28 @@ class AccountServiceImplTest {
     verifyNoInteractions(accountTenantMembershipRepository);
   }
 
+  @ParameterizedTest
+  @CsvSource({
+    "SECURITY_LOCKED, AUTH_ACCOUNT_LOCKED",
+    "DEACTIVATED_PENDING_DELETE, AUTH_INVALID_CREDENTIALS",
+    "DELETED, AUTH_INVALID_CREDENTIALS"
+  })
+  void authenticateRejectsIneligibleLifecycleState(
+      AccountLifecycleState lifecycleState, String expectedCode) {
+    Account account = new Account();
+    account.setId(1L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    account.setLifecycleState(lifecycleState);
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+
+    AuthenticationException exception =
+        assertThrows(AuthenticationException.class, () -> service.authenticate("demo", "password"));
+
+    assertEquals(expectedCode, exception.getCode());
+    verifyNoInteractions(sessionService);
+  }
+
   @Test
   void authenticateForGameplayReturnsTokenWhenPasswordMatches() {
     Account account = new Account();
@@ -506,6 +534,9 @@ class AccountServiceImplTest {
 
     assertNotNull(result.authToken());
     assertEquals(1L, result.accountId());
+    var claims = new JwtUtil(JWT_SECRET, 3600000L).parseToken(result.authToken()).getPayload();
+    assertEquals("account-service", claims.getAudience().iterator().next());
+    assertEquals(1L, claims.get("accountId", Long.class));
     org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, result.authToken());
   }
 

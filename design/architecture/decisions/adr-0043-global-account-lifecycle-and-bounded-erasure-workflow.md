@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The bounded erasure workflow is target state and is not yet fully implemented or proved. The current deletion implementation and its `deleteAccountRemovesAccountOwnedRowsAfterTerminalSubscriptions` proof still model immediate deletion after the billing precondition, including account-owned rows that the target workflow must retain or process asynchronously. They must be treated as known drift until `deactivated_pending_delete`, cross-service progress, retention-safe handling, and terminal completion gating are implemented together.
+
 ## Decision Record
 
 - Decision date: 2026-07-19

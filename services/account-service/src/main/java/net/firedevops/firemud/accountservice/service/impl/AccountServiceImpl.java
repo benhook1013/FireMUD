@@ -52,6 +52,7 @@ import net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge;
+import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthMode;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthModes;
 import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
@@ -99,6 +100,7 @@ public class AccountServiceImpl implements AccountService {
       "Selected gameplay target is no longer admissible; rerun bootstrap discovery and request a fresh connect scope";
   private static final String INVALID_CONNECT_SCOPE_MESSAGE =
       "Connect scope is invalid or expired; rerun bootstrap discovery and request a fresh connect scope";
+  private static final String GAMEPLAY_DELEGATION_AUDIENCE = "account-service";
   private static final int EMAIL_LOGIN_OTP_MAX_ATTEMPTS = 5;
   private static final SecureRandom EMAIL_LOGIN_OTP_RANDOM = new SecureRandom();
 
@@ -260,10 +262,18 @@ public class AccountServiceImpl implements AccountService {
     requireGameplayMembership(account.getId(), tenantId, "Invalid credentials");
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String token =
-        jwtUtil.generateToken(
+        mintToken(
             account.getId().toString(),
+            jwtAuthProperties.getJwtExpirationMs(),
             Map.of(
-                "accountId", account.getId(), "globalRoles", java.util.List.of(account.getRole())));
+                "aud",
+                GAMEPLAY_DELEGATION_AUDIENCE,
+                "accountId",
+                account.getId(),
+                "globalRoles",
+                java.util.List.of(account.getRole()),
+                "jti",
+                UUID.randomUUID().toString()));
     sessionService.storeSession(tenantId, account.getId(), token);
     return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
         account.getId(), token);
@@ -329,13 +339,22 @@ public class AccountServiceImpl implements AccountService {
       recordFailedEmailLoginAttempt(challenge, now);
       throw invalidCredentials();
     }
+    requireAuthenticationEligible(account);
     requireGameplayMembership(account.getId(), tenantId, "Invalid credentials");
     accountEmailLoginChallengeRepository.delete(challenge);
     String token =
-        jwtUtil.generateToken(
+        mintToken(
             account.getId().toString(),
+            jwtAuthProperties.getJwtExpirationMs(),
             Map.of(
-                "accountId", account.getId(), "globalRoles", java.util.List.of(account.getRole())));
+                "aud",
+                GAMEPLAY_DELEGATION_AUDIENCE,
+                "accountId",
+                account.getId(),
+                "globalRoles",
+                java.util.List.of(account.getRole()),
+                "jti",
+                UUID.randomUUID().toString()));
     sessionService.storeSession(tenantId, account.getId(), token);
     return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
         account.getId(), token);
@@ -1103,6 +1122,7 @@ public class AccountServiceImpl implements AccountService {
     if (emailLoginChallenge
         .filter(challenge -> matchesEmailLoginOtp(challenge, password))
         .isPresent()) {
+      requireAuthenticationEligible(account);
       return new PrimaryAuthentication(account, emailLoginChallenge);
     }
     if (!allowsPassword(account) || !verifyPassword(password, account.getPasswordHash())) {
@@ -1111,7 +1131,20 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials");
     }
+    requireAuthenticationEligible(account);
     return new PrimaryAuthentication(account, Optional.empty());
+  }
+
+  private void requireAuthenticationEligible(Account account) {
+    AccountLifecycleState state = account.getLifecycleState();
+    if (state == AccountLifecycleState.ACTIVE) {
+      return;
+    }
+    if (state == AccountLifecycleState.SECURITY_LOCKED) {
+      throw new AuthenticationException(
+          AuthenticationErrorCodes.ACCOUNT_LOCKED, "Account is locked");
+    }
+    throw invalidCredentials();
   }
 
   private Optional<AccountEmailLoginChallenge> activeEmailLoginChallenge(Account account) {

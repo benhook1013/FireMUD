@@ -33,13 +33,19 @@ This one public operation acquires the maintenance lock, fences the scope, and r
 3. internal ledger-reconciliation phase
 4. internal command-convergence phase
 5. internal metadata-initialization phase
-6. internal preserved-session-rebind phase when the selected policy requires it
+6. internal session-policy phase, including invalidation or preserved-session rebind according to the selected policy
 7. internal post-reset smoke-check phase
 8. internal resume-and-success-release phase
 
 The internal pause-and-lock phase is not a public command or a standalone operation. Only `recover` creates the durable `operationId` and maintenance-lock identity; an interrupted workflow resumes through that same operation or is explicitly abandoned through the audited maintenance-lock release control.
 
-Supported external controls are limited to `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` for retrying the same durable operation after a controller restart or an external infrastructure step, and `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason>` for an audited operator abort. Continuation may advance only the recorded next internal phase and must match the active operation and lock; abort retains the paused/fenced state and never reopens the scope. No public command may select or invoke an internal phase.
+Supported external controls use the following canonical API-to-CLI mapping:
+
+- `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` maps to the continuation control for retrying the same durable operation after a controller restart or an external infrastructure step. It may advance only the recorded next internal phase and must match the active operation, expected phase, lock, and evidence.
+- `resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)` is a separate post-recovery safety gate. Phase 7 atomically records `AWAITING_RESUME` only after recovery and smoke gates pass while retaining the maintenance lock and traffic fence. `resume` is valid only for that exact operation, phase, scope, and lock; it atomically records `RESUME_AUTHORIZED` but does not release the lock or reopen traffic.
+- `releaseMaintenanceLock(operationId, scope, maintenanceLockToken, reason, evidenceRef)` maps to `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason> --evidence-ref <evidenceRef>` for audited operator abandonment. It retains the paused/fenced state and never reopens the scope.
+
+No public command may select or invoke an internal phase. The CLI exposes the same controls as `continue-recovery`, `resume`, and `release-lock`; the API names above remain the canonical control-plane names.
 
 Rules:
 
@@ -50,8 +56,9 @@ Rules:
 - Internal ledger reconciliation and command convergence are required before traffic resumes; replay-first workflows use those same phases without a preceding epoch bump, but reset workflows must not skip them.
 - Internal metadata initialization re-establishes `tick:{tenantRegionTag}:meta` from the durable baseline after the reset phase; `{tenantRegionTag}` is the opaque full-scope tag for `<tenantId, gameInstanceId, regionId>`.
 - Internal session rebinding is conditional. Region-scoped resets preserve gameplay sessions by default, tenant-scoped resets do so only when `--preserve-sessions` is recorded, and cluster-scoped resets invalidate gameplay sessions by default.
-- The internal post-reset smoke-check phase is the resume gate proving the new epoch can acquire leases, stage work, converge, and clean up correctly.
-- The internal success-release phase is the canonical success path. If the workflow aborts before it, operators must use the audited `coordination-maintenance release-lock ...` control rather than inventing an alternate unlock sequence.
+- The internal post-reset smoke-check phase proves the new epoch can acquire leases, stage work, converge, and clean up correctly, then atomically enters `AWAITING_RESUME` without dropping the maintenance lock or traffic fence.
+- The internal resume-and-success-release phase requires `RESUME_AUTHORIZED` for the same operation and lock. It atomically reopens the scope, releases that lock, and records terminal `SUCCEEDED`; no caller may observe an open scope with a live recovery lock or a released lock while the scope remains only partially resumed.
+- If the workflow aborts before terminal success, operators must use the audited `coordination-maintenance release-lock ...` control rather than inventing an alternate unlock sequence.
 
 ## Redis SLOs & Budgets
 
@@ -269,11 +276,11 @@ Signals include:
 
 Runbook:
 
-1. pause tick scheduling for affected scope
-2. verify PostgreSQL and Redis have converged on a single authoritative epoch and primary
-3. perform scoped coordination reset for each affected region
-4. if the deployment cannot be isolated safely, perform a cluster-scoped reset
-5. resume ticks only once Redis, PostgreSQL, and epoch metadata are consistent
+1. fence every conflicting Redis primary at the infrastructure or network layer and retain external evidence that only the selected primary can accept coordination traffic; do not ask the affected Redis deployment to prove its own fencing
+2. verify PostgreSQL authority and the surviving Redis primary have converged on one authoritative epoch
+3. invoke one `coordination-maintenance recover --mode reset --scope region ...` operation for each safely isolated affected region; region reset preserves gameplay sessions by default, clears region-local bindings, and blocks normal command intake until preserved sessions complete rebind
+4. if region isolation cannot be proved, retain the external primary fence and invoke one cluster-scoped `recover --mode reset` operation; the cluster fallback keeps traffic blocked and invalidates sessions by default
+5. let the recover operation own its internal pause/fencing, reset, reconciliation, rebind or invalidation, smoke verification, authorized resume, and success release before ticks or command intake resume
 
 ## Normalization and Hash-Tag Migration
 
@@ -287,7 +294,7 @@ Goal: change how `tenantId` / `gameInstanceId` / `regionId` normalization and ha
 4. invoke one bounded `coordination-maintenance recover --mode reset --operation migration --scope ...` operation and require the controller to validate that every participant reports the persisted version set and migration contract before reset begins
 5. start a fresh Coordination Redis deployment or logical database with an empty keyspace as the active recovery operation's recorded external-infrastructure step
 6. rebuild coordination state from PostgreSQL plus fresh activity, then validate normalization, shard locality, Lua registry compatibility, and migration evidence before calling `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`
-7. if the migration cannot safely continue, call the audited `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason>` abort control; it retains the fence and does not reopen traffic
+7. if the migration cannot safely continue, call the audited `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason> --evidence-ref <evidenceRef>` abort control; it retains the fence and does not reopen traffic
 
 ### Runbook: In-Place Normalization Migration
 

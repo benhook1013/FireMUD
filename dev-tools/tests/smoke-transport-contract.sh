@@ -14,6 +14,9 @@ done
 python3 - <<'PY' "$ROOT_DIR"
 import json
 import sys
+import urllib.error
+from contextlib import redirect_stdout
+from io import BytesIO, StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -37,10 +40,12 @@ class FakeHttpResponse:
         return b'{"status":"SUCCESS"}'
 
 
-with patch("smoke_common.urllib.request.urlopen", return_value=FakeHttpResponse()) as urlopen:
-    smoke_common.verify_smoke_account(
-        "http://account.test", "demo@example.com", "swordfish", 5
-    )
+success_output = StringIO()
+with (
+    patch("smoke_common.urllib.request.urlopen", return_value=FakeHttpResponse()) as urlopen,
+    redirect_stdout(success_output),
+):
+    smoke_common.verify_smoke_account("http://account.test", "demo@example.com", "swordfish", 5)
 
 login_request = urlopen.call_args.args[0]
 assert login_request.full_url == "http://account.test/auth/login"
@@ -48,6 +53,27 @@ assert json.loads(login_request.data) == {
     "username": "demo@example.com",
     "password": "swordfish",
 }
+assert "SUCCESS" not in success_output.getvalue()
+assert "status 200" in success_output.getvalue()
+
+failure_body = b'{"error":"sensitive upstream detail"}'
+http_error = urllib.error.HTTPError(
+    "http://account.test/auth/login",
+    401,
+    "Unauthorized",
+    {},
+    BytesIO(failure_body),
+)
+try:
+    with patch("smoke_common.urllib.request.urlopen", side_effect=http_error):
+        smoke_common.verify_smoke_account(
+            "http://account.test", "demo@example.com", "swordfish", 5
+        )
+except RuntimeError as exc:
+    assert str(exc) == "Smoke account validation failed with status 401"
+    assert "sensitive upstream detail" not in str(exc)
+else:
+    raise AssertionError("Expected account validation failure")
 
 
 class FakeSession:

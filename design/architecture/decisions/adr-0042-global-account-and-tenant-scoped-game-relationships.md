@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The global-account and explicit-membership model is target state and is not yet fully implemented or proved. Current registration DTOs, service call sites, fixtures, and persistence still carry legacy `tenantId`/`accounts.tenant_id` assumptions, so registration remains tenant-aware implementation drift rather than evidence that the target global-only registration contract is live. Direct convergence must make registration create only the global account and leave tenant membership to explicit `JOIN`.
+
 ## Decision Record
 
 - Decision date: 2026-07-19

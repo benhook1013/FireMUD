@@ -78,14 +78,14 @@ When session-related metrics indicate schema or TTL problems, use this scoped cl
 1. **Detect the issue**
    - Watch `session.cas_unsupported_schema_total` and reconnect error rates for non-zero values outside brief rollout windows.
    - Interpretation: services and Lua scripts are out of sync on the highest `schemaVersion` in use for `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` keys, session payloads have been corrupted, or a major TTL reduction has left an undesirable tail of long-lived sessions.
-1. **Align deployments**
+2. **Align deployments**
    - Verify and correct deployments so all Game Session Service instances run a version whose CAS script understands the highest `schemaVersion` currently present in Redis (follow the “scripts first, writers second” rule from the Redis architecture docs).
-1. **Run the canonical session cleanup workflow**
+3. **Run the canonical session cleanup workflow**
    - Use the session schema/TTL cleanup flow described in [Session Schema Cleanup and Large Keyspaces](./system-architecture-redis-operations.md#session-schema-cleanup-and-large-keyspaces):
      - Run the single supported `coordination-maintenance recover --mode session-schema-cleanup --operation cleanup --scope tenant --tenant <tenantId>`, using `--dry-run` first if the blast radius is uncertain. The operation owns the maintenance lock and invokes session cleanup as an internal recovery phase, not a separately supported public verb.
      - Configure the recovery request to delete keys with unsupported `schemaVersion` values or aggressively reduce their TTL so they expire quickly when performing a TTL cut-over.
      - Let the recover operation perform its internal success release. After an operator abort or failed workflow, use only `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <maintenanceLockToken> --reason <reason>` against the matching active workflow.
-1. **Verify recovery**
+4. **Verify recovery**
    - Monitor `session.cas_unsupported_schema_total`, reconnect error rates, and Redis key counts for the affected tenant(s) to confirm the issue has cleared.
    - Affected players may need to log in again; no authoritative PostgreSQL data is lost.
 

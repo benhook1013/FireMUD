@@ -94,6 +94,7 @@ Rejected because the front end is not the lease owner and cannot safely serializ
 
 The current implementation is partial. Each supported operator-action family must demonstrate:
 
+- `WorldLifecycleCommandServiceImpl` is a known owner-side drift: its existing `controlPlaneRequestId` handling keys duplicates by `gameInstanceId`, treats the request identifier as one equality field, and reports activation-input mismatches as `INVALID_ARGUMENT` rather than canonical `IDEMPOTENCY_CONFLICT` keyed by the request identifier.
 - durable intent before forwarding, including trusted actor, reason, exact scope, mutation, and `controlPlaneRequestId`;
 - authorization and domain validation at the owner;
 - atomic owner mutation and result persistence with duplicate delivery returning the original result;

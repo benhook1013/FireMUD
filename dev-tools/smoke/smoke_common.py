@@ -37,20 +37,17 @@ def verify_smoke_account(account_api_base, username, password, timeout_seconds):
     for attempt in range(1, 4):
         try:
             with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-                body = response.read().decode("utf-8", errors="ignore").strip()
-                print("=== Account validation response ===")
-                print(body or "<empty>")
+                response.read()
+                print(f"Smoke account validation returned status {response.status}")
                 if response.status >= 500:
                     raise RuntimeError(
                         f"Smoke account validation returned unexpected status {response.status}"
                     )
-                return body
+                return
         except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="ignore").strip()
-            print("=== Account validation response ===")
-            print(body or "<empty>")
+            exc.read()
             raise RuntimeError(
-                f"Smoke account validation failed with status {exc.code}: {body or '<empty>'}"
+                f"Smoke account validation failed with status {exc.code}"
             ) from exc
         except OSError as exc:
             if attempt < 3:
