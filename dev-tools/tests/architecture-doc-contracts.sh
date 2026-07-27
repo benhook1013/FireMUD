@@ -116,15 +116,26 @@ required_reset_contract = [
     "7. internal post-reset smoke-check phase",
     "8. internal resume-and-success-release phase",
     "durable control store outside the target Redis deployment",
-    "never runs automatically",
     "not a public command",
+    "never runs automatically",
 ]
-missing_contract = [item for item in required_reset_contract if item not in operations_text]
-if missing_contract:
-    raise SystemExit(
-        "design/architecture/system-architecture-redis-operations.md: canonical reset contract missing: "
-        f"{missing_contract}"
-    )
+cursor = -1
+previous = "<start of canonical reset contract>"
+for clause in required_reset_contract:
+    first_position = operations_text.find(clause)
+    position = operations_text.find(clause, cursor + 1)
+    if position == -1:
+        if first_position == -1:
+            raise SystemExit(
+                "design/architecture/system-architecture-redis-operations.md: canonical reset contract missing: "
+                f"[{clause!r}] after {previous!r}"
+            )
+        raise SystemExit(
+            "design/architecture/system-architecture-redis-operations.md: canonical reset contract out of order: "
+            f"expected {clause!r} after {previous!r}"
+        )
+    cursor = position
+    previous = clause
 
 require_contains(
     "design/architecture/system-architecture-redis-ops-access.md",

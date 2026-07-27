@@ -120,7 +120,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       AuthenticateRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
     try {
       net.firedevops.firemud.accountservice.dto.AuthenticationResult result =
-          accountService.authenticate(
+          accountService.authenticateForGameplay(
               requirePositiveRequestId(request.getTenantId(), "tenantId"),
               request.getUsername(),
               request.getPassword());

@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The fail-closed outage classification and bounded active-gameplay contract remain target state rather than a complete implementation. Registry/generation enforcement and end-to-end authority-freshness lease behavior are still incomplete; proof that every protected and admission path fails closed and that unresolved active gameplay terminates at the 60-second bound remains outstanding.
+
 ## Decision Record
 
 - Decision date: 2026-07-19

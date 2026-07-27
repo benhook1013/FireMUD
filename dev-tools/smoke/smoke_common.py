@@ -21,13 +21,11 @@ def compose_postgres_container_name():
     return f"{compose_project_name}-postgres-1"
 
 
-def verify_smoke_account(account_api_base, tenant_id, username, password, timeout_seconds):
+def verify_smoke_account(account_api_base, username, password, timeout_seconds):
     payload = json.dumps(
         {
-            "tenantId": int(tenant_id),
             "username": username,
             "password": password,
-            "otp": "",
         }
     ).encode("utf-8")
     request = urllib.request.Request(

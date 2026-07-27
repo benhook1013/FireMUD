@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 python3 - <<'PY' "$ROOT_DIR"
+import json
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -13,6 +14,32 @@ sys.path.insert(0, str(root / "dev-tools" / "smoke"))
 
 import smoke_common
 from smoke_common import run_telnet_smoke_session, run_transport_session, run_websocket_smoke_session
+
+
+class FakeHttpResponse:
+    status = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        return b'{"status":"SUCCESS"}'
+
+
+with patch("smoke_common.urllib.request.urlopen", return_value=FakeHttpResponse()) as urlopen:
+    smoke_common.verify_smoke_account(
+        "http://account.test", "demo@example.com", "swordfish", 5
+    )
+
+login_request = urlopen.call_args.args[0]
+assert login_request.full_url == "http://account.test/auth/login"
+assert json.loads(login_request.data) == {
+    "username": "demo@example.com",
+    "password": "swordfish",
+}
 
 
 class FakeSession:

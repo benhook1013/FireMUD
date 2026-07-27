@@ -27,7 +27,7 @@ Manages user accounts and authentication for the platform. It stores profile dat
 - Optional Google, Discord, or Steam identity linking is target-state only; no provider is advertised until its server-verified authorization, global subject uniqueness, recovery, unlink, and end-to-end login proof are complete.
 - Handles payment processing via **Stripe** for one-time purchases and recurring subscriptions.
 - Link accounts to player characters for ownership and permissions.
-- gRPC APIs expose account management and payment operations. The current caller-asserted external-link scaffold is unsupported implementation drift, not an advertised provider integration.
+- gRPC APIs cover authentication, account lifecycle, export/delete, runtime/admission, membership, realm-grant, entitlement, profile, and payment operations. The canonical API inventory is [API Contracts](./api-contracts.md); the current caller-asserted external-link scaffold is unsupported implementation drift, not an advertised provider integration.
 
 ## Document Map
 

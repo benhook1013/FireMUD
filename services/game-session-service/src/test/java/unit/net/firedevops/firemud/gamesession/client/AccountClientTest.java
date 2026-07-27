@@ -17,6 +17,7 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -27,6 +28,33 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class AccountClientTest {
+
+  @Test
+  void authenticateReturnsUnavailableWhenStubIsNotInitialized() throws Exception {
+    AuthenticateResponse response =
+        newClient(null).authenticate("22", "demo@example.com", "swordfish");
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getMessage()).isEqualTo("Authentication service unavailable");
+  }
+
+  @Test
+  void authenticateForReadinessReturnsUnavailableWhenStubIsNotInitialized() throws Exception {
+    AuthenticateResponse response =
+        newClient(null).authenticateForReadiness("22", "demo@example.com", "swordfish");
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getMessage()).isEqualTo("Authentication service unavailable");
+  }
+
+  @Test
+  void requestEmailLoginOtpReturnsUnavailableWhenStubIsNotInitialized() throws Exception {
+    RequestEmailLoginOtpResponse response =
+        newClient(null).requestEmailLoginOtp("22", "demo@example.com");
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getMessage()).isEqualTo("Authentication service unavailable");
+  }
 
   @ParameterizedTest
   @ValueSource(

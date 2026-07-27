@@ -36,9 +36,8 @@ Plan entitlements are the source of truth for hosting/runtime quotas only. One-t
 To keep authorization consistent, subscription and billing operations map to the role model defined in the Authentication & Authorization design:
 
 - **Per-tenant operations** (for example, create/update/cancel subscription for a given `tenantId`, view billing history for that tenant):
-  - Allowed for:
-    - `tenantAdmin` for that `tenantId` on caller-bound tenant variants (`billing_safe_tenant`).
-  - Global roles (`platformAdmin`, `billingAdmin`) must use explicitly cross-tenant billing-safe route variants (`cross_tenant_billing_safe`) rather than caller-bound tenant variants.
+  - `tenantAdmin` for that `tenantId` may view and manage the subscription under the caller-bound tenant variant. A create/update operation that selects, attaches, or changes an account-owned instrument additionally requires that the caller is the billing-owner account or has an explicit billing-owner handoff; without that authorization, the tenant role cannot select or change a saved payment instrument and must use the documented handoff path. It does not receive wallet access through tenant authority alone.
+  - Global roles (`platformAdmin`, `billingAdmin`) must use explicitly cross-tenant billing-safe route variants (`cross_tenant_billing_safe`) rather than caller-bound tenant variants, with the dedicated audited authorization required before selecting an account-owned instrument.
 - **Cross-tenant billing reports and analytics** (for example, billing-focused multi-tenant reports and revenue dashboards):
   - Allowed only for global roles:
     - `platformAdmin` for full reporting, and

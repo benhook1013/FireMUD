@@ -472,6 +472,7 @@ routes:
     transport: http
     scope: tenant
     classification: tenant_regular
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     route_status: current_openapi_operator_surface
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
@@ -488,11 +489,11 @@ routes:
     transport: http
     scope: tenant
     classification: tenant_regular
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     route_status: current_openapi_operator_surface
     tenant_billing_authority_generation_applies: true
     membership_authority_generation_applies: true
-    # Refreshes security/role state only; it does not admit gameplay or expand runtime capacity.
-    required_live_checks: []
+    # Stops the targeted game instance after current runtime ownership validation.
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
@@ -508,6 +509,7 @@ routes:
     transport: http
     scope: tenant
     classification: tenant_regular
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     route_status: current_openapi_operator_surface
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
@@ -524,6 +526,7 @@ routes:
     transport: http
     scope: tenant
     classification: tenant_regular
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     route_status: current_openapi_operator_surface
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
@@ -1054,6 +1057,7 @@ routes:
     route: POST /feature-flags/toggle
     scope: tenant
     classification: tenant_regular
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
@@ -1070,6 +1074,7 @@ routes:
     route: POST /moderation/actions
     scope: tenant
     classification: tenant_regular
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
@@ -1086,6 +1091,7 @@ routes:
     route: POST /tick-remediation/pause
     scope: tenant
     classification: tenant_regular
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
@@ -1102,6 +1108,7 @@ routes:
     route: POST /tick-remediation/resume
     scope: tenant
     classification: tenant_regular
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
@@ -1118,6 +1125,7 @@ routes:
     route: POST /admission-pointers
     scope: tenant
     classification: tenant_regular
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
@@ -1134,6 +1142,7 @@ routes:
     route: POST /admission-pointers/cutover
     scope: tenant
     classification: tenant_regular
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
@@ -1150,6 +1159,7 @@ routes:
     route: POST /admission-pointers/version-upgrades
     scope: tenant
     classification: tenant_regular
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator

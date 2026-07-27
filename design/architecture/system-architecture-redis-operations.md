@@ -37,7 +37,9 @@ This one public operation acquires the maintenance lock, fences the scope, and r
 7. internal post-reset smoke-check phase
 8. internal resume-and-success-release phase
 
-The internal pause-and-lock phase is not a standalone public command. Only `recover` creates the durable `operationId` and maintenance-lock identity; an interrupted workflow resumes through that same operation or is explicitly abandoned through the audited maintenance-lock release control.
+The internal pause-and-lock phase is not a public command or a standalone operation. Only `recover` creates the durable `operationId` and maintenance-lock identity; an interrupted workflow resumes through that same operation or is explicitly abandoned through the audited maintenance-lock release control.
+
+Supported external controls are limited to `continueRecovery(operationId, expectedPhase, evidenceRef)` for retrying the same durable operation after a controller restart or an external infrastructure step, and `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason>` for an audited operator abort. Continuation may advance only the recorded next internal phase; abort retains the paused/fenced state and never reopens the scope. No public command may select or invoke an internal phase.
 
 Rules:
 
@@ -157,7 +159,7 @@ Runbook:
    - red: `redis_replication_lag_ms >= tail_loss_budget_ms`
 3. If lag is in the acceptable band, promotion is acceptable from a replay perspective.
 4. If lag is in the warning band, investigate immediately and delay promotion unless the failover risk of waiting is worse than accepting a wider tail-loss window.
-5. If lag crosses the red line, either wait for recovery or treat promotion as a deliberate drop-recent-coordination-state event with `pause -> promote -> scoped reset/rebuild` under the normal maintenance-lock and epoch-fencing workflow.
+5. If lag crosses the red line, either wait for recovery or treat promotion as a deliberate drop-recent-coordination-state event handled by one bounded `coordination-maintenance recover --mode reset` operation under the normal maintenance-lock and epoch-fencing workflow.
 
 ## Key Shape Mistakes and Coordination Resets
 
@@ -243,11 +245,11 @@ Canonical maintenance-lock behavior:
 - minimum fields: `operation`, `scope_type`, `tenantId`, `gameInstanceId`, `regionId`, `actor`, `startedAt`, `expiresAt`, `compatibilityClass`, and an evidence or incident reference; `tenantId`, `gameInstanceId`, and `regionId` are nullable or omitted for a deployment-wide lock, and each is required when its corresponding tenant, game-instance, or region scope is included
 - acquisition is fail-closed for incompatible operations; operators may only break the lock with an explicit stale-lock or break-glass evidence record
 - acquisition owner: the single `coordination-maintenance recover --mode ...` operation acquires the lock for multi-step restore, reset, cleanup, migration, topology-change, and exceptional backup-related maintenance workflows
-- refresh owner: every subsequent mutating CLI verb in that workflow refreshes the same lock using `maintenanceLockToken`; lock refresh is not a second independent acquisition
+- refresh owner: every subsequent internal phase in that workflow refreshes the same lock using `maintenanceLockToken`; lock refresh is not a second independent acquisition or a public phase command
 - success release owner: the recover operation's internal release phase is the canonical success-path release once the scope has safely returned to `RUNNING`
 - failure disposition owner: a failed workflow retains its fence and maintenance lock while its durable operation record remains resumable. `coordination-maintenance release-lock ...` is the explicit audited abandonment step when an operator decides not to resume; it never runs automatically and does not make the scope safe to reopen
 - exceptional backup-related maintenance treats lock-acquisition failure as a skipped/failed maintenance attempt; routine online backup health is independent of this lock and is measured through artifact freshness, lineage, integrity, and restore readability
-- restore recovery and reset tooling must refresh or complete the lock before TTL expiry so another actor cannot start a conflicting pause/reset sequence mid-flow
+- restore recovery and reset tooling must refresh or complete the lock before TTL expiry so another actor cannot start a conflicting maintenance workflow mid-flow
 
 Canonical maintenance-active signal:
 
@@ -281,10 +283,10 @@ Goal: change how `tenantId` / `gameInstanceId` / `regionId` normalization and ha
 
 1. implement the new normalization version in shared helpers
 2. schedule a maintenance window
-3. invoke `coordination-maintenance recover --mode reset ...` for the affected scope; its internal pause-and-lock phase drives the scope to canonical `PAUSED` before the reset phases run
-4. deploy services using the new normalization helpers before the canonical `reset` step
-5. start a fresh Coordination Redis deployment or logical database with an empty keyspace after the canonical `reset` step
-6. finish the remaining canonical sequence with the same maintenance lock token and rebuild coordination state from PostgreSQL plus fresh activity
+3. invoke one bounded `coordination-maintenance recover --mode reset --scope ...` operation for the affected scope; it owns fencing, epoch handling, keyspace replacement, reconciliation, initialization, verification, and success release in the canonical order
+4. deploy services using the new normalization helpers while that same durable operation remains fenced at its recorded external-infrastructure step
+5. start a fresh Coordination Redis deployment or logical database with an empty keyspace, then call `continueRecovery(operationId, expectedPhase, evidenceRef)` so the operation verifies the replacement and completes its remaining internal phases
+6. if the migration cannot safely continue, call the audited `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason>` abort control; it retains the fence and does not reopen traffic
 
 ### Runbook: In-Place Normalization Migration
 

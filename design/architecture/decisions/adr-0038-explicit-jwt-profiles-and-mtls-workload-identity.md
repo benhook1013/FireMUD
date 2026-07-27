@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+Explicit JWT profiles and mTLS workload identity remain target state and are not fully implemented or proved. Current shared-runtime tracking records shared-HMAC signing, incomplete Account-JWKS and certificate-derived caller convergence, and missing receiver-specific profile and per-method authorization proof; those gaps remain implementation debt rather than accepted completion.
+
 ## Decision Record
 
 - Decision date: 2026-07-19

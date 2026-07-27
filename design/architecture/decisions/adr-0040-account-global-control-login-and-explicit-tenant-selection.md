@@ -12,6 +12,10 @@ Accepted
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `MS-AA-CONTROL-LOGIN-SCOPE`
 
+## Implementation Status
+
+`/auth/login` is tenantless and issues an audience-bound `control-ui` token through the account-global session path. The canonical single-record issued-token registry, authority-generation claims, multi-tenant scoped-role population, and full tenant-switching proof remain incomplete.
+
 ## Context
 
 An account may hold different roles in multiple tenants and global platform roles outside any tenant. Existing examples mixed a `tenantId` into control-plane login even though the response already carried account-global identity and multi-tenant scoped roles. Treating login as tenant-scoped would require token replacement or parallel tokens when a user switches tenants, uses multiple tabs, or performs an explicit global operation.

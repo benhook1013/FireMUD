@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The monotonic generation contract is target state and is not fully implemented or proved. Current Account runtime documentation records legacy Account session keys and incomplete issued-token/auth-generation enforcement; durable generation records and projections, transactional issuance/revocation ordering, and cross-scope validation proof remain outstanding.
+
 ## Decision Record
 
 - Decision date: 2026-07-19

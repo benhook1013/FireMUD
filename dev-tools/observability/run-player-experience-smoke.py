@@ -279,7 +279,6 @@ def execute_smoke(
         )
     verify_smoke_account(
         config.account_api_base,
-        config.tenant_id,
         config.username,
         config.password,
         config.timeout_seconds,

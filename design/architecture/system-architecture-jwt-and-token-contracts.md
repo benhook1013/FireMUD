@@ -162,6 +162,10 @@ Services must enforce this claim contract before role/tenant authorization:
 | `nbf` | Required | Required | Not required | Required | Token not usable before this time when present |
 | `exp` | Required | Required | Required | Required | Token unusable after this time |
 | `tokenGeneration` | Required | Required | Not used | Required | Positive integer for issued-token-registry lineage; gameplay-connect instead uses its dedicated single-use replay contract |
+| `issuerAuthGeneration` | Required | Required | Absent | Required | Positive monotonic Account-owned issuer generation captured at issuance |
+| `accountAuthGeneration` | Required | Required | Absent | Required | Positive monotonic Account-owned account generation captured at issuance |
+| `tenantAuthGenerations` | Required when `scopedRoles` is non-empty; otherwise Empty map | Empty map | Absent | Required for the delegated tenant scope; otherwise Empty map | Bounded positive-generation map; `control-ui` keys must exactly match `scopedRoles` tenant keys, while private delegation keys match its delegated binding scope |
+| `membershipAuthGenerations` | Required when `scopedRoles` is non-empty; otherwise Empty map | Empty map | Absent | Required for the delegated tenant scope; otherwise Empty map | Bounded positive-generation map with the same key alignment rules as `tenantAuthGenerations` |
 | `tenantId` | Not required | Not required | Required | Not required | Gameplay-connect admission scope |
 | `gameInstanceId` | Not required | Not required | Required | Not required | Server-resolved gameplay-connect runtime target |
 | `worldSlug` | Not required | Not required | Required | Not required | Stable gameplay-connect world selector |
@@ -170,10 +174,12 @@ Services must enforce this claim contract before role/tenant authorization:
 | `connectScopeId` | Not required | Not required | Required | Not required | Opaque discovery scope used for issuance |
 | `requestId` | Not required | Not required | Required | Not required | Connect-token issuance idempotency identity |
 | `replayAdmissionFence` | Not required | Not required | Required | Not required | Exact shared replay-readiness fence observed at issuance; Gateway validates equality before authorization and repeats the check atomically during token consumption |
-| `globalRoles` | Optional | Optional | Not used | Optional | Empty list when none; gameplay-connect admission never authorizes from role claims |
-| `scopedRoles` | Optional | Optional | Not used | Optional | Empty map when none; gameplay-connect admission never authorizes from role claims |
+| `globalRoles` | Optional | Optional | Absent | Optional | Empty list when none; gameplay-connect admission never authorizes from role claims |
+| `scopedRoles` | Optional; Empty map when none | Empty map | Absent | Optional; generation maps align to delegated binding scope rather than this claim | `control-ui` generation-map keys must equal the `scopedRoles` tenant keys exactly; no generation map may introduce an unclaimed tenant |
 
-Tokens that omit required claims, have malformed claim types, or present an unexpected `aud` for the endpoint profile must be rejected before route classification.
+`Required` means the claim must be present with a valid positive value; `Empty map` means the claim must be present as `{}`; `Absent` means the claim must not be serialized. For `control-ui`, both tenant-generation maps are `{}` when `scopedRoles` is empty and otherwise have exactly the same tenant keys. `player-bootstrap` is tenant-free, so its tenant/membership-generation maps and `scopedRoles` are empty. The private player-delegation profile has no end-user role scope; when it carries tenant-generation maps, they are limited to the delegated binding scope.
+
+Tokens that omit required claims, have malformed claim types, violate these empty/absent rules, or present an unexpected `aud` for the endpoint profile must be rejected before route classification.
 
 `tokenGeneration` is distinct from Account-owned issuer/account/tenant/membership authority generations and private-realm `grantVersion` state. It binds refresh/replacement ordering for one token lineage; it does not grant scope, replace current authority checks, or serve as restart authority by itself. Game Session uses the durable protected single-use rebind handle in the gameplay binding when a restart or takeover owner no longer has the raw private delegation JWT; Account consumes that handle and returns the next token-generation value plus replacement handle under the binding/fence protocol.
 

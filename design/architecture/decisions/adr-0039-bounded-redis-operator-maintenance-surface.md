@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The bounded Redis operator surface remains target state, not a fully shipped or proved repo-local tool. Current Redis operations documentation records the `coordination-maintenance` surface as incomplete; separate ACL verification, durable recovery/continuation lifecycle, supported-scope inventory, and break-glass post-check proof remain outstanding.
+
 ## Decision Record
 
 - Decision date: 2026-07-19

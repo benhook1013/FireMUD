@@ -227,6 +227,33 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.authenticate")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticate(
+      String username, String password) {
+    PrimaryAuthentication authentication = authenticateAccountIdentity(username, password, true);
+    Account account = authentication.account();
+    authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
+    String token =
+        mintToken(
+            account.getId().toString(),
+            jwtAuthProperties.getJwtExpirationMs(),
+            Map.of(
+                "aud",
+                "control-ui",
+                "accountId",
+                account.getId(),
+                "globalRoles",
+                java.util.List.of(account.getRole()),
+                "jti",
+                UUID.randomUUID().toString()));
+    sessionService.storeAccountSession(
+        account.getId(), token, jwtAuthProperties.getJwtExpirationMs());
+    return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
+        account.getId(), token);
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "account.authenticate_gameplay")
+  public net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticateForGameplay(
       Long tenantId, String username, String password) {
     PrimaryAuthentication authentication = authenticateAccountIdentity(username, password, true);
     Account account = authentication.account();
