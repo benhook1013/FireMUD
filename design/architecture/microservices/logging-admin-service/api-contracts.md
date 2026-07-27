@@ -31,6 +31,8 @@ This document defines the Logging & Admin Service REST and gRPC surfaces, authen
 - `POST /tick-remediation/resume` – operator-facing scoped tick resume request that forwards to Game Session control-plane with the same audit requirements.
 - `POST /tick-remediation/remediate` – reserved future operator-facing scoped remediation request for coordination/tick recovery. This remains deferred until Game Session exposes a canonical owner-side remediation RPC; Logging & Admin must not invent direct Redis mutation or a fake remediation contract in the meantime.
 
+All target operator mutations use Account's canonical [`IssueOperatorAuthorization`](../account-service/api-contracts.md#operator-authorization-references) contract after Logging & Admin authenticates the `control-ui` actor and records durable intent. Logging & Admin forwards the opaque bounded reference, not the end-user JWT, to the owning service. The owner recomputes the request digest and redeems the reference directly with Account; Logging & Admin never becomes a second authorization authority.
+
 ### Canonical Admission State Operations
 
 `POST /admission-pointers` represents exactly one of two same-target Game Session control-plane operations for `{tenantId, worldSlug, realmSlug}`:

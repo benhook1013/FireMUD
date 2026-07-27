@@ -27,6 +27,9 @@ public interface AccountService {
   AccountDto createAccount(CreateAccountRequest request);
 
   net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticate(
+      String username, String password);
+
+  net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticateForGameplay(
       Long tenantId, String username, String password);
 
   void requestEmailLoginOtp(Long tenantId, String email);

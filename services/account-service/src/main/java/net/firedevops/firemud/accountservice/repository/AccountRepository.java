@@ -45,6 +45,7 @@ public class AccountRepository {
               .set(ACCOUNTS.ROLE, entity.getRole())
               .set(ACCOUNTS.EMAIL_VERIFIED, entity.isEmailVerified())
               .set(ACCOUNTS.LOGIN_AUTH_MODES, normalizedLoginAuthModes(entity))
+              .set(ACCOUNTS.LIFECYCLE_STATE, entity.getLifecycleState().storageValue())
               .returningResult(ACCOUNTS.ID)
               .fetchOne(ACCOUNTS.ID);
       entity.setId(id);
@@ -80,7 +81,8 @@ public class AccountRepository {
         record.getPasswordHash(),
         record.getRole(),
         record.getEmailVerified(),
-        record.getLoginAuthModes());
+        record.getLoginAuthModes(),
+        record.getLifecycleState());
   }
 
   private String normalizedLoginAuthModes(Account entity) {

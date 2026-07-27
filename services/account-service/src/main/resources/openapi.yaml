@@ -64,15 +64,14 @@ components:
     LoginRequest:
       type: object
       properties:
-        tenantId:
-          type: string
         username:
           type: string
+          maxLength: 50
         password:
           type: string
-        otp:
-          type: string
-      required: [tenantId, username, password]
+          minLength: 1
+          maxLength: 100
+      required: [username, password]
     PlayerBootstrapRequest:
       type: object
       properties:

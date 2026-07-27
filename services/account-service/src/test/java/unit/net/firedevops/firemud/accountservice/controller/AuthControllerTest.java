@@ -17,6 +17,7 @@ import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
 import net.firedevops.firemud.accountservice.dto.BootstrapCharacterDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapRealmDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
+import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.LoginRequest;
@@ -47,8 +48,8 @@ class AuthControllerTest {
 
   @Test
   void loginReturnsTokenAndAccountId() throws Exception {
-    LoginRequest request = new LoginRequest(1L, "demo", "password");
-    when(accountService.authenticate(1L, "demo", "password"))
+    LoginRequest request = new LoginRequest("demo", "password");
+    when(accountService.authenticate("demo", "password"))
         .thenReturn(new AuthenticationResult(1L, "tok123"));
 
     mockMvc
@@ -63,19 +64,19 @@ class AuthControllerTest {
   }
 
   @Test
-  void loginRejectsZeroTenantIdBeforeDispatch() throws Exception {
-    LoginRequest request = new LoginRequest(0L, "demo", "password");
+  void loginAcceptsExistingOneCharacterPassword() throws Exception {
+    LoginRequest request = new LoginRequest("demo", "x");
+    when(accountService.authenticate("demo", "x"))
+        .thenReturn(new AuthenticationResult(1L, "tok123"));
 
     mockMvc
         .perform(
             post("/auth/login")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
-
-    verifyNoInteractions(accountService);
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("SUCCESS"))
+        .andExpect(jsonPath("$.data.authToken").value("tok123"));
   }
 
   @Test
@@ -228,6 +229,20 @@ class AuthControllerTest {
                 .content(objectMapper.writeValueAsString(req)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
+  }
+
+  @Test
+  void completePasswordResetRetainsMinimumPasswordLength() throws Exception {
+    CompletePasswordResetRequest request = new CompletePasswordResetRequest("tok", "12345");
+
+    mockMvc
+        .perform(
+            post("/auth/complete-password-reset")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isBadRequest());
+
+    verifyNoInteractions(accountService);
   }
 
   @Test

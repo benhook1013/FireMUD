@@ -3,8 +3,27 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+for smoke_script in \
+  "$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh" \
+  "$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"; do
+  if ! grep -Fq \
+    "verify_smoke_account(account_api_base, username, password, timeout_seconds)" \
+    "$smoke_script"; then
+    printf '%s\n' \
+      "Smoke contract missing required account verification:" \
+      "  script: $smoke_script" \
+      "  pattern: verify_smoke_account(account_api_base, username, password, timeout_seconds)" \
+      >&2
+    exit 1
+  fi
+done
+
 python3 - <<'PY' "$ROOT_DIR"
+import json
 import sys
+import urllib.error
+from contextlib import redirect_stderr, redirect_stdout
+from io import BytesIO, StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +32,117 @@ sys.path.insert(0, str(root / "dev-tools" / "smoke"))
 
 import smoke_common
 from smoke_common import run_telnet_smoke_session, run_transport_session, run_websocket_smoke_session
+
+
+class FakeHttpResponse:
+    status = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        return b'{"status":"SUCCESS"}'
+
+
+success_output = StringIO()
+with patch(
+    "smoke_common.urllib.request.urlopen", return_value=FakeHttpResponse()
+) as urlopen:
+    with redirect_stdout(success_output):
+        smoke_common.verify_smoke_account(
+            "http://account.test", "demo@example.com", "swordfish", 5
+        )
+
+login_request = urlopen.call_args.args[0]
+assert login_request.full_url == "http://account.test/auth/login"
+assert json.loads(login_request.data) == {
+    "username": "demo@example.com",
+    "password": "swordfish",
+}
+assert "SUCCESS" not in success_output.getvalue()
+assert "status 200" in success_output.getvalue()
+
+failure_body = b'{"error":"sensitive upstream detail"}'
+http_error = urllib.error.HTTPError(
+    "http://account.test/auth/login",
+    401,
+    "Unauthorized",
+    {},
+    BytesIO(failure_body),
+)
+failure_stdout = StringIO()
+failure_stderr = StringIO()
+try:
+    with patch("smoke_common.urllib.request.urlopen", side_effect=http_error):
+        with redirect_stdout(failure_stdout):
+            with redirect_stderr(failure_stderr):
+                smoke_common.verify_smoke_account(
+                    "http://account.test", "demo@example.com", "swordfish", 5
+                )
+except RuntimeError as exc:
+    assert str(exc) == "Smoke account validation failed with status 401"
+    assert "sensitive upstream detail" not in str(exc)
+    assert "sensitive upstream detail" not in failure_stdout.getvalue()
+    assert "sensitive upstream detail" not in failure_stderr.getvalue()
+else:
+    raise AssertionError("Expected account validation failure")
+
+
+retry_errors = [
+    urllib.error.HTTPError(
+        "http://account.test/auth/login",
+        503,
+        "Unavailable",
+        {},
+        BytesIO(b'{"error":"sensitive retry detail"}'),
+    ),
+    urllib.error.HTTPError(
+        "http://account.test/auth/login",
+        503,
+        "Unavailable",
+        {},
+        BytesIO(b'{"error":"sensitive retry detail"}'),
+    ),
+]
+retry_output = StringIO()
+with patch(
+    "smoke_common.urllib.request.urlopen",
+    side_effect=retry_errors + [FakeHttpResponse()],
+) as retry_urlopen:
+    with patch("smoke_common.time.sleep") as sleep:
+        with redirect_stdout(retry_output):
+            smoke_common.verify_smoke_account(
+                "http://account.test", "demo@example.com", "swordfish", 5
+            )
+assert retry_urlopen.call_count == 3
+assert sleep.call_count == 2
+assert "sensitive retry detail" not in retry_output.getvalue()
+
+
+non_retryable_error = urllib.error.HTTPError(
+    "http://account.test/auth/login",
+    400,
+    "Bad Request",
+    {},
+    BytesIO(b'{"error":"sensitive non-retryable detail"}'),
+)
+with patch(
+    "smoke_common.urllib.request.urlopen",
+    side_effect=[non_retryable_error, FakeHttpResponse()],
+) as non_retryable_urlopen:
+    try:
+        smoke_common.verify_smoke_account(
+            "http://account.test", "demo@example.com", "swordfish", 5
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "Smoke account validation failed with status 400"
+        assert "sensitive non-retryable detail" not in str(exc)
+    else:
+        raise AssertionError("Expected non-retryable account validation failure")
+assert non_retryable_urlopen.call_count == 1
 
 
 class FakeSession:
@@ -152,7 +282,7 @@ upstream_attempts = []
 
 def open_after_transient_upstream_failure():
     responses = (
-        ["ERROR UPSTREAM_FAILURE Login is temporarily unavailable."]
+        ["ERROR UNAVAILABLE Login is temporarily unavailable."]
         if not upstream_attempts
         else ["OK LOGIN"]
     )

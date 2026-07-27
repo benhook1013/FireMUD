@@ -33,6 +33,7 @@ import net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResul
 import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
 import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthMode;
 import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
@@ -59,9 +60,13 @@ import net.firedevops.firemud.accountservice.service.session.SessionService;
 import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.common.security.JwtAuthProperties;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.common.security.ReloadableJwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -100,7 +105,7 @@ class AccountServiceImplTest {
   void setup() throws net.firedevops.firemud.common.saga.SagaException {
     MockitoAnnotations.openMocks(this);
     AccountMapper mapper = Mappers.getMapper(AccountMapper.class);
-    JwtUtil jwtUtil = new JwtUtil(JWT_SECRET, 3600000L);
+    JwtUtil jwtUtil = new ReloadableJwtUtil(JWT_SECRET, 3600000L);
     jwtAuthProperties.setJwtSecret(JWT_SECRET);
     tokenProperties.setPlayerBootstrapExpirationMs(300000L);
     tokenProperties.setConnectScopeExpirationMs(120000L);
@@ -218,6 +223,25 @@ class AccountServiceImplTest {
     verifyNoInteractions(emailService, accountEmailLoginChallengeRepository);
   }
 
+  @ParameterizedTest
+  @EnumSource(
+      value = AccountLifecycleState.class,
+      names = {"SECURITY_LOCKED", "DEACTIVATED_PENDING_DELETE", "DELETED"})
+  void emailLoginOtpRequestIsNeutralForIneligibleLifecycleState(
+      AccountLifecycleState lifecycleState) {
+    Account account = new Account();
+    account.setId(9L);
+    account.setEmail("verified@example.com");
+    account.setEmailVerified(true);
+    account.setLifecycleState(lifecycleState);
+    when(accountRepository.findByEmail("verified@example.com")).thenReturn(Optional.of(account));
+
+    service.requestEmailLoginOtp(7L, "verified@example.com");
+
+    verifyNoInteractions(
+        accountTenantMembershipRepository, accountEmailLoginChallengeRepository, emailService);
+  }
+
   @Test
   void emailLoginOtpRequestPersistsOnlyHashedChallengeAndSendsSixDigitCode() {
     Account account = new Account();
@@ -329,7 +353,7 @@ class AccountServiceImplTest {
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
         .thenReturn(Optional.of(membership));
 
-    AuthenticationResult result = service.authenticate(7L, "demo@example.com", "123456");
+    AuthenticationResult result = service.authenticateForGameplay(7L, "demo@example.com", "123456");
 
     assertEquals(9L, result.accountId());
     org.mockito.Mockito.verify(accountEmailLoginChallengeRepository).delete(challenge);
@@ -356,7 +380,8 @@ class AccountServiceImplTest {
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
         .thenReturn(Optional.of(membership));
 
-    AuthenticationResult result = service.authenticate(7L, "demo@example.com", "password");
+    AuthenticationResult result =
+        service.authenticateForGameplay(7L, "demo@example.com", "password");
 
     assertEquals(9L, result.accountId());
     org.mockito.Mockito.verify(accountEmailLoginChallengeRepository, org.mockito.Mockito.never())
@@ -385,7 +410,7 @@ class AccountServiceImplTest {
     AuthenticationException exception =
         assertThrows(
             AuthenticationException.class,
-            () -> service.authenticate(7L, "demo@example.com", "wrong"));
+            () -> service.authenticateForGameplay(7L, "demo@example.com", "wrong"));
 
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
     assertEquals(1, challenge.getInvalidAttemptCount());
@@ -445,6 +470,9 @@ class AccountServiceImplTest {
     AuthenticationResult result = service.verifyEmailLoginOtp(7L, "verified@example.com", "123456");
 
     assertEquals(9L, result.accountId());
+    var claims = new JwtUtil(JWT_SECRET, 3600000L).parseToken(result.authToken()).getPayload();
+    assertEquals("account-service", claims.getAudience().iterator().next());
+    assertEquals(9L, claims.get("accountId", Long.class));
     org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(accountEmailLoginChallengeRepository);
     inOrder.verify(accountEmailLoginChallengeRepository).lockAccountChallenge(9L);
     inOrder.verify(accountEmailLoginChallengeRepository).findByAccountId(9L);
@@ -471,7 +499,52 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void authenticateReturnsTokenWhenPasswordMatches() {
+  void authenticateReturnsControlUiTokenWithoutGameplayMembership() {
+    Account account = new Account();
+    account.setId(1L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+
+    AuthenticationResult result = service.authenticate("demo", "password");
+
+    assertNotNull(result.authToken());
+    assertEquals(1L, result.accountId());
+    var claims = new JwtUtil(JWT_SECRET, 3600000L).parseToken(result.authToken()).getPayload();
+    assertEquals("control-ui", claims.getAudience().iterator().next());
+    assertEquals(1L, claims.get("accountId", Long.class));
+    assertEquals(java.util.List.of("player"), claims.get("globalRoles"));
+    assertNotNull(claims.get("jti"));
+    assertFalse(claims.containsKey("tenantId"));
+    org.mockito.Mockito.verify(sessionService)
+        .storeAccountSession(1L, result.authToken(), 3600000L);
+    verifyNoInteractions(accountTenantMembershipRepository);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "SECURITY_LOCKED, AUTH_ACCOUNT_LOCKED",
+    "DEACTIVATED_PENDING_DELETE, AUTH_INVALID_CREDENTIALS",
+    "DELETED, AUTH_INVALID_CREDENTIALS"
+  })
+  void authenticateRejectsIneligibleLifecycleState(
+      AccountLifecycleState lifecycleState, String expectedCode) {
+    Account account = new Account();
+    account.setId(1L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    account.setLifecycleState(lifecycleState);
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+
+    AuthenticationException exception =
+        assertThrows(AuthenticationException.class, () -> service.authenticate("demo", "password"));
+
+    assertEquals(expectedCode, exception.getCode());
+    verifyNoInteractions(sessionService);
+  }
+
+  @Test
+  void authenticateForGameplayReturnsTokenWhenPasswordMatches() {
     Account account = new Account();
     account.setId(1L);
     account.setUsername("demo");
@@ -479,11 +552,17 @@ class AccountServiceImplTest {
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(1L, 1L))
         .thenReturn(Optional.of(membership(account, 1L)));
+    jwtAuthProperties.setJwtSecret(null);
 
-    AuthenticationResult result = service.authenticate(1L, "demo", "password");
+    AuthenticationResult result = service.authenticateForGameplay(1L, "demo", "password");
 
     assertNotNull(result.authToken());
     assertEquals(1L, result.accountId());
+    var claims = new JwtUtil(JWT_SECRET, 3600000L).parseToken(result.authToken()).getPayload();
+    assertEquals("account-service", claims.getAudience().iterator().next());
+    assertEquals(1L, claims.get("accountId", Long.class));
+    assertEquals(java.util.List.of("player"), claims.get("globalRoles"));
+    assertNotNull(claims.get("jti"));
     org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, result.authToken());
   }
 
@@ -495,6 +574,7 @@ class AccountServiceImplTest {
     account.setPasswordHash(hash("password"));
     account.setLoginAuthModes("PASSWORD");
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    jwtAuthProperties.setJwtSecret(null);
 
     PlayerBootstrapResult result = service.issuePlayerBootstrap("demo", "password");
 
@@ -510,6 +590,7 @@ class AccountServiceImplTest {
     var claims = new JwtUtil(JWT_SECRET, 300000L).parseToken(result.bootstrapToken()).getPayload();
     assertEquals("player-bootstrap", claims.getAudience().iterator().next());
     assertFalse(claims.containsKey("tenantId"));
+    assertEquals(300000L, claims.getExpiration().getTime() - claims.getIssuedAt().getTime());
     verifyNoInteractions(accountEmailLoginChallengeRepository);
   }
 
@@ -1013,7 +1094,8 @@ class AccountServiceImplTest {
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(1L, 1L))
         .thenReturn(Optional.of(membership(account, 1L)));
 
-    AuthenticationResult result = service.authenticate(1L, "demo@example.com", "password");
+    AuthenticationResult result =
+        service.authenticateForGameplay(1L, "demo@example.com", "password");
 
     assertNotNull(result.authToken());
     assertEquals(1L, result.accountId());
@@ -1025,7 +1107,9 @@ class AccountServiceImplTest {
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.empty());
     when(accountRepository.findByEmail("demo")).thenReturn(Optional.empty());
     AuthenticationException exception =
-        assertThrows(AuthenticationException.class, () -> service.authenticate(1L, "demo", "bad"));
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.authenticateForGameplay(1L, "demo", "bad"));
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
   }
 
@@ -1037,7 +1121,7 @@ class AccountServiceImplTest {
     AuthenticationException exception =
         assertThrows(
             AuthenticationException.class,
-            () -> service.authenticate(1L, "demo@example.com", "password"));
+            () -> service.authenticateForGameplay(1L, "demo@example.com", "password"));
 
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
   }
@@ -1052,10 +1136,12 @@ class AccountServiceImplTest {
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(7L, 1L))
         .thenReturn(Optional.empty());
 
-    IllegalArgumentException exception =
+    AuthenticationException exception =
         assertThrows(
-            IllegalArgumentException.class, () -> service.authenticate(1L, "demo", "password"));
+            AuthenticationException.class,
+            () -> service.authenticateForGameplay(1L, "demo", "password"));
 
+    assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
     assertEquals("Invalid credentials", exception.getMessage());
   }
 

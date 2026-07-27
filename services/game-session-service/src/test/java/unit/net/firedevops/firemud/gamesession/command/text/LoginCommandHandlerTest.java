@@ -23,6 +23,7 @@ import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
@@ -170,17 +171,16 @@ class LoginCommandHandlerTest {
             RequestEmailLoginOtpResponse.newBuilder()
                 .setError(
                     ErrorDetail.newBuilder()
-                        .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
+                        .setCode(AuthenticationErrorCodes.UNAVAILABLE)
                         .setMessage("challenge delivery failed"))
                 .build());
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
-    assertEquals("UPSTREAM_FAILURE", result.commandResult().errorCode());
+    assertEquals("UNAVAILABLE", result.commandResult().errorCode());
     assertEquals(
-        "ERROR UPSTREAM_FAILURE Authentication service unavailable",
-        joinedOutputText(result.outputs()));
+        "ERROR UNAVAILABLE Authentication service unavailable", joinedOutputText(result.outputs()));
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
@@ -813,7 +813,7 @@ class LoginCommandHandlerTest {
         AuthenticateResponse.newBuilder()
             .setError(
                 ErrorDetail.newBuilder()
-                    .setCode("UNAUTHENTICATED")
+                    .setCode(AuthenticationErrorCodes.INVALID_CREDENTIALS)
                     .setMessage("Invalid credentials")
                     .build())
             .build();
@@ -830,6 +830,9 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
+    assertEquals("INVALID_CREDENTIALS", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR INVALID_CREDENTIALS Invalid credentials", joinedOutputText(result.outputs()));
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService, times(2)).save(captor.capture());
     verify(gameplayPresenceLifecycleService)
@@ -843,7 +846,7 @@ class LoginCommandHandlerTest {
         AuthenticateResponse.newBuilder()
             .setError(
                 ErrorDetail.newBuilder()
-                    .setCode("UNAUTHENTICATED")
+                    .setCode(AuthenticationErrorCodes.INVALID_CREDENTIALS)
                     .setMessage("Invalid credentials")
                     .build())
             .build();
@@ -968,12 +971,79 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void upstreamFailureReturnsUpstreamFailureCode() {
+  void retryLaterUsesStableProtocolCodeAndLocalizedPresentation() {
     AuthenticateResponse authError =
         AuthenticateResponse.newBuilder()
             .setError(
                 ErrorDetail.newBuilder()
-                    .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
+                    .setCode("AUTH_RETRY_LATER")
+                    .setMessage("Account service retry detail")
+                    .build())
+            .build();
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("RETRY_LATER", result.commandResult().errorCode());
+    assertEquals(
+        "Too many failed attempts; try again later.", result.commandResult().errorMessage());
+    assertEquals(
+        "ERROR RETRY_LATER Too many failed attempts; try again later.",
+        joinedOutputText(result.outputs()));
+    assertEquals(
+        "error.login.retry-later", ((ErrorOutput) result.outputs().get(0).payload()).messageKey());
+  }
+
+  @Test
+  void abuseControlUnavailableUsesStableProtocolCodeAndLocalizedPresentation() {
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("AUTH_ABUSE_CONTROL_UNAVAILABLE")
+                    .setMessage("Abuse control backend detail")
+                    .build())
+            .build();
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("ABUSE_CONTROL_UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals(
+        "Login protection is temporarily unavailable. Try again later.",
+        result.commandResult().errorMessage());
+    assertEquals(
+        "ERROR ABUSE_CONTROL_UNAVAILABLE Login protection is temporarily unavailable. "
+            + "Try again later.",
+        joinedOutputText(result.outputs()));
+    assertEquals(
+        "error.login.abuse-control-unavailable",
+        ((ErrorOutput) result.outputs().get(0).payload()).messageKey());
+  }
+
+  @Test
+  void unavailableReturnsUnavailableCode() {
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode(AuthenticationErrorCodes.UNAVAILABLE)
                     .setMessage("Backend unreachable")
                     .build())
             .build();
@@ -989,13 +1059,68 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
-    assertEquals("UPSTREAM_FAILURE", result.commandResult().errorCode());
-    assertEquals("Backend unreachable", result.commandResult().errorMessage());
-    assertEquals("ERROR UPSTREAM_FAILURE Backend unreachable", joinedOutputText(result.outputs()));
+    assertEquals("UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals("Authentication service unavailable", result.commandResult().errorMessage());
+    assertEquals(
+        "ERROR UNAVAILABLE Authentication service unavailable", joinedOutputText(result.outputs()));
   }
 
   @Test
-  void unrecognizedAccountErrorUsesUpstreamFailure() {
+  void normalizedAuthenticationTransportFailureUsesUnavailable() {
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode(AuthenticationErrorCodes.UNAVAILABLE)
+                    .setMessage("Authentication request failed")
+                    .build())
+            .build();
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR UNAVAILABLE Authentication service unavailable", joinedOutputText(result.outputs()));
+  }
+
+  @Test
+  void unmappedAuthenticationCodeUsesUnavailablePublicVocabulary() {
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("AUTH_INTERNAL_ONLY")
+                    .setMessage("Internal authentication detail")
+                    .build())
+            .build();
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR UNAVAILABLE Authentication service unavailable", joinedOutputText(result.outputs()));
+  }
+
+  @Test
+  void unrecognizedAccountErrorUsesUnavailable() {
     AuthenticateResponse authError =
         AuthenticateResponse.newBuilder()
             .setError(
@@ -1013,8 +1138,63 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
-    assertEquals("UPSTREAM_FAILURE", result.commandResult().errorCode());
-    assertEquals("ERROR UPSTREAM_FAILURE Unrecognized failure", joinedOutputText(result.outputs()));
+    assertEquals("UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR UNAVAILABLE Authentication service unavailable", joinedOutputText(result.outputs()));
+  }
+
+  @Test
+  void unrecognizedNonblankAuthenticationCodeUsesUnavailable() {
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("INTERNAL")
+                    .setMessage("internal authentication detail")
+                    .build())
+            .build();
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR UNAVAILABLE Authentication service unavailable", joinedOutputText(result.outputs()));
+  }
+
+  @Test
+  void unauthenticatedDoesNotInferCanonicalCodeFromMessage() {
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("UNAUTHENTICATED")
+                    .setMessage("Invalid credentials")
+                    .build())
+            .build();
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR UNAVAILABLE Authentication service unavailable", joinedOutputText(result.outputs()));
   }
 
   @Test

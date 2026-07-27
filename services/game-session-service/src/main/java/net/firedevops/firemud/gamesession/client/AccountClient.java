@@ -54,12 +54,7 @@ public final class AccountClient
   /** Authenticates a player via the Account Service. */
   public AuthenticateResponse authenticate(String tenantId, String username, String password) {
     if (stub() == null) {
-      return AuthenticateResponse.newBuilder()
-          .setError(
-              ErrorDetail.newBuilder()
-                  .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
-                  .setMessage("Authentication service unavailable"))
-          .build();
+      return authenticationUnavailable();
     }
     AuthenticateRequest request =
         AuthenticateRequest.newBuilder()
@@ -70,26 +65,43 @@ public final class AccountClient
     try {
       return callStub().authenticate(request);
     } catch (StatusRuntimeException ex) {
-      if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
+      Status.Code statusCode = ex.getStatus().getCode();
+      if (statusCode == Status.Code.UNAVAILABLE) {
         logger.warn(
-            "Account Service unavailable; rebuilding channel and retrying authenticate", ex);
+            "Account Service authentication transport failed with UNAVAILABLE; "
+                + "not retrying credential-consuming authentication without an idempotency identity",
+            ex);
         try {
           initClient();
-          return callStub().authenticate(request);
-        } catch (Exception retryEx) {
-          logger.warn("Failed to retry Account Service authenticate after channel reload", retryEx);
+        } catch (Exception reloadEx) {
+          logger.warn(
+              "Failed to reload Account Service channel after authentication failure", reloadEx);
         }
-      } else {
-        logger.warn("Failed to call Account Service authenticate endpoint", ex);
+        return authenticationUnavailable();
       }
+      if (statusCode == Status.Code.DEADLINE_EXCEEDED) {
+        logger.warn(
+            "Account Service authentication deadline exceeded; not retrying "
+                + "credential-consuming authentication without an idempotency identity",
+            ex);
+        return authenticationUnavailable();
+      }
+      logger.warn("Account Service authentication returned a terminal gRPC status", ex);
+      return authenticationError(statusCode.name(), "Authentication request failed");
     } catch (Exception ex) {
-      logger.warn("Failed to call Account Service authenticate endpoint", ex);
+      logger.warn("Account Service authenticate failed before a response completed", ex);
+      return authenticationUnavailable();
     }
+  }
+
+  private AuthenticateResponse authenticationUnavailable() {
+    return authenticationError(
+        AuthenticationErrorCodes.UNAVAILABLE, "Authentication service unavailable");
+  }
+
+  private AuthenticateResponse authenticationError(String code, String message) {
     return AuthenticateResponse.newBuilder()
-        .setError(
-            ErrorDetail.newBuilder()
-                .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
-                .setMessage("Authentication service unavailable"))
+        .setError(ErrorDetail.newBuilder().setCode(code).setMessage(message))
         .build();
   }
 
@@ -130,7 +142,7 @@ public final class AccountClient
       return AuthenticateResponse.newBuilder()
           .setError(
               ErrorDetail.newBuilder()
-                  .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
+                  .setCode(AuthenticationErrorCodes.UNAVAILABLE)
                   .setMessage("Authentication service unavailable"))
           .build();
     }
@@ -149,7 +161,7 @@ public final class AccountClient
     return RequestEmailLoginOtpResponse.newBuilder()
         .setError(
             ErrorDetail.newBuilder()
-                .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
+                .setCode(AuthenticationErrorCodes.UNAVAILABLE)
                 .setMessage("Authentication service unavailable"))
         .build();
   }

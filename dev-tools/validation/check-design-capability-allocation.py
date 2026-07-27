@@ -243,6 +243,15 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0035-single-record-issued-token-registry.md": adr_allocation(
         "SF-1", "Accepted", "AA-1", "AA-2", "SF-2"
     ),
+    "design/architecture/decisions/adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md": adr_allocation(
+        "AA-1", "Accepted", "PO-1", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0049-optional-provider-specific-external-identity-linking.md": adr_allocation(
+        "AA-1", "Accepted", "EA-3", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0050-versioned-export-retention-and-erasure-policy.md": adr_allocation(
+        "AA-1", "Accepted", "AA-2", "PO-1", "PO-3", "SF-2"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

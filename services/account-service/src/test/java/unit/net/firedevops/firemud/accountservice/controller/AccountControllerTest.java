@@ -95,6 +95,21 @@ class AccountControllerTest {
   }
 
   @Test
+  void createAccountRetainsMinimumPasswordLength() throws Exception {
+    CreateAccountRequest request =
+        new CreateAccountRequest(7L, "demo", "demo@example.com", "12345");
+
+    mockMvc
+        .perform(
+            post("/accounts")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isBadRequest());
+
+    verifyNoInteractions(accountService);
+  }
+
+  @Test
   void deleteAccountAllowsScopedTenantAdmin() throws Exception {
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
 

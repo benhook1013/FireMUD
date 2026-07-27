@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
@@ -484,7 +485,7 @@ class SessionResumptionFlowTest {
             AuthenticateResponse.newBuilder()
                 .setError(
                     ErrorDetail.newBuilder()
-                        .setCode("UNAUTHENTICATED")
+                        .setCode(AuthenticationErrorCodes.INVALID_CREDENTIALS)
                         .setMessage("Invalid credentials")
                         .build())
                 .build());

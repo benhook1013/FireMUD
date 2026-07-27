@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -35,6 +36,12 @@ import org.springframework.stereotype.Component;
 @Component
 public final class LoginCommandHandler {
   private static final Logger logger = LoggerFactory.getLogger(LoginCommandHandler.class);
+  private static final String AUTHENTICATION_UNAVAILABLE_CODE = "UNAVAILABLE";
+  private static final String RETRY_LATER_CODE = "RETRY_LATER";
+  private static final String ABUSE_CONTROL_UNAVAILABLE_CODE = "ABUSE_CONTROL_UNAVAILABLE";
+  private static final String RETRY_LATER_MESSAGE = "Too many failed attempts; try again later.";
+  private static final String ABUSE_CONTROL_UNAVAILABLE_MESSAGE =
+      "Login protection is temporarily unavailable. Try again later.";
 
   private final GameInstanceRepository gameInstanceRepository;
   private final SessionContextService sessionContextService;
@@ -131,7 +138,8 @@ public final class LoginCommandHandler {
             || !Optional.ofNullable(error.getMessage()).orElse("").isBlank())) {
       clearFailedLoginSessionState(
           numericSessionId, instance.getTenantId(), bootstrapGameInstanceId, null, null, 0L);
-      return failure(mapErrorCode(error), error.getMessage());
+      String errorCode = mapErrorCode(error);
+      return failure(errorCode, publicErrorMessage(error, errorCode));
     }
 
     Long authenticatedAccountId = parseAccountId(authResponse.getAccountId());
@@ -189,7 +197,7 @@ public final class LoginCommandHandler {
         accountClient.requestEmailLoginOtp(
             String.valueOf(instance.getTenantId()), challengeRequest.email());
     if (hasError(response.getError()) || !response.getAccepted()) {
-      return failure("UPSTREAM_FAILURE", "Authentication service unavailable");
+      return failure(AUTHENTICATION_UNAVAILABLE_CODE, "Authentication service unavailable");
     }
     return new LoginCommandHandlingResult(
         CommandEnqueueResult.success(),
@@ -449,25 +457,31 @@ public final class LoginCommandHandler {
           "INVALID_CREDENTIALS",
           AuthenticationErrorCodes.ACCOUNT_LOCKED,
           "ACCOUNT_LOCKED",
-          AuthenticationErrorCodes.UPSTREAM_FAILURE,
-          "UPSTREAM_FAILURE");
+          AuthenticationErrorCodes.UNAVAILABLE,
+          AUTHENTICATION_UNAVAILABLE_CODE,
+          AuthenticationErrorCodes.RETRY_LATER,
+          RETRY_LATER_CODE,
+          AuthenticationErrorCodes.ABUSE_CONTROL_UNAVAILABLE,
+          ABUSE_CONTROL_UNAVAILABLE_CODE);
 
   private String mapErrorCode(ErrorDetail error) {
     if (error == null) {
-      return "UPSTREAM_FAILURE";
+      return AUTHENTICATION_UNAVAILABLE_CODE;
     }
-    String rawCode = Optional.ofNullable(error.getCode()).orElse("").toUpperCase();
+    String rawCode = Optional.ofNullable(error.getCode()).orElse("").toUpperCase(Locale.ROOT);
     if (CANONICAL_ERROR_MAP.containsKey(rawCode)) {
       return CANONICAL_ERROR_MAP.get(rawCode);
     }
-    String message = Optional.ofNullable(error.getMessage()).orElse("").toLowerCase();
-    if (message.contains("invalid credentials")) {
-      return "INVALID_CREDENTIALS";
-    }
-    if (message.contains("locked")) {
-      return "ACCOUNT_LOCKED";
-    }
-    return "UPSTREAM_FAILURE";
+    return AUTHENTICATION_UNAVAILABLE_CODE;
+  }
+
+  private String publicErrorMessage(ErrorDetail error, String mappedCode) {
+    return switch (mappedCode) {
+      case AUTHENTICATION_UNAVAILABLE_CODE -> "Authentication service unavailable";
+      case RETRY_LATER_CODE -> RETRY_LATER_MESSAGE;
+      case ABUSE_CONTROL_UNAVAILABLE_CODE -> ABUSE_CONTROL_UNAVAILABLE_MESSAGE;
+      default -> Optional.ofNullable(error.getMessage()).orElse("");
+    };
   }
 
   private boolean hasError(ErrorDetail error) {
@@ -536,7 +550,9 @@ public final class LoginCommandHandler {
       case LoginCommandConstants.INVALID_ACCOUNT_CODE -> "error.login.invalid-account";
       case "INVALID_CREDENTIALS" -> "error.login.invalid-credentials";
       case "ACCOUNT_LOCKED" -> "error.login.account-locked";
-      case "UPSTREAM_FAILURE" -> "error.login.upstream-failure";
+      case RETRY_LATER_CODE -> "error.login.retry-later";
+      case ABUSE_CONTROL_UNAVAILABLE_CODE -> "error.login.abuse-control-unavailable";
+      case AUTHENTICATION_UNAVAILABLE_CODE -> "error.login.unavailable";
       default -> null;
     };
   }

@@ -5,8 +5,6 @@ import de.mkammerer.argon2.Argon2Factory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
 import io.micrometer.core.annotation.Timed;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -15,7 +13,6 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Comparator;
-import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -52,6 +49,7 @@ import net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge;
+import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthMode;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthModes;
 import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
@@ -99,6 +97,7 @@ public class AccountServiceImpl implements AccountService {
       "Selected gameplay target is no longer admissible; rerun bootstrap discovery and request a fresh connect scope";
   private static final String INVALID_CONNECT_SCOPE_MESSAGE =
       "Connect scope is invalid or expired; rerun bootstrap discovery and request a fresh connect scope";
+  private static final String GAMEPLAY_DELEGATION_AUDIENCE = "account-service";
   private static final int EMAIL_LOGIN_OTP_MAX_ATTEMPTS = 5;
   private static final SecureRandom EMAIL_LOGIN_OTP_RANDOM = new SecureRandom();
 
@@ -227,16 +226,35 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.authenticate")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticate(
+      String username, String password) {
+    PrimaryAuthentication authentication = authenticateAccountIdentity(username, password, true);
+    Account account = authentication.account();
+    authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
+    String token =
+        mintToken(
+            account.getId().toString(),
+            jwtAuthProperties.getJwtExpirationMs(),
+            authenticationTokenClaims("control-ui", account));
+    sessionService.storeAccountSession(
+        account.getId(), token, jwtAuthProperties.getJwtExpirationMs());
+    return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
+        account.getId(), token);
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "account.authenticate_gameplay")
+  public net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticateForGameplay(
       Long tenantId, String username, String password) {
     PrimaryAuthentication authentication = authenticateAccountIdentity(username, password, true);
     Account account = authentication.account();
     requireGameplayMembership(account.getId(), tenantId, "Invalid credentials");
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String token =
-        jwtUtil.generateToken(
+        mintToken(
             account.getId().toString(),
-            Map.of(
-                "accountId", account.getId(), "globalRoles", java.util.List.of(account.getRole())));
+            jwtAuthProperties.getJwtExpirationMs(),
+            authenticationTokenClaims(GAMEPLAY_DELEGATION_AUDIENCE, account));
     sessionService.storeSession(tenantId, account.getId(), token);
     return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
         account.getId(), token);
@@ -254,8 +272,9 @@ public class AccountServiceImpl implements AccountService {
     }
     Account resolvedAccount = account.orElseThrow();
     try {
+      requireAuthenticationEligible(resolvedAccount);
       requireGameplayMembership(resolvedAccount.getId(), tenantId, "Invalid credentials");
-    } catch (IllegalArgumentException ex) {
+    } catch (AuthenticationException ex) {
       return;
     }
     accountEmailLoginChallengeRepository.lockAccountChallenge(resolvedAccount.getId());
@@ -302,13 +321,14 @@ public class AccountServiceImpl implements AccountService {
       recordFailedEmailLoginAttempt(challenge, now);
       throw invalidCredentials();
     }
+    requireAuthenticationEligible(account);
     requireGameplayMembership(account.getId(), tenantId, "Invalid credentials");
     accountEmailLoginChallengeRepository.delete(challenge);
     String token =
-        jwtUtil.generateToken(
+        mintToken(
             account.getId().toString(),
-            Map.of(
-                "accountId", account.getId(), "globalRoles", java.util.List.of(account.getRole())));
+            jwtAuthProperties.getJwtExpirationMs(),
+            authenticationTokenClaims(GAMEPLAY_DELEGATION_AUDIENCE, account));
     sessionService.storeSession(tenantId, account.getId(), token);
     return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
         account.getId(), token);
@@ -1076,6 +1096,7 @@ public class AccountServiceImpl implements AccountService {
     if (emailLoginChallenge
         .filter(challenge -> matchesEmailLoginOtp(challenge, password))
         .isPresent()) {
+      requireAuthenticationEligible(account);
       return new PrimaryAuthentication(account, emailLoginChallenge);
     }
     if (!allowsPassword(account) || !verifyPassword(password, account.getPasswordHash())) {
@@ -1084,7 +1105,20 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials");
     }
+    requireAuthenticationEligible(account);
     return new PrimaryAuthentication(account, Optional.empty());
+  }
+
+  private void requireAuthenticationEligible(Account account) {
+    AccountLifecycleState state = account.getLifecycleState();
+    if (state == AccountLifecycleState.ACTIVE) {
+      return;
+    }
+    if (state == AccountLifecycleState.SECURITY_LOCKED) {
+      throw new AuthenticationException(
+          AuthenticationErrorCodes.ACCOUNT_LOCKED, "Account is locked");
+    }
+    throw invalidCredentials();
   }
 
   private Optional<AccountEmailLoginChallenge> activeEmailLoginChallenge(Account account) {
@@ -1129,9 +1163,12 @@ public class AccountServiceImpl implements AccountService {
     AccountTenantMembership membership =
         accountTenantMembershipRepository
             .findByAccountIdAndTenantId(accountId, tenantId)
-            .orElseThrow(() -> new IllegalArgumentException(message));
+            .orElseThrow(
+                () ->
+                    new AuthenticationException(
+                        AuthenticationErrorCodes.INVALID_CREDENTIALS, message));
     if (!membership.isGameplayAdmissionAllowed()) {
-      throw new IllegalArgumentException(message);
+      throw new AuthenticationException(AuthenticationErrorCodes.INVALID_CREDENTIALS, message);
     }
   }
 
@@ -1142,24 +1179,19 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private String mintToken(String subject, long expirationMs, Map<String, Object> claims) {
-    long now = System.currentTimeMillis();
-    String secret = jwtAuthProperties.getJwtSecret();
-    if (secret == null || secret.isBlank()) {
-      throw new IllegalStateException("JWT secret must be configured");
-    }
-    Object audience = claims.get("aud");
-    Map<String, Object> nonRegisteredClaims = new java.util.HashMap<>(claims);
-    nonRegisteredClaims.remove("aud");
-    var builder =
-        Jwts.builder()
-            .subject(subject)
-            .claims(nonRegisteredClaims)
-            .issuedAt(new Date(now))
-            .expiration(new Date(now + expirationMs));
-    if (audience != null) {
-      builder.audience().add(audience.toString()).and();
-    }
-    return builder.signWith(Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8))).compact();
+    return jwtUtil.generateToken(subject, expirationMs, claims);
+  }
+
+  private Map<String, Object> authenticationTokenClaims(String audience, Account account) {
+    return Map.of(
+        "aud",
+        audience,
+        "accountId",
+        account.getId(),
+        "globalRoles",
+        List.of(account.getRole()),
+        "jti",
+        UUID.randomUUID().toString());
   }
 
   private Instant parseInstant(Object value) {
