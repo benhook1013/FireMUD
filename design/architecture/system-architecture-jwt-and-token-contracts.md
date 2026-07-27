@@ -49,7 +49,7 @@ The exact shared authority-generation record and propagation shape is a dependen
 
 Coordination Redis outage behavior follows [ADR 0037](./decisions/adr-0037-fail-closed-token-authority-outages-with-bounded-active-gameplay.md):
 
-- **Control-plane APIs (HTTP/gRPC)** – Requests that require issued-token registry checks fail closed while Coordination Redis is unavailable, returning a clear infrastructure error (for example `AUTH_UNAVAILABLE` / `SERVICE_UNAVAILABLE`) rather than silently bypassing authorization.
+- **Control-plane APIs (HTTP/gRPC)** – Requests that require issued-token registry checks fail closed while Coordination Redis is unavailable, returning the canonical retryable `AUTH_UNAVAILABLE` error rather than silently bypassing authorization.
 - **Gameplay admission (`LOGIN` / lobby selection via `PLAY`)** – New admissions fail closed while Coordination Redis is unavailable because allowlist and gameplay session binding state cannot be established reliably.
 - **Already-entered gameplay sessions** – Ongoing gameplay behavior follows the Redis outage/degradation policy defined in [Redis Architecture](./system-architecture-redis.md) and [Redis Operations & Migrations](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence). Game Session must not “assume authorization” in the absence of Redis; if coordination state needed to process commands safely is unavailable, it must degrade or halt according to the Redis policy instead of inventing local-only session authority.
 
@@ -94,17 +94,16 @@ Account Service issues the exact JWT profiles defined below for control-plane UI
 - `nbf`: `1735689600`
 - `exp`: `1735693200`
 - `tokenGeneration`: `12`
+- `issuerAuthGeneration`: `7`
+- `accountAuthGeneration`: `12`
+- `tenantAuthGenerations`: `{ "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": 4, "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a": 9 }`
+- `membershipAuthGenerations`: `{ "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": 18, "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a": 3 }`
 - `globalRoles`: `["billingAdmin"]`
 - `scopedRoles`:
   - `"018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f"` -> `["tenantAdmin", "designer"]`
   - `"018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a"` -> `["moderator"]`
 
 First-party `control-ui` and `player-bootstrap` JWTs are short-lived, non-gameplay control/bootstrap credentials and never become gameplay command authority. `player-bootstrap` can authorize caller-bound discovery, join, and connect-token issuance, but it remains tenant-free and does not itself carry a selected runtime target. Gameplay context (for example `characterId` and `tenantId`) lives in Game Session bindings and is sent through typed command envelopes or `PlayerExecutionContext` rather than embedded in those end-user JWT contracts. The bounded `gameplay-connect` JWT is the separate edge-admission profile: its `tenantId`, `worldSlug`, `realmSlug`, `gameInstanceId`, `pointerVersion`, `connectScopeId`, `requestId`, and `replayAdmissionFence` fields are one short-lived target and replay-readiness snapshot, consumed at Gateway, and never gameplay command authority. Receiver-specific private delegation JWTs remain backend material for their named receiver.
-
-- issuerAuthGeneration: 7
-- accountAuthGeneration: 12
-- tenantAuthGenerations: { "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": 4, "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a": 9 }
-- membershipAuthGenerations: { "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": 18, "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a": 3 }
 
 ### Token Profiles and Audiences
 

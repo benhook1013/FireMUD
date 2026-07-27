@@ -276,9 +276,9 @@ Both the `/auth/login` REST endpoint and the gRPC `Authenticate` method return s
 - `AUTH_RETRY_LATER` - a graduated credential-abuse throttle rejected the attempt; bounded retry metadata is supplied without confirming account existence
 - `AUTH_ACCOUNT_LOCKED` - durable account-security policy denies authentication after sufficient identity proof; arbitrary failed attempts must not use this as an account-existence oracle
 - `AUTH_ABUSE_CONTROL_UNAVAILABLE` - shared credential-abuse enforcement is unavailable, so new player-facing authentication fails closed and may be retried
-- `UNAVAILABLE` - authentication-authority or infrastructure/grpc failures before authentication could complete
+- `AUTH_UNAVAILABLE` - authentication-authority or infrastructure/gRPC failures before authentication could complete
 
-The Game Session Service translates these codes into text-protocol `ERROR <CODE>` responses so Telnet and WebSocket clients always see consistent login error semantics even when human-facing messages evolve.
+The Game Session Service translates Account application errors into the text-protocol namespace: `AUTH_INVALID_CREDENTIALS`, `AUTH_ACCOUNT_LOCKED`, and `AUTH_UNAVAILABLE` become `ERROR INVALID_CREDENTIALS`, `ERROR ACCOUNT_LOCKED`, and `ERROR UNAVAILABLE` respectively. Telnet and WebSocket clients therefore receive stable protocol codes without collapsing the distinct Account application-error namespace.
 
 Canonical non-login authorization/entitlement errors:
 

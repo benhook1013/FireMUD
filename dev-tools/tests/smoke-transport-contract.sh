@@ -15,7 +15,7 @@ python3 - <<'PY' "$ROOT_DIR"
 import json
 import sys
 import urllib.error
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import BytesIO, StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -64,14 +64,20 @@ http_error = urllib.error.HTTPError(
     {},
     BytesIO(failure_body),
 )
+failure_stdout = StringIO()
+failure_stderr = StringIO()
 try:
-    with patch("smoke_common.urllib.request.urlopen", side_effect=http_error):
-        smoke_common.verify_smoke_account(
-            "http://account.test", "demo@example.com", "swordfish", 5
-        )
+    with (
+        patch("smoke_common.urllib.request.urlopen", side_effect=http_error),
+        redirect_stdout(failure_stdout),
+        redirect_stderr(failure_stderr),
+    ):
+        smoke_common.verify_smoke_account("http://account.test", "demo@example.com", "swordfish", 5)
 except RuntimeError as exc:
     assert str(exc) == "Smoke account validation failed with status 401"
     assert "sensitive upstream detail" not in str(exc)
+    assert "sensitive upstream detail" not in failure_stdout.getvalue()
+    assert "sensitive upstream detail" not in failure_stderr.getvalue()
 else:
     raise AssertionError("Expected account validation failure")
 

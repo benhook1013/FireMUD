@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -458,11 +459,11 @@ public final class LoginCommandHandler {
     if (error == null) {
       return AUTHENTICATION_UNAVAILABLE_CODE;
     }
-    String rawCode = Optional.ofNullable(error.getCode()).orElse("").toUpperCase();
+    String rawCode = Optional.ofNullable(error.getCode()).orElse("").toUpperCase(Locale.ROOT);
     if (CANONICAL_ERROR_MAP.containsKey(rawCode)) {
       return CANONICAL_ERROR_MAP.get(rawCode);
     }
-    String message = Optional.ofNullable(error.getMessage()).orElse("").toLowerCase();
+    String message = Optional.ofNullable(error.getMessage()).orElse("").toLowerCase(Locale.ROOT);
     boolean unclassifiedAuthenticationError =
         rawCode.isBlank() || "UNAUTHENTICATED".equals(rawCode);
     if (unclassifiedAuthenticationError && message.contains("invalid credentials")) {
@@ -470,9 +471,6 @@ public final class LoginCommandHandler {
     }
     if (unclassifiedAuthenticationError && message.contains("locked")) {
       return "ACCOUNT_LOCKED";
-    }
-    if (rawCode.startsWith("AUTH_")) {
-      return AUTHENTICATION_UNAVAILABLE_CODE;
     }
     return AUTHENTICATION_UNAVAILABLE_CODE;
   }

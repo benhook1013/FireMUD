@@ -8,4 +8,4 @@ ALTER TABLE accounts
         'security_locked',
         'deactivated_pending_delete',
         'deleted'
-    ));
+    )) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;

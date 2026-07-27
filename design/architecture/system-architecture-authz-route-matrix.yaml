@@ -24,6 +24,7 @@ token_profiles:
     kind: private_player_delegation
 auth_path_vocabulary:
   - control_ui_plus_current_role_and_role_appropriate_assurance
+  - control_ui_plus_recent_reauthentication_and_independent_totp
   - exact_mtls_workload
   - exact_mtls_workload_plus_caller_specific_context
   - exact_mtls_workload_plus_current_token_generation
@@ -49,6 +50,7 @@ route_authentication_rules:
     multi_profile_routes: exact_profile_to_audience_map_required
     audience_source: token_profiles
 required_live_check_vocabulary:
+  # Captured in a private delegation and compared by the receiving owner.
   - account_generation
   - account_state_bootstrap_eligible
   - account_state_login_eligible
@@ -59,6 +61,7 @@ required_live_check_vocabulary:
   - connect_scope_match
   - connect_token_single_use_consume
   - csrf
+  # Live Account-owned generation reread for control-plane authority.
   - current_account_generation
   - current_account_roles
   - current_automation_policy
@@ -116,6 +119,21 @@ classifications:
   - internal_workload
   - pending_deletion_scoped
 role_assurance:
+  privileged_control_when_global_role:
+    resolution: role_specific_global_role_assurance
+    requirements:
+      platformAdmin:
+        role_check: current_global_role
+        elevation_contract: privileged_control
+        when: any_global_role_authorized_route
+      billingAdmin:
+        role_check: current_global_role
+        elevation_contract: privileged_control
+        when_scopes: [cross_tenant]
+      support:
+        role_check: current_global_role
+        elevation_contract: none
+        allowed_classifications: [cross_tenant_support_safe]
   platformAdmin:
     elevation_contract: privileged_control
   billingAdmin:
@@ -413,7 +431,7 @@ routes:
     operator_authorization_reference: required_and_redeemed_with_account
     required_live_checks: [current_operator_authorization, runtime_entitlements]
     mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
-    required_fields: [controlPlaneRequestId, actor, reason, tenant_id, mutationDigest]
+    required_fields: [control_plane_request_id, actor, reason, tenant_id, mutation_digest]
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
@@ -433,7 +451,7 @@ routes:
     operator_authorization_reference: required_and_redeemed_with_account
     required_live_checks: [current_operator_authorization, runtime_entitlements]
     mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
-    required_fields: [controlPlaneRequestId, actor, reason, session_id, mutationDigest]
+    required_fields: [control_plane_request_id, actor, reason, session_id, mutation_digest]
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
@@ -453,7 +471,7 @@ routes:
     operator_authorization_reference: required_and_redeemed_with_account
     required_live_checks: [current_operator_authorization, runtime_entitlements]
     mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
-    required_fields: [controlPlaneRequestId, actor, reason, session_id, mutationDigest]
+    required_fields: [control_plane_request_id, actor, reason, session_id, mutation_digest]
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
@@ -488,7 +506,7 @@ routes:
     direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
     required_live_checks: [current_operator_roles, runtime_entitlements]
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
-    required_fields: [controlPlaneRequestId, actor_from_session, reason, tenant_id]
+    required_fields: [control_plane_request_id, actor_from_session, reason, tenant_id]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: game-session-service
@@ -508,7 +526,7 @@ routes:
     direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
     required_live_checks: [current_operator_roles, runtime_ownership]
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
-    required_fields: [controlPlaneRequestId, actor_from_session, reason, session_id]
+    required_fields: [control_plane_request_id, actor_from_session, reason, session_id]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: game-session-service
@@ -518,6 +536,8 @@ routes:
     classification: tenant_regular
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     route_status: current_openapi_operator_surface
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
@@ -525,7 +545,7 @@ routes:
     direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
     required_live_checks: [current_operator_roles, runtime_entitlements]
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
-    required_fields: [controlPlaneRequestId, actor_from_session, reason, session_id]
+    required_fields: [control_plane_request_id, actor_from_session, reason, session_id]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: game-session-service
@@ -535,6 +555,8 @@ routes:
     classification: tenant_regular
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     route_status: current_openapi_operator_surface
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
@@ -542,7 +564,7 @@ routes:
     direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
     required_live_checks: [current_operator_roles, current_session]
     mutation_contract: owner_atomic_idempotent_role_refresh
-    required_fields: [controlPlaneRequestId, actor_from_session, reason, session_id]
+    required_fields: [control_plane_request_id, actor_from_session, reason, session_id]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: account-service
@@ -569,7 +591,7 @@ routes:
     route: EnterPrivilegedControlWindow
     scope: account
     classification: account_scoped
-    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
+    auth_path: control_ui_plus_recent_reauthentication_and_independent_totp
     subject_binding: caller_account_id
     accepted_token_profiles: [control-ui]
     required_fields: [requestedGlobalRole]
@@ -689,6 +711,8 @@ routes:
     http_route: GET /tenants/{tenantId}/profiles/{accountId}
     scope: tenant
     classification: tenant_regular
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
     subject_binding: caller_account_id
     accepted_token_profiles: [control-ui]
     required_live_checks: [membership]
@@ -700,6 +724,8 @@ routes:
     http_route: PUT /tenants/{tenantId}/profiles/{accountId}
     scope: tenant
     classification: tenant_regular
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
     subject_binding: caller_account_id
     accepted_token_profiles: [control-ui]
     required_live_checks: [membership]
@@ -712,25 +738,47 @@ routes:
     scope: account
     classification: account_scoped
     subject_binding: caller_account_id
+    platform_admin_override: platformAdmin_only
     accepted_token_profiles: [control-ui]
+    role_assurance: privileged_control_when_global_role
     required_live_checks: [recent_account_authentication]
     response_profile: asynchronous_versioned_cross_owner_export_manifest
     response_contract: reports_owner_completion_retries_omissions_and_policy_retention
     implementation_status:
       known_drift:
         - Current implementation returns synchronous Account/profile-local data rather than the versioned cross-owner manifest.
+        - Current helper permits a broad global privileged role; the target cross-account override is platformAdmin-only.
   - service: account-service
     route: DeleteAccount
+    http_route: DELETE /accounts/{accountId}
     scope: account
     classification: account_scoped
     subject_binding: caller_account_id
+    platform_admin_override: platformAdmin_only
     accepted_token_profiles: [control-ui]
+    role_assurance: privileged_control_when_global_role
     required_live_checks:
       [recent_account_authentication, explicit_deletion_confirmation, export_availability, no_nonterminal_owned_subscriptions]
     mutation_contract: pending_delete_advances_account_generation_then_runs_retryable_cross_owner_erasure
     completion_contract: terminal_only_after_all_owner_steps_complete_or_policy_retained
     canonical_errors:
       any_of: [ACCOUNT_DELETE_ACTIVE_BILLING_OWNER]
+    implementation_status:
+      known_drift:
+        - Current helper permits a broad global privileged role; the target cross-account override is platformAdmin-only.
+  - service: account-service
+    route: LinkExternalAccount
+    http_route: POST /accounts/{accountId}/external
+    scope: account
+    classification: account_scoped
+    route_status: target_not_currently_routable
+    subject_binding: caller_account_id
+    accepted_token_profiles: [control-ui]
+    required_live_checks: [recent_account_authentication]
+    mutation_contract: verified_provider_identity_link_with_recent_reauthentication
+    implementation_status:
+      known_drift:
+        - Current route accepts tenant-scoped caller-asserted provider identity without provider callback verification; the target route is global-account scoped and must not grant tenant-role or platformAdmin override access.
   - service: account-service
     route: GET /accounts/{accountId}/deletion
     scope: account
@@ -796,6 +844,7 @@ routes:
     route_status: target_not_currently_routable
     recovery_contract: consume_dedicated_challenge_and_issue_pending_deletion_access
     issued_credential: pending-deletion-access
+    required_live_checks: [pending_deletion_state]
     normal_login_or_gameplay_authority: false
   - service: account-service
     route: IssueConnectToken
@@ -1046,10 +1095,14 @@ routes:
     route: BillingArtifactsTenant
     scope: tenant
     classification: billing_safe_tenant
+    route_status: target_not_currently_routable
     accepted_token_profiles: [control-ui]
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
     required_live_checks: [membership]
+    mutation_contract: shared_instrument_ack_required
+    implementation_status:
+      target_only: true
     canonical_errors:
       any_of: [MEMBERSHIP_AUTH_UNAVAILABLE]
     roles:
@@ -1058,6 +1111,7 @@ routes:
     route: BillingArtifactsCrossTenant
     scope: cross_tenant
     classification: cross_tenant_billing_safe
+    route_status: target_not_currently_routable
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     roles:
@@ -1068,13 +1122,20 @@ routes:
     classification: player_bootstrap_tenant
     auth_path: player_bootstrap
     accepted_token_profiles: [player-bootstrap]
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: true
     subject_binding: caller_account_id_as_reporter
     required_live_checks: [membership, moderation_report_policy]
     mutation_contract: caller_bound_durable_report_record
+    implementation_status:
+      known_drift:
+        - Current OpenAPI/controller accepts caller-supplied tenantId and reporterAccountId; the target player-bootstrap route derives both from the authenticated caller and live membership.
   - service: logging-admin-service
     route: POST /feature-flags/toggle
     scope: tenant
     classification: tenant_regular
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
@@ -1083,7 +1144,7 @@ routes:
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
-    required_fields: [controlPlaneRequestId, actor_from_session, reason, flag_name, enabled, mutationDigest]
+    required_fields: [control_plane_request_id, actor_from_session, reason, flag_name, enabled, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
     owner_service: game-session-service
     roles:
@@ -1092,6 +1153,8 @@ routes:
     route: POST /moderation/actions
     scope: tenant
     classification: tenant_regular
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
@@ -1100,7 +1163,7 @@ routes:
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_moderation_record_idempotency
-    required_fields: [controlPlaneRequestId, actor_from_session, reason, target_account_id, action, mutationDigest]
+    required_fields: [control_plane_request_id, actor_from_session, reason, target_account_id, action, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
     owner_call_status: coverage_drift_no_current_enforcement_owner_rpc
     roles:
@@ -1109,6 +1172,8 @@ routes:
     route: POST /tick-remediation/pause
     scope: tenant
     classification: tenant_regular
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
@@ -1117,7 +1182,7 @@ routes:
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
-    required_fields: [controlPlaneRequestId, actor_from_session, reason, tenant_id, game_instance_id, mutationDigest]
+    required_fields: [control_plane_request_id, actor_from_session, reason, tenant_id, game_instance_id, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
     owner_service: game-session-service
     roles:
@@ -1126,6 +1191,8 @@ routes:
     route: POST /tick-remediation/resume
     scope: tenant
     classification: tenant_regular
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
@@ -1134,7 +1201,7 @@ routes:
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
-    required_fields: [controlPlaneRequestId, actor_from_session, reason, tenant_id, game_instance_id, mutationDigest]
+    required_fields: [control_plane_request_id, actor_from_session, reason, tenant_id, game_instance_id, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
     owner_service: game-session-service
     roles:
@@ -1143,6 +1210,8 @@ routes:
     route: POST /admission-pointers
     scope: tenant
     classification: tenant_regular
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
@@ -1151,7 +1220,7 @@ routes:
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_owner_idempotent_compare_and_set
-    required_fields: [controlPlaneRequestId, actor_from_session, reason, expectedPointerVersion, mutationDigest]
+    required_fields: [control_plane_request_id, actor_from_session, reason, expectedPointerVersion, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
     owner_service: game-session-service
     roles:
@@ -1160,6 +1229,8 @@ routes:
     route: POST /admission-pointers/cutover
     scope: tenant
     classification: tenant_regular
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
@@ -1168,7 +1239,7 @@ routes:
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_owner_idempotent_compare_and_set
-    required_fields: [controlPlaneRequestId, actor_from_session, reason, expectedPointerVersion, preparedVersionUpgradeId, mutationDigest]
+    required_fields: [control_plane_request_id, actor_from_session, reason, expectedPointerVersion, preparedVersionUpgradeId, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
     owner_service: game-session-service
     roles:
@@ -1177,6 +1248,8 @@ routes:
     route: POST /admission-pointers/version-upgrades
     scope: tenant
     classification: tenant_regular
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
@@ -1185,7 +1258,7 @@ routes:
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_owner_idempotent_preparation
-    required_fields: [controlPlaneRequestId, actor_from_session, reason, mutationDigest]
+    required_fields: [control_plane_request_id, actor_from_session, reason, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
     owner_service: game-session-service
     roles:
@@ -1206,7 +1279,7 @@ routes:
     operator_authorization_reference: required_and_redeemed_with_account
     required_live_checks: [current_operator_authorization, runtime_entitlements]
     mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
-    required_fields: [controlPlaneRequestId, actor, reason, tenant_id, flag_name, enabled, mutationDigest]
+    required_fields: [control_plane_request_id, actor, reason, tenant_id, flag_name, enabled, mutation_digest]
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
@@ -1225,7 +1298,7 @@ routes:
     operator_authorization_reference: required_and_redeemed_with_account
     required_live_checks: [current_operator_authorization, runtime_ownership]
     mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
-    required_fields: [controlPlaneRequestId, actor, reason, tenant_id, game_instance_id, mutationDigest]
+    required_fields: [control_plane_request_id, actor, reason, tenant_id, game_instance_id, mutation_digest]
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
@@ -1244,7 +1317,7 @@ routes:
     operator_authorization_reference: required_and_redeemed_with_account
     required_live_checks: [current_operator_authorization, runtime_ownership, recovery_resume_gate]
     mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
-    required_fields: [controlPlaneRequestId, actor, reason, tenant_id, game_instance_id, mutationDigest]
+    required_fields: [control_plane_request_id, actor, reason, tenant_id, game_instance_id, mutation_digest]
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
@@ -1263,7 +1336,7 @@ routes:
     operator_authorization_reference: required_and_redeemed_with_account
     required_live_checks: [current_operator_authorization, expected_pointer_version, prepared_version_upgrade_when_target_changes]
     mutation_contract: owner_atomic_idempotent_compare_and_set_with_durable_result
-    required_fields: [controlPlaneRequestId, actor, reason, mutationDigest]
+    required_fields: [control_plane_request_id, actor, reason, mutation_digest]
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
@@ -1282,7 +1355,7 @@ routes:
     operator_authorization_reference: required_and_redeemed_with_account
     required_live_checks: [current_operator_authorization, expected_pointer_version, prepared_version_upgrade]
     mutation_contract: owner_atomic_idempotent_compare_and_set_with_durable_result
-    required_fields: [controlPlaneRequestId, actor, reason, preparedVersionUpgradeId, mutationDigest]
+    required_fields: [control_plane_request_id, actor, reason, preparedVersionUpgradeId, mutation_digest]
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
@@ -1301,6 +1374,6 @@ routes:
     operator_authorization_reference: required_and_redeemed_with_account
     required_live_checks: [current_operator_authorization]
     mutation_contract: owner_atomic_idempotent_preparation_with_durable_result
-    required_fields: [controlPlaneRequestId, actor, reason, mutationDigest]
+    required_fields: [control_plane_request_id, actor, reason, mutation_digest]
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]

@@ -105,6 +105,17 @@ require_contains(
 )
 
 operations_text = (root / "design/architecture/system-architecture-redis-operations.md").read_text(encoding="utf-8")
+canonical_reset_heading = "## Canonical Coordination Reset Sequence"
+canonical_reset_start = operations_text.find(canonical_reset_heading)
+if canonical_reset_start == -1:
+    raise SystemExit(
+        "design/architecture/system-architecture-redis-operations.md: canonical reset section missing"
+    )
+canonical_reset_end = operations_text.find("\n## ", canonical_reset_start + len(canonical_reset_heading))
+canonical_reset_text = operations_text[
+    canonical_reset_start:
+    canonical_reset_end if canonical_reset_end != -1 else len(operations_text)
+]
 required_reset_contract = [
     "Canonical public operation:",
     "`coordination-maintenance recover --mode reset --scope ... [--preserve-sessions]`",
@@ -115,16 +126,14 @@ required_reset_contract = [
     "5. internal metadata-initialization phase",
     "6. internal session-policy phase",
     "7. internal post-reset smoke-check phase",
-    "8. internal resume-and-success-release phase",
-    "durable control store outside the target Redis deployment",
-    "not a public command",
-    "never runs automatically",
+    "8. public `resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)` safety gate",
+    "9. internal resume-and-success-release phase",
 ]
 cursor = -1
 previous = "<start of canonical reset contract>"
 for clause in required_reset_contract:
-    first_position = operations_text.find(clause)
-    position = operations_text.find(clause, cursor + 1)
+    first_position = canonical_reset_text.find(clause)
+    position = canonical_reset_text.find(clause, cursor + 1)
     if position == -1:
         if first_position == -1:
             raise SystemExit(
@@ -137,6 +146,17 @@ for clause in required_reset_contract:
         )
     cursor = position
     previous = clause
+
+for clause in [
+    "not a public command",
+    "never runs automatically",
+    "durable control store outside the target Redis deployment",
+]:
+    if clause not in canonical_reset_text:
+        raise SystemExit(
+            "design/architecture/system-architecture-redis-operations.md: "
+            f"canonical reset contract missing: [{clause!r}]"
+        )
 
 require_contains(
     "design/architecture/system-architecture-redis-ops-access.md",

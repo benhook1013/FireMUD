@@ -60,6 +60,7 @@ import net.firedevops.firemud.accountservice.service.session.SessionService;
 import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.common.security.JwtAuthProperties;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.common.security.ReloadableJwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -103,7 +104,7 @@ class AccountServiceImplTest {
   void setup() throws net.firedevops.firemud.common.saga.SagaException {
     MockitoAnnotations.openMocks(this);
     AccountMapper mapper = Mappers.getMapper(AccountMapper.class);
-    JwtUtil jwtUtil = new JwtUtil(JWT_SECRET, 3600000L);
+    JwtUtil jwtUtil = new ReloadableJwtUtil(JWT_SECRET, 3600000L);
     jwtAuthProperties.setJwtSecret(JWT_SECRET);
     tokenProperties.setPlayerBootstrapExpirationMs(300000L);
     tokenProperties.setConnectScopeExpirationMs(120000L);
@@ -529,6 +530,7 @@ class AccountServiceImplTest {
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(1L, 1L))
         .thenReturn(Optional.of(membership(account, 1L)));
+    jwtAuthProperties.setJwtSecret(null);
 
     AuthenticationResult result = service.authenticateForGameplay(1L, "demo", "password");
 
@@ -548,6 +550,7 @@ class AccountServiceImplTest {
     account.setPasswordHash(hash("password"));
     account.setLoginAuthModes("PASSWORD");
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    jwtAuthProperties.setJwtSecret(null);
 
     PlayerBootstrapResult result = service.issuePlayerBootstrap("demo", "password");
 
@@ -563,6 +566,7 @@ class AccountServiceImplTest {
     var claims = new JwtUtil(JWT_SECRET, 300000L).parseToken(result.bootstrapToken()).getPayload();
     assertEquals("player-bootstrap", claims.getAudience().iterator().next());
     assertFalse(claims.containsKey("tenantId"));
+    assertEquals(300000L, claims.getExpiration().getTime() - claims.getIssuedAt().getTime());
     verifyNoInteractions(accountEmailLoginChallengeRepository);
   }
 

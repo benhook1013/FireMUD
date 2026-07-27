@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+Partial. Shared multi-tenant services and tenant-qualified authorization and persistence are broadly implemented, but authoritative entitlement and quota freshness, complete owning-service quota enforcement, and the full negative-isolation and noisy-neighbour proof obligations remain incomplete. The decision below is the accepted target topology and isolation contract; acceptance does not imply those implementation and validation obligations are complete.
+
 ## Decision Record
 
 - Decision date: 2026-07-19

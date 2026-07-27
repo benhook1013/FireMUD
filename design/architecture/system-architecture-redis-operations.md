@@ -26,7 +26,7 @@ Canonical public operation:
 
 `coordination-maintenance recover --mode reset --scope ... [--preserve-sessions]`
 
-This one public operation acquires the maintenance lock, fences the scope, and runs these ordered internal phases:
+This one public operation acquires the maintenance lock, fences the scope, and runs these ordered phases. The public `resume(...)` safety gate is required between the smoke check and the internal success release:
 
 1. internal pause-and-lock phase
 2. internal epoch-bump and coordination-reset phase
@@ -35,7 +35,8 @@ This one public operation acquires the maintenance lock, fences the scope, and r
 5. internal metadata-initialization phase
 6. internal session-policy phase, including invalidation or preserved-session rebind according to the selected policy
 7. internal post-reset smoke-check phase
-8. internal resume-and-success-release phase
+8. public `resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)` safety gate, which records `RESUME_AUTHORIZED`
+9. internal resume-and-success-release phase
 
 The internal pause-and-lock phase is not a public command or a standalone operation. Only `recover` creates the durable `operationId` and maintenance-lock identity; an interrupted workflow resumes through that same operation or is explicitly abandoned through the audited maintenance-lock release control.
 
@@ -47,6 +48,8 @@ Supported external controls use the following canonical API-to-CLI mapping:
 
 No public command may select or invoke an internal phase. The CLI exposes the same controls as `continue-recovery`, `resume`, and `release-lock`; the API names above remain the canonical control-plane names.
 
+The audited abandonment control never runs automatically; an operator must supply the matching operation, scope, maintenance-lock token, reason, and immutable evidence reference.
+
 Rules:
 
 - The operation record and maintenance-lock authority live in a durable control store outside the target Redis deployment so the workflow remains resumable after that deployment is replaced or emptied.
@@ -57,7 +60,7 @@ Rules:
 - Internal metadata initialization re-establishes `tick:{tenantRegionTag}:meta` from the durable baseline after the reset phase; `{tenantRegionTag}` is the opaque full-scope tag for `<tenantId, gameInstanceId, regionId>`.
 - Internal session rebinding is conditional. Region-scoped resets preserve gameplay sessions by default, tenant-scoped resets do so only when `--preserve-sessions` is recorded, and cluster-scoped resets invalidate gameplay sessions by default.
 - The internal post-reset smoke-check phase proves the new epoch can acquire leases, stage work, converge, and clean up correctly, then atomically enters `AWAITING_RESUME` without dropping the maintenance lock or traffic fence.
-- The internal resume-and-success-release phase requires `RESUME_AUTHORIZED` for the same operation and lock. It atomically reopens the scope, releases that lock, and records terminal `SUCCEEDED`; no caller may observe an open scope with a live recovery lock or a released lock while the scope remains only partially resumed.
+- The internal resume-and-success-release phase is unreachable until the public `resume(...)` control records `RESUME_AUTHORIZED` for the same operation, expected phase, scope, lock, and evidence. It then atomically reopens the scope, releases that lock, and records terminal `SUCCEEDED`; no caller may observe an open scope with a live recovery lock or a released lock while the scope remains only partially resumed.
 - If the workflow aborts before terminal success, operators must use the audited `coordination-maintenance release-lock ...` control rather than inventing an alternate unlock sequence.
 
 ## Redis SLOs & Budgets

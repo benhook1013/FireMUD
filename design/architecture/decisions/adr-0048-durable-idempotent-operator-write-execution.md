@@ -59,6 +59,14 @@ A Game Session request that mutates region-scoped tick or coordination state exe
 
 Owner-side admission, feature-flag, and tick control RPCs are `internal_workload` calls under this contract. Scopes or action families that cannot yet satisfy this durable, idempotent, fenced contract are rejected as unsupported rather than implemented through a weaker direct-write path. Current moderation enforcement and quota override owner contracts remain coverage drift until their routes and owner APIs exist.
 
+### Redis-Backed Owner Mutations
+
+Coordination Redis is a volatile projection, not the durable owner of an operator mutation. Any supported action that materializes state in Redis must first create or claim a durable owner request record containing the `controlPlaneRequestId`, matching digest, desired mutation, `ownerMutationId`, current owner/lease identity, fencing token, lease expiry, state, and terminal result. The durable record is the source of truth for `PENDING`, `COMMITTED`, `FAILED`, and `NOT_EXECUTED`; Redis key presence or a Redis command response alone is never a terminal result.
+
+The current lease owner applies the projection through one registered Lua script that validates the current lease/fencing token, expected target version, and `ownerMutationId`, then atomically writes the desired Redis state and its mutation marker. A duplicate with the same request and digest returns the existing marker/result; a different digest or stale owner is rejected without mutation. The owner records `COMMITTED` only after the marker and desired state are read back under the current fence. `NOT_EXECUTED` is allowed only when the owner can prove that no mutation marker or target-state change committed under this request; an absent or ambiguous marker remains `PENDING`/indeterminate.
+
+Crash and ownership recovery use the same durable record and request identity. A crash before the Redis script leaves the claim retryable; a crash after the script but before terminal-result persistence is reconciled by the current lease owner from the mutation marker and target version, not by blindly issuing a new mutation. Lease loss fences the old owner from both the Redis script and durable terminal commit; after lease expiry, the new owner may reclaim the durable claim and reconcile or safely retry the same `ownerMutationId`. A Redis reset or lost projection is repaired from the durable desired mutation and does not create a new operator effect. No terminal result may claim `NOT_EXECUTED` while an old owner could still commit, and no `COMMITTED` result may depend on an unreconciled Redis mutation.
+
 ### Availability Boundary
 
 Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, Alertmanager, and similar observability systems may assist investigation, but are not part of write success, owner durability, idempotency, or reconciliation. The required durable records remain in Logging and Admin PostgreSQL and the owning domain's authoritative store.
@@ -98,6 +106,7 @@ The current implementation is partial. Each supported operator-action family mus
 - durable intent before forwarding, including trusted actor, reason, exact scope, mutation, and `controlPlaneRequestId`;
 - authorization and domain validation at the owner;
 - atomic owner mutation and result persistence with duplicate delivery returning the original result;
+- for Redis-backed owner state, a durable claim/state/result record, marker-based Lua mutation, lease-owner fencing, and reconciliation for crashes before and after Redis mutation or lease transfer;
 - an allowlisted read-only owner result lookup that recovers the durable outcome after authorization expiry or revocation without executing the mutation;
 - recovery from crashes before forwarding, during owner execution, after owner commit, and before final outcome recording;
 - truthful operator outcomes for rejection, timeout, lost response, duplicate delivery, authorization expiry, and reconciliation;

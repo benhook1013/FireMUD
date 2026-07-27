@@ -25,6 +25,7 @@ The current shipped scope is narrower than this target contract:
 - Current tick pause/resume support is the shipped `<tenantId, gameInstanceId>` boundary. Regional pause/resume and the explicit aggregate scope/fencing contract remain target-state work tracked in [Game Session runtime and tick coordination](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status).
 - Logging & Admin consumes Game Session health and requests Game Session-owned control APIs; it does not directly mutate Redis or runtime coordination state.
 - Moderation policy, audit data, quota/limit override intent, and operator history remain owned here, while Account, Game Session, and Social & Groups own enforcement and runtime mutation.
+- The current moderation action path persists policy input only; no owner-side enforcement RPC is exposed, so that downstream owner-call requirement is coverage drift rather than a claimed implementation.
 - The core/observability availability split is a design contract; exact independent deployment and pool isolation remain implementation obligations rather than a claim that every backend integration is already isolated in production.
 
 In addition to log and moderation tooling, the service acts as a control-plane coordinator for tick and coordination health:
@@ -58,7 +59,7 @@ The core operator control plane must remain available when Elasticsearch, Promet
 
 The architecture treats these as two runtime partitions even when they are delivered from one deployable:
 
-- Core control-plane endpoints include moderation actions, feature-flag controls, reports, saga inspection, and live tick-remediation pause/resume APIs. These paths must not block on Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager for request success. Quota override and broader remediation are not current endpoints and remain coverage drift.
+- Core control-plane endpoints include moderation actions, feature-flag controls, reports, saga inspection, admission-pointer reads/audit/preparation/cutover/same-target mutations, and live tick-remediation pause/resume APIs. These paths must not block on Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager for request success. Quota override and broader remediation are not current endpoints and remain coverage drift.
 - Observability-backed endpoints include log search, embedded dashboards, traces, metric exploration, and alert investigation views. These paths may degrade independently or return explicit backend-unavailable states.
 - Readiness and degradation reporting must distinguish these partitions so an observability outage does not mark the entire operator service unavailable.
 - Thread pools, connection pools, and timeout budgets for observability integrations must be isolated from the core control plane so expensive search/dashboard failures cannot starve moderation or remediation requests.

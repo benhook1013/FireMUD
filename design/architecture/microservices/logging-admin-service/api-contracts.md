@@ -5,14 +5,17 @@ This document defines the Logging & Admin Service REST and gRPC surfaces, authen
 ## Implementation Notes
 
 - Admission-pointer workflows, feature-flag toggles, and scoped tick-remediation pause/resume forwarding are live in the current service.
+- Admission-pointer reads, audit, preparation, cutover, and same-target mutation endpoints are part of the core operator/control-plane availability contract and must not depend on observability backends.
 - The canonical `SetAdmissionPointerRequest` REST schema omits `actorPrincipal`. `AdmissionPointerServiceImpl` derives the actor from the authenticated operator session or internal workload and writes that derived value to the internal control-plane request; `actorPrincipal` is response/audit data, not client-supplied write authority.
+- The target `POST /reports` route is caller-bound to the `player-bootstrap` subject and live tenant membership. The current OpenAPI/controller accepts caller-supplied `tenantId` and `reporterAccountId`, so the target route remains implementation drift.
+- `ApplyModerationAction` currently persists moderation policy input in Logging & Admin; no owner-side enforcement RPC is currently exposed. That missing owner call is coverage drift, not an implemented downstream contract.
 - Quota-override ingress remains target-state until Account exposes the canonical owner-side override mutation contract.
 - Broader tick-remediation `remediate` remains target-state until Game Session exposes the canonical owner-side remediation RPC.
 
 ## REST
 
 - `GET /ping` – basic health check returning `"pong"`.
-- `POST /reports` – submit an abuse or bug report.
+- `POST /reports` – target caller-bound abuse or bug report submission; reporter and tenant identity must come from the validated `player-bootstrap` session rather than the request body.
 - `POST /feature-flags/toggle` – enable or disable runtime flags.
 - `POST /logs/query` – search stored logs.
 - `POST /moderation/actions` – apply a moderation action.
@@ -31,6 +34,7 @@ This document defines the Logging & Admin Service REST and gRPC surfaces, authen
 ### Coverage Drift
 
 - Quota override has no current OpenAPI route and no current Account owner mutation contract. Do not add `/quota-overrides*` until the owner contract exists.
+- Moderation enforcement has no current Account, Game Session, or Social & Groups owner RPC behind `POST /moderation/actions`; the current route records policy input only.
 - Scoped remediation beyond pause/resume has no current OpenAPI route and no current Game Session owner RPC. Do not add `/tick-remediation/remediate` or a direct Redis mutation path.
 
 ### Canonical Admission State Operations
@@ -68,7 +72,7 @@ grpcurl -plaintext -d '{"tenant_id":1,"reporter_account_id":1,"target_account_id
 | Surface | Examples | Required auth path | Notes |
 | --- | --- | --- | --- |
 | Public/infra health | `GET /ping`, `Ping` | Internal network + platform health policy | Not a user-authenticated business operation. |
-| Player report (HTTP) | `/reports` | Exact `player-bootstrap` profile plus caller-bound tenant membership | Reporter identity comes from the validated session; this is not an operator authority path. |
+| Player report (HTTP) | `/reports` | Exact `player-bootstrap` profile plus caller-bound tenant membership and membership-generation applicability | Target reporter and tenant identity come from the validated session; the current OpenAPI/controller accepts caller-supplied `tenantId` and `reporterAccountId`, so the caller-bound route remains implementation drift and is not an operator authority path. |
 | Operator APIs (HTTP) | `/logs/query`, `/moderation/actions`, `/feature-flags/toggle`, `/sagas*`, `/admission-pointers*`, `/tick-remediation/pause`, `/tick-remediation/resume` | Exact `control-ui` profile, current role, role-appropriate assurance, and route classification | External tools enter through Gateway-allowlisted routes; Account issues the bounded operator authorization reference before owner forwarding. Tenant roles use current membership; global privileged roles use their required elevation. |
 | Owner mutation calls (gRPC internal) | Feature flag, admission, and tick owner RPCs | Exact Logging & Admin mTLS identity plus Account redemption of the opaque bounded operator authorization reference; no end-user JWT | The owner validates domain facts, fencing, and idempotency. Logging & Admin assertions alone are not authority. |
 | Service-to-service control/ingest (gRPC internal) | Internal lifecycle/event ingestion and trusted backend calls | mTLS caller identity + explicit service authorization checks | Never exposed at public ingress; use an exact receiver-specific private delegation profile only where the route declares one. |

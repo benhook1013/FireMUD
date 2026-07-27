@@ -148,7 +148,7 @@ Pointer freshness and cutover rules:
 
 - Players have a **single platform account** managed by the **Account Service**.
 - Registration creates only that global account and its security identity. It does not select a tenant or implicitly create membership, roles, a tenant profile, a character, an entitlement, or gameplay authority; the explicit public-game `JOIN` contract creates membership.
-- Authentication is global at the `accountId` level, but services always check the requested `tenantId` against the account’s allowed tenants and enforce this when retrieving or updating game data.
+- Authentication is global at the `accountId` level. Tenant-owned reads and writes check the requested `tenantId` against the account’s allowed tenants; platform-global account and security records remain account-scoped and must not require a synthetic or unrelated `tenantId`.
 - The same account can join multiple games. Each game is identified by a `tenantId`.
 - `tenantId` is the authoritative tenant identifier owned by the Game Design Service. Identifier naming and format conventions are defined in [Identifier Glossary](./system-architecture-identifier-glossary.md).
 - Persistence models must treat `tenantId` as an opaque identifier, not as a user-facing value.
@@ -165,8 +165,10 @@ Pointer freshness and cutover rules:
 - All microservices connect to a single PostgreSQL instance and store data in service-specific schemas.
   Migrations create tables directly inside dedicated service schemas rather than the `public` schema.
 - Databases are **shared across tenants**. Tenant-owned records carry and enforce `tenantId`; genuinely platform-global records such as the core account identity do not acquire a placeholder tenant merely to satisfy this convention. Relationships between a global record and a game live in explicit tenant-scoped tables. Domain services also scope their versioned data by `version_id` so multiple published or draft configurations can coexist per tenant.
-- Services enforce the `tenantId` filter on all queries to prevent cross-game
-  access.
+- Services enforce the `tenantId` filter on queries for tenant-owned data to prevent
+  cross-game access. They do not apply tenant filters to platform-global account,
+  credential, recovery, or security records; links between those records and a game
+  are represented by explicit tenant-scoped relationships and authorized separately.
 - Redis keys prefix the `tenantId` as described in the
   [Redis Architecture](./system-architecture-redis.md#key-format-examples) so
   cached session state and runtime data remain isolated. For tick-related keys,

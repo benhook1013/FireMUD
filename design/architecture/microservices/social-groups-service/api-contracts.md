@@ -56,7 +56,7 @@ curl -X POST http://localhost:8080/voice/token \
 
 - Game Session owns raw live/recent gameplay-presence facts. Social & Groups is the only player-facing cross-game friend projection and obtains those facts through an internal caller-restricted bounded API.
 - `WHO` remains an in-world current-instance roster. Profile presence privacy does not make a physically present player invisible there; game-defined invisibility or perception mechanics are a separate gameplay concern.
-- `FRIENDS_ONLY` is the new-profile default and applies only to mutually accepted friend relationships. It may expose online/offline state and a world/realm label only when the viewer can independently discover that target. Otherwise it reports online with location private and discloses no hidden realm identity.
+- `FRIENDS_ONLY` is the new-profile default and applies only to mutually accepted friend relationships. It exposes online/offline state to mutual friends. A world/realm label is included only when the viewer can independently discover that location; otherwise location and hidden realm identity remain private.
 - `PRIVATE`, blocked relationships, missing policy, malformed policy, and policy-service unavailability expose no online/offline state, last-seen timestamp, character, location, activity, disconnect disposition, or policy label. The friendship record may remain visible, but its presence projection is absent.
 - `PUBLIC` permits deliberate authenticated presence lookup only through a separately authorized bounded social surface. It never creates a globally enumerable online-player directory.
 - Player-facing presence never exposes disconnect reason or disposition. Those facts remain available only to authorized diagnostic/support surfaces.

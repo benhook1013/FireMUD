@@ -33,6 +33,12 @@ public class ReloadableJwtUtil extends JwtUtil {
   }
 
   @Override
+  public String generateToken(
+      String subject, long tokenExpirationMillis, Map<String, Object> claims) {
+    return delegate.get().generateToken(subject, tokenExpirationMillis, claims);
+  }
+
+  @Override
   public Jws<Claims> parseToken(String token) {
     return delegate.get().parseToken(token);
   }

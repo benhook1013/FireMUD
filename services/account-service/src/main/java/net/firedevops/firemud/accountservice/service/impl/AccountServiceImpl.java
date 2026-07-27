@@ -5,8 +5,6 @@ import de.mkammerer.argon2.Argon2Factory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
 import io.micrometer.core.annotation.Timed;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -15,7 +13,6 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Comparator;
-import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -1202,24 +1199,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private String mintToken(String subject, long expirationMs, Map<String, Object> claims) {
-    long now = System.currentTimeMillis();
-    String secret = jwtAuthProperties.getJwtSecret();
-    if (secret == null || secret.isBlank()) {
-      throw new IllegalStateException("JWT secret must be configured");
-    }
-    Object audience = claims.get("aud");
-    Map<String, Object> nonRegisteredClaims = new java.util.HashMap<>(claims);
-    nonRegisteredClaims.remove("aud");
-    var builder =
-        Jwts.builder()
-            .subject(subject)
-            .claims(nonRegisteredClaims)
-            .issuedAt(new Date(now))
-            .expiration(new Date(now + expirationMs));
-    if (audience != null) {
-      builder.audience().add(audience.toString()).and();
-    }
-    return builder.signWith(Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8))).compact();
+    return jwtUtil.generateToken(subject, expirationMs, claims);
   }
 
   private Instant parseInstant(Object value) {
