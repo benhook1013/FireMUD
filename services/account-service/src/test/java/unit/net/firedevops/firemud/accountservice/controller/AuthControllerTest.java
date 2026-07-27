@@ -47,8 +47,8 @@ class AuthControllerTest {
 
   @Test
   void loginReturnsTokenAndAccountId() throws Exception {
-    LoginRequest request = new LoginRequest(1L, "demo", "password");
-    when(accountService.authenticate(1L, "demo", "password"))
+    LoginRequest request = new LoginRequest("demo", "password");
+    when(accountService.authenticate("demo", "password"))
         .thenReturn(new AuthenticationResult(1L, "tok123"));
 
     mockMvc
@@ -60,22 +60,6 @@ class AuthControllerTest {
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.accountId").value(1))
         .andExpect(jsonPath("$.data.authToken").value("tok123"));
-  }
-
-  @Test
-  void loginRejectsZeroTenantIdBeforeDispatch() throws Exception {
-    LoginRequest request = new LoginRequest(0L, "demo", "password");
-
-    mockMvc
-        .perform(
-            post("/auth/login")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(request)))
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
-
-    verifyNoInteractions(accountService);
   }
 
   @Test

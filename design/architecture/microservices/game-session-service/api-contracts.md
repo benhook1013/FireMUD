@@ -69,6 +69,10 @@ The internal front-end to lease-owner path is a **target-state** fenced gameplay
 - Admission-pointer requests and read/audit responses carry the runtime route version separately from catalog/policy revision. Public-production admission and first-join membership creation consume current catalog visibility/public-production facts with entitlement checks instead of inferring behavior from `realmSlug`; display-only changes do not become runtime cutovers.
 - Admission-pointer audit/list responses now also expose the `preparedVersionUpgradeId` used by a cutover write so operator history preserves the same proof identity that the mutation validated.
 
+### ADR-0048 operator-write contract
+
+Every mutating operator RPC listed above (`StartSession`, `StopSession`, `RestartSession`, `ToggleFeatureFlag`, `PauseTicksForScope`, `ResumeTicksForScope`, `SetAdmissionPointer`, `ExecutePreparedVersionCutover`, and `PrepareVersionUpgrade`) requires the same durable request identity: `controlPlaneRequestId` plus the canonical `mutationDigest`. Account binds both values into the bounded operator authorization reference, and Game Session recomputes and validates the digest before execution. The owner durably records the request before execution and records a terminal result only after owner-specific commit proof; PostgreSQL-owned mutations commit domain state and result atomically, while Redis-backed projections use the durable claim, fenced mutation marker, and reconciliation contract in ADR 0048. A duplicate request carrying the same digest returns the previously committed result, while the same request identifier with a different digest returns `IDEMPOTENCY_CONFLICT` without applying either payload. A timeout must not create a new request identifier; Logging & Admin may use the same identifier for owner result lookup and, only while the original authorization remains valid, redelivery. After authorization expiry, reconciliation is read-only.
+
 Service definitions reside in [../../../../protos/game-session/v1](../../../../protos/game-session/v1). Run `./gradlew generateProto` after modifying these files to regenerate stubs. The generated classes appear under `net.firedevops.firemud.gamesession.v1` in `build/generated/sources/proto/main/{grpc,java}` and are wired into `services/game-session-service/src/main/java/net/firedevops/firemud/service/impl/GameSessionGrpcService.java`.
 
 ### REST endpoints
@@ -83,17 +87,25 @@ Use `/sessions/{id}/refresh-roles` after updating an account's privileges so the
 
 #### External HTTP route classification
 
-Game Session owns the `/api/session/**` Gateway family, but that family is not a blanket public-write contract. The current public gateway inventory exposes only `GET /api/session/ping`; the mutating `/sessions*` routes remain owner-side operator hooks protected by privileged HTTP auth on the service itself and are not part of the public gateway allowlist.
+Game Session owns the `/api/session/**` Gateway family, but that family is not a blanket public-write contract. The current public gateway inventory exposes only `GET /api/session/ping`; the mutating `/sessions*` routes are legacy service-local REST hooks retained by the current OpenAPI surface, protected by privileged HTTP auth on the service itself, and not part of the public gateway allowlist. They are not the canonical external operator ingress or player-admission contract.
 
 | Service-local route | External classification | Notes |
 | --- | --- | --- |
 | `GET /ping` | Infra/local health only | Not part of the external admin/product contract. |
-| `POST /sessions` | Internal-only or Logging & Admin-mediated operator write until a dedicated bypass-safe design says otherwise | This is a control-plane instance lifecycle mutation, not a player admission route. |
-| `POST /sessions/{id}/stop` | Internal-only or Logging & Admin-mediated operator write | Stops runtime state and therefore follows the operator-write ingress policy by default. |
-| `POST /sessions/{id}/restart` | Internal-only or Logging & Admin-mediated operator write | Same classification as stop/start lifecycle mutations. |
-| `POST /sessions/{id}/refresh-roles` | Internal-only maintenance path | Used to refresh session/runtime auth context after account-role changes; not a documented external bypass-safe write. |
+| `POST /sessions` | `legacy_service_local_operator_hook`; exact `control-ui` profile plus `privileged_control_when_global_role` assurance at the current service-local boundary | Current OpenAPI hook only. Direct edge exposure is denied; the canonical external operator ingress is Logging & Admin, not this REST route, and this is not a player admission route. |
+| `POST /sessions/{id}/stop` | `legacy_service_local_operator_hook`; exact `control-ui` profile plus `privileged_control_when_global_role` assurance at the current service-local boundary | Current OpenAPI hook only. Direct edge exposure is denied; the canonical external operator ingress is Logging & Admin. |
+| `POST /sessions/{id}/restart` | `legacy_service_local_operator_hook`; exact `control-ui` profile plus `privileged_control_when_global_role` assurance at the current service-local boundary | Current OpenAPI hook only. Direct edge exposure is denied; the canonical external operator ingress is Logging & Admin. |
+| `POST /sessions/{id}/refresh-roles` | `legacy_service_local_maintenance_hook`; exact `control-ui` profile at the current service-local boundary | Current OpenAPI maintenance hook only. Direct edge exposure is denied; it is not a canonical player or external operator route. |
 
 If a future change wants any of the mutating `/sessions*` routes to be callable directly from external operator tools, the owning contract must explicitly mark that exact route as bypass-safe and explain its auth class, audit behavior, and lease-owner forwarding rules in the same change.
+
+#### Canonical external operator path
+
+External operator mutations enter through the Logging & Admin Service via Gateway. Logging & Admin authenticates the `control-ui` session, validates the actor's current role and required assurance, records the durable intent and audit context, and asks Account Service to issue an opaque, short-lived operator authorization reference bound to the actor, target scope, action family, `controlPlaneRequestId`, and `mutationDigest`. Logging & Admin then forwards only that bounded reference and the structured actor/reason/request fields to the Game Session owner RPC over its exact mTLS workload identity. It may forward the end-user `control-ui` JWT to Account only for reference issuance; it must never forward an end-user JWT to Game Session. Game Session redeems the reference with Account and independently validates current authorization, target-domain ownership, runtime fences, and owner-side idempotency before applying the mutation.
+
+#### Owner-side operator RPC classification
+
+The gRPC owner methods `StartSession`, `RestartSession`, `StopSession`, `ToggleFeatureFlag`, `PauseTicksForScope`, `ResumeTicksForScope`, `SetAdmissionPointer`, `ExecutePreparedVersionCutover`, and `PrepareVersionUpgrade` are `internal_workload` operator RPCs. They accept the exact Logging & Admin mTLS workload identity and one opaque, short-lived Account-issued operator authorization reference for the bounded request, redeemed with Account; they accept no end-user JWT and do not treat forwarded actor assertions as authority. Every method uses the ADR-0048 request identity and result-replay rules above. `StartSession`, `RestartSession`, and `StopSession` additionally require actor, reason, and their target scope; each other mutating method requires the equivalent method-specific scope and precondition fields. Game Session still validates current domain ownership, admission/CAS or runtime-fence facts, and durable request idempotency before committing the owner result. `RefreshRoles` is also `internal_workload`, but uses only its exact allowlisted workload identity plus current session and Account role state because it is a role-refresh operation rather than delegated operator authority.
 
 ```bash
 curl http://localhost:8086/ping
@@ -102,6 +114,8 @@ curl http://localhost:8086/ping
 ```bash
 curl http://localhost:8080/api/session/ping
 ```
+
+The following direct REST example exercises the current legacy service-local hook for local development only; it is not the canonical external operator path:
 
 To start a session via REST:
 

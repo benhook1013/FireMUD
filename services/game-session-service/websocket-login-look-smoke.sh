@@ -78,7 +78,7 @@ wait_for_account_schema(startup_wait_seconds, timeout_seconds)
 wait_for_http_readiness("account-service", account_api_base, startup_wait_seconds, timeout_seconds)
 wait_for_http_readiness("game-logic-service", game_logic_api_base, startup_wait_seconds, timeout_seconds)
 wait_for_http_readiness("game-session-service", game_session_api_base, startup_wait_seconds, timeout_seconds)
-verify_smoke_account(account_api_base, tenant_id, username, password, timeout_seconds)
+verify_smoke_account(account_api_base, username, password, timeout_seconds)
 steps = gameplay_item_container_equipment_steps(
     username,
     password,

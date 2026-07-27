@@ -4,7 +4,7 @@ package net.firedevops.firemud.account;
 public final class AuthenticationErrorCodes {
   public static final String INVALID_CREDENTIALS = "AUTH_INVALID_CREDENTIALS";
   public static final String ACCOUNT_LOCKED = "AUTH_ACCOUNT_LOCKED";
-  public static final String UPSTREAM_FAILURE = "AUTH_UPSTREAM_FAILURE";
+  public static final String UNAVAILABLE = "AUTH_UNAVAILABLE";
 
   private AuthenticationErrorCodes() {
     // constants only

@@ -19,12 +19,17 @@ public class JwtUtil {
   }
 
   public String generateToken(String subject, Map<String, Object> claims) {
+    return generateToken(subject, expirationMillis, claims);
+  }
+
+  public String generateToken(
+      String subject, long tokenExpirationMillis, Map<String, Object> claims) {
     long now = System.currentTimeMillis();
     return Jwts.builder()
         .subject(subject)
         .claims(claims)
         .issuedAt(new Date(now))
-        .expiration(new Date(now + expirationMillis))
+        .expiration(new Date(now + tokenExpirationMillis))
         .signWith(Keys.hmacShaKeyFor(key))
         .compact();
   }

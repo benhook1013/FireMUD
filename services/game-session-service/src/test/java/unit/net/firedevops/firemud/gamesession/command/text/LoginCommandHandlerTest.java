@@ -170,17 +170,16 @@ class LoginCommandHandlerTest {
             RequestEmailLoginOtpResponse.newBuilder()
                 .setError(
                     ErrorDetail.newBuilder()
-                        .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
+                        .setCode(AuthenticationErrorCodes.UNAVAILABLE)
                         .setMessage("challenge delivery failed"))
                 .build());
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
-    assertEquals("UPSTREAM_FAILURE", result.commandResult().errorCode());
+    assertEquals("UNAVAILABLE", result.commandResult().errorCode());
     assertEquals(
-        "ERROR UPSTREAM_FAILURE Authentication service unavailable",
-        joinedOutputText(result.outputs()));
+        "ERROR UNAVAILABLE Authentication service unavailable", joinedOutputText(result.outputs()));
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
@@ -830,6 +829,9 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
+    assertEquals("INVALID_CREDENTIALS", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR INVALID_CREDENTIALS Invalid credentials", joinedOutputText(result.outputs()));
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService, times(2)).save(captor.capture());
     verify(gameplayPresenceLifecycleService)
@@ -968,12 +970,12 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void upstreamFailureReturnsUpstreamFailureCode() {
+  void unavailableReturnsUnavailableCode() {
     AuthenticateResponse authError =
         AuthenticateResponse.newBuilder()
             .setError(
                 ErrorDetail.newBuilder()
-                    .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
+                    .setCode(AuthenticationErrorCodes.UNAVAILABLE)
                     .setMessage("Backend unreachable")
                     .build())
             .build();
@@ -989,13 +991,68 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
-    assertEquals("UPSTREAM_FAILURE", result.commandResult().errorCode());
-    assertEquals("Backend unreachable", result.commandResult().errorMessage());
-    assertEquals("ERROR UPSTREAM_FAILURE Backend unreachable", joinedOutputText(result.outputs()));
+    assertEquals("UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals("Authentication service unavailable", result.commandResult().errorMessage());
+    assertEquals(
+        "ERROR UNAVAILABLE Authentication service unavailable", joinedOutputText(result.outputs()));
   }
 
   @Test
-  void unrecognizedAccountErrorUsesUpstreamFailure() {
+  void normalizedAuthenticationTransportFailureUsesUnavailable() {
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode(AuthenticationErrorCodes.UNAVAILABLE)
+                    .setMessage("Authentication request failed")
+                    .build())
+            .build();
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR UNAVAILABLE Authentication service unavailable", joinedOutputText(result.outputs()));
+  }
+
+  @Test
+  void unmappedAuthenticationCodeUsesUnavailablePublicVocabulary() {
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("AUTH_INTERNAL_ONLY")
+                    .setMessage("Internal authentication detail")
+                    .build())
+            .build();
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR UNAVAILABLE Authentication service unavailable", joinedOutputText(result.outputs()));
+  }
+
+  @Test
+  void unrecognizedAccountErrorUsesUnavailable() {
     AuthenticateResponse authError =
         AuthenticateResponse.newBuilder()
             .setError(
@@ -1013,8 +1070,59 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
-    assertEquals("UPSTREAM_FAILURE", result.commandResult().errorCode());
-    assertEquals("ERROR UPSTREAM_FAILURE Unrecognized failure", joinedOutputText(result.outputs()));
+    assertEquals("UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR UNAVAILABLE Authentication service unavailable", joinedOutputText(result.outputs()));
+  }
+
+  @Test
+  void unrecognizedNonblankAuthenticationCodeUsesUnavailable() {
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("INTERNAL")
+                    .setMessage("internal authentication detail")
+                    .build())
+            .build();
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR UNAVAILABLE Authentication service unavailable", joinedOutputText(result.outputs()));
+  }
+
+  @Test
+  void unauthenticatedWithoutRecognizedMessageUsesUnavailable() {
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(ErrorDetail.newBuilder().setCode("UNAUTHENTICATED").build())
+            .build();
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR UNAVAILABLE Authentication service unavailable", joinedOutputText(result.outputs()));
   }
 
   @Test

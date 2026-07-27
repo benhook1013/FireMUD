@@ -43,6 +43,19 @@ final class JooqAccountRepositorySupport {
       String role,
       Boolean emailVerified,
       String loginAuthModes) {
+    return partialAccount(
+        id, username, email, passwordHash, role, emailVerified, loginAuthModes, null);
+  }
+
+  static Account partialAccount(
+      Long id,
+      String username,
+      String email,
+      String passwordHash,
+      String role,
+      Boolean emailVerified,
+      String loginAuthModes,
+      String lifecycleState) {
     if (id == null) {
       return null;
     }
@@ -55,6 +68,11 @@ final class JooqAccountRepositorySupport {
     account.setEmailVerified(Boolean.TRUE.equals(emailVerified));
     if (loginAuthModes != null) {
       account.setLoginAuthModes(loginAuthModes);
+    }
+    if (lifecycleState != null) {
+      account.setLifecycleState(
+          net.firedevops.firemud.accountservice.entity.AccountLifecycleState.fromStorageValue(
+              lifecycleState));
     }
     return account;
   }

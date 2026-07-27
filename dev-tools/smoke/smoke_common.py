@@ -21,13 +21,11 @@ def compose_postgres_container_name():
     return f"{compose_project_name}-postgres-1"
 
 
-def verify_smoke_account(account_api_base, tenant_id, username, password, timeout_seconds):
+def verify_smoke_account(account_api_base, username, password, timeout_seconds):
     payload = json.dumps(
         {
-            "tenantId": int(tenant_id),
             "username": username,
             "password": password,
-            "otp": "",
         }
     ).encode("utf-8")
     request = urllib.request.Request(
@@ -39,20 +37,17 @@ def verify_smoke_account(account_api_base, tenant_id, username, password, timeou
     for attempt in range(1, 4):
         try:
             with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-                body = response.read().decode("utf-8", errors="ignore").strip()
-                print("=== Account validation response ===")
-                print(body or "<empty>")
+                response.read()
+                print(f"Smoke account validation returned status {response.status}")
                 if response.status >= 500:
                     raise RuntimeError(
                         f"Smoke account validation returned unexpected status {response.status}"
                     )
-                return body
+                return
         except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="ignore").strip()
-            print("=== Account validation response ===")
-            print(body or "<empty>")
+            exc.read()
             raise RuntimeError(
-                f"Smoke account validation failed with status {exc.code}: {body or '<empty>'}"
+                f"Smoke account validation failed with status {exc.code}"
             ) from exc
         except OSError as exc:
             if attempt < 3:
@@ -256,7 +251,9 @@ def wait_for_incremental_response(
             if not expects_explicit_failure and any(
                 stripped.startswith(prefix) for prefix in explicit_failure_prefixes
             ):
-                if retry_upstream_failure and stripped.startswith("ERROR UPSTREAM_FAILURE"):
+                if retry_upstream_failure and stripped.startswith(
+                    ("ERROR UPSTREAM_FAILURE", "ERROR UNAVAILABLE")
+                ):
                     raise TransientUpstreamSmokeFailure(
                         f"Command failed explicitly: {stripped}"
                     )
