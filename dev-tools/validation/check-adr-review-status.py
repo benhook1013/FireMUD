@@ -18,6 +18,7 @@ REVIEW_QUEUE = (
 # These records predate the formal human-review queue. Later reviewed parcels
 # either affirm them directly or supersede them with queue-backed ADRs.
 PRE_FORMAL_REVIEW_RECORDS = set(range(1, 12))
+TERMINAL_ADR_STATUSES = {"Accepted", "Superseded", "Withdrawn"}
 ADR_PATH_RE = re.compile(r"adr-(\d{4})-.*\.md$")
 REVIEW_ROW_RE = re.compile(
     r"^- \[x\] `(?P<key>[^`]+)` — "
@@ -153,18 +154,24 @@ def validate(root: Path = ROOT) -> None:
                 "by a checked review-queue entry"
             )
 
-        if status == "Proposed - Pending Human Review":
-            if fields.get("Human review status") != "Pending":
-                fail(
-                    f"{path.relative_to(root)}: pending proposal requires "
-                    "'Human review status: Pending'"
-                )
-        elif status == "Accepted" and number not in PRE_FORMAL_REVIEW_RECORDS:
-            if not linked_reviews:
-                fail(
-                    f"{path.relative_to(root)}: accepted ADR lacks a checked "
-                    "human-review queue entry"
-                )
+        status_kind = status.split(maxsplit=1)[0]
+        if (
+            status == "Proposed - Pending Human Review"
+            and fields.get("Human review status") != "Pending"
+        ):
+            fail(
+                f"{path.relative_to(root)}: pending proposal requires "
+                "'Human review status: Pending'"
+            )
+        elif (
+            status_kind in TERMINAL_ADR_STATUSES
+            and number not in PRE_FORMAL_REVIEW_RECORDS
+            and not linked_reviews
+        ):
+            fail(
+                f"{path.relative_to(root)}: terminal ADR status lacks a checked "
+                "human-review queue entry"
+            )
 
     missing_adrs = sorted(set(reviews) - seen_numbers)
     if missing_adrs:

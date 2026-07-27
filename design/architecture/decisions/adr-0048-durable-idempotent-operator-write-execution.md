@@ -17,6 +17,10 @@ Accepted
 - Human review disposition: Revised
 - Review source: `ADMIN-01`
 
+## Implementation Status
+
+This ADR is partially implemented. Existing operator intent and forwarding paths do not yet prove durable owner idempotency, owner-result recovery, or lease-fenced reconciliation for every supported action family. The current moderation action path persists policy input and audit only; owner-side moderation enforcement remains target-state work rather than a shipped mutation path.
+
 ## Context
 
 [ADR 0047](./adr-0047-logging-admin-as-external-operator-write-ingress.md) makes Logging and Admin the external ingress for operator writes while preserving domain mutation authority. That routing choice does not by itself settle which durable record proves execution, how timeouts and retries avoid duplicate effects, or how a stable Game Session front end reaches region-owned state.
@@ -27,11 +31,11 @@ Operator writes are low-volume control-plane operations, so one durable intent r
 
 ### One Correlated Execution
 
-Logging and Admin assigns one `controlPlaneRequestId`, computes ADR 0047's versioned canonical `mutationDigest`, and durably records the requested actor, reason, scope, mutation, digest, and initial status before forwarding. If that initial durable record cannot be written, the mutation is not attempted.
+Logging and Admin assigns one `controlPlaneRequestId`, computes ADR 0047's versioned canonical `mutationDigest`, and durably records the requested actor, reason, scope, mutation, digest, and initial status before forwarding. If that initial durable record cannot be written, the mutation is not attempted. `controlPlaneRequestId` is the canonical logical request name across HTTP, Java/domain contracts, ADRs, and audit records. Protobuf contracts may use the language-standard wire spelling `control_plane_request_id`, which maps directly to that same identifier; it is not a second idempotency key.
 
-Account first issues the applicable opaque bounded operator authorization reference defined by ADR 0047. A human reference is bound to the current `control-ui` token `jti`, account generation, role-assurance result, tenant/scope, action family, actor, `controlPlaneRequestId`, `mutationDigest`, issue time, and expiry. An unattended-automation reference is instead bound to the exact workload identity, current automation-policy identity and version, tenant/scope, action family, `controlPlaneRequestId`, `mutationDigest`, issue time, and expiry; it carries no invented user or human elevation. Logging and Admin forwards that reference unchanged with the typed request, digest, and same request identifier to the authoritative domain owner. The owner:
+Account first issues the applicable opaque bounded operator authorization reference defined by ADR 0047. A human request requires the current `control-ui` identity; its reference is bound to the current token `jti`, account generation, role-assurance result, tenant/scope, action family, actor, `controlPlaneRequestId`, `mutationDigest`, issue time, and expiry. An unattended-automation reference is instead bound to the exact Logging and Admin workload mTLS identity, current versioned automation-policy identity, tenant/scope, action family, `controlPlaneRequestId`, `mutationDigest`, issue time, and expiry; it carries no invented user or human elevation. Logging and Admin forwards that reference unchanged with the typed request, digest, and same request identifier to the authoritative domain owner. The owner:
 
-- authenticates the immediate Logging and Admin workload with exact mTLS identity and redeems the reference with Account;
+- authenticates the immediate caller with the exact Logging and Admin workload mTLS identity and redeems the reference with Account;
 - authorizes the current actor and scope rather than trusting ingress-derived domain conclusions or Logging and Admin assertions;
 - validates current domain preconditions and, where applicable, the current authority generation or gameplay fence;
 - recomputes the canonical mutation digest and requires it to match the Account reference;
@@ -57,11 +61,17 @@ Operator-visible states must distinguish at least:
 
 Clients and operators must not create a fresh request identifier merely because a response timed out. Retention of idempotency results must cover the documented retry and reconciliation window for that action family.
 
+### Bounded Owner Reconciliation
+
+When a `PENDING` owner claim expires or the owner request record is missing, the current owner performs a bounded, non-mutating reconciliation before any separately authorized retry. It uses the original `controlPlaneRequestId`, `mutationDigest`, `ownerMutationId` when one exists, current lease/fencing evidence, and a fixed attempt and deadline to inspect the durable request record, mutation marker, and target version/state. It never calls a business mutator, creates a replacement authorization reference, or replays the payload as part of reconciliation.
+
+If a durable marker and target state prove that the mutation committed, the owner records or returns `COMMITTED`. If a durable terminal record proves that no mutation committed, it may return `NOT_EXECUTED`. An expired `PENDING` claim, missing owner record after dispatch, absent marker, or conflicting evidence remains `PENDING`/indeterminate; it is never converted to `NOT_EXECUTED` and never silently applied again. The bounded read-only result is the no-double-apply rule for owner recovery; a later mutation requires a new explicit operator request and authorization.
+
 ### Region-Scoped Game Session Writes
 
 A Game Session request that mutates region-scoped tick or coordination state executes at the current lease owner under the current gameplay fence. A stable front end locates and forwards to that owner; it does not mutate region-owned state itself. A stale owner or stale fence rejects the request, after which the same `controlPlaneRequestId` may be safely retried against the current owner.
 
-Owner-side admission, feature-flag, and tick control RPCs are `internal_workload` calls under this contract. Scopes or action families that cannot yet satisfy this durable, idempotent, fenced contract are rejected as unsupported rather than implemented through a weaker direct-write path. Current moderation enforcement and quota override owner contracts remain coverage drift until their routes and owner APIs exist.
+Owner-side admission, feature-flag, and tick control RPCs are `internal_workload` calls under this contract. Scopes or action families that cannot yet satisfy this durable, idempotent, fenced contract are rejected as unsupported rather than implemented through a weaker direct-write path. The current moderation endpoint persists policy input and audit only; moderation enforcement and quota override owner contracts remain coverage drift until their routes and owner APIs exist.
 
 ### Redis-Backed Owner Mutations
 
@@ -69,7 +79,7 @@ Coordination Redis is a volatile projection, not the durable owner of an operato
 
 The current lease owner applies the projection through one registered Lua script that validates the current lease/fencing token, expected target version, and `ownerMutationId`, then atomically writes the desired Redis state and its mutation marker. A duplicate with the same request and digest returns the existing marker/result; a different digest or stale owner is rejected without mutation. The owner records `COMMITTED` only after the marker and desired state are read back under the current fence. `NOT_EXECUTED` is allowed only when the owner can prove that no mutation marker or target-state change committed under this request; an absent or ambiguous marker remains `PENDING`/indeterminate.
 
-Crash and ownership recovery use the same durable record and request identity. A crash before the Redis script leaves the claim retryable; a crash after the script but before terminal-result persistence is reconciled by the current lease owner from the mutation marker and target version, not by blindly issuing a new mutation. Lease loss fences the old owner from both the Redis script and durable terminal commit; after lease expiry, the new owner may reclaim the durable claim and reconcile or safely retry the same `ownerMutationId`. A Redis reset or lost projection is repaired from the durable desired mutation and does not create a new operator effect. No terminal result may claim `NOT_EXECUTED` while an old owner could still commit, and no `COMMITTED` result may depend on an unreconciled Redis mutation.
+Crash and ownership recovery use the same durable record and request identity. A crash before the Redis script leaves the claim retryable; a crash after the script but before terminal-result persistence is reconciled by the current lease owner from the mutation marker and target version, not by blindly issuing a new mutation. Lease loss fences the old owner from both the Redis script and durable terminal commit; after lease expiry, the new owner must perform the bounded read-only reconciliation above before any separately authorized retry of the same `ownerMutationId`. A Redis reset or lost projection is repaired from the durable desired mutation and does not create a new operator effect. No terminal result may claim `NOT_EXECUTED` while an old owner could still commit, and no `COMMITTED` result may depend on an unreconciled Redis mutation.
 
 ### Availability Boundary
 

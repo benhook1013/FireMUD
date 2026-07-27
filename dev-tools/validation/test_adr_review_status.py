@@ -110,8 +110,46 @@ class AdrReviewStatusTests(unittest.TestCase):
             )
             expect_failure(
                 lambda: self.validator.validate(root),
-                "accepted ADR lacks a checked human-review queue entry",
+                "terminal ADR status lacks a checked human-review queue entry",
             )
+
+    def test_all_terminal_statuses_require_checked_review(self) -> None:
+        for status in ("Accepted", "Superseded by ADR 0099", "Withdrawn"):
+            with self.subTest(status=status), fixture_root() as fixture:
+                root = Path(fixture)
+                path = root / "design/architecture/decisions/adr-0013-pending.md"
+                path.write_text(
+                    path.read_text(encoding="utf-8").replace(
+                        "Proposed - Pending Human Review", status
+                    ),
+                    encoding="utf-8",
+                )
+                expect_failure(
+                    lambda: self.validator.validate(root),
+                    "terminal ADR status lacks a checked human-review queue entry",
+                )
+
+    def test_checked_review_provenance_accepts_all_terminal_statuses(self) -> None:
+        for status in ("Accepted", "Superseded by ADR 0099", "Withdrawn"):
+            with self.subTest(status=status), fixture_root() as fixture:
+                root = Path(fixture)
+                path = root / "design/architecture/decisions/adr-0012-reviewed.md"
+                path.write_text(
+                    path.read_text(encoding="utf-8").replace("Accepted", status),
+                    encoding="utf-8",
+                )
+                self.validator.validate(root)
+
+    def test_pre_formal_terminal_statuses_are_exempt(self) -> None:
+        for status in ("Accepted", "Superseded by ADR 0099", "Withdrawn"):
+            with self.subTest(status=status), fixture_root() as fixture:
+                root = Path(fixture)
+                path = root / "design/architecture/decisions/adr-0001-legacy.md"
+                path.write_text(
+                    path.read_text(encoding="utf-8").replace("Accepted", status),
+                    encoding="utf-8",
+                )
+                self.validator.validate(root)
 
     def test_checked_review_requires_completed_metadata(self) -> None:
         with fixture_root() as fixture:

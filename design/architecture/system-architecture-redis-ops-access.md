@@ -144,14 +144,19 @@ The tool advertises and accepts only scope forms implemented and proved by the r
 - Scope exceptions:
   - The shared Gateway replay domain (`gateway:connect-token:jti:<jti>` and `replayAdmissionFence`) is intentionally not tenant- or region-tagged and is not modified by region- or tenant-scoped coordination resets. Only a Coordination Redis replay-continuity loss trigger, including a cluster-domain reset that invalidates the shared replay state, may apply the gameplay-connect quarantine of 30 seconds plus two configured clock-skew intervals.
   - Region- and tenant-scoped coordination resets preserve Account-owned `session:auth:token:<tokenHash>` records and the shared Gateway replay domain. A cluster-scoped reset must invalidate those records as part of the documented Account repair/reset cutover and replay-readiness recovery; protected traffic remains closed until that cutover and the required re-registration/reauthentication complete. This policy is independent of `--preserve-sessions`.
+- Maintenance-lock token contract:
+  - `maintenanceLockToken` is accepted only as the server-issued capability described in [`system-architecture-redis-operations.md`](./system-architecture-redis-operations.md); it is not a caller-supplied assertion of operation, environment, scope, or operator identity.
+  - Every internal mutating phase after lock acquisition must present the returned `operationId` and `maintenanceLockToken` with the authenticated operator principal. The control plane must resolve the token against the durable active operation record and validate the environment/deployment boundary, operation, scope, compatibility class, operator, expiry, and current phase before mutating state.
+  - Reuse of a token is limited to the same active operation's durable retry/phase records. Duplicate requests return their recorded result without repeating external effects; stale, expired, terminal, or mismatched requests fail closed.
 - Scope inventory source:
   - The authoritative affected-region set comes from the durable Game Session control/status store, not Redis key enumeration.
   - The first fully region-scoped implementation must use a PostgreSQL-backed `RegionStatus` or equivalent runtime ownership table as the inventory source for every tenant and cluster operation.
-  - The affected-region snapshot is taken after the recover operation's internal pause-and-lock phase blocks new command intake, batch allocation, and region creation for the selected scope; later-created regions are rejected or queued until the maintenance operation completes.
+  - The selected scope's region-creation fence is installed in durable controller state before the final affected-region snapshot. Region creation admission and the fence use one durable transaction or equivalent CAS on a monotonic scope generation: a creation that wins before the fence is committed is included in the snapshot, while a fence that wins first rejects or queues the creation. The final snapshot records that generation and the immutable region inventory; no region can be created under the fenced generation and then be omitted from the operation.
+  - The affected-region snapshot is taken only after the recover operation's internal pause-and-lock phase blocks new command intake and batch allocation and the creation fence is committed; later-created regions are rejected or queued until the maintenance operation completes.
   - Tenant scope includes every active, paused, degraded, stalled, or draining region owned by that tenant at the inventory snapshot.
   - Cluster scope includes every active, paused, degraded, stalled, or draining region assigned to the Coordination Redis deployment at the inventory snapshot.
   - Redis `SCAN` is used only to enumerate keys for deletion/inspection after the durable scope has been established; it must not decide which regions exist.
-  - Commands that auto-discover epoch maps must derive them from the same durable affected-region snapshot and emit that snapshot in audit output.
+  - Commands that auto-discover epoch maps must derive them from the same immutable affected-region snapshot and scope generation and emit both in audit output.
 - Epoch arguments are scope-dependent and use one typed contract across the control plane and CLI: region scope accepts scalar `oldRegionEpoch`/`regionEpoch`; tenant and cluster scopes accept `oldRegionEpochMap`/`regionEpochMap` containing one entry for every region in the durable affected-region snapshot. `RunScopedCoordinationReset(scope)` does not accept a caller-supplied epoch; it must return the corresponding scalar old/new epoch evidence for region scope or complete old/new epoch maps for tenant/cluster scope, and all downstream reconcile, command-convergence, metadata-initialization, and session-rebind calls consume that exact evidence. A map must never be collapsed to one scalar, and a scalar must never be reused for multiple regions.
 - Internal recovery phase contract:
   - The following detailed phase semantics apply inside the high-level `recover` workflow. Equivalent internal methods or resumable steps may implement them; names and option spellings shown here are descriptive and are not public compatibility requirements. References to scope mean one of the forms the runtime currently advertises as supported.
@@ -160,7 +165,7 @@ The tool advertises and accepts only scope forms implemented and proved by the r
     - consumes the recover request's optional `--operation <backup|restore|reset|migration|topology-change>` value as the canonical maintenance-lock compatibility class; `session-schema-cleanup` derives the internal `cleanup` compatibility class from `--mode` and does not accept a separate cleanup operation flag. `backup` is reserved for exceptional backup-related maintenance that actually pauses or mutates coordination state.
     - acquires the deployment maintenance lock for the recover workflow's multi-step restore, reset, cleanup, migration, topology-changing scaling, and exceptional backup-related maintenance work. Routine online PostgreSQL backup neither invokes recovery nor pauses ticks.
     - blocks until the scope reaches the control-plane `PAUSED` state or exits non-zero on timeout/failure.
-    - must emit a `maintenanceLockToken` plus the resolved affected-region inventory in audit output; later internal phases in the same workflow consume that token rather than reacquiring the lock independently.
+    - must emit the `operationId`, server-issued `maintenanceLockToken`, immutable resolved affected-region inventory, and scope generation in audit output; later internal phases in the same workflow consume those values rather than reacquiring the lock independently.
   - `coordination-maintenance status` (public read-only control)
     - accepts an advertised supported scope.
     - returns the control-plane status payload defined below for every affected region.
@@ -193,8 +198,9 @@ The tool advertises and accepts only scope forms implemented and proved by the r
     - accepts either `--region-epoch <epoch>` for `--scope region` or `--region-epoch-map <path>` for tenant/cluster scopes.
     - is permitted when the reset's effective session policy preserved sessions: this is the default for region scope, while tenant and cluster scopes require the recorded `--preserve-sessions` choice and any required deployment-policy approval. It recreates region-authoritative bindings from the durable affected-session inventory and must refresh the same maintenance lock rather than acquiring another lock.
   - Internal session-cleanup phase
+    - is owned by the bounded high-level `recover` operation; `session-cleanup` is an internal phase, not a public operation or command. Its continuation, abort, and release behavior use the parent operation's durable identity and lock lifecycle.
     - accepts only `--scope tenant --tenant <tenantId>` in first implementation; broader cleanup scopes are out of contract until explicitly designed.
-    - requires `--maintenance-lock-token <token>`.
+    - requires `--operation-id <operationId>` and `--maintenance-lock-token <maintenanceLockToken>`.
     - accepts `--dry-run`, `--resume-token <token>`, `--batch-size <n>`, and `--max-runtime-seconds <n>`.
     - walks only the documented tenant-scoped gameplay-session and bootstrap/session-context families for that tenant, using bounded `SCAN` windows and `UNLINK` where applicable.
     - must emit structured progress and completion audit output containing the tenant, prefixes visited, scanned count, deleted count, continuation or resume token, and the concrete abort/completion reason.
@@ -289,6 +295,7 @@ The recover operation's internal `PauseTicks` phase, `GetRegionTickStatus`, and 
   - `DEGRADED`
   - `STALLED`
 - Internal `PauseTicks(operationId, scope, maintenanceLockToken)` phase required behavior:
+  - Install the durable region-creation fence and scope generation before taking the final affected-region snapshot; the fence/CAS rule above defines which racing creation is included or deferred.
   - Reject new gameplay command intake for the scope before returning `PAUSED`.
   - Prevent new durable tick-batch allocation for the scope before returning `PAUSED`.
   - Wait for any in-flight executor work in the scope to drain, fail, or lose lease so no executor can create new coordination state under the old epoch.

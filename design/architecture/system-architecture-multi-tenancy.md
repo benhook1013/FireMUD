@@ -31,6 +31,16 @@ FireMUD separates **global identity** from **per-game state** so that one person
 - **Auth token session** – A short-lived issued-token registry record (`session:auth:token:<tokenHash>`) backing a revocable JWT for meta/control or admission APIs, as described in [Authentication & Authorization](./system-architecture-authentication.md#session-and-identity-management).
 - **Control-plane browser session** – A front-end admin/creator UI session that holds short-lived JWTs in memory and relies on auth token sessions on the server; these are distinct from gameplay sessions and are described in the Frontend Architecture and Authentication designs.
 
+### Authority Generations Across Tenant States
+
+Account Service owns the issuer, account, tenant, and caller-bound membership authority generations and their projections. Advancing `session:auth:generation:tenant:<tenantId>` revokes regular and gameplay-affecting tenant authority only; it does not revoke the specifically preserved billing- or support-safe authorities:
+
+- `billing_safe_tenant` uses the Account-owned caller-bound `{accountId, tenantId}` membership authority generation and a live `tenantAdmin` check, so it remains reachable during billing suspension or cancellation but fails after that membership or role is revoked.
+- `cross_tenant_support_safe` uses current Account-owned issuer/account authority, a live global `support` role, and global token scope; it does not use the revoked tenant generation and remains limited to high-level troubleshooting-safe data.
+- `cross_tenant_billing_safe` uses current Account-owned issuer/account authority, a live global `billingAdmin` role, global token scope, and the required `privileged_control` window; it does not use the revoked tenant generation.
+
+If Account authority or its required projection is unavailable, the operation fails closed with retryable `AUTH_UNAVAILABLE`. UI clients retain in-memory state for retry, but no cached JWT role, membership, generation, or allowlist result is authorization.
+
 ### Realm State Model
 
 Tenant membership, tenant roles, and character ownership answer "which game does this account belong to?" They do not imply that every realm inside a tenant shares one undifferentiated set of gameplay state.
@@ -78,6 +88,7 @@ This model underpins both authentication and authorization:
 - Authentication always resolves a single platform `accountId`.
 - Tenant-scoped control-plane authorization combines the authenticated `accountId` with tenant-scoped roles from `scopedRoles[tenantId]`, plus any cross-tenant `globalRoles` such as `platformAdmin`, as described in [Authentication & Authorization](./system-architecture-authentication.md).
 - Gameplay admission is stricter: player-facing `WORLDS` / `REALMS` / `CHARS` / `PLAY` selection uses caller-bound tenant membership, public-production admission policy, and entitlement checks, and global roles alone do not grant gameplay admission.
+- Public-production `JOIN` is the only pre-membership tenant action. It is an explicit Account-owned membership write; character creation, connect-token issuance, and `PLAY` require the resulting caller-bound membership and never create it implicitly.
 - Player-facing world visibility in v1 has two sources:
   - existing caller-bound tenant membership for any visible realm the caller is allowed to enter, and
   - public-production discovery for tenants whose explicit public-production realm is live and gameplay-admissible.

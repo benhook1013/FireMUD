@@ -28,7 +28,7 @@ The design must also distinguish a new real-money charge from spending an existi
 
 Ordinary Telnet/gameplay login and ordinary HTTPS account/control login use the factors selected for the account: `PASSWORD`, verified `EMAIL_OTP`, or both.
 
-FireMUD does not prompt for a password or TOTP during gameplay and does not perform per-command reauthentication. An authenticated gameplay session does not thereby become an elevated account/control session.
+Gameplay `LOGIN` is ordinary authentication only. After it succeeds, FireMUD does not prompt for another password, verified email code, or TOTP during the active gameplay session, does not perform per-command reauthentication, and does not elevate the gameplay session into an account/control session. A reconnect `LOGIN` restores or rebinds gameplay only when the separate gameplay-session checks permit it; it is not an elevation mechanism.
 
 ### HTTPS-only sensitive actions
 
@@ -86,7 +86,7 @@ Rejected as the only mechanism because an explicit, bound handoff preserves the 
 Focused contract and integration proof must demonstrate that:
 
 - ordinary Telnet and HTTPS login honor the account-selected `PASSWORD` and/or verified `EMAIL_OTP` policy;
-- gameplay commands cannot solicit password or TOTP input or acquire elevated control-plane authority;
+- an active gameplay session cannot solicit another ordinary factor, TOTP, or elevated control-plane authority;
 - sensitive routes reject absent or stale ordinary reauthentication and keep their mutations HTTPS-only;
 - `platformAdmin` and cross-tenant `billingAdmin` elevation require independent TOTP before a bounded elevated window is issued;
 - a handoff is opaque, non-authorizing, short-lived, single-use, bound to every declared field, and safe against replay or parameter substitution;

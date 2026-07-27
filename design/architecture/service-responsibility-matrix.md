@@ -69,14 +69,14 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Game moderation policy definition | | | | | | | | | ✔ | | |
 | Moderation policy propagation contract (versioning, invalidation, bounded staleness, and audit context) | | | | ✔ | | | | ✔ | ✔ | | |
 | Subscription entitlements and plan-driven quota values (`GetTenantEntitlements`) | | | ✔ | | | | | | | | |
-| Operator quota overrides, auditing, and dashboards (overlay on entitlements) | | | | | | | | | ✔ | | |
+| Operator quota overrides, auditing, and dashboards (target-state coverage drift; overlay on entitlements; no current Account owner route) | | | | | | | | | ✔ | | |
 | Enforcement of gameplay bans at login/command level | | | | ✔ | | | | | | | |
 | Enforcement of chat mutes/bans at message send time | | | | | | | | ✔ | | | |
 | Authoritative owner: gameplay-ban enforcement (policy remains Logging & Admin-owned) | | | | ✔ | | | | | | | |
 | Authoritative owner: chat mute/chat-ban enforcement (policy remains Logging & Admin-owned) | | | | | | | | ✔ | | | |
 | Movement/location write contract orchestration (effect identity, order, and replay safety) | | ✔ | | ✔ | ✔ | ✔ | | | | | |
 | Instance termination orchestration (`PREPARING/ACTIVE/TERMINATING/TERMINATED`) and cross-service cleanup | | ✔ | | ✔ | ✔ | | | | ✔ | | |
-| Automated tick/coordination remediation (pause/resume/reset) | | | | ✔ | | | | | ✔ | | |
+| Automated tick/coordination remediation (live `PauseTicks`/`ResumeTicks`; broader reset/remediate is target-state coverage drift) | | | | ✔ | | | | | ✔ | | |
 | Game asset publishing & object storage | ✔ | | | | | | | | | | |
 | Asset deletion eligibility oracle (`CanDeleteVersionAssets`) | ✔ | | | | | | | | ✔ | | |
 | Asset purge control-plane workflow (`BeginPurgeVersionAssets` / `FinalizePurgeVersionAssets`) | ✔ | | | | | | | | ✔ | | |
@@ -123,7 +123,7 @@ These ownership boundaries are normative per `design/architecture/decisions/adr-
 - **Movement hot-path exception** – The overview’s two-downstream-service ceiling has one explicit initial-slice exception for movement and region-transition orchestration: Game Session may synchronously coordinate Game Logic, World Management, and Entity Management under one fenced tick/effect contract. This exception is valid only with the overview’s documented budget/fallback contract and must not expand to additional participants without a new architecture decision.
 - **Canonical room-state read fence** – World Management emits the canonical room-read fence on `GetRoomSnapshot`; Game Logic orchestrates same-fence room-view composition by comparing the World fence with the Entity Management room-entity fence and composing the `LookResult` only when both reads align. Game Session owns request initiation, ordering, and transcript rendering/cache behavior, but it is not the downstream read orchestrator for `GetRoomSnapshot` plus `ListRoomEntities`. See the canonical room runtime contract in `design/architecture/system-architecture-overview.md`.
 - **Item command runtime split** – Game Session owns text-session ingress and transcript rendering for player item commands; Game Logic owns the gameplay-facing item command RPC seam; Entity Management remains authoritative for item/container/equipment persistence, holder mutation, validation, and transfer audit writes.
-- **Tick remediation split** – Logging & Admin owns operator-facing remediation APIs, automation policy, and audit trail; Game Session owns all tick/coordination state mutation and executes pause/resume/remediation control actions through its control-plane APIs.
+- **Tick remediation split** – Logging & Admin owns the live operator-facing pause/resume ingress, future remediation APIs, automation policy, and audit trail; Game Session owns all tick/coordination state mutation. Broader reset/remediate actions remain target-state coverage drift until the owner APIs exist.
 - **Replacement-instance compatibility preflight** – Game Session owns `ValidateInstanceCutoverCompatibility` orchestration and result semantics; Game Design, World, Entity, Automation, and Logging/Admin participate as dependency and policy providers for checks.
 - **Moderation policy propagation** – Logging & Admin owns gameplay/chat moderation policy definition and audit trail; Game Session and Social & Groups enforce policy using versioned policy snapshots/events with monotonic invalidation per `{tenantId, policyScope}`, bounded cache staleness, pull-on-miss refresh, and fail-closed behavior for `gameplay_ban` and `chat_ban` when no fresh snapshot is available within the allowed window. See the canonical moderation propagation contract in `design/architecture/system-architecture-overview.md`.
 - **Ban taxonomy** – Account owns account-security bans and auth authority-generation advances; Logging & Admin owns gameplay/chat moderation ban policy definitions; Game Session and Social & Groups are enforcement owners for gameplay and chat scopes respectively.

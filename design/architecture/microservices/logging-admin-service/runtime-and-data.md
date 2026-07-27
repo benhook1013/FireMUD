@@ -28,6 +28,10 @@ The current shipped scope is narrower than this target contract:
 - The current moderation action path persists policy input only; no owner-side enforcement RPC is exposed, so that downstream owner-call requirement is coverage drift rather than a claimed implementation.
 - The core/observability availability split is a design contract; exact independent deployment and pool isolation remain implementation obligations rather than a claim that every backend integration is already isolated in production.
 
+Operator write requests use one canonical logical `controlPlaneRequestId` across HTTP, Java/domain contracts, ADRs, and audit records. Protobuf contracts may use the wire spelling `control_plane_request_id`, which maps directly to that same identifier. Human requests require the current `control-ui` identity; unattended remediation requires the exact Logging and Admin workload mTLS identity plus an Account-validated, versioned automation-policy authorization reference, and neither path may substitute the other's identity.
+
+Owner reconciliation for an expired `PENDING` claim or missing owner record is bounded and read-only: the current owner inspects the original request ID, digest, owner mutation marker, lease/fence, and target version/state within a fixed attempt and deadline. It does not call a business mutator, create new authorization, or replay a payload. A proven terminal commit may be recorded as committed; durable proof of no mutation may be `NOT_EXECUTED`; missing or conflicting evidence remains `PENDING`/indeterminate so recovery cannot double-apply a write.
+
 In addition to log and moderation tooling, the service acts as a control-plane coordinator for tick and coordination health:
 
 - Consumes metrics and health information published by the Game Session Service (for example, per-region status such as `HEALTHY`, `DEGRADED`, or `COORDINATION_UNTRUSTWORTHY`).
@@ -44,7 +48,7 @@ Operator and support diagnostics do not impersonate a player, attach to a live p
 
 - gRPC connections to this service require mTLS. JWT validation is required for admin or user-facing endpoints; internal gameplay and system calls are authenticated solely via mTLS.
 - The security model uses JWT roles plus network-layer isolation: admin endpoints are reachable only through Gateway/internal management surfaces and namespace/network-policy controls, not direct public exposure.
-- All admin APIs are secured via role-based access control integrated with the Account Service.
+- All admin APIs are secured via role-based access control integrated with the Account Service. Human operator writes require the current `control-ui` identity; unattended remediation uses the exact Logging and Admin mTLS identity and a versioned automation-policy authorization reference rather than a human token.
 - Moderation data and log indices include a `tenantId` field so administrators only see information for the games they manage. Cross-tenant queries are rejected per the [Multi-Tenancy](../../system-architecture-multi-tenancy.md) strategy.
 - The service utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
@@ -59,7 +63,7 @@ The core operator control plane must remain available when Elasticsearch, Promet
 
 The architecture treats these as two runtime partitions even when they are delivered from one deployable:
 
-- Core control-plane endpoints include moderation actions, feature-flag controls, reports, saga inspection, admission-pointer reads/audit/preparation/cutover/same-target mutations, and live tick-remediation pause/resume APIs. These paths must not block on Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager for request success. Quota override and broader remediation are not current endpoints and remain coverage drift.
+- Core control-plane endpoints include moderation policy-input persistence actions, feature-flag controls, reports, saga inspection, admission-pointer reads/audit/preparation/cutover/same-target mutations, and live tick-remediation pause/resume APIs. These paths must not block on Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager for request success. Quota override and broader remediation are not current endpoints and remain coverage drift.
 - Observability-backed endpoints include log search, embedded dashboards, traces, metric exploration, and alert investigation views. These paths may degrade independently or return explicit backend-unavailable states.
 - Readiness and degradation reporting must distinguish these partitions so an observability outage does not mark the entire operator service unavailable.
 - Thread pools, connection pools, and timeout budgets for observability integrations must be isolated from the core control plane so expensive search/dashboard failures cannot starve moderation or remediation requests.
@@ -85,7 +89,8 @@ Logging & Admin does not write to Redis directly and does not define a competing
 ## Moderation Workflow
 
 - Operators review flagged logs through the web UI.
-- Actions such as bans or warnings are issued via secured API calls.
+- The current `POST /moderation/actions` path validates and persists policy input and audit data only; it does not invoke an owner-side enforcement RPC.
+- The target path propagates a versioned moderation policy to the owning enforcement service, which validates and commits the authoritative runtime effect.
 - Enforcement follows the ban taxonomy:
   - `account_security_ban` events are applied by Account Service.
   - `gameplay_ban` events are enforced by Game Session Service.

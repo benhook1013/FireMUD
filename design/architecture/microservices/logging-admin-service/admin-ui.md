@@ -13,7 +13,7 @@ and permissions are enforced using the `globalRoles` claim. The
 ## Features
 
 - Search and filter logs with Kibana-like syntax.
-- Review player reports and apply moderation actions.
+- Review player reports and record moderation policy actions. The current moderation endpoint persists policy input and audit only; owner-side enforcement is a target-state path.
 - Toggle runtime feature flags for a specific tenant.
 - Issue tick-remediation pause and resume requests for operator-approved scopes.
 - Inspect saga workflows and view step details.

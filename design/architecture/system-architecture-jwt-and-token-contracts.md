@@ -34,6 +34,8 @@ Bulk revocation (for example “logout all devices”, account bans, membership 
 - `session:auth:generation:tenant:<tenantId>` – regular tenant authority, advanced for tenant-wide gameplay/billing cutoff.
 - `session:auth:generation:membership:<accountId>:<tenantId>` – caller-bound tenant authority, advanced when membership or tenant roles change.
 
+Tenant-generation revocation applies only to regular and gameplay-affecting tenant authority. `billing_safe_tenant` remains authorized by the Account-owned caller-bound `{accountId, tenantId}` membership authority generation plus a live `tenantAdmin` check. `cross_tenant_support_safe` remains authorized by current Account-owned issuer/account authority, a live global `support` role, and global token scope. `cross_tenant_billing_safe` remains authorized by the corresponding Account-owned issuer/account authority, a live global `billingAdmin` role, global token scope, and the required `privileged_control` window. These routes do not use cached authorization.
+
 Authority-generation contract requirements:
 
 - Account Service owns durable current generations and is the sole writer of their Coordination Redis projections.
@@ -53,7 +55,7 @@ Coordination Redis outage behavior follows [ADR 0037](./decisions/adr-0037-fail-
 - **Gameplay admission (`LOGIN` / lobby selection via `PLAY`)** – New admissions fail closed while Coordination Redis is unavailable because allowlist and gameplay session binding state cannot be established reliably.
 - **Already-entered gameplay sessions** – Ongoing gameplay behavior follows the Redis outage/degradation policy defined in [Redis Architecture](./system-architecture-redis.md) and [Redis Operations & Migrations](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence). Game Session must not “assume authorization” in the absence of Redis; if coordination state needed to process commands safely is unavailable, it must degrade or halt according to the Redis policy instead of inventing local-only session authority.
 
-- **Unavailable versus revoked** - Unreachable registry or authority-generation state returns retryable AUTH_UNAVAILABLE / HTTP 503 and does not tell clients to discard authentication. Reachable missing, deleted, expired, malformed, or mismatched authority returns AUTH_SESSION_REVOKED or the specific invalid-token outcome and requires reauthentication.
+- **Unavailable versus revoked** - Unreachable registry or authority-generation state returns retryable AUTH_UNAVAILABLE / HTTP 503 and does not tell clients to discard authentication. The UI may retain in-memory auth state for retry, but the failed operation remains denied and no cached JWT role, membership, generation, or allowlist result may authorize it. Reachable missing, deleted, expired, malformed, or mismatched authority returns AUTH_SESSION_REVOKED or the specific invalid-token outcome and requires reauthentication.
 
 ## JWT Format and Role Claims
 

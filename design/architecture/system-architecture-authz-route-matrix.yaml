@@ -134,11 +134,6 @@ role_assurance:
         role_check: current_global_role
         elevation_contract: none
         allowed_classifications: [cross_tenant_support_safe]
-  platformAdmin:
-    elevation_contract: privileged_control
-  billingAdmin:
-    elevation_contract: privileged_control
-    when_scopes: [cross_tenant]
 elevation_contracts:
   privileged_control:
     entry_route: account-service/EnterPrivilegedControlWindow
@@ -147,6 +142,17 @@ elevation_contracts:
     state: server_side_role_scoped_window
     required_bindings: [account_id, token_jti, account_generation, requested_global_role, issued_at, expires_at]
     invalidated_by: [token_revocation, account_generation_change, role_loss, expiry]
+pending_deletion_contract:
+  validator: account_service_pending_deletion_credential_validator
+  credential: pending-deletion-access
+  registry: account-owned_server-side_pending_deletion_credential_registry
+  binding: [account_id, deletion_workflow_id, issued_at, expires_at]
+  allowed_actions: [status, cancel, export, necessary_billing_settlement]
+  normal_authority: rejected
+  rejection:
+    invalid_expired_or_revoked: AUTH_SESSION_REVOKED
+    unavailable: AUTH_UNAVAILABLE
+    account_state_disclosure: prohibited
 operator_delegation:
   issuer_service: account-service
   credential: opaque_bounded_operator_authorization_reference
@@ -792,6 +798,8 @@ routes:
     pending_deletion_workflow_binding: required
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry]
     response_profile: deletion_status_only
+    canonical_errors:
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
   - service: account-service
     route: POST /accounts/{accountId}/deletion/cancel
     scope: account
@@ -805,6 +813,8 @@ routes:
     pending_deletion_workflow_binding: required
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, cancellation_window]
     mutation_contract: cancel_deletion_revoke_pending_access_then_restore_normal_generation
+    canonical_errors:
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
   - service: account-service
     route: GET /accounts/{accountId}/deletion/export
     scope: account
@@ -818,6 +828,8 @@ routes:
     pending_deletion_workflow_binding: required
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry]
     response_profile: asynchronous_versioned_cross_owner_export_manifest
+    canonical_errors:
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
   - service: account-service
     route: POST /accounts/{accountId}/deletion/billing-settlement
     scope: account
@@ -831,6 +843,8 @@ routes:
     pending_deletion_workflow_binding: required
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, settlement_scope]
     response_profile: necessary_billing_settlement_only
+    canonical_errors:
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
   - service: account-service
     route: POST /auth/pending-deletion/recovery/challenge
     scope: public

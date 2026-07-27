@@ -32,6 +32,8 @@ The Game Session Service exposes `/sessions/{sessionId}/refresh-roles` for manua
 
 This process is invisible to the client; no re-login is needed.
 
+This is backend role-context maintenance only. It does not prompt for another gameplay factor, reauthenticate the active gameplay session, or turn global account/control-plane roles into gameplay authority.
+
 Membership changes that affect tenant access follow a stricter contract than ordinary role refresh:
 
 1. The Account Service emits a membership-change event containing `accountId`, `tenantId`, `membershipVersion`, `membershipAuthorityGeneration`, the changed role set, and whether gameplay admission remains allowed.
@@ -137,7 +139,7 @@ When an `auth-revoked` result reaches a currently connected gameplay binding, Ga
 
 ### Active Session Token Refresh (Required)
 
-Long-lived gameplay sessions require periodic rotation of the private `game-session-account-delegation` JWT used for Account calls. Gameplay clients never receive it, and gameplay-domain authorization continues to use the mTLS workload and typed execution-context contract rather than adding token refresh to each gameplay RPC. Game Session must:
+Long-lived gameplay sessions require periodic rotation of the private `game-session-account-delegation` JWT used for Account calls. Gameplay clients never receive it, and gameplay-domain authorization continues to use the mTLS workload and typed execution-context contract rather than adding token refresh to each gameplay RPC. This backend token rotation is service maintenance, not active-gameplay reauthentication or elevation: the player supplies no additional factor and the gameplay session does not acquire account or control-plane authority. Game Session must:
 
 1. Schedule planned refresh at approximately 50% of the current JWT lifetime with random jitter, but always before `exp` by the configured safety margin. A 60-second minimum interval may throttle repeated attempts only when enough validity remains; it must never postpone the final safe refresh beyond expiry.
 2. Single-flight concurrent refresh demand for the same binding. A transient failure while the current token remains valid retries with bounded jittered backoff and does not rewrite gameplay continuity deadlines.
@@ -174,7 +176,7 @@ Subscription and billing state drives how aggressively sessions are revoked:
     - New player logins and tenant-selection attempts for that tenant are rejected with a dedicated billing error code.
   - Existing gameplay authority is revoked. Game Session sends one bounded, non-sensitive game-unavailable notice, stops further gameplay admission, closes connected sockets, and prevents reconnect into that tenant. The notice flush is not a continuation grace period.
   - Instance processes may then use the separate five-minute maximum drain window for internal cleanup; they are not player-admissible during that drain.
-  - Tenant-scoped authorization must be bulk-revoked by advancing the Account-owned tenant authority generation and projecting `session:auth:generation:tenant:<tenantId>` set-if-greater. Downstream services must not write Account authority state or the generation key directly. Services must not rely on wildcard token-record scans or deletes in hot paths. Billing-safe and support-safe control-plane routes, including tenant-scoped export, remain available as described in [Subscription Management](./microservices/account-service/subscription-management.md#tenant-availability-and-quota-enforcement).
+  - Tenant-scoped authorization must be bulk-revoked by advancing the Account-owned tenant authority generation and projecting `session:auth:generation:tenant:<tenantId>` set-if-greater. Downstream services must not write Account authority state or the generation key directly. Services must not rely on wildcard token-record scans or deletes in hot paths. `billing_safe_tenant` remains reachable only through the Account-owned caller-bound `{accountId, tenantId}` membership authority generation and live `tenantAdmin` check. `cross_tenant_support_safe` survives through current Account-owned issuer/account authority, the live global `support` role, and global token scope; `cross_tenant_billing_safe` survives through the corresponding Account-owned issuer/account authority, live global `billingAdmin` role, global token scope, and required `privileged_control` window. None of these routes may use cached authorization.
 
 Entitlement evaluation is not routine gameplay action authorization. Existing uninterrupted sessions continue without per-action Account/cache reads until a hard billing event or another owning revocation rule ends them.
 
@@ -215,7 +217,7 @@ Control-plane UIs must treat certain auth failures as hard logout conditions and
 - Meta/control APIs that rely on JWTs return canonical error codes such as:
   - `AUTH_TOKEN_EXPIRED` – The presented JWT is no longer valid because its cryptographic lifetime has ended. Frontends must clear any in-memory token, redirect to login, and display a "Session expired" message.
   - `AUTH_SESSION_REVOKED` – The JWT’s auth token sessions have been revoked due to a security event (for example, password reset, account ban, or "logout all devices"). Frontends must clear in-memory token state, redirect to login, and indicate that the session was ended for security reasons.
-  - `AUTH_UNAVAILABLE` – Issued-token or auth-generation authority could not be reached. Frontends keep in-memory auth state, show retriable availability feedback, and use bounded backoff rather than converting the outage into logout.
+  - `AUTH_UNAVAILABLE` – Issued-token or auth-generation authority could not be reached. Frontends keep in-memory auth state, show retriable availability feedback, and use bounded backoff rather than converting the outage into logout. The failed operation remains denied; no cached JWT role, membership, generation, or allowlist result may authorize it.
   - `TENANT_BILLING_BLOCKED` – The operation is blocked because the tenant’s billing state (for example, `suspended` or `canceled`) does not allow the requested action. Frontends must keep the user logged in but surface a billing-specific banner or UI state for that tenant and disable gameplay and instance-management actions while still allowing the billing-safe control-plane surface (for example, updating payment details or exporting tenant-scoped data).
   - `MEMBERSHIP_AUTH_UNAVAILABLE` – Billing-safe mutation authorization could not be established from live membership authority. Frontends keep auth state, show retriable availability feedback, and block billing-safe mutations until authority recovers.
   - `ADMISSION_POINTER_UNAVAILABLE` – Gameplay admission pointer state is unavailable or ambiguous. Frontends keep auth state and retry admission with bounded backoff instead of logging out.

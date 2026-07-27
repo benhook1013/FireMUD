@@ -17,6 +17,10 @@ Accepted
 - Human review disposition: Revised
 - Review source: `SEC-04`
 
+## Implementation Status
+
+This ADR is partially implemented. Logging & Admin has the current operator-facing moderation, report, and coordination surfaces, but the complete owner-forwarding, durable idempotency, and proof boundary is not implemented for every action family. In particular, the current moderation action path persists policy input and audit only; it does not invoke an owner-side enforcement RPC. The versioned policy-propagation and owner-enforcement path below remains target-state work.
+
 ## Context
 
 Operator actions need one predictable external security and audit boundary without moving authoritative domain state into an administration service. Allowing every domain service to expose independent operator-write APIs would multiply authorization, audit, and failure contracts. Making dashboards or observability stores part of write success would make remediation unavailable during the incidents when operators need it most.
@@ -41,13 +45,15 @@ The domain owner alone validates domain facts and commits authoritative state. L
 
 ### Bounded Owner Delegation
 
-Account Service is the authority for operator delegation and supports two explicit issuance paths. Human issuance validates the current `control-ui` token `jti`, account generation, current tenant or global role, tenant/scope, action family, and canonical mutation digest. A `platformAdmin` action and a cross-tenant `billingAdmin` action additionally require the bounded `privileged_control` window from ADR 0045; tenant-scoped `tenantAdmin` and `moderator` actions do not pretend to hold a global-role elevation. Account then issues an opaque, bounded authorization reference bound to the actor account, current `control-ui` `jti`, account generation, role, tenant/scope, action family, `controlPlaneRequestId`, mutation digest, issue time, and expiry. For a global `platformAdmin` tenant operation, the reference also binds the current target-tenant generation without inventing tenant membership.
+Account Service is the authority for operator delegation and supports two explicit issuance paths. Human requests require the current `control-ui` identity; issuance validates its token `jti`, account generation, current tenant or global role, tenant/scope, action family, and canonical mutation digest. A `platformAdmin` action and a cross-tenant `billingAdmin` action additionally require the bounded `privileged_control` window from ADR 0045; tenant-scoped `tenantAdmin` and `moderator` actions do not pretend to hold a global-role elevation. Account then issues an opaque, bounded authorization reference bound to the actor account, current `control-ui` `jti`, account generation, role, tenant/scope, action family, `controlPlaneRequestId`, mutation digest, issue time, and expiry. For a global `platformAdmin` tenant operation, the reference also binds the current target-tenant generation without inventing tenant membership.
 
 Unattended operator automation uses a separate workload issuance path. Account authenticates the exact allowlisted mTLS workload and validates a durable, versioned automation policy that authorizes that workload for the requested tenant/scope, action family, and canonical mutation digest. Its reference is bound to workload identity, automation-policy identity and version, tenant/scope, action family, `controlPlaneRequestId`, mutation digest, issue time, and expiry; it has no invented user account, `control-ui` token, or privileged human window. Logging and Admin records whether the actor is human or workload automation and retains the applicable human or policy evidence.
 
+`controlPlaneRequestId` is the canonical logical request name across HTTP, Java/domain contracts, ADRs, and audit records. Protobuf contracts may use the language-standard wire spelling `control_plane_request_id`, which maps directly to that same identifier; no second request identity is introduced.
+
 Logging and Admin computes `mutationDigest` as SHA-256 over a versioned canonical encoding of every scope, target, expected-version, mutation, and audit-reason field, excluding only transport credentials and the authorization reference. It forwards the reference unchanged with the typed request, digest, and same `controlPlaneRequestId`. The owner recomputes the digest, redeems and validates the exact reference with Account, then independently checks current domain facts, ownership, fencing, and idempotency. Logging and Admin's asserted actor, role, tenant, or scope is request context and audit input, not authority. Owner-side admission RPCs are classified `internal_workload`, require the exact Logging and Admin mTLS identity plus Account redemption, and accept no end-user JWT.
 
-This protocol applies to the current feature-flag, admission-pointer/version-upgrade, and tick pause/resume families. The current moderation endpoint records policy input, but no owner-side enforcement RPC is exposed. Quota override has no current OpenAPI or owner route; it remains coverage drift rather than an invented endpoint.
+This protocol applies to the current feature-flag, admission-pointer/version-upgrade, and tick pause/resume families. The current moderation endpoint persists policy input and audit only; it does not call an owner-side enforcement RPC. The target moderation path is versioned policy propagation to the Game Session or Social & Groups enforcement owner, with policy-versioned audit, rather than a claim that enforcement is already shipped. Quota override has no current OpenAPI or owner route; it remains coverage drift rather than an invented endpoint.
 
 ### Direct Domain Surfaces
 

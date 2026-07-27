@@ -60,7 +60,7 @@ Rules:
 - Internal metadata initialization re-establishes `tick:{tenantRegionTag}:meta` from the durable baseline after the reset phase; `{tenantRegionTag}` is the opaque full-scope tag for `<tenantId, gameInstanceId, regionId>`.
 - Internal session rebinding is conditional. Region-scoped resets preserve gameplay sessions by default, tenant-scoped resets do so only when `--preserve-sessions` is recorded, and cluster-scoped resets invalidate gameplay sessions by default.
 - The internal post-reset smoke-check phase proves the new epoch can acquire leases, stage work, converge, and clean up correctly, then atomically enters `AWAITING_RESUME` without dropping the maintenance lock or traffic fence.
-- The internal resume-and-success-release phase is unreachable until the public `resume(...)` control records `RESUME_AUTHORIZED` for the same operation, expected phase, scope, lock, and evidence. It then atomically reopens the scope, releases that lock, and records terminal `SUCCEEDED`; no caller may observe an open scope with a live recovery lock or a released lock while the scope remains only partially resumed.
+- The internal resume-and-success-release phase is unreachable until the public `resume(...)` control records `RESUME_AUTHORIZED` for the same operation, expected phase, scope, lock, and evidence. Its durable controller transition is atomic, but the external Game Session, Coordination Redis, ingress, affected-scope, and maintenance-lock effects are not one distributed transaction. The phase must idempotently apply and read back each required postcondition, and may record terminal `SUCCEEDED` only after every current observation succeeds; any failed, missing, stale, or ambiguous effect remains quarantined and fail-closed for retry or failure handling.
 - If the workflow aborts before terminal success, operators must use the audited `coordination-maintenance release-lock ...` control rather than inventing an alternate unlock sequence.
 
 ## Redis SLOs & Budgets
@@ -226,7 +226,7 @@ Canonical cleanup operation:
 
 `coordination-maintenance recover --mode session-schema-cleanup --scope tenant --tenant <tenantId> [--dry-run] [--resume-token <token>]`
 
-The recover operation owns the lock, internal session-cleanup phase, continuation, abort, and release behavior. Ad hoc cleanup Jobs must call this operation rather than encoding their own lock, continuation, or abort behavior. `session-cleanup` is an internal phase name, not a public command.
+The bounded high-level `recover` operation owns the lock, internal session-cleanup phase, continuation, abort, and release behavior. Ad hoc cleanup Jobs must call this operation rather than encoding their own lock, continuation, or abort behavior. `session-cleanup` is an internal phase name, not a public command.
 
 Default runbooks should still prefer fixing deployments and relying on TTL over aggressive keyspace scrubbing.
 
@@ -252,7 +252,10 @@ Redis maintenance flows such as session cleanup, scoped resets, normalization mi
 Canonical maintenance-lock behavior:
 
 - lock identity: one active record per Coordination Redis deployment / gameplay environment boundary
-- minimum fields: `operation`, `scope_type`, `tenantId`, `gameInstanceId`, `regionId`, `actor`, `startedAt`, `expiresAt`, `compatibilityClass`, and an evidence or incident reference; `tenantId`, `gameInstanceId`, and `regionId` are nullable or omitted for a deployment-wide lock, and each is required when its corresponding tenant, game-instance, or region scope is included
+- minimum fields: `operationId`, `environmentId` (the canonical deployment/gameplay boundary), `operation`, `scope_type`, `tenantId`, `gameInstanceId`, `regionId`, `actor`, `startedAt`, `expiresAt`, `compatibilityClass`, and an evidence or incident reference; `tenantId`, `gameInstanceId`, and `regionId` are nullable or omitted for a deployment-wide lock, and each is required when its corresponding tenant, game-instance, or region scope is included
+- token contract: `maintenanceLockToken` is an opaque, high-entropy, server-issued capability. The durable operation/lock record stores its token digest together with the operation, environment, scope, authenticated operator principal, expiry, and any absolute operation deadline; callers cannot mint the token or change those bindings by supplying matching-looking fields.
+- trust and validation: the token is trusted only after the control plane resolves it to the active durable operation record and validates the presented `operationId`, environment, operation, scope, compatibility class, and authenticated operator against that record. The token value alone is never authorization.
+- expiry and replay protection: the token is valid only while that exact operation remains active and unexpired. Mutating retries use the same operation/token and durable phase or idempotency record; a duplicate returns the recorded outcome without repeating an external effect, while a stale phase, terminal operation, expired token, or mismatched binding fails closed. Refresh may extend the lease only before expiry and within the operation deadline; it does not create a new lock or revive an expired token.
 - acquisition is fail-closed for incompatible operations; operators may only break the lock with an explicit stale-lock or break-glass evidence record
 - acquisition owner: the single `coordination-maintenance recover --mode ...` operation acquires the lock for multi-step restore, reset, cleanup, migration, topology-change, and exceptional backup-related maintenance workflows
 - refresh owner: every subsequent internal phase in that workflow refreshes the same lock using `maintenanceLockToken`; lock refresh is not a second independent acquisition or a public phase command
