@@ -56,7 +56,7 @@ class AccountRepositoryIntegrationTest {
   @ParameterizedTest
   @EnumSource(
       value = AccountLifecycleState.class,
-      names = {"SECURITY_LOCKED", "DEACTIVATED_PENDING_DELETE"})
+      names = {"SECURITY_LOCKED", "DEACTIVATED_PENDING_DELETE", "DELETED"})
   void genericUpdatePreservesProtectedLifecycleState(AccountLifecycleState lifecycleState) {
     Account persisted = account("original", "original@example.com", lifecycleState);
     Account saved = repository.save(persisted);

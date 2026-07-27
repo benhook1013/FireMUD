@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The provider-specific linking and sign-in contract below is accepted target state, not current behavior. The current Account surface still stores caller-asserted external identifiers in a tenant-scoped relationship and does not implement provider callback verification, global issuer/subject uniqueness, provider login, safe unlinking, or the required recovery and outage behavior. That drift must be replaced before any external provider is advertised as authentication.
+
 ## Decision Record
 
 - Decision date: 2026-07-19

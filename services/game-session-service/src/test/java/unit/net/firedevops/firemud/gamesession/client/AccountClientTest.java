@@ -82,7 +82,24 @@ class AccountClientTest {
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Authentication service unavailable");
     verify(stub, times(1)).authenticate(any(AuthenticateRequest.class));
-    verify(channelFactory, times(1)).buildChannel(anyString(), anyInt(), any(), anyBoolean());
+    verify(channelFactory, times("UNAVAILABLE".equals(statusName) ? 1 : 0))
+        .buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @Test
+  void authenticateNormalizesGenericTransportFailuresToUnavailable() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.authenticate(any(AuthenticateRequest.class)))
+        .thenThrow(new IllegalStateException("channel failed before a response completed"));
+    AccountClient client = newClient(stub);
+
+    AuthenticateResponse response = client.authenticate("22", "demo@example.com", "swordfish");
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getMessage()).isEqualTo("Authentication service unavailable");
+    verify(stub, times(1)).authenticate(any(AuthenticateRequest.class));
   }
 
   @ParameterizedTest

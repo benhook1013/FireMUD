@@ -1116,11 +1116,12 @@ class AccountServiceImplTest {
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(7L, 1L))
         .thenReturn(Optional.empty());
 
-    IllegalArgumentException exception =
+    AuthenticationException exception =
         assertThrows(
-            IllegalArgumentException.class,
+            AuthenticationException.class,
             () -> service.authenticateForGameplay(1L, "demo", "password"));
 
+    assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
     assertEquals("Invalid credentials", exception.getMessage());
   }
 

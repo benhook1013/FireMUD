@@ -273,7 +273,7 @@ public class AccountServiceImpl implements AccountService {
     Account resolvedAccount = account.orElseThrow();
     try {
       requireGameplayMembership(resolvedAccount.getId(), tenantId, "Invalid credentials");
-    } catch (IllegalArgumentException ex) {
+    } catch (AuthenticationException ex) {
       return;
     }
     accountEmailLoginChallengeRepository.lockAccountChallenge(resolvedAccount.getId());
@@ -1162,9 +1162,12 @@ public class AccountServiceImpl implements AccountService {
     AccountTenantMembership membership =
         accountTenantMembershipRepository
             .findByAccountIdAndTenantId(accountId, tenantId)
-            .orElseThrow(() -> new IllegalArgumentException(message));
+            .orElseThrow(
+                () ->
+                    new AuthenticationException(
+                        AuthenticationErrorCodes.INVALID_CREDENTIALS, message));
     if (!membership.isGameplayAdmissionAllowed()) {
-      throw new IllegalArgumentException(message);
+      throw new AuthenticationException(AuthenticationErrorCodes.INVALID_CREDENTIALS, message);
     }
   }
 

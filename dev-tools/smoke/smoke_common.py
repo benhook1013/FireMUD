@@ -46,6 +46,13 @@ def verify_smoke_account(account_api_base, username, password, timeout_seconds):
                 return
         except urllib.error.HTTPError as exc:
             exc.read()
+            if exc.code >= 500:
+                if attempt < 3:
+                    time.sleep(1)
+                    continue
+                raise RuntimeError(
+                    f"Smoke account validation failed with status {exc.code}"
+                ) from exc
             raise RuntimeError(
                 f"Smoke account validation failed with status {exc.code}"
             ) from exc
