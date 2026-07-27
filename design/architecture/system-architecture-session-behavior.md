@@ -178,8 +178,6 @@ Subscription and billing state drives how aggressively sessions are revoked:
 
 Entitlement evaluation is not routine gameplay action authorization. Existing uninterrupted sessions continue without per-action Account/cache reads until a hard billing event or another owning revocation rule ends them.
 
-Entitlement evaluation is not routine gameplay action authorization. Existing uninterrupted sessions continue without per-action Account/cache reads until a hard billing event or another owning revocation rule ends them.
-
 ### Gameplay Logout and Resume Transcript
 
 Explicit gameplay `LOGOUT` is terminal for the current binding. It immediately removes continuity/resume authority and makes the binding's private resume transcript non-replayable; physical deletion may complete asynchronously. A later successful `LOGIN` and `PLAY` is fresh admission and must not replay logged-out private context unless a separate explicit product policy authorizes that behavior.

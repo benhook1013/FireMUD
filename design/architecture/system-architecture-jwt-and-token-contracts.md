@@ -76,8 +76,8 @@ Account Service issues the exact JWT profiles defined below for control-plane UI
 | `iat` | Issued-at timestamp (UTC epoch seconds), required for token lifetime validation and audit chronology but not revocation ordering |
 | `issuerAuthGeneration` | Current issuer authority generation captured at issuance |
 | `accountAuthGeneration` | Current account authority generation captured at issuance |
-| `tenantAuthGenerations` | Bounded map aligned exactly with tenant entries in `scopedRoles` |
-| `membershipAuthGenerations` | Bounded map aligned exactly with tenant entries in `scopedRoles` |
+| `tenantAuthGenerations` | Bounded map keyed by the exact tenant UUID entries in `scopedRoles` |
+| `membershipAuthGenerations` | Bounded map keyed by the exact tenant UUID entries in `scopedRoles` |
 | `nbf` | Not-before timestamp |
 | `exp` | Expiration timestamp |
 | `globalRoles` | Cross-tenant privileges (for example `platformAdmin`, `billingAdmin`, `support`) |
@@ -103,8 +103,8 @@ First-party `control-ui` and `player-bootstrap` JWTs are short-lived, non-gamepl
 
 - issuerAuthGeneration: 7
 - accountAuthGeneration: 12
-- tenantAuthGenerations: { "tenant-abc": 4, "tenant-def": 9 }
-- membershipAuthGenerations: { "tenant-abc": 18, "tenant-def": 3 }
+- tenantAuthGenerations: { "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": 4, "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a": 9 }
+- membershipAuthGenerations: { "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": 18, "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a": 3 }
 
 ### Token Profiles and Audiences
 
@@ -164,8 +164,8 @@ Services must enforce this claim contract before role/tenant authorization:
 | `tokenGeneration` | Required | Required | Not used | Required | Positive integer for issued-token-registry lineage; gameplay-connect instead uses its dedicated single-use replay contract |
 | `issuerAuthGeneration` | Required | Required | Absent | Required | Positive monotonic Account-owned issuer generation captured at issuance |
 | `accountAuthGeneration` | Required | Required | Absent | Required | Positive monotonic Account-owned account generation captured at issuance |
-| `tenantAuthGenerations` | Required when `scopedRoles` is non-empty; otherwise Empty map | Empty map | Absent | Required for the delegated tenant scope; otherwise Empty map | Bounded positive-generation map; `control-ui` keys must exactly match `scopedRoles` tenant keys, while private delegation keys match its delegated binding scope |
-| `membershipAuthGenerations` | Required when `scopedRoles` is non-empty; otherwise Empty map | Empty map | Absent | Required for the delegated tenant scope; otherwise Empty map | Bounded positive-generation map with the same key alignment rules as `tenantAuthGenerations` |
+| `tenantAuthGenerations` | Required when `scopedRoles` is non-empty; otherwise Empty map | Empty map | Absent | Required for the delegated tenant scope; otherwise Empty map | Bounded positive-generation map keyed by the exact tenant UUID entries in `scopedRoles`, while private delegation keys match its delegated binding scope |
+| `membershipAuthGenerations` | Required when `scopedRoles` is non-empty; otherwise Empty map | Empty map | Absent | Required for the delegated tenant scope; otherwise Empty map | Bounded positive-generation map keyed by the exact tenant UUID entries in `scopedRoles`, with the same alignment rules as `tenantAuthGenerations` |
 | `tenantId` | Not required | Not required | Required | Not required | Gameplay-connect admission scope |
 | `gameInstanceId` | Not required | Not required | Required | Not required | Server-resolved gameplay-connect runtime target |
 | `worldSlug` | Not required | Not required | Required | Not required | Stable gameplay-connect world selector |
@@ -175,9 +175,9 @@ Services must enforce this claim contract before role/tenant authorization:
 | `requestId` | Not required | Not required | Required | Not required | Connect-token issuance idempotency identity |
 | `replayAdmissionFence` | Not required | Not required | Required | Not required | Exact shared replay-readiness fence observed at issuance; Gateway validates equality before authorization and repeats the check atomically during token consumption |
 | `globalRoles` | Optional | Optional | Absent | Optional | Empty list when none; gameplay-connect admission never authorizes from role claims |
-| `scopedRoles` | Optional; Empty map when none | Empty map | Absent | Optional; generation maps align to delegated binding scope rather than this claim | `control-ui` generation-map keys must equal the `scopedRoles` tenant keys exactly; no generation map may introduce an unclaimed tenant |
+| `scopedRoles` | Optional; Empty map when none | Empty map | Absent | Optional; generation maps align to delegated binding scope rather than this claim | `control-ui` generation-map keys must equal the `scopedRoles` tenant UUID keys exactly; no generation map may introduce an unclaimed tenant |
 
-`Required` means the claim must be present with a valid positive value; `Empty map` means the claim must be present as `{}`; `Absent` means the claim must not be serialized. For `control-ui`, both tenant-generation maps are `{}` when `scopedRoles` is empty and otherwise have exactly the same tenant keys. `player-bootstrap` is tenant-free, so its tenant/membership-generation maps and `scopedRoles` are empty. The private player-delegation profile has no end-user role scope; when it carries tenant-generation maps, they are limited to the delegated binding scope.
+`Required` means the claim must be present with a valid positive value; `Empty map` means the claim must be present as `{}`; `Absent` means the claim must not be serialized. For `control-ui`, both tenant-generation maps are `{}` when `scopedRoles` is empty and otherwise have exactly the same canonical tenant UUID keys. `player-bootstrap` is tenant-free, so its tenant/membership-generation maps and `scopedRoles` are empty. The private player-delegation profile has no end-user role scope; when it carries tenant-generation maps, they are limited to the delegated binding scope.
 
 Tokens that omit required claims, have malformed claim types, violate these empty/absent rules, or present an unexpected `aud` for the endpoint profile must be rejected before route classification.
 
@@ -202,6 +202,6 @@ JWT verification model (normative):
 
 Normal rotation preserves existing sessions. Signer rollback after promotion must keep public keys for every key used by either application version until all affected tokens expire plus skew.
 
-Compromise and post-restore hardening instead quarantine JWT issuance and protected admission/control-plane traffic, remove the affected public key without overlap, advance the issuer authority generation and complete required issued-token/session cleanup, force every validator to converge, and require proof that the old `kid` is rejected and the replacement is accepted before traffic reopens. The Account key ring is per environment rather than per tenant, so compromise of that key has environment-wide invalidation scope.
+Compromise and post-restore hardening instead quarantine JWT issuance and protected admission/control-plane traffic, remove the affected public key without overlap, advance the issuer authority generation, force every validator to converge, and require proof that the old `kid` is rejected and the replacement is accepted before traffic reopens. Physical issued-token-registry and gameplay-session cleanup is a bounded best-effort follow-up after that authority gate; it must not delay the security gate or substitute for issuer invalidation, key removal, validator convergence, and rejection proof. The Account key ring is per environment rather than per tenant, so compromise of that key has environment-wide invalidation scope.
 
 Player-facing readiness requires focused proof of both planned rotation through pruning and compromise hard cutover. Mounted signing/JWKS files, raw JWKS serving, or direct-file watcher callbacks do not independently satisfy this contract.
