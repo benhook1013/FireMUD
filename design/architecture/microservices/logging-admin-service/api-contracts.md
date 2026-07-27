@@ -37,6 +37,8 @@ This document defines the Logging & Admin Service REST and gRPC surfaces, authen
 - Moderation enforcement has no current Account, Game Session, or Social & Groups owner RPC behind `POST /moderation/actions`; the current route records policy input only.
 - Scoped remediation beyond pause/resume has no current OpenAPI route and no current Game Session owner RPC. Do not add `/tick-remediation/remediate` or a direct Redis mutation path.
 
+All target operator mutations use Account's canonical [`IssueOperatorAuthorization`](../account-service/api-contracts.md#operator-authorization-references) contract after Logging & Admin authenticates the `control-ui` actor and records durable intent. Logging & Admin forwards the opaque bounded reference, not the end-user JWT, to the owning service. The owner recomputes the request digest and redeems the reference directly with Account; Logging & Admin never becomes a second authorization authority.
+
 ### Canonical Admission State Operations
 
 `POST /admission-pointers` represents exactly one of two same-target Game Session control-plane operations for `{tenantId, worldSlug, realmSlug}`:

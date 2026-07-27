@@ -41,7 +41,7 @@ The current implementation checks nonterminal billing ownership and then immedia
 
 Pending deletion has a dedicated Account-owned access credential; it does not preserve ordinary login authority. Account issues one opaque `pending-deletion-access` credential only after a dedicated recovery challenge or an already authenticated deletion workflow proves the account subject. The credential is not a JWT, is not stored in the ordinary `session:auth:token:<tokenHash>` registry, and does not use or restore normal account-generation authority.
 
-Account stores a server-side pending-deletion access record bound to the account, deletion workflow identifier and workflow generation, allowed action family, issue time, expiry, and credential hash. The exact route allowlist is `GET /accounts/{accountId}/deletion` (`pending_deletion_scoped` status), `POST /accounts/{accountId}/deletion/cancel` (`pending_deletion_scoped` cancellation), `GET /accounts/{accountId}/deletion/export` (`pending_deletion_scoped` export), and `POST /accounts/{accountId}/deletion/billing-settlement` (`pending_deletion_scoped` necessary settlement only). No normal profile, tenant, purchase, login, bootstrap, connect-token, or gameplay route accepts it.
+Account stores a server-side pending-deletion access record bound to the account, deletion workflow identifier and workflow generation, allowed action family, issue time, expiry, and credential hash. The exact route allowlist is `GET /accounts/{accountId}/deletion` (`pending_deletion_scoped` status), `POST /accounts/{accountId}/deletion/cancel` (`pending_deletion_scoped` cancellation), the full-subject export lifecycle `POST /accounts/{accountId}/exports`, `GET /accounts/{accountId}/exports/{exportId}`, and `GET /accounts/{accountId}/exports/{exportId}/content` defined by ADR 0050 (`pending_deletion_scoped` export only), and `POST /accounts/{accountId}/deletion/billing-settlement` (`pending_deletion_scoped` necessary settlement only). No normal profile, tenant, purchase, login, bootstrap, connect-token, or gameplay route accepts it.
 
 Cancellation, terminal completion, and expiry revoke the pending-deletion record. Cancellation then establishes a fresh normal account generation; it does not make the pending credential valid for normal access. Re-establishment after credential loss or expiry requires a dedicated pending-deletion recovery challenge and can issue only a newly scoped pending-deletion credential. It cannot issue a normal login or gameplay credential, and the normal account remains denied until the cancellation transition completes.
 
@@ -77,6 +77,13 @@ Disable login forever while retaining all records. This simplifies recovery and 
 - Prove the dedicated recovery challenge can re-establish only pending-deletion access and cannot restore normal login, bootstrap, connect-token, tenant, purchase, or gameplay authority.
 - Prove cancellation before the published cutoff, irreversibility after terminal deletion, safe retry after partial failure, and no early success response.
 - Complete full-account export across portable owning domains rather than treating Account rows and profiles as the whole export.
+
+## Canonical Design Links
+
+- [Account Service](../microservices/account-service/README.md)
+- [Account Service API Contracts](../microservices/account-service/api-contracts.md)
+- [Account Service Runtime and Data](../microservices/account-service/runtime-and-data.md)
+- [Authentication and Authorization](../system-architecture-authentication.md)
 
 ## Reversibility and Revisit Triggers
 

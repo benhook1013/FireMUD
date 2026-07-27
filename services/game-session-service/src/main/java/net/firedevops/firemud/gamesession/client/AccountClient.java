@@ -66,20 +66,28 @@ public final class AccountClient
       return callStub().authenticate(request);
     } catch (StatusRuntimeException ex) {
       Status.Code statusCode = ex.getStatus().getCode();
-      if (statusCode == Status.Code.UNAVAILABLE || statusCode == Status.Code.DEADLINE_EXCEEDED) {
+      if (statusCode == Status.Code.UNAVAILABLE) {
         logger.warn(
-            "Account Service authentication transport failed with a retryable status; "
+            "Account Service authentication transport failed with UNAVAILABLE; "
                 + "not retrying credential-consuming authentication without an idempotency identity",
+            ex);
+        try {
+          initClient();
+        } catch (Exception reloadEx) {
+          logger.warn(
+              "Failed to reload Account Service channel after authentication failure", reloadEx);
+        }
+        return authenticationUnavailable();
+      }
+      if (statusCode == Status.Code.DEADLINE_EXCEEDED) {
+        logger.warn(
+            "Account Service authentication deadline exceeded; not retrying "
+                + "credential-consuming authentication without an idempotency identity",
             ex);
         return authenticationUnavailable();
       }
       logger.warn("Account Service authentication returned a terminal gRPC status", ex);
-      String description = ex.getStatus().getDescription();
-      return authenticationError(
-          statusCode.name(),
-          description == null || description.isBlank()
-              ? "Authentication request failed"
-              : description);
+      return authenticationError(statusCode.name(), "Authentication request failed");
     } catch (Exception ex) {
       logger.warn("Account Service authenticate failed before a response completed", ex);
       return authenticationUnavailable();

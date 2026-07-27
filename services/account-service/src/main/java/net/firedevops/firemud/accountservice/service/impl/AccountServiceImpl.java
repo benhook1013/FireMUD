@@ -234,15 +234,7 @@ public class AccountServiceImpl implements AccountService {
         mintToken(
             account.getId().toString(),
             jwtAuthProperties.getJwtExpirationMs(),
-            Map.of(
-                "aud",
-                "control-ui",
-                "accountId",
-                account.getId(),
-                "globalRoles",
-                java.util.List.of(account.getRole()),
-                "jti",
-                UUID.randomUUID().toString()));
+            authenticationTokenClaims("control-ui", account));
     sessionService.storeAccountSession(
         account.getId(), token, jwtAuthProperties.getJwtExpirationMs());
     return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
@@ -262,15 +254,7 @@ public class AccountServiceImpl implements AccountService {
         mintToken(
             account.getId().toString(),
             jwtAuthProperties.getJwtExpirationMs(),
-            Map.of(
-                "aud",
-                GAMEPLAY_DELEGATION_AUDIENCE,
-                "accountId",
-                account.getId(),
-                "globalRoles",
-                java.util.List.of(account.getRole()),
-                "jti",
-                UUID.randomUUID().toString()));
+            authenticationTokenClaims(GAMEPLAY_DELEGATION_AUDIENCE, account));
     sessionService.storeSession(tenantId, account.getId(), token);
     return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
         account.getId(), token);
@@ -288,8 +272,9 @@ public class AccountServiceImpl implements AccountService {
     }
     Account resolvedAccount = account.orElseThrow();
     try {
+      requireAuthenticationEligible(resolvedAccount);
       requireGameplayMembership(resolvedAccount.getId(), tenantId, "Invalid credentials");
-    } catch (IllegalArgumentException ex) {
+    } catch (AuthenticationException ex) {
       return;
     }
     accountEmailLoginChallengeRepository.lockAccountChallenge(resolvedAccount.getId());
@@ -343,15 +328,7 @@ public class AccountServiceImpl implements AccountService {
         mintToken(
             account.getId().toString(),
             jwtAuthProperties.getJwtExpirationMs(),
-            Map.of(
-                "aud",
-                GAMEPLAY_DELEGATION_AUDIENCE,
-                "accountId",
-                account.getId(),
-                "globalRoles",
-                java.util.List.of(account.getRole()),
-                "jti",
-                UUID.randomUUID().toString()));
+            authenticationTokenClaims(GAMEPLAY_DELEGATION_AUDIENCE, account));
     sessionService.storeSession(tenantId, account.getId(), token);
     return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
         account.getId(), token);
@@ -1186,9 +1163,12 @@ public class AccountServiceImpl implements AccountService {
     AccountTenantMembership membership =
         accountTenantMembershipRepository
             .findByAccountIdAndTenantId(accountId, tenantId)
-            .orElseThrow(() -> new IllegalArgumentException(message));
+            .orElseThrow(
+                () ->
+                    new AuthenticationException(
+                        AuthenticationErrorCodes.INVALID_CREDENTIALS, message));
     if (!membership.isGameplayAdmissionAllowed()) {
-      throw new IllegalArgumentException(message);
+      throw new AuthenticationException(AuthenticationErrorCodes.INVALID_CREDENTIALS, message);
     }
   }
 
@@ -1200,6 +1180,18 @@ public class AccountServiceImpl implements AccountService {
 
   private String mintToken(String subject, long expirationMs, Map<String, Object> claims) {
     return jwtUtil.generateToken(subject, expirationMs, claims);
+  }
+
+  private Map<String, Object> authenticationTokenClaims(String audience, Account account) {
+    return Map.of(
+        "aud",
+        audience,
+        "accountId",
+        account.getId(),
+        "globalRoles",
+        List.of(account.getRole()),
+        "jti",
+        UUID.randomUUID().toString());
   }
 
   private Instant parseInstant(Object value) {

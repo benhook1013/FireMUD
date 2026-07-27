@@ -17,6 +17,7 @@ import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
 import net.firedevops.firemud.accountservice.dto.BootstrapCharacterDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapRealmDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
+import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.LoginRequest;
@@ -59,6 +60,22 @@ class AuthControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.accountId").value(1))
+        .andExpect(jsonPath("$.data.authToken").value("tok123"));
+  }
+
+  @Test
+  void loginAcceptsExistingOneCharacterPassword() throws Exception {
+    LoginRequest request = new LoginRequest("demo", "x");
+    when(accountService.authenticate("demo", "x"))
+        .thenReturn(new AuthenticationResult(1L, "tok123"));
+
+    mockMvc
+        .perform(
+            post("/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.authToken").value("tok123"));
   }
 
@@ -212,6 +229,20 @@ class AuthControllerTest {
                 .content(objectMapper.writeValueAsString(req)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
+  }
+
+  @Test
+  void completePasswordResetRetainsMinimumPasswordLength() throws Exception {
+    CompletePasswordResetRequest request = new CompletePasswordResetRequest("tok", "12345");
+
+    mockMvc
+        .perform(
+            post("/auth/complete-password-reset")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isBadRequest());
+
+    verifyNoInteractions(accountService);
   }
 
   @Test

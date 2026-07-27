@@ -23,6 +23,7 @@ import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
@@ -812,7 +813,7 @@ class LoginCommandHandlerTest {
         AuthenticateResponse.newBuilder()
             .setError(
                 ErrorDetail.newBuilder()
-                    .setCode("UNAUTHENTICATED")
+                    .setCode(AuthenticationErrorCodes.INVALID_CREDENTIALS)
                     .setMessage("Invalid credentials")
                     .build())
             .build();
@@ -845,7 +846,7 @@ class LoginCommandHandlerTest {
         AuthenticateResponse.newBuilder()
             .setError(
                 ErrorDetail.newBuilder()
-                    .setCode("UNAUTHENTICATED")
+                    .setCode(AuthenticationErrorCodes.INVALID_CREDENTIALS)
                     .setMessage("Invalid credentials")
                     .build())
             .build();
@@ -967,6 +968,73 @@ class LoginCommandHandlerTest {
     assertFalse(result.commandResult().accepted());
     assertEquals("ACCOUNT_LOCKED", result.commandResult().errorCode());
     assertEquals("ERROR ACCOUNT_LOCKED Locked out", joinedOutputText(result.outputs()));
+  }
+
+  @Test
+  void retryLaterUsesStableProtocolCodeAndLocalizedPresentation() {
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("AUTH_RETRY_LATER")
+                    .setMessage("Account service retry detail")
+                    .build())
+            .build();
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("RETRY_LATER", result.commandResult().errorCode());
+    assertEquals(
+        "Too many failed attempts; try again later.", result.commandResult().errorMessage());
+    assertEquals(
+        "ERROR RETRY_LATER Too many failed attempts; try again later.",
+        joinedOutputText(result.outputs()));
+    assertEquals(
+        "error.login.retry-later", ((ErrorOutput) result.outputs().get(0).payload()).messageKey());
+  }
+
+  @Test
+  void abuseControlUnavailableUsesStableProtocolCodeAndLocalizedPresentation() {
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("AUTH_ABUSE_CONTROL_UNAVAILABLE")
+                    .setMessage("Abuse control backend detail")
+                    .build())
+            .build();
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString(), anyString())).thenReturn(authError);
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("ABUSE_CONTROL_UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals(
+        "Login protection is temporarily unavailable. Try again later.",
+        result.commandResult().errorMessage());
+    assertEquals(
+        "ERROR ABUSE_CONTROL_UNAVAILABLE Login protection is temporarily unavailable. "
+            + "Try again later.",
+        joinedOutputText(result.outputs()));
+    assertEquals(
+        "error.login.abuse-control-unavailable",
+        ((ErrorOutput) result.outputs().get(0).payload()).messageKey());
   }
 
   @Test
@@ -1103,10 +1171,14 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void unauthenticatedWithoutRecognizedMessageUsesUnavailable() {
+  void unauthenticatedDoesNotInferCanonicalCodeFromMessage() {
     AuthenticateResponse authError =
         AuthenticateResponse.newBuilder()
-            .setError(ErrorDetail.newBuilder().setCode("UNAUTHENTICATED").build())
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("UNAUTHENTICATED")
+                    .setMessage("Invalid credentials")
+                    .build())
             .build();
     TextCommand command =
         new TextCommand(

@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The provider-specific linking and sign-in contract below is accepted target state, not current behavior. The current Account surface still stores caller-asserted external identifiers in a tenant-scoped relationship and does not implement provider callback verification, global issuer/subject uniqueness, provider login, safe unlinking, or the required recovery and outage behavior. That drift must be replaced before any external provider is advertised as authentication.
+
 ## Decision Record
 
 - Decision date: 2026-07-19
@@ -70,6 +74,12 @@ Rejected as the public contract because it obscures provider-specific issuer, su
 ## Implementation and Proof Obligations
 
 Before any provider is advertised, implementation and focused proof must cover verified provider authorization, canonical issuer/subject normalization, global uniqueness, replay and CSRF protection, no email auto-merge, collisions, unlink safeguards, Account-owned fallback recovery, outage behavior, security-generation advancement, global deletion, tenant isolation, and end-to-end web login. The caller-asserted external-ID API and tenant-scoped schema must be removed or replaced rather than promoted.
+
+## Canonical Design Links
+
+- [Authentication and Authorization](../system-architecture-authentication.md)
+- [Account Service API Contracts](../microservices/account-service/api-contracts.md)
+- [Account Service Runtime and Data](../microservices/account-service/runtime-and-data.md)
 
 ## Reversibility and Revisit Triggers
 

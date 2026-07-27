@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The decision is accepted target state, but the full capability is not implementation-complete. Current Account Service export is synchronous and Account/profile-local, the tenant export remains account-targeted, and the cross-service export job, durable status resource, retention registry, erasure journal, and restore-reconciliation protocol below are not yet implemented or proved. Those current surfaces are known drift and must not be described as satisfying this ADR.
+
 ## Decision Record
 
 - Decision date: 2026-07-19
@@ -27,7 +31,9 @@ A single universal retention duration would be false across record purposes and 
 
 ### Full Subject Export
 
-Account orchestrates an asynchronous, versioned JSON export manifest across every owning service for the authenticated global subject. The canonical account route is `GET /accounts/{accountId}/export`; it is caller-bound to that global subject and does not accept a tenant selector. A successful complete export contains all required owner contributions and their schema versions; partial failure remains visibly incomplete and retryable.
+Account orchestrates an asynchronous, versioned JSON export manifest across every owning service for the authenticated global subject. `POST /accounts/{accountId}/exports` initiates or idempotently replays one export job and returns `202 Accepted` with a stable `exportId` and status resource. `GET /accounts/{accountId}/exports/{exportId}` returns that durable job's status and versioned manifest, while `GET /accounts/{accountId}/exports/{exportId}/content` downloads the completed artifact. These routes are caller-bound to the global subject and do not accept a tenant selector.
+
+The initiating request carries a high-entropy request identity bound to the subject and export policy version. Retrying the same request returns the same job; it does not create duplicate snapshots. A required owner failure leaves the job visibly incomplete or failed with owner-specific retry state. Retry resumes the same export generation and stable resource until it either completes or reaches a terminal failure; Account never reports a silent partial success. A successful complete export contains all required owner contributions and their schema versions.
 
 The export includes portable subject-supplied and subject-observed data the caller is entitled to receive, including applicable account and profile data, tenant relationships, characters and player state, social relationships, purchase and entitlement records, and other owner-held subject data. It excludes password hashes, active or historical token material, provider secrets, internal fraud or security detection methods, tenant-owned content administered but not owned by the subject, and other subjects' private data. Redacted, omitted, unavailable, and separately retained categories are named in the manifest rather than silently disappearing.
 
@@ -61,7 +67,11 @@ The immediate access and orchestration behavior remains governed by ADR 0043. Af
 
 Terminal deletion must not claim that immutable backup copies were edited in place. Backups expire under their existing schedule and are not ordinary searchable data. Before an account reaches terminal `deleted`, Account must append a minimized erasure-overlay record to an immutable, versioned journal retained independently of the PostgreSQL backup lineage. The record carries a monotonic journal sequence, the bounded pseudonymous subject locator needed to find snapshot-era rows, the terminal erasure workflow identity, policy version, completion time, and integrity digest or signature; it contains no reusable credential or ordinary profile data.
 
-The erasure journal is retained for at least the maximum age of every backup that could still resurrect the subject plus the configured recovery safety window. Before the backup workflow opens its PostgreSQL snapshot transaction, it reads and durably records the current committed external journal sequence as `preSnapshotJournalHighWater` solely as proof that the journal observation preceded the snapshot. Inside the PostgreSQL snapshot, it reads the erasure ledger and binds immutable `artifactErasureHighWater` to the greatest authoritative ledger sequence visible in that snapshot; these two observations are recorded with distinct sources and meanings. Restore reads and verifies every independently retained journal sequence strictly greater than `artifactErasureHighWater` through the immutable final-cutover `restoreHighWater`, inclusive, and idempotently replays each owner-specific erasure or tombstone before traffic reopens. Recovery captures immutable `initialCatchupHighWater` first and replays the gap-free interval `(artifactErasureHighWater, initialCatchupHighWater]`, then captures immutable `restoreHighWater` during one bounded final cutover and replays `(initialCatchupHighWater, restoreHighWater]`; it never substitutes a moving current high-water for either boundary. Terminal deletion cannot complete until the journal append is durably acknowledged outside the database snapshot boundary. A recovery with missing or duplicate sequence coverage, unverifiable records, unavailable owners, or incomplete convergence remains quarantined. After no eligible backup can contain the erased subject, the locator and journal record expire under the same versioned retention registry rather than becoming an indefinite identity store.
+The erasure journal is retained for at least the maximum age of every backup that could still resurrect the subject plus the configured recovery safety window. Before the backup workflow opens its PostgreSQL snapshot transaction, it reads and durably records the current committed external journal sequence as `preSnapshotJournalHighWater` solely as proof that the journal observation preceded the snapshot. Inside the PostgreSQL snapshot, it reads the erasure ledger and binds immutable `artifactErasureHighWater` to the greatest authoritative ledger sequence visible in that snapshot; these two observations are recorded with distinct sources and meanings.
+
+Restore reads and verifies every independently retained journal sequence strictly greater than `artifactErasureHighWater` through the immutable final-cutover `restoreHighWater`, inclusive, and idempotently replays each owner-specific erasure or tombstone before traffic reopens. Recovery first captures immutable `initialCatchupHighWater` and replays the gap-free interval `(artifactErasureHighWater, initialCatchupHighWater]`. During bounded final cutover it keeps player and operator traffic quarantined, fences or quiesces every erasure-journal writer, waits for acknowledged in-flight appends, captures immutable `restoreHighWater`, and replays `(initialCatchupHighWater, restoreHighWater]`. New erasure requests arriving after the fence are durably queued and cannot append to the restored lineage until traffic reopens. Recovery verifies gap-free journal coverage and that every owner cursor has reached `restoreHighWater` before removing the fence; only then may it reopen traffic and process the queued requests. It never substitutes a moving current high-water for either boundary.
+
+Terminal deletion cannot complete until the journal append is durably acknowledged outside the database snapshot boundary. A recovery with missing or duplicate sequence coverage, unverifiable records, unavailable owners, an unfenced writer, or incomplete convergence remains quarantined. After no eligible backup can contain the erased subject, the locator and journal record expire under the same versioned retention registry rather than becoming an indefinite identity store.
 
 ## Consequences
 
@@ -91,6 +101,14 @@ Rejected because transaction, security, moderation, log, and ordinary profile da
 Before this capability is complete, implementation and focused proof must cover registry completeness; subject-bound export authorization and recent authentication; all required service contributions; explicit partial results; other-subject and tenant redaction; tenant export without global `AccountDto` leakage; every safely disclosable billing blocker; retryable owner-specific erasure; minimized retained records and expiry; external-provider cleanup; durable erasure-journal append before terminal deletion; sequence, integrity, high-water, and expiry enforcement; and restore of a backup containing later-erased data followed by complete idempotent owner replay before reopen.
 
 The current Account/profile-only exports and synchronous hard-delete path remain implementation drift and cannot satisfy the player-facing capability gate.
+
+## Canonical Design Links
+
+- [Account Service API Contracts](../microservices/account-service/api-contracts.md)
+- [Account Service Runtime and Data](../microservices/account-service/runtime-and-data.md)
+- [Backup and Recovery](../system-architecture-backup-recovery.md)
+- [Backup Recovery Evidence and Compliance](../system-architecture-backup-recovery-evidence-and-compliance.md)
+- [ADR 0043: Global Account Lifecycle and Bounded Erasure Workflow](./adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md)
 
 ## Reversibility and Revisit Triggers
 

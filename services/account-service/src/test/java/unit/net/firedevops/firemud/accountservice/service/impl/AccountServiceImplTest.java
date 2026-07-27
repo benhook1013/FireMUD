@@ -66,6 +66,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -220,6 +221,25 @@ class AccountServiceImplTest {
     service.requestEmailLoginOtp(7L, "unknown@example.com");
 
     verifyNoInteractions(emailService, accountEmailLoginChallengeRepository);
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = AccountLifecycleState.class,
+      names = {"SECURITY_LOCKED", "DEACTIVATED_PENDING_DELETE", "DELETED"})
+  void emailLoginOtpRequestIsNeutralForIneligibleLifecycleState(
+      AccountLifecycleState lifecycleState) {
+    Account account = new Account();
+    account.setId(9L);
+    account.setEmail("verified@example.com");
+    account.setEmailVerified(true);
+    account.setLifecycleState(lifecycleState);
+    when(accountRepository.findByEmail("verified@example.com")).thenReturn(Optional.of(account));
+
+    service.requestEmailLoginOtp(7L, "verified@example.com");
+
+    verifyNoInteractions(
+        accountTenantMembershipRepository, accountEmailLoginChallengeRepository, emailService);
   }
 
   @Test
@@ -493,6 +513,8 @@ class AccountServiceImplTest {
     var claims = new JwtUtil(JWT_SECRET, 3600000L).parseToken(result.authToken()).getPayload();
     assertEquals("control-ui", claims.getAudience().iterator().next());
     assertEquals(1L, claims.get("accountId", Long.class));
+    assertEquals(java.util.List.of("player"), claims.get("globalRoles"));
+    assertNotNull(claims.get("jti"));
     assertFalse(claims.containsKey("tenantId"));
     org.mockito.Mockito.verify(sessionService)
         .storeAccountSession(1L, result.authToken(), 3600000L);
@@ -539,6 +561,8 @@ class AccountServiceImplTest {
     var claims = new JwtUtil(JWT_SECRET, 3600000L).parseToken(result.authToken()).getPayload();
     assertEquals("account-service", claims.getAudience().iterator().next());
     assertEquals(1L, claims.get("accountId", Long.class));
+    assertEquals(java.util.List.of("player"), claims.get("globalRoles"));
+    assertNotNull(claims.get("jti"));
     org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, result.authToken());
   }
 
@@ -1112,11 +1136,12 @@ class AccountServiceImplTest {
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(7L, 1L))
         .thenReturn(Optional.empty());
 
-    IllegalArgumentException exception =
+    AuthenticationException exception =
         assertThrows(
-            IllegalArgumentException.class,
+            AuthenticationException.class,
             () -> service.authenticateForGameplay(1L, "demo", "password"));
 
+    assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
     assertEquals("Invalid credentials", exception.getMessage());
   }
 
