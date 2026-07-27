@@ -23,12 +23,17 @@ token_profiles:
     audience: account-service
     kind: private_player_delegation
 auth_path_vocabulary:
+  - control_ui_plus_current_role_and_role_appropriate_assurance
   - exact_mtls_workload
   - exact_mtls_workload_plus_caller_specific_context
   - exact_mtls_workload_plus_current_token_generation
+  - exact_mtls_workload_plus_forwarded_control_ui
+  - exact_mtls_workload_plus_account_operator_authorization_reference
+  - exact_mtls_workload_plus_versioned_automation_policy
   - game_session_authenticated_context
   - gameplay_connect
   - gameplay_connect_cookie_revoke
+  - pending_deletion_access
   - player_bootstrap
 internal_workload_rules:
   caller_constraints: all_declared_constraints_must_pass
@@ -45,25 +50,55 @@ route_authentication_rules:
     audience_source: token_profiles
 required_live_check_vocabulary:
   - account_generation
+  - account_state_bootstrap_eligible
+  - account_state_login_eligible
   - admission_pointer
   - browser_origin
+  - cancellation_window
   - conditional_realm_access_grant
   - connect_scope_match
   - connect_token_single_use_consume
   - csrf
+  - current_account_generation
+  - current_account_roles
+  - current_automation_policy
+  - current_global_role
+  - current_operator_authorization
+  - current_operator_role
+  - current_operator_roles
+  - current_session
   - current_token_generation
+  - expected_pointer_version
+  - explicit_deletion_confirmation
+  - export_availability
   - grant_version
+  - independent_totp
   - issuer_generation
   - membership
   - membership_generation
+  - membership_when_tenant_role
+  - moderation_report_policy
+  - no_nonterminal_owned_subscriptions
+  - pending_deletion_credential_registry
+  - pending_deletion_state
+  - prepared_version_upgrade
+  - prepared_version_upgrade_when_target_changes
   - public_production_admission
   - public_production_visibility
   - realm_visibility
+  - recent_account_authentication
+  - recovery_resume_gate
   - replay_admission_fence_match
   - replay_protection_available
+  - role_appropriate_assurance
   - runtime_entitlements
+  - runtime_ownership
+  - settlement_scope
+  - subscription_binding_integrity
+  - target_tenant_generation
   - tenant_generation
   - trusted_proxy_identity
+  - workload_action_scope
 implementation_status:
   known_drift:
     - public_production_membership_may_be_created_implicitly_by_connect_token_or_play
@@ -105,7 +140,7 @@ operator_delegation:
       bindings:
         [actor_account_id, control_ui_jti, account_generation, role, tenant_scope, action_family, control_plane_request_id, issued_at, expires_at]
     unattended_automation:
-      auth_path: allowlisted_mtls_workload_plus_versioned_automation_policy
+      auth_path: exact_mtls_workload_plus_versioned_automation_policy
       bindings:
         [workload_identity, automation_policy_id, automation_policy_version, tenant_scope, action_family, control_plane_request_id, issued_at, expires_at]
       user_impersonation_forbidden: true
@@ -367,7 +402,7 @@ routes:
     transport: grpc
     scope: tenant
     classification: internal_workload
-    auth_path: mtls_workload_plus_account_operator_authorization_reference
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
     accepted_token_profiles: []
     token_audience: none
     allowed_callers:
@@ -385,7 +420,7 @@ routes:
     transport: grpc
     scope: tenant
     classification: internal_workload
-    auth_path: mtls_workload_plus_account_operator_authorization_reference
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
     accepted_token_profiles: []
     token_audience: none
     allowed_callers:
@@ -403,7 +438,7 @@ routes:
     transport: grpc
     scope: tenant
     classification: internal_workload
-    auth_path: mtls_workload_plus_account_operator_authorization_reference
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
     accepted_token_profiles: []
     token_audience: none
     allowed_callers:
@@ -421,7 +456,7 @@ routes:
     transport: grpc
     scope: tenant
     classification: internal_workload
-    auth_path: mtls_workload
+    auth_path: exact_mtls_workload
     accepted_token_profiles: []
     token_audience: none
     allowed_callers:
@@ -535,7 +570,7 @@ routes:
     transport: grpc
     scope: tenant_or_global
     classification: internal_workload
-    auth_path: logging_admin_mtls_plus_forwarded_control_ui
+    auth_path: exact_mtls_workload_plus_forwarded_control_ui
     accepted_token_profiles: [control-ui]
     allowed_callers:
       any_of: [logging-admin-service]
@@ -550,7 +585,7 @@ routes:
     transport: grpc
     scope: tenant_or_global
     classification: internal_workload
-    auth_path: allowlisted_mtls_workload_plus_versioned_automation_policy
+    auth_path: exact_mtls_workload_plus_versioned_automation_policy
     accepted_token_profiles: []
     token_audience: none
     allowed_callers:
@@ -1131,7 +1166,7 @@ routes:
     route: ToggleFeatureFlag
     scope: tenant
     classification: internal_workload
-    auth_path: mtls_workload_plus_account_operator_authorization_reference
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
     accepted_token_profiles: []
     token_audience: none
     allowed_callers:
@@ -1148,7 +1183,7 @@ routes:
     route: PauseTicksForScope
     scope: tenant
     classification: internal_workload
-    auth_path: mtls_workload_plus_account_operator_authorization_reference
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
     accepted_token_profiles: []
     token_audience: none
     allowed_callers:
@@ -1165,7 +1200,7 @@ routes:
     route: ResumeTicksForScope
     scope: tenant
     classification: internal_workload
-    auth_path: mtls_workload_plus_account_operator_authorization_reference
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
     accepted_token_profiles: []
     token_audience: none
     allowed_callers:
@@ -1182,7 +1217,7 @@ routes:
     route: SetAdmissionPointer
     scope: tenant
     classification: internal_workload
-    auth_path: mtls_workload_plus_account_operator_authorization_reference
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
     accepted_token_profiles: []
     token_audience: none
     allowed_callers:
@@ -1199,7 +1234,7 @@ routes:
     route: ExecutePreparedVersionCutover
     scope: tenant
     classification: internal_workload
-    auth_path: mtls_workload_plus_account_operator_authorization_reference
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
     accepted_token_profiles: []
     token_audience: none
     allowed_callers:
@@ -1216,7 +1251,7 @@ routes:
     route: PrepareVersionUpgrade
     scope: tenant
     classification: internal_workload
-    auth_path: mtls_workload_plus_account_operator_authorization_reference
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
     accepted_token_profiles: []
     token_audience: none
     allowed_callers:

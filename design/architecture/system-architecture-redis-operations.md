@@ -41,6 +41,7 @@ The internal pause-and-lock phase is not a standalone public command. Only `reco
 
 Rules:
 
+- The operation record and maintenance-lock authority live in a durable control store outside the target Redis deployment so the workflow remains resumable after that deployment is replaced or emptied.
 - The internal pause-and-lock phase must drive the chosen scope to canonical `PAUSED` before storage-level wipe or prefix deletion occurs.
 - Capture the `maintenanceLockToken` returned by that phase and pass it to every subsequent internal phase; no phase reacquires the deployment lock independently.
 - The internal epoch-bump and coordination-reset phase is the only phase that bumps `region_epoch` and emits authoritative old/new epoch evidence for downstream reconciliation.

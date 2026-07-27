@@ -50,7 +50,6 @@ The following contract decisions are mandatory and resolve cross-document ambigu
 
 The implemented account login modes are `PASSWORD` and verified-email `EMAIL_OTP`. Authenticator-app TOTP enrollment remains future account-security work; the REST and gRPC authentication contracts do not carry a separate `otp` field. Public player-facing text clients use Telnet-over-TLS, while plaintext Telnet is limited to local, test, and explicitly private-network compatibility. TOTP is not a transport gate or a substitute for channel protection; [ADR 0033](./decisions/adr-0033-public-player-facing-telnet-requires-tls.md) owns that boundary.
 
-
 ### Ordinary Login and Sensitive-Action Step-Up
 
 - Ordinary Telnet, gameplay bootstrap, and account/control login use the account-selected `PASSWORD`, verified `EMAIL_OTP`, or both. Gameplay never solicits TOTP or repeats account authentication per command, and a gameplay session cannot become elevated control-plane authority.
