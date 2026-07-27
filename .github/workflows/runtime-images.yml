@@ -348,11 +348,11 @@ jobs:
             echo
             echo "- Pull request: #${PR_NUMBER}"
             echo "- Base SHA: \`${BASE_SHA}\`"
-            echo "- PR head SHA and fixed image tag: \`${HEAD_SHA}\`"
-            echo "- Tested merge SHA: \`${MERGE_SHA}\`"
+            echo "- PR head SHA and fixed publication tag: \`${HEAD_SHA}\`"
+            echo "- Built and smoke-tested PR merge SHA: \`${MERGE_SHA}\`"
             echo "- Artifact: \`${ARTIFACT_NAME}\`"
             echo
-            echo "This read-only PR workflow built and smoke-tested the images. The trusted default-branch publisher uploads these exact fixed-SHA tags to GHCR for preview deployment."
+            echo "This read-only PR workflow built and smoke-tested the PR merge commit. The trusted default-branch publisher uploads that successful artifact under the fixed PR head-SHA tag used by preview deployment."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Dump Docker Compose logs on failure

@@ -38,16 +38,24 @@ jobs:
           SOURCE_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           SOURCE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          {
-            echo "### Trusted PR runtime image publication"
-            echo
-            echo "- Source workflow run: [${SOURCE_RUN_ID}](${SOURCE_RUN_URL})"
-            echo "- Source run title: \`${SOURCE_RUN_TITLE}\`"
-            echo "- PR head branch: \`${SOURCE_HEAD_BRANCH}\`"
-            echo "- PR head SHA and fixed image tag: \`${SOURCE_HEAD_SHA}\`"
-            echo
-            echo "GitHub displays this run in the default-branch context because \`workflow_run\` uses the trusted workflow definition. It publishes only the successful source run's fixed PR head-SHA artifact and does not check out PR source."
-          } >> "$GITHUB_STEP_SUMMARY"
+          python3 - <<'PY'
+          import os
+
+          def markdown_code(value):
+              return value.replace("\\", "\\\\").replace("`", "\\`").replace("\r", " ").replace("\n", " ")
+
+          summary = f"""### Trusted PR runtime image publication
+
+          - Source workflow run: [{os.environ['SOURCE_RUN_ID']}]({os.environ['SOURCE_RUN_URL']})
+          - Source run title: `{markdown_code(os.environ['SOURCE_RUN_TITLE'])}`
+          - PR head branch: `{markdown_code(os.environ['SOURCE_HEAD_BRANCH'])}`
+          - PR head SHA and fixed image tag: `{os.environ['SOURCE_HEAD_SHA']}`
+
+          GitHub displays this run in the default-branch context because `workflow_run` uses the trusted workflow definition. It publishes only the successful source run's fixed PR head-SHA artifact and does not check out PR source.
+          """
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary_file:
+              summary_file.write(summary)
+          PY
 
       - name: Download successful PR image artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
