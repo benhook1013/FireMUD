@@ -372,6 +372,8 @@ require_contains "$pr_image_publisher_path" 'packages: write'
 require_contains "$pr_image_publisher_path" '### Trusted PR runtime image publication'
 require_contains "$pr_image_publisher_path" 'GitHub displays this run in the default-branch context'
 require_contains "$pr_image_publisher_path" 'markdown_code(os.environ['
+require_contains "$pr_image_publisher_path" 'from html import escape'
+require_contains "$pr_image_publisher_path" '<code>{markdown_code(os.environ['
 assert_job_excludes publish-pr-runtime-images.yml publish 'contents: read'
 # shellcheck disable=SC2016 # These are literal GitHub expression and shell source contracts.
 require_contains "$pr_image_publisher_path" 'pr-runtime-images-${{ github.event.workflow_run.head_sha }}'
@@ -389,6 +391,44 @@ if grep -Fq 'actions/checkout@' "$pr_image_publisher_path"; then
   echo "trusted PR image publisher must not checkout or execute PR source" >&2
   exit 1
 fi
+
+python3 - "$pr_image_publisher_path" <<'PY'
+import os
+import re
+import sys
+import tempfile
+import textwrap
+from pathlib import Path
+
+workflow_text = Path(sys.argv[1]).read_text(encoding="utf-8")
+match = re.search(r"python3 - <<'PY'\n(?P<script>.*?)\n          PY", workflow_text, re.DOTALL)
+if match is None:
+    raise SystemExit("trusted PR image publisher summary script was not found")
+
+script = textwrap.dedent(match.group("script"))
+with tempfile.NamedTemporaryFile(mode="r+", encoding="utf-8") as summary_file:
+    test_environment = {
+        "GITHUB_STEP_SUMMARY": summary_file.name,
+        "SOURCE_RUN_ID": "123",
+        "SOURCE_RUN_URL": "https://github.example/runs/123",
+        "SOURCE_RUN_TITLE": "build `title` <script>&\nnext",
+        "SOURCE_HEAD_BRANCH": "feature/`branch` <b>&",
+        "SOURCE_HEAD_SHA": "abc123",
+    }
+    previous_environment = os.environ.copy()
+    try:
+        os.environ.update(test_environment)
+        exec(compile(script, "publish-pr-runtime-images-summary", "exec"), {})
+    finally:
+        os.environ.clear()
+        os.environ.update(previous_environment)
+    summary_file.seek(0)
+    summary = summary_file.read()
+
+assert "<code>build `title` &lt;script&gt;&amp; next</code>" in summary
+assert "<code>feature/`branch` &lt;b&gt;&amp;</code>" in summary
+assert "<script>" not in summary
+PY
 
 require_contains "$image_wait_path" 'publish-pr-runtime-images.yml/runs?event=workflow_run'
 require_contains "$image_wait_path" 'wait_for_pr_publisher'

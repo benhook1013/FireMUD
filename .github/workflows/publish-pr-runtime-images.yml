@@ -40,15 +40,16 @@ jobs:
         run: |
           python3 - <<'PY'
           import os
+          from html import escape
 
           def markdown_code(value):
-              return value.replace("\\", "\\\\").replace("`", "\\`").replace("\r", " ").replace("\n", " ")
+              return escape(value.replace("\r", " ").replace("\n", " "), quote=False)
 
           summary = f"""### Trusted PR runtime image publication
 
           - Source workflow run: [{os.environ['SOURCE_RUN_ID']}]({os.environ['SOURCE_RUN_URL']})
-          - Source run title: `{markdown_code(os.environ['SOURCE_RUN_TITLE'])}`
-          - PR head branch: `{markdown_code(os.environ['SOURCE_HEAD_BRANCH'])}`
+          - Source run title: <code>{markdown_code(os.environ['SOURCE_RUN_TITLE'])}</code>
+          - PR head branch: <code>{markdown_code(os.environ['SOURCE_HEAD_BRANCH'])}</code>
           - PR head SHA and fixed image tag: `{os.environ['SOURCE_HEAD_SHA']}`
 
           GitHub displays this run in the default-branch context because `workflow_run` uses the trusted workflow definition. It publishes only the successful source run's fixed PR head-SHA artifact and does not check out PR source.
