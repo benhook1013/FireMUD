@@ -35,6 +35,7 @@ import org.springframework.stereotype.Component;
 @Component
 public final class LoginCommandHandler {
   private static final Logger logger = LoggerFactory.getLogger(LoginCommandHandler.class);
+  private static final String AUTHENTICATION_UNAVAILABLE_CODE = AuthenticationErrorCodes.UNAVAILABLE;
 
   private final GameInstanceRepository gameInstanceRepository;
   private final SessionContextService sessionContextService;
@@ -190,7 +191,7 @@ public final class LoginCommandHandler {
         accountClient.requestEmailLoginOtp(
             String.valueOf(instance.getTenantId()), challengeRequest.email());
     if (hasError(response.getError()) || !response.getAccepted()) {
-      return failure("UNAVAILABLE", "Authentication service unavailable");
+      return failure(AUTHENTICATION_UNAVAILABLE_CODE, "Authentication service unavailable");
     }
     return new LoginCommandHandlingResult(
         CommandEnqueueResult.success(),
@@ -451,11 +452,11 @@ public final class LoginCommandHandler {
           AuthenticationErrorCodes.ACCOUNT_LOCKED,
           "ACCOUNT_LOCKED",
           AuthenticationErrorCodes.UNAVAILABLE,
-          "UNAVAILABLE");
+          AUTHENTICATION_UNAVAILABLE_CODE);
 
   private String mapErrorCode(ErrorDetail error) {
     if (error == null) {
-      return "UNAVAILABLE";
+      return AUTHENTICATION_UNAVAILABLE_CODE;
     }
     String rawCode = Optional.ofNullable(error.getCode()).orElse("").toUpperCase();
     if (CANONICAL_ERROR_MAP.containsKey(rawCode)) {
@@ -471,16 +472,16 @@ public final class LoginCommandHandler {
       return "ACCOUNT_LOCKED";
     }
     if (rawCode.startsWith("AUTH_")) {
-      return "UNAVAILABLE";
+      return AUTHENTICATION_UNAVAILABLE_CODE;
     }
     if (!rawCode.isBlank()) {
       return rawCode;
     }
-    return "UNAVAILABLE";
+    return AUTHENTICATION_UNAVAILABLE_CODE;
   }
 
   private String publicErrorMessage(ErrorDetail error, String mappedCode) {
-    if ("UNAVAILABLE".equals(mappedCode)) {
+    if (AUTHENTICATION_UNAVAILABLE_CODE.equals(mappedCode)) {
       return "Authentication service unavailable";
     }
     return Optional.ofNullable(error.getMessage()).orElse("");
@@ -552,7 +553,7 @@ public final class LoginCommandHandler {
       case LoginCommandConstants.INVALID_ACCOUNT_CODE -> "error.login.invalid-account";
       case "INVALID_CREDENTIALS" -> "error.login.invalid-credentials";
       case "ACCOUNT_LOCKED" -> "error.login.account-locked";
-      case "UNAVAILABLE" -> "error.login.unavailable";
+      case AUTHENTICATION_UNAVAILABLE_CODE -> "error.login.unavailable";
       default -> null;
     };
   }

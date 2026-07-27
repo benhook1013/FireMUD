@@ -51,7 +51,7 @@ Operator and support diagnostics do not impersonate a player, attach to a live p
 
 This service has two intentionally different availability classes:
 
-- Core operator control plane: moderation actions, feature-flag requests, reports, saga inspection, and live tick-remediation pause/resume controls. Quota override and broader remediation are coverage drift until current owner-backed routes exist.
+- Core operator control plane: security-sensitive operator APIs whose availability must not depend on observability backends.
 - Observability-backed experiences: embedded dashboards, log search, metric exploration, traces, and alert-centric investigations.
 
 The core operator control plane must remain available when Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager are degraded. Implementations should preserve this with independent readiness/degradation behavior, resource isolation, and defensive timeouts/circuit breakers around observability backends.

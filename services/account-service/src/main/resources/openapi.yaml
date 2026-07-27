@@ -66,8 +66,11 @@ components:
       properties:
         username:
           type: string
+          maxLength: 50
         password:
           type: string
+          minLength: 6
+          maxLength: 100
       required: [username, password]
     PlayerBootstrapRequest:
       type: object
