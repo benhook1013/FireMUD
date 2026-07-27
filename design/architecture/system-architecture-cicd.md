@@ -34,6 +34,17 @@ The current executable unconditionally blocks every player-facing production pro
 
 Workflows live in the `.github/workflows/` directory. A typical pipeline runs on every pull request and on pushes to the long-lived publication branches (`develop` today, and `main` for release-oriented publication paths).
 
+### Pull Request Runtime And Preview Chain
+
+| Workflow | Execution context | Responsibility | What its GitHub run means |
+| --- | --- | --- | --- |
+| [`runtime-images.yml`](../../.github/workflows/runtime-images.yml) (`Build Runtime Images`) | Untrusted PR merge commit with read-only repository permissions | Build the PR merge commit locally, run the one full-stack smoke proof, and upload the successful image artifact under a fixed PR head-SHA tag | The tested merge of the PR head with its recorded base passed full-stack smoke without receiving registry-write credentials. |
+| [`smoke.yml`](../../.github/workflows/smoke.yml) (`PR Smoke Gate`) | PR metadata and Actions API | Decide whether runtime smoke is required and expose the protected `Smoke Gate` by tracking the matching `Build Runtime Images` result | This is a controller and required gate; it does not run a second copy of full-stack smoke. |
+| [`publish-pr-runtime-images.yml`](../../.github/workflows/publish-pr-runtime-images.yml) (`Publish PR Runtime Images`) | Trusted default-branch `workflow_run` definition | Download only the successful same-repository PR merge artifact and publish it with fixed PR head-SHA tags in GHCR | GitHub displays the default branch because the trusted publisher runs there; its summary identifies the source PR run and head SHA. |
+| [`preview.yml`](../../.github/workflows/preview.yml) (`PR Preview Environment`) | PR-scoped hosted preview | Wait for the exact fixed-SHA tags, deploy them to the PR namespace, and report preview access | The preview uses the reviewed PR head artifact; it does not rebuild or select a moving branch tag. |
+
+The trust split is deliberate: PR-controlled source can build and execute without package-write authority, while the trusted publisher never checks out or executes PR source. The source run's recorded base, head, and merge SHAs identify the tested input; the PR head SHA is the fixed publication and preview tag.
+
 Branch-to-environment promotion contract:
 
 | Source branch/event | Primary purpose | Deployment target |

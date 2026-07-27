@@ -30,6 +30,34 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Summarize trusted publication source
+        env:
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_URL: ${{ github.event.workflow_run.html_url }}
+          SOURCE_RUN_TITLE: ${{ github.event.workflow_run.display_title }}
+          SOURCE_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SOURCE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from html import escape
+
+          def markdown_code(value):
+              return escape(value.replace("\r", " ").replace("\n", " "), quote=False)
+
+          summary = f"""### Trusted PR runtime image publication
+
+          - Source workflow run: [{os.environ['SOURCE_RUN_ID']}]({os.environ['SOURCE_RUN_URL']})
+          - Source run title: <code>{markdown_code(os.environ['SOURCE_RUN_TITLE'])}</code>
+          - PR head branch: <code>{markdown_code(os.environ['SOURCE_HEAD_BRANCH'])}</code>
+          - PR head SHA and fixed image tag: `{os.environ['SOURCE_HEAD_SHA']}`
+
+          GitHub displays this run in the default-branch context because `workflow_run` uses the trusted workflow definition. It publishes only the successful source run's fixed PR head-SHA artifact and does not check out PR source.
+          """
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary_file:
+              summary_file.write(summary)
+          PY
+
       - name: Download successful PR image artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:

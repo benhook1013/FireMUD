@@ -1,4 +1,4 @@
-name: Smoke Tests
+name: PR Smoke Gate
 
 on:
   pull_request:
@@ -155,7 +155,7 @@ jobs:
             if (!changesHealthy) {
               headline = `⚠️ Smoke scope detection ${changesStatus}; Smoke Gate remains authoritative`;
             } else if (fullEnabled) {
-              headline = "⏳ Full-stack smoke is tracked by Smoke Gate";
+              headline = "⏳ Full-stack smoke runs in Build Runtime Images and is tracked by Smoke Gate";
             }
 
             const body = [
@@ -228,7 +228,7 @@ jobs:
         if: ${{ needs.changes.result == 'success' && needs.changes.outputs.run_smoke_full != 'true' }}
         run: echo "No runtime-stack smoke proof is required for this change."
 
-      - name: Wait for full smoke dispatch result
+      - name: Track full-stack smoke result from Build Runtime Images
         if: ${{ needs.changes.result == 'success' && needs.changes.outputs.run_smoke_full == 'true' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
