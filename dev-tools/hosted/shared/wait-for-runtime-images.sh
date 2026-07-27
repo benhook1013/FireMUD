@@ -39,13 +39,23 @@ import json
 import sys
 
 head_sha = sys.argv[1]
-payload = json.load(sys.stdin)
+try:
+    payload = json.load(sys.stdin)
+except json.JSONDecodeError:
+    raise SystemExit(1)
 pages = payload if isinstance(payload, list) else [payload]
+if not pages or any(
+    not isinstance(page, dict) or not isinstance(page.get("workflow_runs"), list)
+    for page in pages
+):
+    raise SystemExit(1)
 workflow_runs = [
     run
     for page in pages
-    for run in page.get("workflow_runs", [])
+    for run in page["workflow_runs"]
 ]
+if any(not isinstance(run, dict) for run in workflow_runs):
+    raise SystemExit(1)
 
 def is_matching_run(run):
     if run.get("head_sha") != head_sha:
@@ -85,13 +95,23 @@ import sys
 
 head_sha = sys.argv[1]
 expected_title = f"Publish PR Runtime Images head-{head_sha}"
-payload = json.load(sys.stdin)
+try:
+    payload = json.load(sys.stdin)
+except json.JSONDecodeError:
+    raise SystemExit(1)
 pages = payload if isinstance(payload, list) else [payload]
+if not pages or any(
+    not isinstance(page, dict) or not isinstance(page.get("workflow_runs"), list)
+    for page in pages
+):
+    raise SystemExit(1)
 workflow_runs = [
     run
     for page in pages
-    for run in page.get("workflow_runs", [])
+    for run in page["workflow_runs"]
 ]
+if any(not isinstance(run, dict) for run in workflow_runs):
+    raise SystemExit(1)
 matching_runs = [
     run for run in workflow_runs if run.get("display_title") == expected_title
 ]
@@ -124,7 +144,11 @@ wait_for_pr_publisher() {
       sleep "${sleep_seconds}"
       continue
     fi
-    publisher_state="$(read_publisher_state <<<"${publisher_payload}")"
+    if ! publisher_state="$(read_publisher_state <<<"${publisher_payload}")"; then
+      printf 'GitHub API response was empty or invalid while waiting for the trusted PR image publisher; retrying.\n' >&2
+      sleep "${sleep_seconds}"
+      continue
+    fi
 
     local state run_id run_status run_conclusion run_url
     IFS=$'\t' read -r state run_id run_status run_conclusion run_url <<<"${publisher_state}"
@@ -171,7 +195,11 @@ while (( SECONDS < deadline )); do
     sleep "${sleep_seconds}"
     continue
   fi
-  run_state="$(read_run_state <<<"${workflow_payload}")"
+  if ! run_state="$(read_run_state <<<"${workflow_payload}")"; then
+    printf 'GitHub API response was empty or invalid while waiting for the runtime-images workflow; retrying.\n' >&2
+    sleep "${sleep_seconds}"
+    continue
+  fi
 
   IFS=$'\t' read -r state run_id run_status run_conclusion run_url run_event <<<"${run_state}"
 

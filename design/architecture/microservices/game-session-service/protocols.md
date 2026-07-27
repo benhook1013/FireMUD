@@ -57,15 +57,7 @@ PLAY <world> [realm] [character]
 | `WHISPER <character> <text>` | Standard directed in-room communication action. Targets one nearby character in the current room; baseline default is full content for sender and target, with observer handling controlled by communication-type and target rules. | `WHISPER Sora The forge smells of brimstone` |
 | `TELL <character> <text>` | Standard direct communication action. Targets one character directly, outside room scope by default, while still flowing through the shared communication model and Game Logic. | `TELL Sora Meet me at the forge` |
 
-Selector rules for `PLAY` match the lobby helpers. `WORLDS` returns both `tenantSlug` and
-tenant-scoped `worldSlug`; the canonical textual `<world>` form is
-`tenantSlug/worldSlug`, while a bare `tenantSlug` is shorthand only when that tenant exposes
-exactly one visible authored world. A bare `worldSlug` is never resolved across tenants. `<world>`
-may instead be a menu index from the exact `WORLDS` browse snapshot, `[realm]` accepts a
-`realmSlug` under the resolved world or an index from its exact `REALMS` snapshot, and
-`[character]` is an optional name or response-local index. If a selector is ambiguous or stale,
-the response guides the player toward `WORLDS`, `REALMS`, `CHARS`, or a more specific `PLAY` form
-rather than guessing or returning a backend-flavored error.
+Selector rules for `PLAY` match the lobby helpers. `WORLDS` returns both `tenantSlug` and tenant-scoped `worldSlug`; the canonical textual `<world>` form is `tenantSlug/worldSlug`, while a bare `tenantSlug` is shorthand only when that tenant exposes exactly one visible authored world. A bare `worldSlug` is never resolved across tenants. `<world>` may instead be a menu index from the exact `WORLDS` browse snapshot, `[realm]` accepts a `realmSlug` under the resolved world or an index from its exact `REALMS` snapshot, and `[character]` is an optional name or response-local index. If a selector is ambiguous or stale, the response guides the player toward `WORLDS`, `REALMS`, `CHARS`, or a more specific `PLAY` form rather than guessing or returning a backend-flavored error.
 
 ## Login and Play Flow
 
@@ -127,12 +119,7 @@ PLAY 1 production 2
 OK PLAY Entered world: Demo World / Live Realm as Sora
 ```
 
-The same resolution rules apply to `PLAY demo production 2`, where `demo` is the one-world
-tenant shorthand, `PLAY demo/main production 2`, or `PLAY 1 1 Sora`: response-local menu indices
-and stable qualified slug selectors identify the same player-facing choices. Game Session resolves
-the current admissible runtime target and binds the internal
-`{tenantId, gameInstanceId, characterId}` identity; the player never selects `gameInstanceId`
-directly.
+The same resolution rules apply to `PLAY demo production 2`, where `demo` is the one-world tenant shorthand, `PLAY demo/main production 2`, or `PLAY 1 1 Sora`: response-local menu indices and stable qualified slug selectors identify the same player-facing choices. Game Session resolves the current admissible runtime target and binds the internal `{tenantId, gameInstanceId, characterId}` identity; the player never selects `gameInstanceId` directly.
 
 The Account Service returns canonical `AUTH_*` error codes such as `AUTH_INVALID_CREDENTIALS`, `AUTH_RETRY_LATER`, `AUTH_ACCOUNT_LOCKED`, and `AUTH_UPSTREAM_FAILURE`. Game Session translates them into protocol-level responses such as `ERROR INVALID_CREDENTIALS` and `ERROR RETRY_LATER` so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible. `AUTH_ACCOUNT_LOCKED` is reserved for verified compromise or an explicit account-security policy after sufficient identity proof; ordinary failed-login throttling uses `AUTH_RETRY_LATER`.
 

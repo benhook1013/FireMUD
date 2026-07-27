@@ -22,6 +22,14 @@ token_profiles:
   - profile: game-session-account-delegation
     audience: account-service
     kind: private_player_delegation
+auth_path_vocabulary:
+  - exact_mtls_workload
+  - exact_mtls_workload_plus_caller_specific_context
+  - exact_mtls_workload_plus_current_token_generation
+  - game_session_authenticated_context
+  - gameplay_connect
+  - gameplay_connect_cookie_revoke
+  - player_bootstrap
 internal_workload_rules:
   caller_constraints: all_declared_constraints_must_pass
   caller_policy_alternatives: disjunctive
@@ -163,7 +171,8 @@ routes:
       membership_creation: play_never_creates_membership
       missing_membership_error: JOIN_REQUIRED
     implementation_status:
-      known_drift: connect_token_and_play_may_still_invoke_ensure_public_production_player_membership
+      known_drift:
+        - connect_token_and_play_may_still_invoke_ensure_public_production_player_membership
   - service: spring-cloud-gateway
     route: /ws/game/**
     scope: tenant
@@ -333,7 +342,8 @@ routes:
     issued_token_profile: control-ui
     issued_token_audience: control-ui
     implementation_status:
-      known_drift: current_issuance_uses_legacy_scope_duplicated_session_keys_instead_of_single_token_registry
+      known_drift:
+        - current_issuance_uses_legacy_scope_duplicated_session_keys_instead_of_single_token_registry
   - service: account-service
     route: PlayerBootstrapLogin
     scope: public
@@ -341,7 +351,8 @@ routes:
     issued_token_profile: player-bootstrap
     issued_token_audience: player-bootstrap
     implementation_status:
-      known_drift: current_issuance_uses_legacy_scope_duplicated_session_keys_instead_of_single_token_registry
+      known_drift:
+        - current_issuance_uses_legacy_scope_duplicated_session_keys_instead_of_single_token_registry
   - service: account-service
     route: POST /auth/bootstrap/join
     scope: tenant
@@ -363,7 +374,7 @@ routes:
     target_route: JoinPublicProductionMembership
     scope: tenant
     classification: internal_workload
-    auth_path: mtls_workload
+    auth_path: exact_mtls_workload
     issued_token_state: none
     accepted_token_profiles: []
     token_audience: none
@@ -379,7 +390,8 @@ routes:
       any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, TENANT_BILLING_BLOCKED]
     mutation_contract: explicit_public_membership_atomic
     implementation_status:
-      known_drift: current_membership_seam_may_be_invoked_implicitly_by_connect_token_or_play
+      known_drift:
+        - current_membership_seam_may_be_invoked_implicitly_by_connect_token_or_play
   - service: account-service
     route: DELETE /tenants/{tenantId}/memberships/me
     scope: tenant
@@ -401,7 +413,8 @@ routes:
       player-bootstrap: player-bootstrap
     idempotent_retry_contract: exact_token_noop_after_durable_committed_tombstone
     implementation_status:
-      known_drift: legacy_session_key_runtime_lacks_durable_logout_retry_proof
+      known_drift:
+        - legacy_session_key_runtime_lacks_durable_logout_retry_proof
   - service: account-service
     route: AuthLogoutAll
     scope: account
@@ -413,7 +426,8 @@ routes:
       player-bootstrap: player-bootstrap
     idempotent_retry_contract: superseded_token_noop_after_durable_logout_all_proof
     implementation_status:
-      known_drift: legacy_session_key_runtime_lacks_durable_logout_all_retry_proof
+      known_drift:
+        - legacy_session_key_runtime_lacks_durable_logout_all_retry_proof
   - service: account-service
     route: GetProfile
     scope: account
@@ -486,7 +500,7 @@ routes:
     route: Authenticate
     scope: account
     classification: internal_workload
-    auth_path: mtls_workload
+    auth_path: exact_mtls_workload
     issued_token_state: none
     accepted_token_profiles: []
     token_audience: none
@@ -523,7 +537,7 @@ routes:
     route: GetTenantMembershipForRuntime
     scope: tenant
     classification: internal_workload
-    auth_path: mtls_workload
+    auth_path: exact_mtls_workload
     issued_token_state: none
     accepted_token_profiles: []
     token_audience: none
@@ -537,7 +551,7 @@ routes:
     route: GetRealmAccessGrant
     scope: tenant
     classification: internal_workload
-    auth_path: mtls_workload
+    auth_path: exact_mtls_workload
     issued_token_state: none
     accepted_token_profiles: []
     token_audience: none
@@ -551,7 +565,7 @@ routes:
     route: ListRealmAccessGrantsForAccount
     scope: tenant
     classification: internal_workload
-    auth_path: mtls_workload
+    auth_path: exact_mtls_workload
     issued_token_state: none
     accepted_token_profiles: []
     token_audience: none
@@ -568,7 +582,7 @@ routes:
     response_profile: runtime_admission
     caller_policies:
       - caller: game-session-service
-        auth_path: mtls_workload_plus_current_token_generation
+        auth_path: exact_mtls_workload_plus_current_token_generation
         issued_token_state: current_exact_private_delegation
         accepted_token_profiles: [game-session-account-delegation]
         token_audience: account-service
@@ -580,7 +594,7 @@ routes:
         realm_grant_authority: conditional_account_owned
         realm_grant_version: required_when_grant_gated
       - caller: world-management-service
-        auth_path: mtls_workload
+        auth_path: exact_mtls_workload
         issued_token_state: none
         accepted_token_profiles: []
         token_audience: none

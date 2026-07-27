@@ -232,7 +232,7 @@ In particular:
 
 ### Live Script Patch Boundary
 
-Transactional guarantees for tick execution assume deterministic scripts for the `(versionId, scriptPatchVersion)` pair that was in effect when a given effect was applied:
+The following is the target deterministic replay contract for the `(versionId, scriptPatchVersion)` pair that was in effect when a given effect was applied. Current gameplay-command rows and selected-work manifest items preserve `scriptPatchVersion`, but the live `tick_batch` and effect-ledger schema does not yet durably seal the complete pair, and the selected-work manifest does not yet preserve `versionId`. Until that schema and replay path converge, the fail-closed pair contract below remains an implementation gap rather than a claimed live guarantee:
 
 - The Game Session Service records the `versionId` and `scriptPatchVersion` active for each `gameInstanceId` and seals both fields into durable tick-batch/effect manifest or effect-ledger state alongside `EffectId`. Logs and optional audit records may project that context but are not its replay authority.
 - Tick handlers and script runners must treat the sealed `(versionId, scriptPatchVersion)` pair as immutable effect execution context: replays and retries load the same durable pair that was recorded for the original effect, even if the instance later moves to a different patch. Missing or mismatched durable execution context fails closed rather than falling back to the instance's current patch.

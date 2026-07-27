@@ -31,6 +31,9 @@ import tools.jackson.databind.ObjectMapper;
     value = "EI_EXPOSE_REP2",
     justification = "Injected collaborators remain internal service dependencies")
 public class AssetExportServiceImpl implements AssetExportService {
+  private static final String ASSET_USAGE_KEY_COLLISION = "ASSET_USAGE_KEY_COLLISION";
+  private static final String EXPORT_SNAPSHOT_CAPACITY = "EXPORT_SNAPSHOT_CAPACITY";
+  private static final String MANIFEST_OBJECT_KEY = "manifest.json";
   private static final String REPAIR_VERSION_SCOPE_UNAVAILABLE = "REPAIR_VERSION_SCOPE_UNAVAILABLE";
 
   private final GameAssetRepository repository;
@@ -94,11 +97,11 @@ public class AssetExportServiceImpl implements AssetExportService {
       s3Client.putObject(
           PutObjectRequest.builder()
               .bucket(properties.getBucket())
-              .key(prefix + "manifest.json")
+              .key(prefix + MANIFEST_OBJECT_KEY)
               .contentType("application/json")
               .build(),
           RequestBody.fromString(manifestJson, StandardCharsets.UTF_8));
-      requiredManifestAssetKeys.add("manifest.json");
+      requiredManifestAssetKeys.add(MANIFEST_OBJECT_KEY);
       return new ExportedAssetManifest(
           sha256(manifestJson), List.copyOf(requiredManifestAssetKeys));
     } catch (Exception e) {
@@ -138,7 +141,7 @@ public class AssetExportServiceImpl implements AssetExportService {
         throw new IllegalStateException(REPAIR_VERSION_SCOPE_UNAVAILABLE);
       }
       if (frozenSnapshots.size() >= properties.getFrozenSnapshotCacheMaxEntries()) {
-        throw new IllegalStateException(REPAIR_VERSION_SCOPE_UNAVAILABLE);
+        throw new IllegalStateException(EXPORT_SNAPSHOT_CAPACITY);
       }
       frozenSnapshots.put(scope, candidate);
       return candidate;
@@ -152,8 +155,9 @@ public class AssetExportServiceImpl implements AssetExportService {
       FrozenAsset frozen =
           new FrozenAsset(
               asset.getId(), asset.getFileName(), asset.getContentType(), data, sha256(data));
-      if (frozenByUsageKey.putIfAbsent(asset.getFileName(), frozen) != null) {
-        throw new IllegalStateException("ASSET_USAGE_KEY_COLLISION");
+      if (MANIFEST_OBJECT_KEY.equals(asset.getFileName())
+          || frozenByUsageKey.putIfAbsent(asset.getFileName(), frozen) != null) {
+        throw new IllegalStateException(ASSET_USAGE_KEY_COLLISION);
       }
     }
     return new FrozenAssetSnapshot(List.copyOf(frozenByUsageKey.values()));

@@ -244,7 +244,9 @@ jobs:
             const started = Date.now();
             const timeoutMs = 25 * 60 * 1000;
             const sleepMs = 15000;
+            const pullRequestCheckInterval = 4;
             const retryableStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
+            let pollIteration = 0;
 
             async function withTransientGitHubRetry(label, operation) {
               const maxAttempts = 4;
@@ -268,26 +270,37 @@ jobs:
               throw new Error(`${label} retry loop exited unexpectedly`);
             }
 
-            while (Date.now() - started < timeoutMs) {
-              const { data: currentPullRequest } = await withTransientGitHubRetry(
-                "current pull request lookup",
-                () => github.rest.pulls.get({
-                  owner,
-                  repo,
-                  pull_number: Number(prNumber),
-                })
+            function isObsoletePullRequest(pullRequest) {
+              return (
+                pullRequest.state !== "open" ||
+                pullRequest.head.sha !== headSha ||
+                pullRequest.base.ref !== baseRef ||
+                pullRequest.base.sha !== baseSha
               );
-              if (
-                currentPullRequest.state !== "open" ||
-                currentPullRequest.head.sha !== headSha ||
-                currentPullRequest.base.ref !== baseRef ||
-                currentPullRequest.base.sha !== baseSha
-              ) {
-                core.info(
-                  `Stopping obsolete smoke gate for ${baseRef}@${baseSha}...${headSha}; current PR state/base/head is ${currentPullRequest.state}/${currentPullRequest.base.ref}@${currentPullRequest.base.sha}/${currentPullRequest.head.sha}`
+            }
+
+            function logObsoletePullRequest(label, pullRequest) {
+              core.info(
+                `${label} ${baseRef}@${baseSha}...${headSha}; current PR state/base/head is ${pullRequest.state}/${pullRequest.base.ref}@${pullRequest.base.sha}/${pullRequest.head.sha}`
+              );
+            }
+
+            while (Date.now() - started < timeoutMs) {
+              if (pollIteration % pullRequestCheckInterval === 0) {
+                const { data: currentPullRequest } = await withTransientGitHubRetry(
+                  "current pull request lookup",
+                  () => github.rest.pulls.get({
+                    owner,
+                    repo,
+                    pull_number: Number(prNumber),
+                  })
                 );
-                return;
+                if (isObsoletePullRequest(currentPullRequest)) {
+                  logObsoletePullRequest("Stopping obsolete smoke gate for", currentPullRequest);
+                  return;
+                }
               }
+              pollIteration += 1;
 
               const runs = await withTransientGitHubRetry(
                 "runtime-images workflow lookup",
@@ -340,23 +353,16 @@ jobs:
                 );
                 const { data: completedPullRequest } = await withTransientGitHubRetry(
                   "completed pull request lookup",
-                  async () => {
-                    const { data: completedPullRequest } = await github.rest.pulls.get({
-                      owner,
-                      repo,
-                      pull_number: Number(prNumber),
-                    });
-                    return { data: completedPullRequest };
-                  }
+                  () => github.rest.pulls.get({
+                    owner,
+                    repo,
+                    pull_number: Number(prNumber),
+                  })
                 );
-                if (
-                  completedPullRequest.state !== "open" ||
-                  completedPullRequest.head.sha !== headSha ||
-                  completedPullRequest.base.ref !== baseRef ||
-                  completedPullRequest.base.sha !== baseSha
-                ) {
-                  core.info(
-                    `Stopping obsolete completed smoke gate for ${baseRef}@${baseSha}...${headSha}; current PR state/base/head is ${completedPullRequest.state}/${completedPullRequest.base.ref}@${completedPullRequest.base.sha}/${completedPullRequest.head.sha}`
+                if (isObsoletePullRequest(completedPullRequest)) {
+                  logObsoletePullRequest(
+                    "Stopping obsolete completed smoke gate for",
+                    completedPullRequest
                   );
                   return;
                 }

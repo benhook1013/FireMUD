@@ -43,7 +43,7 @@ The following contract decisions are mandatory and resolve cross-document ambigu
 
 - Telnet and other non-WebSocket text clients authenticate with credential-bearing `LOGIN <username> <secret>` (or the target prompt flow). They do not receive or transmit `control-ui`, `player-bootstrap`, private delegation, or gameplay-connect JWTs.
 - First-party browser and mobile-browser clients authenticate to `/auth/player-bootstrap`, keep that short-lived JWT in memory for bootstrap/discovery HTTP calls, and receive the gameplay-connect credential only as the HttpOnly `Firemud-Connect-Token` cookie. First-party native-mobile and other first-party non-browser clients using a cookie jar remain cookie-only; explicitly classified non-first-party/public non-browser clients use protected secure storage and the dedicated header.
-- Explicitly classified non-browser WebSocket clients authenticate through the same bootstrap control plane and present the gameplay-connect token only through `X-Firemud-Connect-Token`.
+- Explicitly classified non-first-party/public non-browser WebSocket clients authenticate through the same bootstrap control plane and present the gameplay-connect token only through `X-Firemud-Connect-Token`.
 - After Gateway validates and consumes the gameplay-connect credential, public non-proxy WebSocket clients use bare `LOGIN` followed by `PLAY`; no transport sends an end-user JWT as gameplay command authorization.
 
 The implemented account login modes are `PASSWORD` and verified-email `EMAIL_OTP`. Authenticator-app TOTP enrollment remains future account-security work; the REST and gRPC authentication contracts do not carry a separate `otp` field. Public player-facing text clients use Telnet-over-TLS, while plaintext Telnet is limited to local, test, and explicitly private-network compatibility. TOTP is not a transport gate or a substitute for channel protection; [ADR 0033](./decisions/adr-0033-public-player-facing-telnet-requires-tls.md) owns that boundary.
@@ -187,12 +187,7 @@ LOGIN <username> <secret>
 PLAY <world> [realm] [character]
 ```
 
-`<world>` is either an index from the caller's exact `WORLDS` browse snapshot or the stable
-`tenantSlug/worldSlug` selector carried by that response. A bare `tenantSlug` is accepted only
-when the tenant exposes exactly one visible authored world; a bare tenant-scoped `worldSlug` is
-never resolved globally. `[realm]` is a `realmSlug` under the resolved world or an index from the
-corresponding `REALMS` snapshot. Menu indices are response-local conveniences and are never stored
-or forwarded as durable identity.
+`<world>` is either an index from the caller's exact `WORLDS` browse snapshot or the stable `tenantSlug/worldSlug` selector carried by that response. A bare `tenantSlug` is accepted only when the tenant exposes exactly one visible authored world; a bare tenant-scoped `worldSlug` is never resolved globally. `[realm]` is a `realmSlug` under the resolved world or an index from the corresponding `REALMS` snapshot. Menu indices are response-local conveniences and are never stored or forwarded as durable identity.
 
 Before login, only `WORLDS_PUBLIC` is available, and it exposes bounded public-production catalog/availability metadata. `REALMS` and `CHARS` are authenticated post-login discovery commands; they must not be exposed as anonymous pre-login discovery surfaces. After login, authenticated `WORLDS`, `REALMS`, and `CHARS` may provide caller-bound membership/grant-aware discovery.
 

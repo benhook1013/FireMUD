@@ -75,7 +75,7 @@ class AssetExportServiceImplTest {
         .putObject(
             argThat((PutObjectRequest r) -> r.key().equals("t/1/manifest.json")),
             any(RequestBody.class));
-    assertEquals(2, manifest.requiredManifestAssetKeys().size());
+    assertEquals(List.of("logo.png", "manifest.json"), manifest.requiredManifestAssetKeys());
   }
 
   @Test
@@ -118,7 +118,21 @@ class AssetExportServiceImplTest {
         assertThrows(IllegalStateException.class, () -> service.exportAssets("t", 1));
 
     assertEquals("ASSET_USAGE_KEY_COLLISION", thrown.getMessage());
-    verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    verifyNoInteractions(s3Client);
+  }
+
+  @Test
+  void reservedManifestUsageKeyIsRejectedBeforeWritingAssets() {
+    when(versionRepository.findByTenantIdAndVersionNumber("t", 1))
+        .thenReturn(Optional.of(version(VersionLifecycleState.DRAFT)));
+    when(repository.findByTenantId("t"))
+        .thenReturn(List.of(gameAsset("manifest.json", "asset data")));
+
+    IllegalStateException thrown =
+        assertThrows(IllegalStateException.class, () -> service.exportAssets("t", 1));
+
+    assertEquals("ASSET_USAGE_KEY_COLLISION", thrown.getMessage());
+    verifyNoInteractions(s3Client);
   }
 
   @ParameterizedTest
@@ -168,9 +182,13 @@ class AssetExportServiceImplTest {
             List.of(gameAsset("first.png", "first")), List.of(gameAsset("second.png", "second")));
 
     service.exportAssets("t", 1);
+    org.mockito.Mockito.clearInvocations(s3Client);
+
     IllegalStateException thrown =
         assertThrows(IllegalStateException.class, () -> service.exportAssets("t", 2));
-    assertEquals("REPAIR_VERSION_SCOPE_UNAVAILABLE", thrown.getMessage());
+
+    assertEquals("EXPORT_SNAPSHOT_CAPACITY", thrown.getMessage());
+    verifyNoInteractions(s3Client);
   }
 
   @Test

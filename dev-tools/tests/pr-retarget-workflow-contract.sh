@@ -214,6 +214,8 @@ def mask_non_code(source: str) -> str:
 
 path = Path(sys.argv[1])
 predicate = sys.argv[2]
+# This helper intentionally anchors to the first predicate occurrence and accepts only a return
+# directly inside that branch, not one nested in a child block.
 source = path.read_text(encoding="utf-8")
 predicate_index = source.find(predicate)
 if predicate_index < 0:
@@ -304,10 +306,10 @@ for job in changes smoke-summary smoke-gate; do
 done
 assert_job_contains smoke.yml smoke-gate 'pull-requests: read'
 assert_job_contains smoke.yml smoke-gate 'github.rest.pulls.get'
-assert_job_contains smoke.yml smoke-gate 'currentPullRequest.state !== "open"'
-assert_job_contains smoke.yml smoke-gate 'currentPullRequest.head.sha !== headSha'
-assert_job_contains smoke.yml smoke-gate 'currentPullRequest.base.ref !== baseRef'
-assert_job_contains smoke.yml smoke-gate 'currentPullRequest.base.sha !== baseSha'
+assert_job_contains smoke.yml smoke-gate 'pullRequest.state !== "open"'
+assert_job_contains smoke.yml smoke-gate 'pullRequest.head.sha !== headSha'
+assert_job_contains smoke.yml smoke-gate 'pullRequest.base.ref !== baseRef'
+assert_job_contains smoke.yml smoke-gate 'pullRequest.base.sha !== baseSha'
 
 require_contains "$runtime_images_path" 'types: [opened, synchronize, reopened, edited]'
 require_contains "$runtime_images_path" "&& 'metadata' || 'required' }}"
@@ -390,18 +392,18 @@ require_contains "$image_wait_path" 'publisher_timeout_seconds="${HOSTED_IMAGE_P
 # shellcheck disable=SC2016 # This assertion intentionally matches the unevaluated publisher deadline.
 require_contains "$image_wait_path" 'local publisher_deadline=$((SECONDS + publisher_timeout_seconds))'
 
-image_wait_fixture_dir="$(mktemp -d)"
-trap 'rm -rf "$image_wait_fixture_dir"' EXIT
-cat >"$image_wait_fixture_dir/ordered-sequence.txt" <<'EOF'
+contract_fixture_dir="$(mktemp -d)"
+trap 'rm -rf "$contract_fixture_dir"' EXIT
+cat >"$contract_fixture_dir/ordered-sequence.txt" <<'EOF'
 prefix first second suffix
 third
 EOF
-require_ordered_sequence "$image_wait_fixture_dir/ordered-sequence.txt" first second third
-if (require_ordered_sequence "$image_wait_fixture_dir/ordered-sequence.txt" second first) 2>/dev/null; then
+require_ordered_sequence "$contract_fixture_dir/ordered-sequence.txt" first second third
+if (require_ordered_sequence "$contract_fixture_dir/ordered-sequence.txt" second first) 2>/dev/null; then
   echo "require_ordered_sequence must preserve within-line ordering" >&2
   exit 1
 fi
-cat >"$image_wait_fixture_dir/branch-return.js" <<'EOF'
+cat >"$contract_fixture_dir/branch-return.js" <<'EOF'
 if (
   examplePredicate ||
   otherPredicate
@@ -413,19 +415,29 @@ if (
   return;
 }
 EOF
-require_branch_return "$image_wait_fixture_dir/branch-return.js" 'examplePredicate ||'
-cat >"$image_wait_fixture_dir/branch-non-return.js" <<'EOF'
+require_branch_return "$contract_fixture_dir/branch-return.js" 'examplePredicate ||'
+cat >"$contract_fixture_dir/branch-non-return.js" <<'EOF'
 if (examplePredicate) {
   notreturn;
 }
 EOF
-if (require_branch_return "$image_wait_fixture_dir/branch-non-return.js" examplePredicate) 2>/dev/null; then
+if (require_branch_return "$contract_fixture_dir/branch-non-return.js" examplePredicate) 2>/dev/null; then
   echo "require_branch_return must match return as a complete token" >&2
   exit 1
 fi
-cat >"$image_wait_fixture_dir/gh" <<'EOF'
+cat >"$contract_fixture_dir/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+if [[ -n "${CONTRACT_GH_STATE_FILE:-}" ]]; then
+  invocation=0
+  [[ ! -f "$CONTRACT_GH_STATE_FILE" ]] || invocation="$(cat "$CONTRACT_GH_STATE_FILE")"
+  printf '%s\n' "$((invocation + 1))" >"$CONTRACT_GH_STATE_FILE"
+  if (( invocation == 0 )); then
+    printf '{invalid-json'
+    exit 0
+  fi
+fi
 
 if [[ "$*" == *"publish-pr-runtime-images.yml"* ]]; then
   cat <<'JSON'
@@ -437,16 +449,30 @@ else
 JSON
 fi
 EOF
-chmod +x "$image_wait_fixture_dir/gh"
-PATH="$image_wait_fixture_dir:$PATH" \
+chmod +x "$contract_fixture_dir/gh"
+PATH="$contract_fixture_dir:$PATH" \
 GH_TOKEN=contract-token \
 GITHUB_REPOSITORY=example/FireMUD \
 HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=5 \
 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
 bash "$image_wait_path" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
-  >"$image_wait_fixture_dir/output"
-require_contains "$image_wait_fixture_dir/output" 'Matching runtime-images workflow 101 succeeded'
-require_contains "$image_wait_fixture_dir/output" 'Trusted PR image publisher 201 succeeded'
+  >"$contract_fixture_dir/output"
+require_contains "$contract_fixture_dir/output" 'Matching runtime-images workflow 101 succeeded'
+require_contains "$contract_fixture_dir/output" 'Trusted PR image publisher 201 succeeded'
+
+CONTRACT_GH_STATE_FILE="$contract_fixture_dir/gh-state" \
+PATH="$contract_fixture_dir:$PATH" \
+GH_TOKEN=contract-token \
+GITHUB_REPOSITORY=example/FireMUD \
+HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=5 \
+HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+bash "$image_wait_path" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+  >"$contract_fixture_dir/retry-output" \
+  2>"$contract_fixture_dir/retry-error"
+require_contains "$contract_fixture_dir/retry-error" \
+  'GitHub API response was empty or invalid while waiting for the runtime-images workflow; retrying.'
+require_contains "$contract_fixture_dir/retry-output" 'Matching runtime-images workflow 101 succeeded'
+require_contains "$contract_fixture_dir/retry-output" 'Trusted PR image publisher 201 succeeded'
 
 assert_job_excludes runtime-images.yml smoke-full 'pull-requests: write'
 if (assert_job_excludes runtime-images.yml missing-job 'pull-requests: write') 2>/dev/null; then
@@ -458,17 +484,18 @@ require_contains "$smoke_path" 'const baseSha = context.payload.pull_request.bas
 require_contains "$smoke_path" 'const baseRef = context.payload.pull_request.base.ref;'
 require_contains "$smoke_path" 'const mergeSha = context.sha;'
 require_contains "$smoke_path" 'github.rest.pulls.get({'
-require_contains "$smoke_path" 'currentPullRequest.state !== "open" ||'
-require_contains "$smoke_path" 'currentPullRequest.head.sha !== headSha ||'
-require_contains "$smoke_path" 'currentPullRequest.base.ref !== baseRef ||'
-require_contains "$smoke_path" 'currentPullRequest.base.sha !== baseSha'
+require_contains "$smoke_path" 'pullRequest.state !== "open" ||'
+require_contains "$smoke_path" 'pullRequest.head.sha !== headSha ||'
+require_contains "$smoke_path" 'pullRequest.base.ref !== baseRef ||'
+require_contains "$smoke_path" 'pullRequest.base.sha !== baseSha'
+require_contains "$smoke_path" 'pollIteration % pullRequestCheckInterval === 0'
 require_contains "$smoke_path" 'Stopping obsolete smoke gate for'
 require_ordered_sequence \
   "$smoke_path" \
-  'currentPullRequest.state !== "open" ||' \
+  'if (isObsoletePullRequest(currentPullRequest)) {' \
   'return;' \
   'github.rest.actions.listWorkflowRuns,'
-require_branch_return "$smoke_path" 'currentPullRequest.state !== "open" ||'
+require_branch_return "$smoke_path" 'if (isObsoletePullRequest(currentPullRequest)) {'
 require_contains "$smoke_path" 'head_sha: headSha,'
 require_contains "$smoke_path" 'mode-required'
 require_contains "$smoke_path" 'Build Runtime Images secure-pr-artifact pr-'
@@ -481,18 +508,15 @@ require_contains "$smoke_path" 'github.rest.actions.listJobsForWorkflowRun'
 require_contains "$smoke_path" 'job.name === "Smoke Tests (Full Stack) / Smoke Tests (Full Stack)"'
 require_contains "$smoke_path" 'fullSmokeJob.status !== "completed"'
 require_contains "$smoke_path" 'fullSmokeJob.conclusion !== "success"'
-require_contains "$smoke_path" 'const { data: completedPullRequest } = await github.rest.pulls.get({'
-require_contains "$smoke_path" 'completedPullRequest.state !== "open" ||'
-require_contains "$smoke_path" 'completedPullRequest.head.sha !== headSha ||'
-require_contains "$smoke_path" 'completedPullRequest.base.ref !== baseRef ||'
-require_contains "$smoke_path" 'completedPullRequest.base.sha !== baseSha'
+require_contains "$smoke_path" 'const { data: completedPullRequest } = await withTransientGitHubRetry('
+require_contains "$smoke_path" 'if (isObsoletePullRequest(completedPullRequest)) {'
 require_contains "$smoke_path" 'Stopping obsolete completed smoke gate for'
 require_ordered_sequence \
   "$smoke_path" \
   'github.rest.actions.listJobsForWorkflowRun,' \
-  'const { data: completedPullRequest } = await github.rest.pulls.get({' \
-  'completedPullRequest.state !== "open" ||'
-require_branch_return "$smoke_path" 'completedPullRequest.state !== "open" ||'
+  '"completed pull request lookup",' \
+  'if (isObsoletePullRequest(completedPullRequest)) {'
+require_branch_return "$smoke_path" 'if (isObsoletePullRequest(completedPullRequest)) {'
 if grep -Fq 'const matching = runs.find((run) => run.head_sha === headSha);' "$smoke_path"; then
   echo "Smoke Gate must not accept a runtime-images run by head SHA alone" >&2
   exit 1

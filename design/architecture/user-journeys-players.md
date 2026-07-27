@@ -120,7 +120,7 @@ OK PLAY Entered Emberfall / Live Realm as Mara
 Example first-party web flow for a returning member or grant-backed target:
 
 ```text
-POST /auth/player-bootstrap
+POST /auth/player-bootstrap { accountIdentifier=player@example.com, secret=<redacted> }
 GET /auth/bootstrap/worlds
 GET /auth/bootstrap/worlds/{world}/realms
 GET /auth/bootstrap/worlds/{world}/realms/{realm}/characters?connectScopeId={scope}
@@ -133,7 +133,7 @@ PLAY <world> [realm] [character]
 Example first-time public production join:
 
 ```text
-POST /auth/player-bootstrap
+POST /auth/player-bootstrap { accountIdentifier=player@example.com, secret=<redacted> }
 GET /auth/bootstrap/worlds
 GET /auth/bootstrap/worlds/emberfall/realms
 POST /auth/bootstrap/join { connectScopeId=cs_emberfall_production_v1, requestId=req-join-1 }

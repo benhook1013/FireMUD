@@ -76,6 +76,64 @@ def collect_live_checks(value: Any, field: str, errors: list[str]) -> list[str]:
     return checks
 
 
+def collect_auth_paths(value: Any) -> list[Any]:
+    auth_paths: list[Any] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key == "auth_path":
+                auth_paths.append(child)
+            auth_paths.extend(collect_auth_paths(child))
+    elif isinstance(value, list):
+        for child in value:
+            auth_paths.extend(collect_auth_paths(child))
+    return auth_paths
+
+
+def validate_auth_path_vocabulary(document: dict[str, Any], errors: list[str]) -> set[str]:
+    vocabulary = document.get("auth_path_vocabulary")
+    if not isinstance(vocabulary, list) or not vocabulary or any(
+        not isinstance(item, str) for item in vocabulary
+    ):
+        errors.append("auth_path_vocabulary must be a non-empty list of strings")
+        allowed_auth_paths: set[str] = set()
+    else:
+        allowed_auth_paths = set(vocabulary)
+        if len(allowed_auth_paths) != len(vocabulary):
+            errors.append("auth_path_vocabulary must not contain duplicates")
+
+    unknown_auth_paths = [
+        auth_path
+        for auth_path in collect_auth_paths(document)
+        if not isinstance(auth_path, str) or auth_path not in allowed_auth_paths
+    ]
+    if unknown_auth_paths:
+        errors.append(
+            "auth_path contains values outside the closed vocabulary: "
+            f"{unknown_auth_paths!r}"
+        )
+    return allowed_auth_paths
+
+
+def validate_known_drift(value: Any, field: str, errors: list[str]) -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_field = f"{field}.{key}" if field else key
+            if key == "implementation_status" and isinstance(child, dict) and "known_drift" in child:
+                known_drift = child["known_drift"]
+                if (
+                    not isinstance(known_drift, list)
+                    or not known_drift
+                    or any(not isinstance(item, str) for item in known_drift)
+                ):
+                    errors.append(
+                        f"{child_field}.known_drift must be a non-empty list of strings"
+                    )
+            validate_known_drift(child, child_field, errors)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            validate_known_drift(child, f"{field}[{index}]", errors)
+
+
 def matching_routes(
     routes: list[Any],
     service: str,
@@ -330,6 +388,8 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     if not isinstance(document, dict):
         return ["matrix root must be a mapping"], set()
 
+    validate_auth_path_vocabulary(document, errors)
+    validate_known_drift(document, "matrix", errors)
     validate_live_check_vocabulary(document, errors)
 
     routes = document.get("routes")

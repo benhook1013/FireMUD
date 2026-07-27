@@ -304,6 +304,35 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
             "unexpected secondary capabilities",
         )
 
+    def test_explicit_empty_adr_secondary_set_parses_em_dash_through_ledger(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.TOP_ALLOCATION
+            source_path = (
+                "design/architecture/decisions/"
+                "adr-0001-scripting-event-ingress-idempotency-identity.md"
+            )
+            replace_in_line(
+                path,
+                "adr-0001-scripting-event-ingress-idempotency-identity.md",
+                "| `SF-1`, `SF-2` |",
+                "| — |",
+            )
+            original = self.validator.ADR_ALLOCATION_EXPECTATIONS[source_path]
+            self.validator.ADR_ALLOCATION_EXPECTATIONS[source_path] = self.validator.adr_allocation(
+                "AS-1", "Accepted"
+            )
+            try:
+                rows = self.validator.validate_top_allocation_ledger(
+                    root,
+                    self.validator.group_ids(root),
+                    self.validator.repository_files(root)["Architecture decisions"],
+                    self.validator.repository_files(root),
+                )
+            finally:
+                self.validator.ADR_ALLOCATION_EXPECTATIONS[source_path] = original
+            self.assertIn(source_path, {row.path for row in rows})
+
     def test_exempt_adr_secondary_handoff_drift(self) -> None:
         with fixture_root() as directory:
             root = Path(directory)

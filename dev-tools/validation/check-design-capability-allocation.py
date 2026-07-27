@@ -394,6 +394,8 @@ def clean_cell(cell: str) -> str:
 
 
 def capability_set_from_cell(cell: str, context: str, groups: set[str]) -> frozenset[str]:
+    if clean_cell(cell) == "—":
+        return frozenset()
     parsed_values = [clean_cell(value) for value in cell.split(",") if value.strip()]
     duplicates = sorted(
         value for value, count in Counter(parsed_values).items() if count > 1
@@ -935,7 +937,7 @@ def validate_top_allocation_ledger(
         primary = "Exempt" if primary_cell == "Exempt" else primary_from_cell(document, row[primary_index], groups, root)
         classification = row[classification_index].strip()
         expected = ADR_ALLOCATION_EXPECTATIONS.get(source_path)
-        if expected is not None and len(expected) == 3 and expected[2]:
+        if expected is not None and len(expected) == 3:
             secondary = capability_set_from_cell(
                 row[secondary_index],
                 f"{document.relative_to(root)}:{source_path}: secondary handoffs",

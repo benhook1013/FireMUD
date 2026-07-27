@@ -68,6 +68,61 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors = self.validator.validate(path)
         self.assertTrue(any("outside the closed vocabulary" in error for error in errors))
 
+    def test_unknown_auth_path_is_rejected(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(route for route in document["routes"] if route.get("route") == "Authenticate")
+        route["auth_path"] = "mtls_workload"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(
+                self.validator.yaml.safe_dump(document, sort_keys=False),
+                encoding="utf-8",
+            )
+            errors = self.validator.validate(path)
+        self.assertTrue(
+            any("auth_path contains values outside the closed vocabulary" in error for error in errors)
+        )
+
+    def test_nested_unknown_auth_path_is_rejected(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route
+            for route in document["routes"]
+            if route.get("route") == "GetTenantEntitlementsForRuntime"
+        )
+        route["caller_policies"][0]["auth_path"] = "mtls_workload_plus_current_token_generation"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(
+                self.validator.yaml.safe_dump(document, sort_keys=False),
+                encoding="utf-8",
+            )
+            errors = self.validator.validate(path)
+        self.assertTrue(
+            any("auth_path contains values outside the closed vocabulary" in error for error in errors)
+        )
+
+    def test_known_drift_must_be_a_non_empty_list_of_strings(self):
+        for malformed in ("scalar_drift", [], ["valid_drift", 7]):
+            with self.subTest(malformed=malformed), tempfile.TemporaryDirectory() as directory:
+                document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+                route = next(route for route in document["routes"] if route.get("route") == "PLAY")
+                route["implementation_status"]["known_drift"] = malformed
+                path = Path(directory) / "matrix.yaml"
+                path.write_text(
+                    self.validator.yaml.safe_dump(document, sort_keys=False),
+                    encoding="utf-8",
+                )
+                errors = self.validator.validate(path)
+            self.assertTrue(
+                any(
+                    error.endswith(
+                        "implementation_status.known_drift must be a non-empty list of strings"
+                    )
+                    for error in errors
+                )
+            )
+
     def test_route_live_checks_must_be_a_list(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
