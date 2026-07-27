@@ -116,26 +116,26 @@ Operators interact with coordination state through **supported tools**, not raw 
 
 To keep reset/replay behavior implementation-safe, the maintenance/tooling surface is not left to per-runbook invention. Its initial supported public contract is deliberately small, whether delivered as a CLI, an admin API, or both:
 
-- `status(scope)` reports the canonical state, affected inventory, and recovery progress.
-- `recover(scope, policy)` starts the one public recovery/reset operation and returns its durable `operationId`. Its internal pause-and-lock phase fences new work and acquires the maintenance lock. Its `policy` selects replay, reset, or session-schema cleanup and it gates completion on the post-reset smoke check.
-- `continueRecovery(operationId, expectedPhase, evidenceRef)` resumes that same operation after a controller restart or an external infrastructure step. It compare-and-sets the expected durable phase and cannot select or bypass an internal phase.
-- `resume(scope)` is only a safety gate for an existing recovery operation and refuses to resume until the recovery and smoke gates pass; it cannot create a pause or a new operation identity.
-- `releaseMaintenanceLock(scope, reason)` is an audited exceptional operation and does not imply that the scope is safe to resume.
+- `status(scope, operationId)` reports the canonical state, affected inventory, and recovery progress.
+- `recover(scope, policy, operation)` starts the one public recovery/reset operation and returns its durable `operationId` and `maintenanceLockToken`. Its internal pause-and-lock phase fences new work and acquires the maintenance lock. Its `policy` selects replay, reset, or session-schema cleanup and it gates completion on the post-reset smoke check.
+- `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` resumes that same operation after a controller restart or an external infrastructure step. It compare-and-sets the expected durable phase and cannot select or bypass an internal phase.
+- `resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)` is only a safety gate for an existing completed recovery operation and refuses to resume until the recovery and smoke gates pass; it cannot create a pause, release an active recovery lock, or create a new operation identity.
+- `releaseMaintenanceLock(operationId, scope, maintenanceLockToken, reason, evidenceRef)` is an audited exceptional operation and does not imply that the scope is safe to resume.
 
 The high-level recovery operation internally owns durable epoch handling, ledger and command convergence, Redis clearing, metadata initialization, session invalidation or rebinding, and post-reset verification. Its operation record lives in a durable control store outside the target Redis deployment and records the scope inventory, current and expected phase, phase evidence, lock identity, and terminal status. Internal phases may expose APIs for orchestration, resumability, and focused proof, but they are not public operator verbs. `continueRecovery` advances only the recorded next phase of the same operation; status, resume safety state, and audited maintenance-lock release remain separate controls.
 
 The tool advertises and accepts only scope forms implemented and proved by the runtime. Unsupported region, tenant, or cluster scope must be rejected explicitly. A wider scope becomes supported only when its authoritative durable affected-region inventory, pause fencing, recovery ordering, audit output, and resume gate have end-to-end proof.
 
 - Required internal control-plane operations:
-  - `PauseTicks(scope)`
-  - `ResumeTicks(scope)`
-  - `GetRegionTickStatus(scope)`
-  - `RunScopedCoordinationReset(scope)`
-  - `ReconcileTickLedger(scope, oldRegionEpoch | oldRegionEpochMap)`
-  - `ConvergeCommandRecords(scope, oldRegionEpoch | oldRegionEpochMap)`
-  - `InitializeRegionMeta(scope, regionEpoch | regionEpochMap, currentTickId, currentTickState, currentTickTerminalAtMs)`
-  - `RebindRegionSessions(scope, regionEpoch | regionEpochMap)`
-  - `RunPostResetSmokeCheck(scope)`
+  - `PauseTicks(operationId, scope, maintenanceLockToken)`
+  - `ResumeTicks(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)`
+  - `GetRegionTickStatus(scope, operationId)`
+  - `RunScopedCoordinationReset(operationId, scope, maintenanceLockToken)`
+  - `ReconcileTickLedger(operationId, scope, maintenanceLockToken, oldRegionEpoch | oldRegionEpochMap)`
+  - `ConvergeCommandRecords(operationId, scope, maintenanceLockToken, oldRegionEpoch | oldRegionEpochMap)`
+  - `InitializeRegionMeta(operationId, scope, maintenanceLockToken, regionEpoch | regionEpochMap, currentTickId, currentTickState, currentTickTerminalAtMs)`
+  - `RebindRegionSessions(operationId, scope, maintenanceLockToken, regionEpoch | regionEpochMap)`
+  - `RunPostResetSmokeCheck(operationId, scope, maintenanceLockToken)`
 - The public CLI surface is the high-level `recover`, `status`, `continueRecovery`, `resume`, and audited `release-lock` contract defined above; the detailed operations listed here are internal phases rather than separate public verbs.
 - Scope grammar:
   - `--scope region --tenant <tenantId> --game-instance <gameInstanceId> --region <regionId>`
@@ -205,13 +205,13 @@ The tool advertises and accepts only scope forms implemented and proved by the r
     - for tenant/cluster scopes, accepts an optional explicit sample-set argument; otherwise the tool must auto-select one representative region per affected executor/shard group and print which regions were sampled.
   - `coordination-maintenance resume` (public safety control)
     - accepts only an advertised supported scope.
-    - consumes the same maintenance lock token as the prior internal phase.
+    - requires `--operation-id <operationId>`, `--expected-phase <expectedPhase>`, `--maintenance-lock-token <maintenanceLockToken>`, and `--evidence-ref <evidenceRef>`, all matching the active durable workflow.
     - exits non-zero unless the scope currently satisfies the selected workflow's resume gate: reset complete, old-epoch ledger converged, command convergence complete, a passing smoke check, and session rebinding when the effective policy preserved gameplay sessions; replay-first requires in-epoch ledger and command convergence without an epoch bump and a passing replay budget/status check.
-    - remains a separately exposed safety control for an already-completed workflow; the normal recover operation uses its internal success-release phase instead.
+    - remains a separately exposed safety control for an already-completed workflow; it cannot release an active recovery lock, and the normal recover operation uses its internal success-release phase instead.
   - `coordination-maintenance release-lock` (public audited failure control)
-    - requires `--maintenance-lock-token <token>`.
+    - requires `--operation-id <operationId>`, the matching scope, `--maintenance-lock-token <maintenanceLockToken>`, `--reason <reason>`, and `--evidence-ref <evidenceRef>`.
     - is the canonical failure or operator-abort control for releasing the deployment maintenance lock when a recover workflow stops before its internal success-release phase.
-    - must emit structured audit output recording the partial workflow state, actor, release reason, and whether the scope remains paused.
+    - rejects any request whose operation identity, token, scope, mode, or compatibility class does not match the active workflow and emits structured audit output recording the partial workflow state, actor, release reason, and whether the scope remains paused.
 - Required execution rule:
   - The bounded high-level maintenance operations are the only supported write-path entrypoints for coordinated reset/recovery flows. Helm hooks, Jobs, and admin dashboards call them rather than re-encoding reset logic or directly invoking internal recovery phases.
 - Epoch-bump ownership rule:
@@ -223,7 +223,7 @@ The tool advertises and accepts only scope forms implemented and proved by the r
 - Maintenance-lock lifecycle rule:
   - One recover workflow owns one deployment maintenance lock until its internal success release or the separately audited `coordination-maintenance release-lock` abandonment control completes.
   - Later phases in that workflow refresh the lock TTL with the same `maintenanceLockToken`; they do not acquire independent locks. Controller restarts recover the token binding and expected phase from the external durable operation record rather than from target Redis.
-  - A phase failure retains the lock and paused fence. The workflow remains resumable through `continueRecovery(operationId, expectedPhase, evidenceRef)`; it never auto-releases merely because a process exited or an infrastructure step timed out.
+  - A phase failure retains the lock and paused fence. The workflow remains resumable through `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`; it never auto-releases merely because a process exited or an infrastructure step timed out.
   - If a phase loses the lock, every later mutation must fail closed until an operator explicitly restores the same fenced operation or abandons it through audited `release-lock`; abandonment does not authorize resume.
   - A `replay_first` workflow starts with compatibility class `cleanup`. Escalation to `reset_first` must atomically compare-and-match that same token and upgrade the class to `reset` without releasing or reacquiring the lock. The upgrade audit record, including scope, old/new class, token/workflow lineage, actor, reason, and resulting epoch transition, must be durable before the epoch bump or reset-key mutation is allowed.
   - If the same-token upgrade or its audit write cannot complete, the workflow remains paused and no reset mutation may proceed; the operator must use the explicit failure/abort path. A second lock cannot be used to bypass the failed upgrade.
@@ -288,11 +288,11 @@ The recover operation's internal `PauseTicks` phase, `GetRegionTickStatus`, and 
   - `RESETTING`
   - `DEGRADED`
   - `STALLED`
-- Internal `PauseTicks(scope)` phase required behavior:
+- Internal `PauseTicks(operationId, scope, maintenanceLockToken)` phase required behavior:
   - Reject new gameplay command intake for the scope before returning `PAUSED`.
   - Prevent new durable tick-batch allocation for the scope before returning `PAUSED`.
   - Wait for any in-flight executor work in the scope to drain, fail, or lose lease so no executor can create new coordination state under the old epoch.
-- `GetRegionTickStatus(scope)` minimum fields per affected region:
+- `GetRegionTickStatus(scope, operationId)` minimum fields per affected region:
   - `tenantId`
   - `gameInstanceId`
   - `regionId`
@@ -315,13 +315,14 @@ The recover operation's internal `PauseTicks` phase, `GetRegionTickStatus`, and 
   - region scope: the target region satisfies the pass criteria above.
   - tenant scope: every region owned by the tenant satisfies the pass criteria above.
   - cluster scope: every active region on the deployment satisfies the pass criteria above.
-- `ResumeTicks(scope)` required behavior:
+- `ResumeTicks(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)` required behavior:
+  - Reject requests that do not match the active operation and maintenance lock.
   - Refuse to resume any region that has not passed the canonical post-reset resume gate.
   - Transition regions back to `RUNNING` only after the reset workflow has completed for the scope.
 
 Jobs, wrappers, and dashboards may present this state differently, but they must all consume this same underlying contract and must not invent alternate quiescence criteria.
 
-`RunPostResetSmokeCheck(scope)` minimum assertions:
+`RunPostResetSmokeCheck(operationId, scope, maintenanceLockToken)` minimum assertions:
 
 | Check | Required pass criteria |
 | --- | --- |

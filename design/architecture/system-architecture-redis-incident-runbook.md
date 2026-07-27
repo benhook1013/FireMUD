@@ -82,9 +82,9 @@ When session-related metrics indicate schema or TTL problems, use this scoped cl
    - Verify and correct deployments so all Game Session Service instances run a version whose CAS script understands the highest `schemaVersion` currently present in Redis (follow the “scripts first, writers second” rule from the Redis architecture docs).
 1. **Run the canonical session cleanup workflow**
    - Use the session schema/TTL cleanup flow described in [Session Schema Cleanup and Large Keyspaces](./system-architecture-redis-operations.md#session-schema-cleanup-and-large-keyspaces):
-     - Run the single supported `coordination-maintenance recover --mode session-schema-cleanup --scope tenant --tenant <tenantId>`, using `--dry-run` first if the blast radius is uncertain. The operation owns the maintenance lock and invokes session cleanup as an internal recovery phase, not a separately supported public verb.
+     - Run the single supported `coordination-maintenance recover --mode session-schema-cleanup --operation cleanup --scope tenant --tenant <tenantId>`, using `--dry-run` first if the blast radius is uncertain. The operation owns the maintenance lock and invokes session cleanup as an internal recovery phase, not a separately supported public verb.
      - Configure the recovery request to delete keys with unsupported `schemaVersion` values or aggressively reduce their TTL so they expire quickly when performing a TTL cut-over.
-     - Let the recover operation release its lock on success; use the separately audited `coordination-maintenance release-lock ...` control only after an operator abort or failed workflow.
+     - Let the recover operation perform its internal success release. After an operator abort or failed workflow, use only `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <maintenanceLockToken> --reason <reason>` against the matching active workflow.
 1. **Verify recovery**
    - Monitor `session.cas_unsupported_schema_total`, reconnect error rates, and Redis key counts for the affected tenant(s) to confirm the issue has cleared.
    - Affected players may need to log in again; no authoritative PostgreSQL data is lost.
@@ -122,7 +122,7 @@ The following Redis-focused incident flows build on the general recovery steps a
    1. If the chosen mode is `replay_first`:
       - Run `coordination-maintenance recover --mode replay-first ...` for the affected scope without bumping `region_epoch`. The high-level workflow owns ledger and command convergence; those phases are not separate public operator verbs.
       - Watch `tick_effects_pending_oldest_age_seconds`, `tick_effects_replay_slo_breached`, and command convergence for one emitted replay-convergence budget window. Verify that command outcomes settle into the canonical terminal vocabulary described in `system-architecture-tick-execution-flows.md` rather than inventing a replay-only local interpretation.
-      - If the replay budget/status gate passes, run `coordination-maintenance resume ... --maintenance-lock-token <token>` to release the same maintenance lock without bumping `regionEpoch`.
+      - If the replay budget/status gate passes, let the recover operation perform its internal success-release phase without bumping `regionEpoch`; a public `resume` command does not release the active recovery lock.
       - Escalate to `reset_first` immediately if replay cannot make bounded progress, if inconsistent-state signals appear, or if the region transitions to `STALLED`. Escalation atomically upgrades the existing maintenance lock's compatibility class from `cleanup` to `reset` by compare-and-match on the same `maintenanceLockToken`, retains the original recovery audit lineage, and writes the upgrade audit record before bumping `regionEpoch` or mutating reset keys. The audit record must include the scope, old/new compatibility class, token/workflow lineage, actor, reason, and resulting epoch transition. Do not release and reacquire the lock between recovery modes; if the tooling cannot perform that atomic same-token upgrade and audit ordering, it must leave the scope paused for an explicit operator failure path rather than starting a second recovery lock.
       - Worked example:
         1. Region `(T1, R7)` remains on `region_epoch = 13`, `tick_effects_pending_oldest_age_seconds` exceeds budget, and there is no evidence of mixed-epoch state or duplicate durable batches.
@@ -132,7 +132,7 @@ The following Redis-focused incident flows build on the general recovery steps a
    2. If the chosen mode is `reset_first`:
       - Execute the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) for the same scope.
       - Keep only the incident-specific choices local to this runbook: scope selection, whether replay-first was exhausted first, whether gameplay sessions are preserved, and what evidence justified escalation.
-   3. Verify region health returns to `RUNNING` or bounded `DEGRADED` and `redis_coordination_tail_loss_ms` drops back into the SLO envelope after the chosen recovery mode completes.
+   3. Verify region health returns to `RUNNING` or bounded `DEGRADED` and `redis_coordination_tail_loss_ms` drops back into the SLO envelope after the chosen recovery mode completes. If replay cannot complete, the operation remains paused and quarantined until reset escalation or audited `release-lock`.
 
 Alerts based on `redis_coordination_tail_loss_ms` should follow the conventions in `design/observability/grafana/redis-alerts-snippets.md` so they carry `owner` and `runbook` annotations that point back to this section.
 

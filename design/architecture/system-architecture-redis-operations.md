@@ -39,7 +39,7 @@ This one public operation acquires the maintenance lock, fences the scope, and r
 
 The internal pause-and-lock phase is not a public command or a standalone operation. Only `recover` creates the durable `operationId` and maintenance-lock identity; an interrupted workflow resumes through that same operation or is explicitly abandoned through the audited maintenance-lock release control.
 
-Supported external controls are limited to `continueRecovery(operationId, expectedPhase, evidenceRef)` for retrying the same durable operation after a controller restart or an external infrastructure step, and `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason>` for an audited operator abort. Continuation may advance only the recorded next internal phase; abort retains the paused/fenced state and never reopens the scope. No public command may select or invoke an internal phase.
+Supported external controls are limited to `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` for retrying the same durable operation after a controller restart or an external infrastructure step, and `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason>` for an audited operator abort. Continuation may advance only the recorded next internal phase and must match the active operation and lock; abort retains the paused/fenced state and never reopens the scope. No public command may select or invoke an internal phase.
 
 Rules:
 
@@ -281,12 +281,13 @@ Goal: change how `tenantId` / `gameInstanceId` / `regionId` normalization and ha
 
 ### Runbook: Normalization Migration via Reset
 
-1. implement the new normalization version in shared helpers
-2. schedule a maintenance window
-3. invoke one bounded `coordination-maintenance recover --mode reset --scope ...` operation for the affected scope; it owns fencing, epoch handling, keyspace replacement, reconciliation, initialization, verification, and success release in the canonical order
-4. deploy services using the new normalization helpers while that same durable operation remains fenced at its recorded external-infrastructure step
-5. start a fresh Coordination Redis deployment or logical database with an empty keyspace, then call `continueRecovery(operationId, expectedPhase, evidenceRef)` so the operation verifies the replacement and completes its remaining internal phases
-6. if the migration cannot safely continue, call the audited `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason>` abort control; it retains the fence and does not reopen traffic
+1. define an immutable migration contract containing the old and new normalization/hash-tag versions, affected scope, maintenance CLI and control-plane build digests, every participating service image digest, and the Lua Script Registry version/digest
+2. explicitly upgrade the maintenance CLI, control plane, services, and Lua registry as one coordinated version set; mixed-version migration is unsupported
+3. schedule a maintenance window and persist the migration contract in the durable recovery operation before mutating Coordination Redis
+4. invoke one bounded `coordination-maintenance recover --mode reset --operation migration --scope ...` operation and require the controller to validate that every participant reports the persisted version set and migration contract before reset begins
+5. start a fresh Coordination Redis deployment or logical database with an empty keyspace as the active recovery operation's recorded external-infrastructure step
+6. rebuild coordination state from PostgreSQL plus fresh activity, then validate normalization, shard locality, Lua registry compatibility, and migration evidence before calling `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`
+7. if the migration cannot safely continue, call the audited `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason>` abort control; it retains the fence and does not reopen traffic
 
 ### Runbook: In-Place Normalization Migration
 

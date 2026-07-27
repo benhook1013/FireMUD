@@ -140,7 +140,7 @@ for clause in required_reset_contract:
 require_contains(
     "design/architecture/system-architecture-redis-ops-access.md",
     [
-        "`continueRecovery(operationId, expectedPhase, evidenceRef)`",
+        "`continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`",
         "A phase failure retains the lock and paused fence.",
         "abandonment does not authorize resume",
     ],

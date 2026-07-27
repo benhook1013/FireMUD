@@ -35,7 +35,7 @@ import org.springframework.stereotype.Component;
 @Component
 public final class LoginCommandHandler {
   private static final Logger logger = LoggerFactory.getLogger(LoginCommandHandler.class);
-  private static final String AUTHENTICATION_UNAVAILABLE_CODE = AuthenticationErrorCodes.UNAVAILABLE;
+  private static final String AUTHENTICATION_UNAVAILABLE_CODE = "UNAVAILABLE";
 
   private final GameInstanceRepository gameInstanceRepository;
   private final SessionContextService sessionContextService;
