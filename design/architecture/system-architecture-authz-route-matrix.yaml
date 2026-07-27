@@ -68,7 +68,7 @@ tenant_generation_policy:
       required_authority: [issuer_generation, account_generation, membership_generation, membership]
     cross_tenant_support_safe:
       target_tenant_generation: false
-      required_authority: [issuer_generation, account_generation, current_global_role]
+      required_authority: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
     cross_tenant_billing_safe:
       target_tenant_generation: false
       required_authority: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
@@ -77,6 +77,7 @@ tenant_generation_policy:
       - non_allowlisted_route_denied_after_target_tenant_generation_advance
       - billing_safe_tenant_denied_without_exact_membership_generation_and_live_tenant_admin
       - support_safe_denied_without_live_support_or_platform_admin_and_global_scope
+      - support_safe_denied_without_role_appropriate_assurance
       - billing_safe_denied_without_live_billing_admin_or_platform_admin_and_privileged_control
       - new_route_class_does_not_inherit_exception
 entitlement_contract:
@@ -1100,7 +1101,7 @@ routes:
     response_profile: high_level_only
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
-    required_live_checks: [issuer_generation, account_generation, current_global_role]
+    required_live_checks: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
     roles:
       any_of: [support, platformAdmin]
   - service: account-service
@@ -1141,7 +1142,7 @@ routes:
     response_profile: high_level_only
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
-    required_live_checks: [issuer_generation, account_generation, current_global_role]
+    required_live_checks: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
     roles:
       any_of: [support, platformAdmin]
   - service: account-service
@@ -1164,7 +1165,7 @@ routes:
     response_profile: high_level_only
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
-    required_live_checks: [issuer_generation, account_generation, current_global_role]
+    required_live_checks: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
     roles:
       any_of: [support, platformAdmin]
   - service: account-service

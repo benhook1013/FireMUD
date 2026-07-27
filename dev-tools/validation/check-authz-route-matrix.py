@@ -66,6 +66,7 @@ REQUIRED_TENANT_GENERATION_EXCEPTIONS = {
             "issuer_generation",
             "account_generation",
             "current_global_role",
+            "role_appropriate_assurance",
         },
     },
     "cross_tenant_billing_safe": {
@@ -198,6 +199,15 @@ def validate_role_assurance(document: dict[str, Any], errors: list[str]) -> set[
             "role_assurance.privileged_control_when_global_role.requirements must be a mapping"
         )
         return predicates
+    unexpected_roles = sorted(
+        set(requirements) - REQUIRED_ROLE_ASSURANCE_ROLES,
+        key=str,
+    )
+    if unexpected_roles:
+        errors.append(
+            "role_assurance.privileged_control_when_global_role.requirements "
+            f"contains unexpected role keys: {unexpected_roles}"
+        )
     for role in sorted(REQUIRED_ROLE_ASSURANCE_ROLES):
         requirement = requirements.get(role)
         label = f"role_assurance.privileged_control_when_global_role.requirements.{role}"
@@ -243,7 +253,10 @@ def validate_receiver_predicates(
     routes: list[Any], token_profiles: dict[str, dict[str, str]], errors: list[str]
 ) -> None:
     def validate_token_fields(
-        entry: dict[str, Any], label: str, profiles: list[str]
+        entry: dict[str, Any],
+        label: str,
+        profiles: list[str],
+        reported_unknown_profiles: set[str] | None = None,
     ) -> None:
         token_type = entry.get("token_type")
         token_issuer = entry.get("token_issuer")
@@ -259,6 +272,10 @@ def validate_receiver_predicates(
             return
         profile = token_profiles.get(profiles[0])
         if profile is None:
+            if reported_unknown_profiles is None or profiles[0] not in reported_unknown_profiles:
+                errors.append(
+                    f"{label} uses unknown token profiles: {[profiles[0]]}"
+                )
             return
         expected = (profile.get("type"), profile.get("issuer"), profile.get("audience"))
         if (token_type, token_issuer, token_audience) != expected:
@@ -270,6 +287,7 @@ def validate_receiver_predicates(
         if not isinstance(route, dict):
             continue
         profiles_value = route.get("accepted_token_profiles")
+        unknown_profiles: list[str] = []
         if profiles_value is not None:
             profiles = string_list(profiles_value, f"matrix.routes[{index}] accepted_token_profiles", errors)
             unknown_profiles = sorted(set(profiles) - set(token_profiles))
@@ -350,7 +368,7 @@ def validate_receiver_predicates(
         )
         if route.get("method_policy") != "exact_declared_route":
             errors.append(f"{label} must declare method_policy exact_declared_route")
-        validate_token_fields(route, label, profiles)
+        validate_token_fields(route, label, profiles, set(unknown_profiles))
 
 
 def validate_tenant_generation_policy(document: dict[str, Any], routes: list[Any], errors: list[str]) -> None:
@@ -414,12 +432,16 @@ def validate_entitlement_contract(document: dict[str, Any], routes: list[Any], e
         if contract.get("account_wide_fallback") != "forbidden":
             errors.append("entitlement_contract.account_wide_fallback must be forbidden")
     routes_for_entitlements = matching_routes(routes, "account-service", "GetTenantEntitlementsForRuntime")
-    if len(routes_for_entitlements) == 1:
-        route = routes_for_entitlements[0]
-        if route.get("entitlement_scope") != "account_owned_tenant_bound":
-            errors.append("GetTenantEntitlementsForRuntime must declare account_owned_tenant_bound entitlement_scope")
-        if route.get("cross_tenant_inheritance") != "forbidden":
-            errors.append("GetTenantEntitlementsForRuntime must forbid cross-tenant inheritance")
+    if len(routes_for_entitlements) != 1:
+        errors.append(
+            "matrix must contain exactly one account-service GetTenantEntitlementsForRuntime route"
+        )
+        return
+    route = routes_for_entitlements[0]
+    if route.get("entitlement_scope") != "account_owned_tenant_bound":
+        errors.append("GetTenantEntitlementsForRuntime must declare account_owned_tenant_bound entitlement_scope")
+    if route.get("cross_tenant_inheritance") != "forbidden":
+        errors.append("GetTenantEntitlementsForRuntime must forbid cross-tenant inheritance")
 
 
 def validate_role_assurance_references(

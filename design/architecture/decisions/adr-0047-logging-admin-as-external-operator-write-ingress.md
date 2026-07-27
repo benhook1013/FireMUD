@@ -31,9 +31,9 @@ The added ingress hop is acceptable for operator work, but must not become a dep
 
 ### Canonical External Ingress
 
-External operator writes for moderation, runtime feature flags, quota overrides, admission control, and tick or coordination remediation enter through HTTPS at Spring Cloud Gateway and then Logging and Admin. The current live mutation families are runtime feature-flag overrides, admission-pointer state operations, and scoped tick `PauseTicks`/`ResumeTicks`; moderation currently persists policy input and audit only. Quota overrides, broader tick/coordination remediation, and moderation enforcement are target-state families and must not be represented as executable routes until their owner contracts exist.
+External operator requests for moderation, runtime feature flags, quota overrides, admission control, and tick or coordination remediation enter through HTTPS at Spring Cloud Gateway and then Logging and Admin. Only supported executable mutation families are forwarded to owners per request. The current live executable mutation families are runtime feature-flag overrides, admission-pointer state operations, and scoped tick `PauseTicks`/`ResumeTicks`; moderation currently persists policy input and audit only and is neither forwarded nor enforced. Quota overrides, broader tick/coordination remediation, and moderation enforcement are target-state families and must not be represented by executable routes until their owner contracts exist.
 
-For each request, Logging and Admin:
+For each supported executable mutation request, Logging and Admin:
 
 - authenticates the operator and checks the required tenant, global, or cross-tenant scope;
 - validates the operator-facing request;
@@ -45,22 +45,22 @@ The domain owner alone validates domain facts and commits authoritative state. L
 
 ### Bounded Owner Delegation
 
-Account Service is the authority for operator delegation and supports two explicit issuance paths. Human requests use the typed Account `IssueOperatorAuthorization` path and require the current `control-ui` identity; issuance validates its token `jti`, account generation, current tenant or global role, tenant/scope, action family, and canonical mutation digest. A `platformAdmin` action and a cross-tenant `billingAdmin` action additionally require the bounded `privileged_control` window from ADR 0045; tenant-scoped `tenantAdmin` and `moderator` actions do not pretend to hold a global-role elevation. Account then issues an opaque, bounded authorization reference bound to the actor account, current `control-ui` `jti`, account generation, role, tenant/scope, action family, `controlPlaneRequestId`, mutation digest, issue time, and expiry. For a global `platformAdmin` tenant operation, the reference also binds the current target-tenant generation without inventing tenant membership.
+Account Service is the authority for operator delegation and supports two explicit issuance paths. Human requests use the typed Account `IssueHumanOperatorAuthorizationReference` path and require the current `control-ui` identity; issuance validates its token `jti`, account generation, current tenant or global role, tenant/scope, action family, and canonical mutation digest. A `platformAdmin` action and a cross-tenant `billingAdmin` action additionally require the bounded `privileged_control` window from ADR 0045; tenant-scoped `tenantAdmin` and `moderator` actions do not pretend to hold a global-role elevation. Account then issues an opaque, bounded authorization reference bound to the actor account, current `control-ui` `jti`, account generation, role, tenant/scope, action family, `controlPlaneRequestId`, mutation digest, issue time, and expiry. For a global `platformAdmin` tenant operation, the reference also binds the current target-tenant generation without inventing tenant membership.
 
 Unattended operator automation uses the typed Account `IssueAutomationOperatorAuthorizationReference` path with `exact_mtls_workload_plus_versioned_automation_policy`. Account authenticates the exact Logging and Admin workload mTLS identity and validates the current versioned automation policy for the requested tenant/scope, action family, and canonical mutation digest. The reference is bound to `workload_identity`, `automation_policy_id`, `automation_policy_version`, tenant/scope, action family, `controlPlaneRequestId`, mutation digest, issue time, and expiry; it has no user account, end-user token, `control-ui` identity, or privileged human window. The owner must require the same exact Logging and Admin mTLS identity and redeem the reference with Account. Logging and Admin records whether the actor is human or workload automation and retains the applicable human or policy evidence.
 
 `controlPlaneRequestId` is the canonical logical request name across HTTP, Java/domain contracts, ADRs, and audit records. Protobuf contracts may use the language-standard wire spelling `control_plane_request_id`, which maps directly to that same identifier; no second request identity is introduced.
 
-Logging and Admin computes `mutationDigest` as SHA-256 over a versioned canonical encoding of every scope, target, expected-version, mutation, and audit-reason field, excluding only transport credentials and the authorization reference. It forwards the reference unchanged with the typed request, digest, and same `controlPlaneRequestId`. The owner recomputes the digest, redeems and validates the exact reference with Account, then independently checks current domain facts, ownership, fencing, and idempotency. Logging and Admin's asserted actor, role, tenant, or scope is request context and audit input, not authority. Owner-side operator mutation RPCs are classified `internal_workload` and require the exact Logging and Admin mTLS identity plus Account redemption. A human request may carry only the Account-validated `control-ui` authorization evidence; an unattended request carries no end-user JWT or human identity.
+For each supported executable mutation request, Logging and Admin computes `mutationDigest` as SHA-256 over a versioned canonical encoding of every scope, target, expected-version, mutation, and audit-reason field, excluding only transport credentials and the authorization reference. It forwards the reference unchanged with the typed request, digest, and same `controlPlaneRequestId`. The owner recomputes the digest, redeems and validates the exact reference with Account, then independently checks current domain facts, ownership, fencing, and idempotency. Logging and Admin's asserted actor, role, tenant, or scope is request context and audit input, not authority. Owner-side operator mutation RPCs are classified `internal_workload` and require the exact Logging and Admin mTLS identity plus Account redemption. A human request may carry only the Account-validated `control-ui` authorization evidence; an unattended request carries no end-user JWT or human identity.
 
-This protocol applies to the current feature-flag, admission-pointer/version-upgrade, and tick pause/resume families, and defines the target ingress for the following deferred families:
+This protocol applies to the current executable feature-flag, admission-pointer/version-upgrade, and tick pause/resume families, and defines the target ingress for the following deferred families. It does not provide executable forwarding for the current moderation policy-input/audit route; no executable moderation route may be added until an owning enforcement contract exists:
 
 | Action family | Current boundary | Target boundary |
 | --- | --- | --- |
 | Runtime feature-flag override | Live Logging & Admin ingress; Game Session owns runtime state | Owner-validated, durable Game Session mutation |
 | Admission-pointer/version-upgrade control | Live Logging & Admin ingress; Game Session owns pointer and version state | Owner-validated, fenced Game Session mutation |
 | Tick pause/resume | Live scoped Logging & Admin ingress; Game Session owns coordination state | Owner-validated, fenced Game Session mutation |
-| Moderation enforcement | Current route persists policy input and audit only | Versioned policy propagation to Game Session or Social & Groups enforcement owner |
+| Moderation enforcement | No executable route; current route persists policy input and audit only | Versioned policy propagation to Game Session or Social & Groups enforcement owner |
 | Quota override | No current route or Account owner mutation contract | Hypothetical target entitlement overlay owned by Account through this ingress |
 | Broader tick/coordination remediation | No current route or Game Session owner RPC | Target owner control API through this ingress; no direct Redis write |
 
@@ -111,6 +111,7 @@ The current implementation is partial. Existing ingress and forwarding paths do 
 Implementation and focused proof must:
 
 - classify the exact Gateway and Logging and Admin routes and reject unauthorized, wrong-tenant, wrong-scope, and unclassified requests;
+- prove that only supported executable mutation families perform per-request owner forwarding; the current moderation route persists policy input and audit only, and executable moderation routes are rejected until an owning enforcement contract exists;
 - prove external clients cannot reach the corresponding owner-side mutation APIs directly;
 - require exact `control-ui`, current role, and role-appropriate assurance for human ingress, while proving the separate unattended path requires exact mTLS workload identity plus current versioned automation policy and cannot impersonate a user;
 - prove Account issues and owns the bounded operator authorization reference and that the owner redeems it rather than trusting Logging and Admin assertions;
@@ -121,7 +122,7 @@ Implementation and focused proof must:
 - maintain an explicit inventory and focused audit proof for every bypass-safe external write; and
 - prove ordinary gameplay and owner-local enforcement do not call Logging and Admin merely to process a command or commit domain state.
 
-Quota, admission, moderation, feature-flag, and remediation families may converge incrementally, but none is complete until its external route, audit, typed forwarding, Account reference redemption, owner mutation, negative authorization, retry, and outage behavior are all demonstrated. A family with no current route or owner contract is recorded as coverage drift and is not represented by a placeholder endpoint.
+Quota, admission, feature-flag, and remediation families may converge incrementally, but none is complete until its external route, audit, typed forwarding, Account reference redemption, owner mutation, negative authorization, retry, and outage behavior are all demonstrated. Moderation remains a persistence-only policy-input/audit route until its owning enforcement contract exists; it is not an executable family in the current boundary. A family with no current route or owner contract is recorded as coverage drift and is not represented by a placeholder endpoint.
 
 ## Reversibility and Revisit Triggers
 

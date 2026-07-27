@@ -102,6 +102,49 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             any("auth_path contains values outside the closed vocabulary" in error for error in errors)
         )
 
+    def test_caller_policy_unknown_token_profile_is_rejected(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route
+            for route in document["routes"]
+            if route.get("route") == "GetTenantEntitlementsForRuntime"
+        )
+        policy = next(
+            policy
+            for policy in route["caller_policies"]
+            if policy.get("caller") == "game-session-service"
+        )
+        policy["accepted_token_profiles"] = ["unknown-profile"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(
+                self.validator.yaml.safe_dump(document, sort_keys=False),
+                encoding="utf-8",
+            )
+            errors = self.validator.validate(path)
+        self.assertTrue(
+            any(
+                "uses unknown token profiles" in error and "unknown-profile" in error
+                for error in errors
+            )
+        )
+
+    def test_outer_route_unknown_token_profile_is_reported_once(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route
+            for route in document["routes"]
+            if route.get("route") == "IssueHumanOperatorAuthorizationReference"
+        )
+        route["accepted_token_profiles"] = ["unknown-profile"]
+        errors = []
+        token_profiles = self.validator.validate_token_profiles(document, errors)
+        self.validator.validate_receiver_predicates([route], token_profiles, errors)
+        self.assertEqual(
+            ["matrix.routes[0] uses unknown token profiles: ['unknown-profile']"],
+            errors,
+        )
+
     def test_known_drift_must_be_a_non_empty_list_of_strings(self):
         for malformed in ("scalar_drift", [], ["valid_drift", 7]):
             with self.subTest(malformed=malformed), tempfile.TemporaryDirectory() as directory:
@@ -494,6 +537,19 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertTrue(any("support.applies_to must be a mapping" in error for error in errors))
         self.assertTrue(any("one applies_to shape" in error for error in errors))
 
+    def test_role_assurance_rejects_unexpected_role_keys(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        requirements = document["role_assurance"]["privileged_control_when_global_role"]["requirements"]
+        requirements["suport"] = requirements.pop("support")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(
+                self.validator.yaml.safe_dump(document, sort_keys=False),
+                encoding="utf-8",
+            )
+            errors = self.validator.validate(path)
+        self.assertTrue(any("contains unexpected role keys" in error for error in errors))
+
     def test_legacy_target_only_route_declaration_is_rejected(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = next(
@@ -551,6 +607,20 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
             errors = self.validator.validate(path)
         self.assertIn("entitlement_contract.cross_tenant_inheritance must be forbidden", errors)
+
+    def test_entitlement_contract_requires_exactly_one_matching_route(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route
+            for route in document["routes"]
+            if route.get("route") == "GetTenantEntitlementsForRuntime"
+        )
+        expected = "matrix must contain exactly one account-service GetTenantEntitlementsForRuntime route"
+        for routes in ([], [route, dict(route)]):
+            with self.subTest(route_count=len(routes)):
+                errors = []
+                self.validator.validate_entitlement_contract(document, routes, errors)
+                self.assertEqual([expected], errors)
 
 
 if __name__ == "__main__":

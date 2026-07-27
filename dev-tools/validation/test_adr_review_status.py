@@ -151,6 +151,28 @@ class AdrReviewStatusTests(unittest.TestCase):
                 )
                 self.validator.validate(root)
 
+    def test_unrecognized_and_nonterminal_statuses_are_rejected(self) -> None:
+        for status in (
+            "Proposed",
+            "Deferred",
+            "Proposed - Pending Human review",
+            "Accepted with caveat",
+            "Superseded",
+        ):
+            with self.subTest(status=status), fixture_root() as fixture:
+                root = Path(fixture)
+                path = root / "design/architecture/decisions/adr-0013-pending.md"
+                path.write_text(
+                    path.read_text(encoding="utf-8").replace(
+                        "Proposed - Pending Human Review", status
+                    ),
+                    encoding="utf-8",
+                )
+                expect_failure(
+                    lambda: self.validator.validate(root),
+                    "status must be exactly",
+                )
+
     def test_checked_review_requires_completed_metadata(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)

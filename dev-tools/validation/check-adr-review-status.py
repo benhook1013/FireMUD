@@ -18,7 +18,12 @@ REVIEW_QUEUE = (
 # These records predate the formal human-review queue. Later reviewed parcels
 # either affirm them directly or supersede them with queue-backed ADRs.
 PRE_FORMAL_REVIEW_RECORDS = set(range(1, 12))
-TERMINAL_ADR_STATUSES = {"Accepted", "Superseded", "Withdrawn"}
+PENDING_ADR_STATUS = "Proposed - Pending Human Review"
+ADR_REFERENCE = r"(?:ADR \d{4}|\[ADR \d{4}\]\([^)]+\))"
+TERMINAL_ADR_STATUS_RE = re.compile(
+    rf"^(?:Accepted|Superseded by {ADR_REFERENCE}|"
+    rf"Withdrawn(?: \(superseded by {ADR_REFERENCE}\))?)$"
+)
 ADR_PATH_RE = re.compile(r"adr-(\d{4})-.*\.md$")
 REVIEW_ROW_RE = re.compile(
     r"^- \[x\] `(?P<key>[^`]+)` — "
@@ -72,6 +77,10 @@ def review_fields(text: str) -> dict[str, str]:
             fail(f"duplicate ADR review field {name!r}")
         fields[name] = match.group("value").strip()
     return fields
+
+
+def is_terminal_status(status: str) -> bool:
+    return TERMINAL_ADR_STATUS_RE.fullmatch(status) is not None
 
 
 def checked_reviews(path: Path) -> dict[int, list[Review]]:
@@ -154,22 +163,21 @@ def validate(root: Path = ROOT) -> None:
                 "by a checked review-queue entry"
             )
 
-        status_kind = status.split(maxsplit=1)[0]
-        if (
-            status == "Proposed - Pending Human Review"
-            and fields.get("Human review status") != "Pending"
-        ):
+        context = path.relative_to(root)
+        if status == PENDING_ADR_STATUS:
+            if fields.get("Human review status") != "Pending":
+                fail(
+                    f"{context}: pending proposal requires "
+                    "'Human review status: Pending'"
+                )
+        elif not is_terminal_status(status):
             fail(
-                f"{path.relative_to(root)}: pending proposal requires "
-                "'Human review status: Pending'"
+                f"{context}: status must be exactly {PENDING_ADR_STATUS!r} "
+                "or a recognized terminal status"
             )
-        elif (
-            status_kind in TERMINAL_ADR_STATUSES
-            and number not in PRE_FORMAL_REVIEW_RECORDS
-            and not linked_reviews
-        ):
+        elif number not in PRE_FORMAL_REVIEW_RECORDS and not linked_reviews:
             fail(
-                f"{path.relative_to(root)}: terminal ADR status lacks a checked "
+                f"{context}: terminal ADR status lacks a checked "
                 "human-review queue entry"
             )
 

@@ -26,11 +26,13 @@ Each global account has one Stripe customer and one account-owned wallet of paym
 
 Every tenant subscription explicitly binds the payment instrument chosen for that subscription. An established subscription never falls back to an account-default instrument. Changing the binding for one subscription affects only that subscription.
 
+`CreateSubscription` resolves the authoritative billing owner before its subscription row exists and requires either an explicit saved instrument ID or deterministic selection input that resolves to exactly one saved instrument owned by that owner. Account atomically persists the owner, Stripe customer, and instrument binding before provider creation; Stripe customer and provider defaults are prohibited.
+
 Only the billing-owner subject may view or attach instruments in its account wallet. Possession of `tenantAdmin` alone does not permit a subject to inspect another account's instruments. A `billingAdmin` performing cross-tenant billing administration must use the dedicated audited route rather than inheriting wallet access through tenant authority.
 
 An instrument cannot be detached while any subscription references it. The owner must first select replacement instruments for every referencing subscription.
 
-Transferring billing ownership binds the subscription to the new owner's Stripe customer and a payment instrument selected by that owner. Cards and other payment instruments are never transferred between account wallets.
+A billing-owner transfer is an explicit, audited handoff through the dedicated `cross_tenant_billing_safe` route, recording the actor, current owner, new owner, affected subscription, reason, and outcome. It rebinds the subscription to the new owner’s Stripe customer and a payment instrument selected by that owner. Cards and other payment instruments are never transferred between account wallets.
 
 Card management and every new real-money charge complete through HTTPS and the payment-provider flow. Telnet or gameplay may initiate the operation and return a short-lived, single-use checkout URL. The URL is bound to the initiating account and intended operation. FireMUD recognizes payment completion only from a verified provider webhook, then applies the resulting durable entitlement idempotently.
 
@@ -67,9 +69,10 @@ Focused contract and integration proof must demonstrate that:
 
 - subscriptions persist an explicit payment-instrument binding and established subscriptions cannot use an account-default fallback;
 - wallet reads and attachment are limited to the billing-owner subject, `tenantAdmin` alone is denied, and cross-tenant `billingAdmin` operations use the audited route;
+- `CreateSubscription` resolves the authoritative billing owner before creating its subscription row, requires an explicit or deterministic saved-instrument selection owned by that owner, persists the owner/customer/instrument binding before provider creation, and does not use provider or customer defaults;
 - updating one subscription does not change any other subscription;
 - detachment fails until every referencing subscription has a replacement binding;
-- billing-owner transfer uses the new owner's Stripe customer and never copies or transfers instruments;
+- billing-owner transfer is an explicit audited handoff through the dedicated `cross_tenant_billing_safe` route, uses the new owner's Stripe customer, and never copies or transfers instruments;
 - FireMUD persists provider identifiers and safe display metadata only, never raw card data;
 - gameplay-issued checkout URLs expire, are single-use, and are bound to the initiating account and operation; and
 - only verified, replay-safe provider webhooks can complete a charge and idempotently grant its entitlement.

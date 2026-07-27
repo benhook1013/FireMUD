@@ -41,7 +41,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Replacement-instance compatibility preflight (`ValidateInstanceCutoverCompatibility`) | ✔ | ✔ | | ✔ | ✔ | | ✔ | | ✔ | | |
 | Authoritative owner: `versionStateEpoch` CAS enforcement | ✔ | | | | | | | | | | |
 | Version-state CAS APIs ownership/invocation for activation/rollback (`versionStateEpoch`) (live admission-pointer control path) | ✔ | | | ✔ | | | | | ✔ | | |
-| Runtime feature flag overrides (live operator ingress; Game Session owns runtime truth) | | | | ✔ | | | | | | | |
+| Runtime feature-flag truth and overrides (live operator ingress; Game Session owns runtime truth) | | | | ✔ | | | | | ✔ | | |
 | Tick & coordination health metrics (diagnostic scope: `<tenantId, gameInstanceId, regionId>`) | | | | ✔ | | | | | | | |
 | Canonical room-state read fence production and same-fence room-view composition | | ✔ | | | ✔ | ✔ | | | | | |
 | Entity definition and persistence | | | | | ✔ | | | | | | |
@@ -76,7 +76,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Authoritative owner: chat mute/chat-ban enforcement (target; policy remains Logging & Admin-owned) | | | | | | | | ✔ | | | |
 | Movement/location write contract orchestration (effect identity, order, and replay safety) | | ✔ | | ✔ | ✔ | ✔ | | | | | |
 | Instance termination orchestration (`PREPARING/ACTIVE/TERMINATING/TERMINATED`) and cross-service cleanup | | ✔ | | ✔ | ✔ | | | | ✔ | | |
-| Automated tick/coordination remediation (live `PauseTicks`/`ResumeTicks`; broader reset/remediate is hypothetical target coverage) | | | | ✔ | | | | | ✔ | | |
+| Automated tick/coordination remediation (live `PauseTicksForScope`/`ResumeTicksForScope`; broader reset/remediate is hypothetical target coverage) | | | | ✔ | | | | | ✔ | | |
 | Game asset publishing & object storage | ✔ | | | | | | | | | | |
 | Asset deletion eligibility oracle (`CanDeleteVersionAssets`) | ✔ | | | | | | | | ✔ | | |
 | Asset purge control-plane workflow (`BeginPurgeVersionAssets` / `FinalizePurgeVersionAssets`) | ✔ | | | | | | | | ✔ | | |
@@ -88,7 +88,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Dynamic route management and gateway configuration | | | | | | | | | | | ✔ |
 | Authoritative owner: edge admin/creator API allowlist policy | | | | | | | | | | | ✔ |
 | Admin/creator API participation (edge-routable domain APIs) | ✔ | | ✔ | ✔ | | | | ✔ | ✔ | | ✔ |
-| External operator write ingress (live feature flags/admission/tick pause-resume; target moderation enforcement/quota/broader remediation) | | | | | | | | | ✔ | | ✔ |
+| External operator write ingress (live feature flags/admission/`PauseTicksForScope`/`ResumeTicksForScope`; target moderation enforcement/quota/broader remediation) | | | | | | | | | ✔ | | ✔ |
 | API gateway rate limiting and abuse filters | | | | | | | | | | | ✔ |
 
 The `<tenantId, gameInstanceId, regionId>` tuple in the tick and coordination health metrics row is the diagnostic scope Game Session must support through control-plane status, structured logs, and audit records. It is not a Prometheus label tuple: metric series must use bounded `scope`, `scope_bucket`, `region_class`, or equivalent operational buckets under the cardinality policy, while exact identities remain in diagnostic records.

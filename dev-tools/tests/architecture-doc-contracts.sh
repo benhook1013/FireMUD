@@ -145,7 +145,7 @@ for clause in required_reset_contract:
             "design/architecture/system-architecture-redis-operations.md: canonical reset contract out of order: "
             f"expected {clause!r} after {previous!r}"
         )
-    cursor = position
+    cursor = position + len(clause)
     previous = clause
 
 for clause in [

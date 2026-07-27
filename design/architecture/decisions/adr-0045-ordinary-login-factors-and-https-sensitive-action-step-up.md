@@ -42,7 +42,7 @@ The following actions complete only on the HTTPS account/control plane:
 
 The HTTPS client may be a web, native, or CLI client. A pure Telnet client cannot complete these actions.
 
-Sensitive personal and billing changes require recent ordinary reauthentication using the account's selected ordinary factor policy. Initial elevation to `platformAdmin`, or to `billingAdmin` authority that crosses tenant boundaries, additionally requires an independent TOTP. That TOTP step occurs once per bounded elevated window, not once per action, and never appears in gameplay. Tenant-scoped `tenantAdmin` and `moderator` operator actions instead require current tenant membership and role at the action boundary; they do not acquire or claim the global `privileged_control` window merely to make the shared operator-delegation protocol work.
+Every listed HTTPS-sensitive action requires recent ordinary reauthentication using the account's selected ordinary factor policy, including account deletion and global administration. Initial elevation to `platformAdmin`, or to `billingAdmin` authority that crosses tenant boundaries, additionally requires an independent TOTP. That TOTP step occurs once per bounded elevated window, not once per action, and never appears in gameplay. Tenant-scoped `tenantAdmin` and `moderator` operator actions continue to require current tenant membership and role at the action boundary; they do not acquire or claim the global `privileged_control` window merely to make the shared operator-delegation protocol work.
 
 ### Gameplay-to-HTTPS handoff
 
@@ -87,7 +87,7 @@ Focused contract and integration proof must demonstrate that:
 
 - ordinary Telnet and HTTPS login honor the account-selected `PASSWORD` and/or verified `EMAIL_OTP` policy;
 - an active gameplay session cannot solicit another ordinary factor, TOTP, or elevated control-plane authority;
-- sensitive routes reject absent or stale ordinary reauthentication and keep their mutations HTTPS-only;
+- every listed sensitive route, including account deletion and global administration, rejects absent or stale ordinary reauthentication and keeps its mutations HTTPS-only;
 - `platformAdmin` and cross-tenant `billingAdmin` elevation require independent TOTP before a bounded elevated window is issued;
 - a handoff is opaque, non-authorizing, short-lived, single-use, bound to every declared field, and safe against replay or parameter substitution;
 - completion occurs only after a verified authenticated or provider result and is idempotent under retries and duplicate callbacks; and
