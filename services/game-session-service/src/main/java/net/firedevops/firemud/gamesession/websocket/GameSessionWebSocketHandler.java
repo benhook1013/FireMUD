@@ -215,6 +215,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               effectivePresentation,
               maybeContext.orElse(null));
       sendProtocolMessage(session, response);
+      if (shouldCloseAfterFirstPartyScopeRejection(session, resolvedCommand, interpretation)) {
+        closeFirstPartyPolicyViolation(session);
+        return;
+      }
       promptBurstCoordinator.recordPromptEmission(sessionId, outputs);
       maybeAppendToScreenBuffer(
           sessionId,
@@ -395,6 +399,24 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       return;
     }
     session.close(new CloseStatus(CloseStatus.NORMAL.getCode(), "logout"));
+  }
+
+  private boolean shouldCloseAfterFirstPartyScopeRejection(
+      WebSocketSession session,
+      TextCommand command,
+      TextCommandInterpretationResult interpretation) {
+    return "first_party_web".equals(resolveConnectionMode(session))
+        && (command.type() == TextCommandType.LOGIN || command.type() == TextCommandType.PLAY)
+        && !interpretation.commandResult().accepted()
+        && "CONNECT_SCOPE_MISMATCH".equals(interpretation.commandResult().errorCode());
+  }
+
+  private void closeFirstPartyPolicyViolation(WebSocketSession session) {
+    try {
+      session.close(new CloseStatus(CloseStatus.POLICY_VIOLATION.getCode(), "policy_violation"));
+    } catch (IOException ex) {
+      logger.warn("Failed to close session after first-party scope mismatch", ex);
+    }
   }
 
   private void recordGameplayActivity(

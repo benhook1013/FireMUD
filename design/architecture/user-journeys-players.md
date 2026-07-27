@@ -13,6 +13,7 @@ Accounts span multiple hosted games. The [Multi-Tenancy](./system-architecture-m
 ## Table of Contents
 
 - [Goals](#goals)
+- [Implementation Status](#implementation-status)
 - [Quick Reference](#quick-reference)
 - [1. Sign Up](#1-sign-up)
 - [2. Join a Game for the First Time](#2-join-a-game-for-the-first-time)
@@ -32,6 +33,14 @@ Accounts span multiple hosted games. The [Multi-Tenancy](./system-architecture-m
 - Provide a quick reference for how a player moves through the system.
 - Map each step to the microservice that owns the logic or data from a player’s point of view.
 - Link back to deeper design docs for anyone who needs additional context.
+
+---
+
+## Implementation Status
+
+The target journey below requires an explicit `JOIN` / `Join & Play`, then realm-scoped `CHARS`, before character creation, connect-token issuance, or `PLAY` for first-time public-production entry; `PLAY` never creates membership. Returning members and grant-backed non-public players preserve their existing membership/grant-backed discovery flow and skip only the public-production join action. Current implementation still allows the connect-token issuance and text `PLAY` paths to invoke `EnsurePublicProductionPlayerMembership` implicitly, and current text clients can enter through direct `LOGIN` plus `PLAY` without the target discovery/`CHARS` sequence. The explicit join boundary, realm-scoped character gate, and `JOIN_REQUIRED` behavior are not yet implemented across all clients. That is tracked implementation drift, not target behavior.
+
+Realm-aware character discovery and the current creation-policy decision are implemented at the backend boundary, but the richer character-creation descriptor remains a gap. The current flow does not yet provide first-party clients with the published-version-specific template, race, class, and option descriptor needed to render the complete creation choices.
 
 ---
 
@@ -66,22 +75,30 @@ Player → Account Service
 The first successful session for a new player follows a single canonical onboarding flow regardless of client type:
 
 1. **Authenticate the Platform Account**
-   - **First-party web client** – Obtains a short-lived player bootstrap token through the [Account Service](./microservices/account-service/README.md), uses bootstrap-backed discovery endpoints to choose a world/realm/character target, then requests a connect token and opens the gameplay WebSocket through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md). Browser clients receive the connect token as the short-lived `Firemud-Connect-Token` HttpOnly cookie, so they do not depend on custom WebSocket headers.
+   - **First-party web client** – Obtains a short-lived player bootstrap token through the [Account Service](./microservices/account-service/README.md), then uses bootstrap-backed discovery endpoints to choose a world/realm target. For first-time public-production entry, the player completes `Join & Play` before character selection/creation and before `POST /auth/connect-token`; returning members skip that action, while grant-backed non-public players use their existing membership plus grant and also skip it. Eligible players then select or create a character, request a connect token, and open the gameplay WebSocket through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md). Browser clients receive the connect token as the short-lived `Firemud-Connect-Token` HttpOnly cookie, so they do not depend on custom WebSocket headers.
    - **Telnet / MCP client** – Connects through the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) and authenticates in-band with `LOGIN`.
-2. **Browse or Discover Joinable Worlds** – The player may use `WORLDS` before login to browse the platform publicly, then use the same command again after login to see the authenticated discovery set they can actually enter. Existing memberships always qualify. In v1, a live default production realm may also be publicly discoverable even before the player has joined that tenant, so brand-new accounts can still discover where they would enter through the public-production onboarding path. Responses use world slugs and friendly names rather than raw IDs, as defined in [Authentication & Authorization](./system-architecture-authentication.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md).
-3. **Choose a Realm** – If the selected world exposes more than one visible realm, the player uses `REALMS <world>` to choose between the default production realm and any explicitly authorized additional realms such as a playtest fork. Hidden or unauthorized realms are never disclosed. Public discovery applies only to the default production realm in v1; any additional realm requires an explicit access grant from the creator or operator. On the default public production realm, first-party bootstrap creates the player's `player` membership during connect-token issuance before socket admission; credential-bearing text clients create it through the same Account Service writer boundary during `PLAY`.
-4. **List Characters or Create New** – The player uses `CHARS <world> [realm]` to view the character choices valid for the selected realm target. In shared-state realms this typically means the tenant's normal live durable character roster. In isolated realms it may instead mean copied fork-local state, seeded/sample-state characters, or fresh standalone realm-local state for the same account. The current backend discovery contract is realm-aware: character listing carries the resolved `gameInstanceId` and playable-state scope, and bootstrap/text discovery expose the selected realm's state scope and character-creation policy instead of reading a tenant-wide roster behind a realm label. If no visible character exists, the client must complete the world's character-creation flow before `PLAY` succeeds unless the resolved realm's policy forbids creation. The authoritative character-creation owner for this step is the [Entity Management Service](./microservices/entity-management-service/README.md), whose `CreateCharacter` contract defines how new player characters are created for the selected realm scope. For playtest forks, a player may arrive with copied fork-local character state from the source snapshot. If no visible fork-local character exists for that account, fork policy determines whether the player may create a fresh fork-local character or whether the fork is restricted to copied characters only; whichever policy a fork uses must be surfaced consistently in the lobby/client UX. If a fork permits both copied and newly created fork-local characters, `CHARS` returns them in one fork-local list and the client does not need a separate mode switch. If no visible character exists and fork policy forbids creation, the canonical player-facing failure is a hard character-selection denial rather than a generic `CHARACTER_REQUIRED` prompt.
+2. **Browse or Discover Joinable Worlds** – The player may use `WORLDS` before login to browse the platform publicly, then use the same command again after login to see the authenticated discovery set they can actually enter. Existing memberships qualify the world for authenticated discovery, but do not by themselves qualify every realm. In v1, a live default production realm may also be publicly discoverable even before the player has joined that tenant, so brand-new accounts can still discover where they would enter through the public-production onboarding path. Additional realms are not implied by world visibility: they require an explicit Account-owned realm-access grant for the caller, and grant visibility never substitutes for required membership. Responses use world slugs and friendly names rather than raw IDs, as defined in [Authentication & Authorization](./system-architecture-authentication.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md).
+
+   Discovery has two deliberately different admission classes. The configured default production realm may be listed through public world discovery and may offer the explicit `JOIN`/`Join & Play` path; Account creates the caller's durable `player` membership before character discovery, connect-token issuance, or gameplay. Private and playtest realms are never exposed by public visibility alone: they appear only when the caller has an active Account-owned realm-access grant and any separately required tenant membership, skip `JOIN`, and do not create membership. A grant permits visibility and admission to that realm but never substitutes for membership; without the grant, the realm is omitted rather than disclosed as a hidden or generic authorization failure.
+
+3. **Choose a Realm When Needed, Then Join** – If the selected world exposes more than one visible realm, the player uses `REALMS <world>` to understand the available targets. Public discovery and open enrollment apply only to the world's single configured default production realm in v1, so `JOIN <world>` always resolves that unambiguous public-production target and does not accept a realm argument. A first-time public player explicitly selects `Join & Play` or issues `JOIN <world>`; Account then creates the durable tenant `player` membership that powers the player's game library and future return discovery. Grant-backed private or playtest realms validate the current grant and any separately required existing membership, skip `JOIN`, and never create membership through this flow. Hidden or unauthorized realms are never disclosed.
+4. **List Characters or Create New** – After `JOIN <world>` or `Join & Play` has created or confirmed membership for a first-time public-production target, the player uses `CHARS <world> [realm]` to view the character choices valid for the selected realm target. Returning members use their existing membership; grant-backed private or playtest players use existing membership plus the applicable realm grant without a public join. A realm grant never substitutes for tenant membership. In shared-state realms this typically means the tenant's normal live durable character roster. In isolated realms it may instead mean copied fork-local state, seeded/sample-state characters, or fresh standalone realm-local state for the same account. The current backend discovery contract is realm-aware: character listing carries the resolved `gameInstanceId` and playable-state scope, and bootstrap/text discovery expose the selected realm's state scope and character-creation policy instead of reading a tenant-wide roster behind a realm label. If no visible character exists, the client must complete the world's character-creation flow before `PLAY` succeeds unless the resolved realm's policy forbids creation. The authoritative character-creation owner for this step is the [Entity Management Service](./microservices/entity-management-service/README.md), whose `CreateCharacter` contract defines how new player characters are created for the selected realm scope. For playtest forks, a player may arrive with copied fork-local character state from the source snapshot. If no visible fork-local character exists for that account, fork policy determines whether the player may create a fresh fork-local character or whether the fork is restricted to copied characters only; whichever policy a fork uses must be surfaced consistently in the lobby/client UX. If a fork permits both copied and newly created fork-local characters, `CHARS` returns them in one fork-local list and the client does not need a separate mode switch. If no visible character exists and fork policy forbids creation, the canonical player-facing failure is a hard character-selection denial rather than a generic `CHARACTER_REQUIRED` prompt.
    - Minimum realm-policy consequence: when the selected realm is isolated-state, character discovery and any allowed creation target only that realm's gameplay state namespace. They must not silently read from or write to the tenant's normal live production roster.
    - `CHARS` must also expose the realm-local creation decision clearly enough that clients do not infer policy from roster shape alone. A realm that denies fresh creation must say so explicitly; a realm that allows fresh realm-local creation may do so alongside copied/seeded characters without introducing a separate client mode switch.
 5. **Bind to Gameplay** – `PLAY <world> [realm] [character]` resolves to canonical `{tenantId, gameInstanceId, characterId}` values and binds the session to the selected realm. After this step, normal gameplay commands become available.
 
-For a first-time join through a publicly discoverable production realm, the player's `player` membership is created through the Account Service public-production membership writer boundary before gameplay binding is committed. First-party bootstrap normally reaches that boundary during `POST /auth/connect-token`; text clients that do not use bootstrap reach it during `PLAY`. Failed joins do not leave behind partial membership rows.
+For the target public-production flow, the explicit join action creates the player's Account-owned membership transactionally before character creation, connect-token issuance, or gameplay binding. A successful join remains the intentional durable relationship even if later connection or `PLAY` fails; a failed join transaction creates nothing. Connect-token issuance and `PLAY` return `JOIN_REQUIRED` rather than silently creating membership. Grant-backed private and playtest flows validate their grant plus any separately required membership, skip `JOIN`, and do not create membership.
 
 This onboarding flow is the only supported way to discover and enter a realm. First-party WebSocket connect tokens and any future hidden Telnet smart-client metadata may narrow the target realm, but they never replace the authenticated lobby contract.
 
 ```plaintext
-Player → WORLDS (optional public browse) → LOGIN → PLAY
-                      ↘ optional REALMS / CHARS / Create Character when needed
+Telnet:
+Player → TCP Proxy → WORLDS (optional public browse) → LOGIN → [REALMS if multiple]
+       → [JOIN <world> for first public-production entry] → CHARS / Create Character → PLAY
+
+First-party web:
+Player → Account bootstrap/discovery → [Join & Play for first public-production entry] → CHARS / Create Character
+       → connect-token issuance → Gateway WebSocket handshake → bare LOGIN → PLAY
 ```
 
 Example text-client transcript:
@@ -92,17 +109,21 @@ OK WORLDS
 1) emberfall  Emberfall
 LOGIN player@example.com swordfish
 OK LOGIN Logged in as player@example.com
-PLAY emberfall
-OK PLAY Entered world: emberfall
+JOIN emberfall
+OK JOIN Joined Emberfall
+CHARS emberfall production
+OK CHARS 1) Mara
+PLAY emberfall production Mara
+OK PLAY Entered Emberfall / Live Realm as Mara
 ```
 
-Example first-party web flow:
+Example first-party web flow for a returning member or grant-backed target:
 
 ```text
-POST /auth/player-bootstrap
+POST /auth/player-bootstrap { accountIdentifier=player@example.com, secret=<redacted> }
 GET /auth/bootstrap/worlds
 GET /auth/bootstrap/worlds/{world}/realms
-GET /auth/bootstrap/worlds/{world}/realms/{realm}/characters
+GET /auth/bootstrap/worlds/{world}/realms/{realm}/characters?connectScopeId={scope}
 POST /auth/connect-token { connectScopeId=cs_demo_production_v17 }
 GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 LOGIN
@@ -112,12 +133,13 @@ PLAY <world> [realm] [character]
 Example first-time public production join:
 
 ```text
-POST /auth/player-bootstrap
+POST /auth/player-bootstrap { accountIdentifier=player@example.com, secret=<redacted> }
 GET /auth/bootstrap/worlds
 GET /auth/bootstrap/worlds/emberfall/realms
-GET /auth/bootstrap/worlds/emberfall/realms/production/characters
-POST /characters { world=emberfall, realm=production, name=Mara, template=human-fighter }
-POST /auth/connect-token { connectScopeId=cs_emberfall_production_v1 }
+POST /auth/bootstrap/join { connectScopeId=cs_emberfall_production_v1, requestId=req-join-1 }
+GET /auth/bootstrap/worlds/emberfall/realms/production/characters?connectScopeId=cs_emberfall_production_v1
+POST /auth/bootstrap/worlds/emberfall/realms/production/characters { connectScopeId=cs_emberfall_production_v1, name=Mara, template=human-fighter }
+POST /auth/connect-token { connectScopeId=cs_emberfall_production_v1, requestId=req-connect-1 }
 GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 LOGIN
 PLAY emberfall production Mara
@@ -125,7 +147,7 @@ OK PLAY Entered Emberfall / Live Realm as Mara
 ```
 
 After this first successful join, the player's account now has normal `player` membership for Emberfall, so later discovery no longer depends on public-production visibility alone.
-The player-facing character-creation call in this sequence is the canonical `POST /characters` surface backed by Entity Management's `CreateCharacter` contract. It is permitted only for the currently bootstrap-visible realm target and must complete before the new character is admissible through `PLAY`. The currently resolved backend substrate covers realm scope and creation policy; the remaining product contract is a richer character-creation descriptor that tells first-party clients which template/race/class/options to render for a given published game version.
+The player-facing character-creation call in this sequence is the Account-owned `POST /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters` facade backed by Entity Management's internal `CreateCharacter` contract. It requires the opaque server-issued discovery `connectScopeId`, is permitted only for that still-admissible realm target, and must complete before the new character is admissible through `PLAY`. The currently resolved backend substrate covers realm scope and creation policy; the remaining product contract is a richer character-creation descriptor that tells first-party clients which template/race/class/options to render for a given published game version.
 Any non-production realm shown in fork/playtest examples is assumed to already be grant-visible to that caller; non-public realms are not publicly discoverable by default.
 
 ---
@@ -147,9 +169,9 @@ Behind the scenes:
 Players connect using either a web client or a traditional Telnet client:
 
 - **Web Client** – Connects via WebSocket and HTTP through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md).
-- **MUD/Telnet Client** – Connects over TCP to the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md), which upgrades traffic to WebSocket for the Gateway. Both paths converge into a stateless WebSocket flow; see [Protocol Bridging](./system-architecture-protocol-bridging.md) for details. Normal Telnet clients simply issue `LOGIN` and `PLAY` just like WebSocket clients do. Any future smart-client attach hints should be hidden MCP metadata rather than typed player commands.
+- **MUD/Telnet Client** – Connects over TCP to the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md), which upgrades traffic to WebSocket for the Gateway. Both paths converge into a stateless WebSocket flow; see [Protocol Bridging](./system-architecture-protocol-bridging.md) for details. Normal Telnet clients authenticate with `LOGIN`, take the conditional `JOIN` step for first public-production membership, select or create a character with `CHARS` or the character-creation flow, and then issue `PLAY`; returning members skip `JOIN` but not the character-selection requirement. Any future smart-client attach hints should be hidden MCP metadata rather than typed player commands.
 
-Gameplay sessions are managed by the [Game Session Service](./microservices/game-session-service/README.md), which coordinates ticks, sessions, and reconnect behavior. Redis stores gameplay session bindings and related runtime coordination state as described in [Redis Architecture](./system-architecture-redis.md), allowing the Game Session Service to rebind sessions when players reconnect. Account-auth JWT allowlist and revocation state lives under the Account Service-owned `session:auth:*` contract rather than as generic Game Session auth state. Authentication is delegated to the [Account Service](./microservices/account-service/README.md) as described in [Authentication & Authorization](./system-architecture-authentication.md).
+Gameplay sessions are managed by the [Game Session Service](./microservices/game-session-service/README.md), which coordinates ticks, sessions, and reconnect behavior. Redis stores gameplay session bindings and related runtime coordination state as described in [Redis Architecture](./system-architecture-redis.md), allowing the Game Session Service to rebind sessions when players reconnect. The Account-auth issued-token registry and its revocation/version state live under the Account Service-owned `session:auth:*` contract rather than as generic Game Session auth state. Authentication is delegated to the [Account Service](./microservices/account-service/README.md) as described in [Authentication & Authorization](./system-architecture-authentication.md).
 
 Game actions are resolved on a fixed tick loop as outlined in the [Tick System](./system-architecture-ticks.md). Players recover from disconnects through the layered reconnect flow described in [Reconnection Strategy](./system-architecture-reconnection.md).
 

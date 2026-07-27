@@ -66,7 +66,7 @@ The subscription lifecycle is modeled as a finite state machine:
 - `trialing` – The tenant is in a time-limited trial; full hosting features are enabled but may be subject to conservative quotas.  
 - `active` – The subscription is paid and current; quotas and entitlements from the selected plan apply.  
 - `past_due` – Recent billing attempts have failed; the platform has not yet enforced restrictions, but alerts and UI warnings appear.  
-- `grace` – A configured grace period after `past_due` where some or all entitlements may be restricted (for example, blocking new game instances while allowing existing ones to run).  
+- `grace` – A configured recovery period after `past_due` where connected sessions and the exact same resumable bindings may continue, while public join, fresh gameplay bindings, new instances, scale-out, and quota growth are blocked.
 - `suspended` – Hosting entitlements are temporarily disabled due to non-payment or policy; new sessions and instance starts are blocked for the tenant.  
 - `canceled` – The subscription has been terminated; long-term data retention and clean-up policies apply.
 
@@ -79,6 +79,8 @@ State transitions are driven by:
 - Internal timers (for example, moving from `past_due` to `grace` to `suspended` once configured durations elapse).
 
 Each transition triggers domain events that downstream services can consume to adjust quotas or availability.
+
+Account owns the lifecycle boundary. A transition becomes authoritative when Account commits the new status, its monotonic billing sequence/authority changes, and the durable event/outbox evidence. Provider confirmation and downstream revocation, projection, instance drain, socket closure, and cache convergence are separate execution stages. They may be partial or pending after the Account commit, so status and enforcement progress must be reported separately; a retry must resume the idempotent transition execution rather than create a second lifecycle transition or roll back committed Account authority.
 
 ### Plan Changes, Downgrades, and Cancellation Timing
 
@@ -102,11 +104,11 @@ Subscription status feeds directly into tenant availability and resource enforce
 
 - When a subscription is `past_due`:
   - The tenant remains available for gameplay, but operator dashboards and creator/admin UIs surface prominent warnings.  
-  - Optional soft restrictions may apply (for example, preventing further plan upgrades or new instance types) without revoking existing sessions.
+  - Existing and new gameplay continue under the tenant's ordinary plan quotas; `past_due` alone does not revoke sessions or close admission.
 
 - When a subscription enters `grace`:
-  - The tenant continues to run existing game instances and player sessions.  
-  - New instances or large-scale operations (for example, starting additional shards) may be blocked until billing is brought current, based on plan and operator policy.  
+  - The tenant continues to run existing game instances and connected player sessions, and the same still-resumable session may reconnect.
+  - First-time public join, a fresh gameplay binding, new instances, scale-out, and quota-increasing operations are blocked until billing is brought current.
   - Gameplay sessions and auth token sessions remain valid unless explicitly revoked for security reasons.
 
 - When a subscription is `suspended` or `canceled`:
@@ -114,19 +116,19 @@ Subscription status feeds directly into tenant availability and resource enforce
     - The Game Session Service and world-management flows must reject new game instance creations, restarts, and startup requests for the tenant when consulting `GetTenantEntitlementsForRuntime(tenantId)`.  
     - New player logins and tenant-selection attempts for that tenant are rejected with a dedicated error code and user-facing message indicating that the game is currently unavailable due to billing.
   - Existing running game instances for the tenant must be transitioned to shutdown:
-    - Admission is closed immediately (no new sessions).
-    - Connected gameplay sessions are revoked immediately.
+    - The Account authority commit immediately makes new admission unauthorized. Downstream admission closes when the event is delivered or reconciliation observes the new generation, and no later than the `<=60-second` delayed/missed-event bound.
+    - Connected gameplay authority is revoked immediately when Game Session receives the event; delayed or missed delivery is caught within the same `<=60-second` reconciliation bound. Game Session sends one bounded, non-sensitive availability notice and closes the sockets; the notice flush does not permit continued gameplay.
     - Instance processes enter a bounded drain window (target: 5 minutes maximum) for internal cleanup and then stop. During this window they are not gameplay-admissible.
   - A small, explicitly defined **billing-safe control-plane surface** remains accessible so owners can resolve billing issues or export tenant-scoped data. This surface includes actions such as updating payment methods, viewing invoices, and initiating tenant-bounded exports, but does not include full account export, starting game instances, or editing live gameplay configuration. Service-specific docs and shared authorization middleware must explicitly mark which routes participate in this billing-safe surface so they remain reachable while gameplay is blocked.
-  - As part of the transition into `suspended` or `canceled`, the Account Service must:
-    - Write `session:auth:revoked_after:tenant:<tenantId>` with the current timestamp (authoritative writer), and
-    - Emit a `TenantBillingStateChanged` event with `billing_state` set to `suspended` or `canceled`.
-  - Game Session and related services consume this event and immediately:
+  - As part of the transition into `suspended` or `canceled`, the Account Service is the authority for the cutoff: it must commit the billing state, a monotonic durable `TenantBillingStateChanged` outbox event, and the idempotent Account-owned tenant authority-generation advance in one database transaction. This makes the authority cutoff and event enqueue immediate at the Account commit; it does not claim that a remote gameplay socket has already closed, and the cutoff workflow does not report enforcement complete until the authority projection succeeds.
+  - Game Session and related services must close and revoke all affected gameplay sockets immediately when this event is delivered:
     - Revoke all gameplay sessions for the affected `tenantId` (kicking connected sockets and preventing reconnect), and
     - Reconcile entitlement caches and admission gates for the tenant.
-  - Downstream services must not write `session:auth:revoked_after:*` watermark keys directly. Implementations must not rely on wildcard deletes (`session:auth:tenant:<tenantId>:*`) in hot paths; opportunistic cleanup of tenant-scoped allowlist entries is allowed only via purpose-built, bounded indexes and background work.
+    The socket-closure timing starts at consumer delivery, not at the Account Service commit, because durable events are at-least-once and may be delayed.
+  - Downstream services must not write Account-owned authority generations directly. Implementations must not scan `session:auth:token:*` in hot paths; opportunistic cleanup of older token records is allowed only via purpose-built, bounded Account-owned indexes and background work.
+  - Durable event consumption is the fast path. Game Session must also batch-reconcile active tenant authority independently of event delivery so a delayed or missed event is detected and reconciled within the `<=60-second` SLA. Failure to renew that authority-reconciliation lease closes admission and terminates bindings whose authority cannot be re-established at the bound; routine commands do not perform entitlement reads.
 
-These behaviors tie directly into the session revocation rules described in [Authentication & Authorization](../../system-architecture-authentication.md#session-and-identity-management): `TenantBillingStateChanged` events for `suspended` or `canceled` must trigger revocation of gameplay sessions and regular tenant-scoped auth entries, while softer billing states (`trialing`, `active`, `past_due`, `grace`) do not trigger automatic revocation and instead rely on quota and availability rules.
+These behaviors tie directly into the session revocation rules described in [Authentication & Authorization](../../system-architecture-authentication.md#session-and-identity-management): `TenantBillingStateChanged` events for `suspended` or `canceled` must trigger revocation of gameplay sessions and regular tenant-scoped token authority, while softer billing states (`trialing`, `active`, `past_due`, `grace`) do not trigger automatic revocation and instead rely on quota and availability rules.
 
 ## Runtime Entitlement Contract
 
@@ -140,21 +142,28 @@ The internal runtime entitlement surface returns a snapshot of:
 
 - The current subscription status for the tenant (for example, `trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`).  
 - The effective plan and quotas (for example, maximum `active_sessions`, maximum concurrent instances, and storage/world-size tiers) derived from the active plan, plus pending plan-change metadata when a period-end downgrade or cancellation is scheduled.  
-- The current billing-state flags used for availability decisions, such as:
-  - Whether the tenant is considered **available for gameplay** (for example, `trialing` or `active` vs `suspended`/`canceled`).  
-  - Whether new game instances or scaling operations are allowed under the current plan and billing state.
+  - The current billing-state flags used for availability decisions, such as:
+    - Whether the tenant is considered **available for gameplay** (for example, `trialing` or `active` vs `suspended`/`canceled`).
+    - Whether first-time public join and first/new gameplay bindings are allowed under the current billing state.
+    - Whether new game instances or scaling operations are allowed under the current plan and billing state.
 - Freshness and sequencing metadata:
   - `evaluatedAt` (UTC timestamp when entitlements were evaluated),
   - `entitlementVersion` (monotonic entitlement snapshot/version identifier), and
-  - `tenantBillingSequence` (latest applied billing-event sequence for the tenant).
+  - `tenantBillingSequence` (latest applied billing-event sequence for the tenant), and
+  - `tenantAuthorityGeneration` (opaque Account-owned tenant-authority fence).
 
 Runtime services such as the Game Session Service and world-management components use this internal runtime contract as follows:
 
 - On game instance start, restart, rollback that changes the active version, or significant scaling operations, they call `GetTenantEntitlementsForRuntime(tenantId)` and enforce both availability and quotas before admitting new load.  
-- When admitting new player sessions for a tenant, they consult entitlements (either via a fresh call or a cached snapshot) to confirm that the tenant is still available for new logins.  
-- They cache entitlements for a bounded period (for example, at most 60 seconds) and **must** invalidate or refresh them immediately when `SubscriptionStatusChanged` or `TenantBillingStateChanged` events are received, rather than checking entitlements on every tick. Admission paths (new player logins and game instance start/restart flows) must always consult a fresh or recently refreshed entitlement snapshot and must not bypass revocation rules based solely on stale cache entries.
-- Admission-critical paths (`PLAY`, new session admission, instance start/restart/rollback) must enforce a hard entitlement freshness bound of 15 seconds. If the local entitlement snapshot is older than this bound and a refresh cannot be completed immediately, the path fails closed with canonical error `ENTITLEMENT_UNAVAILABLE` (or protocol-mapped equivalent).
-- Admission-critical paths must also fail closed when `tenantBillingSequence` is behind locally observed sequence or when a sequence gap is detected, then reconcile immediately via `GetTenantEntitlementsForRuntime(tenantId)`.
+- When admitting new player sessions for a tenant, they consult entitlements (either via a fresh call or a cached snapshot) to confirm that the tenant is still available for new bindings; general gameplay availability is not sufficient when `grace` has closed new admission.
+- They cache entitlements per tenant, coalesce concurrent refreshes, and invalidate or advance cached state immediately when `SubscriptionStatusChanged` or `TenantBillingStateChanged` events arrive rather than checking entitlements on every tick or issuing one Account call per player.
+- A strict commitment captures `tenantAuthorityGeneration`, `tenantBillingSequence`, and `entitlementVersion` from the fresh snapshot and conditionally commits only while that tuple remains current in Account authority. A billing or tenant-authority advance between evaluation and commit causes a retry or fail-closed rejection; cache invalidation alone is not a commitment fence.
+- A snapshot is fresh for 15 seconds. Explicit join, first/new session admission, new instance/scale, quota increase, paid-feature activation, and capacity-creating cutover require fresh authority and fail closed with `ENTITLEMENT_UNAVAILABLE` when refresh cannot complete.
+- Reconnecting the same resumable session and non-expanding restart/rollback/recovery may use a previously authoritative positive snapshot for at most five minutes from `evaluatedAt`. A different realm target or fresh binding is new admission. The five-minute maximum may be shortened or disabled but not widened by operator configuration.
+- This outage fallback is valid only for the same existing binding, target, authority tuple, and still-valid resume episode with a positive authoritative snapshot. New joins, fresh bindings, expansion, target changes, and uncertain, missing, stale, negative, revoked, or gapped authority fail closed.
+- Last-known-good is forbidden after observed `suspended`/`canceled`, tenant/account authority-generation revocation, a newer locally observed `tenantBillingSequence`, a sequence gap, or when no positive authoritative snapshot exists. An operation-specific negative flag invalidates authority for that requested operation only; it does not erase an otherwise eligible positive continuity snapshot for a different resumable operation. Sequence uncertainty reconciles immediately through `GetTenantEntitlementsForRuntime(tenantId)`.
+- Existing uninterrupted sessions do not check entitlements per action. Hard billing events still revoke them immediately through the canonical event/authority-generation flow.
+- Missing subscription state is not implicit gameplay availability. Free and trial hosting use explicit entitlement states.
 
 ## Edge Cases and Failure Handling
 
@@ -162,7 +171,7 @@ Edge cases around billing and subscription management include:
 
 - **Payment failures and retries** – Repeated failed charges move a subscription from `active` → `past_due` → `grace` → `suspended` based on configured retry and grace-period policies. Webhooks annotate `subscription` records with Stripe’s failure reasons so operators can investigate.  
 - **Partial periods and proration** – Upgrades and downgrades use Stripe’s proration settings; internal subscription records track the current plan and effective period, but proration details are left to Stripe.  
-- **Webhook delays or outages** – If webhooks are delayed, internal subscription state may temporarily lag Stripe; regular reconciliation jobs query Stripe to detect mismatches and correct local state. During extended outages, the platform errs on the side of keeping existing tenants available until configured maximum grace windows expire.
+- **Webhook delays or outages** – If webhooks are delayed, internal subscription state may temporarily lag Stripe; regular reconciliation jobs query Stripe to detect mismatches and correct local state. During an outage, only an existing, still-resumable binding with a valid positive authoritative snapshot may use the bounded continuity fallback. New joins, fresh bindings, expansion, quota increases, target changes, and any operation with uncertain or missing authority fail closed; outage duration must not silently widen the fallback.
 
 ## APIs and Events
 
@@ -175,8 +184,8 @@ Downstream services depend on billing events for timely entitlement enforcement,
 - **At-least-once delivery** – consumers must assume duplicates and must apply events idempotently.
 - **Per-tenant sequencing** – every event that affects a tenant’s availability or quotas (for example `SubscriptionStatusChanged` and `TenantBillingStateChanged`) must carry a monotonically increasing `tenantBillingSequence` scoped to `{tenantId}` so consumers can detect out-of-order or missing events.
 - **Idempotency key** – every event includes a stable `eventId` (UUID) and the `(tenantId, tenantBillingSequence)` pair; consumers persist the latest applied sequence per tenant and treat older/duplicate events as no-ops.
-- **Gap detection and reconciliation** – if a consumer detects a sequence gap (or has no prior watermark for a tenant), it must call `GetTenantEntitlementsForRuntime(tenantId)` to reconcile immediately and should emit an operator-visible warning metric/log indicating entitlement drift was possible.
-- **Periodic refresh** – even when events are flowing, runtime services should refresh cached entitlements on a bounded interval (for example once per minute) so extended event outages do not cause unbounded drift.
+- **Gap detection and reconciliation** – if a consumer detects a sequence gap (or has no prior authority-generation/version for a tenant), it must call `GetTenantEntitlementsForRuntime(tenantId)` to reconcile immediately and must emit an operator-visible structured `billing_event_gap` metric/log. The gap record must include `tenantId`, `expectedTenantBillingSequence`, `observedTenantBillingSequence`, `eventId`, `eventType`, `consumer` (service and subscription/handler), `eventOccurredAt` or `emittedAt`, `detectedAt`, `reconciledAt` when complete, and the event/request `correlationId` or `causationId`. These fields are mandatory; a free-text warning without them is not sufficient for detecting delayed cutoff enforcement.
+- **Periodic refresh** – even when events are flowing, every healthy runtime consumer must refresh or reconcile cached entitlements at least once per 60 seconds so extended event outages meet the `<=60-second` delayed/missed-event SLA rather than causing unbounded drift.
 
 - `CreateSubscription` – Create or update a hosting subscription for a `tenantId` and `plan_code`. Caller-bound tenant variants derive actor identity from auth context; cross-tenant admin variants are separate APIs.  
 - `GetSubscriptionTenantHighLevel` / `ListSubscriptionsTenantHighLevel` – Query subscription state for one tenant, scoped by tenant authorization.  

@@ -1,8 +1,12 @@
 # Protocol Bridging: WebSocket and Telnet (TCP)
 
-This document describes how FireMUD supports **both modern and traditional MUD clients** by bridging two distinct communication protocols: **WebSocket** and **raw TCP (Telnet)**. Both are routed into a unified backend session service for shared logic and scalability.
+This document describes how FireMUD supports **both modern and traditional MUD clients** by bridging two distinct communication protocols: **WebSocket** and **TCP/Telnet**. Both are routed into a unified backend session service for shared logic and scalability.
 
-This design is the **canonical specification** for gameplay command flows through the edge: it defines ordering and delivery guarantees, backpressure and slow-client behaviour, Telnet and WebSocket reconnection and buffering rules, and the Telnet disconnect reason taxonomy. Service-specific designs such as the TCP Proxy Service README describe implementation details and configuration but must remain consistent with the invariants in this document.
+This design is the **canonical specification** for gameplay command flows through the edge: it defines ordering and delivery guarantees, backpressure and slow-client behaviour, Telnet and WebSocket reconnection and buffering rules, and the Telnet disconnect reason taxonomy. Service-specific designs such as the TCP Proxy Service README describe implementation details and configuration but must remain consistent with the invariants in this document. **Target flow:** first public-production credential-bearing text entry is `LOGIN` -> conditional in-band `JOIN` -> `PLAY`; returning members skip `JOIN`. Browser and other first-party WebSocket clients use HTTP `Join & Play` before connect-token issuance, then complete in-band `LOGIN` -> `PLAY` without an in-band `JOIN`.
+
+## Implementation Status
+
+The target flow and delivery contracts below remain normative. Explicit `JOIN`/`Join & Play` is not implemented in the current runtime, and current connect-token/`PLAY` paths may still create public-production membership implicitly. That is implementation drift, not an alternate flow; it does not relax the at-most-once delivery, authentication, admission, reconnect, or close-taxonomy requirements.
 
 ---
 
@@ -13,7 +17,7 @@ FireMUD enables real-time interaction through two types of client connections:
 | Client Type | Protocol | Entry Point |
 | --- | --- | --- |
 | Web-based clients | WebSocket | Spring Cloud Gateway (`/ws/game/**`) |
-| Traditional MUD clients | TCP (Telnet) | TCP Proxy Service (custom) |
+| Traditional MUD clients | TCP/Telnet | TCP Proxy Service (custom) |
 
 Despite their differences, both protocols are normalized into the same internal architecture using a **WebSocket-based session layer**.
 
@@ -26,7 +30,7 @@ Despite their differences, both protocols are normalized into the same internal 
 - Routed through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md), which supports WebSocket proxying.
 - Canonical player-facing endpoint is `/ws/game/**` (token-enforced for non-proxy clients; trusted TCP Proxy bridge is authenticated by mTLS identity).
 - Forwarded to the [Game Session Service](./microservices/game-session-service/README.md), which maintains the gameplay session.
-- Game Session restart should ideally be absorbed behind the established edge connection using shared state and backend rebind, as described in [Reconnection Strategy](./system-architecture-reconnection.md). Spring Cloud Gateway remains the edge socket owner, so a client whose live WebSocket was terminated on the specific Gateway process that restarted or crashed still reconnects, acquires a fresh connect token for `/ws/game/**`, and re-runs `LOGIN`/`PLAY`. Unaffected sockets on other healthy Gateway instances should remain up, and the gateway fleet should continue accepting new handshakes through those healthy instances.
+- Game Session restart should ideally be absorbed behind the established edge connection using shared state and backend rebind, as described in [Reconnection Strategy](./system-architecture-reconnection.md). Spring Cloud Gateway remains the edge socket owner, so a client whose live WebSocket was terminated on the specific Gateway process that restarted or crashed still reconnects, completes HTTP `Join & Play` if membership is absent, acquires a fresh connect token for `/ws/game/**`, and re-runs `LOGIN` and `PLAY`. Unaffected sockets on other healthy Gateway instances should remain up, and the gateway fleet should continue accepting new handshakes through those healthy instances.
 
 ### WebSocket Flow Benefits
 
@@ -38,22 +42,37 @@ Despite their differences, both protocols are normalized into the same internal 
 - `/ws/game/**` is the only gameplay WebSocket route.
 - Non-proxy gameplay clients must present a valid connect token; missing/invalid token returns HTTP `403`.
 - TCP Proxy bridge traffic is admitted without connect token only when the gateway authenticates the proxy identity over the internal mTLS listener and header-trust checks pass.
-- All clients still require in-band `LOGIN` and `PLAY` before gameplay commands.
+- All gameplay sessions require in-band `LOGIN` and `PLAY` before gameplay commands. Credential-bearing text clients use conditional in-band `JOIN` for first public-production membership; browser and other first-party WebSocket clients complete the equivalent HTTP `Join & Play` operation before connect-token issuance and do not send `JOIN` in-band. Returning members skip the join operation.
 
 ---
 
 ## Telnet / TCP Client Flow (Legacy Clients)
 
 - Used by traditional MUD clients (e.g., MUDlet, TinTin++, GMud).
-- Clients connect using raw TCP (typically Telnet-compatible) and are handled by a dedicated **TCP Proxy Service**.
-- The TCP Proxy Service listens on port `2323` by default so Telnet clients can simply connect without additional configuration. This and the Spring Cloud Gateway WebSocket URL can be adjusted with the `TCP_PROXY_PORT` and `GATEWAY_WS_URL` environment variables described in the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md#environment-variables). `GATEWAY_WS_URL` should always be set explicitly by deployment config; local Compose smoke also sets it explicitly to the canonical in-stack target. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for general configuration guidance.
-- Normal Telnet clients connect, optionally browse `WORLDS`, then issue `LOGIN` and `PLAY` before gameplay commands. Typed `SESSION` lines are no longer part of the Telnet contract. If smart-client attach hints return later, they should travel as hidden MCP metadata and remain advisory transport context only.
+- Clients connect using TCP/Telnet and are handled by a dedicated **TCP Proxy Service**.
+- For local development and explicitly private compatibility networks, the TCP Proxy Service listens on port `2323` by default. This plaintext/default port is not a public player-facing contract; public deployments must select one of the TLS modes below. The port and the Spring Cloud Gateway WebSocket URL can be adjusted with the `TCP_PROXY_PORT` and `GATEWAY_WS_URL` environment variables described in the [TCP Proxy Service configuration](./microservices/tcp-proxy-service/configuration.md#environment-variables). `GATEWAY_WS_URL` should always be set explicitly by deployment config; local Compose smoke also sets it explicitly to the canonical in-stack target. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for general configuration guidance.
+- Normal clients may optionally issue `WORLDS` for discovery. For first public-production entry, the conditional gameplay sequence is `LOGIN` → `JOIN` → `PLAY`; returning members skip `JOIN`. Typed `SESSION` lines are not part of the Telnet contract. If smart-client attach hints return later, they travel as hidden MCP metadata and remain advisory transport context only.
+
+### Public Telnet TLS Modes
+
+Public player-facing Telnet has exactly one TLS termination mode per endpoint. These modes are mutually exclusive:
+
+- **Edge termination plus internal PROXY mode** – The public Telnet edge terminates client TLS and forwards plaintext Telnet plus a PROXY header over an authenticated, cryptographically protected edge-to-TCP Proxy channel to the internal-only `TCP_PROXY_PROXY_PROTOCOL_PORT`. The channel must authenticate the peer identity, provide cryptographic integrity/confidentiality, and bind that identity explicitly to the trusted edge workload; a network allowlist, one-way TLS, or PROXY framing alone is not equivalent. `TCP_PROXY_TLS_ENABLED=false` for this mode; TCP Proxy does not terminate client TLS on that listener, and raw and PROXY-protocol ports are not public.
+- **Direct TCP Proxy TLS mode** – The client connects directly to a TCP Proxy TLS listener with `TCP_PROXY_TLS_ENABLED=true`. TCP Proxy terminates client TLS, no preceding edge terminates TLS, and the listener does not accept a PROXY header; client IP is the TCP peer address.
+
+Do not configure both modes on one public path, and do not treat an edge-terminated plaintext hop as a public plaintext exception. The protocol-bridging checklist is:
+
+- Select one mode and record the public listener, certificate owner, and internal target in deployment evidence.
+- Prove a valid TLS handshake, expected certificate chain, and plaintext rejection at the public endpoint.
+- In edge termination plus internal PROXY mode, prove the restricted listener is reachable only from the edge path through a channel that authenticates the peer identity, provides cryptographic integrity/confidentiality, and binds that identity explicitly to the trusted edge workload. A source allowlist and Kubernetes `NetworkPolicy` are defense in depth, not substitutes. Accept only the expected PROXY contract and promote its address for security controls only after the channel identity is authenticated. The TCP Proxy may provide `X-Proxy-Client-IP` only on that authenticated path; otherwise it must use the direct peer address for security controls and keep any PROXY address advisory, never authoritative for Account source context. Spring Cloud Gateway may produce `X-Client-IP` only after authenticating the TCP Proxy identity. PROXY framing carries address metadata; it does not authenticate the sender.
+- In direct TCP Proxy TLS mode, prove the TCP Proxy TLS handshake and direct peer-address behavior, without sending a PROXY header.
+- In both modes, prove Proxy -> Gateway uses the internal `wss://` mTLS listener and that the bridged Telnet client reaches the credential-bearing `LOGIN -> conditional JOIN -> PLAY -> LOOK` flow. Native browser/WebSocket clients instead complete HTTP `Join & Play` when needed, then use `LOGIN -> PLAY -> LOOK`; returning members skip the join operation.
 
 The proxy establishes the Proxy → Gateway gameplay WebSocket lazily for each Telnet connection:
 
 - The bridge is opened before the first forwarded gameplay or MCP line.
 - The proxy may include server-owned advisory bootstrap metadata on the authenticated Proxy → Gateway handshake when local defaults or future hidden MCP-carried smart-client hints are available.
-- Those hints must never bypass `LOGIN` + `PLAY` or retroactively alter an already-established gameplay binding.
+- Those hints must never bypass `LOGIN` + conditional `JOIN` + `PLAY` or retroactively alter an already-established gameplay binding.
 
 Planned Gateway drain example:
 
@@ -89,7 +108,7 @@ The combined TCP Proxy → Spring Cloud Gateway → Game Session path preserves 
   - MCP-specific budgets (for example control-line rate and `_data-tag` continuation limits) that discard excess MCP control lines while keeping the connection open, as described in [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md);
   - Abuse and safety limits in the TCP Proxy Service (oversize lines, malformed Telnet or MCP traffic) where the proxy either discards input or closes the connection;
   - Client-side disconnects or network loss (TCP/WebSocket) where the edge cannot reliably determine whether the last few bytes were delivered to the client.
-- **No implicit replay on reconnect** – Neither Spring Cloud Gateway nor the TCP Proxy Service replays gameplay commands or MCP messages across reconnects. After an actual client-facing edge disconnect, or after authentication invalidation has terminated the active binding, clients must resend `LOGIN`, re-establish gameplay scope with `PLAY`, and re-run MCP negotiation for that new connection if they use MCP. A retained-edge Game Session upstream rebind is not a client reconnect and is exempt from repeating `LOGIN` and `PLAY`. Non-proxy WebSocket clients must also present a fresh connect token when opening `/ws/game/**`. Clients then rely on Game Session and Redis to resume or start fresh according to [Reconnection Strategy](./system-architecture-reconnection.md). Game Session and downstream domain services may use internal effect identifiers and transactional idempotency to protect tick processing and side effects, but these mechanisms are not exposed directly in the Telnet and WebSocket text protocol.
+- **No implicit replay on reconnect** – Neither Spring Cloud Gateway nor the TCP Proxy Service replays gameplay commands or MCP messages across reconnects. After an actual client-facing edge disconnect, or after authentication invalidation has terminated the active binding, credential-bearing text clients must resend `LOGIN`, take the conditional in-band `JOIN` step when public-production membership is absent, and re-establish gameplay scope with `PLAY`. Browser/WebSocket clients must complete HTTP `Join & Play` when membership is absent, then present a fresh connect token, reconnect, and complete `LOGIN` and `PLAY`. Both client classes must re-run MCP negotiation for that new connection if they use MCP. A retained-edge Game Session upstream rebind is not a client reconnect and is exempt from repeating `LOGIN`, `JOIN`, and `PLAY`. Clients then rely on Game Session and Redis to resume or start fresh according to [Reconnection Strategy](./system-architecture-reconnection.md). Game Session and downstream domain services may use internal effect identifiers and transactional idempotency to protect tick processing and side effects, but these mechanisms are not exposed directly in the Telnet and WebSocket text protocol.
 
 Edge behaviour distinguishes between **gameplay command lines** and **MCP/control lines**:
 
@@ -143,12 +162,12 @@ Any additional Telnet-specific reasons introduced in the TCP Proxy implementatio
 The underlying authentication and gameplay services enforce a **single active gameplay binding per `{tenantId, gameInstanceId, characterId}`**, as described in [Authentication & Authorization](./system-architecture-authentication.md#multi-client-behavior-and-session-takeover) and [Reconnection Strategy](./system-architecture-reconnection.md#resume-vs-reload-scenarios). From the networking and protocol edge, this manifests as follows:
 
 - **Telnet → Web takeover**
-  - A Telnet client connects via the TCP Proxy, issues `LOGIN`, and enters gameplay with `PLAY` for a character.
-  - Later, a Web client connects via WebSocket to `/ws/game/**` and successfully issues `LOGIN` + `PLAY` for the same character.
+  - A Telnet client connects via the TCP Proxy, issues `LOGIN`, takes the conditional `JOIN` step if it is first public-production entry, and enters gameplay with `PLAY` for a character.
+  - Later, a Web client completes HTTP `Join & Play` if membership is absent, connects via WebSocket to `/ws/game/**`, and successfully issues `LOGIN` then `PLAY` for the same character.
   - Game Session treats the Web client as the new active binding, terminates or demotes the Telnet connection according to takeover rules, and closes the Telnet path with a `logout` Telnet reason (mapped to WebSocket `1000/logout` in the taxonomy above). No ordering guarantees are provided between the last Telnet commands and the first WebSocket commands; only per-connection FIFO holds on each individual connection.
   - The Telnet client must treat this disconnect as a normal session takeover outcome, apply its reconnection/backoff rules if it wishes to reconnect, and not assume that any new Telnet connection can “resume” alongside the active WebSocket binding.
 - **Web → Telnet takeover**
-  - A Web client connects via `/ws/game/**`, issues `LOGIN`, and enters gameplay with `PLAY` for a character.
+  - A Web client completes HTTP `Join & Play` if membership is absent, connects via `/ws/game/**`, issues `LOGIN`, and enters gameplay with `PLAY` for a character.
   - A Telnet client later connects through the TCP Proxy and logs in as the same character.
   - Game Session treats the Telnet client as the new active binding; the WebSocket session is closed with `1000/logout` and the Telnet connection becomes authoritative. Again, cross-connection ordering is not defined: only per-connection FIFO is guaranteed, and clients must not attempt to sequence commands across the old and new transports.
 - **Concurrent Telnet + Web connections**
@@ -173,9 +192,11 @@ Backpressure and slow-client handling are split across layers so that the platfo
   - Game Session provides **domain-level backpressure**. For gameplay WebSocket sessions, it applies a per-session outbound queue limit and send-timeout budget on its side of the connection. If either is exceeded (for example because a client has stopped reading or a downstream hop between Game Session and the gateway is persistently slow), Game Session closes the session with an explicit close reason instead of allowing the queue to grow without bound or dropping frames while pretending the connection is healthy.
   - For inbound overload (for example, a misbehaving client sending commands far beyond expected rates), Game Session either rejects excess commands with visible error messages or terminates the session after sustained abuse; it does not accept and then silently discard gameplay input. Domain-level backpressure and abuse closures are surfaced via metrics such as `gamesession.connection.closed{reason="backpressure"|"rate_limit"}` and command‑level error counters.
 - **Client expectations**
-  - When WebSocket connections close due to slow-client behavior, abuse, network issues, or backend unavailability, non-proxy clients must fetch a fresh connect token, reconnect, re-`LOGIN`, and re-`PLAY`. Game Session’s Redis-backed state determines whether gameplay resumes or starts fresh, per [Reconnection Strategy](./system-architecture-reconnection.md).
+- When WebSocket connections close due to slow-client behavior, abuse, network issues, or backend unavailability, browser and other first-party WebSocket clients must complete HTTP `Join & Play` if public-production membership is absent, fetch a fresh connect token, reconnect, re-`LOGIN`, and re-`PLAY`. Credential-bearing text clients take the conditional in-band `JOIN` step. Game Session’s Redis-backed state determines whether gameplay resumes or starts fresh, per [Reconnection Strategy](./system-architecture-reconnection.md).
 
 This model favors **clear closures over silent drops** when a client cannot keep up and provides enough metrics at each layer for operators to identify whether the TCP Proxy, Gateway, or Game Session is enforcing backpressure in a given incident.
+
+Telnet TLS termination, PROXY trust, and client-address promotion remain governed by [Public Telnet TLS Modes](#public-telnet-tls-modes); backpressure handling does not create a second transport trust policy.
 
 ### Global Load Shedding Strategy
 
@@ -192,36 +213,26 @@ During severe load or partial outages, each layer in the TCP Proxy → Gateway �
 
 Operators should interpret spikes in each layer’s metrics in this order when diagnosing load incidents: check Game Session and Redis saturation first, then Gateway rate-limit and backend unavailable signals, and finally TCP Proxy connection limits. This layered strategy ensures that both WebSocket and Telnet entry points shed load in a way that keeps behaviour predictable for players and preserves the integrity of core gameplay services.
 
-### Telnet edge proxy and PROXY protocol
-
-In all shared and player-facing environments, public Telnet terminates on a dedicated **Telnet edge proxy** (for example HAProxy) that forwards to the TCP Proxy Service using **PROXY protocol** on an internal-only listener. In this topology:
-
-- External clients connect to the Telnet edge proxy on the public `LoadBalancer` / ingress.
-- The edge proxy forwards to the TCP Proxy Service using PROXY protocol on the port configured by `TCP_PROXY_PROXY_PROTOCOL_PORT`; this listener is internal-only and must not be exposed directly to the Internet.
-- The raw Telnet listener on `TCP_PROXY_PORT` remains available for local development and tightly controlled hobby/self‑hosted deployments where PROXY protocol is unnecessary; it is not a valid public player ingress in shared or player-facing environments.
-
-When PROXY protocol is enabled, the TCP Proxy Service derives the real client IP from the PROXY header; Spring Cloud Gateway in turn derives `X-Client-IP` for Telnet sessions from the trusted `X-Proxy-Client-IP` header, as described in the Gateway header trust model. When PROXY protocol is not in use (for example local dev or tightly controlled self-hosted deployments), `TCP_PROXY_MAX_CONNECTIONS_PER_IP` and other per-IP heuristics are best-effort only and should be backed by higher-layer limits in Spring Cloud Gateway and the Game Session Service.
-
 ### Protocol handling and security
 
-- Accepts and parses line-based input from raw TCP clients; Telnet option negotiation is minimal and optional so plain TCP clients with ANSI color codes work without additional configuration.
+- Accepts and parses line-based input from TCP/Telnet clients; Telnet option negotiation is minimal and optional so compatible plain TCP clients with ANSI color codes work without additional configuration.
 - Sanitizes incoming data and allows only a safe subset of **Telnet protocol commands** as outlined in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls).
 - Runs alongside Spring Cloud Gateway in the network **DMZ** so no client ever reaches internal services directly. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design).
-- Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set; certificates are provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`. Plaintext Telnet is a legacy compatibility transport; player-facing deployments should prefer TLS Telnet or the web client as defined in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls).
-- Telnet-over-TLS certificates (client ↔ proxy) are independent from the Proxy → Gateway WebSocket mutual TLS certificates (proxy ↔ Spring Cloud Gateway); they may reuse the same files in small deployments, but they are different trust surfaces.
+- In `DIRECT_TLS` mode, Telnet-over-TLS uses `TCP_PROXY_TLS_ENABLED=true` with certificates provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`; in `EDGE_PROXY` mode, `TCP_PROXY_TLS_ENABLED=false` because the edge terminates client TLS. Plaintext Telnet is limited to local, automated-test, and explicitly private-network compatibility; player-facing deployments require one of these TLS modes or the web client as defined in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls).
+- Telnet-over-TLS certificates (client ↔ proxy) are independent from the Proxy → Gateway WebSocket mutual TLS certificates (proxy ↔ Spring Cloud Gateway). Every player-facing deployment, including hobby/self-hosted, must use dedicated separately managed certificate and key material for these trust surfaces; reusing certificate files is permitted only for local development, automated tests, or throwaway environments and never qualifies as player-facing evidence.
 
 ### Bridging to the backend
 
 - Normalizes the connection by proxying Telnet traffic through a WebSocket tunnel.
 - Creates a WebSocket connection to Spring Cloud Gateway on behalf of the TCP client. In production this hop uses `wss://` with mutual TLS as described in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway); the detailed mTLS contract (required listener, SAN/hostname expectations, and certificate paths) lives in the TCP Proxy Service design’s **WebSocket mTLS to Spring Cloud Gateway** section, which should be treated as canonical for certificate wiring details.
-- Forwards client identity to the backend using a gateway canonicalization model. The TCP Proxy Service supplies `X-Proxy-Client-IP` (derived from PROXY protocol when a Telnet edge proxy is enabled, or best-effort from the TCP peer address otherwise) and Spring Cloud Gateway sets the canonical `X-Client-IP` header after authenticating the TCP Proxy identity. Spring Cloud Gateway strips any `X-Client-IP`, `X-Game-Instance-Id`, `X-Tenant-Id`, and `X-Proxy-*` headers arriving directly from public clients, and only promotes proxy-supplied inputs when the connection is known to have traversed the TCP Proxy → Gateway path; this trust is enforced by the mTLS identity on the TCP Proxy → Gateway hop. Downstream services treat `X-Client-IP` as authoritative only because the gateway produced it.
+- Forwards client identity to the backend using a gateway canonicalization model. The TCP Proxy Service supplies `X-Proxy-Client-IP` only when the PROXY address came through an authenticated, cryptographically protected edge channel; otherwise it uses the direct peer address for security controls and keeps any PROXY address advisory only. Spring Cloud Gateway sets the canonical `X-Client-IP` header after authenticating the TCP Proxy identity. Spring Cloud Gateway strips any `X-Client-IP`, `X-Game-Instance-Id`, `X-Tenant-Id`, and `X-Proxy-*` headers arriving directly from public clients, and only promotes proxy-supplied inputs when the connection is known to have traversed the TCP Proxy → Gateway path; this trust is enforced by the mTLS identity on the TCP Proxy → Gateway hop. Downstream services treat `X-Client-IP` as authoritative only because the gateway produced it.
 - Proxies I/O between the TCP client and Spring Cloud Gateway.
 
 ### Buffering, reconnection, and observability
 
 - Buffers active input while the client remains connected and discards it if the TCP connection drops; the proxy never replays Telnet commands after a disconnect.
 - Telnet clients keep a sticky connection to the TCP Proxy Service; reconnection and session recovery are handled as described in [Reconnection Strategy](./system-architecture-reconnection.md).
-- Disconnect handling is **layered**: the proxy cleans up Telnet sessions; Spring Cloud Gateway retains the client or proxy-facing gameplay WebSocket while performing ADR 0013's bounded rebind of a rebindable Game Session upstream, then closes with `1013/backend_unavailable` if recovery exhausts its window; and Game Session restores continuation authority from shared state. A retained-edge upstream rebind is not an actual edge disconnect and does not require `LOGIN` or `PLAY`. After an actual edge disconnect, clients use a fresh `/ws/game/**` connect token where applicable, re-`LOGIN`, and re-`PLAY`. The Telnet path does not support hidden reattachment after its distinct Proxy → Gateway gameplay WebSocket is lost: the proxy closes that Telnet connection rather than silently opening a fresh edge bridge behind the same client TCP socket.
+- Disconnect handling is **layered**: the proxy cleans up Telnet sessions; Spring Cloud Gateway retains the client or proxy-facing gameplay WebSocket while performing ADR 0013's bounded rebind of a rebindable Game Session upstream, then closes with `1013/backend_unavailable` if recovery exhausts its window; and Game Session restores continuation authority from shared state. A retained-edge upstream rebind is not an actual edge disconnect and does not require `LOGIN`, `JOIN`, or `PLAY`. After an actual edge disconnect, browser/WebSocket clients complete HTTP `Join & Play` when membership is absent, use a fresh `/ws/game/**` connect token, re-`LOGIN`, and re-`PLAY`; credential-bearing text clients use the conditional in-band `JOIN`. The Telnet path does not support hidden reattachment after its distinct Proxy → Gateway gameplay WebSocket is lost: the proxy closes that Telnet connection rather than silently opening a fresh edge bridge behind the same client TCP socket.
 - The proxy defines a `NotifyDisconnect` gRPC event so the Game Session Service can react quickly when Telnet clients drop. This stream is best-effort and **at-least-once**, and Game Session treats it as an idempotent, advisory hint rather than a source of truth for session liveness. Consumers key handling off `{proxyConnectionId, disconnectSequence}` so late or duplicate events are safe to ignore. The behaviour-level contract for this stream is summarised in the **NotifyDisconnect Behavioral Contract** section of [Reconnection Strategy](./system-architecture-reconnection.md#notifydisconnect-behavioral-contract-summary), while the TCP Proxy Service design’s **Service Interactions** section remains canonical for message fields, retry windows, and envelope context.
 - Metrics are exported at `/actuator/prometheus` and tracing data is sent to the collector configured by `OTEL_ENDPOINT`. See [Logging & Monitoring](./system-architecture-logging-monitoring.md).
 - Environment-specific tuning guidance for the TCP Proxy Service (connection caps, envelope budgets, and production hardening) is documented in the TCP Proxy Service design under **Tuning TCP Proxy for Different Environments**.
@@ -294,8 +305,8 @@ The exact Telnet configuration varies by environment, but recommended defaults a
 | Environment type | Public Telnet transport | Telnet edge proxy | Plaintext Telnet login policy |
 | --- | --- | --- | --- |
 | Local dev / CI | Plaintext to `TCP_PROXY_PORT` | Optional; often omitted | Allowed for protocol iteration; do not represent it as an account-factor-protected path. |
-| Hobby / self‑hosted (single operator) | Prefer Telnet-over-TLS; plaintext permitted only for controlled legacy clients | Recommended but not strictly required; can front the TCP Proxy directly if PROXY protocol and per-IP limits are not needed | Prefer TLS Telnet or the web client. |
-| Player-facing staging / production | Telnet-over-TLS via edge proxy or web client | Required for public Telnet ingress | Do not expose public plaintext Telnet until a complete admission policy is implemented and verified. |
+| Hobby / self‑hosted (single operator) | Telnet-over-TLS through either edge termination plus restricted internal PROXY forwarding or direct TCP Proxy TLS; plaintext only on an explicitly private network | Required only when edge termination mode is selected | Public plaintext TCP/Telnet does not qualify as a supported player-facing deployment. |
+| Player-facing staging / production | Telnet-over-TLS through either edge termination plus restricted internal PROXY forwarding or direct TCP Proxy TLS | Required only when edge termination mode is selected | Select exactly one public TLS mode per endpoint; do not expose public plaintext TCP/Telnet or PROXY-protocol listeners. |
 
 These recommendations complement the detailed Telnet controls in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls) and the authentication flows in [Authentication & Authorization](./system-architecture-authentication.md). When in doubt, treat the Security Architecture and TCP Proxy Service design as canonical sources for Telnet hardening and update the bridge configuration here to match.
 

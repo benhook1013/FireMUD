@@ -4,16 +4,17 @@ This document defines the Account Service REST and gRPC contracts, authenticatio
 
 The authoritative REST schema source lives in [../../../../services/account-service/src/main/resources/openapi.yaml](../../../../services/account-service/src/main/resources/openapi.yaml). Proto definitions are the authoritative gRPC source.
 
-## Implementation Notes
+## Implementation Status
 
-The account lifecycle, full-account export, tenant-scoped export, and deletion precondition contracts below are implemented at the current Account Service boundary. `ExportAccount` and `DeleteAccount` are account-scoped and no longer accept a caller-selected `tenantId`; `ExportTenantData` is the separate tenant-scoped recovery/export surface. Password reset, username reminder, and email-verification tokens are account-scoped rather than tenant-keyed.
+The account lifecycle API, export surfaces, and deletion-precondition contracts are defined at the current Account Service boundary, but lifecycle state-transition execution remains partial as recorded in [Runtime & Data](./runtime-and-data.md). Account is the authority for lifecycle state and the transaction boundary for the committed transition, authority-generation/version advance, and durable event/outbox evidence. Downstream revocation, projection, cleanup, and provider reconciliation are ordered transition execution; partial downstream completion must be reported separately and must not be mistaken for a rolled-back lifecycle state or a completed enforcement outcome. `ExportAccount` and `DeleteAccount` are account-scoped and no longer accept a caller-selected `tenantId`; `ExportTenantData` is the separate tenant-scoped recovery/export surface. Password reset, username reminder, and email-verification tokens are account-scoped rather than tenant-keyed. Explicit `JOIN` / `Join & Play` is not implemented: current connect-token and `PLAY` paths may invoke `EnsurePublicProductionPlayerMembership` implicitly. That is recorded drift; the target contracts below require an explicit join and return `JOIN_REQUIRED` from later admission surfaces when membership is absent. `/auth/player-bootstrap` is account-first and factor-aware, and the browser connect-token body and OpenAPI response are metadata-only and carry the raw token only in the HttpOnly cookie. The registry-backed issuance, refresh, revocation, durable retry, and authority-generation behaviors below are target state, including the contracts for `Authenticate`, `RefreshGameplayServiceToken`, `/auth/login`, `/auth/player-bootstrap`, `/auth/logout`, and `/auth/logout-all`. Current Account sessions use the legacy `session:auth:account:<accountId>:<tokenHash>` key and, for tenant-scoped sessions, the companion `session:auth:tenant:<tenantId>:<tokenHash>` key rather than the canonical single `session:auth:token:<tokenHash>` registry record. Current REST DTOs/OpenAPI still retain numeric account and tenant IDs, so migration to ADR 0020 UUID wire identities remains incomplete.
 
 ## gRPC APIs
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `account_service.proto`.
 - `CreateAccount` – registers a new user and returns its `accountId` so internal services can establish their own sessions using the authentication flows described below.
 - `SendNotification` – deliver account notifications asynchronously.
-- `Authenticate` – verifies credentials and issues a Service JWT (internal token profile) backed by `session:auth:*` allowlist entries for meta/control APIs.
+- `Authenticate` – the current RPC verifies credentials and writes the legacy Account and tenant session keys described above. **Target registry-backed behavior:** require a typed `CredentialSourceContext` and issue the receiver-specific private `game-session-account-delegation` JWT profile with audience `account-service`, backed by one `session:auth:token:<tokenHash>` registry record. The context contains a server-derived canonical client address and transport class; Account rejects absent or untrusted context in player-facing environments, and public callers cannot assert it.
+- **Target state – `RefreshGameplayServiceToken`:** rotates the private `game-session-account-delegation` JWT used by an active Game Session binding after validating the presented per-lineage `tokenGeneration`, binding identity, account and membership authority generations, and all applicable live authority state. Replacement issuance must lock or compare-and-set the durable account authority generation so it cannot commit across a concurrent logout-all or equivalent security cutoff. Game Session mTLS identity alone is not refresh authority. Account first creates the replacement as non-authorizing `pending`, commits the matching durable rotation operation, and atomically marks the replacement registry record `active` while moving the predecessor to `retiring` before exposing the response. Registry activation alone does not authorize this rotated private delegation: every Account call requires the exact active registry record plus the matching Account-owned lease and binding-installation fence in durable `INSTALLED` state. After installing the replacement, Game Session uses the Account-owned retirement acknowledgement from this refresh contract to submit the exact operation, lease/version, binding, predecessor and replacement identities, lineage, installation fence, and retirement request ID. Account finalizes the matching installation immediately, retains the predecessor registry record in `retiring` only through the bounded in-flight cutoff, then removes it idempotently; it replays stored success for the same completed acknowledgement and rejects mismatched or unproved absent-record retirement.
 - `GetProfile` – retrieves profile information for the current account.
 - `UpdateProfile` – modifies profile fields and triggers notification emails. Account holders may select `PUBLIC`, `FRIENDS_ONLY`, or `PRIVATE` presence visibility; `HIDDEN_STAFF` is reserved for the staff-visibility owner and cannot be set through profile writes.
 - `ListPresenceVisibilityPolicies` – bounded internal bulk read of current tenant-scoped profile visibility policy for up to 100 account IDs. Social projections consume this authority at read time; unknown or unavailable entries are intentionally omitted so callers can fail closed.
@@ -26,19 +27,20 @@ The account lifecycle, full-account export, tenant-scoped export, and deletion p
 - `IssuePlayerBootstrapToken` – authenticate a first-party player account and issue the short-lived `player-bootstrap` token profile used only for gameplay bootstrap.
 - `ListBootstrapWorlds` – list caller-visible worlds for first-party gameplay bootstrap.
 - `ListBootstrapRealms` – list caller-visible realms for a selected world during first-party gameplay bootstrap.
-- `ListBootstrapCharacters` – list caller-visible characters for a selected world/realm during first-party gameplay bootstrap.
+- `ListBootstrapCharacters` – list caller-visible characters for the selected opaque server-issued `connectScopeId` target during first-party gameplay bootstrap; the route world/realm must match the resolved scope.
 - Bootstrap discovery response contract: for each admissible realm target, return `connectScopeId`, `tenantId`, `worldSlug`, `realmSlug`, `gameInstanceId`, `pointerVersion`, `evaluatedAt`, and `connectScopeExpiresAt`.
   - Required behavior: treat this as a short-lived snapshot proof of the evaluated realm target, not a durable reservation; callers must rerun discovery after `connectScopeExpiresAt` or after stale-scope failures.
-- `IssueConnectToken` – issue short-lived gameplay connect token for `/ws/game/**` handshake policy after resolving discovery `connectScopeId`, validating live membership/public admission, runtime entitlements, and the current admission pointer for the target `{tenantId, worldSlug, realmSlug, gameInstanceId}`.
+- `IssueConnectToken` – issue short-lived gameplay connect token for `/ws/game/**` handshake policy after resolving discovery `connectScopeId`, validating live membership and the current applicable membership authority generation, public admission, runtime entitlements, and the current admission pointer for the target `{tenantId, worldSlug, realmSlug, gameInstanceId}`.
   - Required behavior: `connectScopeId` is an opaque short-lived selector for one caller-visible realm target, must be revalidated against current visibility/grant state and current admission-pointer state at issuance time, and must fail closed with `CONNECT_SCOPE_MISMATCH` or `ADMISSION_POINTER_UNAVAILABLE` when the earlier discovery target is no longer admissible.
-  - Required behavior: `requestId` is the idempotency key for issuance. Retrying the same `{accountId, connectScopeId, requestId}` must return the same token payload or the same deterministic application failure.
-- `EnsurePublicProductionPlayerMembership` – idempotently create or return the caller's `player` membership for first admission through the default public production realm and return the resulting `membershipVersion`.
-  - Required behavior: valid only for the tenant's current default public production realm, must fail closed for non-production realms, must treat `requestId` as the attempt idempotency key, and must emit one durable audit/event record on successful first-join creation.
+  - Required behavior: read shared replay readiness as `OPEN`, bind the exact `replayAdmissionFence` into the token, and fail with `CONNECT_REPLAY_PROTECTION_UNAVAILABLE` when readiness is missing, unreadable, quarantined, or changes during issuance.
+  - Required behavior: `requestId` is the idempotency key for issuance. Retrying the same `{accountId, connectScopeId, requestId}` must return the same token payload or the same deterministic application failure. If the caller cannot determine whether Gateway may already have consumed the resulting `gameplay-connect` token, it must rediscover the target and retry with a new `requestId`; it must not reuse the old idempotency key after possible Gateway consumption.
+- `EnsurePublicProductionPlayerMembership` – current proto RPC name for the public-production membership seam. Its canonical target semantics are the caller's explicit open-enrollment join selected by verified `connectScopeId`, idempotently creating or returning the durable `player` membership and returning its monotonic `membershipVersion`.
+  - Required behavior: consume the verified caller-bound `connectScopeId` plus `requestId`, resolve and revalidate the tenant/world/realm/game-instance/pointer target at the Account commit gate, permit only the tenant's current default public production realm, fail closed for non-production realms, bind `requestId` to the resolved operation/account/target identity, validate fresh entitlement atomically at the membership commit boundary, and emit one durable audit/event record on successful first-join creation. Independently supplied account, tenant, world, or realm values are not player-path authority.
   - Required failure codes at minimum: `PUBLIC_PRODUCTION_ADMISSION_DENIED`, `ADMISSION_POINTER_UNAVAILABLE`, `TENANT_BILLING_BLOCKED`.
 - `GetCallerTenantMembership` – return authoritative caller-bound account-tenant membership and roles for billing-safe mutation checks.
 - `GetTenantMembershipForAccount` – cross-tenant membership lookup for billing/reporting workflows (`billingAdmin`/`platformAdmin` only).
 - `GetTenantMembershipForRuntime` – authoritative internal membership read for gameplay admission, reconnect/resume, and membership-gap reconciliation.
-- `GetTenantEntitlementsForRuntime` – internal runtime/admission entitlement snapshot for Game Session and other gameplay-affecting services.
+- `GetTenantEntitlementsForRuntime` – unredacted internal runtime/admission entitlement snapshot for exact Game Session and World Management workload identities. Game Session supplies current private delegation for player-scoped admission; World Management supplies tenant/operation-bound instance-lifecycle context. Logging and Admin and `control-ui` callers must use the redacted route variants instead.
 - `GetRealmAccessGrant` / `ListRealmAccessGrantsForAccount` – authoritative internal realm-grant reads for non-public realm bootstrap discovery and gameplay admission.
 - `GetTenantEntitlementsTenant` – caller-bound tenant-admin entitlement view for billing-safe control-plane UX.
 - `GetTenantEntitlementsCrossTenantSupportSafe` – cross-tenant support-safe entitlement view with redacted, high-level fields only.
@@ -57,9 +59,9 @@ The account lifecycle, full-account export, tenant-scoped export, and deletion p
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/ping` | Simple health check |
-| `POST` | `/auth/login` | Authenticate and establish a control-plane session for first-party UIs by returning a Browser JWT; the token is allowlisted server-side via `session:auth:*` entries for revocation |
-| `POST` | `/auth/logout` | Revoke the currently presented control-plane token (`session:auth:*:<tokenHash>` delete for that token) |
-| `POST` | `/auth/logout-all` | Revoke all active control-plane tokens for the authenticated account by advancing `session:auth:revoked_after:account:<accountId>`; the account watermark is the immediate revocation authority and existing tenant/global allowlist keys may be cleaned up asynchronously |
+| `POST` | `/auth/login` | Current endpoint; **target registry-backed behavior:** establish a control-plane session for first-party admin/creator UIs by returning a `control-ui` JWT only after its single `session:auth:token:<tokenHash>` registry record exists |
+| `POST` | `/auth/logout` | Current endpoint; **target registry-backed behavior:** idempotently delete only the currently presented control-plane or player-bootstrap token registry record so other devices and unrelated gameplay bindings remain active |
+| `POST` | `/auth/logout-all` | Current endpoint; **target registry-backed behavior:** idempotently revoke all control-plane, player-bootstrap, and active gameplay authority for the authenticated account by advancing the Account authority generation and emitting the account-security event; older token records may be cleaned up asynchronously |
 | `POST` | `/auth/request-password-reset` | Request account-scoped password reset |
 | `POST` | `/auth/complete-password-reset` | Complete account-scoped password reset |
 | `POST` | `/auth/request-email-verification` | Send account-scoped verification email |
@@ -70,11 +72,12 @@ The account lifecycle, full-account export, tenant-scoped export, and deletion p
 | `GET` | `/accounts/{accountId}/tenant-export?tenantId={tenantId}` | Tenant-scoped billing-safe export for the authenticated subject or tenant operator |
 | `DELETE` | `/accounts/{accountId}` | Delete the global account after billing-owner preconditions pass |
 | `POST` | `/accounts/{accountId}/external` | Link external account |
-| `POST` | `/auth/player-bootstrap` | Authenticate a first-party player account and return a short-lived `player-bootstrap` token for gameplay bootstrap only |
+| `POST` | `/auth/player-bootstrap` | Current endpoint; **target registry-backed behavior:** return a short-lived `player-bootstrap` token for gameplay bootstrap only after Account has atomically established exactly one active issued-token registry record; registry failure fails issuance before the token is exposed, and the token is not the `/auth/login` control-ui session |
 | `GET` | `/auth/bootstrap/worlds` | List caller-visible worlds for first-party gameplay bootstrap |
 | `GET` | `/auth/bootstrap/worlds/{world}/realms` | List caller-visible realms for a selected world during first-party gameplay bootstrap |
-| `GET` | `/auth/bootstrap/worlds/{world}/realms/{realm}/characters` | List caller-visible characters for a selected world and realm during first-party gameplay bootstrap |
-| `POST` | `/internal/runtime/public-production-membership` | Idempotently create or return the caller's `player` membership for first admission through the default public production realm |
+| `GET` | `/auth/bootstrap/worlds/{world}/realms/{realm}/characters?connectScopeId={scope}` | List caller-visible characters for the signed realm-discovery target during first-party gameplay bootstrap |
+| `POST` | `/auth/bootstrap/worlds/{world}/realms/{realm}/characters` | Account-owned player-bootstrap facade for scoped character creation; delegates persistence to Entity Management after signed-scope and membership/grant checks |
+| `POST` | `/internal/runtime/public-production-join` | Target Account-owned boundary used by explicit text-client `JOIN`; its current proto seam is `EnsurePublicProductionPlayerMembership`, while explicit JOIN behavior remains a target gap |
 | `GET` | `/internal/runtime/realm-access-grants/{tenantId}/{realmSlug}/{accountId}` | Internal-only authoritative lookup for one non-public realm-access grant |
 | `GET` | `/internal/runtime/accounts/{accountId}/realm-access-grants` | Internal-only authoritative listing of the caller's non-public realm-access grants for discovery/admission filtering |
 | `POST` | `/tenant-admin/tenants/{tenantId}/realm-access-grants` | Target tenant-admin surface for granting non-public realm visibility/admission to one account |
@@ -84,11 +87,15 @@ The account lifecycle, full-account export, tenant-scoped export, and deletion p
 | `PUT` | `/profiles/{accountId}` | Update profile information |
 | `GET` | `/tenants/{tenantId}/memberships/me` | Authoritative caller-bound membership and roles for billing-safe mutation guards |
 | `GET` | `/tenants/{tenantId}/memberships/{accountId}` | Cross-tenant membership lookup for billing/reporting roles (`billingAdmin`/`platformAdmin`) |
-| `POST` | `/auth/connect-token` | Issue a short-lived gameplay connect token for one discovery-selected realm target using caller-bound player bootstrap identity after live membership/public-admission, runtime entitlement, and admission-pointer validation. Browser clients receive the token as the `Firemud-Connect-Token` HttpOnly cookie; non-browser clients may receive it in the response body for `X-Firemud-Connect-Token` carriage. |
+| `POST` | `/auth/connect-token` | Target behavior issues a short-lived gameplay connect token for one discovery-selected realm target using caller-bound player-bootstrap identity after current membership authority generation, live membership, applicable realm-grant, runtime-entitlement, and admission-pointer validation. It returns `JOIN_REQUIRED` rather than creating public membership. HTTP response delivery uses only the protected `Set-Cookie` field: the response body and custom response headers never expose the raw token or provide a header fallback. First-party browser/mobile/server clients retain that protected cookie; an explicitly classified non-first-party generic WebSocket client may carry the same cookie-jar value in the dedicated handshake header, which is transport carriage rather than Account response delivery. |
+| `POST` | `/auth/bootstrap/join` | **Target-state only; not implemented at the current Account Service boundary.** Perform an explicit caller-bound `Join & Play` membership operation for a discovery-selected public production realm; commits membership plus durable audit/outbox before character creation or connect-token issuance |
+| `DELETE` | `/tenants/{tenantId}/memberships/me` | Leave a joined game using caller-bound membership authority; removes future membership-based discovery/admission while retained character, purchase, audit, and legal data follow their owning policies |
 | `GET` | `/internal/runtime/tenants/{tenantId}/entitlements` | Internal runtime/admission entitlement snapshot for gameplay-affecting services |
 | `GET` | `/tenants/{tenantId}/entitlements/me` | Caller-bound tenant-admin entitlement view for billing-safe UX |
 | `GET` | `/support/tenants/{tenantId}/entitlements` | Cross-tenant support-safe entitlement view with redacted fields |
 | `GET` | `/.well-known/jwks.json` | JWKS for verifying issued JWTs |
+
+The current executable REST and internal response examples use numeric account and tenant IDs. UUID wire identities are an ADR 0020 target-state migration and are not current executable examples.
 
 Canonical `/auth/login` success shape:
 
@@ -99,12 +106,12 @@ Canonical `/auth/login` success shape:
     "token": "jwt-token-here",
     "expiresAt": "2025-01-01T12:00:00Z",
     "account": {
-      "accountId": "user-123",
+      "accountId": 42,
       "email": "demo@example.com"
     },
     "scopedRoles": {
-      "tenant-abc": ["tenantAdmin", "designer"],
-      "tenant-def": ["player"]
+      "7": ["tenantAdmin", "designer"],
+      "9": ["player"]
     },
     "globalRoles": ["platformAdmin"]
   }
@@ -118,10 +125,28 @@ Error responses use the standard `shared.v1.ErrorDetail` structure and `Authenti
 | Surface | Examples | Required auth path | Notes |
 | --- | --- | --- | --- |
 | Public auth/bootstrap | `/auth/login`, `/auth/request-password-reset`, `/auth/complete-password-reset`, `/auth/request-email-verification`, `/auth/verify-email`, `/auth/recover-username`, `/.well-known/jwks.json` | No pre-existing user JWT; endpoint-specific validation and abuse controls | Intended for initial auth/bootstrap flows. |
-| Player bootstrap issuance | `/auth/player-bootstrap` | First-party player account authentication bootstrap | Issues the `player-bootstrap` token profile only; must not return a control-plane Browser JWT or perform tenant-scoped admission checks. |
-| Player bootstrap | `/auth/bootstrap/worlds`, `/auth/bootstrap/worlds/{world}/realms`, `/auth/bootstrap/worlds/{world}/realms/{realm}/characters`, `/auth/connect-token` | Short-lived, memory-only `player-bootstrap` token in `Authorization: Bearer ...` | Caller identity is derived from bootstrap auth context; discovery endpoints must apply the same membership, realm-visibility, and entitlement filtering as the in-band lobby discovery surfaces and return only caller-visible worlds/realms/characters plus a canonical `connectScopeId`. `/auth/connect-token` must not accept arbitrary `accountId` and must perform live membership/public-admission, runtime entitlement, and admission-pointer checks for the discovery-selected target. Browser response mode sets `Firemud-Connect-Token` with `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/ws/game`, and `Max-Age` no longer than the connect-token TTL. |
-| Authenticated account control-plane APIs | `/auth/logout`, `/auth/logout-all`, `/profiles/*`, `/accounts/*/export`, `/accounts/*`, `/tenants/{tenantId}/memberships/me`, `/tenants/{tenantId}/memberships/{accountId}`, `/tenants/{tenantId}/export` | JWT middleware (`AuthTokenInterceptor` + route classification) | Must enforce route class, subject-binding rules, and tenant/global role checks. |
+| Player bootstrap issuance | `/auth/player-bootstrap` | First-party player account authentication bootstrap | **Target state:** issues the `player-bootstrap` token profile only after atomically creating its one active `session:auth:token:<tokenHash>` registry record; registry failure fails issuance before exposure. It must not return a `control-ui` JWT or perform tenant-scoped admission checks. It may share Account's credential verification, abuse controls, and account-state checks with `/auth/login`, but the endpoint, audience, claims, lifetime, and allowed surfaces remain distinct. **Current implementation:** uses the legacy `session:auth:account:<accountId>:<tokenHash>` Account session key rather than the ADR 0035 registry shape. |
+| Player bootstrap | `/auth/bootstrap/worlds`, `/auth/bootstrap/worlds/{world}/realms`, `/auth/bootstrap/join`, `/auth/bootstrap/worlds/{world}/realms/{realm}/characters`, `/auth/connect-token` | Short-lived, memory-only `player-bootstrap` token in `Authorization: Bearer ...` | The implemented bootstrap derives caller identity before tenant selection, then resolves tenant scope through realm discovery. Character discovery and connect-token issuance consume the opaque server-issued `connectScopeId`, verify the route matches it, and revalidate its tenant/runtime target against current admission state. Discovery may show a public production realm before membership exists in the target; explicit `/auth/bootstrap/join` is the target-state first-party open-enrollment writer and is not implemented, while later character and connect-token surfaces must require live membership plus applicable grant, entitlement, and pointer checks. Account delivers the connect token only through the protected `Firemud-Connect-Token` `Set-Cookie` field; the HTTP response body and custom response-header fields are metadata-only. Only an explicitly classified non-first-party generic WebSocket client may carry that cookie-jar value in the dedicated handshake header. |
+
+| Authenticated account control-plane APIs | `/auth/logout`, `/auth/logout-all`, `/profiles/*`, `/accounts/*/export`, `/accounts/*/tenant-export`, `/accounts/*`, `/tenants/{tenantId}/memberships/me`, `/tenants/{tenantId}/memberships/{accountId}` | JWT middleware (`AuthTokenInterceptor` + route classification) | Must enforce route class, subject-binding rules, and tenant/global role checks. |
 | Internal service gRPC | `Authenticate`, `GetCallerTenantMembership`, `GetTenantMembershipForAccount`, `GetTenantMembershipForRuntime`, `GetTenantEntitlementsForRuntime`, `ListPresenceVisibilityPolicies`, payment and profile gRPC APIs | mTLS caller identity plus method-level auth policy | Internal service surfaces are not edge-exposed directly. |
+
+`/auth/login` and `/auth/player-bootstrap` may share the same underlying credential-verification and abuse-policy implementation, but they are separate authentication products. `/auth/login` establishes a `control-ui` control-plane session for admin/creator surfaces; `/auth/player-bootstrap` establishes only the short-lived `player-bootstrap` gameplay-discovery context. Neither endpoint may substitute one profile for the other.
+
+### Logout Retry and Idempotency
+
+**Target state:** `POST /auth/logout` and `POST /auth/logout-all` use one canonical retry envelope. Each request carries a high-entropy caller-generated `requestId`. Account computes and stores a versioned `requestDigest` as the SHA-256 of the normalized operation tuple: `TOKEN_LOGOUT`, the authenticated subject account, the exact token profile (`control-ui` or `player-bootstrap`), and the presented token hash for `/auth/logout`; `ACCOUNT_LOGOUT_ALL`, the authenticated subject account, the exact presented token profile, and the presented token hash for `/auth/logout-all`. Clients do not supply that digest. Raw JWT values must not appear in the digest, durable evidence, logs, or audit records. The current legacy Account session-key implementation does not yet provide this durable retry proof.
+
+- Every logout request binds its `requestId` to that immutable request digest. Reusing a request ID with different meaning, token, profile, account, or scope is rejected as an idempotency conflict.
+- Account persists a bounded durable operation record outside the Redis token registry. For `TOKEN_LOGOUT`, the same Account transaction that commits the `PENDING` operation first advances the exact-token monotonic fence to `PENDING_LOGOUT`, bound to the request ID, digest, and exact token identity; that durable fence is authoritative before any Redis mutation. Refresh, rebind, installation, and reconciliation compare-and-set paths must validate the current fence and cannot recreate or admit the logged-out identity. Only then does Account perform the idempotent registry mutation and, after required durable acknowledgement, advance the matching operation and fence to `COMMITTED` with the mutation outcome and completed tombstone. Validation or idempotency conflicts become terminal `FAILED` records and do not mutate Redis. A completed logout-all also records the durable logout event identity and the account authority generation that superseded the presented token. The evidence is not an authorization grant and contains no raw JWT.
+- A retry with the same `requestId` and matching `requestDigest` returns stored success only from `COMMITTED` after the required token profile, time, and subject validation. A `PENDING` record is reconciled or resumed and a `FAILED` record returns its stable failure; neither is reported as success. A per-token logout with no matching registry record and no completed evidence remains denied; the documented no-op exception requires full token validation plus durable evidence of the earlier operation.
+- `logout-all` compares and sets the expected Account authority generation in the same Account transaction that commits the operation outcome, one account-security event, one audit record, and one outbox entry. That event invalidates all Account-issued `game-session-account-delegation` lineages and instructs Game Session to terminate the account's active gameplay bindings through its idempotent account-wide index/reconciliation path. It advances the generation and emits those durable records at most once for one `requestId`; retries with the same digest return the stored outcome, while a digest conflict is rejected.
+
+This `requestId`/request-digest contract is the Account-owned retry boundary for logout and issued-token-registry mutations.
+
+`POST /auth/bootstrap/worlds/{world}/realms/{realm}/characters` is the canonical player-facing character-creation facade. Account derives the caller from the bootstrap token, requires the opaque server-issued discovery `connectScopeId` to match the route, revalidates that target, then delegates the scoped write to Entity Management `CreateCharacter`; it does not persist character state itself.
+
+The character-creation facade is included in the player-bootstrap authentication class and the Account REST inventory above. It is an Account-owned admission facade, not an Account-owned character persistence surface: Entity Management remains authoritative for the created character and its playable-state scope.
 
 ## Runtime Membership and Entitlement Response Shapes
 
@@ -131,11 +156,12 @@ Illustrative `GetTenantMembershipForRuntime(accountId, tenantId)` response:
 
 ```json
 {
-  "accountId": "acct_123",
-  "tenantId": "tenant-demo",
+  "accountId": 42,
+  "tenantId": 7,
   "gameplayAdmissionAllowed": true,
   "roles": ["player"],
   "membershipVersion": 42,
+  "membershipAuthorityGeneration": 8,
   "evaluatedAt": "2026-03-13T09:15:30Z"
 }
 ```
@@ -144,6 +170,7 @@ Required semantics:
 
 - `gameplayAdmissionAllowed` is the authoritative boolean for gameplay admission.
 - `membershipVersion` advances monotonically for the `{accountId, tenantId}` membership scope whenever gameplay-relevant membership or role authority changes.
+- `membershipAuthorityGeneration` advances whenever membership or tenant-role authority issued to the caller must be invalidated; it is the authority fence for caller-bound tokens and control-plane admission, and is distinct from the membership content/version counter.
 - `evaluatedAt` timestamps the live membership decision used for admission or resume.
 - `GetTenantMembershipForRuntime` is an internal-only gameplay/runtime authority surface and must not be reused as a caller-facing tenant membership endpoint or as a substitute for `GetCallerTenantMembership`.
 
@@ -151,12 +178,12 @@ Illustrative `GetRealmAccessGrant(accountId, tenantId, worldSlug, realmSlug)` re
 
 ```json
 {
-  "accountId": "acct_123",
-  "tenantId": "tenant-demo",
+  "accountId": 42,
+  "tenantId": 7,
   "worldSlug": "demo",
   "realmSlug": "playtest-docks",
   "accessAllowed": true,
-  "grantedByAccountId": "acct_admin_9",
+  "grantedByAccountId": 84,
   "grantedAt": "2026-03-13T09:10:00Z",
   "expiresAt": "2026-03-20T09:10:00Z",
   "evaluatedAt": "2026-03-13T09:15:31Z"
@@ -176,9 +203,11 @@ Illustrative `GetTenantEntitlementsForRuntime(tenantId)` response:
 
 ```json
 {
-  "tenantId": "tenant-demo",
+  "tenantId": 7,
   "subscriptionStatus": "active",
   "gameplayAvailable": true,
+  "allowPublicJoin": true,
+  "allowNewGameplayBindings": true,
   "allowNewInstanceStarts": true,
   "quotas": {
     "maxActiveSessions": 250,
@@ -193,10 +222,12 @@ Illustrative `GetTenantEntitlementsForRuntime(tenantId)` response:
 Required semantics:
 
 - `subscriptionStatus` uses the canonical billing lifecycle values (`trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`).
-- `gameplayAvailable` is the admission-critical availability flag consumed by gameplay-affecting services.
+- `gameplayAvailable` reports whether already-authorized gameplay may continue; callers must also enforce the operation-specific flag for a new commitment.
+- `allowPublicJoin`, `allowNewGameplayBindings`, `allowNewInstanceStarts`, and quota fields distinguish new admission/load from permission to continue already-entitled capacity. In `grace`, general gameplay availability may remain true while all three new-commitment flags are false.
 - `entitlementVersion` identifies the evaluated entitlement snapshot.
 - `tenantBillingSequence` allows consumers to detect stale or gapped billing-event application before admitting gameplay.
-- `evaluatedAt` is used with the admission freshness SLA from the authentication and subscription-management designs.
+- `evaluatedAt` records evaluation of authoritative committed input and is used with the differentiated freshness policy from the authentication and subscription-management designs; reading an old projection must not restamp it as fresh.
+- Missing subscription state is not implicit availability. Free or trial hosting is returned as an explicit entitlement state.
 
 ## Subject-Binding Rules (Normative)
 
@@ -205,7 +236,7 @@ Required semantics:
   - Exception: cross-account access is allowed only for explicitly authorized global roles (`platformAdmin`) on routes that explicitly document this override.
   - On mismatch without eligible role, return canonical authorization failure (`AUTH_FORBIDDEN_SUBJECT_MISMATCH` or service-equivalent).
 - `GET /accounts/{accountId}/export` is the full account export route. It must not require a caller-selected `tenantId`, and it must not be treated as the billing-safe recovery export for a suspended tenant.
-- `GET /accounts/{accountId}/tenant-export?tenantId={tenantId}` is the tenant-scoped billing-safe export route. It requires either the authenticated subject itself or caller-bound tenant operator access via the canonical tenant-access check, remains reachable when the tenant is `suspended` or `canceled`, and returns only data scoped to that `{tenantId, accountId}` pair.
+- `GET /accounts/{accountId}/tenant-export?tenantId={tenantId}` is the canonical tenant-scoped billing-safe export route. It requires either the authenticated subject itself or caller-bound tenant operator access via the canonical tenant-access check, remains reachable when the tenant is `suspended` or `canceled`, and returns only data scoped to that `{tenantId, accountId}` pair.
 - `DELETE /accounts/{accountId}` is global account deletion. It must reject deletion with canonical error `ACCOUNT_DELETE_ACTIVE_BILLING_OWNER` if the account owns any nonterminal subscription (`trialing`, `active`, `past_due`, `grace`, or `suspended`) in any tenant, and the response should include the affected tenant IDs when safe to disclose to the caller. Platform-admin deletion uses the same billing-owner precondition unless an explicit break-glass compliance workflow is documented separately.
 - `GET /tenants/{tenantId}/memberships/me` must ignore any caller-supplied account identifier and always bind subject from authenticated caller context.
 - `GET /tenants/{tenantId}/memberships/{accountId}` is cross-subject by design and is restricted to `billingAdmin`/`platformAdmin`; every call must be audit-logged with caller identity and target `{tenantId, accountId}`.
@@ -221,14 +252,16 @@ Billing, entitlement, and subscription APIs must expose distinct route/method va
 
 ## Login Modes
 
-Account Service currently supports `PASSWORD` and verified-email `EMAIL_OTP` as account-selected login modes. Both `/auth/login` and internal `Authenticate` accept one login secret; Account Service first recognizes an active eligible email-login code and otherwise verifies a password when that mode is enabled. Authenticator-app enrollment, TOTP, and a separate authentication `otp` field are not current contracts.
+Account Service supports `PASSWORD` and verified-email `EMAIL_OTP` as account-selected ordinary gameplay login modes. Both modes must also be accepted by first-party player bootstrap when enabled for the account. `/auth/login` and internal `Authenticate` accept one login secret; Account Service first recognizes an active eligible email-login code and otherwise verifies a password when that mode is enabled. Authenticator-app enrollment, TOTP, and a separate authentication `otp` field are not mandatory gameplay contracts; stronger factors for elevated control-plane actions are a separate security policy.
 
 ## Login Error Codes
 
 Both the `/auth/login` REST endpoint and the gRPC `Authenticate` method return structured `shared.v1.ErrorDetail` responses when authentication fails. Responses use the canonical codes defined in `AuthenticationErrorCodes` so downstream services can rely on stable semantics:
 
 - `AUTH_INVALID_CREDENTIALS` - wrong username or unsupported/invalid login secret
-- `AUTH_ACCOUNT_LOCKED` - account suspended or locked by policy (reserved for future enforcement)
+- `AUTH_RETRY_LATER` - a graduated credential-abuse throttle rejected the attempt; bounded retry metadata is supplied without confirming account existence
+- `AUTH_ACCOUNT_LOCKED` - durable account-security policy denies authentication after sufficient identity proof; arbitrary failed attempts must not use this as an account-existence oracle
+- `AUTH_ABUSE_CONTROL_UNAVAILABLE` - shared credential-abuse enforcement is unavailable, so new player-facing authentication fails closed and may be retried
 - `AUTH_UPSTREAM_FAILURE` - infrastructure/grpc failures before authentication could complete
 
 The Game Session Service translates these codes into text-protocol `ERROR <CODE>` responses so Telnet and WebSocket clients always see consistent login error semantics even when human-facing messages evolve.
@@ -250,12 +283,12 @@ curl -X POST http://localhost:8080/accounts \
   -d '{"username":"demo","email":"demo@example.com","password":"secret"}'
 ```
 
-Example login request:
+Target account-first login request:
 
 ```bash
 curl -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":1,"username":"demo","password":"secret"}'
+  -d '{"username":"demo","password":"secret"}'
 ```
 
 Call the gRPC method with:

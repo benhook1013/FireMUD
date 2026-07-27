@@ -19,9 +19,9 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Account-related email (verification, password reset, security alerts, subscription/billing notifications) | | | ✔ | | | | | | | | |
 | Operational and moderation notifications (alerts, moderation actions, admin digests) | | | | | | | | | ✔ | | |
 | Payment and subscriptions | | | ✔ | | | | | | | | |
-| Account-security bans (`account_security_ban`) policy + revocation authority | | | ✔ | | | | | | | | |
-| Gameplay-ban policy definition (`gameplay_ban`) | | | | | | | | | ✔ | | |
-| Chat mute/chat-ban policy definition (`chat_mute`, `chat_ban`) | | | | | | | | | ✔ | | |
+| Account-security ban policy (`account_security_ban`) and account authority-generation revocation | | | ✔ | | | | | | | | |
+| Gameplay-ban policy definition and audit (`gameplay_ban`) | | | | | | | | | ✔ | | |
+| Chat mute/chat-ban policy definition and audit (`chat_mute`, `chat_ban`) | | | | | | | | | ✔ | | |
 | Account security policy (password rules, lockout, MFA requirements) | | | ✔ | | | | | | | | |
 | Gameplay login command handling and session binding (Redis) | | | | ✔ | | | | | | | |
 | Login throttling, lockout, password reset, and email verification | | | ✔ | | | | | | | | |
@@ -33,6 +33,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Authoritative owner: Coordination Redis gameplay sessions (`session:game:*`) | | | | ✔ | | | | | | | |
 | Authoritative owner: Coordination Redis gameplay coordination keys (`tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`) | | | | ✔ | | | | | | | |
 | Authoritative owner: Coordination Redis auth sessions (`session:auth:*`) | | | ✔ | | | | | | | | |
+| Authoritative owner: Coordination Redis connect-token replay (`gateway:connect-token:jti:*` and replay-readiness fence) | | | | | | | | | | | ✔ |
 | Authoritative owner: Coordination Redis automation tick keyspace (`automation:tick:*`) | | | | | | | ✔ | | | | |
 | Tick-region lease ownership and executor coordination (`<tenantId, gameInstanceId, regionId>`) | | | | ✔ | | | | | | | |
 | Gameplay WebSocket route definition and routing (`/ws/game/**` canonical route) | | | | | | | | | | | ✔ |
@@ -71,8 +72,8 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Operator quota overrides, auditing, and dashboards (overlay on entitlements) | | | | | | | | | ✔ | | |
 | Enforcement of gameplay bans at login/command level | | | | ✔ | | | | | | | |
 | Enforcement of chat mutes/bans at message send time | | | | | | | | ✔ | | | |
-| Authoritative owner: gameplay-ban enforcement | | | | ✔ | | | | | | | |
-| Authoritative owner: chat mute/chat-ban enforcement | | | | | | | | ✔ | | | |
+| Authoritative owner: gameplay-ban enforcement (policy remains Logging & Admin-owned) | | | | ✔ | | | | | | | |
+| Authoritative owner: chat mute/chat-ban enforcement (policy remains Logging & Admin-owned) | | | | | | | | ✔ | | | |
 | Movement/location write contract orchestration (effect identity, order, and replay safety) | | ✔ | | ✔ | ✔ | ✔ | | | | | |
 | Instance termination orchestration (`PREPARING/ACTIVE/TERMINATING/TERMINATED`) and cross-service cleanup | | ✔ | | ✔ | ✔ | | | | ✔ | | |
 | Automated tick/coordination remediation (pause/resume/reset) | | | | ✔ | | | | | ✔ | | |
@@ -106,7 +107,8 @@ Route-review example:
 
 - **Authoritative owner: Coordination Redis gameplay sessions (`session:game:*`)** – Game Session Service owns gameplay session bindings, lifecycle, and reset scope expectations for these keys. Other services participate only through documented shared helper libraries and key contracts; they do not introduce new gameplay session prefixes or modify TTLs/payload semantics without Game Session ownership and Redis design review.
 - **Authoritative owner: Coordination Redis gameplay coordination keys (`tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`)** – Game Session Service owns gameplay coordination schema and lifecycle for these prefixes. Other services participate only through documented shared helper libraries and key contracts; they do not introduce new gameplay coordination prefixes or modify TTLs/payload semantics without Game Session ownership and Redis design review.
-- **Authoritative owner: Coordination Redis auth keyspace (`session:auth:*`)** – Account Service owns JWT allowlist and revocation watermark semantics, including lifecycle, revocation, and scope contracts consumed by downstream services.
+- **Authoritative owner: Coordination Redis auth sessions (`session:auth:*`)** – Account Service owns the issued-token registry and revocation/version semantics, including lifecycle, revocation, and scope contracts consumed by downstream services.
+- **Authoritative owner: Coordination Redis connect-token replay (`gateway:connect-token:jti:*` and replay-readiness fence)** – Spring Cloud Gateway owns only this narrow edge replay-consumption keyspace and its readiness fence. It does not own general gameplay sessions, Account auth state, or broader coordination policy.
 - **Redis-backed automation ownership split** – Automation & Scripting Service owns:
   - Coordination Redis scheduler/timer keys such as `automation:timer:*` and `script-scheduler:*`.
   - Cache/Rate-Limit Redis `automation:queue:*`, `automation:quota:*`, `automation:tenant-budget:*`, and `automation:test:capacity:*` best-effort queues/counters.
@@ -124,7 +126,7 @@ These ownership boundaries are normative per `design/architecture/decisions/adr-
 - **Tick remediation split** – Logging & Admin owns operator-facing remediation APIs, automation policy, and audit trail; Game Session owns all tick/coordination state mutation and executes pause/resume/remediation control actions through its control-plane APIs.
 - **Replacement-instance compatibility preflight** – Game Session owns `ValidateInstanceCutoverCompatibility` orchestration and result semantics; Game Design, World, Entity, Automation, and Logging/Admin participate as dependency and policy providers for checks.
 - **Moderation policy propagation** – Logging & Admin owns gameplay/chat moderation policy definition and audit trail; Game Session and Social & Groups enforce policy using versioned policy snapshots/events with monotonic invalidation per `{tenantId, policyScope}`, bounded cache staleness, pull-on-miss refresh, and fail-closed behavior for `gameplay_ban` and `chat_ban` when no fresh snapshot is available within the allowed window. See the canonical moderation propagation contract in `design/architecture/system-architecture-overview.md`.
-- **Ban taxonomy** – Account owns account-security bans and revocation watermark writes; Logging & Admin owns gameplay/chat moderation ban policy definitions; Game Session and Social & Groups are enforcement owners for gameplay and chat scopes respectively.
+- **Ban taxonomy** – Account owns account-security bans and auth authority-generation writes; Logging & Admin owns gameplay/chat moderation ban policy definitions; Game Session and Social & Groups are enforcement owners for gameplay and chat scopes respectively.
 - **Admin/creator API allowlist policy** – Gateway owns the edge-route allowlist policy; domain services own only the API contracts behind allowlisted routes.
 - **External operator write ingress** – Logging & Admin is the mandatory external ingress for operator writes covering moderation, quota overrides, runtime feature flags, and tick remediation; Gateway participates only as the edge routing and coarse protection layer for those writes.
 - **Edge admin/creator protocol** – External admin/creator APIs are HTTP(S) only at the Gateway edge unless a dedicated design update explicitly adds an edge gRPC contract. Internal service-to-service gRPC remains direct. External mutating operator workflows defined in the overview’s canonical operator action table must enter through Logging & Admin rather than directly through another edge-routable service.

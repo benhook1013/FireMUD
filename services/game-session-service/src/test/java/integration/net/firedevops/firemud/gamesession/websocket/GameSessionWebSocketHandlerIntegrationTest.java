@@ -1281,17 +1281,16 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void websocketFirstPartyPlayRejectsScopeMismatch() throws Exception {
+  void websocketFirstPartyLoginRejectsScopeMismatchAndClosesTransport() throws Exception {
     List<String> payloads;
+    GameplayWebSocketDriver.CloseEvent closeEvent;
     try (GameplayWebSocketDriver client =
         openFirstPartyDriver(
             "2", firstPartyClaims("sandbox", "production", "1", "1", "mismatch"))) {
       client.send("LOGIN");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
-      client.send("PLAY sandbox Sora");
-      client.awaitMatching(
-          payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
+      closeEvent = client.awaitClosed();
       payloads = client.responses();
     }
 
@@ -1300,12 +1299,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
         loginFailure, "LOGIN", "login", "META", "SESSION");
     assertThat(loginFailure.path("accepted").asBoolean()).isFalse();
     assertThat(loginFailure.path("errorCode").asText()).isEqualTo("CONNECT_SCOPE_MISMATCH");
-    JsonNode playFailure = json(payloads.get(1));
-    GameplayStructuredCommandAssertions.requireStructuredCommand(
-        playFailure, "PLAY", "play", "META", "SESSION");
-    assertThat(playFailure.path("accepted").asBoolean()).isFalse();
-    assertThat(playFailure.path("errorCode").asText()).isEqualTo("LOGIN_REQUIRED");
-    assertThat(playFailure.path("outputs").isArray()).isTrue();
+    assertThat(closeEvent.statusCode()).isEqualTo(1008);
+    assertThat(closeEvent.reason()).isEqualTo("policy_violation");
   }
 
   @Test
@@ -1349,15 +1344,14 @@ class GameSessionWebSocketHandlerIntegrationTest {
     bumpProductionAdmissionPointer(2L, true);
 
     List<String> payloads;
+    GameplayWebSocketDriver.CloseEvent closeEvent;
     try (GameplayWebSocketDriver reconnecting =
         openFirstPartyDriver(
             "2", firstPartyClaims("demo", "production", "1", "1", "resume-after-cutover"))) {
       reconnecting.send("LOGIN");
       reconnecting.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
-      reconnecting.send("LOOK");
-      reconnecting.awaitMatching(
-          payload -> isStructuredCommand(payload, "LOOK"), "structured LOOK result");
+      closeEvent = reconnecting.awaitClosed();
       payloads = reconnecting.responses();
     }
 
@@ -1369,15 +1363,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
             .orElseThrow();
     assertThat(loginFailure.path("accepted").asBoolean()).isFalse();
     assertThat(loginFailure.path("errorCode").asText()).isEqualTo("CONNECT_SCOPE_MISMATCH");
-
-    JsonNode lookFailure =
-        payloads.stream()
-            .filter(payload -> isStructuredCommand(payload, "LOOK"))
-            .findFirst()
-            .map(GameSessionWebSocketHandlerIntegrationTest::json)
-            .orElseThrow();
-    assertThat(lookFailure.path("accepted").asBoolean()).isFalse();
-    assertThat(lookFailure.path("errorCode").asText()).isEqualTo("LOGIN_REQUIRED");
+    assertThat(closeEvent.statusCode()).isEqualTo(1008);
+    assertThat(closeEvent.reason()).isEqualTo("policy_violation");
   }
 
   @Test
@@ -1456,6 +1443,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
   @Test
   void websocketFirstPartyPlayRejectsCutoverAfterLogin() throws Exception {
     List<String> payloads;
+    GameplayWebSocketDriver.CloseEvent closeEvent;
     try (GameplayWebSocketDriver client =
         openFirstPartyDriver("2", firstPartyClaims("demo", "production", "1", "1", "stale-play"))) {
       client.send("LOGIN");
@@ -1465,6 +1453,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
       client.send("PLAY demo");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
+      closeEvent = client.awaitClosed();
       payloads = client.responses();
     }
 
@@ -1478,6 +1467,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
         playFailure, "PLAY", "play", "META", "SESSION");
     assertThat(playFailure.path("accepted").asBoolean()).isFalse();
     assertThat(playFailure.path("errorCode").asText()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+    assertThat(closeEvent.statusCode()).isEqualTo(1008);
+    assertThat(closeEvent.reason()).isEqualTo("policy_violation");
   }
 
   @Test

@@ -2,7 +2,7 @@
 
 This document explains how configuration values and sensitive secrets are supplied to FireMUD services across FireMUD environment classes. It is the conceptual overview and operator starting point for environment variables and secrets.
 
-For the full catalog of environment variables (including defaults and detailed rotation notes), see `environment-and-secrets-catalog.md`. For a minimal entry point and links, see `environment-and-secrets.md`.
+For the full catalog of environment variables (including defaults and detailed rotation notes), see [environment-and-secrets-catalog.md](./environment-and-secrets-catalog.md). For a minimal entry point and links, see [environment-and-secrets.md](./environment-and-secrets.md).
 
 ## Table of Contents
 
@@ -28,7 +28,13 @@ This document describes the canonical environment and secret target state. The f
 - Target state: Account Service serves JWKS from the environment-provided `jwt-jwks` resource and permits the packaged classpath fallback only for explicit local/test profiles. Current runtime drift still permits that fallback when the configured file is absent; player-facing environments must not use it and must fail Account startup when the configured JWKS path or file is missing or unreadable, the JWKS is malformed, or its public JWK does not match the Account signing key and `kid`.
 - Hosted `pr-preview` rendering provisions preview-unique Account-owned JWT signing material and matching Account-published JWKS data per namespace instead of relying on one shared inline JWT secret.
 - `dev-tools/deploy/preflight.py` consumes player-facing expected-binding manifests under `design/operations/environments/`, emits `expectedBindingsRef`, and validates the first required binding fields and policy IDs.
-- Account-only private-key distribution, downstream asymmetric JWKS validation, the phased `jwt-rotation` Job/CronJob, overlap and pruning mechanics, validator-convergence checks, and retained rotation evidence described below remain target-state design rather than checked-in deployment automation. Account Service owns private-key generation, validation, promotion, JWKS publication, and public/private pruning; a non-exportable signer may perform only the private-key operations Account delegates. Rotation automation may request Account-owned transitions through the single Account JWT rotation control/status interface, observe publication and validator convergence, and record evidence; it must never read or update `jwt-signing-keys` or write `jwt-jwks`.
+- Account-only private-key distribution, downstream asymmetric JWKS validation, the phased `jwt-rotation` Job/CronJob, overlap and pruning mechanics, validator-convergence checks, and retained rotation evidence described below remain target-state design rather than checked-in deployment automation. The materialization controller alone generates private signing material and writes the signing Secret under an authenticated, operation-bound Account lifecycle request. Account Service owns lifecycle authorization, validation, promotion, issuance, JWKS publication, and public/private pruning decisions, and reconciles the controller's non-secret CAS/pruning evidence. Rotation automation is observation-only for those transitions, publication, and validator convergence, and records evidence without reading or updating `jwt-signing-keys` or writing `jwt-jwks`.
+
+### Current and Target JWT/JWKS Resource Modes
+
+The current checked-in runtime and `preflight.py` still use the legacy resource mode: `jwt-jwks` is a Kubernetes `Secret`, `PREFLIGHT-JWKS-001` checks that Secret/reference, and the executable rejects a `ConfigMap` named `jwt-jwks`. The current runtime also still has shared-HMAC and classpath-fallback drift described above. A passing legacy preflight is therefore current wiring evidence only; it is not player-facing JWT readiness.
+
+The target resource mode is different: `jwt-signing-keys` remains a fixed pre-created private `Secret` read and written through the Kubernetes API only by the materialization controller under an authenticated Account operation, while `jwt-jwks` becomes a fixed pre-created public `ConfigMap` published by Account through name-scoped CAS. Account has no signing-Secret API authority, consumes the private bundle only through a read-only projected mount, and consumes the public projection; validators consume the same public JWKS and never receive private material. Target-mode preflight is not implemented until it proves these boundaries and must fail closed rather than treating legacy Secret mode as equivalent.
 
 Remaining deployment work includes the JWT authority and rotation boundary above as well as deeper live evidence: the traffic-open backup gates validate the first evidence shape, but real environment evidence files still need to be produced by operators or automation before first live traffic; expected-binding validation should also become stricter as richer Kubernetes live-state checks become available. Do not interpret those gaps as alternative supported behavior for staging, production, or hobby/self-hosted traffic.
 
@@ -57,23 +63,26 @@ Key rules:
 
 - **Never** point Coordination Redis and Cache/Rate‑Limit Redis at the same instance in any non-ephemeral environment (including local development, staging, and production).
 - Player‑facing environments must use **distinct logical Redis deployments** for coordination and cache/rate‑limit roles.
-- Truly ephemeral CI/preview stacks may collapse roles into a single Redis instance only when explicitly documented as ephemeral and not used to validate coordination SLOs; see `system-architecture-redis-usage-and-profiles.md#environment-mappings`.
+- Truly ephemeral CI/preview stacks may collapse roles into a single Redis instance only when explicitly documented as ephemeral and not used to validate coordination SLOs; see [Redis usage and profiles](../system-architecture-redis-usage-and-profiles.md#environment-mappings).
 - `pr-preview` keeps the normal Redis role split and preview-unique trust material, but it uses a preview-scoped expected-bindings/preflight posture rather than the full player-facing backup/admission binding contract used for staging and production traffic-open decisions.
 
 Operational notes:
 
-- Coordination Redis hosts both gameplay session bindings (`session:game:*`) and control-plane JWT allowlist entries (`session:auth:*`) as described in `system-architecture-authentication.md`.
+- Coordination Redis hosts both gameplay session bindings (`session:game:*`) and Account-owned issued-token registry and revocation/version state (`session:auth:*`) as described in [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md).
 
 ### Authentication & JWT
+
+The resource and startup requirements in this subsection are the accepted target-mode contract. Current checked-in runtime and preflight remain in the legacy Secret-backed mode described under [Current and Target JWT/JWKS Resource Modes](#current-and-target-jwtjwks-resource-modes); a passing current preflight does not prove these requirements.
 
 | Variable | Purpose | Rotation / Safety Notes |
 | -------- | ------- | ----------------------- |
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Account-only path to the versioned private signing bundle | In player-facing environments, mount `jwt-signing-keys` read-only only into Account Service; the canonical mount is `/var/run/secrets/firemud/jwt` and the active bundle is `/var/run/secrets/firemud/jwt/current.key`. |
-| `FIREMUD_AUTH_JWKS_PATH` | Account-only path to the published `jwks.json` file | In player-facing environments, mount the `jwt-jwks` Secret read-only at `/var/run/secrets/firemud/jwks` and set this to `/var/run/secrets/firemud/jwks/jwks.json`. |
+| `FIREMUD_AUTH_JWKS_PATH` | Path to the published public `jwks.json` consumed by Account and JWT validators | In player-facing environments, mount the fixed Account-owned `jwt-jwks` ConfigMap read-only at `/var/run/secrets/firemud/jwks` and set this to `/var/run/secrets/firemud/jwks/jwks.json`; Account updates the resource through `resourceVersion` CAS and validators use the same Account-published public key set. |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | Changing it changes the `exp` claim only for newly issued JWTs; already issued JWTs retain their existing `exp`. |
-| `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Extra time used when deriving gameplay continuity retention | A change affects newly admitted gameplay bindings and does not rewrite existing JWT `exp` claims or continuity anchors. |
+| `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Issued-token registry cleanup margin | It extends registry retention beyond each token's own `exp` only; it does not extend gameplay continuity. |
+| `FIREMUD_AUTH_SESSION_EXPIRATION_MS` | Initial gameplay-continuity retention | Target default is `300000` ms (five minutes), with an inclusive valid range of `1..300000`; current code still defaults to `3600000` ms (one hour) and does not enforce that range. |
 
-For player-facing environments (`hobby-self-hosted`, staging, production), Account startup must fail closed if `FIREMUD_AUTH_JWKS_PATH` is unset, missing, unreadable, malformed, or does not contain a public JWK matching the Account signing key and `kid`. There is no classpath JWKS fallback in these environments. Account Service owns private-key generation, validation, promotion, JWKS publication, and public/private pruning; a non-exportable signer may perform only the private-key operations Account delegates. The `jwt-rotation` Job/CronJob requests Account-owned transitions through the single Account JWT rotation control/status interface, observes publication and validator convergence, records evidence, and must never read or update `jwt-signing-keys` or write `jwt-jwks`.
+For player-facing environments (`hobby-self-hosted`, staging, production), Account may start with protected traffic and issuance quarantined solely to complete its initial Account-owned JWKS CAS publication. Ordinary readiness fails closed if `FIREMUD_AUTH_JWKS_PATH` is unset, missing, unreadable, malformed, or does not contain a public JWK matching the Account signing key and `kid`; there is no classpath JWKS fallback. The materialization controller alone owns private-key generation and signing-Secret mutation under authenticated, operation-bound Account lifecycle authorization. Account Service owns lifecycle authorization, validation, promotion, issuance, initial and subsequent JWKS publication, and public/private pruning decisions and reconciles materialization evidence through the single Account JWT rotation control/status interface. The `jwt-rotation` Job/CronJob only observes publication and validator convergence, records evidence, and must never read or update `jwt-signing-keys` or write `jwt-jwks`.
 
 ### TCP Proxy → Gateway Bridge (Telnet)
 
@@ -82,8 +91,8 @@ In all player-facing classes (`hobby-self-hosted`, staging, production), this al
 
 ### Secrets & Certificates
 
-- All sensitive values (DB passwords, JWT signing keys, TLS certificates) live in Kubernetes `Secret` objects.
-- TLS certificates are rotated automatically by **cert-manager**. JWT rotation is coordinated by dedicated Kubernetes Jobs (for example `jwt-rotation`) that request Account-owned transitions through the single Account JWT rotation control/status interface, observe Account publication and validator convergence, and record evidence; in production this Job is treated as an operator-run template rather than an unattended cadence (see `system-architecture-security.md#jwt-key--jwks-rotation-workflow`). The Job/CronJob must never read or update the private `jwt-signing-keys` Secret or write `jwt-jwks`.
+- In shared or player-facing Kubernetes environments, workloads consume sensitive values through narrowly scoped Kubernetes `Secret` objects or fixed read-only mounted paths. This is the one FireMUD Kubernetes runtime contract; secret origin is an operator provisioning concern. Local development intentionally uses ignored `.env` values and generated throwaway credentials instead.
+- TLS certificates are rotated automatically by **cert-manager**. JWT rotation is coordinated by Account-owned transitions through the single Account JWT rotation control/status interface. Dedicated Kubernetes Jobs (for example `jwt-rotation`) observe Account status, publication, and validator convergence and record evidence; in production this Job is treated as an operator-run template rather than an unattended cadence (see [Security Architecture](../system-architecture-security.md#jwt-key--jwks-rotation-workflow)). The Job/CronJob must never read or update the private `jwt-signing-keys` Secret or write `jwt-jwks`.
 - Services reload TLS material via shared utilities, and Account Service may use the JWT watcher as one implementation of atomic signing-generation promotion:
   - `TlsCertificateWatcher`
   - `JwtSecretWatcher`
@@ -95,7 +104,7 @@ Operator actions:
   - Pods reload configuration (via watcher) or are restarted according to the runbook.
   - gRPC clients/servers establish new mTLS sessions without errors.
 
-For full descriptions of the variables and their defaults, open `environment-and-secrets-catalog.md`.
+For full descriptions of the variables and their defaults, open [environment-and-secrets-catalog.md](./environment-and-secrets-catalog.md).
 
 ---
 
@@ -107,26 +116,31 @@ For full descriptions of the variables and their defaults, open `environment-and
 - The sample file `.env.sample` lists the variables described in the catalog with default credentials for PostgreSQL and Redis. Copy this file to `.env` and adjust values as needed; `.env` is git‑ignored so real credentials remain local.
 - Docker Compose passes these variables to each container so Spring Boot can connect to the databases.
 - Secrets such as JWT signing keys are not required in development; random keys are generated on startup.
+- When local or operator-run Docker mounts real private material, it uses read-only files outside the repository with restrictive host permissions. FireMUD does not bundle a Vault container or another secret-manager dependency into Compose.
 
 ### Shared and Player-Facing Kubernetes Environments
 
 This section describes the Kubernetes-backed environments that use the canonical runtime configuration and Kubernetes Secrets delivery model. Unless a bullet explicitly says `production` only, the rules here apply to `hobby-self-hosted`, `staging`, and `production`.
 
 - Kubernetes `ConfigMap` objects store non‑secret configuration values like host names or feature flags.
-- Sensitive values (database passwords, JWT signing keys, TLS certificates) are stored in Kubernetes `Secret` objects.
-- TLS certificates are issued by **cert-manager** and rotated automatically; services reload updated certificates using `TlsCertificateWatcher` / `GrpcServerTlsReloader`.
-- JWT signing keys are stored in Secrets. Account Service owns private-key generation, validation, promotion, JWKS publication, and public/private pruning; a non-exportable signer may perform only the private-key operations Account delegates. Dedicated Kubernetes Jobs (for example `jwt-rotation`) request Account-owned transitions through the single Account JWT rotation control/status interface, prove validator visibility, observe the Account-published key set, and record evidence; they never read or update `jwt-signing-keys` or write `jwt-jwks`. See `system-architecture-security.md#jwt-key--jwks-rotation-workflow` for details.
+- Sensitive values (database passwords, JWT signing keys, TLS private keys) are delivered through Kubernetes `Secret` objects.
+- TLS certificates are issued by **cert-manager** and rotated automatically; each workload receives a distinct certificate/private-key Secret and services reload updated certificates using `TlsCertificateWatcher` / `GrpcServerTlsReloader`.
+- Target JWT signing keys are stored in a fixed Secret and public JWKS in a fixed ConfigMap. Account Service owns authenticated lifecycle requests, validation, promotion, public JWKS publication, and the decision to prune public/private material. The materialization controller alone generates private signing material and writes the signing Secret; in the controlled Secret fallback, it is the sole signing-Secret API reader/writer through authenticated, operation-bound `resourceVersion` CAS and returns non-secret CAS/pruning evidence. Account consumes only the read-only projected Secret files, reconciles that evidence, and alone updates public JWKS. Dedicated Kubernetes Jobs observe Account-owned transitions, prove validator visibility, observe the Account-published key set, and record evidence; they never initiate transitions, read or update `jwt-signing-keys`, or write `jwt-jwks`. See [Security Architecture](../system-architecture-security.md#jwt-key--jwks-rotation-workflow) for details.
 - In player-facing environments (`hobby-self-hosted`, staging, production), only Account Service may consume JWT private signing material from a mounted file via `FIREMUD_AUTH_JWT_SECRET_PATH`. Validators must use asymmetric Account JWKS; inline-only or HMAC-only JWT configuration and private-key mounts in validators are non-compliant.
 - Database credentials are stored in Secrets and rotated via explicit operational Jobs and runbooks (for example `db-credential-rotation` in `system-architecture-backup-recovery.md#post-restore-secret-hardening`); there is no fully automatic cadence today.
 - The manifests in `k8s/base/` demonstrate loading Secrets and ConfigMaps via `envFrom` so that services receive the same variables as in development.
 - Services reload TLS certificates for gRPC client and server channels using `TlsCertificateWatcher` and `GrpcServerTlsReloader`. Account may use `JwtSecretWatcher` only as part of validated atomic signer promotion; validators refresh bounded JWKS caches and never reload a private Account signing key.
-- **Kubernetes Secrets** is the chosen mechanism for storing all sensitive credentials. External secret stores like Vault are out of scope at this stage.
+- FireMUD applications support only this Kubernetes Secret/mounted-file delivery contract. They do not call or deploy Vault or cloud-provider secret APIs. Operators may synchronize an external source into the canonical Secret names, but that is transparent infrastructure and must leave already-materialized healthy workload secrets usable during an upstream outage.
+- Staging and production require verified Kubernetes Secret encryption at rest, minimal service-account RBAC, namespace isolation, and Kubernetes API audit logging. Hobby/self-hosted player-facing clusters must pass the common binding, least-privilege, and credential-age preflight; operators should enable the same control-plane encryption/audit controls where their distribution supports them.
+- Re-creatable leaf certificates and service credentials are reissued after loss. Backup-decryption keys or an intentionally retained offline CA root must have encrypted out-of-cluster custody rather than relying on the live cluster as the sole copy.
 
-The Account-only asymmetric/JWKS boundary above is target state, not proof that the current stack enforces it. Current implementation drift includes the runtime classpath JWKS fallback when the configured file is absent, deployment preflight checks that require signing paths and mounts across primary workloads, and checked-in baseline resources that mount shared `jwt-signing-keys` beyond Account. This documentation records the required convergence without changing runtime, preflight, or manifest behavior.
+The Account-only private-key and asymmetric-signing boundary above is target state, not proof that the current stack enforces it. Current implementation drift includes the runtime classpath JWKS fallback when the configured file is absent, deployment preflight checks that require signing paths and mounts across primary workloads, and checked-in baseline resources that mount shared `jwt-signing-keys` beyond Account. Public JWKS consumption by validators is part of the target boundary; validators receive no private signing material. This documentation records the required convergence without changing runtime, preflight, or manifest behavior.
 
 ---
 
 ## JWT Trust Model by Environment
+
+The following environment matrix is the accepted target-mode contract. It is not a claim that current manifests or preflight implement ConfigMap publication, Account-only CAS/RBAC, or fail-closed asymmetric validation.
 
 JWT signing key and JWKS behavior differs slightly by environment to balance safety and operational complexity:
 
@@ -134,7 +148,7 @@ JWT signing key and JWKS behavior differs slightly by environment to balance saf
   - Environment variables are loaded from `.env`, and secrets such as JWT signing keys may be generated randomly on startup for convenience.
   - Cross-service JWT validation is best-effort when random keys are used; operators should not assume that tokens remain valid across service restarts unless a persistent signing key Secret is configured.
 - **Staging / Non-production clusters**
-  - Player-facing staging must use a persistent `jwt-signing-keys` Secret and `jwt-jwks` Secret. Account Service sets `FIREMUD_AUTH_JWT_SECRET_PATH` to its private bundle and `FIREMUD_AUTH_JWKS_PATH` to `/var/run/secrets/firemud/jwks/jwks.json` from the read-only `jwt-jwks` mount.
+  - Player-facing staging must use fixed, pre-created `jwt-signing-keys` Secret and `jwt-jwks` ConfigMap resources. The materialization controller alone CAS-updates the signing Secret after an authenticated Account request; Account CAS-publishes the public JWKS, consumes the mounted public file, and validators consume the same Account-published key set. `FIREMUD_AUTH_JWT_SECRET_PATH` selects the private bundle and `FIREMUD_AUTH_JWKS_PATH` selects `/var/run/secrets/firemud/jwks/jwks.json`.
   - Account startup must fail when the configured JWKS path or file is missing or unreadable, the JWKS is malformed, or its public JWK does not match the Account signing key and `kid`; classpath fallback is local/test only.
   - The same immutable `jwt-rotation` artifact and phased protocol used in production must be exercised periodically. It may run on a low-frequency schedule or as an explicit operator drill.
 - **PR preview**
@@ -142,19 +156,19 @@ JWT signing key and JWKS behavior differs slightly by environment to balance saf
   - Canonical default: store the preview signing key in a preview-unique Kubernetes `Secret`; Account Service owns publication of the corresponding preview-unique JWKS document from a namespace-local `ConfigMap`.
   - Reusing one shared preview signing key across namespaces is non-compliant because it allows tokens minted in one PR environment to validate in another.
 - **Production**
-  - Required to use a persistent `jwt-signing-keys` Secret and `jwt-jwks` Secret. Account Service mounts `jwt-jwks` read-only at `/var/run/secrets/firemud/jwks` and sets `FIREMUD_AUTH_JWKS_PATH` to `/var/run/secrets/firemud/jwks/jwks.json`; JWKS is the canonical trust source for all validating services.
+  - Required to use fixed, pre-created `jwt-signing-keys` Secret and public `jwt-jwks` ConfigMap resources. The materialization controller alone CAS-updates the signing Secret after an authenticated Account request; Account CAS-publishes `jwt-jwks`, mounts the private and public resources read-only, and validators consume the Account-published public key set. `FIREMUD_AUTH_JWKS_PATH` is `/var/run/secrets/firemud/jwks/jwks.json`; JWKS is the canonical trust source for all validating services.
   - Account startup must fail when the configured JWKS path or file is missing or unreadable, the JWKS is malformed, or its public JWK does not match the Account signing key and `kid`; classpath fallback is not permitted.
   - The target `jwt-rotation` artifact is an operator-triggered Job template, or an equivalent CronJob kept at `spec.suspend: true`; no such manifest is checked in yet.
-  - The Job/CronJob may only request Account-owned public-key transitions, observe public JWKS metadata and validator convergence, and record evidence. It must never read or update `jwt-signing-keys` or write `jwt-jwks`; private operations delegated to a non-exportable signer and all public pruning remain under Account Service authority.
-  - Mounted resources alone do not establish readiness. Promotion and traffic-open evidence must prove Account-only asymmetric signing, validator `kid`/JWKS convergence, planned rotation through pruning, and compromise hard cutover as defined in `system-architecture-security.md#player-facing-jwt-readiness`.
+  - The Job/CronJob only observes Account-owned public-key transitions, public JWKS metadata, and validator convergence, and records evidence. It must never read or update `jwt-signing-keys` or write `jwt-jwks`; private operations delegated to a non-exportable signer and all public/private pruning remain under Account Service authority.
+  - Mounted resources alone do not establish readiness. Promotion and traffic-open evidence must prove Account-only asymmetric signing, validator `kid`/JWKS convergence, planned rotation through pruning, and compromise hard cutover as defined in [Security Architecture](../system-architecture-security.md#player-facing-jwt-readiness).
 
-For guidance on how to respond to a suspected JWT signing key compromise (as opposed to planned rotation), see the “JWT Key Compromise Response” section in `system-architecture-security.md`.
+For guidance on how to respond to a suspected JWT signing key compromise (as opposed to planned rotation), see the [JWT Key Compromise Response](../system-architecture-security.md#jwt-key-compromise-response) section.
 
 ---
 
 ## Secret Governance Tiers
 
-FireMUD applies a tiered governance model so the highest-risk credentials have explicit controls even while Kubernetes Secrets remains the storage backend:
+FireMUD applies a tiered governance model so the highest-risk credentials have explicit controls while Kubernetes Secret objects remain the canonical workload-delivery boundary:
 
 - **Tier A (high impact)**
   - Includes JWT signing keys/JWKS, PostgreSQL application/admin credentials, object-store credentials used for backup and restore, and operator-only control-plane credentials.
@@ -167,7 +181,7 @@ FireMUD applies a tiered governance model so the highest-risk credentials have e
   - Includes lower-risk integration credentials and service-level secrets where compromise blast radius is narrower.
   - Rotation cadence may be manual and less frequent, but owners must still document current age, intended cadence, and emergency rotation path.
 
-This model is designed to reduce risk now without introducing unnecessary operational complexity. If operational burden or compliance requirements increase, environments can migrate selected Tier A credential classes to external secret orchestration later without changing application-level environment variable contracts.
+This model is designed to reduce risk without making a secret manager part of the FireMUD runtime. Operators may provision selected Tier A credentials from external orchestration without changing application-level Secret names or mounted-file contracts. A shared active-active multi-datacenter signing or secret authority requires a separate architecture decision; independent deployments use independent authorities by default, and FireMUD does not implement cross-cluster secret replication.
 
 ### Secret Compliance Controls
 
@@ -347,7 +361,7 @@ FireMUD distinguishes between **configuration** and **secrets** but delivers bot
   - May be generated or randomized automatically for local development.
   - Rotation uses the appropriate owner and automation for each secret family:
     - TLS certificates are rotated automatically by cert-manager.
-    - Account Service owns JWT private-key generation, validation, promotion, JWKS publication, and public/private pruning; a non-exportable signer may perform only the private-key operations Account delegates. Jobs such as `jwt-rotation` request Account-owned transitions through the single Account JWT rotation control/status interface, prove convergence, observe the published key set, and record evidence; they never read or update `jwt-signing-keys` or write `jwt-jwks`.
+    - The materialization controller alone generates JWT private signing material and mutates the signing Secret under authenticated, operation-bound Account lifecycle authorization. Account Service owns lifecycle authorization, validation, promotion, issuance, JWKS publication, and public/private pruning decisions. Jobs such as `jwt-rotation` observe Account-owned transitions through the single Account JWT rotation control/status interface, prove convergence, observe the published key set, and record evidence; they never initiate transitions, read or update `jwt-signing-keys`, or write `jwt-jwks`.
     - Database credentials are rotated by Jobs such as `db-credential-rotation` that update the relevant Secrets and restart consumers.
   - Direct, ad hoc edits to Secrets should be treated as emergency measures only and reconciled back into the appropriate Job/runbook flow so future rotations remain automated and repeatable.
 
@@ -359,7 +373,7 @@ The catalog document groups these variables by subsystem (PostgreSQL, Redis, TLS
 
 ## Certificate Management & Watchers
 
-Mutual TLS protects all internal service-to-service traffic. Certificates are normally provisioned by **cert-manager** and mounted from Kubernetes Secrets. These certificates secure:
+Mutual TLS protects internal service-to-service traffic in shared and player-facing Kubernetes environments. Explicit local-development and throwaway-test profiles may use the documented plaintext internal transports and do not provide player-facing or promotion evidence. Certificates are normally provisioned by **cert-manager** and mounted from per-workload Kubernetes Secrets so each service has a concrete private identity. These certificates secure:
 
 - All gRPC calls between services
 - Any internal WebSocket bridges that require mTLS (for example, the TCP Proxy Service connecting to Spring Cloud Gateway over `wss://`)

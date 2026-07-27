@@ -6,6 +6,12 @@ This document explains how game data is versioned and activated at runtime. It a
 
 ---
 
+## Implementation Status
+
+The versioned publish and replacement-cutover substrate is partially implemented, including durable cutover preparation and execution records. The current admission-pointer writer performs a read-then-write version check and persists pointer, audit, and prepared-upgrade execution changes through separate repository calls; it does not yet prove the target single-transaction compare-and-set boundary described below. The target bounded source-drain contract is also not yet implemented: current cutover clears active bindings rather than preserving them through a persisted deadline, notice, socket closure, command fence, and terminal `InstanceTermination` workflow. The target sections that follow are normative design, not proof that the current runtime already satisfies those effects.
+
+---
+
 ## Game Version Publishing
 
 The **Game Design Service** manages version metadata and publish workflows for game configuration (world layouts, scripts, item templates, etc.). Domain services (World Management, Entity Management, Game Logic, and others) store the actual versioned domain data for each `tenantId`.
@@ -526,11 +532,14 @@ Before any operation that changes whether a tenant is actively serving gameplay 
 
 - Call `GetTenantEntitlementsForRuntime(tenantId)` in the Account Service and enforce that:
   - The tenant is currently **available for gameplay** under its subscription and billing state (for example, not `suspended` or `canceled`).  
+  - The operation-specific new-instance/scale flag permits the requested lifecycle change; general gameplay availability during `grace` does not authorize new capacity.
   - The requested instance count and configuration remain within plan-derived quotas (for example, maximum concurrent instances for the tenant).
 - If entitlements indicate that the tenant is unavailable for gameplay or that quotas would be exceeded, the operation fails with a clear, tenant-scoped error and no instance-level changes are applied.
-- Entitlement snapshots used by these admission/control operations must be no older than 15 seconds. If a fresh snapshot cannot be obtained (for example due to event lag or Account Service uncertainty), operations fail closed with canonical error `ENTITLEMENT_UNAVAILABLE` (or protocol-mapped equivalent).
-- Entitlement snapshots must include `evaluatedAt`, `entitlementVersion`, and `tenantBillingSequence`; runtime operations must reject stale time/sequence data and reconcile via fresh `GetTenantEntitlementsForRuntime(tenantId)` reads.
-- Runtime operations must enforce the realm-routing contract exposed to players: each player-addressable realm resolves to exactly one gameplay-admissible instance at a time, and control-plane workflows must not create ambiguity about which instance is admissible for a given realm.
+- New instances, scale-out, quota increases, paid-feature activation, and replacement cutovers that create capacity are strict paths: they require an entitlement snapshot satisfying the ADR 0028 predicate `(localNow - evaluatedAt + maxClockSkew) < 15000` ms, where `evaluatedAt` is Account's authoritative evaluation time and `maxClockSkew` is the configured maximum clock skew. A future-dated `evaluatedAt` beyond `maxClockSkew` is invalid; an exact-boundary result is expired. If a fresh snapshot cannot be established, the operation fails closed with `ENTITLEMENT_UNAVAILABLE`.
+- Only a non-expanding restart, rollback, or recovery of already-entitled capacity may use a previously authoritative positive snapshot as last-known-good. That recovery snapshot has an exact `300000` ms freshness limit and is eligible only when the operation does not increase capacity or quota consumption, `(localNow - evaluatedAt + maxClockSkew) < 300000` ms, and there is no observed hard denial, revocation, newer billing sequence, or sequence gap. A future-dated `evaluatedAt` beyond `maxClockSkew` is invalid for last-known-good as well as for strict admission; a value within the bound is accepted only when the same predicate passes. A reconnect that creates a new binding or changes realm target is a strict new-admission path, not this non-expanding recovery exception.
+- Entitlement snapshots must include `evaluatedAt`, `entitlementVersion`, and `tenantBillingSequence`. For both strict and last-known-good use, the ADR 0028 predicate `(localNow - evaluatedAt + maxClockSkew) < limit` must hold with the applicable limit (`15000` ms or `300000` ms); equality at either boundary is expired. `evaluatedAt`, the skew, and the resulting predicate inputs must be finite and contract-valid. A stale, future-dated beyond-skew, malformed, or sequence-unsafe snapshot is never usable. When the bounded exception does not apply, the runtime must reconcile through `GetTenantEntitlementsForRuntime(tenantId)` and fail closed if that authoritative read cannot establish the required fresh and sequence-safe result.
+- Immediately before the final activation or admission-pointer commit, Game Session must apply the same ADR 0028 skew-adjusted predicate again as a final precommit recheck. A capacity-creating operation requires a fresh snapshot and an allowed operation-specific flag; a non-expanding restart, rollback, or recovery may use eligible last-known-good as its entitlement input within the bounded continuity contract. The exact entitlement evidence identity and evaluated sequence used by that recheck must be committed atomically with the activation or pointer CAS, so a stale, replaced, or concurrently invalidated result cannot authorize the state change. Same-binding player resumption additionally requires Account to validate current lifecycle, security, membership, and revocation authority and commit the ADR 0030 resume lease. Last-known-good never substitutes for version-state, release-attestation, compatibility, lifecycle-fence, or routing-pointer proof. If the required entitlement evidence is unavailable or unsafe, the realm remains closed or the previous pointer remains the sole admissible target.
+- Runtime operations must enforce the realm-routing contract exposed to players: each player-addressable realm is `OPEN` on exactly one gameplay-admissible instance or explicitly `CLOSED`, and control-plane workflows must not create ambiguity about which instance is admissible for a given realm.
 
 ### Realm Routing Contract For Player-Addressable Realms
 
@@ -539,30 +548,44 @@ Version cutover contract for a player-addressable realm:
 1. Prepare the replacement instance as non-admissible (`PREPARING`/draining-safe) and run world creation to completion.
 2. Run compatibility preflight for source instance -> target version and fail closed on mismatch.
 3. Persist a durable `PrepareVersionUpgrade` artifact for that cutover attempt and use it as the proof input to the realm-route swap.
-4. Perform one atomic realm-route swap so the selected realm resolves to exactly one admissible `gameInstanceId` at any instant.
-5. Keep the old instance non-admissible and drain/terminate it through the standard `InstanceTermination` workflow.
-6. If swap fails, keep the previously routed instance as the sole admissible target for that realm and retry; do not open dual admission for the same realm.
+4. Re-run the final activation gate above immediately before changing admission state.
+5. Perform one atomic `OPEN(source)` -> `OPEN(target)` realm-route swap so the selected realm has exactly one target for new or renewed bindings at any instant.
+6. **Target-only bounded source drain:** in the same cutover commit, persist the source instance, a unique `sourceDrainId`, and absolute `sourceDrainDeadlineAt` resolved from `firemud.game-session.cutover-drain.duration-ms`. Keep the old instance closed to new/reconnected bindings while already connected source sessions finish before that deadline, then terminate it through the standard `InstanceTermination` workflow.
+7. If swap fails, keep the previously routed instance as the sole admissible target for that realm and retry; do not open dual admission for the same realm.
 
 Realm-routing contract (required):
 
-- Each player-addressable realm must have exactly one authoritative routing record managed by Game Session.
+- Each player-addressable realm must have exactly one authoritative routing record managed by Game Session. Its state is `OPEN(admissibleGameInstanceId)` or `CLOSED`; only an open realm has an admission target.
+- The authoritative routing record includes `worldSlug`, and the routing identity plus every routing read, write, and CAS operation are exactly `{tenantId, worldSlug, realmSlug}`. `worldSlug` must not be inferred from `realmSlug`, display metadata, or the target `gameInstanceId`.
 - Each routing record must contain at minimum:
   - `tenantId`,
+  - `worldSlug`,
   - `realmSlug` (or equivalent stable player-facing realm selector),
-  - `admissibleGameInstanceId`,
-  - `visible`,
-  - `publicProductionRealm`,
+  - `admissionState`,
+  - `admissibleGameInstanceId` only when `OPEN`,
   - `pointerVersion` (monotonic CAS version),
+  - `catalogRevision`, the one canonical monotonic reference to the separately versioned catalog/policy snapshot used for visibility and public-production reads,
   - `updatedAt`,
   - `updatedBy` / change reason for audit.
-- `REALMS`, connect-token issuance, admission (`PLAY`), and runtime control-plane operations must read these records as the source of truth for realm selection and gameplay-admissible instance routing.
-- Routing updates use compare-and-set semantics on `pointerVersion`; failed CAS must not admit or expose dual-admissible state for the same realm.
+- `catalogRevision` identifies the separately versioned catalog/policy snapshot and is the sole authority for the realm's visibility, access policy, and public-production designation. It is the only catalog-only monotonic field; there is no separate `policyRevision`. The routing record stores `catalogRevision` and the admission pointer; it must not duplicate the `publicProduction` policy value or derive public-production behavior from `realmSlug`, display metadata, or `admissibleGameInstanceId`.
+- All player and control-plane flows must resolve the referenced catalog/policy revision together with the routing pointer, and must fail closed on a missing, stale, mismatched, or ambiguous pair:
+  - `WORLDS` uses the catalog/policy public-production designation and visibility policy when building world discovery.
+  - `REALMS` uses the same policy revision for public-production visibility versus explicit realm grants.
+  - `CHARS` uses that policy decision before resolving caller-valid characters for the selected realm and routed instance.
+  - Bootstrap discovery and connect-token issuance reread the same policy reference and routing pointer before issuing target-specific evidence.
+  - Admission (`PLAY`) and reconnect validation revalidate the current policy designation/access decision and the current admissible routing target; neither trusts a duplicated flag in a routing payload or a stale discovery result.
+  - Runtime control-plane launch, cutover, rollback, and fork operations publish or consume the versioned catalog/policy reference and routing pointer as one auditable authority pair; they must not maintain a second public-production flag in routing state.
+- **Target transaction boundary:** routing updates use an atomic database compare-and-set on the stable tenant-qualified `{tenantId, worldSlug, realmSlug}` identity, with the expected `pointerVersion` included in the update predicate and advanced in the stored value. Failed CAS must not admit or expose dual-admissible state for the same realm. The expected version is required for an existing record, and ordinary `OPEN`/`CLOSED` pointer state, its audit event, and its idempotent request outcome commit atomically. A replacement cutover that changes `gameInstanceId` additionally commits the applicable prepared-cutover execution state in that same transaction; ordinary pointer updates do not require a `prepared_version_upgrade`. The current separate repository writes are an implementation gap and must not be cited as proof of this boundary.
 - Ownership: Game Session Service is the sole writer and system of record for gameplay realm-routing state; other services consume via API/read models and must not write routing state directly.
 - API surface: Game Session exposes control-plane APIs for reading/updating realm-routing state. All launch, cutover, rollback, and fork lifecycle workflows must use these APIs rather than direct table writes.
 - A pointer swap to a different `gameInstanceId` is a cutover operation, not a generic edit. It must reference one durable `prepared_version_upgrade` record, and Game Session must reject the swap unless that preparation is still `COMPATIBLE` and matches both the current source pointer target and the replacement instance's frozen launch proof (`versionId`, `launchDescriptorId`, `remapSetId`).
 - Pointer-audit history must preserve that same preparation identity. A successful cutover write records the `preparedVersionUpgradeId` on the resulting admission-pointer audit event so operators can prove which durable preparation authorized a given swap.
-- If routing state for a selected realm is unavailable or ambiguous, admission fails closed with `ADMISSION_POINTER_UNAVAILABLE` (or protocol-mapped equivalent) until reconciled.
-- One visible realm may be marked as the public-production realm. Additional realms, including playtest forks, are valid first-class player-addressable realms when they are intentionally exposed through the authenticated discovery contract, but public-production onboarding must follow the explicit routing flag rather than inferring behavior from the `realmSlug`.
+- Stopping a realm without a replacement atomically moves it to `CLOSED` before the old instance drains. `CLOSED` returns a stable realm-unavailable outcome; unavailable, malformed, or ambiguous routing state fails with `ADMISSION_POINTER_UNAVAILABLE` until reconciled.
+- **Target-only bounded source-drain behavior:** pointer state controls new or renewed gameplay bindings. Existing connected source sessions do not re-read it per action and remain on the source only before the persisted drain deadline; fresh `PLAY` and reconnect use the current target.
+- In the target-only drain contract, `firemud.game-session.cutover-drain.duration-ms` is an integer millisecond duration in the closed range `0..300000`, with a five-minute platform default and hard maximum. Tenant/game overrides may shorten it or set it to zero but cannot extend it. Negative, non-finite, fractional, or non-representable values fail closed before preparation or cutover commit. The cutover audit and prepared-upgrade execution record preserve the effective value, policy version, `sourceDrainId`, and `sourceDrainDeadlineAt` so retries and operators observe one deadline.
+- In that target contract, Game Session may complete a drain early after the source session index is empty. When the deadline is reached, it sends one bounded update notice, closes remaining source sockets, rejects further source commands through the instance lifecycle fence, marks the source `STOPPING`, and retries the idempotent `InstanceTermination` workflow until the source is terminal.
+- **Current implementation gap:** cutover clears active bindings rather than preserving them through a bounded drain. The creator journey records the player-visible limitation until the target contract above is implemented.
+- Exactly one visible, player-addressable realm must be marked `publicProduction=true` in the referenced catalog/policy revision for each tenant. Zero or multiple public-production realms are invalid catalog state: public discovery, first join, connect-token issuance, and `PLAY` fail closed rather than selecting a fallback. Additional realms, including playtest forks, are valid first-class player-addressable realms only when intentionally exposed through that policy and an explicit Account-owned realm-access grant in the authenticated discovery contract; public-production onboarding must consume the exact-one policy result and never infer behavior from `realmSlug`, ordering, visibility alone, or a duplicate routing-record flag.
 
 ### Fork-Snapshot Boundary For Playtest Realms
 

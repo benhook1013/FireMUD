@@ -76,6 +76,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - `command_id`
   - `status` ∈ {`SCHEDULED`, `APPLIED`, `ABANDONED`}
   - `reason` / `outcome`
+  - replay-verification audit metadata when a replay proves that the effect was already applied (for example verifier, timestamp, and evidence digest/reference)
   - `created_at`, `updated_at`
 - Target-state requires one durable tick-batch record per `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)`, owned by Game Session, and stores at minimum:
   - `tick_batch_id`
@@ -108,6 +109,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
 - `created_at` and `updated_at` are audit/age fields only. They are never members of the canonical work-order tuple or a replay tie-breaker. If a legacy source exposes only a timestamp, the scheduler must normalize it once into the persisted `due_point_normalized` plus deterministic `enqueue_seq`/identity tie-breakers before selection; it must not sort directly by wall-clock insertion time.
 - Recovery that observes multiple durable rows for the same coordinates treats the region as inconsistent, pauses it, and requires reconcile tooling before normal ticks resume.
 - Current live boundary note: gameplay commands do not yet use the fuller target-state `BOUND_TO_BATCH` vocabulary. Instead, the command ledger exposes `enqueueSeq`, `STAGED`, `DRAINED`, and later terminal/requeue outcomes, while the sealed batch manifest digest is used to ensure replay reuses only matching staged batches instead of silently mutating an older batch contract.
+- **Target-state authority:** The durable `tick_batch` record, `tick_effects` ledger, and immutable sealed execution context are authoritative for selected work, execution identity, and replay. The sealed context includes the complete batch coordinates, executor fence, selected-work manifest/digest, effect identities, and pinned execution inputs/version/script patch. Redis `pending`/event streams plus external metrics, logs, traces, and audit streams are projections or diagnostics; they cannot prove a commit or justify replay on their own.
 - For any `(tenant_id, game_instance_id, playable_state_scope, region_id, region_epoch, tick_id, effect_key, target_aggregate_type, target_aggregate_id)` there must eventually be **exactly one terminal state**:
   - `status = APPLIED` – effect successfully committed to domain state.
   - `status = ABANDONED` – effect intentionally skipped or judged unrecoverable.
@@ -158,7 +160,33 @@ Replay of a tick is driven from ledger state:
 - When reprocessing a tick, the executor loads ledger rows for that `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId>` with `status = SCHEDULED` and:
   - Re-queues/re-runs effects whose domain targets do not yet reflect `APPLIED`, then marks those rows `APPLIED`.
   - Marks effects `ABANDONED` with a precise reason when replay determines they are no longer valid (expired session, entity gone, descheduled tick, and so on).
-  - Marks effects `APPLIED` and skips domain calls when it determines the effect has already been applied idempotently.
+  - When idempotency evidence proves that the effect was already applied, replay verification binds the evidence and the `SCHEDULED -> APPLIED` transition in one fenced/CAS transaction (conceptual shape):
+
+    ```sql
+    BEGIN;
+    UPDATE tick_effects AS e
+    SET status = 'APPLIED',
+        replay_verification_evidence_digest = :evidenceDigest,
+        replay_verification_recorded_at = :now
+    FROM tick_batch AS b
+    WHERE e.tick_batch_id = b.tick_batch_id
+      AND e.effect_id = :effectId
+      AND e.status = 'SCHEDULED'
+      AND b.executor_fence = :executorFence
+      AND b.sealed_execution_context_digest = :contextDigest
+      AND EXISTS (
+        SELECT 1
+        FROM durable_domain_evidence AS d
+        WHERE d.effect_id = :effectId
+          AND d.evidence_digest = :evidenceDigest
+          AND d.executor_fence = :executorFence
+          AND d.sealed_execution_context_digest = :contextDigest
+      );
+    -- Require exactly one affected row; otherwise ROLLBACK and reject/retry.
+    COMMIT;
+    ```
+
+    The evidence check, fence check, status CAS, and replay-verification metadata commit together. A stale fence/context, missing evidence, or concurrent winner affects zero rows and must roll back and reject or retry; an audit/log write without this CAS is not proof and must not be used to skip the domain call. This remains the target-state transaction; the current live path has the ledger and manifest-digest boundary but does not yet claim the full sealed-context CAS.
 - Every Lua script that stages effects is required to include the `effect_key` used in the ledger so Redis `pending` entries can always be correlated with ledger rows; staging scripts that cannot be tied back to a ledger identity are rejected.
 - Recovery rules for Redis/SQL mismatch are explicit:
   - durable tick-batch + `SCHEDULED` ledger rows exist, Redis `pending` missing:
@@ -426,7 +454,7 @@ Operationally:
 
 Tick-driven domain calls use a **canonical effect identity** and a shared contract for retries:
 
-- Effect identity is derived deterministically from tick context and target aggregate identity; conceptually it includes:
+- Effect identity is derived deterministically from tick context and target aggregate identity; the canonical `EffectId` includes:
   - `tenantId`
   - `gameInstanceId`
   - `playableStateScope`
@@ -479,7 +507,7 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
 - **Region-scoped reset**
   - Timeline impact:
     - For the affected `<tenantId, gameInstanceId, regionId>`, the documented region-scoped coordination keys for the current `regionEpoch` are dropped according to the reset policy matrix: `tick:{tenantRegionTag}:meta`, `tick:{tenantRegionTag}:pending`, `tick:{tenantRegionTag}:queue:<entityId>`, `tick:{tenantRegionTag}:lock:<entityId>`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, and `tick-executor-lease:{tenantRegionTag}`.
-    - Tenant-scoped coordination such as `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` and current `sessionctx:*` context remains in place unless a broader tenant- or cluster-scoped reset is explicitly invoked; region resets are not expected to evict gameplay sessions. The reset-sensitive `session:auth:*` family is not deleted by a region-only prefix scan, but preserved sessions must pass auth/revocation validation and any required re-authentication before rebind.
+    - Tenant-scoped coordination such as `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` and current `sessionctx:*` context remains in place unless a broader tenant- or cluster-scoped reset is explicitly invoked; region resets are not expected to evict gameplay sessions. Account-issued token registry records and issuer-generation projections are preserved, and the reset-sensitive `session:auth:*` family is not deleted by a region-only prefix scan. Preserved sessions must still pass auth/revocation validation and any required re-authentication before rebind.
     - Region-authoritative `tick:{tenantRegionTag}:session-binding:<entityId>` keys are still region-scoped and are dropped as the narrow session-to-region bridge family; preserved sessions must be rebound through that bridge before normal command intake resumes. No broad `tick:{tenantRegionTag}:*` scan is implied.
     - A new `regionEpoch` is established; subsequent ticks for that region advance on the **new (bumped) `regionEpoch`** starting at `tickId=0` on the coordination timeline described in `system-architecture-redis.md`.
   - Ledger behavior:
@@ -496,7 +524,7 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
     - A tenant reset is an orchestration over every running or recoverable `gameInstanceId` belonging to the tenant, not a single tenant-only key scan or epoch. The reset first snapshots the authoritative game-instance inventory and mapping generation under the reset lease, then enumerates every `<gameInstanceId, regionId>` pair and reads each region's current `regionEpoch` and executor fence.
     - For every enumerated game instance and every one of its regions, the region-scoped coordination keys are cleared and that instance-region's `regionEpoch` is bumped independently. A changed mapping generation, missing instance/region, lost lease, or fence mismatch fails closed before the next mutation; it must not reset only the regions visible in Redis.
     - Cross-region flows (for example follow-ups) resume only under the new epochs; stale follow-ups from previous epochs are ignored or reconciled.
-    - Session and authentication keys follow the canonical reset-policy matrix: a tenant reset always invalidates `session:auth:*`; gameplay/session-context records are preserved only when the explicit `--preserve-sessions` policy is recorded, and preserved sessions must rebind after auth validation.
+    - Session and authentication keys follow the canonical reset-policy matrix: a tenant reset preserves Account-issued token registry records and issuer-generation projections; it does not perform account-wide token invalidation. Gameplay/session-context records are preserved only when the explicit `--preserve-sessions` policy is recorded, and preserved sessions must rebind after auth validation.
   - Ledger behavior:
     - Tick effect ledger rows for each enumerated instance-region scope with `status = SCHEDULED` follow the [Inconclusive Old-Epoch Reconciliation Policy](#inconclusive-old-epoch-reconciliation-policy): inspect durable domain state and any existing `APPLIED` reflection first, mark confirmed reflections `APPLIED`, and mark `ABANDONED` with a tenant-scoped reset reason such as `RESET_TENANT_SCOPED` only when domain state confirms the effect was unapplied and cannot be safely re-driven across the reset.
     - Re-scheduling across epochs is allowed only for features that explicitly document this requirement and provide dedicated tooling.
@@ -511,6 +539,9 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
   - Ledger behavior:
     - `SCHEDULED` ledger rows for all affected regions follow the [Inconclusive Old-Epoch Reconciliation Policy](#inconclusive-old-epoch-reconciliation-policy): durable domain state or an existing `APPLIED` reflection wins, and the ledger reconcile tooling may use a cluster reset reason such as `RESET_CLUSTER_SCOPED` only for effects confirmed unapplied and not safely re-drivable across the reset.
     - Only in exceptional, explicitly designed cases should migration or batch re-drive tooling attempt to carry work across a cluster reset; such tools must document their expectations and failure modes in the owning feature’s design docs.
+  - Shared replay/token behavior:
+    - Account-issued token registry records and issuer-generation projections are canonical preserved state for region- and tenant-scoped resets; neither scope invalidates them through coordination cleanup.
+    - A cluster reset may invalidate the shared Gateway replay domain and Account-owned token records only after protected admission is closed and the documented replay-continuity quarantine plus Account repair/reset cutover has completed. The cutover advances the issuer generation; token cleanup then removes old records, and the current issuer-generation projection is rebuilt and proven before protected traffic reopens.
   - Player impact:
     - All active regions experience at least a brief pause while epochs are re-established and ticks resume under the new coordination state.
     - UX and communications for planned cluster resets should set expectations (maintenance windows, possible brief rollbacks).
@@ -579,8 +610,10 @@ Cross-region follow-ups are durable PostgreSQL records owned by Game Session (or
   - Origin-side reconciliation claims that row idempotently and advances the coordinator only after the correlation matches the durable coordinator record. A transient message, target-only `gameInstanceId`, or mutable command payload is not sufficient correlation.
 - **Topology changes**
   - Mapping-changing split/merge operations must bump `regionEpoch` for affected source/target regions before follow-up draining resumes (see required topology protocol in `system-architecture-ticks.md`).
+  - **Target-state rollover invariant:** If a topology change needs a new target leg, the old follow-up identity and the new identity must be handled atomically: one durable transaction creates and links the new target record, then marks the old identity `ABANDONED` only after that new record is durable. If the records cannot share a transaction, persist a fenced durable rollover intent containing both identities, the desired mapping, and the sealed follow-up context; recovery retries that intent until the new record and link are durable before terminalizing the old identity.
+  - **Current drift:** The current cross-region follow-up path has durable rows and epoch/mapping checks but does not yet claim this atomic or recoverable rollover boundary. Until it is implemented and proven, topology tooling must remain paused/fenced and must not mark an old identity `ABANDONED` merely because its mapping changed.
   - If region split/merge changes which region owns the target entity, topology-change tooling must either:
-    - Rewrite the follow-up to the new `(target_region_id, target_region_epoch)` with an explicit audit trail, or
+    - Complete the atomic or durable-intent rollover above, creating a new target-leg/follow-up identity for the new `(target_game_instance_id, target_region_id, target_region_epoch)` before marking the old identity `ABANDONED` with a topology-change reason. The new record must carry a fresh `target_effect_id` and `due_tick_id`, linked to the old identity by durable correlation; updating only the target instance, region, or epoch on the old record is forbidden.
     - Mark it `ABANDONED` with a topology-change reason when replaying it under the new mapping is not valid.
 
 ## Remote Hint Markers and Resets

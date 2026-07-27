@@ -203,9 +203,9 @@ jobs:
     name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Gate)' || 'Smoke Gate' }}
     runs-on: ubuntu-latest
     permissions:
-      # This job reads workflow and job results for the matching runtime-image run.
-      contents: read
-      actions: read
+      contents: read # Read repository metadata used by the workflow context.
+      actions: read # Inspect matching runtime-image workflow and job results.
+      pull-requests: read # Re-read the current PR head and base before accepting smoke.
     needs: [changes]
     if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     timeout-minutes: 30
@@ -236,6 +236,7 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const headSha = context.payload.pull_request.head.sha;
+            const baseRef = context.payload.pull_request.base.ref;
             const baseSha = context.payload.pull_request.base.sha;
             const mergeSha = context.sha;
             const prNumber = String(context.payload.pull_request.number);
@@ -243,18 +244,77 @@ jobs:
             const started = Date.now();
             const timeoutMs = 25 * 60 * 1000;
             const sleepMs = 15000;
+            const pullRequestCheckInterval = 4;
+            const retryableStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
+            let pollIteration = 0;
+
+            async function withTransientGitHubRetry(label, operation) {
+              const maxAttempts = 4;
+              let retryDelayMs = 1000;
+              for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+                try {
+                  return await operation();
+                } catch (error) {
+                  const status = error?.status ?? error?.response?.status;
+                  const retryable = status == null || retryableStatuses.has(status);
+                  if (!retryable || attempt === maxAttempts) {
+                    throw error;
+                  }
+                  core.warning(
+                    `${label} failed transiently (status=${status ?? "network"}); retrying in ${retryDelayMs}ms`
+                  );
+                  await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+                  retryDelayMs *= 2;
+                }
+              }
+              throw new Error(`${label} retry loop exited unexpectedly`);
+            }
+
+            function isObsoletePullRequest(pullRequest) {
+              return (
+                pullRequest.state !== "open" ||
+                pullRequest.head.sha !== headSha ||
+                pullRequest.base.ref !== baseRef ||
+                pullRequest.base.sha !== baseSha
+              );
+            }
+
+            function logObsoletePullRequest(label, pullRequest) {
+              core.info(
+                `${label} ${baseRef}@${baseSha}...${headSha}; current PR state/base/head is ${pullRequest.state}/${pullRequest.base.ref}@${pullRequest.base.sha}/${pullRequest.head.sha}`
+              );
+            }
 
             while (Date.now() - started < timeoutMs) {
-              const runs = await github.paginate(
-                github.rest.actions.listWorkflowRuns,
-                {
-                  owner,
-                  repo,
-                  workflow_id: "runtime-images.yml",
-                  event: "pull_request",
-                  head_sha: headSha,
-                  per_page: 100,
+              if (pollIteration % pullRequestCheckInterval === 0) {
+                const { data: currentPullRequest } = await withTransientGitHubRetry(
+                  "current pull request lookup",
+                  () => github.rest.pulls.get({
+                    owner,
+                    repo,
+                    pull_number: Number(prNumber),
+                  })
+                );
+                if (isObsoletePullRequest(currentPullRequest)) {
+                  logObsoletePullRequest("Stopping obsolete smoke gate for", currentPullRequest);
+                  return;
                 }
+              }
+              pollIteration += 1;
+
+              const runs = await withTransientGitHubRetry(
+                "runtime-images workflow lookup",
+                () => github.paginate(
+                  github.rest.actions.listWorkflowRuns,
+                  {
+                    owner,
+                    repo,
+                    workflow_id: "runtime-images.yml",
+                    event: "pull_request",
+                    head_sha: headSha,
+                    per_page: 100,
+                  }
+                )
               );
 
               const matching = runs.find((run) => {
@@ -279,15 +339,33 @@ jobs:
                   continue;
                 }
 
-                const jobs = await github.paginate(
-                  github.rest.actions.listJobsForWorkflowRun,
-                  {
+                const jobs = await withTransientGitHubRetry(
+                  "runtime-images job lookup",
+                  () => github.paginate(
+                    github.rest.actions.listJobsForWorkflowRun,
+                    {
+                      owner,
+                      repo,
+                      run_id: matching.id,
+                      per_page: 100,
+                    }
+                  )
+                );
+                const { data: completedPullRequest } = await withTransientGitHubRetry(
+                  "completed pull request lookup",
+                  () => github.rest.pulls.get({
                     owner,
                     repo,
-                    run_id: matching.id,
-                    per_page: 100,
-                  }
+                    pull_number: Number(prNumber),
+                  })
                 );
+                if (isObsoletePullRequest(completedPullRequest)) {
+                  logObsoletePullRequest(
+                    "Stopping obsolete completed smoke gate for",
+                    completedPullRequest
+                  );
+                  return;
+                }
                 const fullSmokeJob = jobs.find(
                   (job) => job.name === "Smoke Tests (Full Stack) / Smoke Tests (Full Stack)"
                 );
@@ -300,6 +378,7 @@ jobs:
                   core.setFailed(
                     `Runtime images/full smoke run ${matching.id} did not complete successfully: run=${matching.conclusion}, full-smoke=${fullSmokeJob.status}/${fullSmokeJob.conclusion}`
                   );
+                  return;
                 }
                 return;
               }

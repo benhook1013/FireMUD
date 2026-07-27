@@ -1,27 +1,35 @@
 # TCP Proxy Service Configuration
 
+## Implementation Status
+
+The target contract requires explicit `TCP_PROXY_TELNET_MODE` selection and startup rejection of incompatible listener and TLS settings in shared and player-facing environments. `EDGE_PROXY` additionally requires an authenticated, cryptographically protected edge-to-PROXY-listener channel and retained deployment evidence for the exact edge and listener identities. Current code still exposes independent port and `TCP_PROXY_TLS_ENABLED` settings without that cross-setting validator or protected-edge-channel readiness proof, so operators can currently construct an invalid or unauthenticated mixed mode. Those gaps are not supported target configurations and require implementation and focused startup proof before player-facing readiness.
+
 ## Minimal Production Configuration Checklist
 
 For any shared or player-facing environment, operators should ensure at least:
 
-- `GATEWAY_WS_URL` points at the Spring Cloud Gateway WebSocket mTLS listener (`wss://.../ws/game`), with `FIREMUD_GATEWAY_WS_*` variables configured so the proxy both authenticates the gateway and presents its own client certificate.
+- `GATEWAY_WS_URL` points at the Spring Cloud Gateway WebSocket mTLS listener (`wss://.../ws/game`), with `FIREMUD_GATEWAY_WS_*` variables configured so TCP Proxy authenticates the Gateway server and presents its own dedicated WebSocket client certificate.
+- The `certs/client.*` values shown below for Proxy -> Gateway and internal gRPC are local/dev convenience defaults only. Shared and player-facing startup/admission must load the effective private-key identities and fail closed when their public-key fingerprints are equal, including when the paths differ through symlinks or aliases.
 - `TCP_PROXY_MAX_CONNECTIONS` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP` are set to non-zero values sized for expected load and NAT patterns; the `0` defaults are reserved for local/dev and CI.
-- In all shared and player-facing environments, Telnet is fronted by a Telnet edge proxy with PROXY protocol enabled into `TCP_PROXY_PROXY_PROTOCOL_PORT`; the PROXY-protocol listener remains internal-only and is never exposed directly as a public `LoadBalancer` port.
-- Plaintext Telnet on `TCP_PROXY_PORT` is treated as a legacy channel governed by the Telnet hardening rules in the Security Architecture, and TLS Telnet plus the web client are preferred for general use.
-- Plaintext Telnet connections should trigger the canonical landing-menu warning recommending the TLS Telnet port or web client instead.
+- Public player-facing Telnet must select exactly one TLS mode per endpoint: edge termination with internal PROXY forwarding, or direct TLS termination at TCP Proxy. These modes must not be combined.
+- Shared and player-facing deployments set `TCP_PROXY_TELNET_MODE` explicitly to `EDGE_PROXY` or `DIRECT_TLS`; an unset mode is allowed only for local development and automated tests.
+- In `EDGE_PROXY` mode, the edge forwards Telnet with PROXY protocol into `TCP_PROXY_PROXY_PROTOCOL_PORT` only through an authenticated, cryptographically protected channel such as mTLS. The deployment must provide the listener identity, trust roots, and exact permitted edge identity through the terminating listener or an attested service-mesh/sidecar boundary; source allowlists and `NetworkPolicy` are defense in depth, not sender authentication. Startup/readiness must reject player-facing `EDGE_PROXY` when that binding and its evidence are absent. The listener remains internal-only, `TCP_PROXY_TLS_ENABLED` must be `false`, and the raw `TCP_PROXY_PORT` listener is unbound or explicitly private and unreachable by players. Recovered PROXY client addresses become trusted only after channel identity validation succeeds.
+- In `DIRECT_TLS` mode, the public listener uses `TCP_PROXY_TLS_ENABLED=true` and does not accept a PROXY header; raw and PROXY-protocol listeners remain local, test-only, or explicitly private.
+- Startup rejects an unknown mode, missing required listener or certificate settings, `EDGE_PROXY` with TCP Proxy TLS enabled, `DIRECT_TLS` without TCP Proxy TLS enabled, or a configuration that exposes both public modes.
+- Genuinely client-facing plaintext Telnet connections should trigger the canonical landing-menu warning recommending Telnet-over-TLS or the web client instead. The trusted internal plaintext hop after edge TLS termination is not itself a plaintext client connection and does not trigger that warning.
 
 ## TLS and Trust Surfaces
 
 The TCP Proxy Service participates in three distinct TLS and trust boundaries:
 
-| Surface | Direction | Purpose | Key configuration |
+| Surface | Direction | Identity and purpose | Key configuration |
 | --- | --- | --- | --- |
-| Telnet plaintext or Telnet-over-TLS | Client <-> TCP Proxy Service | Player Telnet connections from legacy MUD clients. | `TCP_PROXY_PORT`, `TCP_PROXY_TLS_ENABLED`, `TCP_PROXY_TLS_PORT`, `TCP_PROXY_TLS_CERT`, `TCP_PROXY_TLS_KEY` |
-| WebSocket mTLS bridge | TCP Proxy Service <-> Spring Cloud Gateway | Internal WebSocket hop that normalizes Telnet traffic into the same `/ws/game/**` route used by web clients. | `GATEWAY_WS_URL`, `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH`, `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`, `FIREMUD_GATEWAY_WS_CA_CERT_PATH` |
-| Internal gRPC mTLS | Internal clients <-> TCP Proxy Service | Internal-only gRPC endpoints such as `Ping`. | `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH` |
+| Telnet edge termination plus internal PROXY | Public TLS edge -> internal TCP Proxy | Edge terminates client TLS and forwards Telnet with trusted client-IP metadata over an authenticated, cryptographically protected channel; TCP Proxy application TLS remains disabled on the PROXY listener when protection terminates in an attested sidecar or service-mesh boundary. | `TCP_PROXY_PROXY_PROTOCOL_PORT`, edge TLS configuration, and the deployment-owned listener identity, trust roots, permitted edge identity, and readiness evidence |
+| Direct Telnet-over-TLS | Client <-> TCP Proxy Service | **Telnet server-TLS identity:** TCP Proxy presents the server certificate configured by `TCP_PROXY_TLS_CERT`/`TCP_PROXY_TLS_KEY` to Telnet clients. This is client-facing server TLS, not the WebSocket client mTLS identity or the internal gRPC server identity. | `TCP_PROXY_PORT`, `TCP_PROXY_TLS_ENABLED`, `TCP_PROXY_TLS_CERT`, `TCP_PROXY_TLS_KEY` |
+| WebSocket mTLS bridge | TCP Proxy Service -> Spring Cloud Gateway | **Gateway WebSocket client mTLS identity:** TCP Proxy presents its dedicated client certificate to Gateway and validates Gateway with the configured CA. This is not the identity used by TCP Proxy's gRPC server. | `GATEWAY_WS_URL`, `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH`, `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`, `FIREMUD_GATEWAY_WS_CA_CERT_PATH` |
+| Internal gRPC mTLS | Internal clients -> TCP Proxy Service | **Internal gRPC server mTLS identity:** TCP Proxy presents its gRPC server certificate to internal callers and validates their client identity. This is not the Gateway WebSocket client identity or the Telnet server-TLS identity. | `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH` |
 
-Telnet-over-TLS and WebSocket mTLS may reuse the same certificate files in very small deployments, but they represent different trust surfaces and should be managed as separate concerns in production.
-In production and other shared environments, operators should provision separate certificates and keys per surface and override defaults accordingly so a compromise in one trust surface does not automatically extend to the others.
+Plaintext local and throwaway test profiles may omit these identities. Local/dev and throwaway test profiles may also reuse the generated `certs/client.*` material used by the current Compose/test setup. Those repeated certificate defaults are local/dev-only convenience values, not identity defaults for shared or player-facing environments. In shared and player-facing environments, Telnet server TLS, Proxy-to-Gateway WebSocket mTLS, and internal gRPC mTLS use separate private identities appropriate to their distinct trust surfaces; reusing certificate files is not promotion evidence.
 
 ## Redis Role Guidance
 
@@ -39,14 +47,14 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `TCP_PROXY_PORT` | TCP port the proxy listens on | `2323` |
-| `TCP_PROXY_PROXY_PROTOCOL_PORT` | TCP port for the PROXY-protocol Telnet listener; internal-only and reachable only from the Telnet edge proxy | `2325` |
+| `TCP_PROXY_TELNET_MODE` | Select exactly one player-facing Telnet ingress mode: `EDGE_PROXY` or `DIRECT_TLS`; required in shared and player-facing environments, unset only in local/dev and tests | *(none)* |
+| `TCP_PROXY_PORT` | TCP port the proxy listens on; this is the public TLS listener in `DIRECT_TLS` mode and must remain unbound or private in `EDGE_PROXY` mode | `2323` |
+| `TCP_PROXY_PROXY_PROTOCOL_PORT` | TCP port for the edge-termination mode's PROXY-protocol Telnet listener; internal-only and reachable only from the Telnet edge proxy | `2325` |
 | `GATEWAY_WS_URL` | WebSocket URL for forwarding to the gateway; local Docker and test environments may use a plaintext `ws://` endpoint, but player-facing environments must set an explicit `wss://.../ws/game` target | *(none)* |
 | `TCP_PROXY_DEFAULT_WORLD_SLUG` | Explicit local/bootstrap world slug forwarded when the proxy is configured to seed hidden gameplay bridge metadata instead of waiting for first-party connect-token admission | *(empty)* |
 | `TCP_PROXY_DEFAULT_REALM_SLUG` | Explicit local/bootstrap realm slug paired with the seeded world slug when hidden gameplay bridge metadata is preconfigured | *(empty)* |
 | `TCP_PROXY_DEFAULT_POINTER_VERSION` | Explicit local/bootstrap admission-pointer freshness token paired with the seeded world/realm target when hidden gameplay bridge metadata is preconfigured | *(empty)* |
-| `TCP_PROXY_TLS_ENABLED` | Enable Telnet-over-TLS termination | `false` |
-| `TCP_PROXY_TLS_PORT` | TCP port for the Telnet-over-TLS listener | `2324` |
+| `TCP_PROXY_TLS_ENABLED` | Enable direct TCP Proxy Telnet-over-TLS termination; required with `DIRECT_TLS` and rejected with `EDGE_PROXY` | `false` |
 | `TCP_PROXY_TLS_CERT` | Path to the Telnet listener TLS certificate | *(empty)* |
 | `TCP_PROXY_TLS_KEY` | Path to the Telnet listener TLS private key | *(empty)* |
 | `TCP_PROXY_MAX_CONNECTIONS` | Maximum concurrent Telnet connections | `0` |
@@ -64,11 +72,11 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 | `TCP_PROXY_MCP_MAX_ACTIVE_CORDS` | Maximum concurrent MCP cords per connection | `16` |
 | `TCP_PROXY_MCP_MAX_ACTIVE_DATA_TAGS` | Maximum concurrent MCP multiline `_data-tag` continuations per connection | `16` |
 | `TCP_PROXY_MCP_MAX_CONTROL_LINES_PER_SEC` | Maximum MCP control-line processing rate per connection | `50` |
-| `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH` | Client certificate chain path for Proxy -> Gateway WebSocket mTLS | `certs/client.crt` |
-| `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH` | Client private key path for Proxy -> Gateway WebSocket mTLS | `certs/client.key` |
+| `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH` | Client certificate chain path for Proxy -> Gateway WebSocket mTLS | `certs/client.crt` (local/dev only) |
+| `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH` | Client private key path for Proxy -> Gateway WebSocket mTLS | `certs/client.key` (local/dev only) |
 | `FIREMUD_GATEWAY_WS_CA_CERT_PATH` | CA bundle path for verifying the gateway certificate | `certs/ca.crt` |
-| `FIREMUD_GRPC_CERT_CHAIN_PATH` | Certificate chain path for the proxy’s internal gRPC server mTLS | `certs/client.crt` |
-| `FIREMUD_GRPC_PRIVATE_KEY_PATH` | Private key path for the proxy’s internal gRPC server mTLS | `certs/client.key` |
+| `FIREMUD_GRPC_CERT_CHAIN_PATH` | Certificate chain path for the proxy’s internal gRPC server mTLS | `certs/client.crt` (local/dev only) |
+| `FIREMUD_GRPC_PRIVATE_KEY_PATH` | Private key path for the proxy’s internal gRPC server mTLS | `certs/client.key` (local/dev only) |
 | `FIREMUD_GRPC_CA_CERT_PATH` | CA bundle path for verifying gRPC peers | `certs/ca.crt` |
 | `OTEL_ENDPOINT` | OpenTelemetry collector endpoint | `http://otel-collector:4317` |
 
@@ -85,6 +93,8 @@ In production, the TCP Proxy Service connects to Spring Cloud Gateway over `wss:
 The WebSocket client certificate must include the `clientAuth` extended key usage. This is intentionally decoupled from the proxy’s internal gRPC server certificate profile, which must include `serverAuth`.
 
 TLS handshake failures are fail-closed. The proxy does not fall back to plaintext.
+
+Shared and player-facing startup must validate every effective private key for an enabled TLS surface: the Telnet server identity (`TCP_PROXY_TLS_KEY`) in `DIRECT_TLS` mode, the Gateway WebSocket client identity, and the internal gRPC server identity. The same validation must run before player-facing admission and after certificate reload. If any applicable identity converges with another or cannot be verified, player admission is disabled and the proxy fails closed. The separate certificate chains must also satisfy their respective `clientAuth` and `serverAuth` profiles.
 
 When overriding `GATEWAY_WS_URL` in a `wss://` configuration, the host portion of the URL is used for both SNI and hostname verification. If you point `GATEWAY_WS_URL` at an IP address or a hostname that is not present in the Gateway certificate SANs, the TLS handshake fails with `reason="cert_validation"` and no insecure fallback occurs. In cluster-internal deployments, prefer the Kubernetes DNS name for the Gateway service.
 

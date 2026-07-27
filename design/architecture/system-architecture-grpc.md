@@ -2,6 +2,10 @@
 
 These guidelines define how FireMUD microservices design and document their gRPC APIs. Following a consistent structure makes it easier for teams to evolve services over time and share tooling.
 
+## Implementation Status
+
+The normative contract below remains mTLS for internal gRPC outside intentionally relaxed local development. Hosted preview may temporarily use plaintext while the Spring gRPC `1.0.x` SSL-bundle migration and preview re-proof are in flight; this is preview-only and does not create a second target transport. The remaining hardening path is CI/static checking that rejects legacy or ignored server-TLS property usage. These current caveats do not weaken the workload identity, exact method allowlist, or canonical Spring SSL-bundle requirements.
+
 ## Service and RPC Naming
 
 - Use **PascalCase** for all service names (e.g., `PlayerService`).
@@ -153,6 +157,8 @@ All internal gRPC calls use **mutual TLS**. FireMUD services now express the ser
 - `spring.grpc.server.ssl.bundle=firemud-grpc`
 - `spring.grpc.server.ssl.client-auth=REQUIRE` for services that require client certificates
 
+Outside intentionally relaxed local development and hosted preview while its documented plaintext exception remains active, each workload has a distinct cert-manager-issued private key and certificate in its own Kubernetes Secret. Services may share a CA trust bundle, but they must not share one leaf private key or collapse concrete workload identity into a generic “FireMUD service” certificate. The certificate and trust chain authenticate the peer identity; exact method caller allowlists then authorize that already-authenticated identity for the individual RPC. A valid certificate alone does not authorize every internal method.
+
 Hosted preview may temporarily use plaintext internal gRPC while the Spring gRPC `1.0.x` SSL-bundle migration and preview re-proof are in flight. That exception is preview-only, must be documented in the preview slice/docs, and does not change the canonical non-local target state above.
 
 The bundle material still comes from the same file paths, but the supported server-side contract is now the Spring Boot SSL bundle plus Spring gRPC server SSL bundle binding. Each service sets the following environment variables so certificates can be mounted from Secrets or local files:
@@ -166,13 +172,6 @@ The bundle material still comes from the same file paths, but the supported serv
 The [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) guide describes how these values are provided. The shared library includes a `GrpcServerTlsReloader` component to hot reload server certificates, and services use it to reload credentials automatically.
 
 Adopting these conventions helps keep FireMUD services consistent and makes it easier for new contributors to work with the APIs. See [Security Architecture](./system-architecture-security.md#cross-service-trust) for mTLS design.
-
-## Implementation Notes
-
-- The canonical target state remains: internal gRPC uses mTLS everywhere outside intentionally relaxed local development.
-- The canonical server-TLS contract is now Spring Boot SSL bundles plus Spring gRPC server SSL bundle binding (`spring.ssl.bundle.*` and `spring.grpc.server.ssl.*`).
-- Preview-only plaintext internal gRPC is an explicit temporary exception, not a second long-lived transport model.
-- New runtime or preview work should not introduce additional bespoke transport patterns. The remaining hardening path is to add CI/static checks that reject legacy or ignored gRPC server TLS property usage.
 
 ## Related Documentation
 

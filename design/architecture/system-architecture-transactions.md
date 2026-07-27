@@ -77,6 +77,7 @@ Tick execution is replayable: retries, failover, and Redis AOF replay can cause 
   - Accepts `EffectId` plus callbacks for “apply-if-first” and “handle-replay”.
   - Encapsulates the canonical guard pattern (insert-if-absent, treat conflicts as replay) and throws well-defined exceptions on guard violations.
   - Emits a simple, standardized counter such as `tick_effect_outcome_total{service, effect_type, outcome}` so operators can distinguish first-apply vs replay behavior across services without per-tenant configuration.
+- **Replay verification transaction (target state):** Replay evidence is not an audit-only side effect. The verifier must use one transaction fenced by the current durable `executor_fence` and sealed execution-context digest to verify durable domain evidence and CAS the exact `SCHEDULED` ledger row to `APPLIED`, persisting the evidence digest/reference in that same mutation. A zero-row result caused by stale status, fence/context, missing evidence, or a concurrent winner rolls back and rejects or retries. External logs and audit streams are projections; they cannot authorize a replay transition.
 
 > 🔗 The canonical `EffectId` contract and per-side-effect patterns are defined in [Tick Effect Identity and Idempotency Contract](./system-architecture-ticks.md#tick-effect-identity-and-idempotency-contract).
 
@@ -231,11 +232,11 @@ In particular:
 
 ### Live Script Patch Boundary
 
-Transactional guarantees for tick execution assume deterministic scripts for the `(versionId, scriptPatchVersion)` pair that was in effect when a given effect was applied:
+The following is the target deterministic replay contract for the `(versionId, scriptPatchVersion)` pair that was in effect when a given effect was applied. Current gameplay-command rows and selected-work manifest items preserve `scriptPatchVersion`, but the live `tick_batch` and effect-ledger schema does not yet durably seal the complete pair, and the selected-work manifest does not yet preserve `versionId`. Until that schema and replay path converge, the fail-closed pair contract below remains an implementation gap rather than a claimed live guarantee:
 
-- The Game Session Service records the `scriptPatchVersion` that is active for each `gameInstanceId` and includes it in the context for every tick effect (for example via the EffectId metadata and per-effect audit/log records).
-- Tick handlers and script runners must treat `(versionId, scriptPatchVersion)` as part of the effect identity: replays and retries use the same pair that was originally logged for that effect, even if the instance later moves to a different patch.
-- Operational tooling is allowed to change the pinned `scriptPatchVersion` for a running instance at well-defined boundaries (for example between ticks or during maintenance), but that change only affects **future** effects. Previously applied effects remain tied to the patch version recorded alongside their EffectIds in logs and audit tables.
+- The Game Session Service records the `versionId` and `scriptPatchVersion` active for each `gameInstanceId` and seals both fields into durable tick-batch/effect manifest or effect-ledger state alongside `EffectId`. Logs and optional audit records may project that context but are not its replay authority.
+- Tick handlers and script runners must treat the sealed `(versionId, scriptPatchVersion)` pair as immutable effect execution context: replays and retries load the same durable pair that was recorded for the original effect, even if the instance later moves to a different patch. Missing or mismatched durable execution context fails closed rather than falling back to the instance's current patch.
+- Operational tooling is allowed to change the pinned `scriptPatchVersion` for a running instance at well-defined boundaries (for example between ticks or during maintenance), but that change only affects **future** effects. Previously applied effects remain tied to the sealed `(versionId, scriptPatchVersion)` pair in durable tick-batch/effect-ledger state alongside their `EffectId`; logs and audit tables may mirror that pair but never determine replay execution context.
 
 ---
 

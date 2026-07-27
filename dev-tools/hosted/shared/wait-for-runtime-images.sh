@@ -19,19 +19,43 @@ publisher_timeout_seconds="${HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS:-${time
 start_epoch="${SECONDS}"
 deadline=$((SECONDS + timeout_seconds))
 
+fetch_workflow_runs() {
+  local endpoint="$1"
+  local wait_context="$2"
+  local payload
+
+  if ! payload="$(gh api --paginate --slurp "${endpoint}")"; then
+    printf 'GitHub API poll failed while %s; retrying within the existing wait deadline.\n' \
+      "${wait_context}" >&2
+    return 1
+  fi
+
+  printf '%s' "${payload}"
+}
+
 read_run_state() {
   python3 -c '
 import json
 import sys
 
 head_sha = sys.argv[1]
-payload = json.load(sys.stdin)
+try:
+    payload = json.load(sys.stdin)
+except json.JSONDecodeError:
+    raise SystemExit(1)
 pages = payload if isinstance(payload, list) else [payload]
+if not pages or any(
+    not isinstance(page, dict) or not isinstance(page.get("workflow_runs"), list)
+    for page in pages
+):
+    raise SystemExit(1)
 workflow_runs = [
     run
     for page in pages
-    for run in page.get("workflow_runs", [])
+    for run in page["workflow_runs"]
 ]
+if any(not isinstance(run, dict) for run in workflow_runs):
+    raise SystemExit(1)
 
 def is_matching_run(run):
     if run.get("head_sha") != head_sha:
@@ -71,13 +95,23 @@ import sys
 
 head_sha = sys.argv[1]
 expected_title = f"Publish PR Runtime Images head-{head_sha}"
-payload = json.load(sys.stdin)
+try:
+    payload = json.load(sys.stdin)
+except json.JSONDecodeError:
+    raise SystemExit(1)
 pages = payload if isinstance(payload, list) else [payload]
+if not pages or any(
+    not isinstance(page, dict) or not isinstance(page.get("workflow_runs"), list)
+    for page in pages
+):
+    raise SystemExit(1)
 workflow_runs = [
     run
     for page in pages
-    for run in page.get("workflow_runs", [])
+    for run in page["workflow_runs"]
 ]
+if any(not isinstance(run, dict) for run in workflow_runs):
+    raise SystemExit(1)
 matching_runs = [
     run for run in workflow_runs if run.get("display_title") == expected_title
 ]
@@ -101,12 +135,20 @@ wait_for_pr_publisher() {
   local publisher_start_epoch="${SECONDS}"
   local publisher_deadline=$((SECONDS + publisher_timeout_seconds))
   while (( SECONDS < publisher_deadline )); do
-    local publisher_state
-    publisher_state="$(
-      gh api --paginate --slurp \
+    local publisher_payload publisher_state
+    if ! publisher_payload="$(
+      fetch_workflow_runs \
         "repos/${GITHUB_REPOSITORY}/actions/workflows/publish-pr-runtime-images.yml/runs?event=workflow_run&per_page=100" \
-        | read_publisher_state
-    )"
+        "waiting for the trusted PR image publisher"
+    )"; then
+      sleep "${sleep_seconds}"
+      continue
+    fi
+    if ! publisher_state="$(read_publisher_state <<<"${publisher_payload}")"; then
+      printf 'GitHub API response was empty or invalid while waiting for the trusted PR image publisher; retrying.\n' >&2
+      sleep "${sleep_seconds}"
+      continue
+    fi
 
     local state run_id run_status run_conclusion run_url
     IFS=$'\t' read -r state run_id run_status run_conclusion run_url <<<"${publisher_state}"
@@ -145,11 +187,19 @@ wait_for_pr_publisher() {
 }
 
 while (( SECONDS < deadline )); do
-  run_state="$(
-    gh api --paginate --slurp \
+  if ! workflow_payload="$(
+    fetch_workflow_runs \
       "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml/runs?per_page=100" \
-      | read_run_state
-  )"
+      "waiting for the runtime-images workflow"
+  )"; then
+    sleep "${sleep_seconds}"
+    continue
+  fi
+  if ! run_state="$(read_run_state <<<"${workflow_payload}")"; then
+    printf 'GitHub API response was empty or invalid while waiting for the runtime-images workflow; retrying.\n' >&2
+    sleep "${sleep_seconds}"
+    continue
+  fi
 
   IFS=$'\t' read -r state run_id run_status run_conclusion run_url run_event <<<"${run_state}"
 

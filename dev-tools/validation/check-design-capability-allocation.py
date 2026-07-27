@@ -20,6 +20,12 @@ MICROSERVICE_ALLOCATION = ALIGNMENT_DIR / "design-capability-allocation-microser
 MARKDOWN_LINK_RE = re.compile(r"\[[^]]+\]\(([^)]+)\)")
 GROUP_ID_RE = re.compile(r"[A-Z]{2}-\d+")
 SYSTEM_CLASSIFICATIONS = {"normative design", "runbook", "reference", "index"}
+
+
+def adr_allocation(primary: str, classification: str, *secondary: str) -> tuple[str, str, frozenset[str]]:
+    return primary, classification, frozenset(secondary)
+
+
 SYSTEM_ALLOCATION_EXPECTATIONS = {
     # Direct architecture sources.
     "design/architecture/README.md": ("SF-1", "index"),
@@ -129,65 +135,113 @@ SYSTEM_ALLOCATION_EXPECTATIONS = {
     "design/architecture/infrastructure/schedule.md": ("PO-3", "reference"),
     "design/architecture/generated/platform-settings-reference.md": ("AR-2", "generated"),
 }
+# Secondary sets are copied from the allocation registry and intentionally locked here so registry drift fails validation.
 ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/README.md": ("Exempt", "Decision registry/index"),
-    "design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md": (
-        "AS-1",
-        "Accepted",
+    "design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md": adr_allocation(
+        "AS-1", "Accepted", "SF-1", "SF-2"
     ),
-    "design/architecture/decisions/adr-0002-automation-handoff-reliability-and-success-semantics.md": (
-        "AS-1",
-        "Accepted",
+    "design/architecture/decisions/adr-0002-automation-handoff-reliability-and-success-semantics.md": adr_allocation(
+        "AS-1", "Accepted", "GR-1", "SF-2", "PO-4"
     ),
-    "design/architecture/decisions/adr-0003-reload-backpressure-and-retry-contract.md": ("AS-1", "Accepted"),
-    "design/architecture/decisions/adr-0004-gameplay-reroute-vs-backend-unavailable.md": (
-        "PO-2",
-        "Superseded by ADR 0007",
+    "design/architecture/decisions/adr-0003-reload-backpressure-and-retry-contract.md": adr_allocation(
+        "AS-1", "Accepted", "AR-3", "GR-1", "PO-4"
     ),
-    "design/architecture/decisions/adr-0005-tenant-identifiers-in-gameplay-protocol.md": ("AA-3", "Accepted"),
-    "design/architecture/decisions/adr-0006-gameplay-shard-routing-key-transport.md": (
-        "PO-2",
-        "Withdrawn; superseded by ADR 0007",
+    "design/architecture/decisions/adr-0004-gameplay-reroute-vs-backend-unavailable.md": adr_allocation(
+        "PO-2", "Superseded by ADR 0007", "AA-2", "GR-1", "PO-4"
     ),
-    "design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md": ("PO-2", "Accepted"),
-    "design/architecture/decisions/adr-0008-multi-cluster-gameplay-sharding-scope.md": ("GR-1", "Accepted"),
-    "design/architecture/decisions/adr-0009-coordination-redis-ownership-boundary.md": ("SF-2", "Accepted"),
-    "design/architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md": ("SF-1", "Accepted"),
-    "design/architecture/decisions/adr-0011-gameplay-session-front-end-and-region-execution.md": (
-        "GR-1",
-        "Accepted",
+    "design/architecture/decisions/adr-0005-tenant-identifiers-in-gameplay-protocol.md": adr_allocation(
+        "AA-3", "Accepted", "EA-1", "SF-1"
     ),
-    "design/architecture/decisions/adr-0012-settings-value-precedence-and-constraints.md": (
-        "AR-2",
-        "Accepted",
+    "design/architecture/decisions/adr-0006-gameplay-shard-routing-key-transport.md": adr_allocation(
+        "PO-2", "Withdrawn; superseded by ADR 0007", "AA-3", "GR-1", "SF-1"
     ),
-    "design/architecture/decisions/adr-0013-bounded-invisible-non-edge-restart-recovery.md": (
-        "GR-1",
-        "Accepted",
+    "design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md": adr_allocation(
+        "PO-2", "Accepted", "AA-2", "GR-1", "PO-4"
     ),
-    "design/architecture/decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md": (
-        "SF-1",
-        "Accepted",
+    "design/architecture/decisions/adr-0008-multi-cluster-gameplay-sharding-scope.md": adr_allocation(
+        "GR-1", "Accepted", "PO-2", "PO-3", "SF-2"
     ),
-    "design/architecture/decisions/adr-0015-online-backup-and-environment-wide-cold-start-recovery.md": (
-        "PO-3",
-        "Accepted",
+    "design/architecture/decisions/adr-0009-coordination-redis-ownership-boundary.md": adr_allocation(
+        "SF-2", "Accepted", "AA-2", "GR-1", "AS-1"
     ),
-    "design/architecture/decisions/adr-0016-canonical-gameplay-command-status-lifecycle.md": (
-        "GR-1",
-        "Accepted",
+    "design/architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md": adr_allocation(
+        "SF-1", "Accepted", "PO-2", "PO-3"
     ),
-    "design/architecture/decisions/adr-0017-capability-gated-operational-tracing.md": (
-        "PO-4",
-        "Accepted",
+    "design/architecture/decisions/adr-0011-gameplay-session-front-end-and-region-execution.md": adr_allocation(
+        "GR-1", "Accepted", "AA-2", "SF-1", "SF-2", "PO-2"
     ),
-    "design/architecture/decisions/adr-0018-declarative-production-gateway-routes.md": (
-        "PO-2",
-        "Accepted",
+    "design/architecture/decisions/adr-0012-settings-value-precedence-and-constraints.md": adr_allocation(
+        "AR-2", "Accepted", "EA-1", "GR-1", "SF-2"
     ),
-    "design/architecture/decisions/adr-0019-separate-active-session-resume-and-transcript-lifetimes.md": (
-        "AA-2",
-        "Accepted",
+    "design/architecture/decisions/adr-0013-bounded-invisible-non-edge-restart-recovery.md": adr_allocation(
+        "GR-1", "Accepted", "AA-2", "PO-2", "PO-4", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md": adr_allocation(
+        "SF-1", "Accepted", "AA-1", "PO-1", "PO-3", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0015-online-backup-and-environment-wide-cold-start-recovery.md": adr_allocation(
+        "PO-3", "Accepted", "GR-1", "PO-1", "PO-4", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0016-canonical-gameplay-command-status-lifecycle.md": adr_allocation(
+        "GR-1", "Accepted", "AA-2", "PO-4", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0017-capability-gated-operational-tracing.md": adr_allocation(
+        "PO-4", "Accepted", "AA-2", "GR-1", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0018-declarative-production-gateway-routes.md": adr_allocation(
+        "PO-2", "Accepted", "AA-3", "PO-1", "PO-3", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0019-separate-active-session-resume-and-transcript-lifetimes.md": adr_allocation(
+        "AA-2", "Accepted", "AR-2", "EA-3", "GR-1", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0020-scoped-domain-and-operational-identifiers.md": adr_allocation(
+        "SF-1", "Accepted", "AR-1", "GR-2", "GR-3"
+    ),
+    "design/architecture/decisions/adr-0021-staged-player-authentication-and-gameplay-binding.md": adr_allocation(
+        "AA-2", "Accepted", "EA-3", "PO-2", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0022-account-authority-and-gameplay-session-ownership.md": adr_allocation(
+        "AA-1", "Accepted", "AA-2", "SF-1", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0023-central-route-authorization-governance.md": adr_allocation(
+        "SF-1", "Accepted", "AA-1", "PO-1", "PO-2", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0024-trusted-gameplay-workload-delegation.md": adr_allocation(
+        "SF-1", "Accepted", "GR-1", "PO-3"
+    ),
+    "design/architecture/decisions/adr-0025-explicit-open-enrollment-membership.md": adr_allocation(
+        "AA-1", "Accepted", "AA-2", "AA-3", "EA-3"
+    ),
+    "design/architecture/decisions/adr-0026-global-roles-do-not-grant-gameplay-authority.md": adr_allocation(
+        "AA-1", "Accepted", "AA-2", "EA-3", "PO-1"
+    ),
+    "design/architecture/decisions/adr-0027-single-realm-admission-target.md": adr_allocation(
+        "AA-3", "Accepted", "AR-3", "GR-1", "GR-2"
+    ),
+    "design/architecture/decisions/adr-0028-differentiated-entitlement-freshness.md": adr_allocation(
+        "AA-1", "Accepted", "AA-2", "AA-3", "PO-4", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0029-single-use-gameplay-connect-token-carriage.md": adr_allocation(
+        "PO-2", "Accepted", "AA-2", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0030-risk-based-active-session-revocation.md": adr_allocation(
+        "AA-1", "Accepted", "AA-2", "PO-1", "GR-1"
+    ),
+    "design/architecture/decisions/adr-0031-revocation-safe-session-token-rotation-and-logout.md": adr_allocation(
+        "AA-2", "Accepted", "AA-1", "GR-1", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0032-kubernetes-native-secret-delivery-without-mandatory-vault.md": adr_allocation(
+        "SF-1", "Accepted", "PO-1", "PO-2", "PO-3"
+    ),
+    "design/architecture/decisions/adr-0033-public-player-facing-telnet-requires-tls.md": adr_allocation(
+        "PO-2", "Accepted", "AA-1", "AA-2", "EA-3", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0034-layered-abuse-controls-without-attacker-triggered-account-locks.md": adr_allocation(
+        "SF-1", "Accepted", "AA-1", "AA-2", "PO-1", "PO-2"
+    ),
+    "design/architecture/decisions/adr-0035-single-record-issued-token-registry.md": adr_allocation(
+        "SF-1", "Accepted", "AA-1", "AA-2", "SF-2"
     ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
@@ -339,6 +393,21 @@ def clean_cell(cell: str) -> str:
     return cell.strip().strip("*").strip().strip("`").strip("*").strip()
 
 
+def capability_set_from_cell(cell: str, context: str, groups: set[str]) -> frozenset[str]:
+    if clean_cell(cell) == "—":
+        return frozenset()
+    parsed_values = [clean_cell(value) for value in cell.split(",") if value.strip()]
+    duplicates = sorted(
+        value for value, count in Counter(parsed_values).items() if count > 1
+    )
+    if duplicates:
+        fail(f"{context}: duplicate capability IDs: {duplicates}")
+    values = frozenset(parsed_values)
+    if not values or any(value not in groups for value in values):
+        fail(f"{context}: expected comma-separated capability IDs, got {cell!r}")
+    return values
+
+
 def declared_int(cell: str, context: str) -> int:
     match = re.fullmatch(r"\*{0,2}(\d+)\*{0,2}", cell.strip())
     if not match:
@@ -445,12 +514,13 @@ def validate_expected_allocation(
     source_path: str,
     primary: str,
     classification: str,
-    expected_allocations: dict[str, tuple[str, str]],
+    expected_allocations: dict[str, tuple],
+    secondary: frozenset[str] | None = None,
 ) -> None:
     expected = expected_allocations.get(source_path)
     if expected is None:
         fail(f"{document.relative_to(root)}:{source_path}: no expected allocation")
-    expected_primary, expected_classification = expected
+    expected_primary, expected_classification = expected[:2]
     if primary != expected_primary:
         fail(
             f"{document.relative_to(root)}:{source_path}: unexpected primary capability "
@@ -460,6 +530,12 @@ def validate_expected_allocation(
         fail(
             f"{document.relative_to(root)}:{source_path}: unexpected source classification "
             f"{classification!r}; expected {expected_classification!r}"
+        )
+    expected_secondary = expected[2] if len(expected) == 3 else None
+    if expected_secondary is not None and secondary != expected_secondary:
+        fail(
+            f"{document.relative_to(root)}:{source_path}: unexpected secondary capabilities "
+            f"{sorted(secondary or [])!r}; expected {sorted(expected_secondary)!r}"
         )
 
 
@@ -848,10 +924,11 @@ def validate_top_allocation_ledger(
     headers, rows = table_in_section(
         text,
         "Architecture Decision Allocation",
-        {"Design source", "Primary capability", "Status or classification"},
+        {"Design source", "Primary capability", "Secondary handoffs", "Status or classification"},
     )
     source_index = headers.index("Design source")
     primary_index = headers.index("Primary capability")
+    secondary_index = headers.index("Secondary handoffs")
     classification_index = headers.index("Status or classification")
     parsed: list[LedgerRow] = []
     for row in rows:
@@ -859,6 +936,20 @@ def validate_top_allocation_ledger(
         primary_cell = clean_cell(row[primary_index])
         primary = "Exempt" if primary_cell == "Exempt" else primary_from_cell(document, row[primary_index], groups, root)
         classification = row[classification_index].strip()
+        expected = ADR_ALLOCATION_EXPECTATIONS.get(source_path)
+        if expected is not None and len(expected) == 3:
+            secondary = capability_set_from_cell(
+                row[secondary_index],
+                f"{document.relative_to(root)}:{source_path}: secondary handoffs",
+                groups,
+            )
+        else:
+            if clean_cell(row[secondary_index]) != "—":
+                fail(
+                    f"{document.relative_to(root)}:{source_path}: exempt secondary handoffs "
+                    f"must be '—', got {row[secondary_index]!r}"
+                )
+            secondary = None
         validate_expected_allocation(
             root,
             document,
@@ -866,6 +957,7 @@ def validate_top_allocation_ledger(
             primary,
             classification,
             ADR_ALLOCATION_EXPECTATIONS,
+            secondary,
         )
         parsed.append(LedgerRow(source_path, primary, classification))
     paths = [row.path for row in parsed]

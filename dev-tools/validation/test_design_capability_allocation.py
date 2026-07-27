@@ -245,6 +245,110 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
                 "unexpected primary capability",
             )
 
+    def test_adr_secondary_allocation_drift(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.TOP_ALLOCATION
+            replace_in_line(
+                path,
+                "adr-0001-scripting-event-ingress-idempotency-identity.md",
+                "| `SF-1`, `SF-2` |",
+                "| `SF-1`, `PO-1` |",
+            )
+            expect_call_failure(
+                "ADR secondary allocation drift",
+                lambda: self.validator.validate(root),
+                "unexpected secondary capabilities",
+            )
+
+    def test_duplicate_adr_secondary_capability_is_rejected(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.TOP_ALLOCATION
+            replace_in_line(
+                path,
+                "adr-0001-scripting-event-ingress-idempotency-identity.md",
+                "| `SF-1`, `SF-2` |",
+                "| `SF-1`, `SF-1`, `SF-2` |",
+            )
+            expect_call_failure(
+                "duplicate ADR secondary capability",
+                lambda: self.validator.validate(root),
+                "duplicate capability IDs",
+            )
+
+    def test_empty_expected_secondary_matches_no_parsed_handoff(self) -> None:
+        root = Path("/fixture")
+        source_path = "design/architecture/decisions/adr-empty-secondary.md"
+        expected = {source_path: ("AA-1", "Accepted", frozenset())}
+        self.validator.validate_expected_allocation(
+            root,
+            root / "allocation.md",
+            source_path,
+            "AA-1",
+            "Accepted",
+            expected,
+            frozenset(),
+        )
+        expect_call_failure(
+            "unexpected secondary capability against explicit empty allocation",
+            lambda: self.validator.validate_expected_allocation(
+                root,
+                root / "allocation.md",
+                source_path,
+                "AA-1",
+                "Accepted",
+                expected,
+                frozenset({"SF-1"}),
+            ),
+            "unexpected secondary capabilities",
+        )
+
+    def test_explicit_empty_adr_secondary_set_parses_em_dash_through_ledger(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.TOP_ALLOCATION
+            source_path = (
+                "design/architecture/decisions/"
+                "adr-0001-scripting-event-ingress-idempotency-identity.md"
+            )
+            replace_in_line(
+                path,
+                "adr-0001-scripting-event-ingress-idempotency-identity.md",
+                "| `SF-1`, `SF-2` |",
+                "| — |",
+            )
+            original = self.validator.ADR_ALLOCATION_EXPECTATIONS[source_path]
+            self.validator.ADR_ALLOCATION_EXPECTATIONS[source_path] = self.validator.adr_allocation(
+                "AS-1", "Accepted"
+            )
+            try:
+                rows = self.validator.validate_top_allocation_ledger(
+                    root,
+                    self.validator.group_ids(root),
+                    self.validator.repository_files(root)["Architecture decisions"],
+                    self.validator.repository_files(root),
+                )
+            finally:
+                self.validator.ADR_ALLOCATION_EXPECTATIONS[source_path] = original
+            self.assertIn(source_path, {row.path for row in rows})
+
+    def test_exempt_adr_secondary_handoff_drift(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.TOP_ALLOCATION
+            replace_in_line(
+                path,
+                "`design/architecture/decisions/README.md`",
+                "| — |",
+                "| `AA-1` |",
+            )
+            expect_call_failure(
+                "exempt ADR secondary handoff drift",
+                lambda: self.validator.validate(root),
+                "exempt secondary handoffs must be '—'",
+            )
+
     def test_adr_classification_drift(self) -> None:
         with fixture_root() as directory:
             root = Path(directory)

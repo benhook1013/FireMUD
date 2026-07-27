@@ -2,8 +2,8 @@
 
 This document is the **hub/entry point** for environment variables and secrets in FireMUD. It explains where to start, and then points you to:
 
-- `environment-and-secrets-overview.md` – conceptual overview and operator quick reference.
-- `environment-and-secrets-catalog.md` – detailed environment variable catalog and rotation notes.
+- [Environment and Secrets Overview](environment-and-secrets-overview.md) - conceptual overview and operator quick reference.
+- [Environment and Secrets Catalog](environment-and-secrets-catalog.md) - detailed environment variable catalog and rotation notes.
 
 ## Table of Contents
 
@@ -58,27 +58,29 @@ The PostgreSQL environment variables (host, port, database name, user, password)
 
 Redis coordination and cache/rate‑limit variables, along with the precedence and safety rules that enforce separate roles, are documented in `environment-and-secrets-catalog.md#redis-coordination--cache`. Conceptual guidance on Coordination vs Cache/Rate‑Limit Redis lives in:
 
-- `environment-and-secrets-overview.md#operator-quick-reference`
-- `../system-architecture-redis.md`
-- `../system-architecture-redis-usage-and-profiles.md`
+- [Environment and Secrets Overview](environment-and-secrets-overview.md#operator-quick-reference)
+- [Redis architecture](../system-architecture-redis.md)
+- [Redis usage and profiles](../system-architecture-redis-usage-and-profiles.md)
 
 ### gRPC TLS Certificates
 
-Environment variables that configure gRPC TLS certificate paths and the TCP Proxy → Gateway WebSocket mTLS hop are documented in `environment-and-secrets-catalog.md#tls--certificates`. Conceptual TLS and rotation behavior is covered in:
+Environment variables that configure gRPC TLS certificate paths and the TCP Proxy → Gateway WebSocket mTLS hop are documented in the [TLS and certificates catalog](./environment-and-secrets-catalog.md#tls--certificates). Conceptual TLS and rotation behavior is covered in:
 
-- `environment-and-secrets-overview.md#certificate-management--watchers`
-- `../system-architecture-security.md#tls-termination-for-gateway`
-- `../system-architecture-security.md#key-and-certificate-rotation`
+- [Certificate management and watchers](environment-and-secrets-overview.md#certificate-management--watchers)
+- [TLS termination for Gateway](../system-architecture-security.md#tls-termination-for-gateway)
+- [Key and certificate rotation](../system-architecture-security.md#key-and-certificate-rotation)
 
 ### Authentication
 
-JWT and session-related environment variables, including `FIREMUD_AUTH_JWT_SECRET`, `FIREMUD_AUTH_JWT_SECRET_PATH`, `FIREMUD_AUTH_JWKS_PATH`, `FIREMUD_AUTH_JWT_EXPIRATION_MS`, and `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`, are documented in `environment-and-secrets-catalog.md#authentication--jwt`. The authentication architecture and Telnet transport guidance are described in:
+JWT and session-related environment variables, including `FIREMUD_AUTH_JWT_SECRET`, `FIREMUD_AUTH_JWT_SECRET_PATH`, `FIREMUD_AUTH_JWKS_PATH`, `FIREMUD_AUTH_JWT_EXPIRATION_MS`, `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`, and `FIREMUD_AUTH_SESSION_EXPIRATION_MS`, are documented in the [authentication and JWT catalog](./environment-and-secrets-catalog.md#authentication--jwt). The authentication architecture and Telnet transport guidance are described in:
 
-- `../system-architecture-authentication.md`
-- `../system-architecture-security.md`
+- [Authentication architecture](../system-architecture-authentication.md)
+- [Security architecture](../system-architecture-security.md)
 
-The catalog’s Authentication section also documents how the JWT expiration and session safety margin combine into a single derived session TTL, including operational guidance for tightening or relaxing this window.
-The packaged classpath JWKS fallback is permitted only in local/test environments. Hosted `pr-preview` environments require a preview-unique JWT signing-key `Secret` and matching JWKS `ConfigMap` in each preview namespace; shared preview trust material is not allowed. For player-facing environments (`hobby-self-hosted`, staging, production), use file-mounted JWT key material via `FIREMUD_AUTH_JWT_SECRET_PATH` and the read-only `jwt-jwks` Secret via `FIREMUD_AUTH_JWKS_PATH=/var/run/secrets/firemud/jwks/jwks.json`; inline-only JWT secrets and classpath JWKS fallback are not allowed. Account startup must fail when either path or file is missing or unreadable, the JWKS is malformed, or its public JWK does not match the Account signing key and `kid`.
+The catalog’s Authentication section documents the separate gameplay continuity-retention formula. Issued-token registry records instead use each token's actual `exp` plus the cleanup margin, as described in [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md).
+The current checked-in runtime and executable preflight still use the legacy Secret-backed JWKS mode: `jwt-jwks` is a Kubernetes `Secret`, the current runtime still permits shared-HMAC and classpath-fallback drift, and `PREFLIGHT-JWKS-001` rejects a `ConfigMap` named `jwt-jwks`. That current mode is not player-facing readiness. The target mode is a fixed, pre-created `jwt-signing-keys` private Secret read and written through the Kubernetes API only by the materialization controller after an authenticated Account request and a fixed, pre-created public `jwt-jwks` ConfigMap whose initial and subsequent contents are published only by Account through name-scoped `resourceVersion` CAS. Account has no signing-Secret API authority, consumes its private bundle through a read-only projected mount, and consumes the public projection; validators consume the public JWKS and never receive private material. Target-mode preflight remains fail-closed until those checks are implemented. The packaged classpath JWKS fallback is permitted only in local/test environments. Hosted `pr-preview` environments require preview-unique, pre-created JWT signing-key and JWKS resources in each preview namespace; shared preview trust material is not allowed. Account startup must fail when the configured target-mode path or file is missing or unreadable, the JWKS is malformed, or its public JWK does not match the Account signing key and `kid`.
+
+For initial publication, Account remains unready while it authenticates the private-material operation, waits for the projected bundle, derives or receives the operation-bound public JWK, and CAS-populates the pre-created ConfigMap through the Account service account. Account validates the mounted private/public correspondence before becoming ready. There is no separate bootstrap writer or one-time publication-authority exception.
 
 ### Service Discovery
 
@@ -88,27 +90,27 @@ Service discovery overrides based on the `FIREMUD_SERVICES_*` environment variab
 
 Observability-related environment variables, including `OTEL_ENDPOINT` and Fluent Bit / Elasticsearch configuration, are documented in `environment-and-secrets-catalog.md#observability`. Additional details on tracing and logging live in:
 
-- `../system-architecture-logging-monitoring.md`
-- `../system-architecture-tracing.md`
+- [Logging and monitoring architecture](../system-architecture-logging-monitoring.md)
+- [Tracing architecture](../system-architecture-tracing.md)
 
 ### Asset Storage
 
 Asset storage environment variables (for example `ASSET_STORE_ENDPOINT`, `ASSET_STORE_BUCKET`, `ASSET_STORE_REGION`, and access keys) are documented in `environment-and-secrets-catalog.md#asset-storage`. For operational runbooks related to asset storage, see:
 
-- `../system-architecture-asset-store-runbook.md`
+- [Asset store runbook](../system-architecture-asset-store-runbook.md)
 
 ### Backup & Restore Variables
 
 Variables used by backup and restore tooling (such as `PG_DUMP_BUCKET`, `PG_DUMP_ENDPOINT`, and `FIREMUD_K8S_NAMESPACE`) are documented in `environment-and-secrets-catalog.md#backup--restore-variables`. Backup schedules and retention policies are covered in:
 
-- `../system-architecture-backup-recovery.md`
+- [Backup and recovery architecture](../system-architecture-backup-recovery.md)
 
 ### Additional Notes
 
 Service-specific environment variables (such as SMTP credentials for the Account Service or `GAME_TICK_DURATION_MS` for the Game Session Service) remain documented in each microservice’s design README, for example:
 
-- `../microservices/account-service/README.md#environment-variables`
-- `../microservices/game-session-service/README.md#environment-variables`
+- [Account Service environment variables](../microservices/account-service/README.md#environment-variables)
+- [Game Session Service environment variables](../microservices/game-session-service/README.md#environment-variables)
 
 Shared keys and patterns that apply across services are summarized in the catalog; per-service specifics stay close to their owning service docs.
 
@@ -116,11 +118,11 @@ Shared keys and patterns that apply across services are summarized in the catalo
 
 ## Related Documentation
 
-- `environment-and-secrets-overview.md` – Conceptual overview and operator quick reference for environment variables and secrets.
-- `environment-and-secrets-catalog.md` – Detailed environment variable catalog and rotation notes.
-- `deployment-environments.md` – How dev/staging/production environments are structured.
-- `../system-architecture-security.md` – Security and TLS architecture, including key and certificate rotation.
-- `../system-architecture-redis.md` – Redis architecture hub.
-- `../system-architecture-authentication.md` – Authentication and authorization flows.
-- `../system-architecture-redis-usage-and-profiles.md` – How Redis roles and profiles are wired in different environments.
-- `../system-architecture-runbooks.md` – Operational runbooks, including Redis session cleanup and rotation jobs.
+- [Environment and Secrets Overview](environment-and-secrets-overview.md) - Conceptual overview and operator quick reference for environment variables and secrets.
+- [Environment and Secrets Catalog](environment-and-secrets-catalog.md) - Detailed environment variable catalog and rotation notes.
+- [Deployment environments](deployment-environments.md) - How dev/staging/production environments are structured.
+- [Security architecture](../system-architecture-security.md) - Security and TLS architecture, including key and certificate rotation.
+- [Redis architecture](../system-architecture-redis.md) - Redis architecture hub.
+- [Authentication architecture](../system-architecture-authentication.md) - Authentication and authorization flows.
+- [Redis usage and profiles](../system-architecture-redis-usage-and-profiles.md) - How Redis roles and profiles are wired in different environments.
+- [System architecture runbooks](../system-architecture-runbooks.md) - Operational runbooks, including Redis session cleanup and rotation jobs.

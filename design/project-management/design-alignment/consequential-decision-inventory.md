@@ -55,12 +55,12 @@ The source-scoped ledgers contain 183 unique authoritative decision keys with no
 
 | Capability | Sources reviewed | Decisions inventoried | Human-review candidates | Coverage state |
 | --- | ---: | ---: | ---: | --- |
-| Existing ADR set | 19 records plus linked canonical sources | 9 current aliases within the 68 cross-cutting decisions | Prioritized in the source ledgers | Complete initial mapping |
+| Existing ADR set | 35 records plus linked canonical sources | 9 original aliases within the 68 cross-cutting decisions; later accepted records are allocated directly | Prioritized in the source ledger | Reviewed through ADR 0035 |
 | Cross-cutting system architecture | 22 canonical sources plus ADRs | 68 | Prioritized in the source ledger | Complete and independently audited |
 | Microservice architecture | 76 sources | 23 new; stronger evidence for 40 existing keys | Prioritized in the source ledger | Complete and independently audited |
 | Specialized runtime architecture | 39 sources | 54 new; stronger evidence for 20 existing keys | Prioritized in the source ledger | Complete and independently audited |
 | Product and operations architecture | 35 sources | 38 new; stronger evidence for 11 existing keys | Prioritized in the source ledger | Complete and independently audited |
-| **Total unique decision keys** | **All 192 architecture artifacts classified; 172 decision-scan sources plus 20 decision-registry artifacts** | **183** | **Prioritized by source ledger** | **Complete and independently audited** |
+| **Total unique decision keys** | **All 208 architecture artifacts classified; 172 decision-scan sources plus 36 decision-registry artifacts** | **183** | **Prioritized by source ledger** | **Initial inventory complete; accepted records allocated through ADR 0035** |
 
 ## Decision Ledger
 
@@ -86,7 +86,7 @@ The detailed ledgers preserve all conflicts, target/current gaps, weak rationale
 | `SET-01` | Resolved target: values follow defaults, preset, bootstrap, supported runtime-default, tenant, and game-instance precedence while hard bounds and operator caps apply separately as constraints. The current effective-settings implementation does not yet resolve the complete accepted model. |
 | `CONTENT-05` | Resolved baseline: first-party authoring uses Game Design-owned revision and domain APIs; bulk JSON import/export remains deferred until it has a validated package contract. |
 | `SESSION-04` | Resolved target: ordinary non-edge failures use bounded invisible recovery when the edge socket, healthy replacement capacity, and shared authority remain available; the ordinary target is 10 seconds and the hard cutoff is 30 seconds before `1013/backend_unavailable`. Complete real-Game-Session continuity proof remains implementation debt. |
-| `SESSION-08` | Resolved target: healthy uninterrupted play is independent of internal JWT lifetime; immutable continuity expiry limits reuse of an old binding after transport loss, disconnected resume uses the stricter continuity and configured windows, and transcript retention or Redis presence never grants authority. Current `PLAY` admission does not yet enforce these deadlines. |
+| `SESSION-08` | Resolved target: healthy uninterrupted play is independent of private player-delegation token lifetime; immutable continuity expiry limits reuse of an old binding after transport loss, disconnected resume uses the stricter continuity and configured windows, and transcript retention or Redis presence never grants authority. Current `PLAY` admission does not yet enforce these deadlines. |
 | `SEC-02` | Resolved target: planned Account JWT rotation prepublishes and converges the new public key before signer promotion, retains old verification through token expiry, then prunes; compromise/restore uses an environment-wide hard cutover. Current shared-HMAC issuance and validation fail the accepted player-facing readiness gate. |
 | `OPS-04` | Resolved target: routine backups are online environment-wide PostgreSQL snapshots without gameplay pause; player-facing rewind uses only environment-wide `cold_start_restore` with empty Redis, safe participant dispositions, quarantine, and controlled reopen. The durable recovery controller is the runtime authority for the gated reopen transition; checked-in recovery evidence is a finalized projection. Current implementation and proof do not satisfy the accepted gates. |
 | `CMD-STATUS-01` | Resolved target: evolve `GetGameplayCommandStatus` in place as the single authoritative durable API, with stable pre-retry identity and separate acknowledgement, ingress, execution-outcome, and gameplay-result dimensions. Current fields, persistence, recovery, and proof remain incomplete. |
@@ -106,13 +106,13 @@ The review facilitator must preserve the current choice's strongest argument, co
 | Packet | Scope | Reviewed | Total | State |
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
-| 2 | Identity, authority, and security | 0 | 32 | `not-started` |
+| 2 | Identity, authority, and security | 16 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 0 | 43 | `not-started` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **9** | **183** | `in-progress` |
+| **Total** | | **25** | **183** | `in-progress` |
 
 ### Priority Overrides
 
@@ -137,24 +137,26 @@ No implementation-blocking override is active. Record an override here with the 
 
 ### Packet 2: Identity, Authority, And Security
 
+Packet 2 checklist dispositions record the human review outcome, not an inventory status. For every checked Packet 2 entry, `accepted` maps to the canonical inventory status `accepted-explicit`; `revised` maps to the same status after the revised target was accepted. Unchecked entries have no Packet 2 disposition; their canonical inventory status remains whatever the inventory records and is not inferred from this checklist. The `AUTH-02` and `AUTH-06` targets retain explicit `JOIN`/`Join & Play`, but `POST /auth/bootstrap/join` is target-state and not implemented; current implicit membership creation remains implementation drift.
+
 #### Packet 2 P0
 
-- [ ] `ID-01`
-- [ ] `AUTH-02`
-- [ ] `AUTH-03`
-- [ ] `AUTH-04`
-- [ ] `AUTH-05`
-- [ ] `AUTH-06`
-- [ ] `AUTH-07`
-- [ ] `TENANT-01`
-- [ ] `ADMIT-01`
-- [ ] `EDGE-04`
-- [ ] `SESSION-07`
-- [ ] `SESSION-09`
-- [ ] `SEC-01`
-- [ ] `SEC-03`
-- [ ] `SEC-05`
-- [ ] `JWT-01`
+- [x] `ID-01` — `revised` on 2026-07-18; [ADR 0020](../../architecture/decisions/adr-0020-scoped-domain-and-operational-identifiers.md); [canonical identifier contract](../../architecture/system-architecture-identifier-glossary.md)
+- [x] `AUTH-02` — `revised` on 2026-07-18; [ADR 0021](../../architecture/decisions/adr-0021-staged-player-authentication-and-gameplay-binding.md)
+- [x] `AUTH-03` — `accepted` on 2026-07-18; [ADR 0022](../../architecture/decisions/adr-0022-account-authority-and-gameplay-session-ownership.md)
+- [x] `AUTH-04` — `revised` on 2026-07-18; [ADR 0023](../../architecture/decisions/adr-0023-central-route-authorization-governance.md)
+- [x] `AUTH-05` — `revised` on 2026-07-19; [ADR 0024](../../architecture/decisions/adr-0024-trusted-gameplay-workload-delegation.md)
+- [x] `AUTH-06` — `revised` on 2026-07-19; [ADR 0025](../../architecture/decisions/adr-0025-explicit-open-enrollment-membership.md)
+- [x] `AUTH-07` — `revised` on 2026-07-19; [ADR 0026](../../architecture/decisions/adr-0026-global-roles-do-not-grant-gameplay-authority.md)
+- [x] `TENANT-01` — `revised` on 2026-07-19; [ADR 0027](../../architecture/decisions/adr-0027-single-realm-admission-target.md)
+- [x] `ADMIT-01` — `revised` on 2026-07-19; [ADR 0028](../../architecture/decisions/adr-0028-differentiated-entitlement-freshness.md)
+- [x] `EDGE-04` — `revised` on 2026-07-19; [ADR 0029](../../architecture/decisions/adr-0029-single-use-gameplay-connect-token-carriage.md)
+- [x] `SESSION-07` — `revised` on 2026-07-19; [ADR 0030](../../architecture/decisions/adr-0030-risk-based-active-session-revocation.md)
+- [x] `SESSION-09` — `revised` on 2026-07-19; [ADR 0031](../../architecture/decisions/adr-0031-revocation-safe-session-token-rotation-and-logout.md)
+- [x] `SEC-01` — `revised` on 2026-07-19; [ADR 0032](../../architecture/decisions/adr-0032-kubernetes-native-secret-delivery-without-mandatory-vault.md)
+- [x] `SEC-03` — `revised` on 2026-07-19; [ADR 0033](../../architecture/decisions/adr-0033-public-player-facing-telnet-requires-tls.md)
+- [x] `SEC-05` — `revised` on 2026-07-19; [ADR 0034](../../architecture/decisions/adr-0034-layered-abuse-controls-without-attacker-triggered-account-locks.md)
+- [x] `JWT-01` — `revised` on 2026-07-19; [ADR 0035](../../architecture/decisions/adr-0035-single-record-issued-token-registry.md)
 - [ ] `JWT-02`
 - [ ] `JWT-03`
 - [ ] `JWT-04`

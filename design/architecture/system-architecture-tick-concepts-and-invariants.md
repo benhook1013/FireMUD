@@ -36,6 +36,8 @@ When designing new tick-driven features, keep these invariants in mind:
 - **No cross-region locks** – cross-region interactions are modeled as messages, not shared locks or multi-region transactions.
 - **Idempotent side effects** – the region-scoped tick timeline `(region_epoch, tickId)` and effect guards must be used so that replays after failure do not double-apply mutations.
 
+The canonical `EffectId` for a tick-driven mutation is the complete collision-safe identity tuple `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)`. The ADR-level `targetAggregateIdentity` is represented by the target aggregate type and ID (or an equivalent explicitly proven collision-safe encoding). A bare tick tuple or a bare `effectKey` is not a complete `EffectId` unless that encoding proof is documented.
+
 The tick system adopts the same **coordination timeline** concept as the Redis architecture: for each `<tenantId, gameInstanceId, regionId>` there is a canonical timeline defined by `(region_epoch, tickId)`. Within a given `region_epoch`:
 
 - `tickId` is monotonic and uniquely identifies each committed tick for that region.

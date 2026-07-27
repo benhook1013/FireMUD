@@ -5,7 +5,7 @@ The same hard-cutover key semantics are also required for player-facing post-res
 
 ## Implementation Status
 
-This runbook describes target-state behavior. The current runtime does not implement non-exportable signer delegation, Account-only asymmetric issuance and validation, issuer-watermark reading and writing, or the rotation/convergence evidence flow; existing HMAC/JWKS file behavior must not be treated as proof that this response flow is available.
+This runbook describes target-state behavior. The current runtime does not implement non-exportable signer delegation, Account-only asymmetric issuance and validation, issuer authority-generation advancement and validation, or the rotation/convergence evidence flow; existing HMAC/JWKS file behavior must not be treated as proof that this response flow is available.
 
 ## Trigger Conditions
 
@@ -21,15 +21,15 @@ Run this flow when any of the following is true:
    - Stop new Account JWT issuance and block JWT-protected admission/control-plane traffic.
    - Keep protected traffic closed until the replacement, invalidation, and convergence gates pass.
 2. Run compromise-mode rotation.
-   - Have Account Service request or generate a new asymmetric signing keypair and Account signing generation, validate the resulting generation, promote it, publish its JWKS, and prune any compromised public/private rollback material. Account remains authoritative for validation, promotion, JWKS publication, and pruning. Target-state private-key operations are delegated to a non-exportable signer in every environment; the signer may perform no validation, promotion, publication, or pruning. Until that capability is implemented, the controlled fallback is Account-only Kubernetes Secret custody described in [ADR 0014](./decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md): validators receive only public JWKS and rotation automation never receives private material. The private key must never enter rotation automation.
-   - Through the single Account JWT rotation control/status interface, have rotation automation request Account to publish only uncompromised public keys. Do not overlap, retain, or roll back to a compromised key.
-   - The rotation Job/CronJob must never read or update `jwt-signing-keys` or write `jwt-jwks`; it observes Account-owned publication and pruning, runs validator-convergence checks, and records evidence only.
+   - Have Account Service initiate one authenticated, operation-bound transition for a new asymmetric signing generation. In target custody it requests the non-exportable signer, which returns only the operation-bound generation, `kid`, and non-secret cryptographic digest or attestation for the delegated operation. In the interim fallback Account requests the materialization controller to generate, CAS-write, or prune only the named private-Secret slots; that controller additionally returns the Kubernetes `resourceVersion`, CAS result, and private-slot pruning evidence. Account validates and reconciles the result applicable to the selected custody path, promotes the generation, publishes its JWKS, advances issuer authority, and owns the lifecycle decision. Account remains authoritative for validation, promotion, issuer authority, JWKS publication, and public/private pruning policy. Rotation automation is observation-only and never receives private material. The private key must never enter rotation automation.
+   - Account must reconcile the controller's authenticated CAS result and Account-owned public-JWKS status before declaring compromise rotation complete. Do not overlap, retain, or roll back to a compromised key.
+   - The rotation Job/CronJob must never read or update `jwt-signing-keys` or write `jwt-jwks`; it only observes Account/controller status, runs validator-convergence checks, and records evidence.
 3. Invalidate environment-wide issuer authority.
-   - Advance `session:auth:revoked_after:issuer:<issuerId>` through Account authority; its inclusive `iat <= watermark` boundary revokes tokens issued in the watermark second. Perform the required session/allowlist cleanup within the configured bound so reauthentication is mandatory.
+   - Advance the issuer authority generation through Account authority. This is the logical invalidation boundary: every validator rejects a registry snapshot whose issuer generation is older than the new generation, regardless of account, tenant, or token profile. Physical deletion of old token records and cleanup of gameplay/control sessions are bounded best-effort follow-up work; neither is a correctness authority, and wildcard scans or deletion cannot substitute for validator rejection of stale-generation snapshots.
    - Treat compromise of the per-environment Account key as global for that issuer. Tenant-selective cleanup is not sufficient.
-   - Do not treat the watermark as a substitute for key rejection; an attacker holding the old private key can mint fresh claims.
+   - Do not treat the authority-generation advance as a substitute for key rejection; an attacker holding the old private key can mint fresh claims.
 4. Force validator convergence.
-   - Refresh or restart every validator in the declared validator inventory.
+   - Refresh or restart every validator in the declared validator inventory. Install a fail-closed block for the compromised `kid` that overrides any still-fresh cached JWK, and atomically evict or replace that cached key before validation resumes. A validator that cannot prove this state remains quarantined.
 5. Verify convergence.
    - Confirm every validator rejects the compromised `kid` and accepts the replacement `kid`.
 6. Stabilize, monitor, and reopen.
@@ -43,8 +43,8 @@ Before reopening player-facing traffic, incident records must include:
 - Incident/ticket identifier and responder/approver identity.
 - Compromised key identifiers (`kid`) and replacement key identifiers.
 - Quarantine start and end timestamps plus the protected surfaces covered.
-- Timestamped proof that Account Service authorized or completed private-key generation, validated and promoted the signing generation, published JWKS, and performed any required public/private pruning, including any delegated private-key operation performed by a non-exportable signer, plus proof that rotation automation observed the Account-owned `jwt-jwks` update through the control/status interface.
-- Issuer-wide watermark and session invalidation completion evidence.
+- Timestamped proof that Account Service authorized the private-material operation and reconciled the authenticated result for the selected custody path: operation-bound generation, `kid`, and non-secret cryptographic evidence for a non-exportable signer; or those fields plus Kubernetes `resourceVersion`, CAS result, and private-slot pruning evidence for the interim materialization controller. The record must also prove that Account validated and promoted the signing generation, published JWKS, reconciled the required public/private pruning policy, and that rotation automation only observed the Account-owned `jwt-jwks` update through the control/status interface.
+- Issuer authority-generation and logical session-invalidation evidence. Physical deletion of old token records and cleanup of gameplay/control sessions is bounded best-effort work and must be recorded separately; it is not required as cleanup completion before the authority-generation gate can be judged satisfied.
 - Exact validator inventory, last observed JWKS generation, and convergence proof that each validator rejects the compromised `kid` and accepts the replacement.
 - Reopen decision timestamp and approver.
 

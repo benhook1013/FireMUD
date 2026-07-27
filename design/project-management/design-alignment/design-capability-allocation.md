@@ -19,22 +19,22 @@ This ledger maps canonical design sources to the stable capabilities in the [Fir
 | Infrastructure | 6 | 6 | 0 | 100% classified |
 | Generated references | 1 | 1 | 0 | 100% classified |
 | Microservice architecture | 76 | 74 | 0; 2 explicit governance/template exemptions | 100% classified |
-| Architecture decisions | 20 | 19 | 0; 1 registry exemption | 100% classified |
-| **Total** | **192** | **189** | **0; 3 explicit exemptions** | **100% classified** |
+| Architecture decisions | 36 | 35 | 0; 1 registry exemption | 100% classified |
+| **Total** | **208** | **205** | **0; 3 explicit exemptions** | **100% classified** |
 
 ## Allocation Ledger
 
 | Design source | Heading or scope | Primary capability | Secondary handoffs | Source class | Notes or gap |
 | --- | --- | --- | --- | --- | --- |
 | [Microservice architecture allocation](./design-capability-allocation-microservices.md) | All 76 files under `design/architecture/microservices/**` | Per-source allocation | Per-source handoffs | Service design, contract, runtime/data, configuration, operations, and reference sources | Complete path-set coverage |
-| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 19 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; accepted, superseded, and withdrawn records remain distinguishable |
+| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 35 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; accepted, superseded, and withdrawn records remain distinguishable |
 | [System architecture allocation](./design-capability-allocation-system.md) | All 89 direct architecture, 6 infrastructure, and 1 generated source | Per-source allocation | Per-source handoffs | Normative design, runbook, reference, index, and generated sources | Complete path-set coverage |
 
 ## Architecture Decision Allocation
 
 | Design source | Primary capability | Secondary handoffs | Status or classification |
 | --- | --- | --- | --- |
-| `design/architecture/decisions/README.md` | Exempt | All capabilities represented by indexed ADRs | Decision registry/index |
+| `design/architecture/decisions/README.md` | Exempt | — | Decision registry/index |
 | `design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md` | `AS-1` | `SF-1`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0002-automation-handoff-reliability-and-success-semantics.md` | `AS-1` | `GR-1`, `SF-2`, `PO-4` | Accepted |
 | `design/architecture/decisions/adr-0003-reload-backpressure-and-retry-contract.md` | `AS-1` | `AR-3`, `GR-1`, `PO-4` | Accepted |
@@ -54,6 +54,22 @@ This ledger maps canonical design sources to the stable capabilities in the [Fir
 | `design/architecture/decisions/adr-0017-capability-gated-operational-tracing.md` | `PO-4` | `AA-2`, `GR-1`, `SF-1` | Accepted |
 | `design/architecture/decisions/adr-0018-declarative-production-gateway-routes.md` | `PO-2` | `AA-3`, `PO-1`, `PO-3`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0019-separate-active-session-resume-and-transcript-lifetimes.md` | `AA-2` | `AR-2`, `EA-3`, `GR-1`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0020-scoped-domain-and-operational-identifiers.md` | `SF-1` | `AR-1`, `GR-2`, `GR-3` | Accepted |
+| `design/architecture/decisions/adr-0021-staged-player-authentication-and-gameplay-binding.md` | `AA-2` | `EA-3`, `PO-2`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0022-account-authority-and-gameplay-session-ownership.md` | `AA-1` | `AA-2`, `SF-1`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0023-central-route-authorization-governance.md` | `SF-1` | `AA-1`, `PO-1`, `PO-2`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0024-trusted-gameplay-workload-delegation.md` | `SF-1` | `GR-1`, `PO-3` | Accepted |
+| `design/architecture/decisions/adr-0025-explicit-open-enrollment-membership.md` | `AA-1` | `AA-2`, `AA-3`, `EA-3` | Accepted |
+| `design/architecture/decisions/adr-0026-global-roles-do-not-grant-gameplay-authority.md` | `AA-1` | `AA-2`, `EA-3`, `PO-1` | Accepted |
+| `design/architecture/decisions/adr-0027-single-realm-admission-target.md` | `AA-3` | `AR-3`, `GR-1`, `GR-2` | Accepted |
+| `design/architecture/decisions/adr-0028-differentiated-entitlement-freshness.md` | `AA-1` | `AA-2`, `AA-3`, `PO-4`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0029-single-use-gameplay-connect-token-carriage.md` | `PO-2` | `AA-2`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0030-risk-based-active-session-revocation.md` | `AA-1` | `AA-2`, `PO-1`, `GR-1` | Accepted |
+| `design/architecture/decisions/adr-0031-revocation-safe-session-token-rotation-and-logout.md` | `AA-2` | `AA-1`, `GR-1`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0032-kubernetes-native-secret-delivery-without-mandatory-vault.md` | `SF-1` | `PO-1`, `PO-2`, `PO-3` | Accepted |
+| `design/architecture/decisions/adr-0033-public-player-facing-telnet-requires-tls.md` | `PO-2` | `AA-1`, `AA-2`, `EA-3`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0034-layered-abuse-controls-without-attacker-triggered-account-locks.md` | `SF-1` | `AA-1`, `AA-2`, `PO-1`, `PO-2` | Accepted |
+| `design/architecture/decisions/adr-0035-single-record-issued-token-registry.md` | `SF-1` | `AA-1`, `AA-2`, `SF-2` | Accepted |
 
 ## Unallocated Or Ambiguous Sources
 
