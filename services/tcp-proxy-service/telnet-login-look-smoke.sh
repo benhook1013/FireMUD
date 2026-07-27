@@ -130,7 +130,7 @@ wait_for_http_readiness(
 wait_for_http_readiness(
     "tcp-proxy-service", tcp_proxy_api_base, startup_wait_seconds, timeout_seconds
 )
-verify_smoke_account(account_api_base, tenant_id, username, password, timeout_seconds)
+verify_smoke_account(account_api_base, username, password, timeout_seconds)
 steps = gameplay_item_container_equipment_steps(
     username, password, worlds_expect, login_expect, play_expect, look_expect
 )
