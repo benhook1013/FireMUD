@@ -15,6 +15,10 @@ The machine-readable matrix and substantial static Gateway route/blocking tests 
 - Affected capabilities: `AA-1.2`, `PO-1.1`, `PO-2.1`, `PO-4.4`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `AUTH-04`
+- Human review status: Completed
+- Human review date: 2026-07-18
+- Human review disposition: Revised
+- Review source: `AUTH-04`
 
 ## Context
 

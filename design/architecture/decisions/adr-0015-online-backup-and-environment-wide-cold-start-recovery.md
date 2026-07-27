@@ -15,6 +15,10 @@ The decision is accepted; implementation and proof remain partial. The scheduled
 - Affected capabilities: `GR-1.3`, `PO-1.3`, `PO-3.1`, `PO-4.4`, `SF-2.1`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `OPS-04`
+- Human review status: Completed
+- Human review date: 2026-07-18
+- Human review disposition: Revised
+- Review source: `OPS-04`
 
 ## Context
 

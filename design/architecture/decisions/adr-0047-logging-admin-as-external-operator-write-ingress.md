@@ -12,6 +12,10 @@ Accepted
 - Affected capabilities: `PO-1.2`, `PO-1.3`, `PO-1.4`, `PO-2.1`, `GR-1.1`, `AR-3.3`, `AR-2.2`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `SEC-04`
+- Human review status: Completed
+- Human review date: 2026-07-19
+- Human review disposition: Revised
+- Review source: `SEC-04`
 
 ## Context
 

@@ -15,6 +15,10 @@ The decision is accepted; implementation and proof remain partial. The current w
 - Affected capabilities: `AA-1.3`, `PO-1.3`, `PO-3.2`, `PO-4.2`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `SEC-02`
+- Human review status: Completed
+- Human review date: 2026-07-18
+- Human review disposition: Revised
+- Review source: `SEC-02`
 
 ## Context
 

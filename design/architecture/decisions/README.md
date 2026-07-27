@@ -6,7 +6,8 @@ Architecture decision records explain why consequential FireMUD product and arch
 
 - `Accepted` records explain current consequential choices and must remain aligned with canonical design.
 - `Superseded` and `Withdrawn` records are historical context only and must identify the replacing decision.
-- `Proposed` records are not current target state until explicitly accepted and reflected in canonical design. An AI-authored ADR must use `Proposed - Pending Human Review`; an agent must not mark it `Accepted`.
+- `Proposed` records are not current target state until explicitly accepted and reflected in canonical design. An AI-authored ADR must use `Proposed - Pending Human Review` and `Human review status: Pending`.
+- An agent may set an ADR to `Accepted`, `Superseded`, or `Withdrawn` only when the checked review queue in the [consequential decision inventory](../../project-management/design-alignment/consequential-decision-inventory.md) names that ADR. The ADR must record the matching review status, date, disposition, and decision key; an agent must never infer those values.
 - Reversible work may continue while an AI-authored ADR awaits review only when existing canonical design already supports that work and the implementation does not depend on treating the proposal as accepted. Work that changes an accepted decision, selects between competing target states, or creates a consequential commitment waits for human review.
 - A new ADR is warranted for a cross-cutting, authority-setting, security-sensitive, expensive-to-reverse, or genuinely contested decision. Routine local implementation choices belong in code and the owning design document.
 - Changing an accepted decision requires explicit human design review, a new or superseding ADR, and updates to every affected canonical design source.
@@ -75,6 +76,7 @@ New ADRs should include:
 - status and decision dates;
 - primary and affected capabilities;
 - decision owner and consulted decision makers;
+- machine-readable human-review status, date, disposition, and review-source decision key;
 - context, constraints, assumptions, and decision drivers;
 - the accepted decision stated without historical alternatives mixed into it;
 - strongest credible alternatives, including doing nothing where meaningful;

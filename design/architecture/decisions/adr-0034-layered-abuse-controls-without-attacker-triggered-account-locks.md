@@ -15,6 +15,10 @@ Gateway and TCP Proxy transport controls plus focused gameplay and credential-pa
 - Affected capabilities: `AA-1.3`, `AA-2.1`, `PO-2.4`, `PO-1.2`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `SEC-05`
+- Human review status: Completed
+- Human review date: 2026-07-19
+- Human review disposition: Revised
+- Review source: `SEC-05`
 
 ## Context
 

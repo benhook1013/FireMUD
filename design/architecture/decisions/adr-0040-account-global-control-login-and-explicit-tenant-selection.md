@@ -11,6 +11,10 @@ Accepted
 - Affected capabilities: `AA-1.1`, `EA-3.3`, `PO-1.1`, `SF-1.3`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `MS-AA-CONTROL-LOGIN-SCOPE`
+- Human review status: Completed
+- Human review date: 2026-07-19
+- Human review disposition: Revised
+- Review source: `MS-AA-CONTROL-LOGIN-SCOPE`
 
 ## Implementation Status
 

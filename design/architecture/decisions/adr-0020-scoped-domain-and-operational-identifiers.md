@@ -15,6 +15,10 @@ The accepted UUID logical-identifier decision is target state. Current public an
 - Affected capabilities: `GR-2.1`, `GR-3.1`, `AR-1.5`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `ID-01`
+- Human review status: Completed
+- Human review date: 2026-07-18
+- Human review disposition: Revised
+- Review source: `ID-01`
 
 ## Context
 

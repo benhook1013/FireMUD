@@ -15,6 +15,10 @@ The monotonic generation contract is target state and is not fully implemented o
 - Affected capabilities: `SF-2.2`, `AA-1.2`, `AA-1.3`, `AA-2.3`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `JWT-02`
+- Human review status: Completed
+- Human review date: 2026-07-19
+- Human review disposition: Revised
+- Review source: `JWT-02`
 
 ## Context
 

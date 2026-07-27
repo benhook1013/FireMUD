@@ -24,7 +24,7 @@ This file is the always-on project, authority, and safety kernel for AI work. Re
 - For implementation or branch reconciliation, read the owning implementation tracker before interpreting branch names, commits, or raw diffs. Proactively repair nearby in-scope drift when practical.
 - Prefer batches that measurably advance an owned capability, close a declared gap, or strengthen its focused proof rather than accumulating seams that leave tracked capability state unchanged.
 - Keep design docs target-state first. Put partial implementation status near the top in a dedicated section; document one canonical current behavior and remove obsolete transitional guidance unless history is requested.
-- Mark an AI-authored ADR `Proposed - Pending Human Review`; an agent must not accept it. Reversible work may continue only when existing canonical design supports it and the work does not rely on the proposal as accepted.
+- Mark an AI-authored ADR `Proposed - Pending Human Review` with pending human-review metadata. An agent may record a completed human disposition only when the checked consequential-decision review queue names that ADR; it must not infer acceptance. Reversible work may continue only when existing canonical design supports it and the work does not rely on the proposal as accepted.
 - Do not manually hard-wrap documentation. Use GitHub-compatible relative links without line suffixes, and do not use emojis in Markdown headings.
 
 ## Execution Basics

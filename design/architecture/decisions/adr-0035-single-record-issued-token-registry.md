@@ -15,6 +15,10 @@ Basic JWT/JWKS and account/tenant token-state foundations exist, but the accepte
 - Affected capabilities: `SF-2.2`, `AA-1.3`, `AA-2.3`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `JWT-01`
+- Human review status: Completed
+- Human review date: 2026-07-19
+- Human review disposition: Revised
+- Review source: `JWT-01`
 
 ## Context
 

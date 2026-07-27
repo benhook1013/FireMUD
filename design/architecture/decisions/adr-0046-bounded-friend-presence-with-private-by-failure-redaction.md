@@ -11,6 +11,10 @@ Accepted
 - Affected capabilities: `AA-1.3`, `EA-2.1`, `EA-2.2`, `AA-2.1`, `SF-1.1`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `MS-SOCIAL-PRESENCE-PRIVACY`
+- Human review status: Completed
+- Human review date: 2026-07-19
+- Human review disposition: Revised
+- Review source: `MS-SOCIAL-PRESENCE-PRIVACY`
 
 ## Context
 

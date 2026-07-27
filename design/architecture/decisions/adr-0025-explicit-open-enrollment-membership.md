@@ -15,6 +15,10 @@ The accepted explicit-join decision is target state. Current runtime paths still
 - Affected capabilities: `AA-1.1`, `AA-3.2`, `AA-2.1`, `EA-3.1`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `AUTH-06`
+- Human review status: Completed
+- Human review date: 2026-07-19
+- Human review disposition: Revised
+- Review source: `AUTH-06`
 
 ## Context
 

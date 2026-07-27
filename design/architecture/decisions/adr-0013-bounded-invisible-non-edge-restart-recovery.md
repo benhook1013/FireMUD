@@ -15,6 +15,10 @@ The decision is accepted; implementation and proof remain partial. Gateway upstr
 - Affected capabilities: `AA-2.2`, `GR-1.1`, `PO-2.4`, `PO-4.2`, `SF-2.3`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `SESSION-04`
+- Human review status: Completed
+- Human review date: 2026-07-18
+- Human review disposition: Revised
+- Review source: `SESSION-04`
 
 ## Context
 

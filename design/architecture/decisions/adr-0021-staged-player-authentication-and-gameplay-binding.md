@@ -15,6 +15,10 @@ Bootstrap, connect-token, and visible `LOGIN`/`PLAY` pieces exist, but the targe
 - Affected capabilities: `PO-2.1`, `PO-2.2`, `SF-1.3`, `EA-3.1`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `AUTH-02`
+- Human review status: Completed
+- Human review date: 2026-07-18
+- Human review disposition: Revised
+- Review source: `AUTH-02`
 
 ## Context
 

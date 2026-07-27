@@ -15,6 +15,10 @@ The global-account and explicit-membership model is target state and is not yet 
 - Affected capabilities: `AA-1.2`, `AA-1.3`, `AA-1.4`, `AA-1.5`, `SF-2.1`, `PO-1.3`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human resolution of `MS-AA-GLOBAL-TENANT-BOUNDARY`
+- Human review status: Completed
+- Human review date: 2026-07-19
+- Human review disposition: Revised
+- Review source: `MS-AA-GLOBAL-TENANT-BOUNDARY`
 
 ## Context
 

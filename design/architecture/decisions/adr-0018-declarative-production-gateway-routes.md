@@ -15,6 +15,10 @@ The decision is accepted; implementation and proof remain partial. The current G
 - Affected capabilities: `PO-1.1`, `PO-1.4`, `PO-3.1`, `PO-3.2`, `AA-3.3`, `SF-2.1`, `SF-2.2`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led coupled review of `EDGE-06` and `MS-GW-DYNAMIC-ROUTES`
+- Human review status: Completed
+- Human review date: 2026-07-18
+- Human review disposition: Revised
+- Review source: `EDGE-06`, `MS-GW-DYNAMIC-ROUTES`
 
 ## Context
 

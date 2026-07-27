@@ -15,6 +15,10 @@ There is no complete periodic rotation or generation-bound refresh path. The rol
 - Affected capabilities: `AA-2.2`, `AA-1.3`, `SF-1.3`, `GR-1.1`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `SESSION-09`
+- Human review status: Completed
+- Human review date: 2026-07-19
+- Human review disposition: Revised
+- Review source: `SESSION-09`
 
 ## Context
 

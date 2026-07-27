@@ -15,6 +15,10 @@ The decision is accepted; implementation and proof remain partial. Durable bound
 - Affected capabilities: `GR-1.4`, `AR-2.1`, `EA-3.4`, `SF-1.1`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `SESSION-08`
+- Human review status: Completed
+- Human review date: 2026-07-18
+- Human review disposition: Revised
+- Review source: `SESSION-08`
 
 ## Context
 

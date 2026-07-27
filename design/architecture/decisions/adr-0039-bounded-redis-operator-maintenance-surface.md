@@ -15,6 +15,10 @@ The bounded Redis operator surface remains target state, not a fully shipped or 
 - Affected capabilities: `SF-2.2`, `SF-1.3`, `PO-4.4`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `REDIS-06`
+- Human review status: Completed
+- Human review date: 2026-07-19
+- Human review disposition: Revised
+- Review source: `REDIS-06`
 
 ## Context
 

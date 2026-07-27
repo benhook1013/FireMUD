@@ -15,6 +15,10 @@ The accepted separation of global control-plane roles from gameplay authority is
 - Affected capabilities: `AA-2.1`, `PO-1.1`, `PO-1.2`, `EA-3.3`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `AUTH-07`
+- Human review status: Completed
+- Human review date: 2026-07-19
+- Human review disposition: Revised
+- Review source: `AUTH-07`
 
 ## Context
 

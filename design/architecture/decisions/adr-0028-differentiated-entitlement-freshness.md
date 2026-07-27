@@ -15,6 +15,10 @@ The accepted cache and freshness policy is not implemented. Account currently re
 - Affected capabilities: `AA-3.2`, `AA-2.1`, `SF-1.3`, `PO-4.2`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `ADMIT-01`
+- Human review status: Completed
+- Human review date: 2026-07-19
+- Human review disposition: Revised
+- Review source: `ADMIT-01`
 
 ## Context
 

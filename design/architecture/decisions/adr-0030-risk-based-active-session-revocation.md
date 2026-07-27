@@ -15,6 +15,10 @@ No complete producer/consumer, monotonic membership version, authority-generatio
 - Affected capabilities: `AA-1.2`, `AA-1.5`, `AA-2.3`, `GR-1.1`, `PO-1.2`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `SESSION-07`
+- Human review status: Completed
+- Human review date: 2026-07-19
+- Human review disposition: Revised
+- Review source: `SESSION-07`
 
 ## Context
 

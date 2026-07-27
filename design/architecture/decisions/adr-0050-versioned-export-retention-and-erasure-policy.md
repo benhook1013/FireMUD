@@ -12,6 +12,10 @@ Accepted
 - Affected capabilities: `PO-1.3`, `AA-2.3`, `SF-2.1`, `PO-3.4`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `DATA-01`
+- Human review status: Completed
+- Human review date: 2026-07-19
+- Human review disposition: Revised
+- Review source: `DATA-01`
 
 ## Context
 

@@ -15,6 +15,10 @@ The authority split and admission path are substantially present, but immediate 
 - Affected capabilities: `AA-1.2`, `AA-1.5`, `AA-2.3`, `SF-1.3`, `SF-2.2`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `AUTH-03`
+- Human review status: Completed
+- Human review date: 2026-07-18
+- Human review disposition: Accepted
+- Review source: `AUTH-03`
 
 ## Context
 

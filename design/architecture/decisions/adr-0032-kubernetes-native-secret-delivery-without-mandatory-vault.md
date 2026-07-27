@@ -15,6 +15,10 @@ Kubernetes Secret mounts, cert-manager examples, expected-binding preflight, and
 - Affected capabilities: `PO-3.2`, `PO-2.1`, `PO-1.1`, `SF-1.5`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `SEC-01`
+- Human review status: Completed
+- Human review date: 2026-07-19
+- Human review disposition: Revised
+- Review source: `SEC-01`
 
 ## Context
 

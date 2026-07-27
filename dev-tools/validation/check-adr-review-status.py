@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""Validate ADR human-review provenance against the checked decision queue."""
+
+from __future__ import annotations
+
+import re
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+ADR_DIR = ROOT / "design/architecture/decisions"
+REVIEW_QUEUE = (
+    ROOT
+    / "design/project-management/design-alignment/consequential-decision-inventory.md"
+)
+# These records predate the formal human-review queue. Later reviewed parcels
+# either affirm them directly or supersede them with queue-backed ADRs.
+PRE_FORMAL_REVIEW_RECORDS = set(range(1, 12))
+ADR_PATH_RE = re.compile(r"adr-(\d{4})-.*\.md$")
+REVIEW_ROW_RE = re.compile(
+    r"^- \[x\] `(?P<key>[^`]+)` — "
+    r"`(?P<disposition>accepted|revised|deferred|superseded|withdrawn)` "
+    r"on (?P<date>\d{4}-\d{2}-\d{2})[^;]*; "
+    r".*?\[ADR (?P<number>\d{4})\]\([^)]+\)"
+)
+REVIEW_FIELD_RE = re.compile(
+    r"^- (?P<name>Human review status|Human review date|"
+    r"Human review disposition|Review source): (?P<value>.+)$"
+)
+
+
+@dataclass(frozen=True)
+class Review:
+    key: str
+    date: str
+    disposition: str
+
+
+def fail(message: str) -> None:
+    raise SystemExit(message)
+
+
+def adr_number(path: Path) -> int:
+    match = ADR_PATH_RE.fullmatch(path.name)
+    if not match:
+        fail(f"invalid ADR filename: {path}")
+    return int(match.group(1))
+
+
+def section_value(text: str, heading: str) -> str:
+    match = re.search(
+        rf"^## {re.escape(heading)}\n\n(?P<value>[^\n]+)$",
+        text,
+        flags=re.MULTILINE,
+    )
+    if not match:
+        fail(f"missing or malformed {heading!r} section")
+    return match.group("value").strip()
+
+
+def review_fields(text: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for line in text.splitlines():
+        match = REVIEW_FIELD_RE.fullmatch(line)
+        if not match:
+            continue
+        name = match.group("name")
+        if name in fields:
+            fail(f"duplicate ADR review field {name!r}")
+        fields[name] = match.group("value").strip()
+    return fields
+
+
+def checked_reviews(path: Path) -> dict[int, list[Review]]:
+    reviews: dict[int, list[Review]] = defaultdict(list)
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = REVIEW_ROW_RE.match(line)
+        if not match:
+            continue
+        reviews[int(match.group("number"))].append(
+            Review(
+                key=match.group("key"),
+                date=match.group("date"),
+                disposition=match.group("disposition").capitalize(),
+            )
+        )
+    return reviews
+
+
+def validate_completed_review(
+    context: Path,
+    fields: dict[str, str],
+    reviews: list[Review],
+) -> None:
+    expected_dates = {review.date for review in reviews}
+    expected_dispositions = {review.disposition for review in reviews}
+    expected_keys = {review.key for review in reviews}
+    actual_keys = set(re.findall(r"`([^`]+)`", fields.get("Review source", "")))
+
+    if fields.get("Human review status") != "Completed":
+        fail(f"{context}: checked human review requires 'Human review status: Completed'")
+    if fields.get("Human review date") not in expected_dates or len(expected_dates) != 1:
+        fail(
+            f"{context}: human review date must match checked queue date "
+            f"{sorted(expected_dates)}"
+        )
+    if (
+        fields.get("Human review disposition") not in expected_dispositions
+        or len(expected_dispositions) != 1
+    ):
+        fail(
+            f"{context}: human review disposition must match checked queue "
+            f"{sorted(expected_dispositions)}"
+        )
+    if actual_keys != expected_keys:
+        fail(
+            f"{context}: review source keys {sorted(actual_keys)} do not match "
+            f"checked queue keys {sorted(expected_keys)}"
+        )
+
+
+def validate(root: Path = ROOT) -> None:
+    adr_dir = root / ADR_DIR.relative_to(ROOT)
+    queue = root / REVIEW_QUEUE.relative_to(ROOT)
+    reviews = checked_reviews(queue)
+    seen_numbers: set[int] = set()
+
+    for path in sorted(adr_dir.glob("adr-[0-9][0-9][0-9][0-9]-*.md")):
+        number = adr_number(path)
+        if number in seen_numbers:
+            fail(f"duplicate ADR number {number:04d}")
+        seen_numbers.add(number)
+
+        text = path.read_text(encoding="utf-8")
+        try:
+            status = section_value(text, "Status")
+            fields = review_fields(text)
+        except SystemExit as error:
+            fail(f"{path.relative_to(root)}: {error}")
+
+        linked_reviews = reviews.get(number, [])
+        if linked_reviews:
+            validate_completed_review(
+                path.relative_to(root),
+                fields,
+                linked_reviews,
+            )
+        elif fields.get("Human review status") == "Completed":
+            fail(
+                f"{path.relative_to(root)}: completed human review is not backed "
+                "by a checked review-queue entry"
+            )
+
+        if status == "Proposed - Pending Human Review":
+            if fields.get("Human review status") != "Pending":
+                fail(
+                    f"{path.relative_to(root)}: pending proposal requires "
+                    "'Human review status: Pending'"
+                )
+        elif status == "Accepted" and number not in PRE_FORMAL_REVIEW_RECORDS:
+            if not linked_reviews:
+                fail(
+                    f"{path.relative_to(root)}: accepted ADR lacks a checked "
+                    "human-review queue entry"
+                )
+
+    missing_adrs = sorted(set(reviews) - seen_numbers)
+    if missing_adrs:
+        fail(f"checked review queue references missing ADRs: {missing_adrs}")
+
+    print(
+        "ADR review status validation passed: "
+        f"{len(reviews)} reviewed ADRs, "
+        f"{len(PRE_FORMAL_REVIEW_RECORDS & seen_numbers)} pre-formal records"
+    )
+
+
+if __name__ == "__main__":
+    validate()
