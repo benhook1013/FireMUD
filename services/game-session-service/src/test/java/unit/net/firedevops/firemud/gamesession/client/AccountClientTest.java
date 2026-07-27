@@ -2,7 +2,11 @@ package net.firedevops.firemud.gamesession.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -68,13 +72,17 @@ class AccountClientTest {
         .thenThrow(
             new StatusRuntimeException(
                 Status.fromCode(Status.Code.valueOf(statusName)).withDescription(description)));
-    AccountClient client = newClient(stub);
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    when(channelFactory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
+        .thenReturn(mock(ManagedChannel.class));
+    AccountClient client = newClient(stub, channelFactory);
 
     AuthenticateResponse response = client.authenticate("22", "demo@example.com", "swordfish");
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Authentication service unavailable");
-    verify(stub).authenticate(any(AuthenticateRequest.class));
+    verify(stub, times(1)).authenticate(any(AuthenticateRequest.class));
+    verify(channelFactory, times(1)).buildChannel(anyString(), anyInt(), any(), anyBoolean());
   }
 
   @ParameterizedTest
@@ -180,11 +188,17 @@ class AccountClientTest {
 
   private static AccountClient newClient(AccountServiceGrpc.AccountServiceBlockingStub stub)
       throws Exception {
+    return newClient(stub, mock(GrpcChannelFactory.class));
+  }
+
+  private static AccountClient newClient(
+      AccountServiceGrpc.AccountServiceBlockingStub stub, GrpcChannelFactory channelFactory)
+      throws Exception {
     AccountClient client =
         new AccountClient(
             new ServiceEndpointsProperties(),
             new CommonGrpcClientProperties(),
-            mock(GrpcChannelFactory.class),
+            channelFactory,
             BlockingGrpcStubCustomizer.noop());
     Field field =
         net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient.class.getDeclaredField(

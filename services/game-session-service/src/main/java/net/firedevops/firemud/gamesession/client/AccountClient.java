@@ -71,6 +71,12 @@ public final class AccountClient
             "Account Service authentication transport failed with a retryable status; "
                 + "not retrying credential-consuming authentication without an idempotency identity",
             ex);
+        try {
+          initClient();
+        } catch (Exception reloadEx) {
+          logger.warn(
+              "Failed to reload Account Service channel after authentication failure", reloadEx);
+        }
         return authenticationUnavailable();
       }
       logger.warn("Account Service authentication returned a terminal gRPC status", ex);

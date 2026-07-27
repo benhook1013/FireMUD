@@ -102,6 +102,14 @@ Before this capability is complete, implementation and focused proof must cover 
 
 The current Account/profile-only exports and synchronous hard-delete path remain implementation drift and cannot satisfy the player-facing capability gate.
 
+## Canonical Design Links
+
+- [Account Service API Contracts](../microservices/account-service/api-contracts.md)
+- [Account Service Runtime and Data](../microservices/account-service/runtime-and-data.md)
+- [Backup and Recovery](../system-architecture-backup-recovery.md)
+- [Backup Recovery Evidence and Compliance](../system-architecture-backup-recovery-evidence-and-compliance.md)
+- [ADR 0043: Global Account Lifecycle and Bounded Erasure Workflow](./adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md)
+
 ## Reversibility and Revisit Triggers
 
 Registry categories and finite schedules can evolve through versioned policy without redefining account identity or the erasure workflow. Revisit the architecture if a deployment's binding law or provider obligations require a different controller boundary, if tenant-owned exports need a separate dedicated service, or if measured export volume justifies a durable export pipeline rather than Account-led orchestration.

@@ -78,6 +78,13 @@ Disable login forever while retaining all records. This simplifies recovery and 
 - Prove cancellation before the published cutoff, irreversibility after terminal deletion, safe retry after partial failure, and no early success response.
 - Complete full-account export across portable owning domains rather than treating Account rows and profiles as the whole export.
 
+## Canonical Design Links
+
+- [Account Service](../microservices/account-service/README.md)
+- [Account Service API Contracts](../microservices/account-service/api-contracts.md)
+- [Account Service Runtime and Data](../microservices/account-service/runtime-and-data.md)
+- [Authentication and Authorization](../system-architecture-authentication.md)
+
 ## Reversibility and Revisit Triggers
 
 The state machine can add domain steps and adjust policy-owned retention windows without redefining global account identity. Revisit if applicable law or payment-provider obligations require a materially different cancellation, erasure, or retention boundary, or if an external identity provider becomes the lifecycle authority.

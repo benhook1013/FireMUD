@@ -71,6 +71,12 @@ Rejected as the public contract because it obscures provider-specific issuer, su
 
 Before any provider is advertised, implementation and focused proof must cover verified provider authorization, canonical issuer/subject normalization, global uniqueness, replay and CSRF protection, no email auto-merge, collisions, unlink safeguards, Account-owned fallback recovery, outage behavior, security-generation advancement, global deletion, tenant isolation, and end-to-end web login. The caller-asserted external-ID API and tenant-scoped schema must be removed or replaced rather than promoted.
 
+## Canonical Design Links
+
+- [Authentication and Authorization](../system-architecture-authentication.md)
+- [Account Service API Contracts](../microservices/account-service/api-contracts.md)
+- [Account Service Runtime and Data](../microservices/account-service/runtime-and-data.md)
+
 ## Reversibility and Revisit Triggers
 
 Providers can be added or withdrawn independently without changing global account identity. Revisit provider-first signup if conversion evidence justifies its additional collision and recovery policy, or revisit Account-owned fallback only if an external identity platform becomes the explicitly accepted lifecycle and recovery authority.
