@@ -320,6 +320,8 @@ require_contains "$runtime_images_path" 'github.event.pull_request.base.sha'
 require_contains "$runtime_images_path" 'github.event.pull_request.head.sha'
 require_contains "$runtime_images_path" 'github.sha'
 require_contains "$runtime_images_path" 'mode-{4}'
+require_contains "$runtime_images_path" '### PR runtime images and full-stack smoke'
+require_contains "$runtime_images_path" 'The trusted default-branch publisher uploads these exact fixed-SHA tags'
 require_contains "$image_wait_path" 'display_title = run.get("display_title", "")'
 require_contains "$image_wait_path" 'display_title.startswith("Build Runtime Images secure-pr-artifact ")'
 require_contains "$image_wait_path" 'and f" head-{head_sha} " in display_title'
@@ -367,6 +369,8 @@ require_contains "$pr_image_publisher_path" 'github.event.workflow_run.head_repo
 require_contains "$pr_image_publisher_path" "startsWith(github.event.workflow_run.display_title, 'Build Runtime Images secure-pr-artifact ')"
 require_contains "$pr_image_publisher_path" 'actions: read'
 require_contains "$pr_image_publisher_path" 'packages: write'
+require_contains "$pr_image_publisher_path" '### Trusted PR runtime image publication'
+require_contains "$pr_image_publisher_path" 'GitHub displays this run in the default-branch context'
 assert_job_excludes publish-pr-runtime-images.yml publish 'contents: read'
 # shellcheck disable=SC2016 # These are literal GitHub expression and shell source contracts.
 require_contains "$pr_image_publisher_path" 'pr-runtime-images-${{ github.event.workflow_run.head_sha }}'

@@ -30,6 +30,25 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Summarize trusted publication source
+        env:
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_URL: ${{ github.event.workflow_run.html_url }}
+          SOURCE_RUN_TITLE: ${{ github.event.workflow_run.display_title }}
+          SOURCE_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SOURCE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          {
+            echo "### Trusted PR runtime image publication"
+            echo
+            echo "- Source workflow run: [${SOURCE_RUN_ID}](${SOURCE_RUN_URL})"
+            echo "- Source run title: \`${SOURCE_RUN_TITLE}\`"
+            echo "- PR head branch: \`${SOURCE_HEAD_BRANCH}\`"
+            echo "- PR head SHA and fixed image tag: \`${SOURCE_HEAD_SHA}\`"
+            echo
+            echo "GitHub displays this run in the default-branch context because \`workflow_run\` uses the trusted workflow definition. It publishes only the successful source run's fixed PR head-SHA artifact and does not check out PR source."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Download successful PR image artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
