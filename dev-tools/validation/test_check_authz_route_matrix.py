@@ -189,18 +189,19 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 )
 
         drifted_route = routes["POST /sessions"][0]
+        drifted_route_index = document["routes"].index(drifted_route)
         for missing_check in ("tenant_generation", "target_tenant_generation"):
             with self.subTest(missing_check=missing_check):
                 checks = drifted_route["required_live_checks"]
                 checks.remove(missing_check)
-                try:
-                    errors = []
-                    self.validator.validate_generation_applicability(document["routes"], errors)
-                    self.assertTrue(
-                        any(f"operator route must require {missing_check}" in error for error in errors)
-                    )
-                finally:
-                    checks.append(missing_check)
+                errors = []
+                self.validator.validate_generation_applicability(document["routes"], errors)
+                self.assertIn(
+                    f"routes[{drifted_route_index}] game-session-service POST /sessions "
+                    f"operator route must require {missing_check}",
+                    errors,
+                )
+                checks.append(missing_check)
 
     def test_profile_routes_require_generation_checks(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -308,26 +309,59 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             for route in document["routes"]
             if route.get("route") == "POST /feature-flags/toggle"
         )
+        route_index = document["routes"].index(route)
         route["required_live_checks"].remove("current_global_role")
         errors = []
         self.validator.validate_generation_applicability(document["routes"], errors)
-        self.assertTrue(any("current_global_role" in error for error in errors))
+        self.assertIn(
+            f"routes[{route_index}] logging-admin-service POST /feature-flags/toggle "
+            "privileged operator route must require live check current_global_role",
+            errors,
+        )
 
         route["required_live_checks"].append("current_global_role")
         route.pop("role_assurance")
         errors = []
         self.validator.validate_generation_applicability(document["routes"], errors)
-        self.assertTrue(any("must declare role_assurance" in error for error in errors))
+        self.assertIn(
+            f"routes[{route_index}] logging-admin-service POST /feature-flags/toggle "
+            "operator route must declare role_assurance privileged_control_when_global_role",
+            errors,
+        )
 
         owner_route = next(
             route
             for route in document["routes"]
             if route.get("route") == "POST /sessions"
         )
+        owner_route_index = document["routes"].index(owner_route)
         owner_route.pop("canonical_external_ingress")
         errors = []
         self.validator.validate_generation_applicability(document["routes"], errors)
-        self.assertTrue(any("canonical_external_ingress" in error for error in errors))
+        self.assertIn(
+            f"routes[{owner_route_index}] game-session-service POST /sessions "
+            "must declare canonical_external_ingress logging-admin-service",
+            errors,
+        )
+
+    def test_route_live_checks_cache_is_identity_bound_and_returns_fresh_sets(self):
+        route = {"required_live_checks": ["first_check"]}
+        cache = {}
+        errors = []
+
+        first = self.validator.route_live_checks(route, "route", errors, cache)
+        first.add("caller_mutation")
+        second = self.validator.route_live_checks(route, "route", errors, cache)
+        self.assertEqual({"first_check"}, second)
+        self.assertIsNot(first, second)
+        self.assertIs(cache[id(route)][0], route)
+
+        equivalent_route = {"required_live_checks": ["second_check"]}
+        equivalent = self.validator.route_live_checks(
+            equivalent_route, "equivalent-route", errors, cache
+        )
+        self.assertEqual({"second_check"}, equivalent)
+        self.assertEqual([], errors)
 
     def test_multi_profile_unknown_name_is_not_resolved(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

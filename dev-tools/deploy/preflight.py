@@ -355,11 +355,17 @@ def validate_erasure_overlay_reconciliation(
     artifact_sequence = canonical_sequences["artifactErasureHighWater"]
     initial_catchup_sequence = canonical_sequences["initialCatchupHighWater"]
     restore_sequence = canonical_sequences["restoreHighWater"]
+    exclusive_start = sequence_verification.get("exclusiveStart") if isinstance(sequence_verification, dict) else None
+    inclusive_end = sequence_verification.get("inclusiveEnd") if isinstance(sequence_verification, dict) else None
     if (
         not isinstance(sequence_verification, dict)
         or sequence_verification.get("status") != "pass"
-        or sequence_verification.get("exclusiveStart") != artifact_sequence
-        or sequence_verification.get("inclusiveEnd") != initial_catchup_sequence
+        or not isinstance(exclusive_start, int)
+        or isinstance(exclusive_start, bool)
+        or not isinstance(inclusive_end, int)
+        or isinstance(inclusive_end, bool)
+        or exclusive_start != artifact_sequence
+        or inclusive_end != initial_catchup_sequence
         or sequence_verification.get("ordered") is not True
         or any(sequence_verification.get(flag) is not True for flag in required_sequence_flags)
     ):

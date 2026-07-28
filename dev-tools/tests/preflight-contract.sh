@@ -1466,6 +1466,37 @@ invalid_baseline_cases = {
             },
         }
     },
+    "overlay-sequence-verification-bool-endpoint": {
+        "artifactErasureHighWater": {"stream": "erasures", "sequence": 1},
+        "initialCatchupHighWater": {"stream": "erasures", "sequence": 1},
+        "erasureReplay": {
+            **valid_baseline["erasureReplay"],
+            "exclusiveStart": 1,
+            "initialCatchupThrough": 1,
+        },
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "artifactErasureHighWater": {"stream": "erasures", "sequence": 1},
+            "initialCatchupHighWater": {"stream": "erasures", "sequence": 1},
+            "sequenceVerification": {
+                **valid_baseline["erasureOverlayReconciliation"]["sequenceVerification"],
+                "exclusiveStart": True,
+                "inclusiveEnd": True,
+            },
+            "sequenceDispositions": [
+                {
+                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+                    "sequence": sequence,
+                }
+                for sequence in range(2, 13)
+            ],
+        },
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "preSnapshotJournalHighWater": {"stream": "erasures", "sequence": 1},
+            "artifactErasureHighWater": {"stream": "erasures", "sequence": 1},
+        },
+    },
     "overlay-integrity-failed": {
         "erasureOverlayReconciliation": {
             **valid_baseline["erasureOverlayReconciliation"],
@@ -1527,6 +1558,7 @@ expected_invalid_baseline_messages = {
     "overlay-sequence-verification-type": "sequenceVerification must prove the canonical bounds",
     "overlay-sequence-verification-status": "sequenceVerification must prove the canonical bounds",
     "overlay-sequence-verification-unordered": "sequenceVerification must prove the canonical bounds",
+    "overlay-sequence-verification-bool-endpoint": "sequenceVerification must prove the canonical bounds",
     "overlay-integrity-failed": "integrityVerification must be verified with status pass",
     "overlay-object-artifact-canonical-boundary-equality-mismatch": "artifactErasureHighWater must match the canonical bound exactly",
     "retained-backlog": "unsafe or missing disposition: gameplay",

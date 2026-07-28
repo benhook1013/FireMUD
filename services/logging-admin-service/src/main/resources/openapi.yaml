@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Logging & Admin Service API
-  description: Operator-facing moderation, cutover, and runtime-control APIs
+  description: Operator-facing moderation and runtime-control APIs; admission cutover remains target-state and is not currently exposed
   version: 1.0.0
   license:
     name: MIT

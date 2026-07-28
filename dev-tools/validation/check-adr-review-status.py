@@ -53,6 +53,11 @@ REVIEW_FIELD_RE = re.compile(
     r"Human review disposition|Review source): (?P<value>.+)$"
 )
 CHECKED_ROW_PREFIX_RE = re.compile(r"^- \[[xX]\]")
+DECISION_RECORD_RE = re.compile(
+    r"^## Decision Record[ \t]*\r?\n"
+    r"(?P<body>.*?)(?=^## |\Z)",
+    flags=re.MULTILINE | re.DOTALL,
+)
 
 
 @dataclass(frozen=True)
@@ -90,7 +95,10 @@ def section_value(text: str, heading: str) -> str:
 
 def review_fields(text: str) -> dict[str, str]:
     fields: dict[str, str] = {}
-    for line in text.splitlines():
+    section = DECISION_RECORD_RE.search(text)
+    if section is None:
+        return fields
+    for line in section.group("body").splitlines():
         match = REVIEW_FIELD_RE.fullmatch(line)
         if not match:
             continue

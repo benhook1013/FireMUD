@@ -94,6 +94,8 @@ class LoggingAdminApplicationIntegrationTest {
     HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
     assertThat(response.statusCode()).isEqualTo(404);
+    assertThat(response.body()).contains("\"code\":\"NOT_FOUND\"");
+    assertThat(response.body()).contains("\"message\":\"Resource not found\"");
   }
 
   @Test

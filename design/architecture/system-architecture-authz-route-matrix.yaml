@@ -130,7 +130,7 @@ required_live_check_vocabulary:
   - membership_generation
   - membership_when_tenant_role
   - moderation_report_policy
-  - no_nonterminal_owned_subscriptions
+  - billing_deletion_clearance
   - pending_deletion_credential_registry
   - pending_deletion_state
   - prepared_version_upgrade
@@ -921,7 +921,7 @@ routes:
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     required_live_checks:
-      [recent_account_authentication, current_global_role, role_appropriate_assurance, explicit_deletion_confirmation, export_availability, no_nonterminal_owned_subscriptions]
+      [recent_account_authentication, current_global_role, role_appropriate_assurance, explicit_deletion_confirmation, export_availability, billing_deletion_clearance]
     mutation_contract: pending_delete_advances_account_generation_then_runs_retryable_cross_owner_erasure
     completion_contract: terminal_only_after_all_owner_steps_complete_or_policy_retained
     canonical_errors:
@@ -929,6 +929,7 @@ routes:
     implementation_status:
       known_drift:
         - Current helper permits a broad global privileged role; the target cross-account override is platformAdmin-only.
+        - Current deletion admission proves only nonterminal owned subscriptions, not transfer participation or unresolved provider and durable billing work.
   - service: account-service
     route: LinkExternalAccount
     http_route: POST /accounts/{accountId}/external
@@ -1354,7 +1355,7 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
     subject_binding: caller_account_id_as_reporter
-    required_live_checks: [membership, moderation_report_policy]
+    required_live_checks: [membership, membership_generation, moderation_report_policy]
     mutation_contract: caller_bound_durable_report_record
     implementation_status:
       known_drift:

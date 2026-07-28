@@ -58,6 +58,13 @@ For any cluster reset or cold start that can drop `session:auth:*`, the required
 
 For a destructive full-deployment or AOF reset, the canonical pre-wipe gates are `scope_paused_and_locked`, `account_authority_token_cutover`, `replay_domain_quarantine_fence`, and `immutable_external_handoff_evidence`, as defined in [Coordination Redis Ops Access & Tooling](./system-architecture-redis-ops-access.md#canonical-pre-wipe-gates). Here `immutable_external_handoff_evidence` means only immutable pre-wipe authorization and fencing evidence: the authorized action, target scope, old deployment identity, intended replacement target, and proof that the old endpoint is fenced. These gates are internal evidence gates, not public commands, and must all be bound to the same durable `operationId` and server-issued `maintenanceLockToken` before the external storage action. Post-reset replacement verification is a separate evidence group recorded only after the replacement starts; it is not a pre-wipe prerequisite. An empty keyspace never proves any gate.
 
+The two protected cleanup authorities are independent and neither substitutes for the other:
+
+- **Account token-projection deletion gate:** the Account repair/reset cutover must advance the issuer authority generation and durably attest the cutover before old Account-issued token projections may be physically deleted. This Account evidence authorizes only the token-projection deletion boundary; it does not authorize replay-marker cleanup or replacement-token registration.
+- **Replay-marker cleanup gate:** the replay domain must advance `replayAdmissionFence`, remain quarantined for the full token lifetime plus configured clock-skew allowance, and provide durable consume proof before replay markers may be cleaned up and replacement replay admission can proceed. This replay evidence authorizes only the replay cleanup boundary; it does not authorize Account token-projection deletion.
+
+Both gates remain required, operation-bound, and fail closed when incomplete or ambiguous.
+
 Resets are always executed via **versioned coordination tooling** (for example, a maintenance CLI), not ad‑hoc `redis-cli` commands. Every reset:
 
 - Identifies the exact scope (region/tenant/cluster).

@@ -118,9 +118,9 @@ REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS = {
 PRIVILEGED_OPERATOR_ROLE_ASSURANCE = "privileged_control_when_global_role"
 CANONICAL_OPERATOR_INGRESS = "logging-admin-service"
 DIRECT_OWNER_ROUTE_POLICY = "deny_at_edge_and_migrate_to_logging_admin"
-# Maps id(route/parent mapping) to parsed checks for one loaded matrix document.
-# Never reuse across documents or temporary mappings: id reuse can return stale entries.
-LiveChecksCache = dict[int, set[str]]
+# Maps id(route/parent mapping) to the source object and parsed checks for one document.
+# Retaining the source object prevents id reuse from returning stale entries.
+LiveChecksCache = dict[int, tuple[object, set[str]]]
 
 
 def route_key(route: dict[str, Any]) -> str | None:
@@ -149,16 +149,14 @@ def collect_live_checks(
         for key, child in value.items():
             child_field = f"{field}.{key}" if field else key
             if key == "required_live_checks":
-                parsed_checks = (
-                    live_checks_cache.get(id(value))
-                    if live_checks_cache is not None
-                    else None
-                )
-                if parsed_checks is None:
+                cached = live_checks_cache.get(id(value)) if live_checks_cache is not None else None
+                if cached is not None and cached[0] is value:
+                    checks.extend(set(cached[1]))
+                else:
                     parsed_checks = set(string_list(child, child_field, errors))
                     if live_checks_cache is not None:
-                        live_checks_cache[id(value)] = parsed_checks
-                checks.extend(parsed_checks)
+                        live_checks_cache[id(value)] = (value, set(parsed_checks))
+                    checks.extend(set(parsed_checks))
             else:
                 checks.extend(
                     collect_live_checks(child, child_field, errors, live_checks_cache)
@@ -1005,6 +1003,18 @@ def validate_refresh_roles_routes(
     errors: list[str],
     live_checks_cache: LiveChecksCache | None = None,
 ) -> None:
+    def validate_idempotency(route: dict[str, Any], label: str) -> None:
+        required_fields = set(
+            string_list(route.get("required_fields"), f"{label} required_fields", errors)
+        )
+        if "mutation_digest" not in required_fields:
+            errors.append(f"{label} must require mutation_digest for idempotency")
+        canonical_errors = route.get("canonical_errors", {})
+        any_of = canonical_errors.get("any_of") if isinstance(canonical_errors, dict) else None
+        outcomes = string_list(any_of, f"{label} canonical_errors.any_of", errors)
+        if "IDEMPOTENCY_CONFLICT" not in outcomes:
+            errors.append(f"{label} must declare IDEMPOTENCY_CONFLICT")
+
     grpc_route = resolve_unique_route(
         routes, "game-session-service", "RefreshRoles", errors
     )
@@ -1026,20 +1036,7 @@ def validate_refresh_roles_routes(
         ):
             if required_check not in checks:
                 errors.append(f"{label} must require live check {required_check}")
-        required_fields = set(
-            string_list(grpc_route.get("required_fields"), f"{label} required_fields", errors)
-        )
-        if "mutation_digest" not in required_fields:
-            errors.append(f"{label} must require mutation_digest for idempotency")
-        canonical_errors = grpc_route.get("canonical_errors", {})
-        any_of = canonical_errors.get("any_of") if isinstance(canonical_errors, dict) else None
-        outcomes = string_list(
-            any_of,
-            f"{label} canonical_errors.any_of",
-            errors,
-        )
-        if "IDEMPOTENCY_CONFLICT" not in outcomes:
-            errors.append(f"{label} must declare IDEMPOTENCY_CONFLICT")
+        validate_idempotency(grpc_route, label)
 
     http_route = resolve_unique_route(
         routes, "game-session-service", "POST /sessions/{sessionId}/refresh-roles", errors
@@ -1048,16 +1045,7 @@ def validate_refresh_roles_routes(
         label = "game-session-service POST /sessions/{sessionId}/refresh-roles"
         if http_route.get("operator_authorization_reference") != "account_issued_bounded_reference":
             errors.append(f"{label} must require an Account-issued operator reference")
-        required_fields = set(
-            string_list(http_route.get("required_fields"), f"{label} required_fields", errors)
-        )
-        if "mutation_digest" not in required_fields:
-            errors.append(f"{label} must require mutation_digest for idempotency")
-        canonical_errors = http_route.get("canonical_errors", {})
-        any_of = canonical_errors.get("any_of") if isinstance(canonical_errors, dict) else None
-        outcomes = string_list(any_of, f"{label} canonical_errors.any_of", errors)
-        if "IDEMPOTENCY_CONFLICT" not in outcomes:
-            errors.append(f"{label} must declare IDEMPOTENCY_CONFLICT")
+        validate_idempotency(http_route, label)
 
 
 def validate_known_drift(value: Any, field: str, errors: list[str]) -> None:
@@ -1139,15 +1127,15 @@ def route_live_checks(
     live_checks_cache: LiveChecksCache | None = None,
 ) -> set[str]:
     if live_checks_cache is not None:
-        parsed_checks = live_checks_cache.get(id(route))
-        if parsed_checks is not None:
-            return parsed_checks
+        cached = live_checks_cache.get(id(route))
+        if cached is not None and cached[0] is route:
+            return set(cached[1])
     parsed_checks = set(
         string_list(route.get("required_live_checks"), f"{label} required_live_checks", errors)
     )
     if live_checks_cache is not None:
-        live_checks_cache[id(route)] = parsed_checks
-    return parsed_checks
+        live_checks_cache[id(route)] = (route, set(parsed_checks))
+    return set(parsed_checks)
 
 
 def validate_applicability(

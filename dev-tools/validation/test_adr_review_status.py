@@ -353,6 +353,20 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "checked human review requires",
             )
 
+    def test_checked_deferred_row_with_exact_adr_provenance_is_rejected(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [x] `TEST-DEFERRED` — `deferred` on 2026-07-27; "
+                "[ADR 0013](../../architecture/decisions/adr-0013-pending.md)",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "checked human review requires",
+            )
+
     def test_checked_review_date_must_match_queue(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
@@ -476,15 +490,29 @@ class AdrReviewStatusTests(unittest.TestCase):
         with fixture_root() as fixture:
             root = Path(fixture)
             path = root / "design/architecture/decisions/adr-0012-reviewed.md"
-            path.write_text(
-                path.read_text(encoding="utf-8")
-                + "\n- Human review status: Completed\n",
-                encoding="utf-8",
+            text = path.read_text(encoding="utf-8").replace(
+                "## Decision Record\n",
+                "## Decision Record\n- Human review status: Completed\n",
+                1,
             )
+            path.write_text(text, encoding="utf-8")
             expect_failure(self,
                 lambda: self.validator.validate(root),
                 "duplicate ADR review field 'Human review status'",
             )
+
+    def test_review_metadata_is_bounded_to_decision_record(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = root / "design/architecture/decisions/adr-0012-reviewed.md"
+            path.write_text(
+                path.read_text(encoding="utf-8")
+                + "\n## Notes\n\n"
+                "- Human review status: Pending\n"
+                "- Human review date: not metadata\n",
+                encoding="utf-8",
+            )
+            self.validator.validate(root)
 
     def test_malformed_status_section_is_rejected(self) -> None:
         with fixture_root() as fixture:
