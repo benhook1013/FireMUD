@@ -11,10 +11,9 @@ from typing import NoReturn
 
 
 ROOT = Path(__file__).resolve().parents[2]
-ADR_DIR = ROOT / "design/architecture/decisions"
-REVIEW_QUEUE = (
-    ROOT
-    / "design/project-management/design-alignment/consequential-decision-inventory.md"
+ADR_DIR = Path("design/architecture/decisions")
+REVIEW_QUEUE = Path(
+    "design/project-management/design-alignment/consequential-decision-inventory.md"
 )
 # These records predate the formal human-review queue. Later reviewed parcels
 # either affirm them directly or supersede them with queue-backed ADRs.
@@ -29,11 +28,11 @@ PENDING_REVIEW_FIELDS = {
 ADR_REFERENCE = r"(?:ADR \d{4}|\[ADR \d{4}\]\([^)]+\))"
 TERMINAL_ADR_STATUS_RE = re.compile(
     rf"^(?:Accepted|Superseded by {ADR_REFERENCE}|"
-    rf"Withdrawn(?: \(superseded by {ADR_REFERENCE}\))?)$"
+    rf"Withdrawn(?:; superseded by {ADR_REFERENCE}| \(superseded by {ADR_REFERENCE}\))?)$"
 )
 ADR_PATH_RE = re.compile(r"adr-(\d{4})-.*\.md$")
 REVIEW_ROW_RE = re.compile(
-    r"^- \[x\] `(?P<key>[A-Z0-9][A-Z0-9-]*)` — "
+    r"^- \[[xX]\] `(?P<key>[A-Z0-9][A-Z0-9-]*)` — "
     r"`(?P<disposition>accepted|revised|deferred|superseded|withdrawn)` "
     r"on (?P<date>\d{4}-\d{2}-\d{2})(?P<outcome>(?:;| by) .+)$"
 )
@@ -45,6 +44,7 @@ REVIEW_FIELD_RE = re.compile(
     r"^- (?P<name>Human review status|Human review date|"
     r"Human review disposition|Review source): (?P<value>.+)$"
 )
+CHECKED_ROW_PREFIX_RE = re.compile(r"^- \[[xX]\]")
 
 
 @dataclass(frozen=True)
@@ -100,7 +100,7 @@ def checked_reviews(path: Path) -> dict[int, list[Review]]:
         path.read_text(encoding="utf-8").splitlines(), start=1
     ):
         stripped = line.lstrip()
-        if not stripped.startswith("- [x]"):
+        if not CHECKED_ROW_PREFIX_RE.match(stripped):
             continue
         if stripped != line:
             fail(
@@ -217,8 +217,9 @@ def validate_pending_review(context: Path, fields: dict[str, str]) -> None:
 
 
 def validate(root: Path = ROOT) -> None:
-    adr_dir = root / ADR_DIR.relative_to(ROOT)
-    queue = root / REVIEW_QUEUE.relative_to(ROOT)
+    root = root.resolve()
+    adr_dir = root / ADR_DIR
+    queue = root / REVIEW_QUEUE
     if not adr_dir.is_dir():
         fail(f"ADR directory missing: {adr_dir.relative_to(root)}")
     if not queue.is_file():
@@ -268,7 +269,8 @@ def validate(root: Path = ROOT) -> None:
 
     missing_adrs = sorted(set(reviews) - seen_numbers)
     if missing_adrs:
-        fail(f"checked review queue references missing ADRs: {missing_adrs}")
+        formatted_missing_adrs = [f"{number:04d}" for number in missing_adrs]
+        fail(f"checked review queue references missing ADRs: {formatted_missing_adrs}")
 
     print(
         "ADR review status validation passed: "

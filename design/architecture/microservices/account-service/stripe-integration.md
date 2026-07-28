@@ -24,6 +24,14 @@ The Account Service owns billing records and maps them to Stripe resources while
   - Key fields: internal ID, `accountId`, optional `tenantId`, `amount_cents`, `platform_fee_cents`, `creator_share_cents`, `status` (`pending`, `succeeded`, `refunded`, `failed`), `provider` (`stripe`), and `provider_id` (Stripe `payment_intent` ID).  
   - Records whether the transaction is a `donation` and which internal entity it relates to (for example, hosting subscription, in-game item purchase).
 
+- `purchase_operation`
+  - Is committed before any Stripe call for a one-time purchase or donation and binds the authenticated `accountId`, optional `tenantId`, operation type, caller request ID, immutable purchase digest, separate customer-provisioning operation reference, and stable PaymentIntent idempotency identity.
+  - Supplies the non-secret provider metadata correlation identity used by webhook and reconciliation processing. Provider IDs and the linked `payment_transaction` are added when known; a lost response or early webhook leaves the operation nonterminal until those links and the resulting financial/product state are reconciled.
+
+- `stripe_event_inbox`
+  - Idempotently retains each verified Stripe event by provider event ID together with its extracted purchase-operation correlation identity and processing state.
+  - An event that arrives before `provider_id` or transaction linkage is persisted remains pending against the durable purchase operation and is retried after linkage repair. It is never discarded or treated as terminal merely because the local provider ID is not yet available.
+
 - `purchase_entitlement`  
   - Represents the durable product grant created by a successful one-time purchase when the product has ongoing account, tenant, character, virtual-currency, or gameplay value.  
   - Key fields: internal ID, `accountId`, `tenantId`, optional `characterId`, `product_code`, `grant_status` (`pending`, `active`, `revoked`, `consumed_nonrevocable`), `payment_transaction_id`, `provider_event_id`, `granted_at`, and optional `revoked_at` / `revocation_reason`.  
@@ -57,16 +65,17 @@ New real-money charges, saved-instrument changes, subscriptions, refunds, billin
 
 ### One-Time Purchases and Donations
 
-1. A service calls `CreatePaymentIntent` on the Account Service with `accountId`, optional `tenantId`, `amount_cents`, and purchase context (for example, donation vs one-time purchase). The Account Service derives the authoritative account from authenticated context and binds the request to one durable account-keyed purchase operation.
-2. The Account Service provisions or reuses the Stripe customer through the same durable intent contract as `billing_customer`: persist the account-keyed provisioning intent and stable customer-provisioning idempotency identity, reconcile provider metadata before retrying after a timeout, lost response, or failed local commit, and leave ambiguous state nonterminal. A generic lookup-or-create flow after an ambiguous attempt is prohibited. Once the customer is confirmed, Account calls Stripe to create the `PaymentIntent` using a distinct stable payment-intent idempotency identity recorded by the same durable purchase operation.
-3. A `payment_transaction` row is created in `pending` status with the returned `payment_intent` ID recorded as `provider_id`.  
+1. A service calls `CreatePaymentIntent` on the Account Service with `accountId`, optional `tenantId`, `amount_cents`, and purchase context (for example, donation vs one-time purchase). The Account Service derives the authoritative account from authenticated context and, before any Stripe call, commits one account-keyed `purchase_operation` plus webhook-inbox correlation identity bound to the operation type, caller request ID, immutable purchase digest, customer-operation reference, and separate stable PaymentIntent idempotency identity.
+2. The Account Service provisions or reuses the Stripe customer through the same durable intent contract as `billing_customer`: persist the account-keyed provisioning intent and stable customer-provisioning idempotency identity, reconcile provider metadata before retrying after a timeout, lost response, or failed local commit, and leave ambiguous state nonterminal. A generic lookup-or-create flow after an ambiguous attempt is prohibited. Once the customer is confirmed, Account calls Stripe to create the `PaymentIntent` using the purchase operation's distinct stable payment-intent idempotency identity and non-secret provider metadata carrying the durable purchase-operation correlation identity.
+3. A `payment_transaction` row is created in `pending` status and linked to the purchase operation, with the returned `payment_intent` ID recorded as `provider_id`. If the provider call may have succeeded but the response or local linkage commit is lost, the operation remains nonterminal and reconciliation uses the same idempotency and provider-metadata identities; it never creates a new logical purchase attempt.
 4. The client completes payment using Stripe’s client-side flow (for example, via Stripe.js); Stripe later calls a configured webhook when the intent succeeds or fails.  
 5. The webhook handler in the Account Service:
-   - Verifies the webhook signature.  
-   - Locates the `payment_transaction` row by `provider_id`.  
+   - Verifies the webhook signature and idempotently records the event in `stripe_event_inbox` by Stripe event ID before applying business state.
+   - Resolves the durable purchase operation from its provider metadata correlation identity and then locates or repairs the linked `payment_transaction` by operation identity and `provider_id`. An event that arrives before local provider-ID/linkage persistence remains pending in the inbox and is reconciled after linkage becomes available.
    - Sets `status` to `succeeded` or `failed` and records Stripe failure codes where applicable.  
    - For product purchases that grant ongoing value, idempotently creates or activates the corresponding `purchase_entitlement` row using the Stripe event ID and product grant key as fulfillment idempotency inputs.  
    - Emits domain events or saga steps so other services (for example, Logging & Admin, in-game unlocks) can react.
+   - Marks the purchase operation and inbox event terminal only after provider linkage, transaction state, and any required entitlement or failure outcome have converged durably.
 
 Refunds call Stripe’s `Refund` API and update the `payment_transaction` `status` to `refunded`, enabling chargeback handling workflows. If the refunded payment created a `purchase_entitlement`, the refund workflow must revoke that entitlement unless it has already been consumed under a product contract that is explicitly non-revocable. Non-revocable consumption must be recorded as `consumed_nonrevocable` with a reason so support, audit, and revenue-sharing reports can explain why financial refund and product state diverged.
 

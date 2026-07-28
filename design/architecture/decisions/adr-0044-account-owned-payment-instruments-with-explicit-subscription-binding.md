@@ -44,7 +44,7 @@ Stripe subscriptions cannot change Customer in place, so the Stripe adapter perf
 
 Timeouts or ambiguous provider results remain nonterminal and are reconciled using the same two provider-operation identities; they never authorize another replacement. A definitive replacement failure leaves the old binding authoritative and cancels any uncommitted transfer intent. If replacement creation succeeds but old cancellation scheduling or the local cutover cannot be confirmed, the workflow remains blocked and operator-visible while reconciliation converges or performs an idempotent cleanup of the not-yet-authoritative replacement. It must not expose overlapping entitlement, silently strand two billable subscriptions, or claim transfer completion. Immediate mid-period cross-customer transfer, cross-customer credits, and proration are unsupported; an owner may separately choose terminal cancellation and a new subscription when an immediate boundary is required. Account deletion remains blocked until the scheduled transfer has cut over or the old subscription is terminally canceled.
 
-Card management and every new real-money charge complete through HTTPS and the payment-provider flow. Telnet or gameplay may initiate the operation and return a short-lived, single-use checkout URL. The URL is bound to the initiating account and intended operation. FireMUD recognizes payment completion only from a verified provider webhook, then applies the resulting durable entitlement idempotently.
+Card management and every new real-money charge complete through HTTPS and the payment-provider flow. Adopting [ADR 0045](./adr-0045-ordinary-login-factors-and-https-sensitive-action-step-up.md)'s gameplay-to-HTTPS handoff, Telnet or gameplay may initiate the operation and return a short-lived, single-use, opaque checkout URL whose server-side handoff state is bound to the exact initiating account, gameplay session, target tenant, action, product, amount, currency, and `requestId`. The URL contains no authority or mutable commercial parameters; replay, expiry, or parameter substitution cannot change that tuple. FireMUD recognizes payment completion only from a verified provider webhook, then applies the resulting durable entitlement idempotently.
 
 ## Consequences
 
@@ -84,7 +84,7 @@ Focused contract and integration proof must demonstrate that:
 - detachment fails until every referencing subscription has a replacement binding;
 - billing-owner transfer is an explicit audited, row-version-guarded replacement state machine through the dedicated `cross_tenant_billing_safe` route, schedules old termination and new-owner billing at one paid-through boundary, reconciles partial or ambiguous provider outcomes without duplicate billing or entitlement, and never copies or transfers instruments;
 - FireMUD persists provider identifiers and safe display metadata only, never raw card data;
-- gameplay-issued checkout URLs expire, are single-use, and are bound to the initiating account and operation; and
+- gameplay-issued checkout URLs use the ADR 0045 HTTPS handoff, expire, are single-use, and bind account, session, tenant, action, product, amount, currency, and `requestId`; and
 - only verified, replay-safe provider webhooks can complete a charge and idempotently grant its entitlement.
 
 ## Reversibility and Revisit Triggers

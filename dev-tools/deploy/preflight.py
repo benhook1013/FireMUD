@@ -641,6 +641,11 @@ def validate_recovery_baseline(
             "fail",
             "Recovery compatibility baseline preSnapshotJournalHighWater.sequence must be at or above artifactErasureHighWater",
         )
+    if pre_snapshot_sequence > restore_sequence:
+        return (
+            "fail",
+            "Recovery compatibility baseline preSnapshotJournalHighWater.sequence must be at or below restoreHighWater",
+        )
 
     coordination_evidence = baseline.get("coordinationRecoveryEvidence")
     if not isinstance(coordination_evidence, dict):

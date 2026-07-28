@@ -456,6 +456,8 @@ def validate_conditional_operator_route(
         errors.append(
             f"{label} tenant-role branch must require membership_generation"
         )
+    if "tenant_generation" not in checks:
+        errors.append(f"{label} operator route must require tenant_generation")
     if "target_tenant_generation" not in checks:
         errors.append(
             f"{label} operator route must require target_tenant_generation"
@@ -941,8 +943,14 @@ def validate_refresh_roles_routes(routes: list[Any], errors: list[str]) -> None:
         )
         if "mutation_digest" not in required_fields:
             errors.append(f"{label} must require mutation_digest for idempotency")
-        outcomes = grpc_route.get("canonical_errors", {})
-        if not isinstance(outcomes, dict) or "IDEMPOTENCY_CONFLICT" not in outcomes.get("any_of", []):
+        canonical_errors = grpc_route.get("canonical_errors", {})
+        any_of = canonical_errors.get("any_of") if isinstance(canonical_errors, dict) else None
+        outcomes = string_list(
+            any_of,
+            f"{label} canonical_errors.any_of",
+            errors,
+        )
+        if "IDEMPOTENCY_CONFLICT" not in outcomes:
             errors.append(f"{label} must declare IDEMPOTENCY_CONFLICT")
 
     http_route = resolve_unique_route(

@@ -4,6 +4,7 @@ set -euo pipefail
 
 python3 - <<'PY'
 import pathlib
+import re
 
 root = pathlib.Path(".")
 obsolete_public_resume_signature = "`resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)`"
@@ -108,23 +109,19 @@ require_contains(
 )
 
 operations_text = (root / "design/architecture/system-architecture-redis-operations.md").read_text(encoding="utf-8")
-canonical_reset_heading = "## Canonical Coordination Reset Sequence"
-canonical_reset_heading_marker = f"\n{canonical_reset_heading}\n"
-canonical_reset_start = operations_text.find(canonical_reset_heading_marker)
-if canonical_reset_start == -1:
-    if operations_text.startswith(f"{canonical_reset_heading}\n"):
-        canonical_reset_start = 0
-else:
-    canonical_reset_start += 1
-if canonical_reset_start == -1:
-    raise SystemExit(
-        "design/architecture/system-architecture-redis-operations.md: canonical reset section missing"
+canonical_reset_matches = list(
+    re.finditer(
+        r"(?ms)^## Canonical Coordination Reset Sequence[ \t]*\n"
+        r"(?P<section>.*?)(?=^## |\Z)",
+        operations_text,
     )
-canonical_reset_end = operations_text.find("\n## ", canonical_reset_start + len(canonical_reset_heading))
-canonical_reset_text = operations_text[
-    canonical_reset_start:
-    canonical_reset_end if canonical_reset_end != -1 else len(operations_text)
-]
+)
+if len(canonical_reset_matches) != 1:
+    raise SystemExit(
+        "design/architecture/system-architecture-redis-operations.md: expected exactly one canonical reset section, "
+        f"found {len(canonical_reset_matches)}"
+    )
+canonical_reset_text = canonical_reset_matches[0].group("section")
 required_reset_contract = [
     "Canonical public operation:",
     "`coordination-maintenance recover --mode reset --scope ... (--preserve-sessions|--invalidate-sessions)`",
@@ -185,20 +182,17 @@ for path in [
 ]:
     require_contains(path, [canonical_public_resume_signature])
 
-for path in [
+for path in (
     "design/operations/deployments/hobby-self-hosted/recovery/README.md",
     "design/operations/deployments/production/recovery/README.md",
     "design/operations/deployments/staging/recovery/README.md",
-]:
+):
     require_contains(path, [canonical_public_resume_signature])
-require_contains(
+for path in (
     "design/operations/deployments/production/backup-readiness/README.md",
-    [canonical_public_resume_awaiting_signature],
-)
-require_contains(
     "design/operations/deployments/production/traffic-open/README.md",
-    [canonical_public_resume_awaiting_signature],
-)
+):
+    require_contains(path, [canonical_public_resume_awaiting_signature])
 
 require_contains(
     "design/architecture/system-architecture-redis-ops-access.md",

@@ -1151,6 +1151,28 @@ if pre_snapshot_after_artifact_status != "pass":
         + pre_snapshot_after_artifact_message
     )
 
+pre_snapshot_above_restore = copy.deepcopy(valid_baseline)
+pre_snapshot_above_restore["backupArtifactLineage"]["preSnapshotJournalHighWater"] = {
+    "stream": "erasures",
+    "sequence": 13,
+}
+pre_snapshot_above_restore_path = recovery_dir / "pre-snapshot-above-restore-baseline.json"
+pre_snapshot_above_restore_path.write_text(
+    json.dumps(pre_snapshot_above_restore), encoding="utf-8"
+)
+pre_snapshot_above_restore_status, pre_snapshot_above_restore_message = module.validate_recovery_baseline(
+    tmp,
+    str(pre_snapshot_above_restore_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if pre_snapshot_above_restore_status != "fail" or "at or below restoreHighWater" not in pre_snapshot_above_restore_message:
+    raise SystemExit(
+        "preSnapshotJournalHighWater above restore high-water was accepted: "
+        + pre_snapshot_above_restore_message
+    )
+
 rollback_compatibility_status, rollback_compatibility_message = module.recovery_compatibility_check(
     {
         "generatedAt": past_timestamp,
@@ -1246,6 +1268,12 @@ invalid_baseline_cases = {
         "backupArtifactLineage": {
             **valid_baseline["backupArtifactLineage"],
             "preSnapshotJournalHighWater": {"stream": "erasures", "sequence": 9},
+        }
+    },
+    "lineage-pre-snapshot-above-restore": {
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "preSnapshotJournalHighWater": {"stream": "erasures", "sequence": 13},
         }
     },
     "overlay-stream": {
@@ -1446,6 +1474,7 @@ expected_invalid_baseline_messages = {
     "lineage-pre-snapshot-stream": "preSnapshotJournalHighWater.stream must match",
     "lineage-pre-snapshot-sequence": "preSnapshotJournalHighWater.sequence must be an integer",
     "lineage-pre-snapshot-below-artifact": "preSnapshotJournalHighWater.sequence must be at or above",
+    "lineage-pre-snapshot-above-restore": "preSnapshotJournalHighWater.sequence must be at or below",
     "overlay-stream": "stream must match the canonical erasure stream",
     "overlay-entry-stream": "sequenceDispositions[0] stream must match the canonical erasure stream",
     "overlay-integrity": "integrityVerification must be verified with status pass",

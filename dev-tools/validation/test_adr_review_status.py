@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import shutil
 import sys
 import tempfile
@@ -104,7 +105,7 @@ def append_queue_row(root: Path, row: str) -> None:
 
 
 def expect_failure(test_case: unittest.TestCase, call, expected: str) -> None:
-    with test_case.assertRaisesRegex(SystemExit, expected):
+    with test_case.assertRaisesRegex(SystemExit, re.escape(expected)):
         call()
 
 
@@ -153,7 +154,13 @@ class AdrReviewStatusTests(unittest.TestCase):
             )
 
     def test_all_terminal_statuses_require_checked_review(self) -> None:
-        for status in ("Accepted", "Superseded by ADR 0099", "Withdrawn"):
+        for status in (
+            "Accepted",
+            "Superseded by ADR 0099",
+            "Withdrawn",
+            "Withdrawn; superseded by ADR 0099",
+            "Withdrawn (superseded by ADR 0099)",
+        ):
             with self.subTest(status=status), fixture_root() as fixture:
                 root = Path(fixture)
                 path = root / "design/architecture/decisions/adr-0013-pending.md"
@@ -169,7 +176,13 @@ class AdrReviewStatusTests(unittest.TestCase):
                 )
 
     def test_checked_review_provenance_accepts_all_terminal_statuses(self) -> None:
-        for status in ("Accepted", "Superseded by ADR 0099", "Withdrawn"):
+        for status in (
+            "Accepted",
+            "Superseded by ADR 0099",
+            "Withdrawn",
+            "Withdrawn; superseded by ADR 0099",
+            "Withdrawn (superseded by ADR 0099)",
+        ):
             with self.subTest(status=status), fixture_root() as fixture:
                 root = Path(fixture)
                 path = root / "design/architecture/decisions/adr-0012-reviewed.md"
@@ -180,7 +193,13 @@ class AdrReviewStatusTests(unittest.TestCase):
                 self.validator.validate(root)
 
     def test_pre_formal_terminal_statuses_are_exempt(self) -> None:
-        for status in ("Accepted", "Superseded by ADR 0099", "Withdrawn"):
+        for status in (
+            "Accepted",
+            "Superseded by ADR 0099",
+            "Withdrawn",
+            "Withdrawn; superseded by ADR 0099",
+            "Withdrawn (superseded by ADR 0099)",
+        ):
             with self.subTest(status=status), fixture_root() as fixture:
                 root = Path(fixture)
                 path = root / "design/architecture/decisions/adr-0001-legacy.md"
@@ -419,7 +438,7 @@ class AdrReviewStatusTests(unittest.TestCase):
             )
             expect_failure(self,
                 lambda: self.validator.validate(root),
-                r"checked review queue references missing ADRs: \[99\]",
+                "checked review queue references missing ADRs: ['0099']",
             )
 
     def test_checked_queue_row_collects_every_adr_link(self) -> None:
@@ -434,6 +453,17 @@ class AdrReviewStatusTests(unittest.TestCase):
             reviews = self.validator.checked_reviews(queue_path(root))
             self.assertEqual(set(reviews), {12, 14})
             self.assertEqual(reviews[14][0].key, "TEST-COUPLED")
+
+    def test_checked_queue_accepts_uppercase_x(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [X] `TEST-UPPERCASE` — `revised` on 2026-07-27; "
+                "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md)",
+            )
+            reviews = self.validator.checked_reviews(queue_path(root))
+            self.assertEqual(reviews[12][-1].key, "TEST-UPPERCASE")
 
     def test_checked_queue_rejects_duplicate_adr_links_in_one_row(self) -> None:
         with fixture_root() as fixture:

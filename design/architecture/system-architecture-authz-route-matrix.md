@@ -11,7 +11,7 @@ Every protected route in a validated inventory must be listed here with:
 - tenant-billing authority-generation applicability,
 - caller-bound membership authority-generation applicability where relevant,
 - required live authority checks for the route class,
-- any response-profile or mutation-contract requirements needed for CI/security enforcement.
+- any response-profile or mutation-contract requirements needed for CI/security enforcement,
 - any role-assurance or bounded privileged-elevation contract required before a global role may authorize the route.
 
 **Canonical incomplete-inventory rule:** Until source-stable OpenAPI/protobuf inventory coverage is complete and validated, the YAML is declaration-only and must not generate runtime or default-deny policy for routes absent from the validated inventory. Runtime must reject unclassified protected routes and leave unclassified external routes unreachable or denied; CI and deployment inventory checks must fail validated candidate routes missing from the YAML.

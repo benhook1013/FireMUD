@@ -127,6 +127,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 self.assertFalse(route["global_platform_admin_membership_required"])
                 self.assertIn("membership_when_tenant_role", route["required_live_checks"])
                 self.assertIn("membership_generation", route["required_live_checks"])
+                self.assertIn("tenant_generation", route["required_live_checks"])
 
     def test_operator_ingress_conditional_shape_is_validated(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -175,6 +176,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     {
                         "membership_when_tenant_role",
                         "membership_generation",
+                        "tenant_generation",
                         "target_tenant_generation",
                         "current_global_role",
                         "role_appropriate_assurance",
@@ -187,12 +189,15 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 )
 
         drifted_route = routes["POST /sessions"][0]
-        drifted_route["required_live_checks"].remove("target_tenant_generation")
-        errors = []
-        self.validator.validate_generation_applicability(document["routes"], errors)
-        self.assertTrue(
-            any("operator route must require target_tenant_generation" in error for error in errors)
-        )
+        for missing_check in ("tenant_generation", "target_tenant_generation"):
+            with self.subTest(missing_check=missing_check):
+                drifted_route["required_live_checks"].remove(missing_check)
+                errors = []
+                self.validator.validate_generation_applicability(document["routes"], errors)
+                self.assertTrue(
+                    any(f"operator route must require {missing_check}" in error for error in errors)
+                )
+                drifted_route["required_live_checks"].append(missing_check)
 
     def test_profile_routes_require_generation_checks(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -272,6 +277,24 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     any("required_fields must be a list of strings" in error for error in errors)
                 )
                 self.assertTrue(any("must require mutation_digest" in error for error in errors))
+
+    def test_refresh_roles_rejects_malformed_canonical_error_any_of(self):
+        for malformed in ("not-a-list", ["IDEMPOTENCY_CONFLICT", 7]):
+            with self.subTest(malformed=malformed):
+                document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+                route = route_for(document, "game-session-service", "RefreshRoles")
+                route["canonical_errors"]["any_of"] = malformed
+                errors = []
+                self.validator.validate_refresh_roles_routes(document["routes"], errors)
+                self.assertIn(
+                    "game-session-service RefreshRoles canonical_errors.any_of "
+                    "must be a list of strings",
+                    errors,
+                )
+                self.assertIn(
+                    "game-session-service RefreshRoles must declare IDEMPOTENCY_CONFLICT",
+                    errors,
+                )
 
     def test_privileged_operator_routes_require_live_global_role_and_assurance(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -404,12 +427,14 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_cross_tenant_safe_routes_do_not_require_target_membership(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        for route in document["routes"]:
-            if route.get("classification") not in {
-                "cross_tenant_support_safe",
-                "cross_tenant_billing_safe",
-            }:
-                continue
+        matched_routes = [
+            route
+            for route in document["routes"]
+            if route.get("classification")
+            in {"cross_tenant_support_safe", "cross_tenant_billing_safe"}
+        ]
+        self.assertTrue(matched_routes)
+        for route in matched_routes:
             self.assertFalse(route["tenant_billing_authority_generation_applies"])
             self.assertFalse(route["membership_authority_generation_applies"])
             self.assertNotIn("membership", route["required_live_checks"])

@@ -40,6 +40,17 @@ Coordination Redis contains correctness-sensitive, short-lived runtime state. Th
 - The tool advertises and accepts only scope levels implemented and proved by the runtime. Region, tenant, or cluster scope is added only with an authoritative durable inventory and end-to-end recovery proof for that scope.
 - Raw coordination writes are break-glass only. They require actor, reason, deployment and scope audit, the covering reset or cleanup, and a passing post-check before gameplay resumes.
 
+### Recovery Phase Representation
+
+This maintenance surface uses the recovery phase representation defined by [ADR 0015](./adr-0015-online-backup-and-environment-wide-cold-start-recovery.md). The durable controller preserves the broader recovery contract's exact durable identifiers: `ready_to_reopen`, `AWAITING_RESUME`, `RESUME_AUTHORIZED`, `releasing`, and `finalized`; `SUCCEEDED` is terminal status. Public `expectedPhase` is a lower-snake-case wire precondition mapped exactly as follows; case variants and aliases are invalid:
+
+| Public wire `expectedPhase` | Durable controller state checked or recorded |
+| --- | --- |
+| `ready_to_reopen` | `ready_to_reopen` |
+| `awaiting_resume` | `AWAITING_RESUME` |
+
+`continueRecovery` accepts only `ready_to_reopen` and records `AWAITING_RESUME`; `resume` accepts only `awaiting_resume` and records `RESUME_AUTHORIZED`. `RESUME_AUTHORIZED`, `releasing`, and `finalized` remain internal durable states and are never caller-supplied `expectedPhase` values. Durable state and audit use these exact durable spellings; public request parsing and examples use the wire spelling, with no case normalization or aliasing.
+
 ### Public Release-Lock Safety Contract
 
 The public maintenance-lock release control is an audited abandonment operation, not a shortcut to resume or a general unlock API. It must satisfy all of the following gates:

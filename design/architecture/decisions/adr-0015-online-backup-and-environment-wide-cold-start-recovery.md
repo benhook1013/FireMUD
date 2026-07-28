@@ -67,6 +67,17 @@ The only initially supported player-facing database-rewind mode is environment-w
 
 Player-facing `scoped_reset_restore` with surviving Coordination Redis is deferred. It may become supported only after a separate decision and proof package establishes complete region ownership, scope inventory, stale-state rejection, session policy, and end-to-end reset/reconciliation behavior. Quarantined experiments with that mode do not count as readiness.
 
+### Recovery Phase Representation
+
+The durable recovery controller preserves the exact identifiers used by the broader recovery contract: `ready_to_reopen`, `AWAITING_RESUME`, `RESUME_AUTHORIZED`, `releasing`, and `finalized` are durable phase names, while `SUCCEEDED` is the terminal status. Public `expectedPhase` is a lower-snake-case wire precondition, not a second controller state; the controller maps it through this fixed table and rejects case variants or aliases:
+
+| Public wire `expectedPhase` | Durable controller state checked or recorded |
+| --- | --- |
+| `ready_to_reopen` | `ready_to_reopen` |
+| `awaiting_resume` | `AWAITING_RESUME` |
+
+`RESUME_AUTHORIZED`, `releasing`, and `finalized` are internal durable states and have no public `expectedPhase` value. `continueRecovery` accepts only the first mapping and records `AWAITING_RESUME`; `resume` accepts only the second mapping and records `RESUME_AUTHORIZED`. Durable state, audit, and recovery projections use these exact durable spellings, while request parsing and wire examples use the public spelling. No case normalization or aliasing is permitted, and no caller may submit an internal state such as `releasing` as `expectedPhase`.
+
 ### Restore-Safe Quarantine
 
 Quarantine is a technical execution state, not an operator convention:

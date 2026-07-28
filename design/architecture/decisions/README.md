@@ -25,7 +25,7 @@ The authoritative provenance is the checked review queue in the [consequential d
 
 ```text
 - [x] `DECISION-KEY` — `accepted|revised|deferred|superseded|withdrawn` on YYYY-MM-DD; OUTCOME
-- [x] `DECISION-KEY` — `accepted` on YYYY-MM-DD by [ADR NNNN](../../architecture/decisions/adr-NNNN-example.md)
+- [x] `DECISION-KEY` — `accepted` on YYYY-MM-DD by [ADR NNNN](./adr-NNNN-example.md)
 ```
 
 `OUTCOME` must be non-empty, use either the semicolon or `by` form shown in the queue, and contain one or more Markdown links. For a non-supersession row, an ADR provenance reference is specifically a link labeled `[ADR NNNN]` whose target filename is `adr-NNNN-*.md`; every such ADR link in one row receives that row's source key, date, and disposition. In a `superseded` row, every ADR-labeled outcome link is a replacement link, not provenance; a replacement ADR receives provenance only from its own non-superseded checked row. Other outcome prose and canonical-design links may follow. Distinct coupled queue rows may reference the same ADR only when their date and disposition agree. Duplicate source keys, conflicting duplicate ADR provenance, duplicate ADR links in one row, malformed checked rows, and checked rows without an outcome link are invalid. Unchecked rows are not parsed as completed review evidence.
