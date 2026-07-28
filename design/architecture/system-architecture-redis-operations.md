@@ -33,16 +33,18 @@ Canonical public operation:
 This one public operation acquires the maintenance lock, fences the scope, and runs these ordered phases. The public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` safety gate is required between pre-release continuation and the internal success release:
 
 1. internal pause-and-lock phase
-2. internal epoch-bump and coordination-reset phase
+2. internal epoch-bump and scope-safe coordination-reset phase
 3. internal ledger-reconciliation phase
 4. internal command-convergence phase
-5. internal metadata-initialization phase
-6. internal session-policy phase, including invalidation or preserved-session rebind according to the selected policy
-7. internal Account authority and issued-token projection-rebuild phase for reset mode, including replacement projection rebuild and exact-token validation for cluster resets
-8. internal post-reset smoke-check phase, with protected admission still closed until this phase passes
-9. `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` with canonical `expectedPhase=ready_to_reopen`, reconciling the controller into `AWAITING_RESUME`
-10. public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` with canonical `expectedPhase=AWAITING_RESUME`, which resolves the operation's recorded scope and records `RESUME_AUTHORIZED` without releasing the lock or traffic fence
-11. internal resume-and-success-release phase
+5. internal protected-domain cutover-fencing phase for Account durable authority/token identity and replay-domain quarantine, with immutable evidence
+6. external AOF/deployment reset handoff, when the selected reset requires destructive storage cleanup
+7. internal metadata-initialization phase
+8. internal Account authority and issued-token projection-rebuild phase
+9. internal session-policy phase, including invalidation or preserved-session rebind according to the selected policy
+10. internal post-reset smoke-check phase, with protected admission still closed until this phase passes
+11. `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` with canonical `expectedPhase=ready_to_reopen`, reconciling the controller into `AWAITING_RESUME`
+12. public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` with canonical `expectedPhase=AWAITING_RESUME`, which resolves the operation's recorded scope and records `RESUME_AUTHORIZED` without releasing the lock or traffic fence
+13. internal resume-and-success-release phase
 
 The internal pause-and-lock phase is not a public command or a standalone operation. Only `recover` creates the durable `operationId` and maintenance-lock identity; an interrupted workflow resumes through that same operation or is explicitly abandoned through the audited maintenance-lock release control.
 
@@ -62,13 +64,26 @@ Rules:
 - The internal pause-and-lock phase must drive the chosen scope to canonical `PAUSED` before storage-level wipe or prefix deletion occurs.
 - Capture the `maintenanceLockToken` returned by that phase and pass it to every subsequent internal phase; no phase reacquires the deployment lock independently.
 - The internal epoch-bump and coordination-reset phase is the only phase that bumps `region_epoch` and emits authoritative old/new epoch evidence for downstream reconciliation.
+- The early epoch-bump/reset phase may perform only scope-safe coordination cleanup after the scope is fenced. It must not delete or recreate a full Coordination Redis deployment or AOF volume.
 - Internal ledger reconciliation and command convergence are required before traffic resumes; replay-first workflows use those same phases without a preceding epoch bump, but reset workflows must not skip them.
-- Internal metadata initialization re-establishes `tick:{tenantRegionTag}:meta` from the durable baseline after the reset phase; `{tenantRegionTag}` is the opaque full-scope tag for `<tenantId, gameInstanceId, regionId>`.
-- Internal session rebinding is conditional. Every region-, tenant-, and cluster-scoped reset records either `--preserve-sessions` or `--invalidate-sessions`; only the former permits preserved-session rebind, and no scope infers the policy.
+- Internal metadata initialization re-establishes `tick:{tenantRegionTag}:meta` from the durable baseline after scope-safe cleanup and, where applicable, the external AOF/deployment reset; `{tenantRegionTag}` is the opaque full-scope tag for `<tenantId, gameInstanceId, regionId>`.
 - Reset-mode recovery requests Account Service to rebuild and verify the Account issuer, account, tenant, and membership generation projections from Account durable authority and to rebuild and verify the affected `session:auth:token:<tokenHash>` issued-token projections before the smoke phase. Recovery awaits the durable Account result and verifies its returned freshness/generation evidence; it is not a writer of Account-owned projections. Region- and tenant-scoped resets preserve those Account-owned records but still require an idempotent re-projection and exact-generation validation; a cluster reset verifies the Account repair/reset cutover that preceded physical cleanup, then registers replacement issued-token projections and proves exact-token validation before representative-region smoke. The phase emits immutable projection evidence and fails closed on any missing, stale, malformed, or mismatched generation or token record.
+- Internal session rebinding is conditional and occurs only after the Account projection phase succeeds. Every region-, tenant-, and cluster-scoped reset records either `--preserve-sessions` or `--invalidate-sessions`; only the former permits preserved-session rebind, and no scope infers the policy.
+- A destructive full-deployment/AOF reset is permitted only after the protected Account authority/token cutover and replay-domain quarantine/fence have completed and their immutable evidence has been recorded. The external AOF handoff is part of this durable operation; it is not authorized by an empty keyspace, and it does not add another public continuation phase.
 - The internal post-reset smoke-check phase proves the new epoch can acquire leases, stage work, converge, and clean up correctly, proves replay-domain quarantine/fencing and durable consume acknowledgement where the reset affects replay admission, and for tenant/cluster scopes samples the required representative regions only after the Account projection and exact-token gates pass. Protected admission remains closed through those projection, token, and smoke gates; the operation then atomically enters `ready_to_reopen` without dropping the maintenance lock or traffic fence. Its evidence must include the completed Account projection rebuild and any required session-schema-cleanup completion evidence. Only the public `continueRecovery(... expectedPhase=ready_to_reopen ...)` transition may advance it to `AWAITING_RESUME`.
-- The internal resume-and-success-release phase is unreachable until the public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` control records `RESUME_AUTHORIZED` for the same operation, expected phase, recorded scope, lock, and evidence. Its durable controller transition is atomic, but the external Game Session, Coordination Redis, ingress, affected-scope, and maintenance-lock effects are not one distributed transaction. The phase must durably audit the authorization, retain the fence and lock until each release postcondition is observed, idempotently apply and read back each required postcondition, and may record terminal `SUCCEEDED` only after every current observation succeeds; any failed, missing, stale, or ambiguous effect remains quarantined and fail-closed for retry or failure handling.
+- The internal resume-and-success-release phase is unreachable until the external public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` control records `RESUME_AUTHORIZED` for the same operation, expected phase, recorded scope, lock, immutable evidence, Account projection evidence, and replay-domain proof where applicable. Its durable controller transition is atomic, but the external Game Session, Coordination Redis, ingress, affected-scope, and maintenance-lock effects are not one distributed transaction. The phase must durably audit the authorization, retain the fence and lock until each release postcondition is observed, idempotently apply and read back each required postcondition, and may record terminal `SUCCEEDED` only after every current observation succeeds; any failed, missing, stale, or ambiguous effect remains quarantined and fail-closed for retry or failure handling.
 - If the workflow aborts before terminal success, operators must use the audited `coordination-maintenance release-lock ...` control rather than inventing an alternate unlock sequence.
+
+### External AOF-Reset Handoff
+
+An AOF reset or replacement of the Coordination Redis deployment is an external infrastructure step inside the durable recovery operation. It must not race the recovery controller or use the empty keyspace as evidence that the operation is paused:
+
+1. The recover operation first durably records the resolved operation, scope inventory, maintenance-lock digest/fence, expected target deployment identity, and a paused/fenced phase in the external control store. Protected admission and affected coordination writes remain closed; any early reset work is limited to scope-safe cleanup.
+2. Before destructive reset, the operation establishes the protected Account authority/token cutover and replay-domain quarantine/fence, records their immutable evidence, and verifies that the cutovers are bound to the same operation and scope. An AOF wipe must not occur before these fences and evidence exist.
+3. The authorized operator performs the AOF reset or replacement only after recording an immutable handoff evidence reference. That evidence identifies the old and new deployment identities, scope, operator, action and time, tooling digest, and proof that the old endpoint is fenced and the replacement endpoint is the intended target.
+4. The replacement starts with the required empty keyspace and protected credentials/ACLs. Before continuation, the operator records independent verification of endpoint identity, ACL/configuration, empty-keyspace state, and deployment health. Redis key absence alone is not the pause or ownership proof.
+5. The operator binds that evidence to the same durable `operationId`. The controller validates the stored pause/fence, operation-owned scope, lock, target deployment identity, protected-domain cutover evidence, and immutable handoff evidence before its internal recovery worker resumes rebuild phases; it never reconstructs the operation or releases the fence from the new empty keyspace. This handoff is durable operation evidence, not an additional public `continueRecovery` phase.
+6. A missing, stale, mismatched, or ambiguous handoff or verification record leaves the operation paused and gameplay admission closed. Internal retries use the same operation-owned state and do not repeat the AOF reset or begin rebuild concurrently. The only public `continueRecovery` invocation remains the later `expectedPhase=ready_to_reopen` transition into `AWAITING_RESUME`; public `resume` with `expectedPhase=AWAITING_RESUME` and the separate internal release are still required before reopening.
 
 ## Redis SLOs & Budgets
 
@@ -112,9 +127,9 @@ Operators should wire alerts directly to these metrics and treat sustained growt
 2. Schedule a maintenance window.
 3. Keep the control-plane path and maintenance tooling alive long enough to execute the canonical reset handshake; do not stop the very components required to pause, fence, audit, and verify the workflow.
 4. Start the [Canonical Coordination Reset Sequence](#canonical-coordination-reset-sequence) for the affected scope with exactly one explicit session-policy choice, `--preserve-sessions` or `--invalidate-sessions`.
-5. Complete every protected-domain cutover owned by Account Service and any replay-domain quarantine/fence before destructive storage cleanup; the recover operation must receive and verify the returned projection and replay evidence while admission remains closed.
-6. Perform the storage-level reset during the internal epoch-bump/coordination-reset phase by stopping Redis, deleting or recreating the AOF volume, and restarting Redis with the desired AOF configuration. A full-AOF deletion must never precede those protected-domain cutovers or be treated as their authorization boundary.
-7. Allow the single recover operation to complete its internal reconciliation and smoke-check phases to `ready_to_reopen`, then require public `continueRecovery(... expectedPhase=ready_to_reopen ...)` and `resume(... expectedPhase=AWAITING_RESUME ...)` before the internal release phase may finalize and permit ticks or player traffic.
+5. Complete every protected-domain cutover owned by Account Service and any replay-domain quarantine/fence before destructive storage cleanup; the recover operation must receive and verify the returned Account projection and replay evidence while admission remains closed.
+6. Perform the storage-level reset only in the external AOF/deployment reset handoff after those cutovers and fences are established, by stopping Redis, deleting or recreating the AOF volume, and restarting Redis with the desired AOF configuration. The earlier internal reset phase may perform only scope-safe cleanup; a full-AOF deletion must never precede the protected-domain cutovers or be treated as their authorization boundary.
+7. Allow the single recover operation to complete its internal reconciliation and smoke-check phases to `ready_to_reopen`, then require public `continueRecovery(... expectedPhase=ready_to_reopen ...)` to reach `AWAITING_RESUME`, followed by public `resume(... expectedPhase=AWAITING_RESUME ...)` before the separate internal release phase may finalize and permit ticks or player traffic.
 8. If the workflow aborts, use only the separately audited maintenance-lock release control; do not invoke an internal recovery phase as a public command.
 
 Manual AOF surgery is not supported. Either the AOF is trusted and replayed as-is, or it is discarded and Redis restarts from a clean keyspace.
@@ -296,7 +311,7 @@ Runbook:
 2. verify PostgreSQL authority and the surviving Redis primary have converged on one authoritative epoch
 3. invoke one `coordination-maintenance recover --mode reset --scope region ... --preserve-sessions` operation for each safely isolated affected region; it clears region-local bindings and blocks normal command intake until preserved sessions complete rebind
 4. if region isolation cannot be proved, retain the external primary fence and invoke one cluster-scoped `recover --mode reset --scope cluster --invalidate-sessions` operation; the cluster fallback keeps traffic blocked and invalidates gameplay sessions according to its explicit policy
-5. let the recover operation own its internal pause/fencing, reset, reconciliation, rebind or invalidation, smoke verification, authorized resume, and success release before ticks or command intake resume
+5. let the recover operation own its internal pause/fencing, reset, reconciliation, rebind or invalidation, and smoke verification; then require the external public `resume(operationId, expectedPhase=AWAITING_RESUME, maintenanceLockToken, evidenceRef)` gate before the separate internal success-release phase permits ticks or command intake to resume
 
 ## Normalization and Hash-Tag Migration
 

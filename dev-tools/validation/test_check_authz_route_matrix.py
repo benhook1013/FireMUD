@@ -188,7 +188,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
             errors = self.validator.validate(path)
         self.assertTrue(any("uses unknown token profiles" in error for error in errors))
-        self.assertTrue(
+        self.assertFalse(
             any("exactly one token profile per receiver policy" in error for error in errors)
         )
 
@@ -408,7 +408,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
             errors = self.validator.validate(path)
         self.assertTrue(
-            any("multi-profile receiver requires accepted_token_profile_audiences" in error for error in errors)
+            any("accepted token audience keys must equal accepted profiles" in error for error in errors)
         )
         self.assertFalse(any("exactly one token profile per receiver policy" in error for error in errors))
 

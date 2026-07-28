@@ -2,6 +2,12 @@
 
 This document defines gameplay takeover, reconnect, token refresh, membership-version handling, and control-plane logout behavior. It complements [Authentication & Authorization](./system-architecture-authentication.md), which defines the end-to-end authn/authz model and gameplay admission flow.
 
+## Implementation Status
+
+Membership-change event delivery and generation-aware session consumption are not yet live. The current Account runtime response exposes `membershipVersion` without `membershipAuthorityGeneration`, so Game Session must not treat the contract below as implemented until the Account producer, event payload, consumer, and focused proof converge.
+
+Account Service is the sole writer of account authority-generation advances and their `session:auth:generation:account:<accountId>` projections. Game Session and other downstream services consume Account-owned generation events and projections; they must not advance the account generation or write that projection directly.
+
 ## Multi-Client Behavior and Session Takeover
 
 Each gameplay identity can only be controlled by one session at a time, keyed by `{tenantId, gameInstanceId, characterId}`.
@@ -33,8 +39,6 @@ The Game Session Service exposes `/sessions/{sessionId}/refresh-roles` for manua
 This process is invisible to the client; no re-login is needed.
 
 This is backend role-context maintenance only. It does not prompt for another gameplay factor, reauthenticate the active gameplay session, or turn global account/control-plane roles into gameplay authority.
-
-Target-state note: membership-change event delivery and generation-aware session consumption are not yet live. The current Account runtime response exposes `membershipVersion` without `membershipAuthorityGeneration`, so Game Session must not treat the following contract as implemented until the Account producer, event payload, consumer, and focused proof converge.
 
 Membership changes that affect tenant access follow a stricter target contract than ordinary role refresh:
 
@@ -157,8 +161,8 @@ Long-lived gameplay sessions require periodic rotation of the private `game-sess
 
 Security- and billing-related events (for example, account bans, password resets, tenant suspension, or subscription state changes) do not all behave identically; they follow subscription-aware rules:
 
-- For **account-level security events** such as account bans or password resets, services must:
-  - Advance the Account authority generation and project `session:auth:generation:account:<accountId>` set-if-greater so previously issued tokens become invalid without requiring key scans or timestamp comparisons.
+- For **account-level security events** such as account bans or password resets, the Account Service must:
+  - Advance the Account authority generation and project `session:auth:generation:account:<accountId>` set-if-greater so previously issued tokens become invalid without requiring key scans or timestamp comparisons. Downstream services consume the resulting Account-owned event/projection and must not write the account-generation state themselves.
   - Revoke any gameplay session keys bound to the affected account across tenants so active sockets are kicked and must re-login under the new security conditions.
 - For **tenant-level billing events**, see the subscription-state mapping below and [Subscription Management](./microservices/account-service/subscription-management.md#tenant-availability-and-quota-enforcement) for when revocation is mandatory versus when quotas and warnings apply.
 - For **tenant membership changes**, the Account Service is the authoritative source of membership versioning and change events. Each event carries the Account-committed `membershipAuthorityGeneration` for the exact `{accountId, tenantId}` scope as well as `membershipVersion`; consumers must use the generation as the authority fence, treat missing or malformed generation evidence as a contract failure, reconcile gaps from Account, and revoke gameplay immediately when the caller loses tenant membership or gameplay-admission authority for that tenant.

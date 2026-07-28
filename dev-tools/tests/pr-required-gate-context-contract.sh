@@ -98,7 +98,7 @@ require_smoke_pattern \
   'completedJobSnapshotRetries[[:space:]]*<=[[:space:]]*maxCompletedJobSnapshotRetries' \
   "Smoke Gate must bound stale completed-workflow snapshot retries"
 require_smoke_pattern \
-  'core[.]setFailed[[:space:]]*[(]' \
+  'did not expose a terminal PR Full-Stack Smoke job after' \
   "Smoke Gate must fail closed after bounded snapshot retries"
 
 echo "PR required-gate context contract checks passed"

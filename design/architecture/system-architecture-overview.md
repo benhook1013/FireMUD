@@ -504,7 +504,7 @@ From the perspective of admin and moderation tooling there are two broad classes
 
 Implementations of Logging & Admin must preserve this separation with independent readiness/degradation behavior and resource isolation so observability outages do not take down the operator-facing paths on the external admin/creator API plane.
 
-Current implementation status: Logging & Admin has live read and investigation surfaces for logs, reports, saga state, admission-pointer state/audit, and observability dashboards, plus executable forwarding for the supported feature-flag, admission-pointer, and tick pause/resume mutations. Moderation policy recording is live, while owner-side enforcement propagation remains an explicit target-state gap.
+See the [Implementation Status](#implementation-status) section above for the current Logging & Admin implementation boundary; this section defines the architecture separation and target behavior only.
 
 The current `/reports` route is not caller-bound: its OpenAPI/controller still accepts caller-supplied `tenantId` and `reporterAccountId`. The target player route derives both identities from the validated `player-bootstrap` session and fails closed until that contract is implemented.
 

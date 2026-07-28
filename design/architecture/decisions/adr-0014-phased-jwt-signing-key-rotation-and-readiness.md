@@ -47,6 +47,14 @@ Readiness proof is specific to the custody backend. Under the Kubernetes fallbac
 - The key ring is environment-wide, not tenant-specific. Compromise of an active Account signing key is therefore an environment-wide issuer compromise; incident response must not describe tenant-selective containment as sufficient.
 - Gateway connect-context signing remains a separate key family from Account JWT signing. [ADR 0024](./adr-0024-trusted-gameplay-workload-delegation.md) supersedes the former Game Session `SessionAttestation` key family; routine gameplay delegation has no per-action signing keys.
 
+### Canonical Issuer-Generation Evidence
+
+The canonical issuer-generation source is the Account-owned durable authority record for `session:auth:generation:issuer:<issuerId>`. The Coordination Redis key is only its idempotent projection and freshness evidence; a Redis value, JWT claim, token `iat`, JWKS document, signer response, or registry record is not an independent authority source. The durable record binds the environment-wide `issuerId`, its positive monotonic `issuerAuthGeneration`, the Account authority transaction or outbox version that established it, and the current lifecycle status.
+
+Account issuance and refresh read the durable record and capture its exact `issuerAuthGeneration` in the JWT and matching issued-token registry snapshot under the same Account transaction or compare-and-set fence. Validators require an evidence fence proving that the observed projection represents that committed durable generation, then compare the token claim and registry snapshot for exact equality. Planned key rotation normally leaves the issuer generation unchanged; its durable signer-promotion record and `kid` correspondence govern the key transition. A compromise or post-restore hard cutover advances the durable issuer record before protected traffic reopens, so old-generation tokens fail even if another copy of the old public key remains temporarily observable.
+
+Startup and recovery always reconcile from the durable Account issuer record first. Account must not infer the current generation or active authority from signer/JWKS agreement, a Redis key that lacks freshness evidence, token timestamps, or registry presence. A missing, unavailable, malformed, regressed, or conflicting durable record, projection evidence, token claim, or signer/JWKS generation keeps issuance and protected traffic quarantined until Account completes the required reconciliation and correspondence proof.
+
 ### Planned Rotation
 
 A normal rotation uses these ordered phases:

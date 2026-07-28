@@ -1218,6 +1218,30 @@ invalid_baseline_cases = {
             "preSnapshotJournalHighWater": None,
         }
     },
+    "lineage-artifact-bound": {
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "artifactErasureHighWater": {"stream": "erasures", "sequence": 9},
+        }
+    },
+    "lineage-snapshot-bound": {
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "erasureHighWaterSnapshotBound": False,
+        }
+    },
+    "lineage-pre-snapshot-stream": {
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "preSnapshotJournalHighWater": {"stream": "other-stream", "sequence": 10},
+        }
+    },
+    "lineage-pre-snapshot-sequence": {
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "preSnapshotJournalHighWater": {"stream": "erasures", "sequence": "10"},
+        }
+    },
     "lineage-pre-snapshot-below-artifact": {
         "backupArtifactLineage": {
             **valid_baseline["backupArtifactLineage"],
@@ -1346,6 +1370,10 @@ expected_invalid_baseline_messages = {
     "overlay-artifact-bounds": "artifactErasureHighWater must match the canonical bound exactly",
     "overlay-initial-catchup-bounds": "initialCatchupHighWater must match the canonical bound exactly",
     "lineage-pre-snapshot": "artifact lineage must include a valid",
+    "lineage-artifact-bound": "artifactErasureHighWater must match the snapshot-bound",
+    "lineage-snapshot-bound": "erasureHighWaterSnapshotBound must be true",
+    "lineage-pre-snapshot-stream": "preSnapshotJournalHighWater.stream must match",
+    "lineage-pre-snapshot-sequence": "preSnapshotJournalHighWater.sequence must be an integer",
     "lineage-pre-snapshot-below-artifact": "preSnapshotJournalHighWater.sequence must be at or above",
     "overlay-stream": "stream must match the canonical erasure stream",
     "overlay-entry-stream": "sequenceDispositions[0] stream must match the canonical erasure stream",

@@ -276,6 +276,8 @@ Validation rules:
 
 Every production-equivalent drill and actual player-facing restore has one durable recovery-controller state machine. The checked-in records below are immutable projections exported only after that controller reaches `finalized`; they are not runtime authority or release-transaction inputs. For an actual recovery, preflight reads the controller in `ready_to_reopen`, and the controller owns the release reconciliation. The runtime state machine includes the explicit authorization boundary `ready_to_reopen -> AWAITING_RESUME -> RESUME_AUTHORIZED -> releasing -> finalized`:
 
+Phase names have a deliberate representation boundary. Control-plane/API transition labels may use uppercase enum names such as `AWAITING_RESUME` and `RESUME_AUTHORIZED`; persisted recovery projections always use the lower-snake-case values `awaiting_resume` and `resume_authorized`. The public continuation contract's `expectedPhase=ready_to_reopen` is the canonical pre-release input, and consumers must map control-plane labels to persisted values rather than compare the two representations as raw strings.
+
 - `production`: `design/operations/deployments/production/recovery/<recovery-ref>.json`
 - `staging`: `design/operations/deployments/staging/recovery/<recovery-ref>.json`
 - `hobby-self-hosted`: `design/operations/deployments/hobby-self-hosted/recovery/<recovery-ref>.json`

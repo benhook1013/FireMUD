@@ -34,9 +34,18 @@ Coordination Redis contains correctness-sensitive, short-lived runtime state. Th
   - `replay-first` may replay only the declared coherent durable work and must still complete authority/projection proof, affected-scope reconciliation, and the post-recovery smoke gate before any gameplay-capable `resume`.
   - `reset` must complete the full destructive reset ordering, rebuild Account authority and issued-token projections, reconcile affected bindings, and pass the post-reset smoke gate before `resume`.
   - `session-schema-cleanup` may clean only the declared session-schema state. It may not authorize gameplay resume by itself; if the operation is followed by a gameplay-capable `resume`, it must execute the same authority/projection, affected-scope, and smoke gates as the other modes.
-  - A mode that cannot complete the required gates remains paused or failed and has no gameplay-resume path. `AWAITING_RESUME` is observational until the exact public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` checks pass and the controller records `RESUME_AUTHORIZED`.
+- A mode that cannot complete the required gates remains paused or failed and has no gameplay-resume path. `AWAITING_RESUME` is observational until the exact public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` checks pass and the controller records `RESUME_AUTHORIZED`.
 - The tool advertises and accepts only scope levels implemented and proved by the runtime. Region, tenant, or cluster scope is added only with an authoritative durable inventory and end-to-end recovery proof for that scope.
 - Raw coordination writes are break-glass only. They require actor, reason, deployment and scope audit, the covering reset or cleanup, and a passing post-check before gameplay resumes.
+
+### Public Release-Lock Safety Contract
+
+The public maintenance-lock release control is an audited abandonment operation, not a shortcut to resume or a general unlock API. It must satisfy all of the following gates:
+
+- The request names the existing `operationId`, exact recorded scope selectors, server-issued `maintenanceLockToken`, an authenticated authorized actor, a non-empty reason, and an immutable `evidenceRef`. The operation record and its fencing generation are the authorities; caller-supplied scope or token metadata cannot create or transfer ownership.
+- The controller resolves the token to the active operation's stored token digest and fence, verifies the deployment boundary, operation class, actor authorization, and exact scope, then compare-and-sets from the exact durable phase it observed. Release is permitted only for a paused/fenced `PAUSED`, `ready_to_reopen`, `AWAITING_RESUME`, or explicitly recorded pre-release failure phase; it rejects `RUNNING`, `releasing`, `finalized`, concurrent advancement, and every phase/evidence mismatch.
+- A release request is idempotent on the exact operation-owned tuple `(operationId, recorded scope, lock identity, actor, reason digest, and evidence identity)`. A duplicate returns the recorded abandonment result without repeating release effects; a different tuple, stale token, expired lock, missing evidence, or ambiguous external state fails closed and leaves the fence in place.
+- Successful abandonment records the actor, reason, evidence, phase, and fence outcome durably before any lock-release effect is observed. It retains the paused/non-gameplay-safe state and cannot authorize `resume`, `AWAITING_RESUME`, traffic reopening, or a new operation implicitly.
 
 ## Consequences
 

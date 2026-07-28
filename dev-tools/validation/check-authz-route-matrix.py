@@ -214,7 +214,20 @@ def validate_role_assurance(document: dict[str, Any], errors: list[str]) -> set[
         errors.append("role_assurance must be a mapping")
         return set()
 
-    predicates = set(raw_assurance)
+    vocabulary = raw_assurance.get("vocabulary")
+    if not isinstance(vocabulary, dict) or not vocabulary:
+        errors.append("role_assurance.vocabulary must be a non-empty mapping")
+        predicates: set[str] = set()
+    else:
+        predicates = set()
+        for name, definition in vocabulary.items():
+            if not isinstance(name, str) or not name.strip():
+                errors.append("role_assurance.vocabulary keys must be non-empty strings")
+                continue
+            if not isinstance(definition, dict):
+                errors.append(f"role_assurance.vocabulary.{name} must be a mapping")
+                continue
+            predicates.add(name)
     predicate = raw_assurance.get("privileged_control_when_global_role")
     if not isinstance(predicate, dict):
         errors.append(
@@ -319,7 +332,6 @@ def validate_multi_profile_predicates(
 ) -> None:
     known_profiles = [token_profiles.get(profile_name) for profile_name in profiles]
     if not all(profile is not None for profile in known_profiles):
-        errors.append(f"{label} must declare exactly one token profile per receiver policy")
         return
     shared_type_issuer = {
         (profile.get("type"), profile.get("issuer"))
@@ -334,17 +346,91 @@ def validate_multi_profile_predicates(
             f"{label} multi-profile token predicates must match the shared token_type/token_issuer"
         )
         return
-    audience_map = entry.get("accepted_token_profile_audiences")
-    if isinstance(audience_map, dict) and not (
-        set(audience_map) == set(profiles)
-        and all(
-            audience_map.get(profile_name) == token_profiles[profile_name]["audience"]
-            for profile_name in profiles
-        )
-    ):
+
+
+def validate_pending_deletion_generation(
+    route: dict[str, Any],
+    label: str,
+    account_generation: Any,
+    errors: list[str],
+) -> None:
+    if route.get("classification") != "pending_deletion_scoped":
+        return
+    if account_generation is not False:
         errors.append(
-            f"{label} multi-profile receiver requires accepted_token_profile_audiences "
-            "matching every accepted profile"
+            f"{label} pending_deletion_scoped routes must set "
+            "account_authority_generation_applies=false"
+        )
+    if route.get("tenant_billing_authority_generation_applies") is not False:
+        errors.append(
+            f"{label} pending_deletion_scoped routes must set "
+            "tenant_billing_authority_generation_applies=false"
+        )
+    if route.get("membership_authority_generation_applies") is not False:
+        errors.append(
+            f"{label} pending_deletion_scoped routes must set "
+            "membership_authority_generation_applies=false"
+        )
+
+
+def validate_membership_generation(
+    route: dict[str, Any], label: str, errors: list[str]
+) -> Any:
+    value = route.get("membership_authority_generation_applies")
+    valid_scalar = isinstance(value, bool) or value == "conditional_by_operator_role"
+    if value is not None and not valid_scalar:
+        errors.append(
+            f"{label} membership_authority_generation_applies must be one of "
+            f"{sorted(MEMBERSHIP_GENERATION_APPLICABILITY_VALUES, key=str)}"
+        )
+    condition = route.get("membership_authority_generation_condition")
+    if value == "conditional_by_operator_role":
+        if condition != CONDITIONAL_OPERATOR_MEMBERSHIP_SHAPE:
+            errors.append(
+                f"{label} conditional membership generation requires "
+                "tenant_role=true and platformAdmin_global=false"
+            )
+    elif condition is not None:
+        errors.append(
+            f"{label} declares membership_authority_generation_condition without "
+            "conditional_by_operator_role"
+        )
+    return value
+
+
+def validate_conditional_operator_route(
+    route: dict[str, Any], label: str, value: Any, errors: list[str]
+) -> None:
+    route_key_value = (route.get("service"), route.get("route"))
+    if route_key_value not in CONDITIONAL_OPERATOR_ROUTES:
+        return
+    if value != "conditional_by_operator_role":
+        errors.append(
+            f"{label} operator ingress must use conditional_by_operator_role "
+            "membership generation"
+        )
+    if route.get("global_platform_admin_membership_required") is not False:
+        errors.append(
+            f"{label} must set global_platform_admin_membership_required=false"
+        )
+    checks = set(
+        string_list(route.get("required_live_checks"), f"{label} required_live_checks", errors)
+    )
+    if "membership_when_tenant_role" not in checks:
+        errors.append(
+            f"{label} tenant-role branch must require membership_when_tenant_role"
+        )
+    if "membership_generation" not in checks:
+        errors.append(
+            f"{label} tenant-role branch must require membership_generation"
+        )
+    if "target_tenant_generation" not in checks:
+        errors.append(
+            f"{label} operator route must require target_tenant_generation"
+        )
+    if route.get("global_platform_admin_reference_generation_binding") != "target_tenant_generation":
+        errors.append(
+            f"{label} must bind global platformAdmin operations to target_tenant_generation"
         )
 
 
@@ -710,71 +796,11 @@ def validate_generation_applicability(routes: list[Any], errors: list[str]) -> N
         account_generation = route.get("account_authority_generation_applies")
         if account_generation is not None and not isinstance(account_generation, bool):
             errors.append(f"{label} account_authority_generation_applies must be boolean")
-        if route.get("classification") == "pending_deletion_scoped":
-            if account_generation is not False:
-                errors.append(
-                    f"{label} pending_deletion_scoped routes must set "
-                    "account_authority_generation_applies=false"
-                )
-            if route.get("tenant_billing_authority_generation_applies") is not False:
-                errors.append(
-                    f"{label} pending_deletion_scoped routes must set "
-                    "tenant_billing_authority_generation_applies=false"
-                )
-            if route.get("membership_authority_generation_applies") is not False:
-                errors.append(
-                    f"{label} pending_deletion_scoped routes must set "
-                    "membership_authority_generation_applies=false"
-                )
-        value = route.get("membership_authority_generation_applies")
-        valid_scalar = isinstance(value, bool) or value == "conditional_by_operator_role"
-        if value is not None and not valid_scalar:
-            errors.append(
-                f"{label} membership_authority_generation_applies must be one of "
-                f"{sorted(MEMBERSHIP_GENERATION_APPLICABILITY_VALUES, key=str)}"
-            )
-        condition = route.get("membership_authority_generation_condition")
-        if value == "conditional_by_operator_role":
-            if condition != CONDITIONAL_OPERATOR_MEMBERSHIP_SHAPE:
-                errors.append(
-                    f"{label} conditional membership generation requires "
-                    "tenant_role=true and platformAdmin_global=false"
-                )
-        elif condition is not None:
-            errors.append(
-                f"{label} declares membership_authority_generation_condition without "
-                "conditional_by_operator_role"
-            )
-
-        route_key_value = (route.get("service"), route.get("route"))
-        if route_key_value not in CONDITIONAL_OPERATOR_ROUTES:
-            continue
-        if value != "conditional_by_operator_role":
-            errors.append(
-                f"{label} operator ingress must use conditional_by_operator_role "
-                "membership generation"
-            )
-        if route.get("global_platform_admin_membership_required") is not False:
-            errors.append(
-                f"{label} must set global_platform_admin_membership_required=false"
-            )
-        checks = set(string_list(route.get("required_live_checks"), f"{label} required_live_checks", errors))
-        if "membership_when_tenant_role" not in checks:
-            errors.append(
-                f"{label} tenant-role branch must require membership_when_tenant_role"
-            )
-        if "membership_generation" not in checks:
-            errors.append(
-                f"{label} tenant-role branch must require membership_generation"
-            )
-        if "target_tenant_generation" not in checks:
-            errors.append(
-                f"{label} operator route must require target_tenant_generation"
-            )
-        if route.get("global_platform_admin_reference_generation_binding") != "target_tenant_generation":
-            errors.append(
-                f"{label} must bind global platformAdmin operations to target_tenant_generation"
-            )
+        validate_pending_deletion_generation(
+            route, label, account_generation, errors
+        )
+        value = validate_membership_generation(route, label, errors)
+        validate_conditional_operator_route(route, label, value, errors)
 
 
 def validate_profile_authority_routes(routes: list[Any], errors: list[str]) -> None:

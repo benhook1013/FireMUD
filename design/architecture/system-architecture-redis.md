@@ -42,6 +42,8 @@ This document is the **conceptual hub** for Redis in FireMUD. It explains the me
 
 The target authenticated gameplay-session contract below is not fully implemented. Current Game Session runtime state remains in the implementation-local `sessionctx:*` family, including bootstrap context and lookup indexes, rather than the canonical `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` family. The target complete session schema, session-only CAS, and region-binding bridge have not yet converged end to end. The current runtime also derives Redis session TTL directly from `FIREMUD_AUTH_SESSION_EXPIRATION_MS`, with a `3,600,000` ms default, and does not enforce the target five-minute cap.
 
+The target issued-token registry contract and Account-owned authority-generation enforcement are also incomplete and not fully proven. The `session:auth:token:<tokenHash>` registry, issuer/account/tenant/membership generation projections, freshness fences, and their fail-closed consumers must not be treated as live merely because the target key names and validation rules are documented; current runtime coverage and focused proof remain separate implementation gaps.
+
 ---
 
 ## How to Use This Hub

@@ -102,8 +102,8 @@ def append_queue_row(root: Path, row: str) -> None:
     )
 
 
-def expect_failure(call, expected: str) -> None:
-    with unittest.TestCase().assertRaisesRegex(SystemExit, expected):
+def expect_failure(test_case: unittest.TestCase, call, expected: str) -> None:
+    with test_case.assertRaisesRegex(SystemExit, expected):
         call()
 
 
@@ -126,7 +126,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            expect_failure(
+            expect_failure(self,
                 lambda: self.validator.validate(root),
                 "terminal ADR status lacks a checked human-review queue entry",
             )
@@ -142,7 +142,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
-                expect_failure(
+                expect_failure(self,
                     lambda: self.validator.validate(root),
                     "terminal ADR status lacks a checked human-review queue entry",
                 )
@@ -186,7 +186,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
-                expect_failure(
+                expect_failure(self,
                     lambda: self.validator.validate(root),
                     "status must be exactly",
                 )
@@ -201,7 +201,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            expect_failure(
+            expect_failure(self,
                 lambda: self.validator.validate(root),
                 "checked human review requires",
             )
@@ -216,7 +216,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            expect_failure(
+            expect_failure(self,
                 lambda: self.validator.validate(root),
                 "human review date must match",
             )
@@ -242,7 +242,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                     path.read_text(encoding="utf-8").replace(current, replacement),
                     encoding="utf-8",
                 )
-                expect_failure(
+                expect_failure(self,
                     lambda: self.validator.validate(root),
                     "pending proposal requires exact",
                 )
@@ -255,7 +255,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "- [x] `TEST-PENDING` — `revised` on 2026-07-27; "
                 "[ADR 0013](../../architecture/decisions/adr-0013-pending.md)",
             )
-            expect_failure(
+            expect_failure(self,
                 lambda: self.validator.validate(root),
                 "checked human review requires",
             )
@@ -270,7 +270,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            expect_failure(
+            expect_failure(self,
                 lambda: self.validator.validate(root),
                 "human review date must match",
             )
@@ -286,7 +286,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            expect_failure(
+            expect_failure(self,
                 lambda: self.validator.validate(root),
                 "human review disposition must match",
             )
@@ -301,7 +301,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            expect_failure(
+            expect_failure(self,
                 lambda: self.validator.validate(root),
                 "review source keys",
             )
@@ -316,7 +316,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            expect_failure(
+            expect_failure(self,
                 lambda: self.validator.validate(root),
                 "completed human review is not backed",
             )
@@ -327,7 +327,7 @@ class AdrReviewStatusTests(unittest.TestCase):
             reviewed = root / "design/architecture/decisions/adr-0012-reviewed.md"
             duplicate = root / "design/architecture/decisions/adr-0012-duplicate.md"
             duplicate.write_text(reviewed.read_text(encoding="utf-8"), encoding="utf-8")
-            expect_failure(
+            expect_failure(self,
                 lambda: self.validator.validate(root),
                 "duplicate ADR number 0012",
             )
@@ -341,7 +341,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 + "\n- Human review status: Completed\n",
                 encoding="utf-8",
             )
-            expect_failure(
+            expect_failure(self,
                 lambda: self.validator.validate(root),
                 "duplicate ADR review field 'Human review status'",
             )
@@ -357,7 +357,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            expect_failure(
+            expect_failure(self,
                 lambda: self.validator.validate(root),
                 "missing or malformed 'Status' section",
             )
@@ -370,7 +370,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "- [x] `TEST-99` — `accepted` on 2026-07-27; "
                 "[ADR 0099](../../architecture/decisions/adr-0099-missing.md)",
             )
-            expect_failure(
+            expect_failure(self,
                 lambda: self.validator.validate(root),
                 r"checked review queue references missing ADRs: \[99\]",
             )
@@ -409,7 +409,7 @@ class AdrReviewStatusTests(unittest.TestCase):
         for row in rows:
             with self.subTest(row=row), fixture_root() as fixture:
                 append_queue_row(Path(fixture), row)
-                expect_failure(
+                expect_failure(self,
                     lambda: self.validator.checked_reviews(
                         queue_path(Path(fixture))
                     ),
@@ -421,7 +421,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 Path(fixture),
                 "- [x] `TEST-99` — `revised` on 2026-07-27; outcome without link",
             )
-            expect_failure(
+            expect_failure(self,
                 lambda: self.validator.checked_reviews(queue_path(Path(fixture))),
                 "must contain at least one Markdown outcome link",
             )
@@ -436,7 +436,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md)\n",
                 encoding="utf-8",
             )
-            expect_failure(
+            expect_failure(self,
                 lambda: self.validator.checked_reviews(path),
                 "indented checked review queue row",
             )
@@ -449,7 +449,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "- [x] `TEST-01` — `revised` on 2026-07-27; "
                 "[duplicate](../../architecture/decisions/adr-0012-reviewed.md)",
             )
-            expect_failure(
+            expect_failure(self,
                 lambda: self.validator.checked_reviews(queue_path(root)),
                 "ambiguous duplicate checked review source",
             )
@@ -462,7 +462,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "- [x] `TEST-02` — `accepted` on 2026-07-27; "
                 "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md)",
             )
-            expect_failure(
+            expect_failure(self,
                 lambda: self.validator.checked_reviews(queue_path(root)),
                 "ambiguous duplicate checked review rows for ADR 0012",
             )

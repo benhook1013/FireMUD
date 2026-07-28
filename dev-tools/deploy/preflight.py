@@ -10,6 +10,7 @@ import subprocess
 import sys
 import uuid
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -375,10 +376,25 @@ def validate_erasure_overlay_reconciliation(
             return ("fail", f"{label} sequenceDispositions[{index}] integrity must be verified")
         observed_sequences.add(sequence)
 
-    expected_sequences = set(range(initial_catchup_sequence + 1, restore_sequence + 1))
-    if observed_sequences != expected_sequences:
-        missing_sequences = sorted(expected_sequences - observed_sequences)
-        unexpected_sequences = sorted(observed_sequences - expected_sequences)
+    expected_sequence_count = restore_sequence - initial_catchup_sequence
+    if len(observed_sequences) != expected_sequence_count:
+        missing_sequences = list(
+            islice(
+                (
+                    sequence
+                    for sequence in range(
+                        initial_catchup_sequence + 1, restore_sequence + 1
+                    )
+                    if sequence not in observed_sequences
+                ),
+                20,
+            )
+        )
+        unexpected_sequences = sorted(
+            sequence
+            for sequence in observed_sequences
+            if sequence <= initial_catchup_sequence or sequence > restore_sequence
+        )
         return (
             "fail",
             f"{label} sequenceDispositions must cover the exact final interval; "
@@ -542,16 +558,43 @@ def validate_recovery_baseline(
         if isinstance(backup_artifact_lineage, dict)
         else None
     )
-    if (
-        not isinstance(backup_artifact_lineage, dict)
-        or backup_artifact_lineage.get("artifactErasureHighWater") != artifact_high_water
-        or backup_artifact_lineage.get("erasureHighWaterSnapshotBound") is not True
-        or not isinstance(pre_snapshot_journal_high_water, dict)
-        or pre_snapshot_journal_high_water.get("stream") != high_water_stream
-        or not isinstance(pre_snapshot_journal_high_water.get("sequence"), int)
-        or isinstance(pre_snapshot_journal_high_water.get("sequence"), bool)
-        or pre_snapshot_journal_high_water["sequence"] < artifact_sequence
-    ):
+    if not isinstance(backup_artifact_lineage, dict):
+        return (
+            "fail",
+            "Recovery compatibility baseline artifact lineage must be an object",
+        )
+    if backup_artifact_lineage.get("artifactErasureHighWater") != artifact_high_water:
+        return (
+            "fail",
+            "Recovery compatibility baseline artifact lineage artifactErasureHighWater "
+            "must match the snapshot-bound artifact high-water sequence",
+        )
+    if backup_artifact_lineage.get("erasureHighWaterSnapshotBound") is not True:
+        return (
+            "fail",
+            "Recovery compatibility baseline artifact lineage erasureHighWaterSnapshotBound "
+            "must be true",
+        )
+    if not isinstance(pre_snapshot_journal_high_water, dict):
+        return (
+            "fail",
+            "Recovery compatibility baseline artifact lineage must include a valid "
+            "preSnapshotJournalHighWater object",
+        )
+    if pre_snapshot_journal_high_water.get("stream") != high_water_stream:
+        return (
+            "fail",
+            "Recovery compatibility baseline preSnapshotJournalHighWater.stream "
+            "must match the canonical erasure stream",
+        )
+    pre_snapshot_sequence = pre_snapshot_journal_high_water.get("sequence")
+    if not isinstance(pre_snapshot_sequence, int) or isinstance(pre_snapshot_sequence, bool):
+        return (
+            "fail",
+            "Recovery compatibility baseline preSnapshotJournalHighWater.sequence "
+            "must be an integer",
+        )
+    if pre_snapshot_sequence < artifact_sequence:
         return (
             "fail",
             "Recovery compatibility baseline artifact lineage must include a valid "

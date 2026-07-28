@@ -371,7 +371,7 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 - **ADR recommendation:** Yes before expanding audience scope; define delivery, retention, moderation, capability, and privacy semantics first.
 - **Human consultation:** Yes; product, trust-and-safety, and player-support owners must choose the future audience model.
 
-#### `ACCOUNT-01` - External identity providers are a product promise, not an implementation detail
+#### `ACCOUNT-01` - Optional provider-specific external identity linking
 
 - **Capability:** Primary `AA-1.3`. Secondary `EA-3.1`.
 - **Decision / status / importance:** Google, Discord, and Steam are planned optional provider-specific HTTPS linking and sign-in integrations, not baseline launch or simultaneous-availability promises. Initial delivery links a verified provider subject to an existing global account; provider-first account creation and email-based merging are deferred. Account-owned verified-email recovery and an ordinary login mode remain mandatory. Status `accepted-explicit`; `M/med`.

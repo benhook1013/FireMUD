@@ -106,7 +106,13 @@ require_contains(
 
 operations_text = (root / "design/architecture/system-architecture-redis-operations.md").read_text(encoding="utf-8")
 canonical_reset_heading = "## Canonical Coordination Reset Sequence"
-canonical_reset_start = operations_text.find(canonical_reset_heading)
+canonical_reset_heading_marker = f"\n{canonical_reset_heading}\n"
+canonical_reset_start = operations_text.find(canonical_reset_heading_marker)
+if canonical_reset_start == -1:
+    if operations_text.startswith(f"{canonical_reset_heading}\n"):
+        canonical_reset_start = 0
+else:
+    canonical_reset_start += 1
 if canonical_reset_start == -1:
     raise SystemExit(
         "design/architecture/system-architecture-redis-operations.md: canonical reset section missing"
@@ -120,22 +126,24 @@ required_reset_contract = [
     "Canonical public operation:",
     "`coordination-maintenance recover --mode reset --scope ... (--preserve-sessions|--invalidate-sessions)`",
     "1. internal pause-and-lock phase",
-    "2. internal epoch-bump and coordination-reset phase",
+    "2. internal epoch-bump and scope-safe coordination-reset phase",
     "3. internal ledger-reconciliation phase",
     "4. internal command-convergence phase",
-    "5. internal metadata-initialization phase",
-    "6. internal session-policy phase",
-    "7. internal Account authority and issued-token projection-rebuild phase",
-    "8. internal post-reset smoke-check phase",
-    "9. `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`",
-    "10. public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`",
-    "11. internal resume-and-success-release phase",
+    "5. internal protected-domain cutover-fencing phase",
+    "6. external AOF/deployment reset handoff",
+    "7. internal metadata-initialization phase",
+    "8. internal Account authority and issued-token projection-rebuild phase",
+    "9. internal session-policy phase",
+    "10. internal post-reset smoke-check phase",
+    "11. `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`",
+    "12. public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`",
+    "13. internal resume-and-success-release phase",
 ]
-cursor = -1
+cursor = 0
 previous = "<start of canonical reset contract>"
 for clause in required_reset_contract:
     first_position = canonical_reset_text.find(clause)
-    position = canonical_reset_text.find(clause, cursor + 1)
+    position = canonical_reset_text.find(clause, cursor)
     if position == -1:
         if first_position == -1:
             raise SystemExit(

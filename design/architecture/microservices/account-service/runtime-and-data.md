@@ -2,9 +2,11 @@
 
 This document defines the Account Service runtime model, persistent data ownership, Redis role, token/session responsibilities, and monetization-related domain notes.
 
-## Implementation Notes
+## Implementation Status
 
 The account lifecycle state machine, global deletion preconditions, full-account versus tenant-scoped export split, and `purchase_entitlement` model are the canonical target design. The current service has live identity/authentication, profile, external-link persistence, recovery/verification, payment, subscription, notification, and virtual-currency foundations, but lifecycle state transitions, genuine provider authentication, cross-service export, retained-record handling, purchased-entitlement fulfillment, and complete billing/subscription follow-through remain partial. The current external-link route accepts caller-asserted provider identity and stores tenant scope; it is not a supported provider login and directly conflicts with [ADR 0049](../../decisions/adr-0049-optional-provider-specific-external-identity-linking.md). The current full export returns only Account and profile rows, the tenant export includes excessive global Account fields, and successful deletion immediately removes Account-owned rows including payment transactions. Those behaviors directly conflict with [ADR 0050](../../decisions/adr-0050-versioned-export-retention-and-erasure-policy.md) and the bounded erasure workflow below.
+
+The live runtime membership response and Account proto currently expose `membershipVersion` and `evaluatedAt` but not `membershipAuthorityGeneration`, and no live membership-change event consumer enforces the generation-bearing contract. Account-first bootstrap now authenticates before tenant selection and accepts configured password or verified-email OTP modes. `GetTenantMembershipForRuntime(accountId, tenantId)`, `GetTenantEntitlementsForRuntime(tenantId)`, `GetAdmissionPointer(tenantId, worldSlug, realmSlug)`, and the existing `EnsurePublicProductionPlayerMembership` seam are present, but runtime admission still has an implicit membership path. Explicit `JOIN`/`Join & Play`, removal of membership writes from connect-token/`PLAY`, broader reconnect/cutover consumption of admission-pointer truth, and operator-facing pointer tooling remain incomplete. The producer and consumer remain implementation drift until the generation field, event delivery, and focused proof are implemented together.
 
 ## Architecture and Runtime Notes
 
@@ -126,9 +128,6 @@ Billing-safe mutation authority contract:
 
 Runtime caller contract:
 
-- Current implementation note:
-  - Account-first bootstrap now authenticates before tenant selection and accepts configured password or verified-email OTP modes. `GetTenantMembershipForRuntime(accountId, tenantId)`, `GetTenantEntitlementsForRuntime(tenantId)`, `GetAdmissionPointer(tenantId, worldSlug, realmSlug)`, and the existing `EnsurePublicProductionPlayerMembership` seam are present, but current runtime admission still has the implicit membership path.
-  - Explicit `JOIN`/`Join & Play` and membership-write removal from connect-token/`PLAY` remain target follow-through; broader reconnect/cutover consumption of admission-pointer truth and operator-facing pointer tooling are also incomplete.
 - `GetTenantMembershipForRuntime(accountId, tenantId)` is the authoritative internal membership surface for gameplay/runtime flows.
   - Minimum request fields: `accountId`, `tenantId`, `requestId`.
   - Target minimum response fields: `accountId`, `tenantId`, `roles[]`, `gameplayAdmissionAllowed`, `membershipVersion`, `membershipAuthorityGeneration`, and `evaluatedAt`.
@@ -167,8 +166,6 @@ Runtime caller contract:
 - Runtime callers must treat missing required fields as contract failure and fail closed rather than inferring defaults.
 
 Membership-change producer contract:
-
-Target-state note: the live runtime membership response and Account proto currently expose `membershipVersion` and `evaluatedAt` but not `membershipAuthorityGeneration`, and no live membership-change event consumer enforces this generation-bearing contract yet. The producer and consumer remain implementation drift until the generation field, event delivery, and focused proof are implemented together.
 
 - The target Account producer emits membership-change events with `eventId`, `accountId`, `tenantId`, `membershipVersion`, the Account-committed opaque `membershipAuthorityGeneration` for that exact `{accountId, tenantId}` scope, changed roles, and a flag indicating whether gameplay admission remains allowed.
 - `eventId` is the stable event identity for idempotent deduplication. `membershipVersion` is monotonic per `{accountId, tenantId}` and is the ordering and gap-detection value for membership changes; consumers must process or reconcile events by that version rather than by arrival time.
