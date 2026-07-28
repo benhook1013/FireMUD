@@ -41,6 +41,7 @@ EOF
 CODEQL_WORKFLOW="$ROOT_DIR/.github/workflows/codeql.yml"
 LICENSE_WORKFLOW="$ROOT_DIR/.github/workflows/license-scan.yml"
 OVERLAY_WORKFLOW="$ROOT_DIR/.github/workflows/validate-kustomize-overlays.yml"
+SMOKE_WORKFLOW="$ROOT_DIR/.github/workflows/smoke.yml"
 
 grep -Fq 'needs: [changes, analyze]' "$CODEQL_WORKFLOW" || {
   echo "CodeQL gate must depend directly on change detection" >&2
@@ -64,6 +65,14 @@ grep -Fq 'types: [opened, synchronize, reopened, edited]' "$OVERLAY_WORKFLOW" ||
 }
 grep -Fq "github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null)" "$OVERLAY_WORKFLOW" || {
   echo "Overlay validation must skip metadata-only edits without replacing the required context" >&2
+  exit 1
+}
+grep -Fq 'const maxCompletedJobSnapshotRetries = 8;' "$SMOKE_WORKFLOW" || {
+  echo "Smoke Gate must bound retries for eventually consistent completed-job snapshots" >&2
+  exit 1
+}
+grep -Fq 'succeeded but its PR Full-Stack Smoke job snapshot is not terminal yet' "$SMOKE_WORKFLOW" || {
+  echo "Smoke Gate must retry a stale completed-workflow job snapshot" >&2
   exit 1
 }
 

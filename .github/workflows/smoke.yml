@@ -245,8 +245,10 @@ jobs:
             const timeoutMs = 25 * 60 * 1000;
             const sleepMs = 15000;
             const pullRequestCheckInterval = 4;
+            const maxCompletedJobSnapshotRetries = 8;
             const retryableStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
             let pollIteration = 0;
+            let completedJobSnapshotRetries = 0;
 
             async function withTransientGitHubRetry(label, operation) {
               const maxAttempts = 4;
@@ -338,6 +340,12 @@ jobs:
                   await new Promise((resolve) => setTimeout(resolve, sleepMs));
                   continue;
                 }
+                if (matching.conclusion !== "success") {
+                  core.setFailed(
+                    `Runtime images run ${matching.id} did not complete successfully: run=${matching.conclusion}`
+                  );
+                  return;
+                }
 
                 const jobs = await withTransientGitHubRetry(
                   "runtime-images job lookup",
@@ -369,12 +377,26 @@ jobs:
                 const fullSmokeJob = jobs.find(
                   (job) => job.name === "PR Full-Stack Smoke"
                 );
-                if (!fullSmokeJob) {
-                  core.setFailed(`Runtime images run ${matching.id} did not expose the required PR Full-Stack Smoke job`);
+                if (!fullSmokeJob || fullSmokeJob.status !== "completed") {
+                  completedJobSnapshotRetries += 1;
+                  if (completedJobSnapshotRetries <= maxCompletedJobSnapshotRetries) {
+                    core.info(
+                      `Runtime images run ${matching.id} succeeded but its PR Full-Stack Smoke job snapshot is not terminal yet: ` +
+                      `${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}; ` +
+                      `retrying ${completedJobSnapshotRetries}/${maxCompletedJobSnapshotRetries}`
+                    );
+                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                    continue;
+                  }
+                  core.setFailed(
+                    `Runtime images run ${matching.id} did not expose a terminal PR Full-Stack Smoke job after ` +
+                    `${maxCompletedJobSnapshotRetries} retries: ` +
+                    `${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}`
+                  );
                   return;
                 }
 
-                if (matching.conclusion !== "success" || fullSmokeJob.status !== "completed" || fullSmokeJob.conclusion !== "success") {
+                if (fullSmokeJob.conclusion !== "success") {
                   core.setFailed(
                     `Runtime images/full smoke run ${matching.id} did not complete successfully: run=${matching.conclusion}, full-smoke=${fullSmokeJob.status}/${fullSmokeJob.conclusion}`
                   );
