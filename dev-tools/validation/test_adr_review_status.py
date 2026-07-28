@@ -79,6 +79,9 @@ def fixture_root() -> tempfile.TemporaryDirectory[str]:
         ## Decision Record
 
         - Human review status: Pending
+        - Human review date: Not yet reviewed
+        - Human review disposition: Pending
+        - Review source: `AI-AUTHORED-PENDING`
         """,
     )
     return fixture
@@ -197,6 +200,60 @@ class AdrReviewStatusTests(unittest.TestCase):
                     "Human review status: Completed", "Human review status: Pending"
                 ),
                 encoding="utf-8",
+            )
+            expect_failure(
+                lambda: self.validator.validate(root),
+                "checked human review requires",
+            )
+
+    def test_checked_terminal_record_requires_each_review_field(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = root / "design/architecture/decisions/adr-0012-reviewed.md"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "- Human review date: 2026-07-27\n", ""
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                lambda: self.validator.validate(root),
+                "human review date must match",
+            )
+
+    def test_pending_record_requires_exact_metadata_shape(self) -> None:
+        pending_fields = (
+            ("Human review status: Pending", "Human review status: Awaiting"),
+            ("Human review date: Not yet reviewed", "Human review date: 2026-07-27"),
+            (
+                "Human review disposition: Pending",
+                "Human review disposition: Deferred",
+            ),
+            (
+                "Review source: `AI-AUTHORED-PENDING`",
+                "Review source: `AI-REVIEWED`",
+            ),
+        )
+        for current, replacement in pending_fields:
+            with self.subTest(current=current), fixture_root() as fixture:
+                root = Path(fixture)
+                path = root / "design/architecture/decisions/adr-0013-pending.md"
+                path.write_text(
+                    path.read_text(encoding="utf-8").replace(current, replacement),
+                    encoding="utf-8",
+                )
+                expect_failure(
+                    lambda: self.validator.validate(root),
+                    "pending proposal requires exact",
+                )
+
+    def test_pending_record_cannot_be_backed_by_checked_queue(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [x] `TEST-PENDING` — `revised` on 2026-07-27; "
+                "[ADR 0013](../../architecture/decisions/adr-0013-pending.md)",
             )
             expect_failure(
                 lambda: self.validator.validate(root),
@@ -330,6 +387,18 @@ class AdrReviewStatusTests(unittest.TestCase):
             reviews = self.validator.checked_reviews(queue_path(root))
             self.assertEqual(set(reviews), {12, 14})
             self.assertEqual(reviews[14][0].key, "TEST-COUPLED")
+
+    def test_supersession_adr_links_do_not_assign_provenance(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [x] `TEST-SUPERSEDED` — `superseded` on 2026-07-27 by "
+                "[ADR 0014](../../architecture/decisions/adr-0014-replacement.md)",
+            )
+            reviews = self.validator.checked_reviews(queue_path(root))
+            self.assertNotIn(14, reviews)
+            self.assertEqual(reviews[12][0].key, "TEST-01")
 
     def test_malformed_checked_queue_rows_fail_closed(self) -> None:
         rows = (

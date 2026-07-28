@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,7 @@ REQUIRED_REVOKE_APPLICABILITY = {
     "connection_mode": "first_party_web",
     "operation": "connect_token_cookie_revoke",
 }
+REQUIRED_FIELD_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 ROUTE_STATUS_VALUES = {
     "current_openapi_operator_surface",
     "target_not_currently_routable",
@@ -67,6 +69,13 @@ OPERATOR_INGRESS_ROUTES = {
     ("logging-admin-service", "POST /admission-pointers/cutover"),
     ("logging-admin-service", "POST /admission-pointers/version-upgrades"),
 }
+GAME_SESSION_OPERATOR_ROUTES = {
+    ("game-session-service", "POST /sessions"),
+    ("game-session-service", "POST /sessions/{sessionId}/stop"),
+    ("game-session-service", "POST /sessions/{sessionId}/restart"),
+    ("game-session-service", "POST /sessions/{sessionId}/refresh-roles"),
+}
+CONDITIONAL_OPERATOR_ROUTES = OPERATOR_INGRESS_ROUTES | GAME_SESSION_OPERATOR_ROUTES
 REQUIRED_ROLE_ASSURANCE_ROLES = {"platformAdmin", "billingAdmin", "support"}
 REQUIRED_TENANT_GENERATION_EXCEPTIONS = {
     "billing_safe_tenant": {
@@ -190,7 +199,7 @@ def validate_token_profiles(document: dict[str, Any], errors: list[str]) -> dict
         if profile:
             if profile in profiles:
                 errors.append(f"token_profiles must not contain duplicate profile {profile!r}")
-            elif profile not in profiles:
+            else:
                 profiles[profile] = values
         if values.get("issuer") and values["issuer"] != TOKEN_ISSUER:
             errors.append(f"{label}.issuer must be {TOKEN_ISSUER!r}")
@@ -252,14 +261,35 @@ def validate_role_assurance(document: dict[str, Any], errors: list[str]) -> set[
     return predicates
 
 
-def validate_route_statuses(routes: list[Any], errors: list[str]) -> None:
+def validate_route_status_vocabulary(document: dict[str, Any], errors: list[str]) -> set[str]:
+    vocabulary = document.get("route_status_vocabulary")
+    if not isinstance(vocabulary, list) or not vocabulary or any(
+        not isinstance(item, str) for item in vocabulary
+    ):
+        errors.append("route_status_vocabulary must be a non-empty list of strings")
+        allowed_statuses: set[str] = set()
+    else:
+        allowed_statuses = set(vocabulary)
+        if len(allowed_statuses) != len(vocabulary):
+            errors.append("route_status_vocabulary must not contain duplicates")
+        if allowed_statuses != ROUTE_STATUS_VALUES:
+            errors.append(
+                "route_status_vocabulary must contain exactly "
+                f"{sorted(ROUTE_STATUS_VALUES)}"
+            )
+    return allowed_statuses
+
+
+def validate_route_statuses(
+    routes: list[Any], allowed_statuses: set[str], errors: list[str]
+) -> None:
     for index, route in enumerate(routes):
         if not isinstance(route, dict):
             continue
         status = route.get("route_status")
-        if status is not None and status not in ROUTE_STATUS_VALUES:
+        if status is not None and status not in allowed_statuses:
             errors.append(
-                f"routes[{index}] route_status must be one of {sorted(ROUTE_STATUS_VALUES)}"
+                f"routes[{index}] route_status must be one of {sorted(allowed_statuses)}"
             )
         implementation_status = route.get("implementation_status")
         if isinstance(implementation_status, dict) and "target_only" in implementation_status:
@@ -268,9 +298,53 @@ def validate_route_statuses(routes: list[Any], errors: list[str]) -> None:
             )
 
 
+def validate_required_fields(routes: list[Any], errors: list[str]) -> None:
+    for index, route in enumerate(routes):
+        if not isinstance(route, dict) or "required_fields" not in route:
+            continue
+        fields = string_list(route.get("required_fields"), f"routes[{index}] required_fields", errors)
+        invalid_fields = [field for field in fields if not REQUIRED_FIELD_PATTERN.fullmatch(field)]
+        if invalid_fields:
+            errors.append(
+                f"routes[{index}] required_fields must use snake_case: {invalid_fields}"
+            )
+
+
 def validate_receiver_predicates(
     routes: list[Any], token_profiles: dict[str, dict[str, str]], errors: list[str]
 ) -> None:
+    def validate_multi_profile_predicates(
+        entry: dict[str, Any], label: str, profiles: list[str]
+    ) -> None:
+        known_profiles = [token_profiles.get(profile_name) for profile_name in profiles]
+        if not all(profile is not None for profile in known_profiles):
+            errors.append(f"{label} must declare exactly one token profile per receiver policy")
+            return
+        shared_type_issuer = {
+            (profile.get("type"), profile.get("issuer"))
+            for profile in known_profiles
+        }
+        token_predicates = (entry.get("token_type"), entry.get("token_issuer"))
+        if token_predicates == (None, None):
+            return
+        if len(shared_type_issuer) != 1 or token_predicates != next(iter(shared_type_issuer)):
+            errors.append(
+                f"{label} multi-profile token predicates must match the shared token_type/token_issuer"
+            )
+            return
+        audience_map = entry.get("accepted_token_profile_audiences")
+        if isinstance(audience_map, dict) and not (
+            set(audience_map) == set(profiles)
+            and all(
+                audience_map.get(profile_name) == token_profiles[profile_name]["audience"]
+                for profile_name in profiles
+            )
+        ):
+            errors.append(
+                f"{label} multi-profile receiver requires accepted_token_profile_audiences "
+                "matching every accepted profile"
+            )
+
     def validate_token_fields(
         entry: dict[str, Any],
         label: str,
@@ -288,49 +362,15 @@ def validate_receiver_predicates(
                 )
             return
         if len(profiles) != 1:
-            audience_map = entry.get("accepted_token_profile_audiences")
-            known_profiles = [token_profiles.get(profile_name) for profile_name in profiles]
-            all_profiles_resolved = all(profile is not None for profile in known_profiles)
-            shared_type_issuer = {
-                (profile.get("type"), profile.get("issuer"))
-                for profile in known_profiles
-                if profile is not None
-            }
-            if (
-                allow_multi_profile
-                and len(profiles) > 1
-                and all_profiles_resolved
-                and len(shared_type_issuer) == 1
-                and (token_type, token_issuer) == next(iter(shared_type_issuer))
-                and isinstance(audience_map, dict)
-                and set(audience_map) == set(profiles)
-                and all(
-                    audience_map.get(profile_name)
-                    == token_profiles.get(profile_name, {}).get("audience")
-                    for profile_name in profiles
-                )
-            ):
+            if allow_multi_profile and len(profiles) > 1:
+                known_profiles = [token_profiles.get(profile_name) for profile_name in profiles]
+                if all(profile is not None for profile in known_profiles):
+                    validate_multi_profile_predicates(entry, label, profiles)
+                else:
+                    errors.append(
+                        f"{label} must declare exactly one token profile per receiver policy"
+                    )
                 return
-            if allow_multi_profile and len(profiles) > 1 and all_profiles_resolved:
-                if len(shared_type_issuer) != 1 or (token_type, token_issuer) != next(iter(shared_type_issuer)):
-                    errors.append(
-                        f"{label} multi-profile token predicates must match the shared token_type/token_issuer"
-                    )
-                    return
-                if not (
-                    isinstance(audience_map, dict)
-                    and set(audience_map) == set(profiles)
-                    and all(
-                        audience_map.get(profile_name)
-                        == token_profiles[profile_name].get("audience")
-                        for profile_name in profiles
-                    )
-                ):
-                    errors.append(
-                        f"{label} multi-profile receiver requires accepted_token_profile_audiences "
-                        "matching every accepted profile"
-                    )
-                    return
             errors.append(f"{label} must declare exactly one token profile per receiver policy")
             return
         profile = token_profiles.get(profiles[0])
@@ -377,6 +417,14 @@ def validate_receiver_predicates(
                         )
 
         if route.get("classification") != "internal_workload":
+            if len(profiles) > 1 and all(isinstance(profile_name, str) for profile_name in profiles):
+                validate_token_fields(
+                    route,
+                    f"matrix.routes[{index}]",
+                    profiles,
+                    set(unknown_profiles),
+                    allow_multi_profile=True,
+                )
             continue
 
         label = f"{route.get('service')} {route.get('route')}"
@@ -589,7 +637,7 @@ def validate_generation_applicability(routes: list[Any], errors: list[str]) -> N
             )
 
         route_key_value = (route.get("service"), route.get("route"))
-        if route_key_value not in OPERATOR_INGRESS_ROUTES:
+        if route_key_value not in CONDITIONAL_OPERATOR_ROUTES:
             continue
         if value != "conditional_by_operator_role":
             errors.append(
@@ -609,6 +657,36 @@ def validate_generation_applicability(routes: list[Any], errors: list[str]) -> N
             errors.append(
                 f"{label} tenant-role branch must require membership_generation"
             )
+        if "target_tenant_generation" not in checks:
+            errors.append(
+                f"{label} operator route must require target_tenant_generation"
+            )
+        if route.get("global_platform_admin_reference_generation_binding") != "target_tenant_generation":
+            errors.append(
+                f"{label} must bind global platformAdmin operations to target_tenant_generation"
+            )
+
+
+def validate_profile_authority_routes(routes: list[Any], errors: list[str]) -> None:
+    for route_name in ("GetProfile", "UpdateProfile"):
+        matches = matching_routes(routes, "account-service", route_name)
+        if len(matches) != 1:
+            errors.append(
+                f"matrix must contain exactly one account-service {route_name} route"
+            )
+            continue
+        route = matches[0]
+        label = f"account-service {route_name}"
+        if route.get("tenant_billing_authority_generation_applies") is not True:
+            errors.append(
+                f"{label} must apply tenant billing authority generation"
+            )
+        if route.get("membership_authority_generation_applies") is not True:
+            errors.append(f"{label} must apply membership authority generation")
+        checks = set(string_list(route.get("required_live_checks"), f"{label} required_live_checks", errors))
+        for required_check in ("membership", "membership_generation", "tenant_generation"):
+            if required_check not in checks:
+                errors.append(f"{label} must require live check {required_check}")
 
 
 def validate_known_drift(value: Any, field: str, errors: list[str]) -> None:
@@ -890,6 +968,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     role_assurance_predicates = validate_role_assurance(document, errors)
     validate_known_drift(document, "matrix", errors)
     validate_live_check_vocabulary(document, errors)
+    allowed_route_statuses = validate_route_status_vocabulary(document, errors)
 
     routes = document.get("routes")
     if not isinstance(routes, list):
@@ -898,8 +977,10 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
 
     classifications = string_list(document.get("classifications"), "classifications", errors)
     route_keys = validate_route_variants(routes, set(classifications), errors)
-    validate_route_statuses(routes, errors)
+    validate_route_statuses(routes, allowed_route_statuses, errors)
+    validate_required_fields(routes, errors)
     validate_generation_applicability(routes, errors)
+    validate_profile_authority_routes(routes, errors)
     validate_receiver_predicates(routes, token_profiles, errors)
     validate_role_assurance_references(routes, role_assurance_predicates, errors)
     validate_tenant_generation_policy(document, routes, errors)

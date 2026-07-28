@@ -39,6 +39,14 @@ The target gameplay-domain delegation boundary uses concrete mTLS identity, exac
 - `gameplay-connect` remains a short-lived Account-signed, Gateway-only, single-use admission artifact. Gateway signed connect context remains a separate Gateway key family and assertion. Neither is an issued-token-registry auth session.
 - Player-facing and shared environments require asymmetric Account signing and JWKS validation. HMAC is allowed only for local/dev and explicitly ephemeral CI. Account is the only application workload with the Account JWT private key.
 
+### mTLS Identity And Certificate Lifecycle
+
+- The authenticated workload identity is sourced only from the peer certificate validated by the receiving mTLS listener. In shared and player-facing Kubernetes environments, cert-manager issues a distinct certificate and private key for each workload or explicitly classified bridge/operator client from the FireMUD cluster CA. The canonical identity is the normalized URI SAN; DNS SAN allowlisting is only the documented migration fallback for the TCP Proxy -> Gateway bridge while URI SAN issuance is incomplete. Common service-family labels, certificate subjects, forwarded identity headers, and JWT subjects are not identities.
+- The receiver terminates mTLS only at the declared internal listener and validates the complete chain, `clientAuth` EKU, validity interval, and exact URI SAN against the route's allowlist before dispatch. A trusted internal termination component may forward identity-derived metadata only through the existing authenticated context contract: the TCP Proxy -> Gateway hop uses the certificate-authenticated `X-Proxy-*` contract, while Gateway -> Game Session uses the separately signed connect context. An unauthenticated or externally supplied header can never become mTLS identity, and Internet-facing TLS termination does not satisfy an internal workload-authentication predicate.
+- Identity matching is exact and method-scoped: the concrete normalized URI SAN must be allowlisted for that receiver and RPC/route, and one identity allowed for one method is not inherited by another. The receiver fails closed on missing, duplicated, malformed, expired, wrong-EKU, unknown, or ambiguous certificate identity before JWT/profile or business authorization.
+- cert-manager renewal replaces the leaf certificate before expiry and supports bounded overlap for rolling peers. Receivers reload the trust and leaf material through the documented watcher/reloader path, accept both old and new approved leaf identities only for the configured overlap, and then remove the old identity from the allowed set. Rotation never broadens a method allowlist or changes the identity spelling.
+- A suspected compromise, revoked certificate, failed chain validation, or lost trust root immediately denies that identity, removes its method permissions, and audits the affected calls. The service or bridge must receive a newly issued certificate and pass peer/readiness proof before traffic resumes. CA/issuer rotation is a separate incident workflow; it does not silently fall back to a broad trust bundle, DNS-only matching, or plaintext in a player-facing environment.
+
 ## Consequences
 
 - Tokens cannot move laterally merely because multiple services accept a generic internal audience.
@@ -66,6 +74,7 @@ This exposes internal authority to raw clients and creates a per-command validat
 - Replace generic `internal` and locally minted workload JWT paths directly in this pre-v1 system.
 - Define exact profile/audience constants and route-matrix acceptance for every issuer and consumer.
 - Prove every cross-profile, wrong-type, wrong-issuer, wrong-audience, wrong-certificate-caller, and unallowlisted-method combination fails before authorization.
+- Prove certificate-derived URI-SAN identity extraction, exact method matching, trusted-termination boundaries, renewal overlap, old-identity removal, and compromise/revocation fail-closed behavior.
 - Prove workload-only calls use mTLS caller policy without JWTs, every receiver applies an exact per-method policy, and gameplay commands retain no JWT hot path.
 - Separate Account JWT, gameplay-connect, and Gateway connect-context key families and deployment mounts.
 - Prove asymmetric JWKS startup/readiness in player-facing environments and rejection of HMAC-only configuration.

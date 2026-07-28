@@ -16,6 +16,10 @@ Accepted
 - Human review disposition: Revised
 - Review source: `MS-SOCIAL-PRESENCE-PRIVACY`
 
+## Implementation Status
+
+This decision is partially implemented. Social & Groups has friend relationship and presence surfaces, but the complete target contract remains in follow-through: snapshot-bound continuation, current relationship and policy revalidation, bounded chunked bulk reads, atomic no-partial-page failure behavior, and private-by-failure redaction are not all fully implemented and proven in the current runtime. This status does not change the human-reviewed decision metadata above.
+
 ## Context
 
 FireMUD needs cross-game friend presence without turning live sessions into a globally enumerable directory or leaking activity when policy data is unavailable. The design must also keep account-profile privacy distinct from in-world visibility mechanics and the instance-local `WHO` command.
@@ -35,10 +39,6 @@ World or realm names for a non-public realm are disclosed only when the viewer c
 Gameplay `WHO` remains a current-game-instance view. It is separate from Account profile privacy and from game-authored invisibility and perception mechanics, which must be applied by their owning gameplay policy before `WHO` renders its instance-local result. FireMUD has no current hidden-staff or observer presence mode.
 
 Player-facing friend presence does not expose disconnect disposition. Internal operational and recovery consumers may retain that fact within their authorized service boundary.
-
-## Implementation Status
-
-This decision is partially implemented. Social & Groups has friend relationship and presence surfaces, but the complete target contract remains in follow-through: snapshot-bound continuation, current relationship and policy revalidation, bounded chunked bulk reads, atomic no-partial-page failure behavior, and private-by-failure redaction are not all fully implemented and proven in the current runtime. This status does not change the human-reviewed decision metadata above.
 
 ## Consequences
 

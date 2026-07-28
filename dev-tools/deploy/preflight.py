@@ -307,6 +307,7 @@ def validate_safe_dispositions(value: Any, label: str) -> tuple[str, str]:
 def validate_erasure_overlay_reconciliation(
     value: Any,
     artifact_high_water: dict[str, Any],
+    initial_catchup_high_water: dict[str, Any],
     restore_high_water: dict[str, Any],
     stream: str,
 ) -> tuple[str, str]:
@@ -317,17 +318,29 @@ def validate_erasure_overlay_reconciliation(
         return ("fail", f"{label} stream must match the canonical erasure stream")
     if value.get("artifactErasureHighWater") != artifact_high_water:
         return ("fail", f"{label} artifactErasureHighWater must match the canonical bound exactly")
+    if value.get("initialCatchupHighWater") != initial_catchup_high_water:
+        return ("fail", f"{label} initialCatchupHighWater must match the canonical bound exactly")
     if value.get("restoreHighWater") != restore_high_water:
         return ("fail", f"{label} restoreHighWater must match the canonical bound exactly")
 
     sequence_verification = value.get("sequenceVerification")
     required_sequence_flags = ("contiguous", "complete", "gapFree", "duplicateFree")
+    artifact_sequence = artifact_high_water["sequence"]
+    initial_catchup_sequence = initial_catchup_high_water["sequence"]
+    restore_sequence = restore_high_water["sequence"]
     if (
         not isinstance(sequence_verification, dict)
         or sequence_verification.get("status") != "pass"
+        or sequence_verification.get("exclusiveStart") != artifact_sequence
+        or sequence_verification.get("inclusiveEnd") != initial_catchup_sequence
+        or sequence_verification.get("ordered") is not True
         or any(sequence_verification.get(flag) is not True for flag in required_sequence_flags)
     ):
-        return ("fail", f"{label} sequenceVerification must prove a contiguous, complete, gap-free, duplicate-free pass")
+        return (
+            "fail",
+            f"{label} sequenceVerification must prove the ordered, contiguous, complete, "
+            "gap-free, duplicate-free initial catch-up interval",
+        )
 
     integrity_verification = value.get("integrityVerification")
     if (
@@ -341,8 +354,6 @@ def validate_erasure_overlay_reconciliation(
     if not isinstance(sequence_dispositions, list):
         return ("fail", f"{label} sequenceDispositions must be a list")
 
-    artifact_sequence = artifact_high_water["sequence"]
-    restore_sequence = restore_high_water["sequence"]
     observed_sequences: set[int] = set()
     for index, entry in enumerate(sequence_dispositions):
         if not isinstance(entry, dict):
@@ -352,7 +363,7 @@ def validate_erasure_overlay_reconciliation(
         sequence = entry.get("sequence")
         if not isinstance(sequence, int) or isinstance(sequence, bool):
             return ("fail", f"{label} sequenceDispositions[{index}] sequence must be an integer")
-        if sequence <= artifact_sequence or sequence > restore_sequence:
+        if sequence <= initial_catchup_sequence or sequence > restore_sequence:
             return ("fail", f"{label} sequenceDispositions[{index}] sequence is outside the final interval")
         if sequence in observed_sequences:
             return ("fail", f"{label} sequenceDispositions contains duplicate sequence {sequence}")
@@ -364,7 +375,7 @@ def validate_erasure_overlay_reconciliation(
             return ("fail", f"{label} sequenceDispositions[{index}] integrity must be verified")
         observed_sequences.add(sequence)
 
-    expected_sequences = set(range(artifact_sequence + 1, restore_sequence + 1))
+    expected_sequences = set(range(initial_catchup_sequence + 1, restore_sequence + 1))
     if observed_sequences != expected_sequences:
         missing_sequences = sorted(expected_sequences - observed_sequences)
         unexpected_sequences = sorted(observed_sequences - expected_sequences)
@@ -519,6 +530,7 @@ def validate_recovery_baseline(
     overlay_status, overlay_message = validate_erasure_overlay_reconciliation(
         baseline.get("erasureOverlayReconciliation"),
         artifact_high_water,
+        initial_catchup_high_water,
         restore_high_water,
         high_water_stream,
     )
@@ -543,7 +555,7 @@ def validate_recovery_baseline(
         return (
             "fail",
             "Recovery compatibility baseline artifact lineage must include a valid "
-            "preSnapshotJournalHighWater at or above the snapshot-bound artifact high-water",
+            "preSnapshotJournalHighWater.sequence must be at or above the snapshot-bound artifact high-water sequence",
         )
 
     coordination_evidence = baseline.get("coordinationRecoveryEvidence")

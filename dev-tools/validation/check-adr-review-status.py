@@ -19,6 +19,12 @@ REVIEW_QUEUE = (
 # either affirm them directly or supersede them with queue-backed ADRs.
 PRE_FORMAL_REVIEW_RECORDS = set(range(1, 12))
 PENDING_ADR_STATUS = "Proposed - Pending Human Review"
+PENDING_REVIEW_FIELDS = {
+    "Human review status": "Pending",
+    "Human review date": "Not yet reviewed",
+    "Human review disposition": "Pending",
+    "Review source": "`AI-AUTHORED-PENDING`",
+}
 ADR_REFERENCE = r"(?:ADR \d{4}|\[ADR \d{4}\]\([^)]+\))"
 TERMINAL_ADR_STATUS_RE = re.compile(
     rf"^(?:Accepted|Superseded by {ADR_REFERENCE}|"
@@ -104,7 +110,7 @@ def checked_reviews(path: Path) -> dict[int, list[Review]]:
         if not match:
             fail(f"{path}: malformed checked review queue row at line {line_number}")
 
-        adr_numbers = [
+        outcome_adr_numbers = [
             int(adr_match.group("number"))
             for adr_match in ADR_LINK_RE.finditer(match.group("outcome"))
         ]
@@ -113,11 +119,20 @@ def checked_reviews(path: Path) -> dict[int, list[Review]]:
                 f"{path}: checked review queue row at line {line_number} "
                 "must contain at least one Markdown outcome link"
             )
-        if len(adr_numbers) != len(set(adr_numbers)):
+        if len(outcome_adr_numbers) != len(set(outcome_adr_numbers)):
             fail(
                 f"{path}: checked review queue row at line {line_number} "
                 "contains duplicate ADR outcome links"
             )
+
+        # A superseded row names the replacement decision(s) in its outcome.
+        # Those links must not make the replacement inherit the old row's
+        # review provenance; each replacement needs its own checked row.
+        adr_numbers = (
+            []
+            if match.group("disposition") == "superseded"
+            else outcome_adr_numbers
+        )
 
         review = Review(
             key=match.group("key"),
@@ -178,6 +193,15 @@ def validate_completed_review(
         )
 
 
+def validate_pending_review(context: Path, fields: dict[str, str]) -> None:
+    for name, expected in PENDING_REVIEW_FIELDS.items():
+        if fields.get(name) != expected:
+            fail(
+                f"{context}: pending proposal requires exact "
+                f"'{name}: {expected}'"
+            )
+
+
 def validate(root: Path = ROOT) -> None:
     adr_dir = root / ADR_DIR.relative_to(ROOT)
     queue = root / REVIEW_QUEUE.relative_to(ROOT)
@@ -212,11 +236,7 @@ def validate(root: Path = ROOT) -> None:
 
         context = path.relative_to(root)
         if status == PENDING_ADR_STATUS:
-            if fields.get("Human review status") != "Pending":
-                fail(
-                    f"{context}: pending proposal requires "
-                    "'Human review status: Pending'"
-                )
+            validate_pending_review(context, fields)
         elif not is_terminal_status(status):
             fail(
                 f"{context}: status must be exactly {PENDING_ADR_STATUS!r} "

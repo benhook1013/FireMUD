@@ -3,6 +3,9 @@ updated_by: "platform-security+account-service"
 default_action: deny
 default_action_scope: declared_route_entries_only
 unlisted_route_status: drift
+route_status_vocabulary:
+  - current_openapi_operator_surface
+  - target_not_currently_routable
 default_deny_generation:
   enabled: false
   blocked_until: source_stable_openapi_protobuf_coverage_complete_and_validated
@@ -562,13 +565,18 @@ routes:
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     route_status: current_openapi_operator_surface
     tenant_billing_authority_generation_applies: true
-    membership_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
     canonical_external_ingress: logging-admin-service
     direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
-    required_live_checks: [current_operator_roles, runtime_entitlements]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation, runtime_entitlements]
+    global_platform_admin_membership_required: false
+    global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
     required_fields: [control_plane_request_id, actor_from_session, reason, tenant_id]
     roles:
@@ -581,14 +589,19 @@ routes:
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     route_status: current_openapi_operator_surface
     tenant_billing_authority_generation_applies: true
-    membership_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
     # Stops the targeted game instance after current runtime ownership validation.
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
     canonical_external_ingress: logging-admin-service
     direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
-    required_live_checks: [current_operator_roles, runtime_ownership]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation, runtime_ownership]
+    global_platform_admin_membership_required: false
+    global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
     required_fields: [control_plane_request_id, actor_from_session, reason, session_id]
     roles:
@@ -601,13 +614,18 @@ routes:
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     route_status: current_openapi_operator_surface
     tenant_billing_authority_generation_applies: true
-    membership_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
     canonical_external_ingress: logging-admin-service
     direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
-    required_live_checks: [current_operator_roles, runtime_entitlements]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation, runtime_entitlements]
+    global_platform_admin_membership_required: false
+    global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
     required_fields: [control_plane_request_id, actor_from_session, reason, session_id]
     roles:
@@ -620,13 +638,18 @@ routes:
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     route_status: current_openapi_operator_surface
     tenant_billing_authority_generation_applies: true
-    membership_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
     canonical_external_ingress: logging-admin-service
     direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
-    required_live_checks: [current_operator_roles, current_session]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation, current_session]
+    global_platform_admin_membership_required: false
+    global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: owner_atomic_idempotent_role_refresh
     required_fields: [control_plane_request_id, actor_from_session, reason, session_id]
     roles:
@@ -658,7 +681,7 @@ routes:
     auth_path: control_ui_plus_recent_reauthentication_and_independent_totp
     subject_binding: caller_account_id
     accepted_token_profiles: [control-ui]
-    required_fields: [requestedGlobalRole]
+    required_fields: [requested_global_role]
     required_live_checks:
       [recent_account_authentication, independent_totp, current_account_generation, current_global_role, current_token_generation]
     mutation_contract: create_bounded_server_side_role_elevation_bound_to_current_token
@@ -791,7 +814,7 @@ routes:
     target_subject_binding: same_tenant_profile_for_tenantAdmin
     platform_admin_override: forbidden
     accepted_token_profiles: [control-ui]
-    required_live_checks: [membership]
+    required_live_checks: [membership, membership_generation, tenant_generation]
     required_fields: [tenant_id, account_id]
     roles:
       any_of: [player, moderator, designer, tenantAdmin]
@@ -807,7 +830,7 @@ routes:
     target_subject_binding: same_tenant_profile_for_tenantAdmin
     platform_admin_override: forbidden
     accepted_token_profiles: [control-ui]
-    required_live_checks: [membership]
+    required_live_checks: [membership, membership_generation, tenant_generation]
     required_fields: [tenant_id, account_id]
     roles:
       any_of: [player, moderator, designer, tenantAdmin]
@@ -1373,7 +1396,7 @@ routes:
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_owner_idempotent_compare_and_set
-    required_fields: [control_plane_request_id, actor_from_session, reason, expectedPointerVersion, mutation_digest]
+    required_fields: [control_plane_request_id, actor_from_session, reason, expected_pointer_version, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
     owner_service: game-session-service
     roles:
@@ -1395,7 +1418,7 @@ routes:
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_owner_idempotent_compare_and_set
-    required_fields: [control_plane_request_id, actor_from_session, reason, expectedPointerVersion, preparedVersionUpgradeId, mutation_digest]
+    required_fields: [control_plane_request_id, actor_from_session, reason, expected_pointer_version, prepared_version_upgrade_id, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
     owner_service: game-session-service
     roles:
@@ -1534,7 +1557,7 @@ routes:
     operator_authorization_reference: required_and_redeemed_with_account
     required_live_checks: [current_operator_authorization, expected_pointer_version, prepared_version_upgrade]
     mutation_contract: owner_atomic_idempotent_compare_and_set_with_durable_result
-    required_fields: [control_plane_request_id, actor, reason, preparedVersionUpgradeId, mutation_digest]
+    required_fields: [control_plane_request_id, actor, reason, prepared_version_upgrade_id, mutation_digest]
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service

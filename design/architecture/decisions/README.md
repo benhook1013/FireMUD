@@ -6,7 +6,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 
 - `Accepted` records explain current consequential choices and must remain aligned with canonical design.
 - `Superseded` and `Withdrawn` records are historical context only and must identify the replacing decision.
-- `Proposed` records are not current target state until explicitly accepted and reflected in canonical design. An AI-authored ADR must use `Proposed - Pending Human Review` and `Human review status: Pending`.
+- `Proposed` records are not current target state until explicitly accepted and reflected in canonical design. An AI-authored ADR awaiting human review must use the exact pending metadata shape defined below: `Proposed - Pending Human Review`, `Human review status: Pending`, `Human review date: Not yet reviewed`, `Human review disposition: Pending`, and `Review source: AI-AUTHORED-PENDING`.
 - An agent may set an ADR to `Accepted`, `Superseded`, or `Withdrawn` only when the checked review queue in the [consequential decision inventory](../../project-management/design-alignment/consequential-decision-inventory.md) names that ADR, except for pre-formal ADRs `0001` through `0011`, which predate the checked queue. The ADR must record the matching review status, date, disposition, and decision key when review metadata exists; an agent must never infer those values.
 - Reversible work may continue while an AI-authored ADR awaits review only when existing canonical design already supports that work and the implementation does not depend on treating the proposal as accepted. Work that changes an accepted decision, selects between competing target states, or creates a consequential commitment waits for human review.
 - A new ADR is warranted for a cross-cutting, authority-setting, security-sensitive, expensive-to-reverse, or genuinely contested decision. Routine local implementation choices belong in code and the owning design document.
@@ -28,9 +28,31 @@ The authoritative provenance is the checked review queue in the [consequential d
 - [x] `DECISION-KEY` — `accepted` on YYYY-MM-DD by [ADR NNNN](../../architecture/decisions/adr-NNNN-example.md)
 ```
 
-`OUTCOME` must be non-empty, use either the semicolon or `by` form shown in the queue, and contain one or more Markdown links. An ADR provenance reference is specifically a link labeled `[ADR NNNN]` whose target filename is `adr-NNNN-*.md`; every such ADR link in one row receives that row's source key, date, and disposition. Supersession rows may instead link replacement decision keys as their outcome; those links describe the replacement but do not reassign the replacement ADR's own review provenance. Other outcome prose and canonical-design links may follow. Distinct coupled queue rows may reference the same ADR only when their date and disposition agree. Duplicate source keys, conflicting duplicate ADR provenance, duplicate ADR links in one row, malformed checked rows, and checked rows without an outcome link are invalid. Unchecked rows are not parsed as completed review evidence.
+`OUTCOME` must be non-empty, use either the semicolon or `by` form shown in the queue, and contain one or more Markdown links. For a non-supersession row, an ADR provenance reference is specifically a link labeled `[ADR NNNN]` whose target filename is `adr-NNNN-*.md`; every such ADR link in one row receives that row's source key, date, and disposition. In a `superseded` row, every ADR-labeled outcome link is a replacement link, not provenance; a replacement ADR receives provenance only from its own non-superseded checked row. Other outcome prose and canonical-design links may follow. Distinct coupled queue rows may reference the same ADR only when their date and disposition agree. Duplicate source keys, conflicting duplicate ADR provenance, duplicate ADR links in one row, malformed checked rows, and checked rows without an outcome link are invalid. Unchecked rows are not parsed as completed review evidence.
 
-Validation precedence is fixed: first parse every checked queue row and validate its ADR references; then aggregate the checked rows for each ADR and require the ADR's completed metadata to match that aggregate exactly; finally validate the ADR `Status` independently. A terminal status requires checked queue evidence except for pre-formal ADR records `0001` through `0011`, while a pending proposal must retain `Proposed - Pending Human Review` and `Human review status: Pending`. The validator never infers human review from a terminal ADR status or from an unchecked queue row.
+For any ADR linked by a non-superseded checked queue row, all four completed review fields are mandatory and must match the aggregate queue evidence exactly:
+
+- `Human review status: Completed`
+- `Human review date: YYYY-MM-DD`
+- `Human review disposition: Accepted`, `Revised`, `Deferred`, `Superseded`, or `Withdrawn`
+- `Review source: DECISION-KEY` (one or more queue keys)
+
+The pre-formal records `0001` through `0011` are the explicit exception only when no checked queue row links them; those historical records may omit review metadata. An AI-authored pending record is not review evidence and must use this exact shape instead:
+
+```text
+## Status
+
+Proposed - Pending Human Review
+
+## Decision Record
+
+- Human review status: Pending
+- Human review date: Not yet reviewed
+- Human review disposition: Pending
+- Review source: `AI-AUTHORED-PENDING`
+```
+
+Validation precedence is fixed: first parse every checked queue row and validate its ADR references; then aggregate the checked rows for each ADR and require the ADR's completed metadata to match that aggregate exactly; finally validate the ADR `Status` independently. A terminal status requires checked queue evidence except for pre-formal ADR records `0001` through `0011`, while a pending proposal must retain the exact pending metadata shape above. The validator never infers human review from a terminal ADR status or from an unchecked queue row.
 
 ## Registry
 

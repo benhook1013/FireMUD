@@ -104,6 +104,68 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
         )
 
+    def test_game_session_operator_routes_match_ingress_authority_shape(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        routes = {
+            (route["service"], route["route"]): route
+            for route in document["routes"]
+            if route.get("service") == "game-session-service"
+            and route.get("route", "").startswith("POST /sessions")
+        }
+        for route_key in self.validator.GAME_SESSION_OPERATOR_ROUTES:
+            route = routes[route_key]
+            self.assertEqual(
+                "conditional_by_operator_role",
+                route["membership_authority_generation_applies"],
+            )
+            self.assertEqual(
+                {"tenant_role": True, "platformAdmin_global": False},
+                route["membership_authority_generation_condition"],
+            )
+            self.assertTrue(route["tenant_billing_authority_generation_applies"])
+            self.assertFalse(route["global_platform_admin_membership_required"])
+            self.assertEqual(
+                "target_tenant_generation",
+                route["global_platform_admin_reference_generation_binding"],
+            )
+            self.assertTrue(
+                {
+                    "membership_when_tenant_role",
+                    "membership_generation",
+                    "target_tenant_generation",
+                }.issubset(route["required_live_checks"])
+            )
+
+        drifted_route = routes[("game-session-service", "POST /sessions")]
+        drifted_route["required_live_checks"].remove("target_tenant_generation")
+        errors = []
+        self.validator.validate_generation_applicability(document["routes"], errors)
+        self.assertTrue(
+            any("operator route must require target_tenant_generation" in error for error in errors)
+        )
+
+    def test_profile_routes_require_generation_checks(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        routes = {
+            route["route"]: route
+            for route in document["routes"]
+            if route.get("service") == "account-service"
+        }
+        for route_name in ("GetProfile", "UpdateProfile"):
+            route = routes[route_name]
+            self.assertTrue(route["tenant_billing_authority_generation_applies"])
+            self.assertTrue(route["membership_authority_generation_applies"])
+            self.assertTrue(
+                {"membership", "membership_generation", "tenant_generation"}.issubset(
+                    route["required_live_checks"]
+                )
+            )
+
+        routes["GetProfile"]["required_live_checks"].remove("tenant_generation")
+        errors = []
+        self.validator.validate_profile_authority_routes(document["routes"], errors)
+        self.assertIn("account-service GetProfile must require live check tenant_generation", errors)
+
     def test_multi_profile_unknown_name_is_not_resolved(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = next(
@@ -364,6 +426,55 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         profiles = self.validator.validate_token_profiles(document, errors)
         self.assertTrue(any("duplicate profile 'control-ui'" in error for error in errors))
         self.assertEqual("control-ui", profiles["control-ui"]["audience"])
+
+    def test_route_status_vocabulary_is_declared_and_closed(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        errors = []
+        statuses = self.validator.validate_route_status_vocabulary(document, errors)
+        self.assertEqual(
+            {"current_openapi_operator_surface", "target_not_currently_routable"},
+            statuses,
+        )
+        self.assertEqual([], errors)
+
+        document["route_status_vocabulary"].append("current_openapi_operator_surface")
+        errors = []
+        self.validator.validate_route_status_vocabulary(document, errors)
+        self.assertEqual(["route_status_vocabulary must not contain duplicates"], errors)
+
+    def test_route_status_uses_declared_vocabulary(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route
+            for route in document["routes"]
+            if route.get("route_status") == "target_not_currently_routable"
+        )
+        route["route_status"] = "declared_but_not_current"
+        document["route_status_vocabulary"].append("declared_but_not_current")
+        errors = []
+        statuses = self.validator.validate_route_status_vocabulary(document, errors)
+        self.validator.validate_route_statuses(document["routes"], statuses, errors)
+        self.assertTrue(
+            any("route_status_vocabulary must contain exactly" in error for error in errors)
+        )
+
+        document["route_status_vocabulary"].remove("declared_but_not_current")
+        errors = []
+        statuses = self.validator.validate_route_status_vocabulary(document, errors)
+        self.validator.validate_route_statuses(document["routes"], statuses, errors)
+        self.assertTrue(any("route_status must be one of" in error for error in errors))
+
+    def test_required_fields_use_snake_case(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        errors = []
+        self.validator.validate_required_fields(document["routes"], errors)
+        self.assertEqual([], errors)
+
+        route = next(route for route in document["routes"] if route.get("route") == "EnterPrivilegedControlWindow")
+        route["required_fields"] = ["RequestedGlobalRole"]
+        errors = []
+        self.validator.validate_required_fields(document["routes"], errors)
+        self.assertTrue(any("required_fields must use snake_case" in error for error in errors))
 
     def test_pending_deletion_uses_canonical_account_generation_field(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

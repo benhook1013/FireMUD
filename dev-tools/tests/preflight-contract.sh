@@ -990,9 +990,13 @@ def canonical_recovery_record(finalized_at):
         "erasureOverlayReconciliation": {
             "stream": "erasures",
             "artifactErasureHighWater": {"stream": "erasures", "sequence": 10},
+            "initialCatchupHighWater": {"stream": "erasures", "sequence": 11},
             "restoreHighWater": {"stream": "erasures", "sequence": 12},
             "sequenceVerification": {
                 "status": "pass",
+                "exclusiveStart": 10,
+                "inclusiveEnd": 11,
+                "ordered": True,
                 "contiguous": True,
                 "complete": True,
                 "gapFree": True,
@@ -1000,13 +1004,6 @@ def canonical_recovery_record(finalized_at):
             },
             "integrityVerification": {"status": "pass", "verified": True},
             "sequenceDispositions": [
-                {
-                    "stream": "erasures",
-                    "sequence": 11,
-                    "owner": "account-service",
-                    "disposition": "converged",
-                    "integrityVerified": True,
-                },
                 {
                     "stream": "erasures",
                     "sequence": 12,
@@ -1134,6 +1131,26 @@ baseline_status, baseline_message = module.validate_recovery_baseline(
 if baseline_status != "pass":
     raise SystemExit(f"valid recovery baseline did not pass: {baseline_message}")
 
+pre_snapshot_after_artifact = copy.deepcopy(valid_baseline)
+pre_snapshot_after_artifact["backupArtifactLineage"]["preSnapshotJournalHighWater"] = {
+    "stream": "erasures",
+    "sequence": 12,
+}
+pre_snapshot_after_artifact_path = recovery_dir / "pre-snapshot-after-artifact-baseline.json"
+pre_snapshot_after_artifact_path.write_text(json.dumps(pre_snapshot_after_artifact), encoding="utf-8")
+pre_snapshot_after_artifact_status, pre_snapshot_after_artifact_message = module.validate_recovery_baseline(
+    tmp,
+    str(pre_snapshot_after_artifact_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if pre_snapshot_after_artifact_status != "pass":
+    raise SystemExit(
+        "preSnapshotJournalHighWater above artifact high-water did not pass: "
+        + pre_snapshot_after_artifact_message
+    )
+
 rollback_compatibility_status, rollback_compatibility_message = module.recovery_compatibility_check(
     {
         "generatedAt": past_timestamp,
@@ -1189,10 +1206,22 @@ invalid_baseline_cases = {
             "artifactErasureHighWater": {"stream": "erasures", "sequence": 9},
         }
     },
+    "overlay-initial-catchup-bounds": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "initialCatchupHighWater": {"stream": "erasures", "sequence": 10},
+        }
+    },
     "lineage-pre-snapshot": {
         "backupArtifactLineage": {
             **valid_baseline["backupArtifactLineage"],
             "preSnapshotJournalHighWater": None,
+        }
+    },
+    "lineage-pre-snapshot-below-artifact": {
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "preSnapshotJournalHighWater": {"stream": "erasures", "sequence": 9},
         }
     },
     "overlay-stream": {
@@ -1208,8 +1237,7 @@ invalid_baseline_cases = {
                 {
                     **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
                     "stream": "other-stream",
-                },
-                valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][1],
+                }
             ],
         }
     },
@@ -1226,8 +1254,7 @@ invalid_baseline_cases = {
                 {
                     **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
                     "integrityVerified": False,
-                },
-                valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][1],
+                }
             ],
         }
     },
@@ -1243,9 +1270,7 @@ invalid_baseline_cases = {
     "overlay-missing-entry": {
         "erasureOverlayReconciliation": {
             **valid_baseline["erasureOverlayReconciliation"],
-            "sequenceDispositions": [
-                valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
-            ],
+            "sequenceDispositions": [],
         }
     },
     "overlay-dispositions-type": {
@@ -1269,9 +1294,8 @@ invalid_baseline_cases = {
             "sequenceDispositions": [
                 {
                     **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
-                    "sequence": 10,
-                },
-                valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][1],
+                    "sequence": 11,
+                }
             ],
         }
     },
@@ -1283,8 +1307,7 @@ invalid_baseline_cases = {
                     key: value
                     for key, value in valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0].items()
                     if key != "owner"
-                },
-                valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][1],
+                }
             ],
         }
     },
@@ -1295,8 +1318,7 @@ invalid_baseline_cases = {
                 {
                     **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
                     "owner": "   ",
-                },
-                valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][1],
+                }
             ],
         }
     },
@@ -1307,8 +1329,7 @@ invalid_baseline_cases = {
                 {
                     **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
                     "disposition": "unknown",
-                },
-                valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][1],
+                }
             ],
         }
     },
@@ -1323,15 +1344,17 @@ expected_invalid_baseline_messages = {
     "coordination-replay-evidence": "coordination recovery must prove",
     "overlay-bounds": "restoreHighWater must match the canonical bound exactly",
     "overlay-artifact-bounds": "artifactErasureHighWater must match the canonical bound exactly",
-    "lineage-pre-snapshot": "preSnapshotJournalHighWater at or above the snapshot-bound artifact high-water",
+    "overlay-initial-catchup-bounds": "initialCatchupHighWater must match the canonical bound exactly",
+    "lineage-pre-snapshot": "artifact lineage must include a valid",
+    "lineage-pre-snapshot-below-artifact": "preSnapshotJournalHighWater.sequence must be at or above",
     "overlay-stream": "stream must match the canonical erasure stream",
     "overlay-entry-stream": "sequenceDispositions[0] stream must match the canonical erasure stream",
     "overlay-integrity": "integrityVerification must be verified with status pass",
     "overlay-entry-integrity": "sequenceDispositions[0] integrity must be verified",
-    "overlay-duplicate": "contains duplicate sequence 11",
+    "overlay-duplicate": "contains duplicate sequence 12",
     "overlay-missing-entry": "missing=[12]",
     "overlay-dispositions-type": "sequenceDispositions must be a list",
-    "overlay-gap": "sequenceVerification must prove a contiguous, complete, gap-free, duplicate-free pass",
+    "overlay-gap": "sequenceVerification must prove the ordered, contiguous, complete, gap-free, duplicate-free initial catch-up interval",
     "overlay-out-of-range": "sequenceDispositions[0] sequence is outside the final interval",
     "overlay-owner-missing": "sequenceDispositions[0] owner must be non-empty",
     "overlay-owner-blank": "sequenceDispositions[0] owner must be non-empty",
