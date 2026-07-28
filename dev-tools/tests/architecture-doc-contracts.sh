@@ -19,16 +19,39 @@ maintenance_lock_token_prohibition = re.compile(
     r"|--maintenance-lock-token(?![A-Za-z0-9_-])[^\r\n]*"
     r"\b(?:forbidden|prohibited|disallowed)\b"
 )
+fence_start = re.compile(r"^[ \t]*(`{3,}|~{3,})")
+
+
+def sentence_containing(text, position):
+    boundaries = ".!?\n"
+    start = max((text.rfind(boundary, 0, position) for boundary in boundaries), default=-1)
+    ends = [text.find(boundary, position) for boundary in boundaries]
+    ends = [end for end in ends if end != -1]
+    end = min(ends, default=len(text))
+    return text[start + 1 : end + 1]
 
 
 def has_forbidden_maintenance_lock_token_syntax(text):
+    in_fenced_example = False
+    fence_marker = None
+    for line in text.splitlines(keepends=True):
+        fence = fence_start.match(line)
+        if fence:
+            marker = fence.group(1)[0]
+            if not in_fenced_example:
+                in_fenced_example = True
+                fence_marker = marker
+            elif marker == fence_marker:
+                in_fenced_example = False
+                fence_marker = None
+        if in_fenced_example:
+            if maintenance_lock_token_syntax.search(line):
+                return True
+
     for match in maintenance_lock_token_syntax.finditer(text):
-        line_start = text.rfind("\n", 0, match.start()) + 1
-        line_end = text.find("\n", match.end())
-        if line_end == -1:
-            line_end = len(text)
-        line = text[line_start:line_end]
-        if not maintenance_lock_token_prohibition.search(line):
+        if maintenance_lock_token_prohibition.search(
+            sentence_containing(text, match.start())
+        ) is None:
             return True
     return False
 
@@ -47,6 +70,14 @@ if has_forbidden_maintenance_lock_token_syntax(
     "The public command must not accept `--maintenance-lock-token` as a value."
 ):
     raise SystemExit("explicit maintenance token prohibition was incorrectly rejected")
+if not has_forbidden_maintenance_lock_token_syntax(
+    "The option is forbidden. `--maintenance-lock-token`"
+):
+    raise SystemExit("cross-sentence maintenance token prohibition was incorrectly accepted")
+if not has_forbidden_maintenance_lock_token_syntax(
+    "```text\n--maintenance-lock-token <token>\n```"
+):
+    raise SystemExit("fenced maintenance token example was incorrectly accepted")
 
 def require_contains(path, snippets):
     text = (root / path).read_text(encoding="utf-8")

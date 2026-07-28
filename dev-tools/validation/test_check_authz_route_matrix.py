@@ -450,6 +450,119 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertTrue(route["tenant_billing_authority_generation_applies"])
         self.assertIn("tenant_generation", route["required_live_checks"])
 
+    def test_route_class_branch_table_matches_canonical_branches(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        branches = {
+            (entry["classification"], entry["branch"]): entry
+            for entry in document["route_class_branch_table"]
+        }
+        self.assertEqual(set(self.validator.EXPECTED_ROUTE_CLASS_BRANCHES), set(branches))
+        self.assertEqual(
+            "omitted",
+            branches[("billing_safe_tenant", "tenantAdmin")]["generations"]["tenant"],
+        )
+        self.assertEqual(
+            "not_required",
+            branches[("cross_tenant_support_safe", "support_global")][
+                "privileged_control"
+            ],
+        )
+        self.assertEqual(
+            "required",
+            branches[("cross_tenant_support_safe", "platformAdmin_global")][
+                "privileged_control"
+            ],
+        )
+
+    def test_route_class_branch_table_rejects_intentional_omission_drift(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        entry = next(
+            entry
+            for entry in document["route_class_branch_table"]
+            if entry["classification"] == "billing_safe_tenant"
+        )
+        entry["generations"]["membership"] = "omitted"
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "billing_safe_tenant tenantAdmin.generations.membership must be 'required'"
+                in error
+                for error in errors
+            )
+        )
+
+    def test_join_pre_membership_contract_is_explicit(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        expected = {
+            "public_production_visibility",
+            "public_production_admission",
+            "runtime_entitlements",
+            "admission_pointer",
+            "idempotency",
+        }
+        exception = document["tenant_membership_policy"]["public_production_join_exception"]
+        self.assertEqual(expected, set(exception["required_pre_membership_checks"]))
+        for service, route_name in self.validator.JOIN_ROUTES_REQUIRING_POINTER_ERROR:
+            route = route_for(document, service, route_name)
+            self.assertTrue(expected.issubset(set(route["required_live_checks"])))
+            self.assertEqual("caller_bound_after_validation", route["membership_creation"])
+
+    def test_join_pre_membership_checks_are_validated(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "game-session-service", "JOIN")
+        route["required_live_checks"].remove("idempotency")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(any("game-session-service JOIN is missing pre-membership checks" in error for error in errors))
+
+    def test_fresh_authority_evidence_excludes_bound_ordinary_gameplay_rereads(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        fresh = document["authority_evidence_policy"]["fail_closed_fresh_evidence"]
+        self.assertEqual(
+            {"admission", "renewal", "reconnect", "tenant_scoped_control_plane_mutation"},
+            set(fresh["applies_to"]),
+        )
+        bound = document["authority_evidence_policy"]["bound_ordinary_gameplay"]
+        self.assertFalse(bound["pointer_authority_reread"])
+        self.assertEqual({"bound_game_instance", "runtime_fence"}, set(bound["required_fences"]))
+
+    def test_ws_game_defers_membership_to_downstream_admission(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        routes = [
+            route
+            for route in document["routes"]
+            if route.get("service") == "spring-cloud-gateway"
+            and route.get("route") == "/ws/game/**"
+        ]
+        self.assertEqual(2, len(routes))
+        for route in routes:
+            self.assertFalse(route["tenant_billing_authority_generation_applies"])
+            self.assertFalse(route["membership_authority_generation_applies"])
+            downstream = route["downstream_admission_contract"]
+            self.assertFalse(downstream["tenant_billing_authority_generation_applies"])
+            self.assertTrue(downstream["membership_authority_generation_applies"])
+            self.assertIn("membership", downstream["required_live_checks"])
+            self.assertIn("membership_generation", downstream["required_live_checks"])
+
+    def test_ws_game_downstream_membership_contract_is_required(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route
+            for route in document["routes"]
+            if route.get("service") == "spring-cloud-gateway"
+            and route.get("route") == "/ws/game/**"
+            and {"connection_mode": "trusted_tcp_proxy"}
+            in route.get("applicability", {}).get("all_of", [])
+        )
+        route["downstream_admission_contract"]["membership_authority_generation_applies"] = False
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "/ws/game/** trusted_tcp_proxy downstream_admission_contract must apply membership authority generation"
+                in error
+                for error in errors
+            )
+        )
+
     def test_cross_tenant_safe_routes_do_not_require_target_membership(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         matched_routes = [
@@ -653,6 +766,28 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         errors = []
         self.validator.validate_required_fields(document["routes"], errors)
         self.assertTrue(any("required_fields must use snake_case" in error for error in errors))
+
+    def test_privileged_control_entry_route_establishes_the_window(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "account-service", "EnterPrivilegedControlWindow")
+        bootstrap = document["elevation_contracts"]["privileged_control"]["bootstrap_exemption"]
+        self.assertEqual("establishes_window", route["privileged_control"])
+        self.assertEqual("account-service/EnterPrivilegedControlWindow", bootstrap["route"])
+        self.assertFalse(bootstrap["requires_existing_window"])
+
+    def test_privileged_control_entry_route_rejects_existing_window_requirement(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        document["elevation_contracts"]["privileged_control"]["bootstrap_exemption"][
+            "requires_existing_window"
+        ] = True
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "privileged_control bootstrap exemption must not require an existing window"
+                in error
+                for error in errors
+            )
+        )
 
     def test_pending_deletion_uses_canonical_account_generation_field(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -1125,10 +1260,11 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     delegated_subject: authenticated_session_account
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
-    required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
+    required_live_checks: [public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, idempotency]
     canonical_errors:
       any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, TENANT_BILLING_BLOCKED]
-    mutation_contract: explicit_public_membership_atomic""",
+    mutation_contract: explicit_public_membership_atomic
+    membership_creation: caller_bound_after_validation""",
                 """  - service: game-session-service
     route: JOIN
     scope: tenant
@@ -1138,7 +1274,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     delegated_subject: authenticated_session_account
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
-    required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
+    required_live_checks: [public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, idempotency]
     mutation_contract: explicit_public_membership_atomic""",
             )
             path.write_text(text, encoding="utf-8")

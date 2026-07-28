@@ -96,6 +96,25 @@ tenant_generation_policy:
       - support_safe_platform_admin_branch_denied_without_privileged_control
       - billing_safe_denied_without_live_billing_admin_or_platform_admin_and_privileged_control
       - new_route_class_does_not_inherit_exception
+tenant_membership_policy:
+  tenant_owned_writes_require_existing_membership: true
+  public_production_join_exception:
+    classification: public_production_onboarding
+    membership_creation: caller_bound_after_validation
+    required_pre_membership_checks:
+      [public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, idempotency]
+    routes:
+      - [game-session-service, JOIN]
+      - [account-service, POST /auth/bootstrap/join]
+      - [account-service, EnsurePublicProductionPlayerMembership]
+authority_evidence_policy:
+  fail_closed_fresh_evidence:
+    applies_to: [admission, renewal, reconnect, tenant_scoped_control_plane_mutation]
+    unavailable_or_ambiguous: AUTH_UNAVAILABLE
+  bound_ordinary_gameplay:
+    applies_to: already_bound_instance_runtime
+    pointer_authority_reread: false
+    required_fences: [bound_game_instance, runtime_fence]
 entitlement_contract:
   owner: account-service
   binding: exact_tenant_id
@@ -127,6 +146,7 @@ required_live_check_vocabulary:
   - explicit_deletion_confirmation
   - export_availability
   - grant_version
+  - idempotency
   - independent_totp
   - issuer_generation
   - membership
@@ -172,6 +192,87 @@ classifications:
   - cross_tenant_data_bearing
   - internal_workload
   - pending_deletion_scoped
+route_class_branch_table:
+  - classification: tenant_regular
+    branch: tenant_role
+    scope: tenant
+    role: route_declared_tenant_role
+    generations:
+      issuer: required
+      account: required
+      tenant: required
+      membership: required
+    privileged_control: not_required
+  - classification: tenant_regular
+    branch: platformAdmin_global
+    scope: tenant
+    role: platformAdmin
+    generations:
+      issuer: required
+      account: required
+      tenant: target_tenant_generation
+      membership: omitted
+    privileged_control: required
+  - classification: cross_tenant_data_bearing
+    branch: platformAdmin_global
+    scope: cross_tenant
+    role: platformAdmin
+    generations:
+      issuer: required
+      account: required
+      tenant: target_tenant_generation
+      membership: omitted
+    privileged_control: required
+  - classification: billing_safe_tenant
+    branch: tenantAdmin
+    scope: tenant
+    role: tenantAdmin
+    generations:
+      issuer: required
+      account: required
+      tenant: omitted
+      membership: required
+    privileged_control: not_required
+  - classification: cross_tenant_support_safe
+    branch: support_global
+    scope: cross_tenant
+    role: support
+    generations:
+      issuer: required
+      account: required
+      tenant: omitted
+      membership: omitted
+    privileged_control: not_required
+  - classification: cross_tenant_support_safe
+    branch: platformAdmin_global
+    scope: cross_tenant
+    role: platformAdmin
+    generations:
+      issuer: required
+      account: required
+      tenant: omitted
+      membership: omitted
+    privileged_control: required
+  - classification: cross_tenant_billing_safe
+    branch: billingAdmin_global
+    scope: cross_tenant
+    role: billingAdmin
+    generations:
+      issuer: required
+      account: required
+      tenant: omitted
+      membership: omitted
+    privileged_control: required
+  - classification: cross_tenant_billing_safe
+    branch: platformAdmin_global
+    scope: cross_tenant
+    role: platformAdmin
+    generations:
+      issuer: required
+      account: required
+      tenant: omitted
+      membership: omitted
+    privileged_control: required
 role_assurance:
   privileged_control_when_global_role:
     resolution: role_specific_global_role_assurance
@@ -200,6 +301,10 @@ elevation_contracts:
     state: server_side_role_scoped_window
     required_bindings: [account_id, token_jti, account_generation, requested_global_role, issued_at, expires_at]
     invalidated_by: [token_revocation, account_generation_change, role_loss, expiry]
+    bootstrap_exemption:
+      route: account-service/EnterPrivilegedControlWindow
+      privileged_control: establishes_window
+      requires_existing_window: false
     implementation_status:
       known_drift:
         - EnterPrivilegedControlWindow is not currently routable or implemented; route branches requiring the window fail closed, and platformAdmin cannot currently obtain it.
@@ -358,10 +463,11 @@ routes:
     delegated_subject: authenticated_session_account
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
-    required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
+    required_live_checks: [public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, idempotency]
     canonical_errors:
       any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, TENANT_BILLING_BLOCKED]
     mutation_contract: explicit_public_membership_atomic
+    membership_creation: caller_bound_after_validation
   - service: game-session-service
     route: PLAY
     scope: tenant
@@ -399,12 +505,16 @@ routes:
     issued_token_state: none_bounded_single_use_replay_exception
     issuer_authority_generation_applies: false
     account_authority_generation_applies: false
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
     accepted_carriers: [first_party_cookie, classified_non_browser_header]
     edge_consumer: spring_cloud_gateway_public_non_proxy_websocket
     connect_context_output: signed_connect_context
     required_live_checks: [connect_token_single_use_consume, replay_protection_available, replay_admission_fence_match, connect_scope_match]
     downstream_admission_contract:
       owner: game-session-service
+      tenant_billing_authority_generation_applies: false
+      membership_authority_generation_applies: true
       required_live_checks: [membership, membership_generation, public_production_admission, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
       membership_creation: explicit_join_only
     handshake_error_classes:
@@ -440,7 +550,15 @@ routes:
     end_user_token_required: false
     edge_consumer: spring_cloud_gateway_internal_mtls_websocket
     connect_context_output: trusted_tcp_proxy_mode
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
     required_live_checks: [trusted_proxy_identity]
+    downstream_admission_contract:
+      owner: game-session-service
+      tenant_billing_authority_generation_applies: false
+      membership_authority_generation_applies: true
+      required_live_checks: [membership, membership_generation, public_production_admission, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
+      membership_creation: explicit_join_only
     handshake_error_classes:
       any_of: [POLICY_DENY, BACKEND_UNAVAILABLE, PROTOCOL_MISMATCH, INTERNAL_ERROR]
   - service: spring-cloud-gateway
@@ -753,6 +871,7 @@ routes:
     subject_binding: caller_account_id
     accepted_token_profiles: [control-ui]
     required_fields: [requested_global_role]
+    privileged_control: establishes_window
     required_live_checks:
       [recent_account_authentication, independent_totp, current_account_generation, current_global_role, current_token_generation]
     mutation_contract: create_bounded_server_side_role_elevation_bound_to_current_token
@@ -807,10 +926,11 @@ routes:
     target_binding: opaque_server_issued_connect_scope_id_matches_route
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
-    required_live_checks: [account_state_bootstrap_eligible, pending_deletion_state, public_production_admission, runtime_entitlements, admission_pointer, connect_scope_match]
+    required_live_checks: [account_state_bootstrap_eligible, pending_deletion_state, public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, connect_scope_match, idempotency]
     canonical_errors:
       any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, TENANT_BILLING_BLOCKED]
     mutation_contract: explicit_public_membership_atomic
+    membership_creation: caller_bound_after_validation
     route_status: target_not_currently_routable
   - service: account-service
     route: EnsurePublicProductionPlayerMembership
@@ -831,10 +951,11 @@ routes:
     delegated_subject: typed_player_execution_context
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
-    required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
+    required_live_checks: [public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, idempotency]
     canonical_errors:
       any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, TENANT_BILLING_BLOCKED]
     mutation_contract: explicit_public_membership_atomic
+    membership_creation: caller_bound_after_validation
     implementation_status:
       known_drift:
         - current_runtime_invokes_membership_seam_implicitly_from_connect_token_or_play; this is a live security_contract_violation and affected admission must fail closed until explicit JOIN is the only membership writer

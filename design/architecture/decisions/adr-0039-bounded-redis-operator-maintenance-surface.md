@@ -65,7 +65,22 @@ The canonical public maintenance-lock release operation is `releaseMaintenanceLo
 
 The authenticated actor or workload identity, deployment boundary, and authorization are request context, not caller-supplied wire fields. `releaseMaintenanceLock` has no public `expectedPhase` field: the controller resolves the current durable phase for `operationId` and compare-and-sets only from that exact observed phase. It accepts `PAUSED`, `collecting`, `ready_to_reopen`, or `AWAITING_RESUME`; it rejects `RESUME_AUTHORIZED`, `releasing`, `PARTIAL_RELEASE_RECONCILING`, `finalized`, unknown phases, and any operation whose current state cannot be resolved unambiguously. `RUNNING`, `FAILED`, and `SUCCEEDED` are operation statuses, not phases; status does not replace the exact phase check.
 
-After durable abandonment and lock-release observation, the response is the stable record:
+The controller first durably records the validated abandonment intent as nonterminal `PENDING_RELEASE`, including the exact request tuple, observed phase, and fencing generation. That intent is committed before any lock-release effect is invoked or observed, and the operation remains paused and non-gameplay-safe while release is pending. The controller then applies the lock-release effect under that recorded fence and observes its result. Until that observation succeeds, the response is nonterminal:
+
+```json
+{
+  "operationId": "...",
+  "scope": { "kind": "...", "selectors": {} },
+  "phase": "collecting",
+  "outcome": "PENDING_RELEASE",
+  "maintenanceLockReleased": false,
+  "gameplayResumeAuthorized": false,
+  "evidenceRef": "...",
+  "recordedAt": "..."
+}
+```
+
+After the same fenced release effect has been observed, the terminal response is the stable record:
 
 ```json
 {
@@ -80,14 +95,14 @@ After durable abandonment and lock-release observation, the response is the stab
 }
 ```
 
-The response contains no raw maintenance-lock token. A retry while the durable abandonment record exists returns the recorded result after observing the same lock-release effect; it never repeats a release effect.
+The response contains no raw maintenance-lock token. An exact-tuple retry while the durable record is `PENDING_RELEASE` resumes or reconciles the same fenced, idempotent release effect; it never starts a second effect. `ABANDONED` is terminal only after lock release has been observed and that observation is durably committed. A retry after that point returns the recorded terminal result without repeating release.
 
 The public maintenance-lock release control is an audited abandonment operation, not a shortcut to resume or a general unlock API. It must satisfy all of the following gates:
 
 - The request names the existing `operationId`, exact recorded scope selectors, server-issued `maintenanceLockToken`, an authenticated authorized actor, a non-empty reason, and an immutable `evidenceRef`. The operation record and its fencing generation are the authorities; caller-supplied scope or token metadata cannot create or transfer ownership.
 - The controller resolves the token to the active operation's stored token digest and fence, verifies the deployment boundary, operation class, actor authorization, and exact scope, then compare-and-sets from the exact durable phase it observed. Release is permitted only for a paused/fenced `PAUSED`, `collecting`, `ready_to_reopen`, or `AWAITING_RESUME`; it rejects `RESUME_AUTHORIZED`, `releasing`, `PARTIAL_RELEASE_RECONCILING`, `finalized`, concurrent advancement, and every phase/evidence mismatch.
-- A release request is idempotent on exactly `(operationName=releaseMaintenanceLock, operationId, recorded scope selectors, maintenance-lock identity, authenticated actor/workload identity, reasonDigest, evidenceRef identity)`, where `reasonDigest` is the canonical digest of the supplied reason and maintenance-lock identity is the stored token digest plus fencing generation. A duplicate returns the recorded abandonment result without repeating release effects; any different tuple, stale token, expired lock, missing evidence, or ambiguous external state is an idempotency conflict or fails closed and leaves the fence in place.
-- Successful abandonment records the actor, reason, evidence, phase, and fence outcome durably before any lock-release effect is observed. It retains the paused/non-gameplay-safe state and cannot authorize `resume`, `AWAITING_RESUME`, traffic reopening, or a new operation implicitly.
+- A release request is idempotent on exactly `(operationName=releaseMaintenanceLock, operationId, recorded scope selectors, maintenance-lock identity, authenticated actor/workload identity, reasonDigest, evidenceRef identity)`, where `reasonDigest` is the canonical digest of the supplied reason and maintenance-lock identity is the stored token digest plus fencing generation. The first valid request durably records `PENDING_RELEASE` before invoking the fenced release effect. An exact duplicate resumes that same effect and an already-observed effect is finalized without repetition; any different tuple returns `IDEMPOTENCY_CONFLICT` without invoking the release effect, while a stale token, expired lock, missing evidence, or ambiguous external state fails closed and leaves the fence in place.
+- The terminal `ABANDONED` result records the actor, reason, evidence, phase, and fence outcome only after the same fenced release effect has been observed and that observation commits durably. Until then it retains `PENDING_RELEASE` and the paused/non-gameplay-safe state, and it cannot authorize `resume`, `AWAITING_RESUME`, traffic reopening, or a new operation implicitly.
 
 ## Consequences
 

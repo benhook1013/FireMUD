@@ -10,7 +10,6 @@ import subprocess
 import sys
 import uuid
 from dataclasses import dataclass
-from itertools import islice
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -47,6 +46,7 @@ SAFE_RECOVERY_DISPOSITIONS = {
     "terminalized",
     "invalidated",
 }
+MISSING_SEQUENCE_DISPLAY_LIMIT = 20
 
 # These are the policy results emitted by this executable. The two JWT policies
 # documented as target-state-only are deliberately not included until they are
@@ -411,22 +411,18 @@ def validate_erasure_overlay_reconciliation(
     expected_sequence_count = restore_sequence - initial_catchup_sequence
     if len(observed_sequences) != expected_sequence_count:
         missing_sequence_count = expected_sequence_count - len(observed_sequences)
-        missing_sequences = list(
-            islice(
-                (
-                    sequence
-                    for sequence in range(
-                        initial_catchup_sequence + 1, restore_sequence + 1
-                    )
-                    if sequence not in observed_sequences
-                ),
-                20,
-            )
-        )
+        missing_sequences = [
+            sequence
+            for sequence in range(initial_catchup_sequence + 1, restore_sequence + 1)
+            if sequence not in observed_sequences
+        ]
+        displayed_missing_sequences = missing_sequences[:MISSING_SEQUENCE_DISPLAY_LIMIT]
+        omitted_count = len(missing_sequences) - len(displayed_missing_sequences)
         return (
             "fail",
             f"{label} sequenceDispositions must cover the exact final interval; "
-            f"missingCount={missing_sequence_count}, missing={missing_sequences}",
+            f"missingCount={missing_sequence_count}, "
+            f"missing={displayed_missing_sequences}, omittedCount={omitted_count}",
         )
     return ("pass", "")
 

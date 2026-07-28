@@ -69,7 +69,7 @@ For any ADR linked by an exact `[ADR NNNN]` provenance label in a checked queue 
 - `Human review status: Completed`
 - `Human review date: YYYY-MM-DD`
 - `Human review disposition: Accepted`, `Revised`, `Superseded`, or `Withdrawn` for an ADR provenance record
-- `Review source: DECISION-KEY` (one or more queue keys)
+- `Review source:` followed by one or more backtick-delimited queue keys, for example `` `DECISION-KEY` `` or `` `DECISION-KEY`, `OTHER-KEY` ``
 
 The pre-formal records `0001` through `0011` are the explicit exception only when no checked queue row links them; those historical records may omit review metadata. An AI-authored pending record is not review evidence and must use this exact shape instead:
 

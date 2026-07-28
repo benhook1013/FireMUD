@@ -106,12 +106,12 @@ class GlobalExceptionHandlerTest {
   void handleNoResourceFoundPreservesNotFoundEnvelope() {
     GlobalExceptionHandler handler = new GlobalExceptionHandler();
 
-    ApiResponse<ErrorDetail> response =
-        handler
-            .handleNoResourceFound(
-                new NoResourceFoundException(HttpMethod.POST, "/reports", "reports"))
-            .getBody();
+    var responseEntity =
+        handler.handleNoResourceFound(
+            new NoResourceFoundException(HttpMethod.POST, "/reports", "reports"));
+    ApiResponse<ErrorDetail> response = responseEntity.getBody();
 
+    assertEquals(HttpStatus.NOT_FOUND, responseEntity.getStatusCode());
     Assertions.assertNotNull(response);
     assertEquals("NOT_FOUND", response.error().code());
     assertEquals("Resource not found", response.error().message());

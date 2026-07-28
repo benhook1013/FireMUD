@@ -38,6 +38,8 @@ Account Service owns the issuer, account, tenant, and caller-bound membership au
 
 If Account authority or its required projection is unavailable, the operation fails closed with retryable `AUTH_UNAVAILABLE`. UI clients retain in-memory state for retry, but no cached JWT role, membership, generation, or allowlist result is authorization.
 
+Fresh authoritative evidence is required for admission, authority renewal, reconnect, and tenant-scoped control-plane mutations. Those paths fail closed when issuer, account, tenant, membership, entitlement, routing, or generation evidence is missing, unavailable, stale, or ambiguous. Already-bound ordinary gameplay is different: after a session is bound to a resolved `gameInstanceId`, ordinary gameplay uses the bound instance and runtime fences without rereading pointer authority for every action. Reconnect, renewal, and any new admission must establish fresh evidence again.
+
 ### Realm State Model
 
 Tenant membership, tenant roles, and character ownership answer "which game does this account belong to?" They do not imply that every realm inside a tenant shares one undifferentiated set of gameplay state.
@@ -85,7 +87,7 @@ This model underpins both authentication and authorization:
 - Authentication always resolves a single platform `accountId`.
 - Tenant-scoped control-plane authorization combines the authenticated `accountId` with tenant-scoped roles from `scopedRoles[tenantId]`, plus any cross-tenant `globalRoles` such as `platformAdmin`, as described in [Authentication & Authorization](./system-architecture-authentication.md).
 - Gameplay admission is stricter: player-facing `WORLDS` / `REALMS` / `CHARS` / `PLAY` selection uses caller-bound tenant membership, public-production admission policy, and entitlement checks, and global roles alone do not grant gameplay admission.
-- Public-production `JOIN` is the only pre-membership tenant action. It is an explicit Account-owned membership write; character creation, connect-token issuance, and `PLAY` require the resulting caller-bound membership and never create it implicitly.
+- Public-production `JOIN` is the sole exception to the existing-membership rule for tenant-owned writes. It is an explicit Account-owned, caller-bound membership write that validates catalog visibility, public-production admission policy, tenant entitlement, admission routing, and idempotency before committing membership; character creation, connect-token issuance, and `PLAY` require the resulting caller-bound membership and never create it implicitly.
 - Player-facing world visibility in v1 has two sources:
   - existing caller-bound tenant membership for any visible realm the caller is allowed to enter, and
   - public-production discovery for tenants whose explicit public-production realm is live and gameplay-admissible.

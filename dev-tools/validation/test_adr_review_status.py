@@ -145,6 +145,9 @@ class AdrReviewStatusTests(unittest.TestCase):
         with fixture_root() as fixture:
             self.validator.validate(Path(fixture))
 
+    def test_repository_corpus_passes(self) -> None:
+        self.validator.validate(ROOT)
+
     def test_section_value_accepts_lf_and_crlf_without_carriage_return(self) -> None:
         for newline in ("\n", "\r\n"):
             with self.subTest(newline=repr(newline)):
@@ -289,7 +292,11 @@ class AdrReviewStatusTests(unittest.TestCase):
                 expect_failure(
                     self,
                     lambda root=root: self.validator.validate(root),
-                    "does not allow human review disposition",
+                    (
+                        "checked deferred review row"
+                        if disposition == "Deferred"
+                        else "does not allow human review disposition"
+                    ),
                 )
 
     def test_checked_review_requires_completed_metadata(self) -> None:
@@ -404,7 +411,7 @@ class AdrReviewStatusTests(unittest.TestCase):
             expect_failure(
                 self,
                 lambda: self.validator.validate(root),
-                "checked human review requires",
+                "checked deferred review row",
             )
 
     def test_checked_review_date_must_match_queue(self) -> None:
@@ -580,12 +587,16 @@ class AdrReviewStatusTests(unittest.TestCase):
             )
             expect_failure(self,
                 lambda: self.validator.validate(root),
-                "checked review queue references missing ADRs: ['0099']",
+                "ADR 0099 target does not exist",
             )
 
     def test_checked_queue_row_collects_every_adr_link(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
+            write(
+                root / "design/architecture/decisions/adr-0014-other.md",
+                "# ADR 0014\n",
+            )
             append_queue_row(
                 root,
                 "- [x] `TEST-COUPLED` — `revised` on 2026-07-27; "
@@ -639,6 +650,10 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_superseded_rows_keep_reviewed_adr_provenance(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
+            write(
+                root / "design/architecture/decisions/adr-0014-replacement.md",
+                "# ADR 0014\n",
+            )
             append_queue_row(
                 root,
                 "- [x] `TEST-SUPERSEDED` — `superseded` on 2026-07-27 by "

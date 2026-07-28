@@ -4,7 +4,7 @@ This document outlines the administration interface delivered as a lightweight R
 
 ## Implementation Status
 
-- The admin UI is a lightweight operator surface. Its live scope is log search, saga inspection, analytics, feature-flag toggles, moderation policy-input/audit persistence, and per-instance tick-remediation pause/resume forwarding. The separate backend `EvaluateModerationPolicy` contract is consumed by Game Session for `GAMEPLAY_ADMISSION` and Social & Groups for `CHAT_SEND`; it is not an admin UI capability. Versioned propagation and broader enforcement remain unavailable.
+- The admin UI is a lightweight operator surface. Its live scope is log search, saga inspection, analytics, and moderation policy-input/audit persistence. Feature-flag toggles and per-instance tick-remediation pause/resume have backend implementation paths but are unavailable as UI capabilities until their action-family schemas and shared cross-language `mutationDigest/v1` golden vectors exist. The separate backend `EvaluateModerationPolicy` contract is consumed by Game Session for `GAMEPLAY_ADMISSION` and Social & Groups for `CHAT_SEND`; it is not an admin UI capability. Versioned propagation and broader enforcement remain unavailable.
 - Player report review is target coverage. Public administrative `/reports` persistence is unavailable because its unsafe HTTP controller and Gateway route were removed pending canonical authorization and live reference-validation checks; this UI does not present it as player submission.
 - Admission-pointer reads, audit, and version-upgrade preparation/read remain API-only to this UI; same-target CAS open/close and prepared cutover mutations are target-only, as are session-lifecycle controls, broader remediation, versioned moderation propagation, and richer dashboards. Current runtime enforcement occurs in Game Session and Social & Groups from Logging & Admin policy evaluations; the target inventory below must not be read as proof that broader surfaces are live.
 
@@ -12,8 +12,8 @@ This document outlines the administration interface delivered as a lightweight R
 
 - Search and filter logs with Kibana-like syntax.
 - Player report review is target coverage and is separate from the live moderation-action persistence path. Public administrative `/reports` persistence remains unavailable until its canonical checks exist, and the target player route remains unavailable until player-bootstrap subject and tenant-membership binding exist. `POST /moderation/actions` persists target-player moderation policy input and audit only; `EvaluateModerationPolicy` is the separate evaluation contract consumed by enforcement owners. The action endpoint does not issue bans or warnings or enforce owner-side moderation outcomes.
-- Toggle runtime feature flags for a specific tenant.
-- Issue per-instance tick-remediation pause and resume requests for a specific `<tenantId, gameInstanceId>` scope.
+- Target capability: toggle runtime feature flags for a specific tenant after its conformance gate passes.
+- Target capability: issue per-instance tick-remediation pause and resume requests for a specific `<tenantId, gameInstanceId>` scope after their conformance gate passes.
 - Inspect saga workflows and view step details.
 - Reference [Moderation Policies](./moderation-policies.md) when recording policy input and audit evidence; current owner-side enforcement uses synchronous policy evaluation, while versioned propagation remains target coverage.
 - View analytics dashboards built with Grafana and Kibana.
@@ -25,9 +25,6 @@ Routes include:
 ```text
 POST /logs/query
 POST /moderation/actions
-POST /feature-flags/toggle
-POST /tick-remediation/pause
-POST /tick-remediation/resume
 GET  /sagas
 GET  /sagas/{id}/steps
 ```
@@ -35,16 +32,16 @@ GET  /sagas/{id}/steps
 Mutation inventory:
 
 - Live persistence/audit mutation: `POST /moderation/actions` persists moderation policy input and audit only; it does not evaluate policy, call an enforcement owner, or mutate `GAMEPLAY_ADMISSION`/`CHAT_SEND` enforcement state. `EvaluateModerationPolicy` is the separate evaluation contract.
-- Live owner-forwarding mutations: `POST /feature-flags/toggle` and per-instance `POST /tick-remediation/pause` and `POST /tick-remediation/resume` forward operator mutations to Game Session owner APIs.
+- Gated implemented owner-forwarding paths not presented as usable UI controls: `POST /feature-flags/toggle`, `POST /tick-remediation/pause`, and `POST /tick-remediation/resume` remain unavailable pending their action schemas and shared `mutationDigest/v1` vectors.
 - Live backend reads not presented by this UI: admission-pointer reads, audit, and version-upgrade preparation/read.
 - Target-only or unavailable capabilities not presented by this UI: admission-pointer same-target CAS open/close and prepared cutover, session-lifecycle controls, quota overrides, broader remediation, and versioned moderation propagation.
 
 The live admission-pointer reads, audit, and version-upgrade preparation/read endpoints are intentionally excluded from this UI inventory: no corresponding React/admin surface is implemented in this module. Operators must use the documented `/admission-pointers*` API family for those live reads and preparation operations. Same-target CAS open/close and prepared cutover mutations are target-only and are not current operator controls.
 
-Current-state note: `POST /tick-remediation/pause` and `POST /tick-remediation/resume` are backed by live Logging & Admin forwarding endpoints for a specific `<tenantId, gameInstanceId>` scope. Game Session `/sessions*` lifecycle routes are current owner-local hooks, not current UI or Logging & Admin ingress. Quota override and broader remediation are coverage drift: no current routes or owner-side contracts exist, so the UI must not present placeholder controls.
+Current-state note: `POST /tick-remediation/pause` and `POST /tick-remediation/resume` have Logging & Admin forwarding implementations for a specific `<tenantId, gameInstanceId>` scope, but the UI must not expose them before the conformance gate passes. Game Session `/sessions*` lifecycle routes are current owner-local hooks, not current UI or Logging & Admin ingress. Quota override and broader remediation are coverage drift: no current routes or owner-side contracts exist, so the UI must not present placeholder controls.
 
 `POST /moderation/actions` is a live policy-input persistence/audit support surface for a selected target player. It is independent of unavailable public administrative `/reports` persistence and the unavailable target player-submission route. The UI does not directly perform runtime enforcement or policy evaluation; Game Session and Social & Groups consume synchronous `EvaluateModerationPolicy` decisions, while versioned propagation remains unavailable. Log search, saga inspection, admission-pointer reads, audit, version-upgrade preparation/read, and analytics dashboards remain read or investigation surfaces; this UI does not expose `/reports` as an investigation or player-submission surface.
 
 The UI is packaged as a separate web module served by the Logging & Admin Service. Styling relies on Material‑UI components, and all API calls are protected by the existing security interceptors described in the [API contracts](./api-contracts.md) and [runtime model](./runtime-and-data.md).
 
-Backend endpoints for the live UI-listed features are available as described in the [API contracts](./api-contracts.md). The React interface consumes only those documented UI routes directly. Other live backend surfaces, including admission-pointer reads, audit, and version-upgrade preparation/read, remain API-only until a UI is implemented; public administrative report persistence, same-target CAS open/close, prepared cutover, and the target caller-bound player report route remain unavailable.
+Backend endpoints for the live UI-listed features are available as described in the [API contracts](./api-contracts.md). The React interface consumes only those documented UI routes directly. Other live backend surfaces, including admission-pointer reads, audit, and prepared-upgrade reads, remain API-only until a UI is implemented; feature-flag, version-upgrade preparation, and tick-forwarding mutations remain unavailable pending conformance, while public administrative report persistence, same-target CAS open/close, prepared cutover, and the target caller-bound player report route remain unavailable for their documented reasons.

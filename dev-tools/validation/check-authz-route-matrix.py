@@ -28,6 +28,13 @@ JOIN_ROUTES_REQUIRING_POINTER_ERROR = {
     ("account-service", "POST /auth/bootstrap/join"),
     ("account-service", "EnsurePublicProductionPlayerMembership"),
 }
+REQUIRED_JOIN_PRE_MEMBERSHIP_CHECKS = {
+    "public_production_visibility",
+    "public_production_admission",
+    "runtime_entitlements",
+    "admission_pointer",
+    "idempotency",
+}
 REQUIRED_DELEGATED_ENTITLEMENT_CHECKS = {
     "conditional_realm_access_grant",
     "grant_version",
@@ -36,6 +43,15 @@ REQUIRED_DELEGATED_ENTITLEMENT_CHECKS = {
 }
 REQUIRED_TRUSTED_PROXY_CHECKS = {"trusted_proxy_identity"}
 REQUIRED_CONNECT_TOKEN_REVOKE_CHECKS = {"browser_origin", "csrf"}
+REQUIRED_DOWNSTREAM_ADMISSION_CHECKS = {
+    "membership",
+    "membership_generation",
+    "public_production_admission",
+    "realm_visibility",
+    "conditional_realm_access_grant",
+    "runtime_entitlements",
+    "admission_pointer",
+}
 REQUIRED_FIRST_PARTY_WS_APPLICABILITY = {
     "connection_mode": "first_party_web",
     "operation": "websocket_upgrade",
@@ -116,6 +132,98 @@ REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS = {
     },
 }
 PRIVILEGED_OPERATOR_ROLE_ASSURANCE = "privileged_control_when_global_role"
+PRIVILEGED_CONTROL_VALUES = {"required", "not_required", "establishes_window"}
+AUTHORITY_GENERATION_VALUES = {"required", "omitted", "target_tenant_generation"}
+EXPECTED_ROUTE_CLASS_BRANCHES = {
+    ("tenant_regular", "tenant_role"): {
+        "scope": "tenant",
+        "role": "route_declared_tenant_role",
+        "generations": {
+            "issuer": "required",
+            "account": "required",
+            "tenant": "required",
+            "membership": "required",
+        },
+        "privileged_control": "not_required",
+    },
+    ("tenant_regular", "platformAdmin_global"): {
+        "scope": "tenant",
+        "role": "platformAdmin",
+        "generations": {
+            "issuer": "required",
+            "account": "required",
+            "tenant": "target_tenant_generation",
+            "membership": "omitted",
+        },
+        "privileged_control": "required",
+    },
+    ("cross_tenant_data_bearing", "platformAdmin_global"): {
+        "scope": "cross_tenant",
+        "role": "platformAdmin",
+        "generations": {
+            "issuer": "required",
+            "account": "required",
+            "tenant": "target_tenant_generation",
+            "membership": "omitted",
+        },
+        "privileged_control": "required",
+    },
+    ("billing_safe_tenant", "tenantAdmin"): {
+        "scope": "tenant",
+        "role": "tenantAdmin",
+        "generations": {
+            "issuer": "required",
+            "account": "required",
+            "tenant": "omitted",
+            "membership": "required",
+        },
+        "privileged_control": "not_required",
+    },
+    ("cross_tenant_support_safe", "support_global"): {
+        "scope": "cross_tenant",
+        "role": "support",
+        "generations": {
+            "issuer": "required",
+            "account": "required",
+            "tenant": "omitted",
+            "membership": "omitted",
+        },
+        "privileged_control": "not_required",
+    },
+    ("cross_tenant_support_safe", "platformAdmin_global"): {
+        "scope": "cross_tenant",
+        "role": "platformAdmin",
+        "generations": {
+            "issuer": "required",
+            "account": "required",
+            "tenant": "omitted",
+            "membership": "omitted",
+        },
+        "privileged_control": "required",
+    },
+    ("cross_tenant_billing_safe", "billingAdmin_global"): {
+        "scope": "cross_tenant",
+        "role": "billingAdmin",
+        "generations": {
+            "issuer": "required",
+            "account": "required",
+            "tenant": "omitted",
+            "membership": "omitted",
+        },
+        "privileged_control": "required",
+    },
+    ("cross_tenant_billing_safe", "platformAdmin_global"): {
+        "scope": "cross_tenant",
+        "role": "platformAdmin",
+        "generations": {
+            "issuer": "required",
+            "account": "required",
+            "tenant": "omitted",
+            "membership": "omitted",
+        },
+        "privileged_control": "required",
+    },
+}
 CANONICAL_OPERATOR_INGRESS = "logging-admin-service"
 DIRECT_OWNER_ROUTE_POLICY = "deny_at_edge_and_migrate_to_logging_admin"
 # Maps id(route/parent mapping) to the source object and parsed checks for one document.
@@ -385,6 +493,214 @@ def validate_required_fields(routes: list[Any], errors: list[str]) -> None:
         if invalid_fields:
             errors.append(
                 f"routes[{index}] required_fields must use snake_case: {invalid_fields}"
+            )
+
+
+def validate_route_class_branch_table(
+    document: dict[str, Any], errors: list[str]
+) -> None:
+    raw_table = document.get("route_class_branch_table")
+    if not isinstance(raw_table, list):
+        errors.append("route_class_branch_table must be a list of mappings")
+        return
+
+    actual: dict[tuple[Any, Any], dict[str, Any]] = {}
+    for index, entry in enumerate(raw_table):
+        label = f"route_class_branch_table[{index}]"
+        if not isinstance(entry, dict):
+            errors.append(f"{label} must be a mapping")
+            continue
+        key = (entry.get("classification"), entry.get("branch"))
+        if key in actual:
+            errors.append(f"{label} duplicates route-class branch {key!r}")
+        actual[key] = entry
+
+    expected_keys = set(EXPECTED_ROUTE_CLASS_BRANCHES)
+    if set(actual) != expected_keys:
+        errors.append(
+            "route_class_branch_table must contain exactly the canonical route-class "
+            f"branches: {sorted(expected_keys)!r}"
+        )
+
+    for key, expected in EXPECTED_ROUTE_CLASS_BRANCHES.items():
+        entry = actual.get(key)
+        if entry is None:
+            continue
+        label = f"route_class_branch_table {key[0]} {key[1]}"
+        for field in ("scope", "role", "privileged_control"):
+            if entry.get(field) != expected[field]:
+                errors.append(
+                    f"{label} must declare {field}={expected[field]!r}"
+                )
+        generations = entry.get("generations")
+        if not isinstance(generations, dict):
+            errors.append(f"{label}.generations must be a mapping")
+            continue
+        if set(generations) != set(expected["generations"]):
+            errors.append(
+                f"{label}.generations must declare exactly issuer/account/tenant/membership"
+            )
+            continue
+        for generation, expected_value in expected["generations"].items():
+            actual_value = generations.get(generation)
+            if actual_value not in AUTHORITY_GENERATION_VALUES:
+                errors.append(
+                    f"{label}.generations.{generation} must be one of "
+                    f"{sorted(AUTHORITY_GENERATION_VALUES)}"
+                )
+            elif actual_value != expected_value:
+                errors.append(
+                    f"{label}.generations.{generation} must be {expected_value!r}"
+                )
+        if entry.get("privileged_control") not in PRIVILEGED_CONTROL_VALUES:
+            errors.append(
+                f"{label}.privileged_control must be one of "
+                f"{sorted(PRIVILEGED_CONTROL_VALUES)}"
+            )
+
+
+def validate_membership_policy(
+    document: dict[str, Any],
+    routes: list[Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> None:
+    policy = document.get("tenant_membership_policy")
+    if not isinstance(policy, dict):
+        errors.append("tenant_membership_policy must be a mapping")
+        return
+    if policy.get("tenant_owned_writes_require_existing_membership") is not True:
+        errors.append(
+            "tenant_membership_policy must require existing membership for tenant-owned writes"
+        )
+    exception = policy.get("public_production_join_exception")
+    if not isinstance(exception, dict):
+        errors.append("tenant_membership_policy.public_production_join_exception must be a mapping")
+        return
+    if exception.get("classification") != "public_production_onboarding":
+        errors.append(
+            "tenant_membership_policy public-production exception must use "
+            "public_production_onboarding"
+        )
+    if exception.get("membership_creation") != "caller_bound_after_validation":
+        errors.append(
+            "tenant_membership_policy public-production exception must create "
+            "caller-bound membership after validation"
+        )
+    checks = set(
+        string_list(
+            exception.get("required_pre_membership_checks"),
+            "tenant_membership_policy.public_production_join_exception.required_pre_membership_checks",
+            errors,
+        )
+    )
+    if checks != REQUIRED_JOIN_PRE_MEMBERSHIP_CHECKS:
+        errors.append(
+            "tenant_membership_policy public-production exception has the wrong "
+            "pre-membership checks"
+        )
+    raw_routes = exception.get("routes")
+    expected_routes = set(JOIN_ROUTES_REQUIRING_POINTER_ERROR)
+    actual_routes = {
+        tuple(item)
+        for item in raw_routes
+        if isinstance(item, list) and len(item) == 2
+    } if isinstance(raw_routes, list) else set()
+    if actual_routes != expected_routes:
+        errors.append(
+            "tenant_membership_policy public-production exception must enumerate "
+            f"exactly {sorted(expected_routes)!r}"
+        )
+
+    for service, route_name in sorted(expected_routes):
+        route = resolve_unique_route(routes, service, route_name, errors)
+        if route is None:
+            continue
+        label = f"{service} {route_name}"
+        if route.get("membership_authority_generation_applies") is not False:
+            errors.append(f"{label} must disable membership generation while creating membership")
+        if route.get("membership_creation") != "caller_bound_after_validation":
+            errors.append(f"{label} must declare caller_bound_after_validation membership creation")
+        missing = sorted(
+            REQUIRED_JOIN_PRE_MEMBERSHIP_CHECKS
+            - route_live_checks(route, label, errors, live_checks_cache)
+        )
+        if missing:
+            errors.append(f"{label} is missing pre-membership checks: {missing}")
+
+
+def validate_authority_evidence_policy(
+    document: dict[str, Any], errors: list[str]
+) -> None:
+    policy = document.get("authority_evidence_policy")
+    if not isinstance(policy, dict):
+        errors.append("authority_evidence_policy must be a mapping")
+        return
+    fresh = policy.get("fail_closed_fresh_evidence")
+    if not isinstance(fresh, dict):
+        errors.append("authority_evidence_policy.fail_closed_fresh_evidence must be a mapping")
+    else:
+        if set(fresh.get("applies_to", [])) != {
+            "admission",
+            "renewal",
+            "reconnect",
+            "tenant_scoped_control_plane_mutation",
+        }:
+            errors.append(
+                "authority_evidence_policy fresh evidence must cover admission, renewal, "
+                "reconnect, and tenant-scoped control-plane mutations"
+            )
+        if fresh.get("unavailable_or_ambiguous") != "AUTH_UNAVAILABLE":
+            errors.append(
+                "authority_evidence_policy fresh evidence must fail closed with AUTH_UNAVAILABLE"
+            )
+    bound = policy.get("bound_ordinary_gameplay")
+    if not isinstance(bound, dict):
+        errors.append("authority_evidence_policy.bound_ordinary_gameplay must be a mapping")
+    else:
+        if bound.get("applies_to") != "already_bound_instance_runtime":
+            errors.append(
+                "authority_evidence_policy bound gameplay must be already_bound_instance_runtime"
+            )
+        if bound.get("pointer_authority_reread") is not False:
+            errors.append(
+                "authority_evidence_policy bound gameplay must not reread pointer authority"
+            )
+        if set(bound.get("required_fences", [])) != {"bound_game_instance", "runtime_fence"}:
+            errors.append(
+                "authority_evidence_policy bound gameplay must require bound_game_instance and runtime_fence"
+            )
+
+
+def validate_elevation_bootstrap(
+    document: dict[str, Any], routes: list[Any], errors: list[str]
+) -> None:
+    contracts = document.get("elevation_contracts")
+    privileged = contracts.get("privileged_control") if isinstance(contracts, dict) else None
+    bootstrap = privileged.get("bootstrap_exemption") if isinstance(privileged, dict) else None
+    expected_route = "account-service/EnterPrivilegedControlWindow"
+    if not isinstance(bootstrap, dict):
+        errors.append("elevation_contracts.privileged_control.bootstrap_exemption must be a mapping")
+    else:
+        if bootstrap.get("route") != expected_route:
+            errors.append("privileged_control bootstrap exemption must name EnterPrivilegedControlWindow")
+        if bootstrap.get("privileged_control") != "establishes_window":
+            errors.append("privileged_control bootstrap exemption must establish the window")
+        if bootstrap.get("requires_existing_window") is not False:
+            errors.append("privileged_control bootstrap exemption must not require an existing window")
+
+    route = resolve_unique_route(routes, "account-service", "EnterPrivilegedControlWindow", errors)
+    if route is not None and route.get("privileged_control") != "establishes_window":
+        errors.append(
+            "account-service EnterPrivilegedControlWindow must declare privileged_control=establishes_window"
+        )
+    for route in routes:
+        if not isinstance(route, dict) or "privileged_control" not in route:
+            continue
+        if route.get("privileged_control") not in PRIVILEGED_CONTROL_VALUES:
+            errors.append(
+                f"{route.get('service')} {route.get('route')} privileged_control must be one of "
+                f"{sorted(PRIVILEGED_CONTROL_VALUES)}"
             )
 
 
@@ -1179,6 +1495,43 @@ def validate_applicability(
             )
 
 
+def validate_downstream_admission_contract(
+    route: dict[str, Any], label: str, errors: list[str], live_checks_cache: LiveChecksCache | None = None
+) -> None:
+    contract = route.get("downstream_admission_contract")
+    if not isinstance(contract, dict):
+        errors.append(f"{label} must declare downstream_admission_contract")
+        return
+    if contract.get("owner") != "game-session-service":
+        errors.append(f"{label} downstream_admission_contract must be owned by game-session-service")
+    if contract.get("tenant_billing_authority_generation_applies") is not False:
+        errors.append(
+            f"{label} downstream_admission_contract must disable tenant billing authority generation"
+        )
+    if contract.get("membership_authority_generation_applies") is not True:
+        errors.append(
+            f"{label} downstream_admission_contract must apply membership authority generation"
+        )
+    if contract.get("membership_creation") != "explicit_join_only":
+        errors.append(
+            f"{label} downstream_admission_contract must declare membership_creation explicit_join_only"
+        )
+    missing = sorted(
+        REQUIRED_DOWNSTREAM_ADMISSION_CHECKS
+        - cached_live_checks(
+            contract,
+            contract.get("required_live_checks"),
+            f"{label} downstream_admission_contract.required_live_checks",
+            errors,
+            live_checks_cache,
+        )
+    )
+    if missing:
+        errors.append(
+            f"{label} downstream_admission_contract is missing required live checks: {missing}"
+        )
+
+
 def validate_ws_game_routes(
     routes: list[Any],
     errors: list[str],
@@ -1200,6 +1553,17 @@ def validate_ws_game_routes(
             "spring-cloud-gateway /ws/game/** route"
         )
     else:
+        for route in ws_routes:
+            label = f"/ws/game/** {applicability_value(route, 'connection_mode', '/ws/game/**', errors)}"
+            for field in (
+                "tenant_billing_authority_generation_applies",
+                "membership_authority_generation_applies",
+            ):
+                if route.get(field) is not False:
+                    errors.append(
+                        f"{label} must explicitly set {field}=false for downstream admission"
+                    )
+
         first_party = by_mode["first_party_web"][0]
         validate_applicability(
             first_party,
@@ -1237,6 +1601,22 @@ def validate_ws_game_routes(
                 "/ws/game/** first_party_web must explicitly disable "
                 "account_authority_generation_applies"
             )
+        if first_party.get("tenant_billing_authority_generation_applies") is not False:
+            errors.append(
+                "/ws/game/** first_party_web must explicitly disable "
+                "tenant_billing_authority_generation_applies"
+            )
+        if first_party.get("membership_authority_generation_applies") is not False:
+            errors.append(
+                "/ws/game/** first_party_web must defer membership authority generation "
+                "to downstream_admission_contract"
+            )
+        validate_downstream_admission_contract(
+            first_party,
+            "/ws/game/** first_party_web",
+            errors,
+            live_checks_cache,
+        )
 
         trusted_proxy = by_mode["trusted_tcp_proxy"][0]
         missing_trusted_proxy = sorted(
@@ -1253,6 +1633,22 @@ def validate_ws_game_routes(
                 "/ws/game/** trusted_tcp_proxy is missing required live checks: "
                 f"{missing_trusted_proxy}"
             )
+        if trusted_proxy.get("tenant_billing_authority_generation_applies") is not False:
+            errors.append(
+                "/ws/game/** trusted_tcp_proxy must explicitly disable "
+                "tenant_billing_authority_generation_applies"
+            )
+        if trusted_proxy.get("membership_authority_generation_applies") is not False:
+            errors.append(
+                "/ws/game/** trusted_tcp_proxy must defer membership authority generation "
+                "to downstream_admission_contract"
+            )
+        validate_downstream_admission_contract(
+            trusted_proxy,
+            "/ws/game/** trusted_tcp_proxy",
+            errors,
+            live_checks_cache,
+        )
 
     revoke_route = resolve_unique_route(
         routes,
@@ -1310,7 +1706,11 @@ def validate_issue_connect_token(
         errors.append(f"IssueConnectToken is missing required live checks: {missing_checks}")
 
 
-def validate_join_routes(routes: list[Any], errors: list[str]) -> None:
+def validate_join_routes(
+    routes: list[Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> None:
     for service, name in sorted(JOIN_ROUTES_REQUIRING_POINTER_ERROR):
         matches = matching_routes(routes, service, name)
         if len(matches) != 1:
@@ -1320,6 +1720,47 @@ def validate_join_routes(routes: list[Any], errors: list[str]) -> None:
         outcomes = canonical_errors.get("any_of", []) if isinstance(canonical_errors, dict) else []
         if "ADMISSION_POINTER_UNAVAILABLE" not in outcomes:
             errors.append(f"{service} {name} must declare ADMISSION_POINTER_UNAVAILABLE")
+        route = matches[0]
+        checks = route_live_checks(
+            route,
+            f"{service} {name}",
+            errors,
+            live_checks_cache,
+        )
+        missing_checks = sorted(REQUIRED_JOIN_PRE_MEMBERSHIP_CHECKS - checks)
+        if missing_checks:
+            errors.append(
+                f"{service} {name} is missing pre-membership checks: {missing_checks}"
+            )
+        if route.get("tenant_billing_authority_generation_applies") is not False:
+            errors.append(
+                f"{service} {name} must disable tenant_billing_authority_generation_applies"
+            )
+        if route.get("membership_authority_generation_applies") is not False:
+            errors.append(
+                f"{service} {name} must disable membership_authority_generation_applies"
+            )
+
+
+def validate_privileged_control_bootstrap(
+    routes: list[Any],
+    errors: list[str],
+    cardinality_errors: set[str] | None = None,
+) -> None:
+    route = resolve_unique_route(
+        routes,
+        "account-service",
+        "EnterPrivilegedControlWindow",
+        errors,
+        cardinality_errors,
+    )
+    if route is None:
+        return
+    if route.get("privileged_control") != "establishes_window":
+        errors.append(
+            "account-service EnterPrivilegedControlWindow must declare "
+            "privileged_control: establishes_window"
+        )
 
 
 def validate_delegated_entitlements(
@@ -1456,6 +1897,8 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
         routes = []
 
     classifications = string_list(document.get("classifications"), "classifications", errors)
+    validate_route_class_branch_table(document, errors)
+    validate_authority_evidence_policy(document, errors)
     route_keys = validate_route_variants(routes, set(classifications), errors)
     validate_route_statuses(routes, allowed_route_statuses, errors)
     validate_required_fields(routes, errors)
@@ -1465,12 +1908,15 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     validate_receiver_predicates(routes, token_profiles, errors)
     validate_role_assurance_references(routes, role_assurance_predicates, errors)
     validate_tenant_generation_policy(document, routes, errors, live_checks_cache)
+    validate_membership_policy(document, routes, errors, live_checks_cache)
+    validate_elevation_bootstrap(document, routes, errors)
     cardinality_errors: set[str] = set()
     validate_entitlement_contract(document, routes, errors, cardinality_errors)
 
     validate_ws_game_routes(routes, errors, live_checks_cache, cardinality_errors)
     validate_issue_connect_token(routes, errors, live_checks_cache, cardinality_errors)
-    validate_join_routes(routes, errors)
+    validate_join_routes(routes, errors, live_checks_cache)
+    validate_privileged_control_bootstrap(routes, errors, cardinality_errors)
     validate_delegated_entitlements(
         routes, errors, live_checks_cache, cardinality_errors
     )

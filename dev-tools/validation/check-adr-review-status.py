@@ -167,10 +167,13 @@ def checked_reviews(path: Path) -> dict[int, list[Review]]:
         outcome_adr_numbers: list[int] = []
         for adr_match in ADR_LINK_RE.finditer(match.group("outcome")):
             displayed_number = int(adr_match.group("number"))
-            target_filename = (
+            target_ref = (
                 adr_match.group("target")
                 .split("#", 1)[0]
                 .split("?", 1)[0]
+            )
+            target_filename = (
+                target_ref
                 .rsplit("/", 1)[-1]
             )
             target_match = ADR_PATH_RE.fullmatch(target_filename)
@@ -179,6 +182,12 @@ def checked_reviews(path: Path) -> dict[int, list[Review]]:
                     f"{path}: malformed ADR provenance at line {line_number}; "
                     f"displayed ADR {displayed_number:04d} does not match target "
                     f"{adr_match.group('target')!r}"
+                )
+            target_path = Path(target_ref)
+            if target_path.is_absolute() or not (path.parent / target_path).is_file():
+                fail(
+                    f"{path}: ADR {displayed_number:04d} target does not exist: "
+                    f"{target_ref!r}"
                 )
             outcome_adr_numbers.append(displayed_number)
         if not OUTCOME_LINK_RE.search(match.group("outcome")):
@@ -197,6 +206,11 @@ def checked_reviews(path: Path) -> dict[int, list[Review]]:
             date=match.group("date"),
             disposition=match.group("disposition").capitalize(),
         )
+        if review.disposition == "Deferred" and outcome_adr_numbers:
+            fail(
+                f"{path}: checked deferred review row at line {line_number} "
+                "must not use exact ADR provenance"
+            )
         if review.key in seen_keys:
             fail(
                 f"{path}: ambiguous duplicate checked review source "

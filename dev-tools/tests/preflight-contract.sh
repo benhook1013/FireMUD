@@ -1145,6 +1145,7 @@ if (
     wide_overlay_status != "fail"
     or "missingCount=28" not in wide_overlay_message
     or f"missing={list(range(13, 33))}" not in wide_overlay_message
+    or "omittedCount=8" not in wide_overlay_message
 ):
     raise SystemExit(
         "wide missing sequence interval did not report the true count with a truncated display: "
