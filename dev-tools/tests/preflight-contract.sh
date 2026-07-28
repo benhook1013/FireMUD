@@ -643,6 +643,7 @@ PY
 done
 
 python3 - <<'PY' "$ROOT_DIR" "$TMP_DIR"
+import copy
 import json
 import importlib.util
 import pathlib
@@ -1229,16 +1230,10 @@ invalid_baseline_cases = {
     "overlay-gap": {
         "erasureOverlayReconciliation": {
             **valid_baseline["erasureOverlayReconciliation"],
-            "sequenceDispositions": [
-                {
-                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
-                    "sequence": 11,
-                },
-                {
-                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][1],
-                    "sequence": 13,
-                },
-            ],
+            "sequenceVerification": {
+                **valid_baseline["erasureOverlayReconciliation"]["sequenceVerification"],
+                "gapFree": False,
+            },
         }
     },
     "overlay-out-of-range": {
@@ -1248,6 +1243,31 @@ invalid_baseline_cases = {
                 {
                     **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
                     "sequence": 10,
+                },
+                valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][1],
+            ],
+        }
+    },
+    "overlay-owner-missing": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                {
+                    key: value
+                    for key, value in valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0].items()
+                    if key != "owner"
+                },
+                valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][1],
+            ],
+        }
+    },
+    "overlay-owner-blank": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                {
+                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+                    "owner": "   ",
                 },
                 valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][1],
             ],
@@ -1266,8 +1286,29 @@ invalid_baseline_cases = {
         }
     },
 }
+expected_invalid_baseline_messages = {
+    "controller": "controller lineage must be finalized",
+    "erasure": "erasure replay must be gap-free through restoreHighWater",
+    "coordination": "coordination recovery must prove",
+    "confidentiality": "backup confidentiality evidence must pass",
+    "participant": "unsafe or missing disposition: gameplay",
+    "coordination-account-projections": "coordination recovery must prove",
+    "coordination-replay-evidence": "coordination recovery must prove",
+    "overlay-bounds": "restoreHighWater must match the canonical bound exactly",
+    "overlay-stream": "stream must match the canonical erasure stream",
+    "overlay-entry-stream": "sequenceDispositions[0] stream must match the canonical erasure stream",
+    "overlay-integrity": "integrityVerification must be verified with status pass",
+    "overlay-entry-integrity": "sequenceDispositions[0] integrity must be verified",
+    "overlay-duplicate": "contains duplicate sequence 11",
+    "overlay-gap": "sequenceVerification must prove a contiguous, complete, gap-free, duplicate-free pass",
+    "overlay-out-of-range": "sequenceDispositions[0] sequence is outside the final interval",
+    "overlay-owner-missing": "sequenceDispositions[0] owner must be non-empty",
+    "overlay-owner-blank": "sequenceDispositions[0] owner must be non-empty",
+    "overlay-disposition": "has an invalid canonical disposition",
+}
 for case_name, replacement in invalid_baseline_cases.items():
-    invalid_baseline = {**valid_baseline, **replacement}
+    invalid_baseline = copy.deepcopy(valid_baseline)
+    invalid_baseline.update(copy.deepcopy(replacement))
     invalid_path = recovery_dir / f"invalid-{case_name}-baseline.json"
     invalid_path.write_text(json.dumps(invalid_baseline), encoding="utf-8")
     invalid_status, invalid_message = module.validate_recovery_baseline(
@@ -1277,8 +1318,11 @@ for case_name, replacement in invalid_baseline_cases.items():
         now,
         now,
     )
-    if invalid_status != "fail":
-        raise SystemExit(f"invalid {case_name} recovery baseline was accepted: {invalid_message}")
+    expected_message = expected_invalid_baseline_messages[case_name]
+    if invalid_status != "fail" or expected_message not in invalid_message:
+        raise SystemExit(
+            f"invalid {case_name} recovery baseline failed for the wrong reason: {invalid_message}"
+        )
 
 stale_baseline = {
     **canonical_recovery_record(now - module.dt.timedelta(days=31)),

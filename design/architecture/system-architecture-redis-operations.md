@@ -28,7 +28,7 @@ This section is the normative source for the multi-step Coordination Redis reset
 
 Canonical public operation:
 
-`coordination-maintenance recover --mode reset --scope ... [--preserve-sessions]`
+`coordination-maintenance recover --mode reset --scope ... (--preserve-sessions|--invalidate-sessions)`
 
 This one public operation acquires the maintenance lock, fences the scope, and runs these ordered phases. The public `resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)` safety gate is required between pre-release continuation and the internal success release:
 
@@ -38,8 +38,8 @@ This one public operation acquires the maintenance lock, fences the scope, and r
 4. internal command-convergence phase
 5. internal metadata-initialization phase
 6. internal session-policy phase, including invalidation or preserved-session rebind according to the selected policy
-7. internal Account authority and issued-token projection-rebuild phase for reset mode
-8. internal post-reset smoke-check phase
+7. internal Account authority and issued-token projection-rebuild phase for reset mode, including replacement projection rebuild and exact-token validation for cluster resets
+8. internal post-reset smoke-check phase, with protected admission still closed until this phase passes
 9. `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` with canonical `expectedPhase=ready_to_reopen`, reconciling the controller into `AWAITING_RESUME`
 10. public `resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)` with canonical `expectedPhase=AWAITING_RESUME`, which records `RESUME_AUTHORIZED` without releasing the lock or traffic fence
 11. internal resume-and-success-release phase
@@ -64,9 +64,9 @@ Rules:
 - The internal epoch-bump and coordination-reset phase is the only phase that bumps `region_epoch` and emits authoritative old/new epoch evidence for downstream reconciliation.
 - Internal ledger reconciliation and command convergence are required before traffic resumes; replay-first workflows use those same phases without a preceding epoch bump, but reset workflows must not skip them.
 - Internal metadata initialization re-establishes `tick:{tenantRegionTag}:meta` from the durable baseline after the reset phase; `{tenantRegionTag}` is the opaque full-scope tag for `<tenantId, gameInstanceId, regionId>`.
-- Internal session rebinding is conditional. Region-scoped resets preserve gameplay sessions by default, tenant-scoped resets do so only when `--preserve-sessions` is recorded, and cluster-scoped resets invalidate gameplay sessions by default.
-- Reset-mode recovery must rebuild and verify the Account issuer, account, tenant, and membership generation projections from Account durable authority and rebuild and verify the affected `session:auth:token:<tokenHash>` issued-token projections before the smoke phase. Region- and tenant-scoped resets preserve those Account-owned records but still require an idempotent re-projection and exact-generation validation; a cluster reset verifies the Account repair/reset cutover that preceded physical cleanup, then registers and proves replacement issued-token records. The phase emits immutable projection evidence and fails closed on any missing, stale, malformed, or mismatched generation or token record.
-- The internal post-reset smoke-check phase proves the new epoch can acquire leases, stage work, converge, and clean up correctly, proves replay-domain quarantine/fencing and durable consume acknowledgement where the reset affects replay admission, then atomically enters `AWAITING_RESUME` without dropping the maintenance lock or traffic fence. Its evidence must include the completed Account projection rebuild and any required session-schema-cleanup completion evidence.
+- Internal session rebinding is conditional. Every region-, tenant-, and cluster-scoped reset records either `--preserve-sessions` or `--invalidate-sessions`; only the former permits preserved-session rebind, and no scope infers the policy.
+- Reset-mode recovery must rebuild and verify the Account issuer, account, tenant, and membership generation projections from Account durable authority and rebuild and verify the affected `session:auth:token:<tokenHash>` issued-token projections before the smoke phase. Region- and tenant-scoped resets preserve those Account-owned records but still require an idempotent re-projection and exact-generation validation; a cluster reset verifies the Account repair/reset cutover that preceded physical cleanup, then registers replacement issued-token projections and proves exact-token validation before representative-region smoke. The phase emits immutable projection evidence and fails closed on any missing, stale, malformed, or mismatched generation or token record.
+- The internal post-reset smoke-check phase proves the new epoch can acquire leases, stage work, converge, and clean up correctly, proves replay-domain quarantine/fencing and durable consume acknowledgement where the reset affects replay admission, and for tenant/cluster scopes samples the required representative regions only after the Account projection and exact-token gates pass. Protected admission remains closed through those projection, token, and smoke gates; the operation then atomically enters `AWAITING_RESUME` without dropping the maintenance lock or traffic fence. Its evidence must include the completed Account projection rebuild and any required session-schema-cleanup completion evidence.
 - The internal resume-and-success-release phase is unreachable until the public `resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)` control records `RESUME_AUTHORIZED` for the same operation, expected phase, scope, lock, and evidence. Its durable controller transition is atomic, but the external Game Session, Coordination Redis, ingress, affected-scope, and maintenance-lock effects are not one distributed transaction. The phase must durably audit the authorization, retain the fence and lock until each release postcondition is observed, idempotently apply and read back each required postcondition, and may record terminal `SUCCEEDED` only after every current observation succeeds; any failed, missing, stale, or ambiguous effect remains quarantined and fail-closed for retry or failure handling.
 - If the workflow aborts before terminal success, operators must use the audited `coordination-maintenance release-lock ...` control rather than inventing an alternate unlock sequence.
 
@@ -111,7 +111,7 @@ Operators should wire alerts directly to these metrics and treat sustained growt
 1. Confirm via metrics or `INFO` that AOF size, restart time, or daily growth is outside the agreed budget.
 2. Schedule a maintenance window.
 3. Keep the control-plane path and maintenance tooling alive long enough to execute the canonical reset handshake; do not stop the very components required to pause, fence, audit, and verify the workflow.
-4. Start the [Canonical Coordination Reset Sequence](#canonical-coordination-reset-sequence) for the affected scope.
+4. Start the [Canonical Coordination Reset Sequence](#canonical-coordination-reset-sequence) for the affected scope with exactly one explicit session-policy choice, `--preserve-sessions` or `--invalidate-sessions`.
 5. Perform the storage-level reset during the internal epoch-bump/coordination-reset phase by stopping Redis, deleting or recreating the AOF volume, and restarting Redis with the desired AOF configuration.
 6. Allow the single recover operation to complete its internal reconciliation and smoke-check phases before ticks and player traffic resume.
 7. If the workflow aborts, use only the separately audited maintenance-lock release control; do not invoke an internal recovery phase as a public command.
@@ -176,7 +176,7 @@ Runbook:
    - red: `redis_replication_lag_ms >= tail_loss_budget_ms`
 3. If lag is in the acceptable band, promotion is acceptable from a replay perspective.
 4. If lag is in the warning band, investigate immediately and delay promotion unless the failover risk of waiting is worse than accepting a wider tail-loss window.
-5. If lag crosses the red line, either wait for recovery or treat promotion as a deliberate drop-recent-coordination-state event handled by one bounded `coordination-maintenance recover --mode reset` operation under the normal maintenance-lock and epoch-fencing workflow.
+5. If lag crosses the red line, either wait for recovery or treat promotion as a deliberate drop-recent-coordination-state event handled by one bounded `coordination-maintenance recover --mode reset --scope <scope> (--preserve-sessions|--invalidate-sessions)` operation under the normal maintenance-lock and epoch-fencing workflow.
 
 ## Key Shape Mistakes and Coordination Resets
 
@@ -231,7 +231,7 @@ Session schema cleanup is a hygiene and recovery tool, not a normal steady-state
 
 Canonical cleanup operation:
 
-`coordination-maintenance recover --mode session-schema-cleanup --scope tenant --tenant <tenantId> [--dry-run] [--resume-token <token>]`
+`coordination-maintenance recover --mode session-schema-cleanup --scope tenant --tenant <tenantId> --invalidate-sessions [--dry-run] [--resume-token <token>]`
 
 The bounded high-level `recover` operation owns the lock, internal session-cleanup phase, continuation, abort, and release behavior. Ad hoc cleanup Jobs must call this operation rather than encoding their own lock, continuation, or abort behavior. `session-cleanup` is an internal phase name, not a public command.
 
@@ -293,8 +293,8 @@ Runbook:
 
 1. fence every conflicting Redis primary at the infrastructure or network layer and retain external evidence that only the selected primary can accept coordination traffic; do not ask the affected Redis deployment to prove its own fencing
 2. verify PostgreSQL authority and the surviving Redis primary have converged on one authoritative epoch
-3. invoke one `coordination-maintenance recover --mode reset --scope region ...` operation for each safely isolated affected region; region reset preserves gameplay sessions by default, clears region-local bindings, and blocks normal command intake until preserved sessions complete rebind
-4. if region isolation cannot be proved, retain the external primary fence and invoke one cluster-scoped `recover --mode reset` operation; the cluster fallback keeps traffic blocked and invalidates sessions by default
+3. invoke one `coordination-maintenance recover --mode reset --scope region ... --preserve-sessions` operation for each safely isolated affected region; it clears region-local bindings and blocks normal command intake until preserved sessions complete rebind
+4. if region isolation cannot be proved, retain the external primary fence and invoke one cluster-scoped `recover --mode reset --scope cluster --invalidate-sessions` operation; the cluster fallback keeps traffic blocked and invalidates gameplay sessions according to its explicit policy
 5. let the recover operation own its internal pause/fencing, reset, reconciliation, rebind or invalidation, smoke verification, authorized resume, and success release before ticks or command intake resume
 
 ## Normalization and Hash-Tag Migration
@@ -306,7 +306,7 @@ Goal: change how `tenantId` / `gameInstanceId` / `regionId` normalization and ha
 1. define an immutable migration contract containing the old and new normalization/hash-tag versions, affected scope, maintenance CLI and control-plane build digests, every participating service image digest, and the Lua Script Registry version/digest
 2. explicitly upgrade the maintenance CLI, control plane, services, and Lua registry as one coordinated version set; mixed-version migration is unsupported
 3. schedule a maintenance window and persist the migration contract in the durable recovery operation before mutating Coordination Redis
-4. invoke one bounded `coordination-maintenance recover --mode reset --operation migration --scope ...` operation and require the controller to validate that every participant reports the persisted version set and migration contract before reset begins
+4. invoke one bounded `coordination-maintenance recover --mode reset --operation migration --scope ... (--preserve-sessions|--invalidate-sessions)` operation and require the controller to validate that every participant reports the persisted version set and migration contract before reset begins
 5. start a fresh Coordination Redis deployment or logical database with an empty keyspace as the active recovery operation's recorded external-infrastructure step
 6. rebuild coordination state from PostgreSQL plus fresh activity, then validate normalization, shard locality, Lua registry compatibility, and migration evidence before calling `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` with canonical `expectedPhase=ready_to_reopen`; continuation reaches `AWAITING_RESUME`, after which public `resume(... expectedPhase=AWAITING_RESUME ...)` and the internal release phase are required
 7. if the migration cannot safely continue, call the audited `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason> --evidence-ref <evidenceRef>` abort control; it retains the fence and does not reopen traffic

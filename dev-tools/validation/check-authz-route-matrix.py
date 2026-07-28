@@ -270,9 +270,18 @@ def validate_receiver_predicates(
             return
         if len(profiles) != 1:
             audience_map = entry.get("accepted_token_profile_audiences")
+            known_profiles = [token_profiles.get(profile_name) for profile_name in profiles]
+            shared_type_issuer = {
+                (profile.get("type"), profile.get("issuer"))
+                for profile in known_profiles
+                if profile is not None
+            }
             if (
                 allow_multi_profile
                 and len(profiles) > 1
+                and len(known_profiles) == len(profiles)
+                and len(shared_type_issuer) == 1
+                and (token_type, token_issuer) == next(iter(shared_type_issuer))
                 and isinstance(audience_map, dict)
                 and set(audience_map) == set(profiles)
                 and all(
@@ -282,6 +291,12 @@ def validate_receiver_predicates(
                 )
             ):
                 return
+            if allow_multi_profile and len(profiles) > 1 and len(known_profiles) == len(profiles):
+                if len(shared_type_issuer) != 1 or (token_type, token_issuer) != next(iter(shared_type_issuer)):
+                    errors.append(
+                        f"{label} multi-profile token predicates must match the shared token_type/token_issuer"
+                    )
+                    return
             errors.append(f"{label} must declare exactly one token profile per receiver policy")
             return
         profile = token_profiles.get(profiles[0])
@@ -358,7 +373,11 @@ def validate_receiver_predicates(
                     f"{policy_label} accepted_token_profiles",
                     errors,
                 )
-                validate_token_fields(policy, policy_label, policy_profiles)
+                if isinstance(policy.get("accepted_token_profiles"), list) and all(
+                    isinstance(profile_name, str)
+                    for profile_name in policy["accepted_token_profiles"]
+                ):
+                    validate_token_fields(policy, policy_label, policy_profiles)
             continue
 
         allowed_callers = route.get("allowed_callers")
@@ -376,21 +395,19 @@ def validate_receiver_predicates(
             for item in mtls_callers.get("any_of", [])
         ):
             errors.append(f"{label} mtls_callers.any_of must contain concrete spiffe:// identities")
-        if profiles_value is None:
-            profiles = string_list(
-                profiles_value,
-                f"{label} accepted_token_profiles",
-                errors,
-            )
         if route.get("method_policy") != "exact_declared_route":
             errors.append(f"{label} must declare method_policy exact_declared_route")
-        validate_token_fields(
-            route,
-            label,
-            profiles,
-            set(unknown_profiles),
-            allow_multi_profile=True,
-        )
+        if profiles_value is None or (
+            isinstance(profiles_value, list)
+            and all(isinstance(profile_name, str) for profile_name in profiles_value)
+        ):
+            validate_token_fields(
+                route,
+                label,
+                profiles,
+                set(unknown_profiles),
+                allow_multi_profile=True,
+            )
 
 
 def validate_tenant_generation_policy(document: dict[str, Any], routes: list[Any], errors: list[str]) -> None:

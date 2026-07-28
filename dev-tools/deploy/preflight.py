@@ -41,6 +41,12 @@ class CheckResult:
 
 
 RECOVERY_COMPATIBILITY_STATUSES = {"compatible", "drill_required", "incompatible"}
+SAFE_RECOVERY_DISPOSITIONS = {
+    "converged",
+    "terminalized",
+    "invalidated",
+    "fenced_disabled_backlog_retained",
+}
 
 # These are the policy results emitted by this executable. The two JWT policies
 # documented as target-state-only are deliberately not included until they are
@@ -287,16 +293,10 @@ def is_missing(value: Any) -> bool:
 
 
 def validate_safe_dispositions(value: Any, label: str) -> tuple[str, str]:
-    safe_dispositions = {
-        "converged",
-        "terminalized",
-        "invalidated",
-        "fenced_disabled_backlog_retained",
-    }
     if not isinstance(value, dict) or not value:
         return ("fail", f"Recovery compatibility baseline {label} must be a non-empty object")
     for participant, result in value.items():
-        if not isinstance(result, dict) or result.get("disposition") not in safe_dispositions:
+        if not isinstance(result, dict) or result.get("disposition") not in SAFE_RECOVERY_DISPOSITIONS:
             return (
                 "fail",
                 f"Recovery compatibility baseline {label} has unsafe or missing disposition: {participant}",
@@ -351,13 +351,7 @@ def validate_erasure_overlay_reconciliation(
             f"({artifact_sequence}, {restore_sequence}]",
         )
 
-    canonical_dispositions = {
-        "converged",
-        "terminalized",
-        "invalidated",
-        "fenced_disabled_backlog_retained",
-    }
-    observed_sequences: list[int] = []
+    observed_sequences: set[int] = set()
     for index, entry in enumerate(sequence_dispositions):
         if not isinstance(entry, dict):
             return ("fail", f"{label} sequenceDispositions[{index}] must be an object")
@@ -372,11 +366,11 @@ def validate_erasure_overlay_reconciliation(
             return ("fail", f"{label} sequenceDispositions contains duplicate sequence {sequence}")
         if not isinstance(entry.get("owner"), str) or not entry["owner"].strip():
             return ("fail", f"{label} sequenceDispositions[{index}] owner must be non-empty")
-        if entry.get("disposition") not in canonical_dispositions:
+        if entry.get("disposition") not in SAFE_RECOVERY_DISPOSITIONS:
             return ("fail", f"{label} sequenceDispositions[{index}] has an invalid canonical disposition")
         if entry.get("integrityVerified") is not True:
             return ("fail", f"{label} sequenceDispositions[{index}] integrity must be verified")
-        observed_sequences.append(sequence)
+        observed_sequences.add(sequence)
 
     for offset, sequence in enumerate(sorted(observed_sequences), start=1):
         expected_sequence = artifact_sequence + offset

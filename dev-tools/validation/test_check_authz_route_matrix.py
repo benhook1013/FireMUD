@@ -188,6 +188,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_malformed_route_profiles_are_reported_once(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = next(route for route in document["routes"] if route.get("route") == "ToggleFeatureFlag")
+        route_index = document["routes"].index(route)
         route["accepted_token_profiles"] = "control-ui"
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
@@ -195,22 +196,127 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors = self.validator.validate(path)
         self.assertEqual(
             1,
-            errors.count("matrix.routes[71] accepted_token_profiles must be a list of strings"),
+            errors.count(f"matrix.routes[{route_index}] accepted_token_profiles must be a list of strings"),
         )
 
     def test_multi_profile_route_with_audience_map_is_accepted(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = next(route for route in document["routes"] if route.get("route") == "ToggleFeatureFlag")
-        route["accepted_token_profiles"] = ["control-ui", "player-bootstrap"]
-        route["accepted_token_profile_audiences"] = {
-            "control-ui": "control-ui",
-            "player-bootstrap": "player-bootstrap",
+        base_profile = next(
+            profile for profile in document["token_profiles"] if profile["profile"] == "control-ui"
+        )
+        second_profile = {
+            **base_profile,
+            "profile": "control-ui-secondary",
+            "audience": "control-ui-secondary",
         }
+        document["token_profiles"].append(second_profile)
+        profile_names = [base_profile["profile"], second_profile["profile"]]
+        route["accepted_token_profiles"] = profile_names
+        route["accepted_token_profile_audiences"] = {
+            profile_name: next(
+                profile["audience"]
+                for profile in document["token_profiles"]
+                if profile["profile"] == profile_name
+            )
+            for profile_name in profile_names
+        }
+        route["token_type"] = base_profile["type"]
+        route["token_issuer"] = base_profile["issuer"]
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
             path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
             errors = self.validator.validate(path)
-        self.assertFalse(any("exactly one token profile per receiver policy" in error for error in errors))
+        self.assertEqual([], errors)
+
+    def test_multi_profile_route_requires_shared_type_and_issuer(self):
+        for field in ("token_type", "token_issuer"):
+            with self.subTest(field=field):
+                document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+                route = next(
+                    route for route in document["routes"] if route.get("route") == "ToggleFeatureFlag"
+                )
+                base_profile = next(
+                    profile
+                    for profile in document["token_profiles"]
+                    if profile["profile"] == "control-ui"
+                )
+                second_profile = {
+                    **base_profile,
+                    "profile": "control-ui-secondary",
+                    "audience": "control-ui-secondary",
+                }
+                document["token_profiles"].append(second_profile)
+                profile_names = [base_profile["profile"], second_profile["profile"]]
+                route["accepted_token_profiles"] = profile_names
+                route["accepted_token_profile_audiences"] = {
+                    profile_name: next(
+                        profile["audience"]
+                        for profile in document["token_profiles"]
+                        if profile["profile"] == profile_name
+                    )
+                    for profile_name in profile_names
+                }
+                route["token_type"] = base_profile["type"]
+                route["token_issuer"] = base_profile["issuer"]
+                route[field] = "mismatch"
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "matrix.yaml"
+                    path.write_text(
+                        self.validator.yaml.safe_dump(document, sort_keys=False),
+                        encoding="utf-8",
+                    )
+                    errors = self.validator.validate(path)
+                self.assertTrue(
+                    any(
+                        "multi-profile token predicates must match the shared token_type/token_issuer"
+                        in error
+                        for error in errors
+                    )
+                )
+
+    def test_caller_policy_shape_errors_are_not_duplicated(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route for route in document["routes"] if route.get("route") == "GetTenantEntitlementsForRuntime"
+        )
+        policy = next(policy for policy in route["caller_policies"] if policy.get("caller") == "game-session-service")
+        policy.pop("accepted_token_profiles")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertEqual(
+            1,
+            errors.count(
+                "account-service GetTenantEntitlementsForRuntime caller_policies[0] accepted_token_profiles must be a list of strings"
+            ),
+        )
+        self.assertFalse(
+            any(
+                "GetTenantEntitlementsForRuntime caller_policies[0] must declare token_type/token_issuer/token_audience as none"
+                in error
+                for error in errors
+            )
+        )
+
+    def test_caller_policy_method_policy_error_is_not_duplicated(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route for route in document["routes"] if route.get("route") == "GetTenantEntitlementsForRuntime"
+        )
+        policy = next(policy for policy in route["caller_policies"] if policy.get("caller") == "game-session-service")
+        policy["method_policy"] = "all_methods"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertEqual(
+            1,
+            errors.count(
+                "account-service GetTenantEntitlementsForRuntime caller_policies[0] must declare method_policy exact_declared_route"
+            ),
+        )
 
     def test_known_drift_must_be_a_non_empty_list_of_strings(self):
         for malformed in ("scalar_drift", [], ["valid_drift", 7]):

@@ -118,7 +118,7 @@ canonical_reset_text = operations_text[
 ]
 required_reset_contract = [
     "Canonical public operation:",
-    "`coordination-maintenance recover --mode reset --scope ... [--preserve-sessions]`",
+    "`coordination-maintenance recover --mode reset --scope ... (--preserve-sessions|--invalidate-sessions)`",
     "1. internal pause-and-lock phase",
     "2. internal epoch-bump and coordination-reset phase",
     "3. internal ledger-reconciliation phase",

@@ -101,7 +101,9 @@ Hard cutover intentionally causes reauthentication and may create a bounded auth
 
 - Validators cache known JWKS keys for a configured bounded maximum age and refresh proactively before expiry.
 - An unknown `kid` triggers one forced refresh and one retry, then fails closed.
-- While Account JWKS is temporarily unavailable, a validator may continue validating a known key only within its unexpired bounded cache entry. It must not extend cache age or accept an unknown key to preserve availability.
+- If the Account-owned issued-token registry, authority-generation registry, or other required authority dependency is unreachable or returns an unavailable dependency outcome, the caller receives retryable `AUTH_UNAVAILABLE` with the protocol-equivalent unavailable status. That classification preserves local authentication state and does not assert revocation.
+- Once the required authority is reachable, missing, expired, deleted, malformed, mismatched, revoked, or compromised evidence is authoritative invalid/revoked evidence and fails closed with the canonical invalid-token or revoked-session outcome. It must not be relabeled as `AUTH_UNAVAILABLE` merely to preserve availability.
+- While public Account JWKS is temporarily unavailable, a validator may continue validating a known key only within its unexpired bounded cache entry. It must not extend cache age or accept an unknown key to preserve availability; this public-key cache exception does not establish unavailable issued-token or generation authority.
 - Compromise and restore hard cutovers override ordinary cache availability: the quarantined `kid` must be evicted or rejected before cached-key signature acceptance, and protected traffic cannot reopen until every validator proves that behavior.
 - Validator inventory, maximum cache age, refresh outcome, last observed JWKS generation, and active/retired key acceptance are observable and form part of rotation evidence.
 - Filesystem hot reload is an implementation option, not the contract. If used, projected-volume symlink replacement, partial writes, malformed data, key/JWKS mismatch, and atomic signer swap must be tested explicitly.

@@ -69,6 +69,9 @@ tenant_generation_policy:
     cross_tenant_support_safe:
       target_tenant_generation: false
       required_authority: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
+      role_assurance:
+        support: none
+        platformAdmin: privileged_control_with_independent_totp
     cross_tenant_billing_safe:
       target_tenant_generation: false
       required_authority: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
@@ -140,7 +143,7 @@ required_live_check_vocabulary:
   - workload_action_scope
 implementation_status:
   known_drift:
-    - public_production_membership_may_be_created_implicitly_by_connect_token_or_play
+    - public_production_membership_is_created_implicitly_by_connect_token_or_play_in_current_runtime; this violates the explicit_join_security_contract and affected admission must fail closed in the target state
 classifications:
   - public
   - account_scoped
@@ -186,7 +189,7 @@ pending_deletion_contract:
   validator: account_service_pending_deletion_credential_validator
   credential: pending-deletion-access
   registry: account-owned_server-side_pending_deletion_credential_registry
-  binding: [account_id, deletion_workflow_id, issued_at, expires_at]
+  binding: [account_id, deletion_workflow_id, deletion_workflow_generation, action_family, issued_at, expires_at]
   allowed_actions: [status, cancel, export, necessary_billing_settlement]
   normal_authority: rejected
   rejection:
@@ -338,7 +341,7 @@ routes:
       missing_membership_error: JOIN_REQUIRED
     implementation_status:
       known_drift:
-        - connect_token_and_play_may_still_invoke_ensure_public_production_player_membership
+        - connect_token_and_play_may_still_invoke_ensure_public_production_player_membership_in_current_runtime; this is a live security_contract_violation and affected admission must fail closed until existing membership is required
   - service: spring-cloud-gateway
     route: /ws/game/**
     scope: tenant
@@ -948,7 +951,7 @@ routes:
       membership_creation: issue_connect_token_never_creates_membership
     implementation_status:
       known_drift:
-        - issue_connect_token_may_still_invoke_ensure_public_production_player_membership
+        - issue_connect_token_may_still_invoke_ensure_public_production_player_membership_in_current_runtime; this is a live security_contract_violation and issuance must fail closed until existing membership is required
         - issue_connect_token_does_not_reread_membership_authority_generation
   - service: account-service
     route: Authenticate

@@ -166,7 +166,7 @@ There is no generic backend JWT profile, and the `internal` audience is forbidde
 
 ### Pending-Deletion Access Credential
 
-`pending-deletion-access` is an opaque Account-issued credential, not a JWT profile and not a variant of `control-ui` or `player-bootstrap`. Account stores its hash in a separate server-side pending-deletion registry bound to the deletion workflow, workflow generation, account subject, exact action family, issue time, and expiry. The credential is accepted only by the matrix's `pending_deletion_scoped` status, cancel, export, and necessary billing-settlement routes. It does not carry or restore normal account-generation authority, and it cannot authenticate login, bootstrap, connect-token, tenant, purchase, or gameplay routes.
+`pending-deletion-access` is an opaque Account-issued credential, not a JWT profile and not a variant of `control-ui` or `player-bootstrap`. Account stores its hash in a separate server-side pending-deletion registry bound to `account_id`, `deletion_workflow_id`, `deletion_workflow_generation`, `action_family`, issue time, and expiry. The credential is accepted only by the matrix's `pending_deletion_scoped` status, cancel, export, and necessary billing-settlement routes. It does not carry or restore normal account-generation authority, and it cannot authenticate login, bootstrap, connect-token, tenant, purchase, or gameplay routes.
 
 The credential is revoked on cancellation, terminal deletion, or expiry. Credential loss or expiry can be recovered only through a dedicated pending-deletion recovery challenge, which issues another pending-deletion credential and never a normal login or gameplay credential.
 

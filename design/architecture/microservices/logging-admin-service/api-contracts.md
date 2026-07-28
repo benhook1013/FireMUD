@@ -16,7 +16,7 @@ This document defines the Logging & Admin Service REST and gRPC surfaces, authen
 ## REST
 
 - `GET /ping` – basic health check returning `"pong"`.
-- `POST /reports` – target caller-bound abuse or bug report submission; reporter and tenant identity must come from the validated `player-bootstrap` session rather than the request body.
+- `POST /reports` – target player-bootstrap abuse or bug report submission. This is a player-facing route family, not an operator control-plane route: reporter and tenant identity must come from the validated `player-bootstrap` session rather than the request body, with routing and authorization evaluated under the dedicated player ingress/delegation policy.
 - `POST /feature-flags/toggle` – live enable or disable runtime flags.
 - `POST /logs/query` – search stored logs.
 - `POST /moderation/actions` – persist moderation policy input and audit only (current); it does not forward or enforce a mutation, and executable moderation routes require a separate owner-propagation contract.
@@ -75,7 +75,7 @@ grpcurl -plaintext -d '{"tenant_id":1,"reporter_account_id":1,"target_account_id
 | Surface | Examples | Required auth path | Notes |
 | --- | --- | --- | --- |
 | Public/infra health | `GET /ping`, `Ping` | Internal network + platform health policy | Not a user-authenticated business operation. |
-| Player report (HTTP) | `/reports` | Exact `player-bootstrap` profile plus caller-bound tenant membership and membership-generation applicability | Target reporter and tenant identity come from the validated session; the current OpenAPI/controller accepts caller-supplied `tenantId` and `reporterAccountId`, so the caller-bound route remains implementation drift and is not an operator authority path. |
+| Player-bootstrap report (HTTP) | `/reports` | Dedicated player ingress/delegation route with exact `player-bootstrap` profile, caller-bound tenant membership, and membership-generation applicability | Target reporter and tenant identity come from the validated session; the current OpenAPI/controller accepts caller-supplied `tenantId` and `reporterAccountId`, so the caller-bound route remains implementation drift. It is not an operator authority path. |
 | Operator APIs (HTTP) | `/logs/query`, `/moderation/actions`, `/feature-flags/toggle`, `/sagas*`, `/admission-pointers*`, `/tick-remediation/pause`, `/tick-remediation/resume` | Human: exact `control-ui` profile, current role, role-appropriate assurance, and route classification | External tools enter through Gateway-allowlisted routes. For supported executable families, Account issues the bounded human authorization reference before owner forwarding; `/moderation/actions` is persistence/audit only. Unattended automation uses its separate typed Account policy authorization rather than a human profile. |
 | Owner mutation calls (gRPC internal) | Current feature flag, admission, and tick owner RPCs; target moderation, quota, and broader-remediation owner RPCs | Exact Logging & Admin mTLS identity plus Account redemption of the matching human or versioned automation authorization reference | The owner validates domain facts, fencing, and idempotency. Logging & Admin assertions alone are not authority. |
 | Service-to-service control/ingest (gRPC internal) | Internal lifecycle/event ingestion and trusted backend calls | mTLS caller identity + explicit service authorization checks | Never exposed at public ingress; use an exact receiver-specific private delegation profile only where the route declares one. |
@@ -84,5 +84,6 @@ grpcurl -plaintext -d '{"tenant_id":1,"reporter_account_id":1,"target_account_id
 
 | Endpoint family | Availability class | Required behavior during observability outage |
 | --- | --- | --- |
-| `/moderation/actions`, `/feature-flags/toggle`, `/reports`, `/sagas*`, `/admission-pointers*`, `/tick-remediation/pause`, `/tick-remediation/resume` | Core operator/control plane | Remain available; may use local/PostgreSQL-backed audit state and downstream domain-service APIs only |
+| `/moderation/actions`, `/feature-flags/toggle`, `/sagas*`, `/admission-pointers*`, `/tick-remediation/pause`, `/tick-remediation/resume` | Core operator/control plane | Remain available; may use local/PostgreSQL-backed audit state and downstream domain-service APIs only |
+| `/reports` | Player-bootstrap / player delegation | Uses its dedicated player routing and authorization path. Observability backends are not a prerequisite for durable report submission; local report persistence and required Account/player-delegation authority remain required, and an unavailable required dependency fails closed with an explicit unavailable result. |
 | `/logs/query`, embedded Kibana/Grafana/Jaeger/Alertmanager views | Observability-backed | May degrade, return explicit unavailable/read-only states, or be hidden behind degraded-state messaging |
