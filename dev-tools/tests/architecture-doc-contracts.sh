@@ -8,6 +8,17 @@ import re
 
 root = pathlib.Path(".")
 obsolete_public_resume_signature = "`resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)`"
+maintenance_lock_token_syntax = re.compile(r"--maintenance-lock-token(?:\s|=|$)")
+
+for example in (
+    "--maintenance-lock-token <token>",
+    "--maintenance-lock-token=<token>",
+    "--maintenance-lock-token = <token>",
+):
+    if not maintenance_lock_token_syntax.search(example):
+        raise SystemExit(f"maintenance token syntax fixture was not rejected: {example}")
+if maintenance_lock_token_syntax.search("--maintenance-lock-token-file <token-file>"):
+    raise SystemExit("maintenance token file syntax was incorrectly rejected")
 
 def require_contains(path, snippets):
     text = (root / path).read_text(encoding="utf-8")
@@ -21,10 +32,10 @@ for path in (root / "design").rglob("*.md"):
         raise SystemExit(f"{path}: use the canonical <deploymentEventId> path placeholder")
     if obsolete_public_resume_signature in text:
         raise SystemExit(f"{path}: uses obsolete caller-supplied recovery scope")
-    if "--maintenance-lock-token <" in text:
+    if maintenance_lock_token_syntax.search(text):
         raise SystemExit(
             f"{path.relative_to(root)}: recovery examples must not expose "
-            "maintenanceLockToken on the command line"
+            "maintenanceLockToken command-line syntax"
         )
 
 canonical_world_dynamic = "world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>"

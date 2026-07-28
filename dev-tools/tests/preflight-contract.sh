@@ -1131,6 +1131,26 @@ baseline_status, baseline_message = module.validate_recovery_baseline(
 if baseline_status != "pass":
     raise SystemExit(f"valid recovery baseline did not pass: {baseline_message}")
 
+wide_restore_high_water = {"stream": "erasures", "sequence": 40}
+wide_overlay = copy.deepcopy(valid_baseline["erasureOverlayReconciliation"])
+wide_overlay["restoreHighWater"] = wide_restore_high_water
+wide_overlay_status, wide_overlay_message = module.validate_erasure_overlay_reconciliation(
+    wide_overlay,
+    valid_baseline["artifactErasureHighWater"],
+    valid_baseline["initialCatchupHighWater"],
+    wide_restore_high_water,
+    "erasures",
+)
+if (
+    wide_overlay_status != "fail"
+    or "missingCount=28" not in wide_overlay_message
+    or f"missing={list(range(13, 33))}" not in wide_overlay_message
+):
+    raise SystemExit(
+        "wide missing sequence interval did not report the true count with a truncated display: "
+        + wide_overlay_message
+    )
+
 pre_snapshot_after_artifact = copy.deepcopy(valid_baseline)
 pre_snapshot_after_artifact["backupArtifactLineage"]["preSnapshotJournalHighWater"] = {
     "stream": "erasures",
@@ -1149,28 +1169,6 @@ if pre_snapshot_after_artifact_status != "pass":
     raise SystemExit(
         "preSnapshotJournalHighWater above artifact high-water did not pass: "
         + pre_snapshot_after_artifact_message
-    )
-
-pre_snapshot_above_restore = copy.deepcopy(valid_baseline)
-pre_snapshot_above_restore["backupArtifactLineage"]["preSnapshotJournalHighWater"] = {
-    "stream": "erasures",
-    "sequence": 13,
-}
-pre_snapshot_above_restore_path = recovery_dir / "pre-snapshot-above-restore-baseline.json"
-pre_snapshot_above_restore_path.write_text(
-    json.dumps(pre_snapshot_above_restore), encoding="utf-8"
-)
-pre_snapshot_above_restore_status, pre_snapshot_above_restore_message = module.validate_recovery_baseline(
-    tmp,
-    str(pre_snapshot_above_restore_path.relative_to(tmp)),
-    "sha256:recovery-contract",
-    now,
-    now,
-)
-if pre_snapshot_above_restore_status != "fail" or "at or below restoreHighWater" not in pre_snapshot_above_restore_message:
-    raise SystemExit(
-        "preSnapshotJournalHighWater above restore high-water was accepted: "
-        + pre_snapshot_above_restore_message
     )
 
 rollback_compatibility_status, rollback_compatibility_message = module.recovery_compatibility_check(
@@ -1216,19 +1214,19 @@ invalid_baseline_cases = {
             "replayConsumeEvidenceRef": "",
         }
     },
-    "overlay-bounds": {
+    "overlay-restore-high-water-mismatch": {
         "erasureOverlayReconciliation": {
             **valid_baseline["erasureOverlayReconciliation"],
             "restoreHighWater": {"stream": "erasures", "sequence": 11},
         }
     },
-    "overlay-artifact-bounds": {
+    "overlay-artifact-high-water-mismatch": {
         "erasureOverlayReconciliation": {
             **valid_baseline["erasureOverlayReconciliation"],
             "artifactErasureHighWater": {"stream": "erasures", "sequence": 9},
         }
     },
-    "overlay-initial-catchup-bounds": {
+    "overlay-initial-catchup-high-water-mismatch": {
         "erasureOverlayReconciliation": {
             **valid_baseline["erasureOverlayReconciliation"],
             "initialCatchupHighWater": {"stream": "erasures", "sequence": 10},
@@ -1240,7 +1238,7 @@ invalid_baseline_cases = {
             "preSnapshotJournalHighWater": None,
         }
     },
-    "lineage-artifact-bound": {
+    "lineage-artifact-high-water-mismatch": {
         "backupArtifactLineage": {
             **valid_baseline["backupArtifactLineage"],
             "artifactErasureHighWater": {"stream": "erasures", "sequence": 9},
@@ -1264,13 +1262,13 @@ invalid_baseline_cases = {
             "preSnapshotJournalHighWater": {"stream": "erasures", "sequence": "10"},
         }
     },
-    "lineage-pre-snapshot-below-artifact": {
+    "lineage-pre-snapshot-below-artifact-high-water": {
         "backupArtifactLineage": {
             **valid_baseline["backupArtifactLineage"],
             "preSnapshotJournalHighWater": {"stream": "erasures", "sequence": 9},
         }
     },
-    "lineage-pre-snapshot-above-restore": {
+    "lineage-pre-snapshot-above-restore-high-water": {
         "backupArtifactLineage": {
             **valid_baseline["backupArtifactLineage"],
             "preSnapshotJournalHighWater": {"stream": "erasures", "sequence": 13},
@@ -1496,22 +1494,22 @@ expected_invalid_baseline_messages = {
     "participant": "unsafe or missing disposition: gameplay",
     "coordination-account-projections": "coordination recovery must prove",
     "coordination-replay-evidence": "coordination recovery must prove",
-    "overlay-bounds": "restoreHighWater must match the canonical bound exactly",
-    "overlay-artifact-bounds": "artifactErasureHighWater must match the canonical bound exactly",
-    "overlay-initial-catchup-bounds": "initialCatchupHighWater must match the canonical bound exactly",
+    "overlay-restore-high-water-mismatch": "restoreHighWater must match the canonical bound exactly",
+    "overlay-artifact-high-water-mismatch": "artifactErasureHighWater must match the canonical bound exactly",
+    "overlay-initial-catchup-high-water-mismatch": "initialCatchupHighWater must match the canonical bound exactly",
     "lineage-pre-snapshot": "artifact lineage must include a valid",
-    "lineage-artifact-bound": "artifactErasureHighWater must match the snapshot-bound",
+    "lineage-artifact-high-water-mismatch": "artifactErasureHighWater must match the snapshot-bound",
     "lineage-snapshot-bound": "erasureHighWaterSnapshotBound must be true",
     "lineage-pre-snapshot-stream": "preSnapshotJournalHighWater.stream must match",
     "lineage-pre-snapshot-sequence": "preSnapshotJournalHighWater.sequence must be an integer",
-    "lineage-pre-snapshot-below-artifact": "preSnapshotJournalHighWater.sequence must be at or above",
-    "lineage-pre-snapshot-above-restore": "preSnapshotJournalHighWater.sequence must be at or below",
+    "lineage-pre-snapshot-below-artifact-high-water": "preSnapshotJournalHighWater.sequence must be at or above",
+    "lineage-pre-snapshot-above-restore-high-water": "preSnapshotJournalHighWater.sequence must be at or below",
     "overlay-stream": "stream must match the canonical erasure stream",
     "overlay-entry-stream": "sequenceDispositions[0] stream must match the canonical erasure stream",
     "overlay-integrity": "integrityVerification must be verified with status pass",
     "overlay-entry-integrity": "sequenceDispositions[0] integrity must be verified",
     "overlay-duplicate": "contains duplicate sequence 12",
-    "overlay-missing-entry": "missing=[12]",
+    "overlay-missing-entry": "missingCount=1, missing=[12]",
     "overlay-dispositions-type": "sequenceDispositions must be a list",
     "overlay-gap": "sequenceVerification must prove the canonical bounds and ordered, contiguous, complete, gap-free, duplicate-free initial catch-up interval",
     "overlay-out-of-range": "sequenceDispositions[0] sequence is outside the final interval",
@@ -1533,6 +1531,11 @@ expected_invalid_baseline_messages = {
     "overlay-object-artifact-canonical-boundary-equality-mismatch": "artifactErasureHighWater must match the canonical bound exactly",
     "retained-backlog": "unsafe or missing disposition: gameplay",
 }
+if set(invalid_baseline_cases) != set(expected_invalid_baseline_messages):
+    raise SystemExit(
+        "invalid recovery baseline cases and expected messages must have the same exact key set: "
+        f"cases={sorted(invalid_baseline_cases)}, messages={sorted(expected_invalid_baseline_messages)}"
+    )
 for case_name, replacement in invalid_baseline_cases.items():
     invalid_baseline = copy.deepcopy(valid_baseline)
     invalid_baseline.update(copy.deepcopy(replacement))

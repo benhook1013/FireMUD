@@ -47,7 +47,6 @@ SAFE_RECOVERY_DISPOSITIONS = {
     "terminalized",
     "invalidated",
 }
-NON_QUALIFYING_RECOVERY_DISPOSITIONS = {"fenced_disabled_backlog_retained"}
 
 # These are the policy results emitted by this executable. The two JWT policies
 # documented as target-state-only are deliberately not included until they are
@@ -298,7 +297,7 @@ def validate_safe_dispositions(value: Any, label: str) -> tuple[str, str]:
         return ("fail", f"Recovery compatibility baseline {label} must be a non-empty object")
     for participant, result in value.items():
         disposition = result.get("disposition") if isinstance(result, dict) else None
-        if disposition in NON_QUALIFYING_RECOVERY_DISPOSITIONS or disposition not in SAFE_RECOVERY_DISPOSITIONS:
+        if disposition not in SAFE_RECOVERY_DISPOSITIONS:
             return (
                 "fail",
                 f"Recovery compatibility baseline {label} has unsafe or missing disposition: {participant}",
@@ -405,6 +404,7 @@ def validate_erasure_overlay_reconciliation(
 
     expected_sequence_count = restore_sequence - initial_catchup_sequence
     if len(observed_sequences) != expected_sequence_count:
+        missing_sequence_count = expected_sequence_count - len(observed_sequences)
         missing_sequences = list(
             islice(
                 (
@@ -420,7 +420,7 @@ def validate_erasure_overlay_reconciliation(
         return (
             "fail",
             f"{label} sequenceDispositions must cover the exact final interval; "
-            f"missing={missing_sequences}",
+            f"missingCount={missing_sequence_count}, missing={missing_sequences}",
         )
     return ("pass", "")
 

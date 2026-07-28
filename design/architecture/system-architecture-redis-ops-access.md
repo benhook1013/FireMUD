@@ -7,8 +7,8 @@ This document expands on the access control and operational guardrails described
 The target control-plane and maintenance contract in this document is ahead of the currently shipped runtime surface:
 
 - Game Session currently ships `PauseTicksForScope` / `ResumeTicksForScope` plus `GetRuntimeOwnershipStatus` on the control-plane gRPC surface.
-- The live implementation supports the current `{tenantId, gameInstanceId}` queue boundary; `region_id` is present in the proto contract but is currently rejected by the service implementation.
-- The bounded `coordination-maintenance ...` public surface remains target state, not a description of fully implemented repo-local tooling today. Recovery phases may be implemented and tested behind the high-level operation without becoming separate public commands.
+- The live implementation supports the current `{tenantId, gameInstanceId}` queue boundary; `regionId` is present in the proto contract but is currently rejected by the service implementation.
+- The bounded `coordination-maintenance ...` public surface remains target state, not a description of fully implemented repo-local tooling today. No public recovery scope is currently implemented and proven; recovery phases may be implemented and tested behind the high-level operation without becoming separate public commands.
 
 Use this doc as the canonical target-state contract for later reset/replay tooling, but do not assume every operation below is already available in the running codebase.
 
@@ -123,11 +123,14 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
 - `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` is the safety gate for an existing recovery operation in `AWAITING_RESUME`. It uses canonical `expectedPhase=awaiting_resume`, resolves and validates the same operation's recorded scope, lock, authenticated actor, and immutable evidence reference, persists the audit result, and atomically records `RESUME_AUTHORIZED` only after the selected recovery, cleanup, Account projection, replay-domain, and smoke gates pass while retaining the recovery lock and traffic fence; it cannot create a pause, release the recovery lock, reopen traffic, or create a new operation identity.
 - `releaseMaintenanceLock(operationId, scope, maintenanceLockToken, reason, evidenceRef)` is an audited exceptional operation and does not imply that the scope is safe to resume.
 
-The high-level recovery operation internally owns durable epoch handling, Account authority-projection rebuild, ledger and command convergence, Redis clearing, metadata initialization, session invalidation or rebinding, post-reset verification, and the final atomic success release. Its operation record lives in a durable control store outside the target Redis deployment and records the scope inventory, current and expected phase, phase evidence, lock identity, and terminal status. Internal phases may expose APIs for orchestration, resumability, and focused proof, but they are not public operator verbs. After the selected workflow's recovery, projection, cleanup, and smoke proofs, the operation atomically records `ready_to_reopen` while retaining its lock and fence. Public `continueRecovery(... expectedPhase=ready_to_reopen ...)` advances that same operation to `AWAITING_RESUME`; public `resume` records `RESUME_AUTHORIZED`; only the internal final phase may then reopen traffic, release the lock, and record `SUCCEEDED`.
+The high-level recovery operation internally owns durable epoch handling, Account authority-projection rebuild, ledger and command convergence, Redis clearing, metadata initialization, session invalidation or rebinding, post-reset verification, and the final atomic success release. Its operation record lives in a durable control store outside the target Redis deployment and records the scope inventory, current and expected phase, phase evidence, lock identity, and terminal status. Internal phases may expose APIs for orchestration, resumability, and focused proof, but they are not public operator verbs. After the selected workflow's recovery, projection, cleanup, and smoke proofs, the operation atomically records `ready_to_reopen` while retaining its lock and fence. Public `continueRecovery(... expectedPhase=ready_to_reopen ...)` advances that same operation to `AWAITING_RESUME`; public `resume(... expectedPhase=awaiting_resume ...)` records `RESUME_AUTHORIZED`; only the controller's internal `releasing -> finalized` phase may then apply and observe release effects. `SUCCEEDED` is a separate terminal operation status and may be recorded only after `finalized` and all release postconditions.
 
 The Account projection-rebuild phase explicitly includes every affected issued-token projection at `session:auth:token:<tokenHash>` in addition to issuer, account, tenant, and membership generation projections. Recovery must verify exact-token state before protected admission or representative-region smoke can proceed.
 
-The tool advertises and accepts only scope forms implemented and proved by the runtime. Unsupported region, tenant, or cluster scope must be rejected explicitly. A wider scope becomes supported only when its authoritative durable affected-region inventory, pause fencing, recovery ordering, audit output, and resume gate have end-to-end proof.
+#### Public Recovery Scope Status
+
+- No `coordination-maintenance recover` scope is currently implemented and proven. The shipped control-plane pause/status surface is narrower and supports the current `{tenantId, gameInstanceId}` queue boundary only; that support is not recovery proof.
+- The target tool must advertise and accept only scope forms implemented and proved by the runtime. Unsupported region, tenant, or cluster recovery scope must be rejected explicitly. A wider scope becomes supported only when its authoritative durable affected-region inventory, pause fencing, recovery ordering, audit output, and public continuation/release gate have end-to-end proof.
 
 - Required internal control-plane operations:
   - `PauseTicks(operationId, scope, maintenanceLockToken)`
@@ -141,7 +144,7 @@ The tool advertises and accepts only scope forms implemented and proved by the r
   - `RebuildAccountAuthorityAndIssuedTokenProjections(operationId, scope, maintenanceLockToken)`
   - `RunPostResetSmokeCheck(operationId, scope, maintenanceLockToken)`
 - The public CLI surface is the high-level `recover`, `status`, `continueRecovery`, `resume`, and audited `release-lock` contract defined above; the detailed operations listed here are internal phases rather than separate public verbs.
-- Scope grammar:
+- Target scope grammar (not current public support):
   - `--scope region --tenant <tenantId> --game-instance <gameInstanceId> --region <regionId>`
   - `--scope tenant --tenant <tenantId>`
   - `--scope cluster`
@@ -186,7 +189,7 @@ The tool advertises and accepts only scope forms implemented and proved by the r
   - Internal ledger-reconciliation phase
     - consumes the advertised supported scope selected by the recovery workflow and its maintenance lock token.
     - accepts either `--old-region-epoch <epoch>` for `--scope region` or `--old-region-epoch-map <path>` for tenant/cluster scopes.
-    - owns `replay_first` convergence as well as old-epoch reset convergence:
+    - owns `replay-first` convergence as well as old-epoch reset convergence:
       - without an epoch bump, it drives in-epoch `SCHEDULED` ledger rows toward `APPLIED` or `ABANDONED` for the selected current-epoch scope.
       - after an epoch bump, it drives old-epoch rows toward terminal reset outcomes for the selected reset scope.
     - may support `--discover-old-epochs` as an implementation convenience, but only if it resolves epochs from PostgreSQL and emits the discovered map in its audit output.
@@ -226,7 +229,7 @@ The tool advertises and accepts only scope forms implemented and proved by the r
     - requires `--operation-id <operationId>`, `--expected-phase <expectedPhase>`, a protected token input such as `--maintenance-lock-token-file <permissioned-token-file>`, and `--evidence-ref <evidenceRef>`, all matching the active durable workflow. The control resolves the operation-owned scope; callers do not supply scope selectors to resume.
     - resolves the presented token against the active operation and validates the authenticated actor, deployment boundary, operation, expected phase, scope, mode, compatibility class, expiry, and immutable evidence reference before any mutation. A mismatch, missing evidence, stale phase, lost lock, or incomplete gate fails closed and leaves the scope fenced.
     - exits non-zero unless the durable operation is exactly `AWAITING_RESUME` and the scope satisfies the selected workflow's resume gate: reset complete, Account issuer/account/tenant/membership generation and issued-token projection rebuild evidence complete, replay-domain quarantine/fence and durable consume proof complete where applicable, old-epoch ledger converged, command convergence complete, a passing smoke check, and session rebinding when the effective policy preserved gameplay sessions; `session-schema-cleanup` additionally requires immutable completion evidence for the exact tenant, prefixes, scan/delete counts, final cursor or continuation state, schema disposition, and completion reason; replay-first requires in-epoch ledger and command convergence without an epoch bump and a passing replay budget/status check.
-    - durably audits the matching operation tuple, authenticated actor, evidence reference, gate result, and pre-resume fence state, then atomically records `RESUME_AUTHORIZED` while retaining the recovery lock and traffic fence. The recover operation's internal success-release phase is the only transition that may then reopen traffic, release the lock, and record terminal `SUCCEEDED`.
+    - durably audits the matching operation tuple, authenticated actor, evidence reference, gate result, and pre-resume fence state, then atomically records `RESUME_AUTHORIZED` while retaining the recovery lock and traffic fence. The controller's internal `releasing -> finalized` phase is the only transition that may then apply and observe release effects; `SUCCEEDED` is recorded only after `finalized` and all release postconditions.
   - `coordination-maintenance release-lock` (public audited failure control)
     - requires `--operation-id <operationId>`, the matching scope, a protected token input such as `--maintenance-lock-token-file <permissioned-token-file>`, `--reason <reason>`, and `--evidence-ref <evidenceRef>`.
     - is the canonical failure or operator-abort control for releasing the deployment maintenance lock when a recover workflow stops before its internal success-release phase.
@@ -244,7 +247,7 @@ The tool advertises and accepts only scope forms implemented and proved by the r
   - Later phases in that workflow refresh the lock TTL with the same `maintenanceLockToken`; they do not acquire independent locks. Controller restarts recover the token binding and expected phase from the external durable operation record rather than from target Redis.
   - A phase failure retains the lock and paused fence. The workflow remains resumable through `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`; it never auto-releases merely because a process exited or an infrastructure step timed out.
   - If a phase loses the lock, every later mutation must fail closed until an operator explicitly restores the same fenced operation or abandons it through audited `release-lock`; abandonment does not authorize resume.
-  - A `replay_first` workflow starts with compatibility class `cleanup`. Escalation to `reset_first` must atomically compare-and-match that same token and upgrade the class to `reset` without releasing or reacquiring the lock. The upgrade audit record, including scope, old/new class, token/workflow lineage, actor, reason, and resulting epoch transition, must be durable before the epoch bump or reset-key mutation is allowed.
+  - A `replay-first` workflow starts with compatibility class `cleanup`. Escalation to `reset` must atomically compare-and-match that same token and upgrade the class to `reset` without releasing or reacquiring the lock. The upgrade audit record, including scope, old/new class, token/workflow lineage, actor, reason, and resulting epoch transition, must be durable before the epoch bump or reset-key mutation is allowed.
   - If the same-token upgrade or its audit write cannot complete, the workflow remains paused and no reset mutation may proceed; the operator must use the explicit failure/abort path. A second lock cannot be used to bypass the failed upgrade.
 
 ### Canonical Pre-Wipe Gates
@@ -346,11 +349,11 @@ The recover operation's internal `PauseTicks` phase, `GetRegionTickStatus`, and 
   - region scope: the target region satisfies the pass criteria above.
   - tenant scope: every region owned by the tenant satisfies the pass criteria above.
   - cluster scope: every active region on the deployment satisfies the pass criteria above.
-- `ResumeTicks(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` required behavior:
-  - Reject requests that do not match the active operation, expected phase, operation-owned scope, immutable evidence reference, and maintenance lock; the operation record supplies the scope.
-  - Resolve the server-issued token against the durable operation record, persist the authenticated actor and gate result in the operation audit, and keep the affected scope fenced until the internal success-release phase observes every release postcondition.
-  - Refuse to resume any region that has not passed the canonical post-reset resume gate.
-  - Transition regions back to `RUNNING` only after the reset workflow has completed for the scope.
+- Internal release path (`ResumeTicks` or equivalent) required behavior:
+  - Consume only a prior `RESUME_AUTHORIZED` record from the same active operation; no public call invokes this internal path directly.
+  - Resolve the server-issued token against the durable operation record, persist the authenticated actor and gate result in the operation audit, and keep the affected scope fenced until the internal `releasing -> finalized` transition observes every release postcondition.
+  - Refuse to release any region that has not passed the canonical post-reset resume gate.
+  - Apply the region transition back to `RUNNING` only as an internal release effect after public authorization, and record `SUCCEEDED` only after the controller reaches `finalized`.
 
 Jobs, wrappers, and dashboards may present this state differently, but they must all consume this same underlying contract and must not invent alternate quiescence criteria.
 

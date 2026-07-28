@@ -52,7 +52,35 @@ The previous target distinguished soft and hard billing states and required even
 - Every authority change that can affect a new gameplay binding advances its existing applicable Account-owned authority generation or grant version and the monotonic outbox event sequence in that same Account transaction. Together, that authority tuple and committed event sequence are the admission cutoff checkpoint; this ADR does not introduce a separate global fence. The Account-owned admission decision/read exposes the exact checkpoint it covers, and Game Session may create a new binding only after confirming that its relevant projection has applied that checkpoint. A missing, stale, gapped, ambiguous, or otherwise unconfirmed projection fails closed before binding creation. This is an Account authority and projection-confirmation protocol, not a claimed cross-store transaction.
 - An issuer-generation cutoff is also an active-session revocation authority, not only a token-validation rule. Account advances the issuer generation and emits the committed outbox event with the issuer scope, new generation, and cutoff checkpoint. Game Session durably projects that issuer generation with set-if-greater semantics; duplicate or older events are no-ops, while a gap or unavailable, stale, regressed, or ambiguous projection triggers authoritative reconciliation and fail-closed admission. Every active gameplay binding persists the issuer generation captured at admission, and the issuer cutoff is applied to all affected bindings across tenants.
 - Every new gameplay binding and every reconnect/resume admission must also use an Account-owned exact-binding admission lease. The lease contains the target binding identity, the applicable issuer, membership/grant/billing/security authority tuple, the committed outbox cutoff checkpoint, a monotonic `leaseFence`, and a short expiry; grace resume uses the existing `resumeActivationLease` as this contract's exact-resume specialization. Game Session's binding CAS must include the expected old binding generation, exact lease identity, `leaseFence`, and cutoff checkpoint in its predicate and may publish only a non-admissible provisional record until Account durably finalizes the same lease as `COMMITTED`. Account authority advancement and lease finalization serialize through the same Account CAS: if an issuer, membership, grant, billing, or other applicable cutoff wins before finalization, it advances the fence, finalization fails, and any provisional local binding is removed or remains blocked; if finalization wins first, that binding commit was valid and the later authority event follows the ordinary bounded active-revocation path. A stale, missing, expired, ambiguous, or unfenced lease never becomes an admissible binding. This lease/fence predicate is the conditional authority checked by the Game Session binding CAS; it is an ordered idempotent protocol across stores, not a claimed cross-store transaction.
-- Game Session consumes revocation events durably and idempotently. Events carry a stable ID, source scope, applicable issuer/account/tenant/membership generation or grant version, and monotonic authority version and outbox sequence; duplicates and older versions are no-ops, while gaps trigger authoritative reconciliation. Event delivery, projection application, and consumer convergence are part of the cutoff proof.
+- Game Session consumes revocation events durably and idempotently. The canonical Account outbox payload is:
+
+  ```text
+  {
+    schemaVersion,
+    eventId,
+    eventType,
+    sourceScope,
+    authorityTuple: {
+      issuerAuthGeneration?,
+      accountAuthorityGeneration?,
+      tenantAuthorityGeneration?,
+      membershipAuthorityGeneration?,
+      grantVersion?
+    },
+    authorityVersion,
+    outboxSequence,
+    cutoff: {
+      issuerAuthGenerationCutoff?,
+      accountAuthorityGenerationCutoff?,
+      tenantAuthorityGenerationCutoff?,
+      membershipAuthorityGenerationCutoff?,
+      grantVersionCutoff?
+    },
+    occurredAt
+  }
+  ```
+
+  `sourceScope` identifies the affected issuer, account, tenant, caller-bound membership, or private-realm grant. Only applicable authority-tuple and cutoff fields are present; absent fields are not zero or wildcard values. `authorityVersion` is the monotonic version for the source scope, and `outboxSequence` is the monotonic Account outbox stream position used for gap detection. The payload uses the accepted ADR 0036 generation authorities and ADR 0030 grant-version/checkpoint fields; it does not introduce timestamp cutoffs or a separate global fence. Duplicates and older versions are no-ops, while gaps trigger authoritative reconciliation. Event delivery, projection application, and consumer convergence are part of the cutoff proof.
 - Game Session maintains bounded active-binding indexes by issuer, account, tenant, and private-realm grant scope. An issuer cutoff performs a bounded sweep of the issuer index, partitioned as needed within the existing revocation budget, and terminates every binding whose captured issuer generation is below the committed cutoff. Revocation must not rely on Redis wildcard scans.
 - If an active-binding index read, write, or repair obligation is unavailable or ambiguous during a cutoff, Game Session must not treat it as empty, use a wildcard scan, or wait for recovery. It establishes a scope-level fail-closed revocation fence at each Game Session front end: new admission and reconnect/resume stop, and local admission/transport controls terminate every locally owned binding in the affected authority scope. Durable repair obligations and authoritative binding records account for bindings not visible through the index; any binding that cannot be positively accounted for remains blocked or terminated until reconciliation proves coverage. This fallback uses the existing termination sub-budget and must complete no later than `T0 + 60 seconds`; index recovery is not a reason to extend the deadline.
 - The event is the fast path. From the authoritative Account commit at `T0` to completed socket/admission termination, the end-to-end active-revocation budget is at most 60 seconds. The configured budgets for event delivery, event-gap detection, reconciliation scheduling jitter, bounded retries, authority/projection datastore timeouts, deployment clock-skew uncertainty, and socket/admission termination must be explicit and satisfy `B_event_delivery + B_gap_detection + B_scheduler_jitter + B_retries + B_datastore_timeouts + B_clock_skew + B_termination <= 60 seconds`. No retry or backoff may extend beyond its assigned budget, and the configured sum must be validated before deployment.

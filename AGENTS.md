@@ -46,5 +46,5 @@ The main `gpt-5.6-sol` thread owns planning, human design discussion, task decom
 
 - Use process proportional to the risk and size of the change. Do not create ledgers, audit suites, repeated review machinery, or speculative governance infrastructure for small edits unless a concrete correctness risk requires it.
 - Delegate bounded bulk reading, mechanical work, or focused investigation only with a disjoint scope and explicit success conditions.
-- Every delegation prompt repeats the complete applicable boundaries from the linked workflow. Unless one exact action is explicitly delegated, subagents do not run Gradle, Docker, or repository-wide validation; commit, push, retarget branches, open or merge PRs; invoke review or CodeRabbit commands; trigger CI or hosted review; mutate review threads or comments; or edit outside their assigned file set. The main thread reviews and integrates delegated results and retains final decisions.
+- Delegation prompts repeat the applicable complete boundaries from the authoritative workflow; that workflow remains the authority.
 - Preserve one authority direction: architecture defines target behavior; implementation tracking records status; workflow guidance selects process; the orchestrator evaluates evidence and makes the final decision.

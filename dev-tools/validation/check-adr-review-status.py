@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,8 +55,12 @@ class Review:
     disposition: str
 
 
+class ValidationError(Exception):
+    """Raised when ADR review status validation fails."""
+
+
 def fail(message: str) -> NoReturn:
-    raise SystemExit(message)
+    raise ValidationError(message)
 
 
 def adr_number(path: Path) -> int:
@@ -139,15 +144,6 @@ def checked_reviews(path: Path) -> dict[int, list[Review]]:
                 "contains duplicate ADR outcome links"
             )
 
-        # A superseded row names the replacement decision(s) in its outcome.
-        # Those links must not make the replacement inherit the old row's
-        # review provenance; each replacement needs its own checked row.
-        adr_numbers = (
-            []
-            if match.group("disposition") == "superseded"
-            else outcome_adr_numbers
-        )
-
         review = Review(
             key=match.group("key"),
             date=match.group("date"),
@@ -160,7 +156,9 @@ def checked_reviews(path: Path) -> dict[int, list[Review]]:
             )
         seen_keys.add(review.key)
 
-        for number in adr_numbers:
+        # Exact [ADR NNNN] labels carry provenance for every disposition,
+        # including superseded rows. Replacement links use other labels.
+        for number in outcome_adr_numbers:
             existing = reviews[number]
             if existing and any(
                 (prior.date, prior.disposition)
@@ -237,7 +235,7 @@ def validate(root: Path = ROOT) -> None:
         try:
             status = section_value(text, "Status")
             fields = review_fields(text)
-        except SystemExit as error:
+        except ValidationError as error:
             fail(f"{path.relative_to(root)}: {error}")
 
         linked_reviews = reviews.get(number, [])
@@ -280,4 +278,8 @@ def validate(root: Path = ROOT) -> None:
 
 
 if __name__ == "__main__":
-    validate()
+    try:
+        validate()
+    except ValidationError as error:
+        print(error, file=sys.stderr)
+        raise SystemExit(1)

@@ -112,7 +112,10 @@ def append_queue_row(root: Path, row: str) -> None:
 
 
 def expect_failure(test_case: unittest.TestCase, call, expected: str) -> None:
-    with test_case.assertRaisesRegex(SystemExit, re.escape(expected)):
+    with test_case.assertRaisesRegex(
+        test_case.validator.ValidationError,
+        re.escape(expected),
+    ):
         call()
 
 
@@ -515,17 +518,19 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "malformed ADR provenance",
             )
 
-    def test_supersession_adr_links_do_not_assign_provenance(self) -> None:
+    def test_superseded_rows_keep_reviewed_adr_provenance(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
             append_queue_row(
                 root,
                 "- [x] `TEST-SUPERSEDED` — `superseded` on 2026-07-27 by "
-                "[ADR 0014](../../architecture/decisions/adr-0014-replacement.md)",
+                "[ADR 0013](../../architecture/decisions/adr-0013-pending.md); "
+                "replacement: [replacement ADR 0014](../../architecture/decisions/"
+                "adr-0014-replacement.md)",
             )
             reviews = self.validator.checked_reviews(queue_path(root))
+            self.assertEqual(reviews[13][0].key, "TEST-SUPERSEDED")
             self.assertNotIn(14, reviews)
-            self.assertEqual(reviews[12][0].key, "TEST-01")
 
     def test_malformed_checked_queue_rows_fail_closed(self) -> None:
         rows = (

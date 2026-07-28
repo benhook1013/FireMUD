@@ -400,6 +400,8 @@ import tempfile
 import textwrap
 from pathlib import Path
 
+if len(sys.argv) != 2:
+    raise SystemExit("trusted PR image publisher contract requires one workflow path")
 workflow_text = Path(sys.argv[1]).read_text(encoding="utf-8")
 match = re.search(r"python3 - <<'PY'\n(?P<script>.*?)\n          PY", workflow_text, re.DOTALL)
 if match is None:
@@ -425,9 +427,12 @@ with tempfile.NamedTemporaryFile(mode="r+", encoding="utf-8") as summary_file:
     summary_file.seek(0)
     summary = summary_file.read()
 
-assert "<code>build `title` &lt;script&gt;&amp; next</code>" in summary
-assert "<code>feature/`branch` &lt;b&gt;&amp;</code>" in summary
-assert "<script>" not in summary
+if "<code>build `title` &lt;script&gt;&amp; next</code>" not in summary:
+    raise SystemExit("trusted PR image publisher did not escape the run title")
+if "<code>feature/`branch` &lt;b&gt;&amp;</code>" not in summary:
+    raise SystemExit("trusted PR image publisher did not escape the head branch")
+if "<script>" in summary:
+    raise SystemExit("trusted PR image publisher emitted unescaped HTML")
 PY
 
 require_contains "$image_wait_path" 'publish-pr-runtime-images.yml/runs?event=workflow_run'
@@ -533,6 +538,18 @@ require_contains "$smoke_path" 'pullRequest.state !== "open" ||'
 require_contains "$smoke_path" 'pullRequest.head.sha !== headSha ||'
 require_contains "$smoke_path" 'pullRequest.base.ref !== baseRef ||'
 require_contains "$smoke_path" 'pullRequest.base.sha !== baseSha'
+require_contains "$smoke_path" 'const matchingRuns = runs.filter((run) => {'
+require_contains "$smoke_path" 'const matching = matchingRuns.reduce((newest, candidate) => {'
+require_contains "$smoke_path" 'let fullSmokeJob = null;'
+require_contains "$smoke_path" 'const remainingTimeoutMs = Math.max(0, timeoutMs - (Date.now() - started));'
+require_contains "$smoke_path" 'const maxCompletedJobSnapshotRetries = Math.min('
+require_contains "$smoke_path" 'Math.floor(remainingTimeoutMs / sleepMs) - 1'
+require_contains "$smoke_path" 'completedJobSnapshotAttempt <= maxCompletedJobSnapshotRetries'
+require_contains "$smoke_path" 'run_id: matching.id'
+require_contains "$smoke_path" 'completedJobSnapshotAttempt < maxCompletedJobSnapshotRetries'
+require_contains "$smoke_path" 'did not expose a terminal PR Full-Stack Smoke job after'
+require_contains "$smoke_path" 'Runtime images run ${matching.id} succeeded, but PR Full-Stack Smoke job did not complete successfully:'
+require_contains "$smoke_path" 'Stopping obsolete failed full-smoke gate for'
 require_contains "$smoke_path" 'pollIteration % pullRequestCheckInterval === 0'
 require_contains "$smoke_path" 'Stopping obsolete smoke gate for'
 require_ordered_sequence \
@@ -580,6 +597,8 @@ from pathlib import Path
 
 import yaml
 
+if len(sys.argv) != 3:
+    raise SystemExit("smoke/runtime-images parity contract requires two workflow paths")
 smoke_path, runtime_images_path = map(Path, sys.argv[1:])
 smoke = smoke_path.read_text(encoding="utf-8")
 runtime_images = runtime_images_path.read_text(encoding="utf-8")
@@ -654,10 +673,12 @@ runtime_images_fixture = """on:
   push:
     branches: [main]
 """
-assert pull_request_paths(runtime_images_fixture, "runtime fixture") == {
+expected_runtime_fixture_paths = {
     "services/example/**",
     "literal  push: value",
 }
+if pull_request_paths(runtime_images_fixture, "runtime fixture") != expected_runtime_fixture_paths:
+    raise SystemExit("runtime fixture paths were parsed incorrectly")
 
 for invalid_source, expected_message in (
     ("on:\n  push:\n    branches: [main]\n", "must define on.pull_request"),
@@ -666,9 +687,12 @@ for invalid_source, expected_message in (
     try:
         pull_request_paths(invalid_source, "invalid runtime fixture")
     except AssertionError as exc:
-        assert expected_message in str(exc)
+        if expected_message not in str(exc):
+            raise SystemExit(
+                f"invalid runtime fixture raised the wrong message: {exc}"
+            ) from exc
     else:
-        raise AssertionError(f"invalid runtime fixture {expected_message}")
+        raise SystemExit(f"invalid runtime fixture was accepted: {expected_message}")
 
 
 def path_pattern_covers_prefix(pattern, prefix):
@@ -679,8 +703,10 @@ def path_pattern_covers_prefix(pattern, prefix):
     return pattern.endswith("**") and prefix.startswith(pattern.removesuffix("**"))
 
 
-assert path_pattern_covers_prefix("services/**", "services/common-library/")
-assert not path_pattern_covers_prefix("web-client/**", "services/common-library/")
+if not path_pattern_covers_prefix("services/**", "services/common-library/"):
+    raise SystemExit("services/** must cover services/common-library/")
+if path_pattern_covers_prefix("web-client/**", "services/common-library/"):
+    raise SystemExit("web-client/** must not cover services/common-library/")
 
 missing_prefixes = [
     prefix
