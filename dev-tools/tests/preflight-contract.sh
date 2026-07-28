@@ -1019,6 +1019,7 @@ def canonical_recovery_record(finalized_at):
         "backupArtifactLineage": {
             "databaseIdentity": "production",
             "snapshotAt": credential_validated_at,
+            "preSnapshotJournalHighWater": {"stream": "erasures", "sequence": 10},
             "artifactErasureHighWater": {"stream": "erasures", "sequence": 10},
             "erasureHighWaterSnapshotBound": True,
         },
@@ -1182,6 +1183,18 @@ invalid_baseline_cases = {
             "restoreHighWater": {"stream": "erasures", "sequence": 11},
         }
     },
+    "overlay-artifact-bounds": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "artifactErasureHighWater": {"stream": "erasures", "sequence": 9},
+        }
+    },
+    "lineage-pre-snapshot": {
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "preSnapshotJournalHighWater": None,
+        }
+    },
     "overlay-stream": {
         "erasureOverlayReconciliation": {
             **valid_baseline["erasureOverlayReconciliation"],
@@ -1225,6 +1238,20 @@ invalid_baseline_cases = {
                 valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
                 valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
             ],
+        }
+    },
+    "overlay-missing-entry": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+            ],
+        }
+    },
+    "overlay-dispositions-type": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": {},
         }
     },
     "overlay-gap": {
@@ -1295,11 +1322,15 @@ expected_invalid_baseline_messages = {
     "coordination-account-projections": "coordination recovery must prove",
     "coordination-replay-evidence": "coordination recovery must prove",
     "overlay-bounds": "restoreHighWater must match the canonical bound exactly",
+    "overlay-artifact-bounds": "artifactErasureHighWater must match the canonical bound exactly",
+    "lineage-pre-snapshot": "preSnapshotJournalHighWater at or above the snapshot-bound artifact high-water",
     "overlay-stream": "stream must match the canonical erasure stream",
     "overlay-entry-stream": "sequenceDispositions[0] stream must match the canonical erasure stream",
     "overlay-integrity": "integrityVerification must be verified with status pass",
     "overlay-entry-integrity": "sequenceDispositions[0] integrity must be verified",
     "overlay-duplicate": "contains duplicate sequence 11",
+    "overlay-missing-entry": "missing=[12]",
+    "overlay-dispositions-type": "sequenceDispositions must be a list",
     "overlay-gap": "sequenceVerification must prove a contiguous, complete, gap-free, duplicate-free pass",
     "overlay-out-of-range": "sequenceDispositions[0] sequence is outside the final interval",
     "overlay-owner-missing": "sequenceDispositions[0] owner must be non-empty",

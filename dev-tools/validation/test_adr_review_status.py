@@ -203,19 +203,50 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "checked human review requires",
             )
 
-    def test_checked_review_fields_must_match_queue(self) -> None:
+    def test_checked_review_date_must_match_queue(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
             path = root / "design/architecture/decisions/adr-0012-reviewed.md"
             path.write_text(
-                path.read_text(encoding="utf-8")
-                .replace("2026-07-27", "2026-07-26")
-                .replace("`TEST-01`", "`TEST-02`"),
+                path.read_text(encoding="utf-8").replace(
+                    "2026-07-27", "2026-07-26"
+                ),
                 encoding="utf-8",
             )
             expect_failure(
                 lambda: self.validator.validate(root),
                 "human review date must match",
+            )
+
+    def test_checked_review_disposition_must_match_queue(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = root / "design/architecture/decisions/adr-0012-reviewed.md"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "Human review disposition: Revised",
+                    "Human review disposition: Accepted",
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                lambda: self.validator.validate(root),
+                "human review disposition must match",
+            )
+
+    def test_checked_review_source_must_match_queue(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = root / "design/architecture/decisions/adr-0012-reviewed.md"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "`TEST-01`", "`TEST-02`"
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                lambda: self.validator.validate(root),
+                "review source keys",
             )
 
     def test_completed_metadata_requires_checked_queue_entry(self) -> None:

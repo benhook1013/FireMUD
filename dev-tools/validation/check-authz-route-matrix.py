@@ -190,7 +190,8 @@ def validate_token_profiles(document: dict[str, Any], errors: list[str]) -> dict
         if profile:
             if profile in profiles:
                 errors.append(f"token_profiles must not contain duplicate profile {profile!r}")
-            profiles[profile] = values
+            elif profile not in profiles:
+                profiles[profile] = values
         if values.get("issuer") and values["issuer"] != TOKEN_ISSUER:
             errors.append(f"{label}.issuer must be {TOKEN_ISSUER!r}")
         if "kind" in raw_profile:
@@ -314,6 +315,20 @@ def validate_receiver_predicates(
                 if len(shared_type_issuer) != 1 or (token_type, token_issuer) != next(iter(shared_type_issuer)):
                     errors.append(
                         f"{label} multi-profile token predicates must match the shared token_type/token_issuer"
+                    )
+                    return
+                if not (
+                    isinstance(audience_map, dict)
+                    and set(audience_map) == set(profiles)
+                    and all(
+                        audience_map.get(profile_name)
+                        == token_profiles[profile_name].get("audience")
+                        for profile_name in profiles
+                    )
+                ):
+                    errors.append(
+                        f"{label} multi-profile receiver requires accepted_token_profile_audiences "
+                        "matching every accepted profile"
                     )
                     return
             errors.append(f"{label} must declare exactly one token profile per receiver policy")
@@ -529,6 +544,30 @@ def validate_generation_applicability(routes: list[Any], errors: list[str]) -> N
         if not isinstance(route, dict):
             continue
         label = f"routes[{index}] {route.get('service')} {route.get('route')}"
+        if "account_generation_applies" in route:
+            errors.append(
+                f"{label} must use account_authority_generation_applies instead of "
+                "account_generation_applies"
+            )
+        account_generation = route.get("account_authority_generation_applies")
+        if account_generation is not None and not isinstance(account_generation, bool):
+            errors.append(f"{label} account_authority_generation_applies must be boolean")
+        if route.get("classification") == "pending_deletion_scoped":
+            if account_generation is not False:
+                errors.append(
+                    f"{label} pending_deletion_scoped routes must set "
+                    "account_authority_generation_applies=false"
+                )
+            if route.get("tenant_billing_authority_generation_applies") is not False:
+                errors.append(
+                    f"{label} pending_deletion_scoped routes must set "
+                    "tenant_billing_authority_generation_applies=false"
+                )
+            if route.get("membership_authority_generation_applies") is not False:
+                errors.append(
+                    f"{label} pending_deletion_scoped routes must set "
+                    "membership_authority_generation_applies=false"
+                )
         value = route.get("membership_authority_generation_applies")
         valid_scalar = isinstance(value, bool) or value == "conditional_by_operator_role"
         if value is not None and not valid_scalar:

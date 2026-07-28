@@ -34,7 +34,9 @@ This process is invisible to the client; no re-login is needed.
 
 This is backend role-context maintenance only. It does not prompt for another gameplay factor, reauthenticate the active gameplay session, or turn global account/control-plane roles into gameplay authority.
 
-Membership changes that affect tenant access follow a stricter contract than ordinary role refresh:
+Target-state note: membership-change event delivery and generation-aware session consumption are not yet live. The current Account runtime response exposes `membershipVersion` without `membershipAuthorityGeneration`, so Game Session must not treat the following contract as implemented until the Account producer, event payload, consumer, and focused proof converge.
+
+Membership changes that affect tenant access follow a stricter target contract than ordinary role refresh:
 
 1. The Account Service emits a membership-change event containing `accountId`, `tenantId`, `membershipVersion`, `membershipAuthorityGeneration`, the changed role set, and whether gameplay admission remains allowed.
 2. Game Session compares the event against active gameplay bindings for `{accountId, tenantId}`.
@@ -44,15 +46,16 @@ Membership changes that affect tenant access follow a stricter contract than ord
    The corresponding Account-owned projection is `session:auth:generation:membership:<accountId>:<tenantId>` and is applied set-if-greater; missing, unavailable, or stale evidence fails closed.
 6. `PLAY` and reconnect/resume must obtain `membershipVersion` from authoritative membership reads rather than inferring it from JWT claims or local caches.
 
-Membership-change event delivery semantics are required, not best-effort folklore:
+Target membership-change event delivery semantics are required, not best-effort folklore:
 
 - Every event must include a stable `eventId` plus the tuple `{accountId, tenantId, membershipVersion, membershipAuthorityGeneration}`.
 - `membershipVersion` must be monotonic per `{accountId, tenantId}` and must advance on any role or membership change that can affect gameplay or tenant-safe control-plane authority. `membershipAuthorityGeneration` is a separate authority fence that advances whenever previously issued caller-bound tenant authority must be invalidated; consumers must not substitute one for the other.
 - Consumers must treat duplicate or older versions as no-ops.
 - If Game Session detects a version gap or has no prior version for an active binding, it must reconcile immediately via the authoritative internal membership API before deciding whether the session remains valid.
 - Account Service owns the version increment rules; other services must not synthesize membership versions locally.
+- Focused proof must show that Account emits the event's `membershipAuthorityGeneration` from the same committed generation advanced for the membership change, and that Game Session rejects missing or mismatched generation evidence rather than substituting `membershipVersion`.
 
-Account commits each security, membership, grant, or billing authority change, the corresponding durable Account-owned authority-generation or grant-version advance, and its monotonic outbox event in one database transaction. Redis and other downstream projections then idempotently reflect the committed authority state. The cutoff workflow does not report enforcement complete until the required projection and consumer convergence succeeds. Game Session consumes the durable events through an idempotent consumer and maintains the canonical bounded active-binding indexes listed below; correctness must not depend on wildcard Redis scans.
+Target transaction and consumer contract: once implemented, Account commits each security, membership, grant, or billing authority change, the corresponding durable Account-owned authority-generation or grant-version advance, and its monotonic outbox event in one database transaction. Redis and other downstream projections then idempotently reflect the committed authority state. The cutoff workflow does not report enforcement complete until the required projection and consumer convergence succeeds. Game Session consumes the durable events through an idempotent consumer and maintains the canonical bounded active-binding indexes listed below; correctness must not depend on wildcard Redis scans.
 The downstream generation projection uses set-if-greater semantics and may not move authority backward.
 
 An accepted, delivered authority event is the immediate revocation path: Game Session targets the affected bindings, closes their active sockets, and removes their admission state without waiting for the reconciliation interval. The `<=60-second` bound applies only when an event is missed, delayed, or cannot be consumed; batched authority-generation/version reconciliation must then discover the stale authority and terminate the affected bindings within that bound. If the reconciliation lease cannot be renewed, new admission fails closed and active bindings whose authority cannot be re-established are terminated at the bound. This is periodic per-authority reconciliation, not an Account or Redis lookup on each gameplay command.

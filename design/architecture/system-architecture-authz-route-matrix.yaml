@@ -71,7 +71,7 @@ tenant_generation_policy:
       required_authority: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
       role_assurance:
         support: none
-        platformAdmin: privileged_control_with_independent_totp
+        platformAdmin: privileged_control
     cross_tenant_billing_safe:
       target_tenant_generation: false
       required_authority: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
@@ -159,6 +159,10 @@ classifications:
   - internal_workload
   - pending_deletion_scoped
 role_assurance:
+  vocabulary:
+    privileged_control_when_global_role:
+      elevation_contract: privileged_control
+      applies_when: caller_authorizes_via_global_role
   privileged_control_when_global_role:
     resolution: role_specific_global_role_assurance
     requirements:
@@ -848,6 +852,7 @@ routes:
     classification: account_scoped
     route_status: target_not_currently_routable
     subject_binding: caller_account_id
+    platform_admin_override: forbidden
     accepted_token_profiles: [control-ui]
     required_live_checks: [recent_account_authentication]
     mutation_contract: verified_provider_identity_link_with_recent_reauthentication
@@ -863,7 +868,9 @@ routes:
     accepted_token_profiles: []
     accepted_credentials: [pending-deletion-access]
     subject_binding: pending_deletion_credential_account_id
-    account_generation_applies: false
+    account_authority_generation_applies: false
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
     pending_deletion_workflow_binding: required
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry]
     response_profile: deletion_status_only
@@ -878,7 +885,9 @@ routes:
     accepted_token_profiles: []
     accepted_credentials: [pending-deletion-access]
     subject_binding: pending_deletion_credential_account_id
-    account_generation_applies: false
+    account_authority_generation_applies: false
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
     pending_deletion_workflow_binding: required
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, cancellation_window]
     mutation_contract: cancel_deletion_revoke_pending_access_then_restore_normal_generation
@@ -893,7 +902,9 @@ routes:
     accepted_token_profiles: []
     accepted_credentials: [pending-deletion-access]
     subject_binding: pending_deletion_credential_account_id
-    account_generation_applies: false
+    account_authority_generation_applies: false
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
     pending_deletion_workflow_binding: required
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry]
     response_profile: asynchronous_versioned_cross_owner_export_manifest
@@ -908,7 +919,9 @@ routes:
     accepted_token_profiles: []
     accepted_credentials: [pending-deletion-access]
     subject_binding: pending_deletion_credential_account_id
-    account_generation_applies: false
+    account_authority_generation_applies: false
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
     pending_deletion_workflow_binding: required
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, settlement_scope]
     response_profile: necessary_billing_settlement_only

@@ -31,7 +31,7 @@ The added ingress hop is acceptable for operator work, but must not become a dep
 
 ### Canonical External Ingress
 
-External operator requests for moderation, runtime feature flags, quota overrides, admission control, and tick or coordination remediation enter through HTTPS at Spring Cloud Gateway and then Logging and Admin. Only supported executable mutation families are forwarded to owners per request. The current live executable mutation families are runtime feature-flag overrides, admission-pointer state operations, and scoped tick `PauseTicks`/`ResumeTicks`; moderation currently persists policy input and audit only and is neither forwarded nor enforced. Quota overrides, broader tick/coordination remediation, and moderation enforcement are target-state families and must not be represented by executable routes until their owner contracts exist.
+The current supported external operator mutation requests enter through HTTPS at Spring Cloud Gateway and then Logging and Admin. Only supported executable mutation families are forwarded to owners per request. The current live executable mutation families are runtime feature-flag overrides, admission-pointer state operations, and scoped tick `PauseTicks`/`ResumeTicks`; moderation currently persists policy input and audit only and is neither forwarded nor enforced. Quota overrides, broader tick/coordination remediation, and moderation enforcement remain deferred target-state families and must not be represented by executable routes until their owner contracts exist.
 
 For each supported executable mutation request, Logging and Admin:
 

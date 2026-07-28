@@ -37,6 +37,9 @@ The current JWT profile names are `control-ui`, `player-bootstrap`, the one-use 
   - Fail if a route uses an unknown classification value.
   - Fail if a route is marked billing- or support-safe but lacks required redaction/authorization tests.
   - Once the source-stable inventory gate above passes, fail if the same-run generated route inventory (OpenAPI/proto) differs from the YAML matrix for auth/session and billing/subscription domains. Before that gate passes, record the difference as drift without treating the incomplete inventory as an enforceable registry.
+- **Governance vocabulary**:
+  - `route_status` must be `current_openapi_operator_surface` for a currently exposed operator route or `target_not_currently_routable` for target-only coverage.
+  - Authority-generation applicability uses the explicit `*_authority_generation_applies` fields, including `account_authority_generation_applies`, `tenant_billing_authority_generation_applies`, and `membership_authority_generation_applies`. Pending-deletion routes must set account, tenant-billing, and membership authority-generation applicability explicitly to `false`.
 - **Default-deny behavior**:
   - The declared-entry `default_action: deny` is normative only for entries in the YAML; the canonical incomplete-inventory rule above governs routes absent from the validated inventory.
   - Runtime classification and CI/deployment inventory registration are separate gates; both follow the canonical incomplete-inventory rule above.
@@ -100,6 +103,7 @@ Critical routes may also require explicit machine-readable fields for:
 
 - `applicability` when multiple entries share one transport route or command; predicates must be explicit and mutually exclusive so classification is deterministic
 - `membership_authority_generation_applies`, which may be `true`, `false`, or `conditional_by_operator_role`; the conditional form must declare `membership_authority_generation_condition.tenant_role: true` and `membership_authority_generation_condition.platformAdmin_global: false`
+- `account_authority_generation_applies`, which must be a boolean when declared and is explicitly `false` for `pending_deletion_scoped` routes
 - `tenant_billing_authority_generation_applies`
 - `required_live_checks`, whose values must come from the closed YAML `required_live_check_vocabulary`, such as `membership`, `conditional_realm_access_grant`, `membership_generation`, `runtime_entitlements`, `admission_pointer`, `connect_token_single_use_consume`, `replay_protection_available`, `replay_admission_fence_match`, and `connect_scope_match`
 - `mutation_contract` for payment-instrument flows must require billing-owner authorization, explicit per-subscription binding, replacement-before-detach, and audited billing-ownership transfer; a shared-instrument acknowledgement is not an authorization substitute. When the owning payment-instrument route is not yet routable, the entry must mark this as target-only rather than claiming an implemented path

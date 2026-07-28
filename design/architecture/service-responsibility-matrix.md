@@ -67,8 +67,8 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Social network graph (friends/blocks/etc.) | | | | | | | | ✔ | | | |
 | Centralized observability dashboards and moderation analytics (logs/metrics/traces) | | | | | | | | | ✔ | | |
 | Admin panel UX and runtime feature-flag override workflow (live) | | | | ✔ | | | | | ✔ | | |
-| Game moderation tools (live policy-input and audit surface) | | | | | | | | | ✔ | | |
-| Game moderation policy definition and audit (live persistence-only ingress) | | | | | | | | | ✔ | | |
+| Game moderation operator tooling (reports, policy-action UX, and audit investigation) | | | | | | | | | ✔ | | |
+| Game moderation policy definition and audit (live persistence-only API ingress) | | | | | | | | | ✔ | | |
 | Moderation policy propagation and enforcement contract (target; current route is persistence-only) | | | | ✔ | | | | ✔ | ✔ | | |
 | Subscription entitlements and plan-driven quota values (`GetTenantEntitlements`) | | | ✔ | | | | | | | | |
 | Operator quota overrides, auditing, and dashboards (hypothetical target; overlay on entitlements; no current Account owner route) | | | | | | | | | ✔ | | |
@@ -99,7 +99,10 @@ For the edge-routable services in this matrix, participation does not imply that
 
 Service docs may not create new external bypass-safe write classes on their own. If a workflow is not explicitly allowlisted by the overview or this matrix, treat it as non-bypass-safe until the architecture docs are updated.
 
-Route-review example:
+Route-review procedure:
+
+1. Classify the proposed route using the [canonical route-review examples and traffic split](./system-architecture-overview.md#canonical-route-review-examples).
+2. Confirm the matching participation and ingress rows below; participation alone does not authorize a direct external mutation.
 
 - The exact current matrix row is **External operator write ingress (live feature flags/admission/`PauseTicksForScope`/`ResumeTicksForScope`; target moderation enforcement/quota/broader remediation)**.
 - Proposed route: `POST /api/session/game-sessions/{id}/feature-flags/{flagKey}:toggle`. Matrix check: `Game Session` participates in `Admin/creator API participation`, but the **External operator write ingress (live feature flags/admission/`PauseTicksForScope`/`ResumeTicksForScope`; target moderation enforcement/quota/broader remediation)** row routes this workflow through `Logging & Admin`, so the direct external Game Session route is not allowed without a design update.

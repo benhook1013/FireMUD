@@ -59,13 +59,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_operator_ingress_uses_conditional_membership_generation(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route_names = {
-            "POST /feature-flags/toggle",
-            "POST /moderation/actions",
-            "POST /tick-remediation/pause",
-            "POST /tick-remediation/resume",
-            "POST /admission-pointers",
-            "POST /admission-pointers/cutover",
-            "POST /admission-pointers/version-upgrades",
+            route
+            for service, route in self.validator.OPERATOR_INGRESS_ROUTES
+            if service == "logging-admin-service"
         }
         routes = {
             route["route"]: route
@@ -328,6 +324,63 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
             errors = self.validator.validate(path)
         self.assertEqual([], errors)
+
+    def test_multi_profile_route_reports_audience_map_error(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(route for route in document["routes"] if route.get("route") == "ToggleFeatureFlag")
+        base_profile = next(
+            profile for profile in document["token_profiles"] if profile["profile"] == "control-ui"
+        )
+        second_profile = {
+            **base_profile,
+            "profile": "control-ui-secondary",
+            "audience": "control-ui-secondary",
+        }
+        document["token_profiles"].append(second_profile)
+        route["accepted_token_profiles"] = ["control-ui", "control-ui-secondary"]
+        route["accepted_token_profile_audiences"] = {"control-ui": "control-ui"}
+        route["token_type"] = base_profile["type"]
+        route["token_issuer"] = base_profile["issuer"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(
+            any("multi-profile receiver requires accepted_token_profile_audiences" in error for error in errors)
+        )
+        self.assertFalse(any("exactly one token profile per receiver policy" in error for error in errors))
+
+    def test_duplicate_profile_preserves_first_definition(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        document["token_profiles"].append(
+            {
+                "profile": "control-ui",
+                "type": "different_type",
+                "issuer": "firemud-account-service",
+                "audience": "different-audience",
+            }
+        )
+        errors = []
+        profiles = self.validator.validate_token_profiles(document, errors)
+        self.assertTrue(any("duplicate profile 'control-ui'" in error for error in errors))
+        self.assertEqual("control-ui", profiles["control-ui"]["audience"])
+
+    def test_pending_deletion_uses_canonical_account_generation_field(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route
+            for route in document["routes"]
+            if route.get("classification") == "pending_deletion_scoped"
+        )
+        self.assertFalse(route["account_authority_generation_applies"])
+        self.assertFalse(route["tenant_billing_authority_generation_applies"])
+        self.assertFalse(route["membership_authority_generation_applies"])
+        route["account_generation_applies"] = route.pop("account_authority_generation_applies")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(any("must use account_authority_generation_applies" in error for error in errors))
 
     def test_multi_profile_route_requires_shared_type_and_issuer(self):
         for field in ("token_type", "token_issuer"):

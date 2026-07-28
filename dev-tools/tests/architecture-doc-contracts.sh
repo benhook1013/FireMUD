@@ -128,7 +128,7 @@ required_reset_contract = [
     "7. internal Account authority and issued-token projection-rebuild phase",
     "8. internal post-reset smoke-check phase",
     "9. `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`",
-    "10. public `resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)`",
+    "10. public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`",
     "11. internal resume-and-success-release phase",
 ]
 cursor = -1
@@ -159,6 +159,23 @@ for clause in [
             "design/architecture/system-architecture-redis-operations.md: "
             f"canonical reset contract missing: [{clause!r}]"
         )
+
+canonical_public_resume_signature = "`resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`"
+obsolete_public_resume_signature = "`resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)`"
+for path in (root / "design").rglob("*.md"):
+    if obsolete_public_resume_signature in path.read_text(encoding="utf-8"):
+        raise SystemExit(f"{path}: uses obsolete caller-supplied recovery scope")
+
+for path in [
+    "design/architecture/decisions/adr-0015-online-backup-and-environment-wide-cold-start-recovery.md",
+    "design/architecture/system-architecture-backup-recovery.md",
+    "design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md",
+    "design/architecture/system-architecture-deployment-runbook.md",
+    "design/architecture/system-architecture-post-restore-hardening.md",
+    "design/architecture/system-architecture-redis-operations.md",
+    "design/architecture/system-architecture-redis-reset-and-recovery.md",
+]:
+    require_contains(path, [canonical_public_resume_signature])
 
 require_contains(
     "design/architecture/system-architecture-redis-ops-access.md",

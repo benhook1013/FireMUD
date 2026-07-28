@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+This decision is partially implemented. Account has payment and subscription persistence plus Stripe/payment-operation foundations, but the complete target path is not yet converged: explicit owner-authorized instrument binding, audited billing-owner handoff, provider creation without customer or provider defaults, replacement-before-detach enforcement, verified webhook entitlement completion, and their end-to-end proof remain incomplete. This status describes implementation coverage only and does not change the human-reviewed decision metadata above.
+
 ## Decision Record
 
 - Decision date: 2026-07-19
@@ -35,10 +39,6 @@ An instrument cannot be detached while any subscription references it. The owner
 A billing-owner transfer is an explicit, audited handoff through the dedicated `cross_tenant_billing_safe` route, recording the actor, current owner, new owner, affected subscription, reason, and outcome. It rebinds the subscription to the new owner’s Stripe customer and a payment instrument selected by that owner. Cards and other payment instruments are never transferred between account wallets.
 
 Card management and every new real-money charge complete through HTTPS and the payment-provider flow. Telnet or gameplay may initiate the operation and return a short-lived, single-use checkout URL. The URL is bound to the initiating account and intended operation. FireMUD recognizes payment completion only from a verified provider webhook, then applies the resulting durable entitlement idempotently.
-
-## Implementation Status
-
-This decision is partially implemented. Account has payment and subscription persistence plus Stripe/payment-operation foundations, but the complete target path is not yet converged: explicit owner-authorized instrument binding, audited billing-owner handoff, provider creation without customer or provider defaults, replacement-before-detach enforcement, verified webhook entitlement completion, and their end-to-end proof remain incomplete. This status describes implementation coverage only and does not change the human-reviewed decision metadata above.
 
 ## Consequences
 
