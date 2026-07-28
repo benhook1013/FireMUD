@@ -1587,7 +1587,7 @@ routes:
     operator_authorization_reference: required_and_redeemed_with_account
     required_live_checks: [current_operator_authorization, expected_pointer_version, prepared_version_upgrade_when_target_changes]
     mutation_contract: owner_atomic_idempotent_compare_and_set_with_durable_result
-    required_fields: [control_plane_request_id, actor, reason, mutation_digest]
+    required_fields: [control_plane_request_id, actor, reason, expected_pointer_version, mutation_digest]
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service

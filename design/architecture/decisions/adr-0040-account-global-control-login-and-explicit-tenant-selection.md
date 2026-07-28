@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+`/auth/login` is tenantless and issues an audience-bound `control-ui` token through the account-global session path. The canonical single-record issued-token registry, authority-generation claims, multi-tenant scoped-role population, and full tenant-switching proof remain incomplete.
+
 ## Decision Record
 
 - Decision date: 2026-07-19
@@ -15,10 +19,6 @@ Accepted
 - Human review date: 2026-07-19
 - Human review disposition: Revised
 - Review source: `MS-AA-CONTROL-LOGIN-SCOPE`
-
-## Implementation Status
-
-`/auth/login` is tenantless and issues an audience-bound `control-ui` token through the account-global session path. The canonical single-record issued-token registry, authority-generation claims, multi-tenant scoped-role population, and full tenant-switching proof remain incomplete.
 
 ## Context
 

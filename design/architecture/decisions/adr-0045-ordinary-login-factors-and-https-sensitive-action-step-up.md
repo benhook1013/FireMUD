@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+This decision is partially implemented. Account has live password and verified-email-code authentication foundations and HTTPS control-plane surfaces, but the full selected-factor policy, recent-reauthentication and independent-TOTP elevation windows, gameplay-to-HTTPS handoff completion, replay/idempotency proof, and registry-backed logout behavior are not yet fully converged. The current implementation must not be read as proof that every sensitive action already satisfies this target contract. This status does not change the human-reviewed decision metadata in the Decision Record below.
+
 ## Decision Record
 
 - Decision date: 2026-07-19
@@ -15,10 +19,6 @@ Accepted
 - Human review date: 2026-07-19
 - Human review disposition: Revised
 - Review source: `MS-AA-LOGIN-FACTORS`
-
-## Implementation Status
-
-This decision is partially implemented. Account has live password and verified-email-code authentication foundations and HTTPS control-plane surfaces, but the full selected-factor policy, recent-reauthentication and independent-TOTP elevation windows, gameplay-to-HTTPS handoff completion, replay/idempotency proof, and registry-backed logout behavior are not yet fully converged. The current implementation must not be read as proof that every sensitive action already satisfies this target contract. This status does not change the human-reviewed decision metadata above.
 
 ## Context
 

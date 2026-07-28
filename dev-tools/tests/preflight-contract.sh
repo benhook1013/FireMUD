@@ -1466,7 +1466,7 @@ expected_invalid_baseline_messages = {
     "overlay-boundary-non-int-sequence": "restoreHighWater.sequence must be an integer",
     "overlay-verification-bounds": "sequenceVerification must prove the canonical bounds",
     "overlay-integrity-failed": "integrityVerification must be verified with status pass",
-    "overlay-bound-ordering": "erasure high-water sequences must be ordered",
+    "overlay-bound-ordering": "overlay erasure high-water sequences must be ordered",
     "retained-backlog": "unsafe or missing disposition: gameplay",
 }
 for case_name, replacement in invalid_baseline_cases.items():

@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+This decision is partially implemented. Social & Groups has friend relationship and presence surfaces, but the complete target contract remains in follow-through: snapshot-bound continuation, current relationship and policy revalidation, bounded chunked bulk reads, atomic no-partial-page failure behavior, and private-by-failure redaction are not all fully implemented and proven in the current runtime. This status does not change the human-reviewed decision metadata in the Decision Record below.
+
 ## Decision Record
 
 - Decision date: 2026-07-19
@@ -15,10 +19,6 @@ Accepted
 - Human review date: 2026-07-19
 - Human review disposition: Revised
 - Review source: `MS-SOCIAL-PRESENCE-PRIVACY`
-
-## Implementation Status
-
-This decision is partially implemented. Social & Groups has friend relationship and presence surfaces, but the complete target contract remains in follow-through: snapshot-bound continuation, current relationship and policy revalidation, bounded chunked bulk reads, atomic no-partial-page failure behavior, and private-by-failure redaction are not all fully implemented and proven in the current runtime. This status does not change the human-reviewed decision metadata above.
 
 ## Context
 

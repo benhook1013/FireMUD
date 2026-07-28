@@ -350,7 +350,10 @@ def validate_erasure_overlay_reconciliation(
         <= canonical_sequences["initialCatchupHighWater"]
         <= canonical_sequences["restoreHighWater"]
     ):
-        return ("fail", f"{label} erasure high-water sequences must be ordered")
+        return (
+            "fail",
+            f"{label} canonical erasure high-water sequences must be ordered",
+        )
     # Check overlay ordering before exact equality so malformed overlay metadata
     # fails closed on its own ordering contract.
     if not (
@@ -358,7 +361,10 @@ def validate_erasure_overlay_reconciliation(
         <= overlay_boundaries["initialCatchupHighWater"]
         <= overlay_boundaries["restoreHighWater"]
     ):
-        return ("fail", f"{label} erasure high-water sequences must be ordered")
+        return (
+            "fail",
+            f"{label} overlay erasure high-water sequences must be ordered",
+        )
 
     if value.get("stream") != stream:
         return ("fail", f"{label} stream must match the canonical erasure stream")

@@ -965,6 +965,18 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors = self.validator.validate(path)
         self.assertTrue(any("classifications must be a list of strings" in error for error in errors))
 
+    def test_null_classification_vocabulary_is_reported_without_crashing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            text = replace_or_fail(
+                MATRIX.read_text(encoding="utf-8"),
+                "classifications:\n  - public",
+                "classifications: null\nignored_classifications:\n  - public",
+            )
+            path.write_text(text, encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(any("classifications must be a list of strings" in error for error in errors))
+
     def test_route_classification_lists_and_mappings_are_reported(self):
         old = """    classification: public
     applicability:

@@ -259,6 +259,12 @@ def validate_role_assurance(document: dict[str, Any], errors: list[str]) -> set[
             "role_assurance.privileged_control_when_global_role.requirements "
             f"contains unexpected role keys: {unexpected_roles}"
         )
+    raw_classifications = document.get("classifications")
+    allowed_classifications = {
+        item
+        for item in (raw_classifications if isinstance(raw_classifications, list) else [])
+        if isinstance(item, str)
+    }
     for role in sorted(REQUIRED_ROLE_ASSURANCE_ROLES):
         requirement = requirements.get(role)
         label = f"role_assurance.privileged_control_when_global_role.requirements.{role}"
@@ -285,11 +291,6 @@ def validate_role_assurance(document: dict[str, Any], errors: list[str]) -> set[
                 f"{label}.applies_to.route_classifications must be a list of strings"
             )
             continue
-        allowed_classifications = {
-            item
-            for item in document.get("classifications", [])
-            if isinstance(item, str)
-        }
         unknown_classifications = sorted(
             set(route_classifications) - allowed_classifications
         )
