@@ -226,7 +226,7 @@ def validate(root: Path = ROOT) -> None:
     reviews = checked_reviews(queue)
     seen_numbers: set[int] = set()
 
-    for path in sorted(adr_dir.glob("adr-[0-9][0-9][0-9][0-9]-*.md")):
+    for path in sorted(adr_dir.glob("adr-*.md")):
         number = adr_number(path)
         if number in seen_numbers:
             fail(f"duplicate ADR number {number:04d}")

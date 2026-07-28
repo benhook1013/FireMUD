@@ -17,7 +17,7 @@ Every record must follow `design/architecture/system-architecture-backup-recover
 The durable recovery operation does not reopen player traffic directly from continuation. After all recovery and pre-release gates pass:
 
 1. `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` uses `expectedPhase=ready_to_reopen` and transitions the operation to `AWAITING_RESUME` without releasing its fence or maintenance lock.
-2. The authenticated public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` uses `expectedPhase=AWAITING_RESUME` and records `RESUME_AUTHORIZED` for the exact operation and its recorded scope; it does not release the lock or reopen traffic.
+2. The authenticated public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` uses persisted-form `expectedPhase=awaiting_resume` and records `RESUME_AUTHORIZED` for the exact operation and its recorded scope; it does not release the lock or reopen traffic.
 3. Only the internal success-release phase applies and verifies the reopen postconditions, then transitions the operation to `finalized`. A failed or abandoned operation remains fenced and uses the exact-scope audited `coordination-maintenance release-lock --operation-id <operationId> --scope <scope> --maintenance-lock-token <token> --reason <reason> --evidence-ref <evidenceRef>` control.
 
 Hobby-specific requirements:

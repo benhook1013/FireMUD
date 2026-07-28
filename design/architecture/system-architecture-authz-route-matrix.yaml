@@ -247,7 +247,11 @@ coverage_drift:
     note: Current ApplyModerationAction records policy input in Logging and Admin, but no current owner-side enforcement RPC is exposed.
   - family: game-session-session-lifecycle-external-ingress
     status: drift-found
-    current_routes: []
+    current_routes:
+      - POST /sessions
+      - POST /sessions/{sessionId}/stop
+      - POST /sessions/{sessionId}/restart
+      - POST /sessions/{sessionId}/refresh-roles
     target_ingress: logging-admin-service
     target_owner: game-session-service
     owner_routes:
@@ -255,7 +259,7 @@ coverage_drift:
       - POST /sessions/{sessionId}/stop
       - POST /sessions/{sessionId}/restart
       - POST /sessions/{sessionId}/refresh-roles
-    note: Logging and Admin has no complete current /sessions* external route family in its source-stable OpenAPI surface. The Game Session service-local hooks remain explicitly edge-denied and migrate to Logging and Admin; do not invent external routes or claim the family covered until the Logging and Admin contract exists.
+    note: The listed current routes are Game Session owner-local hooks, not the canonical external ingress. Logging and Admin has no complete current /sessions* external route family in its source-stable OpenAPI surface; the owner-local hooks remain explicitly edge-denied and migrate to Logging and Admin, so do not invent external routes or claim the family covered until that contract exists.
   - family: commerce-payment-instrument
     status: drift-found
     current_routes: []

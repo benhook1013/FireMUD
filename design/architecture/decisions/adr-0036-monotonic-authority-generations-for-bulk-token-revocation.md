@@ -38,14 +38,14 @@ The Account domain already requires monotonic versions and durable ordered secur
   - `session:auth:generation:account:<accountId>`
   - `session:auth:generation:tenant:<tenantId>`
   - `session:auth:generation:membership:<accountId>:<tenantId>`
-- Missing, malformed, unavailable, or regressed generation state never means generation zero. Protected operations fail closed until current authority can be established or the projection is rebuilt from Account's durable state.
+- Missing, malformed, unavailable, stale, or regressed generation state never means generation zero. A Redis projection is usable only when its source-generation/freshness evidence is confirmed against the current durable Account authority; otherwise protected operations fail closed until that authority is established or the projection is rebuilt.
 
 ### Token Capture And Validation
 
 - Every revocable Account JWT captures the current issuer and account generations when issued.
 - A token containing tenant-scoped authority also captures the current tenant and membership generations for exactly the bounded tenant entries already present in its scoped claims. Generation metadata must not introduce scopes absent from those claims.
 - A global `platformAdmin` token does not acquire tenant claims or membership generations. For `tenant_regular` operational routes and `cross_tenant_data_bearing` routes that operate on one target tenant, Account reads the current target-tenant generation while authorizing the request and binds it into the bounded operator authorization reference; the owner redeems that exact reference and rejects it if the target-tenant generation has changed. This is a target-scope freshness fence, not tenant membership, and no caller-bound membership is invented or bypassed. The explicitly safe `cross_tenant_support_safe` and `cross_tenant_billing_safe` classes omit the target-tenant generation only under the closed allowlist below; they still require exact target scope, live global role/assurance, and audit. `platformAdmin` is not a caller-bound substitute for `billing_safe_tenant` and cannot use global role alone for gameplay admission or switching.
-- After cryptographic/profile validation and the issued-token registry check, a consumer compares the token's captured generations with the current applicable projections. Every generation required for the route must match exactly.
+- After cryptographic/profile validation and the issued-token registry check, a consumer confirms that each applicable projection is fresh against durable Account authority, then compares the token's captured generations with the current applicable projections. Missing, stale, unavailable, or unverifiable freshness evidence fails closed; every generation required for the route must match exactly.
 - A mismatch revokes that token's authority at the mismatched scope. Tenant-generation omission is not a general route exception: the only allowed route classifications are the closed allowlist below, and each still requires the listed issuer, account, global-role, or membership checks. A route is never exempt merely because a caller or service labels it billing-safe or support-safe.
 - JWT `iat` remains a required audit and lifetime claim but is not bulk-revocation ordering authority.
 

@@ -24,7 +24,7 @@ Routes include:
 
 ```text
 POST /logs/query
-POST /reports (disabled until player-bootstrap binding)
+POST /reports (disabled until player-bootstrap binding; player-report write)
 POST /moderation/actions
 POST /feature-flags/toggle
 POST /tick-remediation/pause
@@ -37,7 +37,7 @@ The live admission-pointer backend family is intentionally excluded from this UI
 
 Current-state note: `POST /tick-remediation/pause` and `POST /tick-remediation/resume` are backed by live Logging & Admin forwarding endpoints. Quota override and broader remediation are coverage drift: no current routes or owner-side contracts exist, so the UI must not present placeholder controls.
 
-`POST /moderation/actions` is a live persistence/audit-only support surface for a selected target player. It is independent of player report submission and remains available according to its own authorization contract even while `/reports` is disabled or fail-closed. The UI does not issue bans or warnings, and owner-side gameplay/chat enforcement forwarding remains unavailable until the owning enforcement contracts exist. Log search, reports, saga inspection, admission-pointer reads/audit, and analytics dashboards remain read or investigation surfaces even when a corresponding mutation family is not implemented.
+`POST /moderation/actions` is a live persistence/audit-only support surface for a selected target player. It is independent of player report submission and remains available according to its own authorization contract even while `/reports` is disabled or fail-closed. The UI does not issue bans or warnings, and owner-side gameplay/chat enforcement forwarding remains unavailable until the owning enforcement contracts exist. Log search, saga inspection, admission-pointer reads/audit, and analytics dashboards remain read or investigation surfaces; `POST /reports` is a player-facing write that creates a report and is not an investigation surface.
 
 The UI is packaged as a separate web module served by the Logging & Admin Service. Styling relies on Material‑UI components, and all API calls are protected by the existing security interceptors described in the [API contracts](./api-contracts.md) and [runtime model](./runtime-and-data.md).
 

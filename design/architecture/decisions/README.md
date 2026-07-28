@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-Architecture decision records explain why consequential FireMUD product and architecture choices were accepted, superseded, withdrawn, or rejected. They supplement canonical architecture but do not replace it: current target-state behavior remains defined by the linked canonical design documents.
+Architecture decision records explain why consequential FireMUD product and architecture choices were accepted, superseded, or withdrawn. They supplement canonical architecture but do not replace it: current target-state behavior remains defined by the linked canonical design documents.
 
 ## Status Rules
 

@@ -555,15 +555,12 @@ require_contains "$smoke_path" 'github.rest.actions.listJobsForWorkflowRun'
 require_contains "$smoke_path" 'job.name === "PR Full-Stack Smoke"'
 require_contains "$smoke_path" 'fullSmokeJob.status !== "completed"'
 require_contains "$smoke_path" 'fullSmokeJob.conclusion !== "success"'
-require_contains "$smoke_path" 'const { data: completedPullRequest } = await withTransientGitHubRetry('
-require_contains "$smoke_path" 'if (isObsoletePullRequest(completedPullRequest)) {'
 require_contains "$smoke_path" 'Stopping obsolete completed smoke gate for'
 require_ordered_sequence \
   "$smoke_path" \
   'github.rest.actions.listJobsForWorkflowRun,' \
-  '"completed pull request lookup",' \
-  'if (isObsoletePullRequest(completedPullRequest)) {'
-require_branch_return "$smoke_path" 'if (isObsoletePullRequest(completedPullRequest)) {'
+  'if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {'
+require_branch_return "$smoke_path" 'if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {'
 if grep -Fq 'const matching = runs.find((run) => run.head_sha === headSha);' "$smoke_path"; then
   echo "Smoke Gate must not accept a runtime-images run by head SHA alone" >&2
   exit 1

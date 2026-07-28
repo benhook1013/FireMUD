@@ -15,14 +15,14 @@ The target service preserves two independently degradable partitions:
 - core control-plane actions remain usable when search, metrics, tracing, dashboards, or alerting backends are unavailable;
 - observability-backed searches, dashboards, traces, and alert investigations degrade explicitly without taking the core control plane down.
 
-Tick and coordination remediation remains a Game Session responsibility. Logging & Admin may display health, choose an allowed operation, request a bounded remediation, and record audit evidence, but Game Session remains the authority for region leases, pause/resume, reset, and coordination mutation. Any regional or aggregate operation must carry the owning service's explicit scope and fencing evidence rather than being inferred from an operator UI selection.
+Tick and coordination remediation remains a Game Session responsibility. Logging & Admin may display health, choose an allowed operation, request a bounded remediation, and record audit evidence, but Game Session remains the authority for region leases, pause/resume, reset, and coordination mutation. The live pause/resume target is exactly one gameplay instance, identified by `<tenantId, gameInstanceId>`; regional pause/resume and regional remediation are target-only contracts, not live broad-scope controls. Any regional or aggregate operation must carry the owning service's explicit scope and fencing evidence rather than being inferred from an operator UI selection.
 
 ## Implementation Status
 
 The current shipped scope is narrower than this target contract:
 
 - The service exposes core admin/moderation, report, saga-inspection, and coordination-health surfaces, plus observability-backed integrations; it does not yet provide the complete target control-plane workflow for every recovery, regional, or aggregate operation.
-- Current tick pause/resume support is the shipped `<tenantId, gameInstanceId>` boundary. Regional pause/resume and the explicit aggregate scope/fencing contract remain target-state work tracked in [Game Session runtime and tick coordination](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status).
+- Current tick pause/resume support is the shipped `<tenantId, gameInstanceId>` boundary. Regional pause/resume and regional remediation remain target-only behavior, with no claim that the live instance control implicitly expands to a region or aggregate scope; they are tracked in [Game Session runtime and tick coordination](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status).
 - Logging & Admin consumes Game Session health and requests Game Session-owned control APIs; it does not directly mutate Redis or runtime coordination state.
 - Moderation policy input, audit data, and operator history remain owned here, while Account, Game Session, and Social & Groups own enforcement and runtime mutation. Quota/limit override is hypothetical target UX only; no current Account owner mutation route exists.
 - The current moderation action path persists policy input and audit only; it does not forward or enforce a mutation, no owner-side enforcement RPC is exposed, and executable moderation routes remain prohibited until an owning contract exists.

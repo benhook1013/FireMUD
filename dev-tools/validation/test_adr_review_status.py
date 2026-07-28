@@ -353,6 +353,32 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "duplicate ADR number 0012",
             )
 
+    def test_malformed_adr_filename_is_rejected(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(
+                root / "design/architecture/decisions/adr-not-number.md",
+                """
+                # Invalid ADR filename
+
+                ## Status
+
+                Proposed - Pending Human Review
+
+                ## Decision Record
+
+                - Human review status: Pending
+                - Human review date: Not yet reviewed
+                - Human review disposition: Pending
+                - Review source: `AI-AUTHORED-PENDING`
+                """,
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "invalid ADR filename",
+            )
+
     def test_duplicate_human_review_field_is_rejected(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)

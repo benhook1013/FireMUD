@@ -6,6 +6,7 @@ python3 - <<'PY'
 import pathlib
 
 root = pathlib.Path(".")
+obsolete_public_resume_signature = "`resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)`"
 
 def require_contains(path, snippets):
     text = (root / path).read_text(encoding="utf-8")
@@ -17,6 +18,8 @@ for path in (root / "design").rglob("*.md"):
     text = path.read_text(encoding="utf-8")
     if "<deployment-event-id>" in text:
         raise SystemExit(f"{path}: use the canonical <deploymentEventId> path placeholder")
+    if obsolete_public_resume_signature in text:
+        raise SystemExit(f"{path}: uses obsolete caller-supplied recovery scope")
 
 canonical_world_dynamic = "world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>"
 for path in [
@@ -169,11 +172,7 @@ for clause in [
         )
 
 canonical_public_resume_signature = "`resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`"
-canonical_public_resume_awaiting_signature = "`resume(operationId, expectedPhase=AWAITING_RESUME, maintenanceLockToken, evidenceRef)`"
-obsolete_public_resume_signature = "`resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)`"
-for path in (root / "design").rglob("*.md"):
-    if obsolete_public_resume_signature in path.read_text(encoding="utf-8"):
-        raise SystemExit(f"{path}: uses obsolete caller-supplied recovery scope")
+canonical_public_resume_awaiting_signature = "`resume(operationId, expectedPhase=awaiting_resume, maintenanceLockToken, evidenceRef)`"
 
 for path in [
     "design/architecture/decisions/adr-0015-online-backup-and-environment-wide-cold-start-recovery.md",

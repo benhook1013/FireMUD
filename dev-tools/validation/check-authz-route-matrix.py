@@ -464,9 +464,6 @@ def validate_conditional_operator_route(
             f"{label} must bind global platformAdmin operations to target_tenant_generation"
         )
     if route.get("role_assurance") == PRIVILEGED_OPERATOR_ROLE_ASSURANCE:
-        checks = set(
-            string_list(route.get("required_live_checks"), f"{label} required_live_checks", errors)
-        )
         for required_check in ("current_global_role", "role_appropriate_assurance"):
             if required_check not in checks:
                 errors.append(
@@ -886,13 +883,9 @@ def validate_generation_applicability(routes: list[Any], errors: list[str]) -> N
 
 def validate_profile_authority_routes(routes: list[Any], errors: list[str]) -> None:
     for route_name in ("GetProfile", "UpdateProfile"):
-        matches = matching_routes(routes, "account-service", route_name)
-        if len(matches) != 1:
-            errors.append(
-                f"matrix must contain exactly one account-service {route_name} route"
-            )
+        route = resolve_unique_route(routes, "account-service", route_name, errors)
+        if route is None:
             continue
-        route = matches[0]
         label = f"account-service {route_name}"
         if route.get("auth_path") != "control_ui_plus_current_tenant_role":
             errors.append(

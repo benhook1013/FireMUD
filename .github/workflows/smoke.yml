@@ -392,19 +392,7 @@ jobs:
                     }
                   )
                 );
-                const { data: completedPullRequest } = await withTransientGitHubRetry(
-                  "completed pull request lookup",
-                  () => github.rest.pulls.get({
-                    owner,
-                    repo,
-                    pull_number: Number(prNumber),
-                  })
-                );
-                if (isObsoletePullRequest(completedPullRequest)) {
-                  logObsoletePullRequest(
-                    "Stopping obsolete completed smoke gate for",
-                    completedPullRequest
-                  );
+                if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {
                   return;
                 }
                 const fullSmokeJob = jobs.find(
