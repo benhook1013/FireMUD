@@ -42,14 +42,14 @@ Coordination Redis contains correctness-sensitive, short-lived runtime state. Th
 
 ### Recovery Phase Representation
 
-This maintenance surface uses the recovery phase representation defined by [ADR 0015](./adr-0015-online-backup-and-environment-wide-cold-start-recovery.md). The durable controller preserves the broader recovery contract's exact durable identifiers: `PAUSED`, `collecting`, `ready_to_reopen`, `AWAITING_RESUME`, `RESUME_AUTHORIZED`, `releasing`, and `finalized`; `PAUSED` is the fenced pause state and `collecting` is the pre-release failure/retry phase; `SUCCEEDED` is terminal status. Public `expectedPhase` is a lower-snake-case wire precondition mapped exactly as follows; case variants and aliases are invalid:
+This maintenance surface uses the recovery phase representation defined by [ADR 0015](./adr-0015-online-backup-and-environment-wide-cold-start-recovery.md). The durable controller preserves the broader recovery contract's exact phase identifiers: `PAUSED`, `collecting`, `ready_to_reopen`, `AWAITING_RESUME`, `RESUME_AUTHORIZED`, `releasing`, and `finalized`; `PAUSED` is the fenced pause state and `collecting` is the pre-release failure/retry phase. `SUCCEEDED` is a separate terminal operation-status field, not a controller phase or valid `expectedPhase`; it may be recorded only after phase `finalized` and all release postconditions are durably observed. Public `expectedPhase` is a lower-snake-case wire precondition mapped exactly as follows; case variants and aliases are invalid:
 
 | Public wire `expectedPhase` | Durable controller state checked or recorded |
 | --- | --- |
 | `ready_to_reopen` | `ready_to_reopen` |
 | `awaiting_resume` | `AWAITING_RESUME` |
 
-`continueRecovery` accepts only `ready_to_reopen` and records `AWAITING_RESUME`; `resume` accepts only `awaiting_resume` and records `RESUME_AUTHORIZED`. `PAUSED`, `collecting`, `RESUME_AUTHORIZED`, `releasing`, and `finalized` remain internal durable states and are never caller-supplied `expectedPhase` values. Durable state and audit use these exact durable spellings; public request parsing and examples use the wire spelling, with no case normalization or aliasing.
+`continueRecovery` accepts only `ready_to_reopen` and records `AWAITING_RESUME`; `resume` accepts only `awaiting_resume` and records `RESUME_AUTHORIZED`. `PAUSED`, `collecting`, `RESUME_AUTHORIZED`, `releasing`, and `finalized` remain internal durable phases and are never caller-supplied `expectedPhase` values. Durable phase state and audit use these exact spellings; terminal status validation separately requires `phase=finalized` before `status=SUCCEEDED`. Public request parsing and examples use the wire spelling, with no case normalization or aliasing.
 
 ### Public Release-Lock Safety Contract
 

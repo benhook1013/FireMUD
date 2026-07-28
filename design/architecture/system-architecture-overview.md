@@ -7,6 +7,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 This overview is target-state canonical; implementation coverage is partial and must not be inferred from the target tables alone. The current operator-control boundary is:
 
 - Runtime feature-flag overrides, admission-pointer reads/audit/preparation, and scoped tick `PauseTicks`/`ResumeTicks` are live through Logging & Admin, with Game Session retaining runtime and coordination mutation authority. Admission-pointer compare-and-set/cutover semantics, including explicit `CLOSED` handling, remain target-state and must not be read as a current implementation claim.
+- The current Logging & Admin `POST /reports` surface is administrative/internal persistence: its controller accepts caller-supplied `tenantId`, `reporterAccountId`, and optional `targetAccountId`, persists the report, and is reachable through the current `/api/admin/reports/**` Gateway route. It is not player ingestion. The target player-bootstrap submission route, which would derive reporter and tenant identity from authenticated player authority, is unavailable; this does not disable the current administrative route.
 - `POST /moderation/actions` currently persists moderation policy input and audit only; versioned propagation and Game Session/Social & Groups enforcement are target-state and no owner enforcement RPC is currently exposed.
 - Quota override is a hypothetical target overlay on Account entitlements; no current OpenAPI route or Account owner mutation contract exists.
 - Broader tick/coordination remediation beyond pause/resume is hypothetical target coverage; no current OpenAPI route or Game Session owner RPC exists.
@@ -138,7 +139,7 @@ Canonical route-review examples:
 | External operator writes for moderation, quota overrides, runtime feature flags, admission control, and tick remediation | Logging & Admin APIs via Gateway | Direct domain bypass not allowed unless a future design update explicitly amends the operator write ingress policy |
 | Internal service-to-service control APIs | Internal-only service contracts | Not an edge contract; does not traverse Gateway unless the contract is explicitly defined as Gateway-managed infrastructure control traffic |
 
-See [Service Responsibility Matrix](./service-responsibility-matrix.md) for the matching `Admin/creator API participation (edge-routable domain APIs)` and `External operator write ingress for moderation, quota overrides, runtime feature flags, admission control, and tick remediation` responsibilities used when reviewing new route proposals.
+See [Service Responsibility Matrix](./service-responsibility-matrix.md) for the matching `Admin/creator API participation (edge-routable domain APIs)`, `External operator read/preparation ingress`, and `External operator mutating ingress` responsibilities used when reviewing new route proposals.
 
 #### Edge Exposure Policy (Canonical)
 
@@ -507,7 +508,7 @@ Implementations of Logging & Admin must preserve this separation with independen
 
 See the [Implementation Status](#implementation-status) section above for the current Logging & Admin implementation boundary; this section defines the architecture separation and target behavior only.
 
-The current `/reports` route is not caller-bound: its OpenAPI/controller still accepts caller-supplied `tenantId` and `reporterAccountId`. The target player route derives both identities from the validated `player-bootstrap` session and fails closed until that contract is implemented.
+The current administrative/internal `/reports` persistence route is not caller-bound: its OpenAPI/controller accepts caller-supplied `tenantId` and `reporterAccountId` and is not player ingestion. The separate target player-bootstrap route derives both identities from the validated player session and remains unavailable until that contract is implemented.
 
 For gameplay/chat moderation specifically, the operator policy plane and enforcement plane must remain aligned under the canonical moderation propagation contract:
 

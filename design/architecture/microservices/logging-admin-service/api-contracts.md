@@ -60,7 +60,7 @@ curl http://localhost:8080/ping
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`logging_admin_service.proto`](../../../../protos/logging-admin/v1/logging_admin_service.proto).
 - `QueryLogs(QueryLogsRequest) returns (QueryLogsResponse)` – searches collected logs.
 - `ApplyModerationAction(ApplyModerationActionRequest) returns (ApplyModerationActionResponse)` – records a moderation event.
-- `CreateReport(CreateReportRequest) returns (CreateReportResponse)` – ingest a player report.
+- `CreateReport(CreateReportRequest) returns (CreateReportResponse)` – administrative/internal report persistence using caller-supplied tenant and reporter identities; player submission is target-only and unavailable.
 - `ToggleFeatureFlag(ToggleFeatureFlagRequest) returns (ToggleFeatureFlagResponse)` – enable or disable a feature flag.
 - Tick-remediation is not a Logging & Admin-owned state-mutation gRPC surface; this service audits and forwards those operator actions to Game Session control-plane APIs instead of defining a competing remediation RPC.
 

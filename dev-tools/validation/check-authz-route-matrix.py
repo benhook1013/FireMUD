@@ -482,13 +482,17 @@ def validate_conditional_operator_route(
         errors.append(
             f"{label} must bind global platformAdmin operations to target_tenant_generation"
         )
-    if route.get("role_assurance") == PRIVILEGED_OPERATOR_ROLE_ASSURANCE:
-        for required_check in ("current_global_role", "role_appropriate_assurance"):
-            if required_check not in checks:
-                errors.append(
-                    f"{label} privileged operator route must require live check "
-                    f"{required_check}"
-                )
+    if route.get("role_assurance") != PRIVILEGED_OPERATOR_ROLE_ASSURANCE:
+        errors.append(
+            f"{label} operator route must declare role_assurance "
+            f"{PRIVILEGED_OPERATOR_ROLE_ASSURANCE}"
+        )
+    for required_check in ("current_global_role", "role_appropriate_assurance"):
+        if required_check not in checks:
+            errors.append(
+                f"{label} privileged operator route must require live check "
+                f"{required_check}"
+            )
     if route_key_value in GAME_SESSION_OPERATOR_ROUTES:
         if route.get("canonical_external_ingress") != CANONICAL_OPERATOR_INGRESS:
             errors.append(
@@ -1007,6 +1011,11 @@ def validate_refresh_roles_routes(routes: list[Any], errors: list[str]) -> None:
         )
         if "mutation_digest" not in required_fields:
             errors.append(f"{label} must require mutation_digest for idempotency")
+        canonical_errors = http_route.get("canonical_errors", {})
+        any_of = canonical_errors.get("any_of") if isinstance(canonical_errors, dict) else None
+        outcomes = string_list(any_of, f"{label} canonical_errors.any_of", errors)
+        if "IDEMPOTENCY_CONFLICT" not in outcomes:
+            errors.append(f"{label} must declare IDEMPOTENCY_CONFLICT")
 
 
 def validate_known_drift(value: Any, field: str, errors: list[str]) -> None:

@@ -21,6 +21,11 @@ for path in (root / "design").rglob("*.md"):
         raise SystemExit(f"{path}: use the canonical <deploymentEventId> path placeholder")
     if obsolete_public_resume_signature in text:
         raise SystemExit(f"{path}: uses obsolete caller-supplied recovery scope")
+    if "--maintenance-lock-token <" in text:
+        raise SystemExit(
+            f"{path.relative_to(root)}: recovery examples must not expose "
+            "maintenanceLockToken on the command line"
+        )
 
 canonical_world_dynamic = "world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>"
 for path in [
@@ -213,13 +218,6 @@ require_contains(
         "--maintenance-lock-token-file <permissioned-token-file>",
     ],
 )
-for path in (root / "design").rglob("*.md"):
-    if "--maintenance-lock-token <" in path.read_text(encoding="utf-8"):
-        raise SystemExit(
-            f"{path.relative_to(root)}: recovery examples must not expose "
-            "maintenanceLockToken on the command line"
-        )
-
 print("architecture doc contracts passed")
 PY
 

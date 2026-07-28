@@ -1447,13 +1447,13 @@ invalid_baseline_cases = {
             ],
         }
     },
-    "overlay-boundary-bool-sequence": {
+    "overlay-object-artifact-boundary-bool-sequence": {
         "erasureOverlayReconciliation": {
             **valid_baseline["erasureOverlayReconciliation"],
             "artifactErasureHighWater": {"stream": "erasures", "sequence": True},
         }
     },
-    "overlay-boundary-non-int-sequence": {
+    "overlay-object-restore-boundary-non-int-sequence": {
         "erasureOverlayReconciliation": {
             **valid_baseline["erasureOverlayReconciliation"],
             "restoreHighWater": {"stream": "erasures", "sequence": "12"},
@@ -1474,7 +1474,7 @@ invalid_baseline_cases = {
             "integrityVerification": {"status": "fail", "verified": False},
         }
     },
-    "overlay-bound-ordering": {
+    "overlay-object-boundary-ordering-mismatch": {
         "erasureOverlayReconciliation": {
             **valid_baseline["erasureOverlayReconciliation"],
             "artifactErasureHighWater": {"stream": "erasures", "sequence": 12},
@@ -1522,15 +1522,15 @@ expected_invalid_baseline_messages = {
     "overlay-entry-type": "sequenceDispositions[0] must be an object",
     "overlay-entry-bool-sequence": "sequenceDispositions[0] sequence must be an integer",
     "overlay-entry-non-int-sequence": "sequenceDispositions[0] sequence must be an integer",
-    "overlay-boundary-bool-sequence": "artifactErasureHighWater must match the canonical bound exactly",
-    "overlay-boundary-non-int-sequence": "restoreHighWater must match the canonical bound exactly",
+    "overlay-object-artifact-boundary-bool-sequence": "artifactErasureHighWater must match the canonical bound exactly",
+    "overlay-object-restore-boundary-non-int-sequence": "restoreHighWater must match the canonical bound exactly",
     "overlay-verification-bounds": "sequenceVerification must prove the canonical bounds",
     "overlay-sequence-verification-absent": "sequenceVerification must prove the canonical bounds",
     "overlay-sequence-verification-type": "sequenceVerification must prove the canonical bounds",
     "overlay-sequence-verification-status": "sequenceVerification must prove the canonical bounds",
     "overlay-sequence-verification-unordered": "sequenceVerification must prove the canonical bounds",
     "overlay-integrity-failed": "integrityVerification must be verified with status pass",
-    "overlay-bound-ordering": "artifactErasureHighWater must match the canonical bound exactly",
+    "overlay-object-boundary-ordering-mismatch": "artifactErasureHighWater must match the canonical bound exactly",
     "retained-backlog": "unsafe or missing disposition: gameplay",
 }
 for case_name, replacement in invalid_baseline_cases.items():

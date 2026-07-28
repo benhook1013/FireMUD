@@ -249,6 +249,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         http = routes["POST /sessions/{sessionId}/refresh-roles"][0]
         self.assertEqual("account_issued_bounded_reference", http["operator_authorization_reference"])
         self.assertIn("mutation_digest", http["required_fields"])
+        self.assertIn("IDEMPOTENCY_CONFLICT", http["canonical_errors"]["any_of"])
 
         grpc.pop("operator_authorization_reference")
         errors = []
@@ -278,22 +279,23 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 self.assertTrue(any("must require mutation_digest" in error for error in errors))
 
     def test_refresh_roles_rejects_malformed_canonical_error_any_of(self):
-        for malformed in ("not-a-list", ["IDEMPOTENCY_CONFLICT", 7]):
-            with self.subTest(malformed=malformed):
-                document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-                route = route_for(document, "game-session-service", "RefreshRoles")
-                route["canonical_errors"]["any_of"] = malformed
-                errors = []
-                self.validator.validate_refresh_roles_routes(document["routes"], errors)
-                self.assertIn(
-                    "game-session-service RefreshRoles canonical_errors.any_of "
-                    "must be a list of strings",
-                    errors,
-                )
-                self.assertIn(
-                    "game-session-service RefreshRoles must declare IDEMPOTENCY_CONFLICT",
-                    errors,
-                )
+        for route_name in ("RefreshRoles", "POST /sessions/{sessionId}/refresh-roles"):
+            for malformed in ("not-a-list", ["IDEMPOTENCY_CONFLICT", 7]):
+                with self.subTest(route_name=route_name, malformed=malformed):
+                    document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+                    route = route_for(document, "game-session-service", route_name)
+                    route["canonical_errors"]["any_of"] = malformed
+                    errors = []
+                    self.validator.validate_refresh_roles_routes(document["routes"], errors)
+                    label = f"game-session-service {route_name}"
+                    self.assertIn(
+                        f"{label} canonical_errors.any_of must be a list of strings",
+                        errors,
+                    )
+                    self.assertIn(
+                        f"{label} must declare IDEMPOTENCY_CONFLICT",
+                        errors,
+                    )
 
     def test_privileged_operator_routes_require_live_global_role_and_assurance(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -306,6 +308,12 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         errors = []
         self.validator.validate_generation_applicability(document["routes"], errors)
         self.assertTrue(any("current_global_role" in error for error in errors))
+
+        route["required_live_checks"].append("current_global_role")
+        route.pop("role_assurance")
+        errors = []
+        self.validator.validate_generation_applicability(document["routes"], errors)
+        self.assertTrue(any("must declare role_assurance" in error for error in errors))
 
         owner_route = next(
             route
@@ -685,7 +693,11 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             path = Path(directory) / "matrix.yaml"
             path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
             errors = self.validator.validate(path)
-        self.assertTrue(any("no_target_tenant_classifications" in error for error in errors))
+        self.assertIn(
+            "tenant_generation_policy.no_target_tenant_classifications."
+            "pending_deletion_scoped must declare a bounded contract_justification",
+            errors,
+        )
 
     def test_multi_profile_route_requires_shared_type_and_issuer(self):
         for field in ("token_type", "token_issuer"):

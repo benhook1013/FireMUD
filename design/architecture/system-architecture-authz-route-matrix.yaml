@@ -279,6 +279,7 @@ coverage_drift:
         scope: cross_tenant
         classification: cross_tenant_billing_safe
         accepted_token_profiles: [control-ui]
+        role_assurance: privileged_control_when_global_role
         roles: [billingAdmin, platformAdmin]
         audit_contract: required_cross_tenant_actor_scope_reason_and_outcome
         mutation_contract: audited_cross_tenant_billing_intervention
@@ -698,6 +699,8 @@ routes:
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: account-service

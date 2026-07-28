@@ -22,7 +22,7 @@ Defining additional Redis users, ACL variations, or ad-hoc tools is considered *
 ## Coordination Redis Access Rules
 
 - Coordination Redis is treated as an **application-only write surface**:
-  - All writes to coordination prefixes (`tick:*`, `retry:*`, `timer:*`, `remote:*`, `session:*`, `tick-executor-lease:*`, and related keys) go through owned typed key and mutation helpers in `firemud-common`. Registered Lua scripts are required when an atomic multi-key mutation needs them, not for every ordinary single-key operation.
+  - All mutations to coordination prefixes (`tick:*`, `retry:*`, `timer:*`, `remote:*`, `session:*`, `tick-executor-lease:*`, and related keys) always go through owned typed key and mutation helpers in `firemud-common`. Lua is mandatory only when the helper must provide atomic multi-key behavior; those registered scripts are invoked through the same typed helper and registry path. Ordinary single-key mutations use the typed helpers without Lua.
   - Application services (Game Session, Automation & Scripting, and any future tick participants) never bypass those helpers with raw Redis commands.
 - Human operators and ad-hoc tools:
   - May use `redis-cli`, RedisInsight, or similar tools with **read-only ops users** to inspect coordination state.
