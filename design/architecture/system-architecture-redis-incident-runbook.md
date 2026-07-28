@@ -106,9 +106,10 @@ When session-related metrics indicate schema or TTL problems, use this scoped cl
   - Capture diagnostics and snapshots where safe.
   - Follow only the documented AOF recovery paths:
     - Replay the existing AOF as-is when it is trusted, or
-  - Discard coordination state and run the scoped reset/full-wipe flow from `system-architecture-redis-operations.md`. A full deployment/AOF wipe requires the named pre-wipe gates `scope_paused_and_locked`, `account_authority_token_cutover`, `replay_domain_quarantine_fence`, and `immutable_external_handoff_evidence` to be established for the same operation and maintenance lock first; earlier reset phases may perform only scope-safe cleanup.
+  - Discard coordination state and run the scoped reset/full-wipe flow from `system-architecture-redis-operations.md`. A full deployment/AOF wipe requires the named pre-wipe gates `scope_paused_and_locked`, `account_authority_token_cutover`, `replay_domain_quarantine_fence`, and immutable pre-wipe `immutable_external_handoff_evidence` to be established for the same operation and server-issued maintenance lock first; `scope_paused_and_locked` must prove that exact binding. This pre-wipe evidence contains authorization and old-endpoint fencing only. After replacement startup, record separate `post_reset_replacement_verification` for endpoint, ACL/configuration, empty keyspace, and health, and require the controller to validate both evidence groups before continuation and public `resume`; earlier reset phases may perform only scope-safe cleanup.
   - Do not perform manual AOF truncation or file editing.
   - Use idempotent replay and tick system rules to rebuild necessary state.
+  - During Account projection repair, set-if-greater is permitted only for a missing or lower Redis generation. A Redis generation greater than Account durable authority is poisoned and must be quarantined or replaced by an Account-owned audited workflow, recreated from durable authority, and verified with immutable evidence for each affected scope before protected traffic reopens. The current repository does not ship and prove this projection-repair workflow end to end.
 
 ## Redis Incident Scenarios
 

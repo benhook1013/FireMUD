@@ -51,7 +51,7 @@ The inventory is split into this control ledger and exhaustive source-scoped led
 - [Specialized runtime decisions](./decision-inventory-specialized-runtime.md) contains 54 decisions and stronger evidence for 20 cross-cutting decisions from 39 Redis, scripting, tick, identity, token, migration, shared-library, spatial, authorization, and tracing documents.
 - [Product and operations decisions](./decision-inventory-product-operations.md) contains 38 decisions and stronger evidence for 11 existing keys from the remaining 35 product, frontend, authoring, protocol, infrastructure, deployment, recovery, observability, and generated-settings sources.
 
-The source-scoped ledgers contain 183 unique authoritative decision keys with no duplicate keys across ledgers. The nine ADR-backed aliases retained below are navigation entries and do not add to that count. Collectively, the inventories reference all 79 leaf capabilities in the taxonomy.
+The source-scoped ledgers contain 183 unique canonical decision keys with no duplicate canonical keys across ledgers. Service/source ledgers may intentionally repeat evidence references to existing cross-cutting keys; those repeated references do not add canonical keys or change the 183 total. The nine ADR-backed aliases retained below are navigation entries and do not add to that count. Collectively, the inventories reference all 79 leaf capabilities in the taxonomy.
 
 | Capability | Sources reviewed | Decisions inventoried | Human-review candidates | Coverage state |
 | --- | ---: | ---: | ---: | --- |

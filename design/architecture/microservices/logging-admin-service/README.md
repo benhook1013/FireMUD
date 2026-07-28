@@ -2,11 +2,11 @@
 
 ## Overview
 
-Centralized logging and administration tools for the platform. The service collects log data from all services, provides moderation capabilities for game operators, embeds shared observability tools, and acts as the operator-facing coordinator for tick and coordination-health remediation.
+Centralized logging and administration tools for the platform. The service collects log data from all services, provides moderation capabilities for game operators, embeds shared observability tools, and acts as the operator-facing coordinator for coordination-health monitoring and live per-instance tick pause/resume forwarding.
 
 ## Implementation Status
 
-Logging & Admin owns moderation policy persistence, evaluation, and audit. `GAMEPLAY_ADMISSION` is the gameplay enforcement decision boundary consumed by Game Session, and `CHAT_SEND` is the chat enforcement decision boundary consumed by Social & Groups; applicable high-risk decisions fail closed when a fresh policy result is unavailable. Versioned snapshot/event propagation and broader owner-side enforcement remain missing, so the current operator action route persists policy input and audit but is not itself an enforcement mutation.
+Logging & Admin owns moderation policy persistence, evaluation, and audit. `GAMEPLAY_ADMISSION` is the gameplay enforcement decision boundary consumed by Game Session, and `CHAT_SEND` is the chat enforcement decision boundary consumed by Social & Groups; applicable high-risk decisions fail closed when a fresh policy result is unavailable. Versioned snapshot/event propagation and broader owner-side enforcement remain missing, so the current operator action route persists policy input and audit but is not itself an enforcement mutation. Automated remediation is live only as per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` forwarding; regional reset and general remediation are not live capabilities.
 
 ## Responsibilities
 
@@ -14,7 +14,7 @@ Logging & Admin owns moderation policy persistence, evaluation, and audit. `GAME
 - Offer dashboards and search for operators and moderators by embedding Kibana and Grafana views.
 - Define moderation policy, record moderation actions, and keep auditable moderation records.
 - Record audit trails for feature flag changes and account events.
-- Monitor coordination and tick health across tenants and regions and drive automated remediation where safe by issuing documented Game Session control-plane requests.
+- Monitor coordination and tick health across tenant and region scopes. Automated remediation is live only as per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` forwarding; regional pause/resume, regional reset, and broader/general remediation remain target-only.
 
 ## Key Features
 
