@@ -103,7 +103,7 @@ Service docs may not create new external bypass-safe write classes on their own.
 
 Route-review procedure:
 
-1. Classify the proposed route using the [canonical route-review examples and traffic split](./system-architecture-overview.md#canonical-route-review-examples).
+1. Classify the proposed route using the [canonical route-review examples and traffic split](./system-architecture-overview.md#external-admin-traffic-split-canonical).
 2. Confirm the matching participation and ingress rows below; participation alone does not authorize a direct external mutation.
 
 - The exact current matrix rows are **External operator read/preparation ingress (live admission-pointer reads/audit/version-upgrade preparation/read; current Game Session session-lifecycle routes are owner-local rather than external ingress)** and **External operator mutating ingress (live feature-flag overrides and scoped `PauseTicksForScope`/`ResumeTicksForScope`; target Logging & Admin session-lifecycle forwarding plus admission open/close/retarget CAS/cutover, moderation enforcement, quota overrides, and broader remediation)**.
