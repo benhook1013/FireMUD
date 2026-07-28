@@ -91,6 +91,8 @@ tenant_generation_policy:
       - billing_safe_tenant_denied_without_exact_membership_generation_and_live_tenant_admin
       - support_safe_denied_without_live_support_or_platform_admin_and_global_scope
       - support_safe_denied_without_role_appropriate_assurance
+      - support_safe_support_branch_does_not_require_privileged_control
+      - support_safe_platform_admin_branch_denied_without_privileged_control
       - billing_safe_denied_without_live_billing_admin_or_platform_admin_and_privileged_control
       - new_route_class_does_not_inherit_exception
 entitlement_contract:
@@ -154,6 +156,7 @@ required_live_check_vocabulary:
 implementation_status:
   known_drift:
     - public_production_membership_is_created_implicitly_by_connect_token_or_play_in_current_runtime; this violates the explicit_join_security_contract and affected admission must fail closed in the target state
+    - privileged_control_is_target_only_and_unavailable_in_current_runtime; platformAdmin_and_cross_tenant_billingAdmin_branches_requiring_it_fail_closed_while_the_support_branch_does_not_require_it
 classifications:
   - public
   - account_scoped
@@ -222,6 +225,7 @@ operator_delegation:
   issuance_paths:
     human:
       auth_path: exact_mtls_workload_plus_forwarded_control_ui
+      issued_token_state: current_exact_active_control_ui_registry_record
       bindings:
         [actor_account_id, control_ui_jti, account_generation, role, tenant_scope, action_family, control_plane_request_id, issued_at, expires_at]
     unattended_automation:
@@ -368,7 +372,7 @@ routes:
     membership_authority_generation_applies: true
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
-    required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
+    required_live_checks: [membership, public_production_admission, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
     canonical_errors:
       any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE]
     canonical_target:
@@ -377,7 +381,7 @@ routes:
       missing_membership_error: JOIN_REQUIRED
     implementation_status:
       known_drift:
-        - connect_token_and_play_may_still_invoke_ensure_public_production_player_membership_in_current_runtime; this is a live security_contract_violation and affected admission must fail closed until existing membership is required
+        - current_runtime_invokes_ensure_public_production_player_membership_from_connect_token_or_play; this is a live security_contract_violation and affected admission must fail closed until existing membership is required
   - service: spring-cloud-gateway
     route: /ws/game/**
     scope: tenant
@@ -398,6 +402,10 @@ routes:
     edge_consumer: spring_cloud_gateway_public_non_proxy_websocket
     connect_context_output: signed_connect_context
     required_live_checks: [connect_token_single_use_consume, replay_protection_available, replay_admission_fence_match, connect_scope_match]
+    downstream_admission_contract:
+      owner: game-session-service
+      required_live_checks: [membership, membership_generation, public_production_admission, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
+      membership_creation: explicit_join_only
     handshake_error_classes:
       any_of:
         - CONNECT_TOKEN_MISSING
@@ -700,7 +708,7 @@ routes:
     subject_binding: authenticated_operator
     canonical_external_ingress: logging-admin-service
     direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
-    required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation, current_session]
+    required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles, current_account_roles, current_global_role, role_appropriate_assurance, target_tenant_generation, current_session]
     operator_authorization_reference: account_issued_bounded_reference
     required_fields: [control_plane_request_id, actor_from_session, reason, session_id, mutation_digest]
     global_platform_admin_membership_required: false
@@ -749,6 +757,7 @@ routes:
     classification: internal_workload
     auth_path: exact_mtls_workload_plus_forwarded_control_ui
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -822,7 +831,7 @@ routes:
     mutation_contract: explicit_public_membership_atomic
     implementation_status:
       known_drift:
-        - current_membership_seam_may_be_invoked_implicitly_by_connect_token_or_play
+        - current_runtime_invokes_membership_seam_implicitly_from_connect_token_or_play; this is a live security_contract_violation and affected admission must fail closed until explicit JOIN is the only membership writer
   - service: account-service
     route: DELETE /tenants/{tenantId}/memberships/me
     scope: tenant
@@ -1050,7 +1059,7 @@ routes:
     target_binding: opaque_server_issued_connect_scope_id_matches_route
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
-    required_live_checks: [membership, membership_generation, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match, replay_protection_available, replay_admission_fence_match]
+    required_live_checks: [membership, membership_generation, public_production_admission, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match, replay_protection_available, replay_admission_fence_match]
     canonical_errors:
       any_of: [JOIN_REQUIRED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, CONNECT_REPLAY_PROTECTION_UNAVAILABLE, ENTITLEMENT_UNAVAILABLE]
     subject_binding: caller_account_id
@@ -1059,7 +1068,7 @@ routes:
       membership_creation: issue_connect_token_never_creates_membership
     implementation_status:
       known_drift:
-        - issue_connect_token_may_still_invoke_ensure_public_production_player_membership_in_current_runtime; this is a live security_contract_violation and issuance must fail closed until existing membership is required
+        - current_runtime_invokes_ensure_public_production_player_membership_from_issue_connect_token; this is a live security_contract_violation and issuance must fail closed until existing membership is required
         - issue_connect_token_does_not_reread_membership_authority_generation
   - service: account-service
     route: Authenticate

@@ -12,7 +12,6 @@ import textwrap
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "dev-tools/validation/check-adr-review-status.py"
 
@@ -146,6 +145,12 @@ class AdrReviewStatusTests(unittest.TestCase):
         with fixture_root() as fixture:
             self.validator.validate(Path(fixture))
 
+    def test_section_value_accepts_lf_and_crlf_without_carriage_return(self) -> None:
+        for newline in ("\n", "\r\n"):
+            with self.subTest(newline=repr(newline)):
+                text = f"## Status{newline}{newline}Accepted{newline}"
+                self.assertEqual("Accepted", self.validator.section_value(text, "Status"))
+
     def test_pre_formal_record_requires_completed_metadata_when_checked(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
@@ -227,7 +232,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 set_review_status(root, status, disposition)
                 self.validator.validate(root)
 
-    def test_pre_formal_terminal_statuses_are_exempt(self) -> None:
+    def test_pre_formal_terminal_statuses_are_exempt_with_unrelated_checked_row(self) -> None:
         for status in (
             "Accepted",
             "Superseded by ADR 0099",
@@ -242,6 +247,9 @@ class AdrReviewStatusTests(unittest.TestCase):
                     path.read_text(encoding="utf-8").replace("Accepted", status),
                     encoding="utf-8",
                 )
+                checked = self.validator.checked_reviews(queue_path(root))
+                self.assertIn(12, checked)
+                self.assertNotIn(1, checked)
                 self.validator.validate(root)
 
     def test_unrecognized_and_nonterminal_statuses_are_rejected(self) -> None:

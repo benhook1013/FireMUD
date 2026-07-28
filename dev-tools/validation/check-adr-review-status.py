@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
-
 ROOT = Path(__file__).resolve().parents[2]
 ADR_DIR = Path("design/architecture/decisions")
 REVIEW_QUEUE = Path(
@@ -84,7 +83,7 @@ def adr_number(path: Path) -> int:
 
 def section_value(text: str, heading: str) -> str:
     match = re.search(
-        rf"^## {re.escape(heading)}\n\n(?P<value>[^\n]+)$",
+        rf"^## {re.escape(heading)}\r?\n\r?\n(?P<value>[^\r\n]+)(?:\r?\n|$)",
         text,
         flags=re.MULTILINE,
     )

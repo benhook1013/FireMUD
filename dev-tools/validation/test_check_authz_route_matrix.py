@@ -46,6 +46,16 @@ def route_for(document, service, route_name):
     )
 
 
+def validate_document(validator, document):
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "matrix.yaml"
+        path.write_text(
+            validator.yaml.safe_dump(document, sort_keys=False),
+            encoding="utf-8",
+        )
+        return validator.validate(path)
+
+
 def configure_multi_profile_route(document):
     route = route_for(document, "game-session-service", "ToggleFeatureFlag")
     base_profile = next(
@@ -136,13 +146,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             if route.get("route") == "POST /feature-flags/toggle"
         )
         route["membership_authority_generation_condition"]["platformAdmin_global"] = True
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(
-                self.validator.yaml.safe_dump(document, sort_keys=False),
-                encoding="utf-8",
-            )
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
                 "conditional membership generation requires" in error
@@ -373,13 +377,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         }
         route["token_type"] = "control_plane_user"
         route["token_issuer"] = "firemud-account-service"
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(
-                self.validator.yaml.safe_dump(document, sort_keys=False),
-                encoding="utf-8",
-            )
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertTrue(any("uses unknown token profiles" in error for error in errors))
         self.assertFalse(
             any("exactly one token profile per receiver policy" in error for error in errors)
@@ -394,13 +392,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             and route.get("route") == "POST /feature-flags/toggle"
         )
         route["token_type"] = "wrong_token_type"
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(
-                self.validator.yaml.safe_dump(document, sort_keys=False),
-                encoding="utf-8",
-            )
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
                 "token predicates must exactly match profile 'control-ui'"
@@ -418,13 +410,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             and route.get("route") == "StartSession"
         )
         route["mtls_callers"]["any_of"] = "not-a-list"
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(
-                self.validator.yaml.safe_dump(document, sort_keys=False),
-                encoding="utf-8",
-            )
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         structural_error = (
             "game-session-service StartSession mtls_callers.any_of "
             "must be a non-empty list of strings"
@@ -440,13 +426,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = route_for(document, "game-session-service", "ToggleFeatureFlag")
         route["method_policy"] = "all_methods"
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(
-                self.validator.yaml.safe_dump(document, sort_keys=False),
-                encoding="utf-8",
-            )
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertEqual(
             1,
             errors.count(
@@ -519,13 +499,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = next(route for route in document["routes"] if route.get("route") == "Authenticate")
         route["auth_path"] = "mtls_workload"
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(
-                self.validator.yaml.safe_dump(document, sort_keys=False),
-                encoding="utf-8",
-            )
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any("auth_path contains values outside the closed vocabulary" in error for error in errors)
         )
@@ -538,13 +512,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             if route.get("route") == "GetTenantEntitlementsForRuntime"
         )
         route["caller_policies"][0]["auth_path"] = "mtls_workload_plus_current_token_generation"
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(
-                self.validator.yaml.safe_dump(document, sort_keys=False),
-                encoding="utf-8",
-            )
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any("auth_path contains values outside the closed vocabulary" in error for error in errors)
         )
@@ -562,13 +530,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             if policy.get("caller") == "game-session-service"
         )
         policy["accepted_token_profiles"] = ["unknown-profile"]
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(
-                self.validator.yaml.safe_dump(document, sort_keys=False),
-                encoding="utf-8",
-            )
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
                 "uses unknown token profiles" in error and "unknown-profile" in error
@@ -597,10 +559,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         route = route_for(document, "game-session-service", "ToggleFeatureFlag")
         route_index = document["routes"].index(route)
         route["accepted_token_profiles"] = "control-ui"
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertEqual(
             1,
             errors.count(f"matrix.routes[{route_index}] accepted_token_profiles must be a list of strings"),
@@ -609,20 +568,14 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_multi_profile_route_with_audience_map_is_accepted(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         configure_multi_profile_route(document)
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertEqual([], errors)
 
     def test_multi_profile_route_reports_audience_map_error(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = configure_multi_profile_route(document)
         route["accepted_token_profile_audiences"] = {"control-ui": "control-ui"}
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any("accepted token audience keys must equal accepted profiles" in error for error in errors)
         )
@@ -680,6 +633,15 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.validator.validate_route_statuses(document["routes"], statuses, errors)
         self.assertTrue(any("route_status must be one of" in error for error in errors))
 
+    def test_route_status_may_be_omitted_without_implying_routability(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "game-session-service", "POST /sessions")
+        route.pop("route_status")
+        errors = []
+        statuses = self.validator.validate_route_status_vocabulary(document, errors)
+        self.validator.validate_route_statuses(document["routes"], statuses, errors)
+        self.assertEqual([], errors)
+
     def test_required_fields_use_snake_case(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         errors = []
@@ -703,10 +665,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertFalse(route["tenant_billing_authority_generation_applies"])
         self.assertFalse(route["membership_authority_generation_applies"])
         route["account_generation_applies"] = route.pop("account_authority_generation_applies")
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertTrue(any("must use account_authority_generation_applies" in error for error in errors))
 
     def test_pending_deletion_generation_exception_has_bounded_negative_proof(self):
@@ -727,10 +686,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
 
         exception.pop("contract_justification")
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertIn(
             "tenant_generation_policy.no_target_tenant_classifications."
             "pending_deletion_scoped must declare a bounded contract_justification",
@@ -743,16 +699,25 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
                 route = configure_multi_profile_route(document)
                 route[field] = "mismatch"
-                with tempfile.TemporaryDirectory() as directory:
-                    path = Path(directory) / "matrix.yaml"
-                    path.write_text(
-                        self.validator.yaml.safe_dump(document, sort_keys=False),
-                        encoding="utf-8",
-                    )
-                    errors = self.validator.validate(path)
+                errors = validate_document(self.validator, document)
                 self.assertTrue(
                     any(
                         "multi-profile token predicates must match the shared token_type/token_issuer"
+                        in error
+                        for error in errors
+                    )
+                )
+
+    def test_multi_profile_route_requires_token_type_and_issuer(self):
+        for field in ("token_type", "token_issuer"):
+            with self.subTest(field=field):
+                document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+                route = configure_multi_profile_route(document)
+                route.pop(field)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(
+                        "multi-profile routes must declare token_type/token_issuer"
                         in error
                         for error in errors
                     )
@@ -764,10 +729,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         route["token_audience"] = "control-ui"
         route.pop("token_type")
         route.pop("token_issuer")
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertTrue(any("must not declare scalar token_audience" in error for error in errors))
 
     def test_caller_policy_shape_errors_are_not_duplicated(self):
@@ -777,10 +739,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
         policy = next(policy for policy in route["caller_policies"] if policy.get("caller") == "game-session-service")
         policy.pop("accepted_token_profiles")
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertEqual(
             1,
             errors.count(
@@ -823,10 +782,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
         policy = next(policy for policy in route["caller_policies"] if policy.get("caller") == "game-session-service")
         policy["method_policy"] = "all_methods"
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertEqual(
             1,
             errors.count(
@@ -836,16 +792,11 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_known_drift_must_be_a_non_empty_list_of_strings(self):
         for malformed in ("scalar_drift", [], ["valid_drift", 7]):
-            with self.subTest(malformed=malformed), tempfile.TemporaryDirectory() as directory:
+            with self.subTest(malformed=malformed):
                 document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
                 route = next(route for route in document["routes"] if route.get("route") == "PLAY")
                 route["implementation_status"]["known_drift"] = malformed
-                path = Path(directory) / "matrix.yaml"
-                path.write_text(
-                    self.validator.yaml.safe_dump(document, sort_keys=False),
-                    encoding="utf-8",
-                )
-                errors = self.validator.validate(path)
+                errors = validate_document(self.validator, document)
             self.assertTrue(
                 any(
                     error.endswith(
@@ -899,13 +850,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = route_for(document, "game-session-service", "POST /sessions")
         route["required_live_checks"] = "not-a-list"
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(
-                self.validator.yaml.safe_dump(document, sort_keys=False),
-                encoding="utf-8",
-            )
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         structural_errors = [
             error
             for error in errors
@@ -1218,20 +1163,14 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_caller_policies_null_and_mapping_values_are_reported(self):
         for malformed in (None, {"caller": "game-session-service"}):
             with self.subTest(malformed=malformed):
-                with tempfile.TemporaryDirectory() as directory:
-                    document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-                    route = next(
-                        route
-                        for route in document["routes"]
-                        if route.get("route") == "GetTenantEntitlementsForRuntime"
-                    )
-                    route["caller_policies"] = malformed
-                    path = Path(directory) / "matrix.yaml"
-                    path.write_text(
-                        self.validator.yaml.safe_dump(document, sort_keys=False),
-                        encoding="utf-8",
-                    )
-                    errors = self.validator.validate(path)
+                document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+                route = next(
+                    route
+                    for route in document["routes"]
+                    if route.get("route") == "GetTenantEntitlementsForRuntime"
+                )
+                route["caller_policies"] = malformed
+                errors = validate_document(self.validator, document)
                 self.assertIn(
                     "GetTenantEntitlementsForRuntime caller_policies must be a list",
                     errors,
@@ -1253,13 +1192,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 )
                 policies = [] if policy_count == 0 else [game_policy, dict(game_policy)]
                 route["caller_policies"] = policies
-                with tempfile.TemporaryDirectory() as directory:
-                    path = Path(directory) / "matrix.yaml"
-                    path.write_text(
-                        self.validator.yaml.safe_dump(document, sort_keys=False),
-                        encoding="utf-8",
-                    )
-                    errors = self.validator.validate(path)
+                errors = validate_document(self.validator, document)
                 self.assertIn(
                     "GetTenantEntitlementsForRuntime must contain exactly one game-session-service caller policy",
                     errors,
@@ -1289,10 +1222,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         requirement = document["role_assurance"]["privileged_control_when_global_role"]["requirements"]["support"]
         requirement["allowed_classifications"] = requirement["applies_to"]["route_classifications"]
         del requirement["applies_to"]
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertTrue(any("support.applies_to must be a mapping" in error for error in errors))
         self.assertTrue(any("one applies_to shape" in error for error in errors))
 
@@ -1300,42 +1230,24 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         requirement = document["role_assurance"]["privileged_control_when_global_role"]["requirements"]["support"]
         requirement["applies_to"]["route_classifications"] = []
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertTrue(any("must be a non-empty list of strings" in error for error in errors))
 
         requirement["applies_to"]["route_classifications"] = ["not_a_classification"]
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertTrue(any("outside the classification vocabulary" in error for error in errors))
 
     def test_role_assurance_rejects_unexpected_role_keys(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         requirements = document["role_assurance"]["privileged_control_when_global_role"]["requirements"]
         requirements["suport"] = requirements.pop("support")
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(
-                self.validator.yaml.safe_dump(document, sort_keys=False),
-                encoding="utf-8",
-            )
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertTrue(any("contains unexpected role keys" in error for error in errors))
 
     def test_role_assurance_requires_canonical_predicate(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         document["role_assurance"].pop("privileged_control_when_global_role")
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(
-                self.validator.yaml.safe_dump(document, sort_keys=False),
-                encoding="utf-8",
-            )
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertIn(
             "role_assurance.privileged_control_when_global_role must be a mapping",
             errors,
@@ -1366,20 +1278,14 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
         route.pop("route_status")
         route.setdefault("implementation_status", {})["target_only"] = True
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertTrue(any("route_status instead of implementation_status.target_only" in error for error in errors))
 
     def test_unknown_route_status_is_rejected(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = next(route for route in document["routes"] if route.get("route") == "BillingArtifactsTenant")
         route["route_status"] = "target_only"
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertTrue(any("route_status must be one of" in error for error in errors))
 
     def test_private_receiver_requires_exact_token_and_method_predicates(self):
@@ -1390,10 +1296,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         policy["token_issuer"] = "untrusted-service"
         policy["mtls_identity"] = "game-session-service"
         policy["method_policy"] = "all_methods"
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertTrue(any("token predicates must exactly match profile" in error for error in errors))
         self.assertTrue(any("must be a concrete spiffe:// identity" in error for error in errors))
         self.assertTrue(any("must declare method_policy exact_declared_route" in error for error in errors))
@@ -1402,19 +1305,13 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = next(route for route in document["routes"] if route.get("route") == "GetTenantEntitlementsTenant")
         route["required_live_checks"].remove("membership_generation")
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertTrue(any("GetTenantEntitlementsTenant is missing route-class authority checks" in error for error in errors))
 
     def test_tenant_generation_exception_entries_must_be_mappings(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         document["tenant_generation_policy"]["exception_allowlist"]["billing_safe_tenant"] = "malformed"
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertIn(
             "tenant_generation_policy.exception_allowlist.billing_safe_tenant must be a mapping",
             errors,
@@ -1431,13 +1328,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     if route.get("classification") == "cross_tenant_support_safe"
                 )
                 route["required_live_checks"] = []
-                with tempfile.TemporaryDirectory() as directory:
-                    path = Path(directory) / "matrix.yaml"
-                    path.write_text(
-                        self.validator.yaml.safe_dump(document, sort_keys=False),
-                        encoding="utf-8",
-                    )
-                    errors = self.validator.validate(path)
+                errors = validate_document(self.validator, document)
                 self.assertIn(
                     "tenant_generation_policy must enable applies_by_default",
                     errors,
@@ -1452,13 +1343,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             "cross_tenant_support_safe"
         ]
         exception.pop("role_assurance_policy")
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(
-                self.validator.yaml.safe_dump(document, sort_keys=False),
-                encoding="utf-8",
-            )
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertIn(
             "tenant_generation_policy exception cross_tenant_support_safe "
             "must reference privileged_control_when_global_role",
@@ -1473,19 +1358,13 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             if route.get("route") == "GetSubscriptionCrossTenantSupportSafe"
         )
         route["required_live_checks"].append("membership")
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertTrue(any("must not require target membership" in error for error in errors))
 
     def test_entitlement_contract_is_exactly_tenant_bound(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         document["entitlement_contract"]["cross_tenant_inheritance"] = "allowed"
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            errors = self.validator.validate(path)
+        errors = validate_document(self.validator, document)
         self.assertIn("entitlement_contract.cross_tenant_inheritance must be forbidden", errors)
 
     def test_entitlement_contract_requires_exactly_one_matching_route(self):

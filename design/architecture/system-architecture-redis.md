@@ -286,7 +286,8 @@ For a destructive full-deployment or AOF reset, the canonical pre-wipe gates are
 - `scope_paused_and_locked` proves canonical `PAUSED`, blocked command and batch intake, no in-flight executor work, and no old-epoch coordination writer.
 - `account_authority_token_cutover` proves protected admission is closed and Account's durable authority/token identity cutover and required immutable evidence are complete for the operation's scope.
 - `replay_domain_quarantine_fence` proves the shared replay domain is either verified untouched for a narrower reset or quarantined and fenced for the destructive reset, with its immutable fence evidence recorded.
-- `immutable_external_handoff_evidence` identifies the old and intended new deployment, fenced endpoint, authorized operator and action, time, tooling digest, and independent replacement verification.
+- `immutable_external_handoff_evidence` contains only pre-wipe authorization and fencing facts: the old and intended new deployment, fenced endpoint, authorized operator and action, time, and tooling digest. It contains no post-wipe health or replacement observations.
+- `post_reset_replacement_verification` is a separate evidence group recorded after the replacement starts; it proves the replacement endpoint identity, health, ACL/configuration, and empty keyspace before recovery continuation.
 
 This contract keeps region-local correctness shard-safe while still letting reconnect and takeover flows carry session-wide intent. It also means the system tolerates brief mismatches between `session:game:*` and region-local bindings: the region-local binding key is authoritative for gameplay, while `session:game:*` remains authoritative for reconnect semantics.
 

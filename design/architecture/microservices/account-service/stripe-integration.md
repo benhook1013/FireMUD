@@ -29,8 +29,8 @@ The Account Service owns billing records and maps them to Stripe resources. Reco
   - Supplies the immutable, non-secret provider-metadata correlation identity used by webhook and reconciliation processing. Provider IDs and the linked `payment_transaction` are added when known; a lost response or early webhook leaves the operation nonterminal until those links and the resulting financial/product state are reconciled.
 
 - `stripe_event_inbox`
-  - Idempotently retains each verified Stripe event by provider event ID together with its extracted purchase-operation correlation identity and processing state.
-  - An event that arrives before `provider_id` or transaction linkage is persisted remains pending against the durable purchase operation and is retried after linkage repair. It is never discarded or treated as terminal merely because the local provider ID is not yet available.
+  - Idempotently retains each verified Stripe event by provider event ID together with a typed `(operation_type, operation_id)` correlation and processing state. The correlation is exactly one of `purchase` with the immutable purchase-operation ID, `subscription` with the immutable `subscription_provisioning_request_id`, `transfer` with the immutable `transferRequestId` plus its provider-operation identity, or `customer_provisioning` with the immutable `customer_provisioning_request_id`; provider IDs are lookup and evidence fields, not the operation identity.
+  - Stripe provider metadata carries that typed correlation for every resource created by these operations. An event that arrives before provider ID, operation linkage, or required local dependency persistence remains `pending` against its durable operation and is retried after linkage repair. Timeouts, lost responses, and partial outcomes remain nonterminal; retries reuse the same typed operation and provider idempotency identities and never create a duplicate resource or transition.
 
 - `purchase_entitlement`  
   - Represents the durable product grant created by a successful one-time purchase when the product has ongoing account, tenant, character, virtual-currency, or gameplay value.  

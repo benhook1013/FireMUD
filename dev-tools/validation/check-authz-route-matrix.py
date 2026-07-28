@@ -138,6 +138,23 @@ def string_list(value: Any, field: str, errors: list[str]) -> list[str]:
     return value
 
 
+def cached_live_checks(
+    source: object,
+    value: Any,
+    field: str,
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> set[str]:
+    if live_checks_cache is not None:
+        cached = live_checks_cache.get(id(source))
+        if cached is not None and cached[0] is source:
+            return set(cached[1])
+    parsed_checks = set(string_list(value, field, errors))
+    if live_checks_cache is not None:
+        live_checks_cache[id(source)] = (source, set(parsed_checks))
+    return set(parsed_checks)
+
+
 def collect_live_checks(
     value: Any,
     field: str,
@@ -149,14 +166,11 @@ def collect_live_checks(
         for key, child in value.items():
             child_field = f"{field}.{key}" if field else key
             if key == "required_live_checks":
-                cached = live_checks_cache.get(id(value)) if live_checks_cache is not None else None
-                if cached is not None and cached[0] is value:
-                    checks.extend(set(cached[1]))
-                else:
-                    parsed_checks = set(string_list(child, child_field, errors))
-                    if live_checks_cache is not None:
-                        live_checks_cache[id(value)] = (value, set(parsed_checks))
-                    checks.extend(set(parsed_checks))
+                checks.extend(
+                    cached_live_checks(
+                        value, child, child_field, errors, live_checks_cache
+                    )
+                )
             else:
                 checks.extend(
                     collect_live_checks(child, child_field, errors, live_checks_cache)
@@ -380,23 +394,32 @@ def validate_multi_profile_predicates(
     profiles: list[str],
     token_profiles: dict[str, dict[str, str]],
     errors: list[str],
+    allow_implicit_profile: bool = False,
 ) -> None:
-    known_profiles = [token_profiles.get(profile_name) for profile_name in profiles]
-    if not all(profile is not None for profile in known_profiles):
-        return
     if entry.get("token_audience") is not None:
         errors.append(
             f"{label} multi-profile routes must not declare scalar token_audience; "
             "use accepted_token_profile_audiences"
         )
+    token_type = entry.get("token_type")
+    token_issuer = entry.get("token_issuer")
+    if token_type is None or token_issuer is None:
+        if allow_implicit_profile and token_type is None and token_issuer is None:
+            return
+        errors.append(
+            f"{label} multi-profile routes must declare token_type/token_issuer"
+        )
+        return
+
+    known_profiles = [token_profiles.get(profile_name) for profile_name in profiles]
+    if not all(profile is not None for profile in known_profiles):
+        return
     shared_type_issuer = {
         (profile.get("type"), profile.get("issuer"))
         for profile in known_profiles
         if profile is not None
     }
-    token_predicates = (entry.get("token_type"), entry.get("token_issuer"))
-    if token_predicates == (None, None):
-        return
+    token_predicates = (token_type, token_issuer)
     if len(shared_type_issuer) != 1 or token_predicates != next(iter(shared_type_issuer)):
         errors.append(
             f"{label} multi-profile token predicates must match the shared token_type/token_issuer"
@@ -552,7 +575,12 @@ def validate_token_fields(
     if len(profiles) != 1:
         if allow_multi_profile and len(profiles) > 1:
             validate_multi_profile_predicates(
-                entry, label, profiles, token_profiles, errors
+                entry,
+                label,
+                profiles,
+                token_profiles,
+                errors,
+                allow_implicit_profile,
             )
             return
         errors.append(f"{label} must declare exactly one token profile per receiver policy")
@@ -1126,16 +1154,13 @@ def route_live_checks(
     errors: list[str],
     live_checks_cache: LiveChecksCache | None = None,
 ) -> set[str]:
-    if live_checks_cache is not None:
-        cached = live_checks_cache.get(id(route))
-        if cached is not None and cached[0] is route:
-            return set(cached[1])
-    parsed_checks = set(
-        string_list(route.get("required_live_checks"), f"{label} required_live_checks", errors)
+    return cached_live_checks(
+        route,
+        route.get("required_live_checks"),
+        f"{label} required_live_checks",
+        errors,
+        live_checks_cache,
     )
-    if live_checks_cache is not None:
-        live_checks_cache[id(route)] = (route, set(parsed_checks))
-    return set(parsed_checks)
 
 
 def validate_applicability(
