@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The authority split and admission path are substantially present, but immediate revocation, token rotation, Account-owned authority generations, and monotonic membership-version proof remain incomplete. Accepted ownership is target authority; an implementation gap does not transfer authority to the component holding convenient local state.
+The authority split and admission path are substantially present, but complete issued-token registry issuance/validation, immediate revocation, token rotation, Account-owned authority generations, and monotonic membership-version proof remain incomplete. Accepted ownership is target authority; an implementation gap does not transfer authority to the component holding convenient local state.
 
 ## Decision Record
 

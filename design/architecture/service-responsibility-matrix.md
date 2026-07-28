@@ -40,7 +40,9 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Game version activation at runtime | | | | ✔ | | | | | | | |
 | Replacement-instance compatibility preflight (`ValidateInstanceCutoverCompatibility`) | ✔ | ✔ | | ✔ | ✔ | | ✔ | | ✔ | | |
 | Authoritative owner: `versionStateEpoch` CAS enforcement | ✔ | | | | | | | | | | |
-| Version-state CAS APIs ownership/invocation for activation/rollback (`versionStateEpoch`) (live admission-pointer control path) | ✔ | | | ✔ | | | | | ✔ | | |
+| Version-state CAS API invocation for activation/rollback (`versionStateEpoch`) | ✔ | | | ✔ | | | | | ✔ | | |
+| Authoritative owner: admission-pointer `pointerVersion` CAS enforcement | | | | ✔ | | | | | | | |
+| Admission-pointer CAS API invocation (`pointerVersion`) | | | | ✔ | | | | | ✔ | | |
 | Runtime feature-flag truth and overrides (live operator ingress; Game Session owns runtime truth) | | | | ✔ | | | | | ✔ | | |
 | Tick & coordination health metrics (diagnostic scope: `<tenantId, gameInstanceId, regionId>`) | | | | ✔ | | | | | | | |
 | Canonical room-state read fence production and same-fence room-view composition | | ✔ | | | ✔ | ✔ | | | | | |
@@ -104,6 +106,8 @@ Route-review example:
 - Proposed route: `GET /api/account/accounts/{id}`. Matrix check: `Account Service` participates in `Admin/creator API participation`, and the request is an external admin read rather than an operator write covered by `External operator write ingress for moderation, quota overrides, runtime feature flags, admission control, and tick remediation`, so the route may be edge-routable when the owning service documents it as a bypass-safe read contract.
 
 ## Notes on Redis Ownership and Participation
+
+- **Independent version and admission CAS domains** – Game Design Service owns the version lifecycle state and `versionStateEpoch` CAS contract used for activation and rollback. Game Session and Logging & Admin may invoke that typed lifecycle API through their documented control-plane paths, but neither owns the version epoch. Game Session separately owns the admission-pointer `pointerVersion` CAS contract for `{tenantId, worldSlug, realmSlug}`; Logging & Admin invokes that admission operation through its operator ingress. The two CAS tokens are independent and must not be substituted for one another.
 
 - **Authoritative owner: Coordination Redis gameplay sessions (`session:game:*`)** – Game Session Service owns gameplay session bindings, lifecycle, and reset scope expectations for these keys. Other services participate only through documented shared helper libraries and key contracts; they do not introduce new gameplay session prefixes or modify TTLs/payload semantics without Game Session ownership and Redis design review.
 - **Authoritative owner: Coordination Redis gameplay coordination keys (`tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`)** – Game Session Service owns gameplay coordination schema and lifecycle for these prefixes. Other services participate only through documented shared helper libraries and key contracts; they do not introduce new gameplay coordination prefixes or modify TTLs/payload semantics without Game Session ownership and Redis design review.

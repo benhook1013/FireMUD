@@ -62,6 +62,13 @@ All billing/support route classifications in this domain must be registered in [
 
 The subscription lifecycle is modeled as a finite state machine:
 
+Before the billing lifecycle states below, creation uses two durable provisioning states:
+
+- `pending` – Account has committed the subscription intent, billing-owner/instrument binding, stable provider idempotency identity, and outbox work item, but provider creation has not been claimed.
+- `provisioning` – A worker has claimed the outbox item and is creating or reconciling the provider subscription. Retries reuse the same provider idempotency identity; this state grants no hosting entitlement and cannot be billed.
+
+Only a confirmed provider subscription ID may transition the row from `pending`/`provisioning` into `trialing` or `active`. A timeout or lost provider response is reconciled before another create is attempted; if the provider resource exists but the local ID is missing, reconciliation repairs the reference without creating a duplicate.
+
 - `trialing` – The tenant is in a time-limited trial; full hosting features are enabled but may be subject to conservative quotas.  
 - `active` – The subscription is paid and current; quotas and entitlements from the selected plan apply.  
 - `past_due` – Recent billing attempts have failed; the platform has not yet enforced restrictions, but alerts and UI warnings appear.  
@@ -79,7 +86,7 @@ State transitions are driven by:
 
 Each transition triggers domain events that downstream services can consume to adjust quotas or availability.
 
-Account owns the lifecycle boundary. A transition becomes authoritative when Account commits the new status, its monotonic billing sequence/authority changes, and the durable event/outbox evidence. Provider confirmation and downstream revocation, projection, instance drain, socket closure, and cache convergence are separate execution stages. They may be partial or pending after the Account commit, so status and enforcement progress must be reported separately; a retry must resume the idempotent transition execution rather than create a second lifecycle transition or roll back committed Account authority.
+Account owns the lifecycle boundary. A transition becomes authoritative when Account commits the new status, its monotonic billing sequence/authority changes, and the durable event/outbox evidence. Provisioning is a durable pre-lifecycle workflow: the subscription intent and outbox evidence commit before the provider call, and recovery resumes that intent rather than creating a second one. Provider confirmation and downstream revocation, projection, instance drain, socket closure, and cache convergence are separate execution stages. They may be partial or pending after the Account commit, so status and enforcement progress must be reported separately; a retry must resume the idempotent transition execution rather than create a second lifecycle transition or roll back committed Account authority.
 
 ### Plan Changes, Downgrades, and Cancellation Timing
 
@@ -186,7 +193,7 @@ Downstream services depend on billing events for timely entitlement enforcement,
 - **Gap detection and reconciliation** – if a consumer detects a sequence gap (or has no prior authority-generation/version for a tenant), it must call `GetTenantEntitlementsForRuntime(tenantId)` to reconcile immediately and must emit an operator-visible structured `billing_event_gap` metric/log. The gap record must include `tenantId`, `expectedTenantBillingSequence`, `observedTenantBillingSequence`, `eventId`, `eventType`, `consumer` (service and subscription/handler), `eventOccurredAt` or `emittedAt`, `detectedAt`, `reconciledAt` when complete, and the event/request `correlationId` or `causationId`. These fields are mandatory; a free-text warning without them is not sufficient for detecting delayed cutoff enforcement.
 - **Periodic refresh** – even when events are flowing, every healthy runtime consumer must refresh or reconcile cached entitlements at least once per 60 seconds so extended event outages meet the `<=60-second` delayed/missed-event SLA rather than causing unbounded drift.
 
-- `CreateSubscription` – Create or update a hosting subscription for a `tenantId` and `plan_code`. A new subscription must resolve the authoritative billing owner before its subscription row exists and require either an explicit saved `paymentInstrumentId` or deterministic selection input that resolves to exactly one saved instrument owned by that owner. Account must atomically persist the owner, provider customer, and instrument binding before provider creation; Stripe customer and provider defaults are prohibited. Caller-bound tenant variants derive actor identity from auth context; cross-tenant admin variants are separate APIs.
+- `CreateSubscription` – Create or update a hosting subscription for a `tenantId` and `plan_code`. A new subscription must resolve the authoritative billing owner before its subscription row exists and require either an explicit saved `paymentInstrumentId` or deterministic selection input that resolves to exactly one saved instrument owned by that owner. Account must atomically persist the owner, provider customer, instrument binding, `pending` status, stable provider idempotency identity, and outbox work item before provider creation; Stripe customer and provider defaults are prohibited. Provider activation and billing require a confirmed provider subscription ID. Caller-bound tenant variants derive actor identity from auth context; cross-tenant admin variants are separate APIs.
 - `GetSubscriptionTenantHighLevel` / `ListSubscriptionsTenantHighLevel` – Query subscription state for one tenant, scoped by tenant authorization.  
 - `ListSubscriptionsCrossTenantSupportSafe` – Cross-tenant support-safe high-level listing for troubleshooting only.  
 - `ListSubscriptionsCrossTenantBillingSafeReports` – Cross-tenant billing-report listing for `billingAdmin`/`platformAdmin` only.  

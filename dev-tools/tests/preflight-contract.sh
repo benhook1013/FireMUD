@@ -986,6 +986,35 @@ def canonical_recovery_record(finalized_at):
             "replayedThrough": 12,
             "gapFree": True,
         },
+        "erasureOverlayReconciliation": {
+            "stream": "erasures",
+            "artifactErasureHighWater": {"stream": "erasures", "sequence": 10},
+            "restoreHighWater": {"stream": "erasures", "sequence": 12},
+            "sequenceVerification": {
+                "status": "pass",
+                "contiguous": True,
+                "complete": True,
+                "gapFree": True,
+                "duplicateFree": True,
+            },
+            "integrityVerification": {"status": "pass", "verified": True},
+            "sequenceDispositions": [
+                {
+                    "stream": "erasures",
+                    "sequence": 11,
+                    "owner": "account-service",
+                    "disposition": "converged",
+                    "integrityVerified": True,
+                },
+                {
+                    "stream": "erasures",
+                    "sequence": 12,
+                    "owner": "account-service",
+                    "disposition": "invalidated",
+                    "integrityVerified": True,
+                },
+            ],
+        },
         "backupArtifactLineage": {
             "databaseIdentity": "production",
             "snapshotAt": credential_validated_at,
@@ -1017,6 +1046,11 @@ def canonical_recovery_record(finalized_at):
             "targetEnvironmentBound": True,
             "snapshotCredentialsRejected": True,
             "regionEpochFences": "advanced-or-recreated",
+            "accountAuthorityProjections": "rebuilt-and-verified",
+            "accountAuthorityProjectionEvidenceRef": "evidence/account-authority-projections.json",
+            "replayAdmissionFence": "advanced",
+            "replayQuarantine": "lifetime-plus-skew-observed",
+            "replayConsumeEvidenceRef": "evidence/replay-consume.json",
         },
         "backupConfidentialityEvidence": {"status": "pass", "transport": "encrypted", "storage": "encrypted"},
         "durableParticipantConvergence": {"gameplay": {"disposition": "converged"}},
@@ -1129,6 +1163,108 @@ invalid_baseline_cases = {
         }
     },
     "participant": {"durableParticipantConvergence": {"gameplay": {"disposition": "unknown"}}},
+    "coordination-account-projections": {
+        "coordinationRecoveryEvidence": {
+            **valid_baseline["coordinationRecoveryEvidence"],
+            "accountAuthorityProjections": "missing",
+        }
+    },
+    "coordination-replay-evidence": {
+        "coordinationRecoveryEvidence": {
+            **valid_baseline["coordinationRecoveryEvidence"],
+            "replayConsumeEvidenceRef": "",
+        }
+    },
+    "overlay-bounds": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "restoreHighWater": {"stream": "erasures", "sequence": 11},
+        }
+    },
+    "overlay-stream": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "stream": "other-stream",
+        }
+    },
+    "overlay-entry-stream": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                {
+                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+                    "stream": "other-stream",
+                },
+                valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][1],
+            ],
+        }
+    },
+    "overlay-integrity": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "integrityVerification": {"status": "pass", "verified": False},
+        }
+    },
+    "overlay-entry-integrity": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                {
+                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+                    "integrityVerified": False,
+                },
+                valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][1],
+            ],
+        }
+    },
+    "overlay-duplicate": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+                valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+            ],
+        }
+    },
+    "overlay-gap": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                {
+                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+                    "sequence": 11,
+                },
+                {
+                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][1],
+                    "sequence": 13,
+                },
+            ],
+        }
+    },
+    "overlay-out-of-range": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                {
+                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+                    "sequence": 10,
+                },
+                valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][1],
+            ],
+        }
+    },
+    "overlay-disposition": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                {
+                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+                    "disposition": "unknown",
+                },
+                valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][1],
+            ],
+        }
+    },
 }
 for case_name, replacement in invalid_baseline_cases.items():
     invalid_baseline = {**valid_baseline, **replacement}

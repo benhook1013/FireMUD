@@ -1,13 +1,10 @@
 # FireMUD System Architecture: Multi-Tenancy
 
-This document explains how FireMUD hosts many independent games on shared infrastructure.
-It complements the [System Architecture Overview](./system-architecture-overview.md) and
-the multi-tenant requirements in the
-[Core Requirements](../project-management/core-requirements.md).
+This document explains how FireMUD hosts many independent games on shared infrastructure. It complements the [System Architecture Overview](./system-architecture-overview.md) and the multi-tenant requirements in the [Core Requirements](../project-management/core-requirements.md).
 
 ## Implementation Status
 
-The realm-catalog, admission-pointer, realm-local character, explicit first-join, and quota-boundary contracts below are normative target behavior. Current runtime proof is partial: `IssueConnectToken` and text `PLAY` can still invoke implicit public-production membership creation; the membership-generation live reread at connect-token issuance is not implemented; pointer updates still use a read-then-write check with separate pointer/audit/prepared-execution writes; scoped-role population and tenant switching are not fully implemented/proved; and authoritative entitlement freshness plus complete owning-service quota enforcement remain incomplete. These are implementation gaps only. They do not weaken tenant isolation, the distinct `tenantSlug` and tenant-scoped authored-world `worldSlug` selectors, the exact-tenant quota binding, or the required `GetAdmissionPointer(tenantId, worldSlug, realmSlug)` contract.
+The realm-catalog, admission-pointer, realm-local character, explicit first-join, and quota-boundary contracts below are normative target behavior. Current runtime proof is partial: `IssueConnectToken` and text `PLAY` can still invoke implicit public-production membership creation; the membership-generation live reread at connect-token issuance is not implemented; pointer updates still use a read-then-write check with separate pointer/audit/prepared-execution writes; scoped-role population and tenant switching are not fully implemented/proved; and authoritative entitlement freshness plus complete owning-service quota enforcement remain incomplete. The implicit membership creation in `IssueConnectToken` and `PLAY` is a security contract violation and a known unavailable gap, not a benign non-weakening implementation gap: only the explicit public-production `JOIN` flow may create membership, and affected admission paths must fail closed until that rule is enforced. The remaining gaps do not change the distinct `tenantSlug` and tenant-scoped authored-world `worldSlug` selectors, the exact-tenant quota binding, or the required `GetAdmissionPointer(tenantId, worldSlug, realmSlug)` contract.
 
 ---
 
@@ -172,10 +169,7 @@ Pointer freshness and cutover rules:
 - All microservices connect to a single PostgreSQL instance and store data in service-specific schemas.
   Migrations create tables directly inside dedicated service schemas rather than the `public` schema.
 - Databases are **shared across tenants**. Tenant-owned records carry and enforce `tenantId`; genuinely platform-global records such as the core account identity do not acquire a placeholder tenant merely to satisfy this convention. Relationships between a global record and a game live in explicit tenant-scoped tables. Domain services also scope their versioned data by `version_id` so multiple published or draft configurations can coexist per tenant.
-- Services enforce the `tenantId` filter on queries for tenant-owned data to prevent
-  cross-game access. They do not apply tenant filters to platform-global account,
-  credential, recovery, or security records; links between those records and a game
-  are represented by explicit tenant-scoped relationships and authorized separately.
+- Services enforce the `tenantId` filter on queries for tenant-owned data to prevent cross-game access. They do not apply tenant filters to platform-global account, credential, recovery, or security records; links between those records and a game are represented by explicit tenant-scoped relationships and authorized separately.
 - Redis keys prefix the `tenantId` as described in the
   [Redis Architecture](./system-architecture-redis.md#key-format-examples) so
   cached session state and runtime data remain isolated. For tick-related keys,

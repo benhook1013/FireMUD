@@ -200,7 +200,7 @@ Under [ADR 0048](./decisions/adr-0048-durable-idempotent-operator-write-executio
 
 | Operator action | Operator-facing entry point | Runtime/policy owner | Required write path | Required durable store(s) for success | Observability dependency allowed for write success |
 | --- | --- | --- | --- | --- | --- |
-| Moderation action (`gameplay_ban`, `chat_mute`, `chat_ban`) | Logging & Admin HTTP(S) APIs via Gateway | Logging & Admin defines policy; Game Session or Social & Groups enforce runtime scope | Logging & Admin records audit and calls owning enforcement/policy APIs | Logging & Admin PostgreSQL audit state plus owning service PostgreSQL/control-plane state | No |
+| Moderation action (`gameplay_ban`, `chat_mute`, `chat_ban`) | Logging & Admin HTTP(S) APIs via Gateway | Current: Logging & Admin records policy input and audit only. Target: Game Session or Social & Groups enforce runtime scope. | Current: persistence/audit only; no owner enforcement RPC exists. Target: Logging & Admin records durable intent and calls the owning enforcement API. | Current: Logging & Admin PostgreSQL audit state. Target: owning service PostgreSQL/control-plane state as well. | No |
 | Runtime feature-flag override | Logging & Admin HTTP(S) APIs via Gateway | Game Session | Logging & Admin records audit and calls Game Session `ToggleFeatureFlag`/equivalent control API | Game Session PostgreSQL plus Logging & Admin PostgreSQL audit state | No |
 | Quota override (hypothetical target; no current route or Account owner contract) | Hypothetical target: Logging & Admin HTTP(S) APIs via Gateway | Account Service canonical entitlement contract | Hypothetical target: Logging & Admin records audit and calls the Account control-plane API so the merged entitlement view remains canonical at Account | Account PostgreSQL plus Logging & Admin PostgreSQL audit state | No |
 | Admission-pointer open, close, or retarget | Logging & Admin HTTP(S) APIs via Gateway | Game Session | Logging & Admin records durable intent with one `controlPlaneRequestId`; Game Session validates current catalog/runtime authority and compare-and-sets the pointer under the current version/fence | Game Session PostgreSQL admission-pointer state plus Logging & Admin PostgreSQL intent/audit state | No |
@@ -497,10 +497,12 @@ See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for the 
 
 From the perspective of admin and moderation tooling there are two broad classes of features:
 
-- **Core admin actions** – Feature flag toggles, bans/unbans, basic account and session controls, and other actions that primarily talk to domain microservices (for example, Account, Game Session, Social & Groups) via the Gateway. These are designed to remain available even if Elasticsearch, Prometheus, Jaeger, or Alertmanager are temporarily unavailable.
+- **Core admin actions** – Feature flag toggles, supported admission and tick-remediation controls, basic account and session controls, and other actions that primarily talk to domain microservices (for example, Account, Game Session, Social & Groups) via the Gateway. These are designed to remain available even if Elasticsearch, Prometheus, Jaeger, or Alertmanager are temporarily unavailable. Current moderation actions persist policy input and audit only; owner-side gameplay/chat enforcement forwarding is target coverage rather than a shipped mutation path.
 - **Observability-driven workflows** – Log search, metrics and trace dashboards, and alert-centric investigations that depend on Elasticsearch, Prometheus, Jaeger, and Alertmanager being healthy. These surfaces may degrade or become read-only during observability outages but should not block core admin actions.
 
 Implementations of Logging & Admin must preserve this separation with independent readiness/degradation behavior and resource isolation so observability outages do not take down the operator-facing paths on the external admin/creator API plane.
+
+Current implementation status: Logging & Admin has live read and investigation surfaces for logs, reports, saga state, admission-pointer state/audit, and observability dashboards, plus executable forwarding for the supported feature-flag, admission-pointer, and tick pause/resume mutations. Moderation policy recording is live, while owner-side enforcement propagation remains an explicit target-state gap.
 
 For gameplay/chat moderation specifically, the operator policy plane and enforcement plane must remain aligned under the canonical moderation propagation contract:
 

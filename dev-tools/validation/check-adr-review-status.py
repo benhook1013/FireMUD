@@ -26,10 +26,13 @@ TERMINAL_ADR_STATUS_RE = re.compile(
 )
 ADR_PATH_RE = re.compile(r"adr-(\d{4})-.*\.md$")
 REVIEW_ROW_RE = re.compile(
-    r"^- \[x\] `(?P<key>[^`]+)` — "
+    r"^- \[x\] `(?P<key>[A-Z0-9][A-Z0-9-]*)` — "
     r"`(?P<disposition>accepted|revised|deferred|superseded|withdrawn)` "
-    r"on (?P<date>\d{4}-\d{2}-\d{2})[^;]*; "
-    r".*?\[ADR (?P<number>\d{4})\]\([^)]+\)"
+    r"on (?P<date>\d{4}-\d{2}-\d{2})(?P<outcome>(?:;| by) .+)$"
+)
+OUTCOME_LINK_RE = re.compile(r"\[[^\]\r\n]+\]\([^)\r\n]+\)")
+ADR_LINK_RE = re.compile(
+    r"\[ADR (?P<number>\d{4})\]\([^)]*\badr-(?P=number)-[^)]*\.md(?:#[^)]*)?\)"
 )
 REVIEW_FIELD_RE = re.compile(
     r"^- (?P<name>Human review status|Human review date|"
@@ -85,17 +88,55 @@ def is_terminal_status(status: str) -> bool:
 
 def checked_reviews(path: Path) -> dict[int, list[Review]]:
     reviews: dict[int, list[Review]] = defaultdict(list)
-    for line in path.read_text(encoding="utf-8").splitlines():
-        match = REVIEW_ROW_RE.match(line)
-        if not match:
+    seen_keys: set[str] = set()
+    for line_number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        if not line.startswith("- [x]"):
             continue
-        reviews[int(match.group("number"))].append(
-            Review(
-                key=match.group("key"),
-                date=match.group("date"),
-                disposition=match.group("disposition").capitalize(),
+        match = REVIEW_ROW_RE.fullmatch(line)
+        if not match:
+            fail(f"{path}: malformed checked review queue row at line {line_number}")
+
+        adr_numbers = [
+            int(adr_match.group("number"))
+            for adr_match in ADR_LINK_RE.finditer(match.group("outcome"))
+        ]
+        if not OUTCOME_LINK_RE.search(match.group("outcome")):
+            fail(
+                f"{path}: checked review queue row at line {line_number} "
+                "must contain at least one Markdown outcome link"
             )
+        if len(adr_numbers) != len(set(adr_numbers)):
+            fail(
+                f"{path}: checked review queue row at line {line_number} "
+                "contains duplicate ADR outcome links"
+            )
+
+        review = Review(
+            key=match.group("key"),
+            date=match.group("date"),
+            disposition=match.group("disposition").capitalize(),
         )
+        if review.key in seen_keys:
+            fail(
+                f"{path}: ambiguous duplicate checked review source "
+                f"{review.key!r} at line {line_number}"
+            )
+        seen_keys.add(review.key)
+
+        for number in adr_numbers:
+            existing = reviews[number]
+            if existing and any(
+                (prior.date, prior.disposition)
+                != (review.date, review.disposition)
+                for prior in existing
+            ):
+                fail(
+                    f"{path}: ambiguous duplicate checked review rows for "
+                    f"ADR {number:04d}"
+                )
+            existing.append(review)
     return reviews
 
 

@@ -127,8 +127,9 @@ required_reset_contract = [
     "6. internal session-policy phase",
     "7. internal Account authority and issued-token projection-rebuild phase",
     "8. internal post-reset smoke-check phase",
-    "9. public `resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)` safety gate",
-    "10. internal resume-and-success-release phase",
+    "9. `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`",
+    "10. public `resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)`",
+    "11. internal resume-and-success-release phase",
 ]
 cursor = -1
 previous = "<start of canonical reset contract>"

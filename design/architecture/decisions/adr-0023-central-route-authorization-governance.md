@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The machine-readable matrix and substantial static Gateway route/blocking tests exist, but the route inventory is incomplete and the matrix is not consumed by generated completeness checks or shared runtime middleware. Current JWT middleware does not yet enforce all documented route-class, token-profile, authority-generation, and cross-tenant distinctions.
+The machine-readable matrix and substantial static Gateway route/blocking tests exist, but the route inventory is incomplete and the matrix is not consumed by generated completeness checks or shared runtime middleware. Current JWT middleware does not yet enforce the complete issued-token registry, route-class, token-profile, authority-generation, and cross-tenant distinctions documented here.
 
 ## Decision Record
 

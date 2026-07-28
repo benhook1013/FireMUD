@@ -84,6 +84,21 @@ def fixture_root() -> tempfile.TemporaryDirectory[str]:
     return fixture
 
 
+def queue_path(root: Path) -> Path:
+    return (
+        root
+        / "design/project-management/design-alignment/consequential-decision-inventory.md"
+    )
+
+
+def append_queue_row(root: Path, row: str) -> None:
+    path = queue_path(root)
+    path.write_text(
+        path.read_text(encoding="utf-8") + f"\n{row}\n",
+        encoding="utf-8",
+    )
+
+
 def expect_failure(call, expected: str) -> None:
     with unittest.TestCase().assertRaisesRegex(SystemExit, expected):
         call()
@@ -262,19 +277,79 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_checked_queue_entry_requires_matching_adr(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            queue = (
-                root
-                / "design/project-management/design-alignment/consequential-decision-inventory.md"
-            )
-            queue.write_text(
-                queue.read_text(encoding="utf-8")
-                + "\n- [x] `TEST-99` — `accepted` on 2026-07-27; "
-                "[ADR 0099](../../architecture/decisions/adr-0099-missing.md)\n",
-                encoding="utf-8",
+            append_queue_row(
+                root,
+                "- [x] `TEST-99` — `accepted` on 2026-07-27; "
+                "[ADR 0099](../../architecture/decisions/adr-0099-missing.md)",
             )
             expect_failure(
                 lambda: self.validator.validate(root),
                 r"checked review queue references missing ADRs: \[99\]",
+            )
+
+    def test_checked_queue_row_collects_every_adr_link(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [x] `TEST-COUPLED` — `revised` on 2026-07-27; "
+                "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md); "
+                "[ADR 0014](../../architecture/decisions/adr-0014-other.md)",
+            )
+            reviews = self.validator.checked_reviews(queue_path(root))
+            self.assertEqual(set(reviews), {12, 14})
+            self.assertEqual(reviews[14][0].key, "TEST-COUPLED")
+
+    def test_malformed_checked_queue_rows_fail_closed(self) -> None:
+        rows = (
+            "- [x] `TEST-99`",
+            "- [x] `TEST-99` — `revised`",
+            "- [x] `TEST-99` — `revised` on 2026-07-27",
+        )
+        for row in rows:
+            with self.subTest(row=row), fixture_root() as fixture:
+                append_queue_row(Path(fixture), row)
+                expect_failure(
+                    lambda: self.validator.checked_reviews(
+                        queue_path(Path(fixture))
+                    ),
+                    "malformed checked review queue row",
+                )
+
+        with fixture_root() as fixture:
+            append_queue_row(
+                Path(fixture),
+                "- [x] `TEST-99` — `revised` on 2026-07-27; outcome without link",
+            )
+            expect_failure(
+                lambda: self.validator.checked_reviews(queue_path(Path(fixture))),
+                "must contain at least one Markdown outcome link",
+            )
+
+    def test_duplicate_checked_review_source_is_rejected(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [x] `TEST-01` — `revised` on 2026-07-27; "
+                "[duplicate](../../architecture/decisions/adr-0012-reviewed.md)",
+            )
+            expect_failure(
+                lambda: self.validator.checked_reviews(queue_path(root)),
+                "ambiguous duplicate checked review source",
+            )
+
+    def test_conflicting_duplicate_adr_rows_are_rejected(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [x] `TEST-02` — `accepted` on 2026-07-27; "
+                "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md)",
+            )
+            expect_failure(
+                lambda: self.validator.checked_reviews(queue_path(root)),
+                "ambiguous duplicate checked review rows for ADR 0012",
             )
 
 

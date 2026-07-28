@@ -8,7 +8,7 @@ Centralized logging and administration tools for the platform. The service colle
 
 - Aggregate logs from every microservice via Fluent Bit sidecars and expose search APIs.
 - Offer dashboards and search for operators and moderators by embedding Kibana and Grafana views.
-- Define moderation policy, issue moderation actions, and keep auditable moderation records.
+- Define moderation policy, record moderation actions, and keep auditable moderation records. Owner-side gameplay/chat enforcement forwarding remains target coverage until the owning enforcement contracts exist.
 - Record audit trails for feature flag changes and account events.
 - Monitor coordination and tick health across tenants and regions and drive automated remediation where safe by issuing documented Game Session control-plane requests.
 
@@ -16,7 +16,7 @@ Centralized logging and administration tools for the platform. The service colle
 
 - Central log search for entries collected via Fluent Bit sidecars.
 - [Analytics dashboards](./analytics-dashboards.md) for operators, embedding Kibana and Grafana panels, including Telnet ingress views based on the TCP Proxy metrics described in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and the example Grafana snippets under `design/observability/grafana/`.
-- Tools for banning or restricting accounts.
+- Tools for reviewing and recording account restrictions; owner-side enforcement is not implied by the current Logging & Admin persistence/audit surface.
 - [Role-based admin UI](./admin-ui.md) for moderators.
 - [Moderation policies](./moderation-policies.md) including profanity filters.
 - UI for requesting runtime feature-flag overrides through owning domain control-plane APIs.

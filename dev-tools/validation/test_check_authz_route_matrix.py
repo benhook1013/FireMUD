@@ -38,6 +38,46 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_current_matrix_passes(self):
         self.assertEqual([], self.validator.validate(MATRIX))
 
+    def test_owner_route_metadata_is_explicit(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        routes = {
+            route["route"]: route
+            for route in document["routes"]
+            if route.get("service") == "game-session-service"
+        }
+        self.assertEqual(["current_operator_authorization", "runtime_ownership"], routes["StopSession"]["required_live_checks"])
+        for route_name in (
+            "ToggleFeatureFlag",
+            "PauseTicksForScope",
+            "ResumeTicksForScope",
+            "SetAdmissionPointer",
+            "ExecutePreparedVersionCutover",
+            "PrepareVersionUpgrade",
+        ):
+            self.assertEqual("grpc", routes[route_name]["transport"])
+
+    def test_profile_routes_distinguish_self_only_subjects(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for route_name in ("GetProfile", "UpdateProfile"):
+            route = next(route for route in document["routes"] if route.get("route") == route_name)
+            self.assertEqual("caller_account_id_for_self_only_roles", route["subject_binding"])
+            self.assertEqual(["player", "moderator", "designer"], route["self_only_roles"])
+            self.assertEqual("same_tenant_profile_for_tenantAdmin", route["target_subject_binding"])
+            self.assertEqual("forbidden", route["platform_admin_override"])
+
+    def test_cross_tenant_safe_routes_do_not_require_target_membership(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for route in document["routes"]:
+            if route.get("classification") not in {
+                "cross_tenant_support_safe",
+                "cross_tenant_billing_safe",
+            }:
+                continue
+            self.assertFalse(route["tenant_billing_authority_generation_applies"])
+            self.assertFalse(route["membership_authority_generation_applies"])
+            self.assertNotIn("membership", route["required_live_checks"])
+            self.assertNotIn("membership_generation", route["required_live_checks"])
+
     def test_unknown_live_check_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
@@ -144,6 +184,33 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             ["matrix.routes[0] uses unknown token profiles: ['unknown-profile']"],
             errors,
         )
+
+    def test_malformed_route_profiles_are_reported_once(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(route for route in document["routes"] if route.get("route") == "ToggleFeatureFlag")
+        route["accepted_token_profiles"] = "control-ui"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertEqual(
+            1,
+            errors.count("matrix.routes[71] accepted_token_profiles must be a list of strings"),
+        )
+
+    def test_multi_profile_route_with_audience_map_is_accepted(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(route for route in document["routes"] if route.get("route") == "ToggleFeatureFlag")
+        route["accepted_token_profiles"] = ["control-ui", "player-bootstrap"]
+        route["accepted_token_profile_audiences"] = {
+            "control-ui": "control-ui",
+            "player-bootstrap": "player-bootstrap",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertFalse(any("exactly one token profile per receiver policy" in error for error in errors))
 
     def test_known_drift_must_be_a_non_empty_list_of_strings(self):
         for malformed in ("scalar_drift", [], ["valid_drift", 7]):
@@ -598,6 +665,32 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
             errors = self.validator.validate(path)
         self.assertTrue(any("GetTenantEntitlementsTenant is missing route-class authority checks" in error for error in errors))
+
+    def test_tenant_generation_exception_entries_must_be_mappings(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        document["tenant_generation_policy"]["exception_allowlist"]["billing_safe_tenant"] = "malformed"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertIn(
+            "tenant_generation_policy.exception_allowlist.billing_safe_tenant must be a mapping",
+            errors,
+        )
+
+    def test_cross_tenant_target_membership_checks_are_rejected(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route
+            for route in document["routes"]
+            if route.get("route") == "GetSubscriptionCrossTenantSupportSafe"
+        )
+        route["required_live_checks"].append("membership")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(any("must not require target membership" in error for error in errors))
 
     def test_entitlement_contract_is_exactly_tenant_bound(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

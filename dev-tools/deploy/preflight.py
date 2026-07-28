@@ -129,6 +129,7 @@ CANONICAL_RECOVERY_REQUIRED_FIELDS = (
     "initialCatchupHighWater",
     "restoreHighWater",
     "erasureReplay",
+    "erasureOverlayReconciliation",
     "backupArtifactLineage",
     "backupToolDigest",
     "recoveryToolDigest",
@@ -192,6 +193,7 @@ CANONICAL_RECOVERY_OBJECT_FIELDS = (
     "initialCatchupHighWater",
     "restoreHighWater",
     "erasureReplay",
+    "erasureOverlayReconciliation",
     "backupArtifactLineage",
     "recoveryControllerLineage",
     "coordinationRecoveryEvidence",
@@ -299,6 +301,87 @@ def validate_safe_dispositions(value: Any, label: str) -> tuple[str, str]:
                 "fail",
                 f"Recovery compatibility baseline {label} has unsafe or missing disposition: {participant}",
             )
+    return ("pass", "")
+
+
+def validate_erasure_overlay_reconciliation(
+    value: Any,
+    artifact_high_water: dict[str, Any],
+    restore_high_water: dict[str, Any],
+    stream: str,
+) -> tuple[str, str]:
+    label = "Recovery compatibility baseline erasureOverlayReconciliation"
+    if not isinstance(value, dict):
+        return ("fail", f"{label} must be an object")
+    if value.get("stream") != stream:
+        return ("fail", f"{label} stream must match the canonical erasure stream")
+    if value.get("artifactErasureHighWater") != artifact_high_water:
+        return ("fail", f"{label} artifactErasureHighWater must match the canonical bound exactly")
+    if value.get("restoreHighWater") != restore_high_water:
+        return ("fail", f"{label} restoreHighWater must match the canonical bound exactly")
+
+    sequence_verification = value.get("sequenceVerification")
+    required_sequence_flags = ("contiguous", "complete", "gapFree", "duplicateFree")
+    if (
+        not isinstance(sequence_verification, dict)
+        or sequence_verification.get("status") != "pass"
+        or any(sequence_verification.get(flag) is not True for flag in required_sequence_flags)
+    ):
+        return ("fail", f"{label} sequenceVerification must prove a contiguous, complete, gap-free, duplicate-free pass")
+
+    integrity_verification = value.get("integrityVerification")
+    if (
+        not isinstance(integrity_verification, dict)
+        or integrity_verification.get("status") != "pass"
+        or integrity_verification.get("verified") is not True
+    ):
+        return ("fail", f"{label} integrityVerification must be verified with status pass")
+
+    sequence_dispositions = value.get("sequenceDispositions")
+    if not isinstance(sequence_dispositions, list):
+        return ("fail", f"{label} sequenceDispositions must be a list")
+
+    artifact_sequence = artifact_high_water["sequence"]
+    restore_sequence = restore_high_water["sequence"]
+    expected_count = restore_sequence - artifact_sequence
+    if len(sequence_dispositions) != expected_count:
+        return (
+            "fail",
+            f"{label} sequenceDispositions must contain exactly one entry for every sequence in "
+            f"({artifact_sequence}, {restore_sequence}]",
+        )
+
+    canonical_dispositions = {
+        "converged",
+        "terminalized",
+        "invalidated",
+        "fenced_disabled_backlog_retained",
+    }
+    observed_sequences: list[int] = []
+    for index, entry in enumerate(sequence_dispositions):
+        if not isinstance(entry, dict):
+            return ("fail", f"{label} sequenceDispositions[{index}] must be an object")
+        if entry.get("stream") != stream:
+            return ("fail", f"{label} sequenceDispositions[{index}] stream must match the canonical erasure stream")
+        sequence = entry.get("sequence")
+        if not isinstance(sequence, int) or isinstance(sequence, bool):
+            return ("fail", f"{label} sequenceDispositions[{index}] sequence must be an integer")
+        if sequence <= artifact_sequence or sequence > restore_sequence:
+            return ("fail", f"{label} sequenceDispositions[{index}] sequence is outside the final interval")
+        if sequence in observed_sequences:
+            return ("fail", f"{label} sequenceDispositions contains duplicate sequence {sequence}")
+        if not isinstance(entry.get("owner"), str) or not entry["owner"].strip():
+            return ("fail", f"{label} sequenceDispositions[{index}] owner must be non-empty")
+        if entry.get("disposition") not in canonical_dispositions:
+            return ("fail", f"{label} sequenceDispositions[{index}] has an invalid canonical disposition")
+        if entry.get("integrityVerified") is not True:
+            return ("fail", f"{label} sequenceDispositions[{index}] integrity must be verified")
+        observed_sequences.append(sequence)
+
+    for offset, sequence in enumerate(sorted(observed_sequences), start=1):
+        expected_sequence = artifact_sequence + offset
+        if sequence != expected_sequence:
+            return ("fail", f"{label} sequenceDispositions has a gap in final interval coverage")
     return ("pass", "")
 
 
@@ -442,6 +525,14 @@ def validate_recovery_baseline(
         or erasure_replay.get("replayedThrough") != restore_sequence
     ):
         return ("fail", "Recovery compatibility baseline erasure replay must be gap-free through restoreHighWater")
+    overlay_status, overlay_message = validate_erasure_overlay_reconciliation(
+        baseline.get("erasureOverlayReconciliation"),
+        artifact_high_water,
+        restore_high_water,
+        high_water_stream,
+    )
+    if overlay_status != "pass":
+        return ("fail", overlay_message)
     backup_artifact_lineage = baseline.get("backupArtifactLineage")
     if (
         not isinstance(backup_artifact_lineage, dict)
@@ -463,10 +554,17 @@ def validate_recovery_baseline(
         or coordination_evidence.get("targetEnvironmentBound") is not True
         or coordination_evidence.get("snapshotCredentialsRejected") is not True
         or coordination_evidence.get("regionEpochFences") != "advanced-or-recreated"
+        or coordination_evidence.get("accountAuthorityProjections") != "rebuilt-and-verified"
+        or coordination_evidence.get("replayAdmissionFence") != "advanced"
+        or coordination_evidence.get("replayQuarantine") != "lifetime-plus-skew-observed"
+        or not isinstance(coordination_evidence.get("accountAuthorityProjectionEvidenceRef"), str)
+        or not coordination_evidence["accountAuthorityProjectionEvidenceRef"].strip()
+        or not isinstance(coordination_evidence.get("replayConsumeEvidenceRef"), str)
+        or not coordination_evidence["replayConsumeEvidenceRef"].strip()
     ):
         return (
             "fail",
-            "Recovery compatibility baseline coordination recovery must prove empty Redis, target-environment credential rebinding, and advanced region fences",
+            "Recovery compatibility baseline coordination recovery must prove empty Redis, target-environment credential rebinding, advanced region fences, Account authority projection rebuild, and replay-domain readiness",
         )
 
     for field, label in (

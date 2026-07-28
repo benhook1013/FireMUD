@@ -237,7 +237,7 @@ coverage_drift:
         accepted_token_profiles: [control-ui]
         subject_binding: current_billing_owner_account_id
         required_live_checks: [recent_account_authentication, subscription_binding_integrity]
-        mutation_contract: explicit_subscription_binding_and_safe_detachment
+        mutation_contract: billing_owner_authorized_per_subscription_binding_replacement_before_detach_and_audited_ownership_transfer
       - route: PaymentInstrumentWalletCrossTenant
         scope: cross_tenant
         classification: cross_tenant_billing_safe
@@ -523,7 +523,7 @@ routes:
     end_user_token_required: false
     delegated_subject: operator_authorization_reference
     operator_authorization_reference: required_and_redeemed_with_account
-    required_live_checks: [current_operator_authorization, runtime_entitlements]
+    required_live_checks: [current_operator_authorization, runtime_ownership]
     mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
     required_fields: [control_plane_request_id, actor, reason, session_id, mutation_digest]
     canonical_errors:
@@ -779,7 +779,10 @@ routes:
     classification: tenant_regular
     tenant_billing_authority_generation_applies: true
     membership_authority_generation_applies: true
-    subject_binding: caller_account_id
+    subject_binding: caller_account_id_for_self_only_roles
+    self_only_roles: [player, moderator, designer]
+    target_subject_binding: same_tenant_profile_for_tenantAdmin
+    platform_admin_override: forbidden
     accepted_token_profiles: [control-ui]
     required_live_checks: [membership]
     required_fields: [tenant_id, account_id]
@@ -792,7 +795,10 @@ routes:
     classification: tenant_regular
     tenant_billing_authority_generation_applies: true
     membership_authority_generation_applies: true
-    subject_binding: caller_account_id
+    subject_binding: caller_account_id_for_self_only_roles
+    self_only_roles: [player, moderator, designer]
+    target_subject_binding: same_tenant_profile_for_tenantAdmin
+    platform_admin_override: forbidden
     accepted_token_profiles: [control-ui]
     required_live_checks: [membership]
     required_fields: [tenant_id, account_id]
@@ -1212,7 +1218,6 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
     required_live_checks: [issuer_generation, account_generation, membership_generation, membership]
-    mutation_contract: shared_instrument_ack_required
     canonical_errors:
       any_of: [MEMBERSHIP_AUTH_UNAVAILABLE]
     roles:
@@ -1378,6 +1383,7 @@ routes:
       any_of: [tenantAdmin, platformAdmin]
   - service: game-session-service
     route: ToggleFeatureFlag
+    transport: grpc
     scope: tenant
     classification: internal_workload
     auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
@@ -1400,6 +1406,7 @@ routes:
       any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
     route: PauseTicksForScope
+    transport: grpc
     scope: tenant
     classification: internal_workload
     auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
@@ -1422,6 +1429,7 @@ routes:
       any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
     route: ResumeTicksForScope
+    transport: grpc
     scope: tenant
     classification: internal_workload
     auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
@@ -1444,6 +1452,7 @@ routes:
       any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
     route: SetAdmissionPointer
+    transport: grpc
     scope: tenant
     classification: internal_workload
     auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
@@ -1466,6 +1475,7 @@ routes:
       any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
     route: ExecutePreparedVersionCutover
+    transport: grpc
     scope: tenant
     classification: internal_workload
     auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
@@ -1488,6 +1498,7 @@ routes:
       any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
     route: PrepareVersionUpgrade
+    transport: grpc
     scope: tenant
     classification: internal_workload
     auth_path: exact_mtls_workload_plus_account_operator_authorization_reference

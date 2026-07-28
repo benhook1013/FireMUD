@@ -42,6 +42,16 @@ Region-scoped coordination key examples use `{tenantRegionTag}`, the canonical o
    - After replay/reset work, use the canonical `GetGameplayCommandStatus` surface described in `design/architecture/system-architecture-tick-failures-and-operations.md` to confirm commands converged to their final durable outcomes.
    - Do not treat raw Redis queue/key inspection as the primary operator answer for player-visible command status after remediation.
 
+### Authority-Freshness Lease Contract
+
+When token authority is unavailable but gameplay coordination remains healthy, the existing-binding exception is governed by an explicit Account-owned authority-freshness lease:
+
+- **Record** – The authoritative binding record stores the exact account, tenant, game-instance, and gameplay-binding identity together with the applicable issuer/account/tenant/membership/grant authority generations, the committed authority checkpoint, a monotonic lease fence, and `authorityLeaseExpiresAt`.
+- **Issuer** – Account Service issues and renews the lease only after reading the authoritative issued-token registry and applicable current authority generations. Game Session accepts and persists only that exact lease evidence; a JWT claim, local process state, or cached role is not an issuer or substitute.
+- **Renewal** – A successful authoritative renewal replaces the applicable generation/checkpoint tuple and sets `authorityLeaseExpiresAt` to renewal time plus 60 seconds. Ordinary gameplay commands, socket activity, reconnect attempts, local heartbeats, and retries cannot renew or recreate the lease.
+- **Generations and invalidation** – A mismatch, gap, revocation, or advance in any applicable issuer, account, tenant, membership, grant, or lease-fence value invalidates the binding. The binding must stop rather than continue on stale authority.
+- **Absolute bound and fail-closed behavior** – The deadline is measured from the last successful authoritative renewal and is never extended beyond 60 seconds by local activity. New admission, token issuance/refresh, and reconnect/rebind remain closed while renewal is unavailable; an existing binding terminates at its stored deadline, or earlier when invalidated. No per-command registry read or cached-authority fallback changes this contract.
+
 ### Coordination Redis Recovery Behaviour
 
 When Coordination Redis recovers after an outage or severe degradation:

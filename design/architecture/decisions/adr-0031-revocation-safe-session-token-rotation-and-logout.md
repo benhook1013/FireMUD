@@ -88,7 +88,7 @@ Long lifetimes reduce refresh traffic but extend stale-role and stolen-token exp
 
 ### Workload-Identity-Only Refresh
 
-Allowing Game Session to mint a fresh player token from mTLS plus an account ID is simple, but can cross logout-all and security authority-generation advances. The current token lineage generation and captured authority generations must remain part of refresh authority.
+Allowing Game Session to mint a fresh player token from mTLS plus an account ID is simple, but can cross logout-all and security authority-generation advances. The current token lineage generation, every applicable captured authority generation, and every applicable private-realm `grantVersion` must remain part of refresh authority.
 
 ### Delete Every Token For Logout-All
 

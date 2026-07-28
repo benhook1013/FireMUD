@@ -257,6 +257,7 @@ def validate_receiver_predicates(
         label: str,
         profiles: list[str],
         reported_unknown_profiles: set[str] | None = None,
+        allow_multi_profile: bool = False,
     ) -> None:
         token_type = entry.get("token_type")
         token_issuer = entry.get("token_issuer")
@@ -268,6 +269,19 @@ def validate_receiver_predicates(
                 )
             return
         if len(profiles) != 1:
+            audience_map = entry.get("accepted_token_profile_audiences")
+            if (
+                allow_multi_profile
+                and len(profiles) > 1
+                and isinstance(audience_map, dict)
+                and set(audience_map) == set(profiles)
+                and all(
+                    audience_map.get(profile_name)
+                    == token_profiles.get(profile_name, {}).get("audience")
+                    for profile_name in profiles
+                )
+            ):
+                return
             errors.append(f"{label} must declare exactly one token profile per receiver policy")
             return
         profile = token_profiles.get(profiles[0])
@@ -287,6 +301,7 @@ def validate_receiver_predicates(
         if not isinstance(route, dict):
             continue
         profiles_value = route.get("accepted_token_profiles")
+        profiles: list[str] = []
         unknown_profiles: list[str] = []
         if profiles_value is not None:
             profiles = string_list(profiles_value, f"matrix.routes[{index}] accepted_token_profiles", errors)
@@ -361,14 +376,21 @@ def validate_receiver_predicates(
             for item in mtls_callers.get("any_of", [])
         ):
             errors.append(f"{label} mtls_callers.any_of must contain concrete spiffe:// identities")
-        profiles = string_list(
-            route.get("accepted_token_profiles"),
-            f"{label} accepted_token_profiles",
-            errors,
-        )
+        if profiles_value is None:
+            profiles = string_list(
+                profiles_value,
+                f"{label} accepted_token_profiles",
+                errors,
+            )
         if route.get("method_policy") != "exact_declared_route":
             errors.append(f"{label} must declare method_policy exact_declared_route")
-        validate_token_fields(route, label, profiles, set(unknown_profiles))
+        validate_token_fields(
+            route,
+            label,
+            profiles,
+            set(unknown_profiles),
+            allow_multi_profile=True,
+        )
 
 
 def validate_tenant_generation_policy(document: dict[str, Any], routes: list[Any], errors: list[str]) -> None:
@@ -385,6 +407,10 @@ def validate_tenant_generation_policy(document: dict[str, Any], routes: list[Any
     for classification, expected in REQUIRED_TENANT_GENERATION_EXCEPTIONS.items():
         entry = allowlist.get(classification)
         if not isinstance(entry, dict):
+            errors.append(
+                "tenant_generation_policy.exception_allowlist."
+                f"{classification} must be a mapping"
+            )
             continue
         if entry.get("target_tenant_generation") is not expected["target_tenant_generation"]:
             errors.append(f"tenant_generation_policy exception {classification} has the wrong target generation setting")
@@ -416,6 +442,13 @@ def validate_tenant_generation_policy(document: dict[str, Any], routes: list[Any
         missing = sorted(expected["required_live_checks"] - checks)
         if missing:
             errors.append(f"{label} is missing route-class authority checks: {missing}")
+        if classification in {"cross_tenant_support_safe", "cross_tenant_billing_safe"}:
+            target_membership_checks = checks & {"membership", "membership_generation", "tenant_generation"}
+            if target_membership_checks:
+                errors.append(
+                    f"{label} must not require target membership or tenant generation checks "
+                    f"for {classification}: {sorted(target_membership_checks)}"
+                )
 
 
 def validate_entitlement_contract(document: dict[str, Any], routes: list[Any], errors: list[str]) -> None:

@@ -168,10 +168,10 @@ Runtime caller contract:
 
 Membership-change producer contract:
 
-- The Account Service emits membership-change events with `eventId`, `accountId`, `tenantId`, `membershipVersion`, changed roles, and a flag indicating whether gameplay admission remains allowed.
+- The Account Service emits membership-change events with `eventId`, `accountId`, `tenantId`, `membershipVersion`, the Account-committed opaque `membershipAuthorityGeneration` for that exact `{accountId, tenantId}` scope, changed roles, and a flag indicating whether gameplay admission remains allowed.
 - `membershipVersion` is monotonic per `{accountId, tenantId}` and must advance on any membership or role change that can affect gameplay admission or caller-bound tenant authority.
 - When a membership or tenant-role change invalidates existing caller-bound tenant authorization, the Account Service must also advance the `{accountId, tenantId}` membership authority generation and project `session:auth:generation:membership:<accountId>:<tenantId>` so previously issued control-plane tokens lose tenant authority immediately rather than waiting for expiry.
-- Consumers treat duplicate/older versions as no-ops and reconcile gaps with authoritative membership reads.
+- The producer proof must show that the event's `membershipAuthorityGeneration` is the same committed generation advanced and projected by Account for the membership change; it must not be reconstructed from `membershipVersion` or a projection read after commit. Consumers treat duplicate/older versions as no-ops, require exact generation freshness for authorization, and reconcile gaps or unavailable generation evidence with authoritative membership reads before admitting or retaining authority.
 
 Entitlement producer contract:
 
