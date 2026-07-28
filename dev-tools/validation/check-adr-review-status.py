@@ -39,7 +39,7 @@ REVIEW_ROW_RE = re.compile(
 )
 OUTCOME_LINK_RE = re.compile(r"\[[^\]\r\n]+\]\([^)\r\n]+\)")
 ADR_LINK_RE = re.compile(
-    r"\[ADR (?P<number>\d{4})\]\([^)]*\badr-(?P=number)-[^)]*\.md(?:#[^)]*)?\)"
+    r"\[ADR (?P<number>\d{4})\]\((?P<target>[^)\r\n]+)\)"
 )
 REVIEW_FIELD_RE = re.compile(
     r"^- (?P<name>Human review status|Human review date|"
@@ -111,10 +111,23 @@ def checked_reviews(path: Path) -> dict[int, list[Review]]:
         if not match:
             fail(f"{path}: malformed checked review queue row at line {line_number}")
 
-        outcome_adr_numbers = [
-            int(adr_match.group("number"))
-            for adr_match in ADR_LINK_RE.finditer(match.group("outcome"))
-        ]
+        outcome_adr_numbers: list[int] = []
+        for adr_match in ADR_LINK_RE.finditer(match.group("outcome")):
+            displayed_number = int(adr_match.group("number"))
+            target_filename = (
+                adr_match.group("target")
+                .split("#", 1)[0]
+                .split("?", 1)[0]
+                .rsplit("/", 1)[-1]
+            )
+            target_match = ADR_PATH_RE.fullmatch(target_filename)
+            if target_match is None or int(target_match.group(1)) != displayed_number:
+                fail(
+                    f"{path}: malformed ADR provenance at line {line_number}; "
+                    f"displayed ADR {displayed_number:04d} does not match target "
+                    f"{adr_match.group('target')!r}"
+                )
+            outcome_adr_numbers.append(displayed_number)
         if not OUTCOME_LINK_RE.search(match.group("outcome")):
             fail(
                 f"{path}: checked review queue row at line {line_number} "

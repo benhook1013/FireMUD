@@ -68,6 +68,12 @@ Rely only on tenant identifiers and horizontal scaling. This is operationally si
 - Keep environment-wide backup, restore, maintenance, incident, and security-hardening documentation explicit about the accepted all-tenant blast radius.
 - Do not add tenant-placement flags, selective database or Redis routing, or dedicated-service modes without a new accepted decision.
 
+## Required Documentation Alignment
+
+- [Multi-tenancy architecture](../system-architecture-multi-tenancy.md)
+- [Architecture overview](../system-architecture-overview.md)
+- [Account subscription management](../microservices/account-service/subscription-management.md)
+
 ## Reversibility and Revisit Triggers
 
 Logical tenant contracts remain usable if a future isolated environment is introduced, but separating an existing tenant requires an explicit export, migration, identity, routing, and cutover design. Revisit only when a concrete legal or residency mandate, verified security requirement, measured scale limit, contractual isolation commitment, or demonstrated recovery objective cannot be met inside the shared topology. Any revisit must compare a complete separate environment against the operational and product cost of continuing shared hosting; selectively dedicated service or datastore modes are not presumed as an intermediate step.

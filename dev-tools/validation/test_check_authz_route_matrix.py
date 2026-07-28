@@ -39,6 +39,41 @@ def grouped_routes(document, service):
     return routes
 
 
+def route_for(document, service, route_name):
+    return next(
+        route
+        for route in document["routes"]
+        if route.get("service") == service and route.get("route") == route_name
+    )
+
+
+def configure_multi_profile_route(document):
+    route = route_for(document, "game-session-service", "ToggleFeatureFlag")
+    base_profile = next(
+        profile for profile in document["token_profiles"] if profile["profile"] == "control-ui"
+    )
+    second_profile = {
+        **base_profile,
+        "profile": "control-ui-secondary",
+        "audience": "control-ui-secondary",
+    }
+    document["token_profiles"].append(second_profile)
+    profile_names = [base_profile["profile"], second_profile["profile"]]
+    route["accepted_token_profiles"] = profile_names
+    route["accepted_token_profile_audiences"] = {
+        profile_name: next(
+            profile["audience"]
+            for profile in document["token_profiles"]
+            if profile["profile"] == profile_name
+        )
+        for profile_name in profile_names
+    }
+    route["token_type"] = base_profile["type"]
+    route["token_issuer"] = base_profile["issuer"]
+    route.pop("token_audience", None)
+    return route
+
+
 class AuthzRouteMatrixValidationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -52,9 +87,11 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         routes = grouped_routes(document, "game-session-service")
         self.assertTrue(routes["StopSession"])
         for route in routes["StopSession"]:
-            self.assertEqual(
-                ["current_operator_authorization", "runtime_ownership"],
-                route["required_live_checks"],
+            self.assertTrue(
+                {
+                    "current_operator_authorization",
+                    "runtime_ownership",
+                }.issubset(route["required_live_checks"])
             )
         for route_name in (
             "ToggleFeatureFlag",
@@ -139,7 +176,14 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                         "membership_when_tenant_role",
                         "membership_generation",
                         "target_tenant_generation",
+                        "current_global_role",
+                        "role_appropriate_assurance",
                     }.issubset(route["required_live_checks"])
+                )
+                self.assertEqual("logging-admin-service", route["canonical_external_ingress"])
+                self.assertEqual(
+                    "deny_at_edge_and_migrate_to_logging_admin",
+                    route["direct_owner_route_policy"],
                 )
 
         drifted_route = routes["POST /sessions"][0]
@@ -158,6 +202,8 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             for route in routes[route_name]:
                 self.assertTrue(route["tenant_billing_authority_generation_applies"])
                 self.assertTrue(route["membership_authority_generation_applies"])
+                self.assertEqual("control_ui_plus_current_tenant_role", route["auth_path"])
+                self.assertEqual("exact_declared_route", route["method_policy"])
                 self.assertTrue(
                     {"membership", "membership_generation", "tenant_generation"}.issubset(
                         route["required_live_checks"]
@@ -169,13 +215,67 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.validator.validate_profile_authority_routes(document["routes"], errors)
         self.assertIn("account-service GetProfile must require live check tenant_generation", errors)
 
-    def test_multi_profile_unknown_name_is_not_resolved(self):
+    def test_profile_route_auth_and_method_policy_are_validated(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(route for route in document["routes"] if route.get("route") == "GetProfile")
+        route["auth_path"] = "wrong_auth_path"
+        route["method_policy"] = "all_methods"
+        errors = []
+        self.validator.validate_profile_authority_routes(document["routes"], errors)
+        self.assertIn(
+            "account-service GetProfile must declare auth_path control_ui_plus_current_tenant_role",
+            errors,
+        )
+        self.assertIn(
+            "account-service GetProfile must declare method_policy exact_declared_route",
+            errors,
+        )
+
+    def test_refresh_roles_uses_redeemed_operator_authority_and_idempotency(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        routes = grouped_routes(document, "game-session-service")
+        grpc = routes["RefreshRoles"][0]
+        self.assertEqual(
+            "exact_mtls_workload_plus_account_operator_authorization_reference",
+            grpc["auth_path"],
+        )
+        self.assertEqual("required_and_redeemed_with_account", grpc["operator_authorization_reference"])
+        self.assertIn("mutation_digest", grpc["required_fields"])
+        self.assertIn("IDEMPOTENCY_CONFLICT", grpc["canonical_errors"]["any_of"])
+        http = routes["POST /sessions/{sessionId}/refresh-roles"][0]
+        self.assertEqual("account_issued_bounded_reference", http["operator_authorization_reference"])
+        self.assertIn("mutation_digest", http["required_fields"])
+
+        grpc.pop("operator_authorization_reference")
+        errors = []
+        self.validator.validate_refresh_roles_routes(document["routes"], errors)
+        self.assertTrue(any("operator authorization redemption" in error for error in errors))
+
+    def test_privileged_operator_routes_require_live_global_role_and_assurance(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = next(
             route
             for route in document["routes"]
-            if route.get("route") == "ToggleFeatureFlag"
+            if route.get("route") == "POST /feature-flags/toggle"
         )
+        route["required_live_checks"].remove("current_global_role")
+        errors = []
+        self.validator.validate_generation_applicability(document["routes"], errors)
+        self.assertTrue(any("current_global_role" in error for error in errors))
+
+        owner_route = next(
+            route
+            for route in document["routes"]
+            if route.get("route") == "POST /sessions"
+        )
+        owner_route.pop("canonical_external_ingress")
+        errors = []
+        self.validator.validate_generation_applicability(document["routes"], errors)
+        self.assertTrue(any("canonical_external_ingress" in error for error in errors))
+
+    def test_multi_profile_unknown_name_is_not_resolved(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "game-session-service", "ToggleFeatureFlag")
         route["accepted_token_profiles"] = ["control-ui", "unknown-profile"]
         route["accepted_token_profile_audiences"] = {
             "control-ui": "control-ui",
@@ -248,11 +348,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_route_without_caller_policies_reports_method_policy_once(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        route = next(
-            route
-            for route in document["routes"]
-            if route.get("route") == "ToggleFeatureFlag"
-        )
+        route = route_for(document, "game-session-service", "ToggleFeatureFlag")
         route["method_policy"] = "all_methods"
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
@@ -276,6 +372,13 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             self.assertEqual(["player", "moderator", "designer"], route["self_only_roles"])
             self.assertEqual("same_tenant_profile_for_tenantAdmin", route["target_subject_binding"])
             self.assertEqual("forbidden", route["platform_admin_override"])
+
+    def test_export_tenant_data_is_tenant_generation_bound(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(route for route in document["routes"] if route.get("route") == "ExportTenantData")
+        self.assertEqual("tenant_regular", route["classification"])
+        self.assertTrue(route["tenant_billing_authority_generation_applies"])
+        self.assertIn("tenant_generation", route["required_live_checks"])
 
     def test_cross_tenant_safe_routes_do_not_require_target_membership(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -399,7 +502,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_malformed_route_profiles_are_reported_once(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        route = next(route for route in document["routes"] if route.get("route") == "ToggleFeatureFlag")
+        route = route_for(document, "game-session-service", "ToggleFeatureFlag")
         route_index = document["routes"].index(route)
         route["accepted_token_profiles"] = "control-ui"
         with tempfile.TemporaryDirectory() as directory:
@@ -413,28 +516,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_multi_profile_route_with_audience_map_is_accepted(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        route = next(route for route in document["routes"] if route.get("route") == "ToggleFeatureFlag")
-        base_profile = next(
-            profile for profile in document["token_profiles"] if profile["profile"] == "control-ui"
-        )
-        second_profile = {
-            **base_profile,
-            "profile": "control-ui-secondary",
-            "audience": "control-ui-secondary",
-        }
-        document["token_profiles"].append(second_profile)
-        profile_names = [base_profile["profile"], second_profile["profile"]]
-        route["accepted_token_profiles"] = profile_names
-        route["accepted_token_profile_audiences"] = {
-            profile_name: next(
-                profile["audience"]
-                for profile in document["token_profiles"]
-                if profile["profile"] == profile_name
-            )
-            for profile_name in profile_names
-        }
-        route["token_type"] = base_profile["type"]
-        route["token_issuer"] = base_profile["issuer"]
+        route = configure_multi_profile_route(document)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
             path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
@@ -443,20 +525,8 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_multi_profile_route_reports_audience_map_error(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        route = next(route for route in document["routes"] if route.get("route") == "ToggleFeatureFlag")
-        base_profile = next(
-            profile for profile in document["token_profiles"] if profile["profile"] == "control-ui"
-        )
-        second_profile = {
-            **base_profile,
-            "profile": "control-ui-secondary",
-            "audience": "control-ui-secondary",
-        }
-        document["token_profiles"].append(second_profile)
-        route["accepted_token_profiles"] = ["control-ui", "control-ui-secondary"]
+        route = configure_multi_profile_route(document)
         route["accepted_token_profile_audiences"] = {"control-ui": "control-ui"}
-        route["token_type"] = base_profile["type"]
-        route["token_issuer"] = base_profile["issuer"]
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
             path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
@@ -547,36 +617,29 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors = self.validator.validate(path)
         self.assertTrue(any("must use account_authority_generation_applies" in error for error in errors))
 
+    def test_pending_deletion_generation_exception_has_bounded_negative_proof(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        exception = document["tenant_generation_policy"]["exception_allowlist"]["pending_deletion_scoped"]
+        self.assertFalse(exception["target_tenant_generation"])
+        self.assertIn("pending_deletion_state", exception["required_authority"])
+        self.assertTrue(exception["contract_justification"])
+        self.assertIn(
+            "pending_deletion_route_denied_after_target_tenant_generation_advance",
+            exception["negative_proof"],
+        )
+
+        exception.pop("contract_justification")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(any("bounded contract_justification" in error for error in errors))
+
     def test_multi_profile_route_requires_shared_type_and_issuer(self):
         for field in ("token_type", "token_issuer"):
             with self.subTest(field=field):
                 document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-                route = next(
-                    route for route in document["routes"] if route.get("route") == "ToggleFeatureFlag"
-                )
-                base_profile = next(
-                    profile
-                    for profile in document["token_profiles"]
-                    if profile["profile"] == "control-ui"
-                )
-                second_profile = {
-                    **base_profile,
-                    "profile": "control-ui-secondary",
-                    "audience": "control-ui-secondary",
-                }
-                document["token_profiles"].append(second_profile)
-                profile_names = [base_profile["profile"], second_profile["profile"]]
-                route["accepted_token_profiles"] = profile_names
-                route["accepted_token_profile_audiences"] = {
-                    profile_name: next(
-                        profile["audience"]
-                        for profile in document["token_profiles"]
-                        if profile["profile"] == profile_name
-                    )
-                    for profile_name in profile_names
-                }
-                route["token_type"] = base_profile["type"]
-                route["token_issuer"] = base_profile["issuer"]
+                route = configure_multi_profile_route(document)
                 route[field] = "mismatch"
                 with tempfile.TemporaryDirectory() as directory:
                     path = Path(directory) / "matrix.yaml"
@@ -592,6 +655,18 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                         for error in errors
                     )
                 )
+
+    def test_multi_profile_route_rejects_scalar_audience(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = configure_multi_profile_route(document)
+        route["token_audience"] = "control-ui"
+        route.pop("token_type")
+        route.pop("token_issuer")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(any("must not declare scalar token_audience" in error for error in errors))
 
     def test_caller_policy_shape_errors_are_not_duplicated(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -616,6 +691,27 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 in error
                 for error in errors
             )
+        )
+
+    def test_entitlement_route_cardinality_error_is_shared_once(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        routes = [
+            route
+            for route in document["routes"]
+            if not (
+                route.get("service") == "account-service"
+                and route.get("route") == "GetTenantEntitlementsForRuntime"
+            )
+        ]
+        errors = []
+        cardinality_errors = set()
+        self.validator.validate_entitlement_contract(
+            document, routes, errors, cardinality_errors
+        )
+        self.validator.validate_delegated_entitlements(routes, errors, cardinality_errors)
+        self.assertEqual(
+            ["matrix must contain exactly one account-service GetTenantEntitlementsForRuntime route"],
+            errors,
         )
 
     def test_caller_policy_method_policy_error_is_not_duplicated(self):
@@ -1027,6 +1123,23 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors = self.validator.validate(path)
         self.assertTrue(any("support.applies_to must be a mapping" in error for error in errors))
         self.assertTrue(any("one applies_to shape" in error for error in errors))
+
+    def test_role_assurance_scope_must_be_non_empty_and_declared(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        requirement = document["role_assurance"]["privileged_control_when_global_role"]["requirements"]["support"]
+        requirement["applies_to"]["route_classifications"] = []
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(any("must be a non-empty list of strings" in error for error in errors))
+
+        requirement["applies_to"]["route_classifications"] = ["not_a_classification"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            errors = self.validator.validate(path)
+        self.assertTrue(any("outside the classification vocabulary" in error for error in errors))
 
     def test_role_assurance_rejects_unexpected_role_keys(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

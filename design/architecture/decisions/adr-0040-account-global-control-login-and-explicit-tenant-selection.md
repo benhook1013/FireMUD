@@ -58,6 +58,12 @@ This is convenient for UI code, but makes navigation state an authority input an
 - Treat tenant selection as untrusted presentation state in first-party clients and preserve independent `player-bootstrap` issuance for gameplay.
 - Test multi-tab tenant switching without token replacement or authority leakage.
 
+## Required Documentation Alignment
+
+- [Authentication and authorization](../system-architecture-authentication.md)
+- [JWT and token contracts](../system-architecture-jwt-and-token-contracts.md)
+- [Authorization route matrix](../system-architecture-authz-route-matrix.md)
+
 ## Reversibility and Revisit Triggers
 
 Tenant-scoped delegated sessions could be added later for unusually sensitive operations without redefining ordinary login. Revisit if control-token size becomes material, an external identity provider changes session issuance, or measured cross-tenant control risk warrants short-lived step-up tokens for a narrow action class.

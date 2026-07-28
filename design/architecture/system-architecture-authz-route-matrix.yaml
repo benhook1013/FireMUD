@@ -31,6 +31,7 @@ token_profiles:
     audience: account-service
 auth_path_vocabulary:
   - control_ui_plus_current_role_and_role_appropriate_assurance
+  - control_ui_plus_current_tenant_role
   - control_ui_plus_recent_reauthentication_and_independent_totp
   - exact_mtls_workload
   - exact_mtls_workload_plus_caller_specific_context
@@ -78,6 +79,12 @@ tenant_generation_policy:
     cross_tenant_billing_safe:
       target_tenant_generation: false
       required_authority: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
+    pending_deletion_scoped:
+      target_tenant_generation: false
+      required_authority: [pending_deletion_state, pending_deletion_credential_registry]
+      contract_justification: Dedicated pending-deletion credentials are bound to the account and deletion workflow; tenant generation is not an authority input for these account-owned recovery actions.
+      negative_proof:
+        - pending_deletion_route_denied_after_target_tenant_generation_advance
   negative_proof:
     required:
       - non_allowlisted_route_denied_after_target_tenant_generation_advance
@@ -85,6 +92,7 @@ tenant_generation_policy:
       - support_safe_denied_without_live_support_or_platform_admin_and_global_scope
       - support_safe_denied_without_role_appropriate_assurance
       - billing_safe_denied_without_live_billing_admin_or_platform_admin_and_privileged_control
+      - pending_deletion_route_denied_after_target_tenant_generation_advance
       - new_route_class_does_not_inherit_exception
 entitlement_contract:
   owner: account-service
@@ -237,6 +245,17 @@ coverage_drift:
     target_ingress: logging-admin-service
     target_owner: account-service_or_gameplay_policy_owner
     note: Current ApplyModerationAction records policy input in Logging and Admin, but no current owner-side enforcement RPC is exposed.
+  - family: game-session-session-lifecycle-external-ingress
+    status: drift-found
+    current_routes: []
+    target_ingress: logging-admin-service
+    target_owner: game-session-service
+    owner_routes:
+      - POST /sessions
+      - POST /sessions/{sessionId}/stop
+      - POST /sessions/{sessionId}/restart
+      - POST /sessions/{sessionId}/refresh-roles
+    note: Logging and Admin has no complete current /sessions* external route family in its source-stable OpenAPI surface. The Game Session service-local hooks remain explicitly edge-denied and migrate to Logging and Admin; do not invent external routes or claim the family covered until the Logging and Admin contract exists.
   - family: commerce-payment-instrument
     status: drift-found
     current_routes: []
@@ -489,6 +508,8 @@ routes:
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
     end_user_token_required: false
+    canonical_external_ingress: logging-admin-service
+    direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
     delegated_subject: operator_authorization_reference
     operator_authorization_reference: required_and_redeemed_with_account
     required_live_checks: [current_operator_authorization, runtime_entitlements]
@@ -512,6 +533,8 @@ routes:
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
     end_user_token_required: false
+    canonical_external_ingress: logging-admin-service
+    direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
     delegated_subject: operator_authorization_reference
     operator_authorization_reference: required_and_redeemed_with_account
     required_live_checks: [current_operator_authorization, runtime_entitlements]
@@ -535,6 +558,8 @@ routes:
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
     end_user_token_required: false
+    canonical_external_ingress: logging-admin-service
+    direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
     delegated_subject: operator_authorization_reference
     operator_authorization_reference: required_and_redeemed_with_account
     required_live_checks: [current_operator_authorization, runtime_ownership]
@@ -547,7 +572,7 @@ routes:
     transport: grpc
     scope: tenant
     classification: internal_workload
-    auth_path: exact_mtls_workload
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
     accepted_token_profiles: []
     token_type: none
     token_issuer: none
@@ -558,9 +583,15 @@ routes:
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
     end_user_token_required: false
-    delegated_subject: none
-    required_live_checks: [current_session, current_account_roles]
-    mutation_contract: owner_atomic_idempotent_role_refresh
+    canonical_external_ingress: logging-admin-service
+    direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
+    delegated_subject: operator_authorization_reference
+    operator_authorization_reference: required_and_redeemed_with_account
+    required_live_checks: [current_operator_authorization, current_session, current_account_roles]
+    mutation_contract: owner_atomic_idempotent_role_refresh_with_durable_result
+    required_fields: [control_plane_request_id, actor, reason, session_id, mutation_digest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
     route: POST /sessions
     transport: http
@@ -578,7 +609,7 @@ routes:
     subject_binding: authenticated_operator
     canonical_external_ingress: logging-admin-service
     direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
-    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation, runtime_entitlements]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation, runtime_entitlements]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
@@ -604,7 +635,7 @@ routes:
     subject_binding: authenticated_operator
     canonical_external_ingress: logging-admin-service
     direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
-    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation, runtime_ownership]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation, runtime_ownership]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
@@ -629,7 +660,7 @@ routes:
     subject_binding: authenticated_operator
     canonical_external_ingress: logging-admin-service
     direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
-    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation, runtime_entitlements]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation, runtime_entitlements]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
@@ -654,11 +685,12 @@ routes:
     subject_binding: authenticated_operator
     canonical_external_ingress: logging-admin-service
     direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
-    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation, current_session]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation, current_session]
+    operator_authorization_reference: account_issued_bounded_reference
+    required_fields: [control_plane_request_id, actor_from_session, reason, session_id, mutation_digest]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: owner_atomic_idempotent_role_refresh
-    required_fields: [control_plane_request_id, actor_from_session, reason, session_id]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: account-service
@@ -685,6 +717,7 @@ routes:
     route: EnterPrivilegedControlWindow
     scope: account
     classification: account_scoped
+    route_status: target_not_currently_routable
     auth_path: control_ui_plus_recent_reauthentication_and_independent_totp
     subject_binding: caller_account_id
     accepted_token_profiles: [control-ui]
@@ -814,6 +847,8 @@ routes:
     http_route: GET /tenants/{tenantId}/profiles/{accountId}
     scope: tenant
     classification: tenant_regular
+    auth_path: control_ui_plus_current_tenant_role
+    method_policy: exact_declared_route
     tenant_billing_authority_generation_applies: true
     membership_authority_generation_applies: true
     subject_binding: caller_account_id_for_self_only_roles
@@ -830,6 +865,8 @@ routes:
     http_route: PUT /tenants/{tenantId}/profiles/{accountId}
     scope: tenant
     classification: tenant_regular
+    auth_path: control_ui_plus_current_tenant_role
+    method_policy: exact_declared_route
     tenant_billing_authority_generation_applies: true
     membership_authority_generation_applies: true
     subject_binding: caller_account_id_for_self_only_roles
@@ -1181,13 +1218,13 @@ routes:
     route: ExportTenantData
     http_route: GET /tenant-admin/tenants/{tenantId}/export
     scope: tenant
-    classification: billing_safe_tenant
+    classification: tenant_regular
     route_status: target_not_currently_routable
     subject_binding: tenant_path_only_no_account_subject
     accepted_token_profiles: [control-ui]
-    tenant_billing_authority_generation_applies: false
+    tenant_billing_authority_generation_applies: true
     membership_authority_generation_applies: true
-    required_live_checks: [issuer_generation, account_generation, membership_generation, membership]
+    required_live_checks: [issuer_generation, account_generation, tenant_generation, membership_generation, membership]
     response_profile: tenant_wide_tenant_owned_export
     response_contract: tenant_owned_records_with_minimum_stable_subject_references_only
     implementation_status:
@@ -1317,7 +1354,7 @@ routes:
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
-    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
@@ -1339,7 +1376,7 @@ routes:
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
-    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_moderation_record_idempotency
@@ -1361,7 +1398,7 @@ routes:
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
-    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation, runtime_ownership]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation, runtime_ownership]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
@@ -1383,7 +1420,7 @@ routes:
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
-    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation, runtime_ownership]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation, runtime_ownership]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
@@ -1405,7 +1442,7 @@ routes:
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
-    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_owner_idempotent_compare_and_set
@@ -1427,7 +1464,7 @@ routes:
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
-    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation, prepared_version_upgrade]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation, prepared_version_upgrade]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_owner_idempotent_compare_and_set
@@ -1449,7 +1486,7 @@ routes:
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
-    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_owner_idempotent_preparation

@@ -46,8 +46,8 @@ SAFE_RECOVERY_DISPOSITIONS = {
     "converged",
     "terminalized",
     "invalidated",
-    "fenced_disabled_backlog_retained",
 }
+NON_QUALIFYING_RECOVERY_DISPOSITIONS = {"fenced_disabled_backlog_retained"}
 
 # These are the policy results emitted by this executable. The two JWT policies
 # documented as target-state-only are deliberately not included until they are
@@ -297,7 +297,8 @@ def validate_safe_dispositions(value: Any, label: str) -> tuple[str, str]:
     if not isinstance(value, dict) or not value:
         return ("fail", f"Recovery compatibility baseline {label} must be a non-empty object")
     for participant, result in value.items():
-        if not isinstance(result, dict) or result.get("disposition") not in SAFE_RECOVERY_DISPOSITIONS:
+        disposition = result.get("disposition") if isinstance(result, dict) else None
+        if disposition in NON_QUALIFYING_RECOVERY_DISPOSITIONS or disposition not in SAFE_RECOVERY_DISPOSITIONS:
             return (
                 "fail",
                 f"Recovery compatibility baseline {label} has unsafe or missing disposition: {participant}",
@@ -315,6 +316,48 @@ def validate_erasure_overlay_reconciliation(
     label = "Recovery compatibility baseline erasureOverlayReconciliation"
     if not isinstance(value, dict):
         return ("fail", f"{label} must be an object")
+
+    overlay_boundaries = {}
+    for boundary_name in (
+        "artifactErasureHighWater",
+        "initialCatchupHighWater",
+        "restoreHighWater",
+    ):
+        boundary = value.get(boundary_name)
+        if not isinstance(boundary, dict):
+            return ("fail", f"{label} {boundary_name} must be an object")
+        sequence = boundary.get("sequence")
+        if not isinstance(sequence, int) or isinstance(sequence, bool):
+            return ("fail", f"{label} {boundary_name}.sequence must be an integer")
+        overlay_boundaries[boundary_name] = sequence
+
+    canonical_boundaries = {
+        "artifactErasureHighWater": artifact_high_water,
+        "initialCatchupHighWater": initial_catchup_high_water,
+        "restoreHighWater": restore_high_water,
+    }
+    canonical_sequences = {}
+    for boundary_name, boundary in canonical_boundaries.items():
+        if not isinstance(boundary, dict):
+            return ("fail", f"{label} canonical {boundary_name} must be an object")
+        sequence = boundary.get("sequence")
+        if not isinstance(sequence, int) or isinstance(sequence, bool):
+            return ("fail", f"{label} canonical {boundary_name}.sequence must be an integer")
+        canonical_sequences[boundary_name] = sequence
+
+    if not (
+        canonical_sequences["artifactErasureHighWater"]
+        <= canonical_sequences["initialCatchupHighWater"]
+        <= canonical_sequences["restoreHighWater"]
+    ):
+        return ("fail", f"{label} erasure high-water sequences must be ordered")
+    if not (
+        overlay_boundaries["artifactErasureHighWater"]
+        <= overlay_boundaries["initialCatchupHighWater"]
+        <= overlay_boundaries["restoreHighWater"]
+    ):
+        return ("fail", f"{label} erasure high-water sequences must be ordered")
+
     if value.get("stream") != stream:
         return ("fail", f"{label} stream must match the canonical erasure stream")
     if value.get("artifactErasureHighWater") != artifact_high_water:
@@ -326,9 +369,9 @@ def validate_erasure_overlay_reconciliation(
 
     sequence_verification = value.get("sequenceVerification")
     required_sequence_flags = ("contiguous", "complete", "gapFree", "duplicateFree")
-    artifact_sequence = artifact_high_water["sequence"]
-    initial_catchup_sequence = initial_catchup_high_water["sequence"]
-    restore_sequence = restore_high_water["sequence"]
+    artifact_sequence = canonical_sequences["artifactErasureHighWater"]
+    initial_catchup_sequence = canonical_sequences["initialCatchupHighWater"]
+    restore_sequence = canonical_sequences["restoreHighWater"]
     if (
         not isinstance(sequence_verification, dict)
         or sequence_verification.get("status") != "pass"
@@ -339,8 +382,8 @@ def validate_erasure_overlay_reconciliation(
     ):
         return (
             "fail",
-            f"{label} sequenceVerification must prove the ordered, contiguous, complete, "
-            "gap-free, duplicate-free initial catch-up interval",
+            f"{label} sequenceVerification must prove the canonical bounds and ordered, contiguous, "
+            "complete, gap-free, duplicate-free initial catch-up interval",
         )
 
     integrity_verification = value.get("integrityVerification")
@@ -521,7 +564,7 @@ def validate_recovery_baseline(
         or isinstance(restore_sequence, bool)
         or not artifact_sequence <= initial_catchup_sequence <= restore_sequence
     ):
-        return ("fail", "Recovery compatibility baseline erasure high-water sequence is invalid")
+        return ("fail", "Recovery compatibility baseline erasure high-water sequences must be ordered non-boolean integers")
     high_water_stream = artifact_high_water.get("stream")
     if (
         not isinstance(high_water_stream, str)
@@ -548,16 +591,12 @@ def validate_recovery_baseline(
     if overlay_status != "pass":
         return ("fail", overlay_message)
     backup_artifact_lineage = baseline.get("backupArtifactLineage")
-    pre_snapshot_journal_high_water = (
-        backup_artifact_lineage.get("preSnapshotJournalHighWater")
-        if isinstance(backup_artifact_lineage, dict)
-        else None
-    )
     if not isinstance(backup_artifact_lineage, dict):
         return (
             "fail",
             "Recovery compatibility baseline artifact lineage must be an object",
         )
+    pre_snapshot_journal_high_water = backup_artifact_lineage.get("preSnapshotJournalHighWater")
     if backup_artifact_lineage.get("artifactErasureHighWater") != artifact_high_water:
         return (
             "fail",
@@ -592,8 +631,7 @@ def validate_recovery_baseline(
     if pre_snapshot_sequence < artifact_sequence:
         return (
             "fail",
-            "Recovery compatibility baseline artifact lineage must include a valid "
-            "preSnapshotJournalHighWater.sequence must be at or above the snapshot-bound artifact high-water sequence",
+            "Recovery compatibility baseline preSnapshotJournalHighWater.sequence must be at or above artifactErasureHighWater",
         )
 
     coordination_evidence = baseline.get("coordinationRecoveryEvidence")

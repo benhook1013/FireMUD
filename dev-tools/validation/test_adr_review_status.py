@@ -164,7 +164,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 expect_failure(self,
-                    lambda: self.validator.validate(root),
+                    lambda root=root: self.validator.validate(root),
                     "terminal ADR status lacks a checked human-review queue entry",
                 )
 
@@ -208,7 +208,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 expect_failure(self,
-                    lambda: self.validator.validate(root),
+                    lambda root=root: self.validator.validate(root),
                     "status must be exactly",
                 )
 
@@ -264,7 +264,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 expect_failure(self,
-                    lambda: self.validator.validate(root),
+                    lambda root=root: self.validator.validate(root),
                     "pending proposal requires exact",
                 )
 
@@ -409,6 +409,20 @@ class AdrReviewStatusTests(unittest.TestCase):
             self.assertEqual(set(reviews), {12, 14})
             self.assertEqual(reviews[14][0].key, "TEST-COUPLED")
 
+    def test_checked_queue_rejects_mismatched_adr_link_provenance(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [x] `TEST-MISMATCH` — `revised` on 2026-07-27; "
+                "[ADR 0013](../../architecture/decisions/adr-0012-reviewed.md)",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.checked_reviews(queue_path(root)),
+                "malformed ADR provenance",
+            )
+
     def test_supersession_adr_links_do_not_assign_provenance(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
@@ -429,11 +443,10 @@ class AdrReviewStatusTests(unittest.TestCase):
         )
         for row in rows:
             with self.subTest(row=row), fixture_root() as fixture:
-                append_queue_row(Path(fixture), row)
+                root = Path(fixture)
+                append_queue_row(root, row)
                 expect_failure(self,
-                    lambda: self.validator.checked_reviews(
-                        queue_path(Path(fixture))
-                    ),
+                    lambda root=root: self.validator.checked_reviews(queue_path(root)),
                     "malformed checked review queue row",
                 )
 

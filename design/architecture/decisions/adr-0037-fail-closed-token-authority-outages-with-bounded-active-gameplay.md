@@ -42,7 +42,7 @@ The earlier design said control-plane and new admission fail closed but did not 
 
 ### Separate Coordination And Authority Leases
 
-`coordinationHealthLease` and the ADR 0030 authority-freshness lease are different authorities and different records:
+`coordinationHealthLease` and the [ADR 0030](./adr-0030-risk-based-active-session-revocation.md) authority-freshness lease are different authorities and different records:
 
 - The active Game Session coordination controller is the issuer of `coordinationHealthLease`, fenced by the current coordination generation, and issues it for one gameplay binding only after proving that the queues, locks, leases, session state, and tick coordination required by that binding are healthy. It contains the coordination generation, binding identity, issuer, issue time, absolute expiry, and monotonic lease fence. Game Session validates the authenticated issuer identity, generation, binding, and expiry; local process state, socket activity, and JWT validity cannot issue or renew it, and Account is never an issuer for this health lease.
 - Account issues and renews the ADR 0030 authority-freshness lease only after authoritative issued-token, account, tenant, membership, grant, and cutoff-checkpoint validation. It contains the applicable authority tuple, Account checkpoint, binding identity, issuer, absolute `authorityLeaseExpiresAt`, and its own monotonic fence. It proves prior positive token authority; it does not prove Redis coordination health.

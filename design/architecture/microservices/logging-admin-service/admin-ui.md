@@ -1,6 +1,6 @@
 # Role-Based Admin UI
 
-This document outlines the administration interface delivered as a lightweight React application. The `web-client` module provides the main player-facing UI while the admin interface is served separately by the Logging & Admin Service. Moderators and administrators interact with the service through this interface, which exchanges credentials with the Account Service. JWTs for backend calls remain server-side as described in [Authentication & Authorization](../../system-architecture-authentication.md), and permissions are enforced using the `globalRoles` claim. The `scopedRoles` claim is supported.
+This document outlines the administration interface delivered as a lightweight React application. The `web-client` module provides the main player-facing UI while the admin interface is served separately by the Logging & Admin Service. Moderators and administrators interact with the service through this interface using the exact `control-ui` identity issued by Account. Every protected write must be authorized from the current server-side role and role-appropriate assurance plus the Account-issued authorization reference for that operation; JWT `globalRoles` or `scopedRoles` claims alone are insufficient. The short-lived JWT may be held in frontend memory, but authorization and authorization-reference validation remain server-side in the receiving service as described in [Authentication & Authorization](../../system-architecture-authentication.md).
 
 ## Implementation Status
 

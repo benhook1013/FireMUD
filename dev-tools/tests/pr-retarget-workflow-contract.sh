@@ -537,10 +537,12 @@ require_contains "$smoke_path" 'pollIteration % pullRequestCheckInterval === 0'
 require_contains "$smoke_path" 'Stopping obsolete smoke gate for'
 require_ordered_sequence \
   "$smoke_path" \
-  'if (isObsoletePullRequest(currentPullRequest)) {' \
+  'if (await isCurrentPullRequestObsolete("Stopping obsolete smoke gate for")) {' \
   'return;' \
   'github.rest.actions.listWorkflowRuns,'
-require_branch_return "$smoke_path" 'if (isObsoletePullRequest(currentPullRequest)) {'
+require_branch_return \
+  "$smoke_path" \
+  'if (await isCurrentPullRequestObsolete("Stopping obsolete smoke gate for")) {'
 require_contains "$smoke_path" 'head_sha: headSha,'
 require_contains "$smoke_path" 'mode-required'
 require_contains "$smoke_path" 'Build Runtime Images secure-pr-artifact pr-'

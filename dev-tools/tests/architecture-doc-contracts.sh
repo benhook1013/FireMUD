@@ -169,6 +169,7 @@ for clause in [
         )
 
 canonical_public_resume_signature = "`resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`"
+canonical_public_resume_awaiting_signature = "`resume(operationId, expectedPhase=AWAITING_RESUME, maintenanceLockToken, evidenceRef)`"
 obsolete_public_resume_signature = "`resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)`"
 for path in (root / "design").rglob("*.md"):
     if obsolete_public_resume_signature in path.read_text(encoding="utf-8"):
@@ -193,17 +194,11 @@ for path in [
     require_contains(path, [canonical_public_resume_signature])
 require_contains(
     "design/operations/deployments/production/backup-readiness/README.md",
-    [
-        "`resume(operationId, expectedPhase=AWAITING_RESUME, "
-        "maintenanceLockToken, evidenceRef)`",
-    ],
+    [canonical_public_resume_awaiting_signature],
 )
 require_contains(
     "design/operations/deployments/production/traffic-open/README.md",
-    [
-        "`resume(operationId, expectedPhase=AWAITING_RESUME, "
-        "maintenanceLockToken, evidenceRef)`",
-    ],
+    [canonical_public_resume_awaiting_signature],
 )
 
 require_contains(

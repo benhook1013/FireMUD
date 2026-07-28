@@ -105,7 +105,17 @@ REQUIRED_TENANT_GENERATION_EXCEPTIONS = {
             "role_appropriate_assurance",
         },
     },
+    "pending_deletion_scoped": {
+        "target_tenant_generation": False,
+        "required_live_checks": {
+            "pending_deletion_state",
+            "pending_deletion_credential_registry",
+        },
+    },
 }
+PRIVILEGED_OPERATOR_ROLE_ASSURANCE = "privileged_control_when_global_role"
+CANONICAL_OPERATOR_INGRESS = "logging-admin-service"
+DIRECT_OWNER_ROUTE_POLICY = "deny_at_edge_and_migrate_to_logging_admin"
 
 
 def route_key(route: dict[str, Any]) -> str | None:
@@ -265,11 +275,28 @@ def validate_role_assurance(document: dict[str, Any], errors: list[str]) -> set[
             errors.append(f"{label}.applies_to must be a mapping")
             continue
         route_classifications = applies_to.get("route_classifications")
-        if not isinstance(route_classifications, list) or any(
-            not isinstance(item, str) for item in route_classifications
-        ):
+        if not isinstance(route_classifications, list) or not route_classifications:
+            errors.append(
+                f"{label}.applies_to.route_classifications must be a non-empty list of strings"
+            )
+            continue
+        if any(not isinstance(item, str) for item in route_classifications):
             errors.append(
                 f"{label}.applies_to.route_classifications must be a list of strings"
+            )
+            continue
+        allowed_classifications = {
+            item
+            for item in document.get("classifications", [])
+            if isinstance(item, str)
+        }
+        unknown_classifications = sorted(
+            set(route_classifications) - allowed_classifications
+        )
+        if unknown_classifications:
+            errors.append(
+                f"{label}.applies_to.route_classifications contains values outside "
+                f"the classification vocabulary: {unknown_classifications}"
             )
     return predicates
 
@@ -333,6 +360,11 @@ def validate_multi_profile_predicates(
     known_profiles = [token_profiles.get(profile_name) for profile_name in profiles]
     if not all(profile is not None for profile in known_profiles):
         return
+    if entry.get("token_audience") is not None:
+        errors.append(
+            f"{label} multi-profile routes must not declare scalar token_audience; "
+            "use accepted_token_profile_audiences"
+        )
     shared_type_issuer = {
         (profile.get("type"), profile.get("issuer"))
         for profile in known_profiles
@@ -345,7 +377,6 @@ def validate_multi_profile_predicates(
         errors.append(
             f"{label} multi-profile token predicates must match the shared token_type/token_issuer"
         )
-        return
 
 
 def validate_pending_deletion_generation(
@@ -432,6 +463,25 @@ def validate_conditional_operator_route(
         errors.append(
             f"{label} must bind global platformAdmin operations to target_tenant_generation"
         )
+    if route.get("role_assurance") == PRIVILEGED_OPERATOR_ROLE_ASSURANCE:
+        checks = set(
+            string_list(route.get("required_live_checks"), f"{label} required_live_checks", errors)
+        )
+        for required_check in ("current_global_role", "role_appropriate_assurance"):
+            if required_check not in checks:
+                errors.append(
+                    f"{label} privileged operator route must require live check "
+                    f"{required_check}"
+                )
+    if route_key_value in GAME_SESSION_OPERATOR_ROUTES:
+        if route.get("canonical_external_ingress") != CANONICAL_OPERATOR_INGRESS:
+            errors.append(
+                f"{label} must declare canonical_external_ingress {CANONICAL_OPERATOR_INGRESS}"
+            )
+        if route.get("direct_owner_route_policy") != DIRECT_OWNER_ROUTE_POLICY:
+            errors.append(
+                f"{label} must declare direct_owner_route_policy {DIRECT_OWNER_ROUTE_POLICY}"
+            )
 
 
 def validate_token_fields(
@@ -683,6 +733,21 @@ def validate_tenant_generation_allowlist(
                 f"tenant_generation_policy exception {classification} "
                 "has the wrong required authority checks"
             )
+        if classification == "pending_deletion_scoped":
+            justification = entry.get("contract_justification")
+            if not isinstance(justification, str) or not justification.strip():
+                errors.append(
+                    "tenant_generation_policy exception pending_deletion_scoped "
+                    "must declare a bounded contract_justification"
+                )
+            proof = entry.get("negative_proof")
+            if not isinstance(proof, list) or not proof or any(
+                not isinstance(item, str) or not item.strip() for item in proof
+            ):
+                errors.append(
+                    "tenant_generation_policy exception pending_deletion_scoped "
+                    "must declare non-empty negative_proof"
+                )
 
 
 def validate_tenant_generation_exception_routes(
@@ -753,7 +818,12 @@ def validate_tenant_generation_policy(
     validate_tenant_generation_exception_routes(routes, errors)
 
 
-def validate_entitlement_contract(document: dict[str, Any], routes: list[Any], errors: list[str]) -> None:
+def validate_entitlement_contract(
+    document: dict[str, Any],
+    routes: list[Any],
+    errors: list[str],
+    cardinality_errors: set[str] | None = None,
+) -> None:
     contract = document.get("entitlement_contract")
     if not isinstance(contract, dict):
         errors.append("entitlement_contract must be a mapping")
@@ -766,13 +836,15 @@ def validate_entitlement_contract(document: dict[str, Any], routes: list[Any], e
             errors.append("entitlement_contract.cross_tenant_inheritance must be forbidden")
         if contract.get("account_wide_fallback") != "forbidden":
             errors.append("entitlement_contract.account_wide_fallback must be forbidden")
-    routes_for_entitlements = matching_routes(routes, "account-service", "GetTenantEntitlementsForRuntime")
-    if len(routes_for_entitlements) != 1:
-        errors.append(
-            "matrix must contain exactly one account-service GetTenantEntitlementsForRuntime route"
-        )
+    route = resolve_unique_route(
+        routes,
+        "account-service",
+        "GetTenantEntitlementsForRuntime",
+        errors,
+        cardinality_errors,
+    )
+    if route is None:
         return
-    route = routes_for_entitlements[0]
     if route.get("entitlement_scope") != "account_owned_tenant_bound":
         errors.append("GetTenantEntitlementsForRuntime must declare account_owned_tenant_bound entitlement_scope")
     if route.get("cross_tenant_inheritance") != "forbidden":
@@ -822,6 +894,12 @@ def validate_profile_authority_routes(routes: list[Any], errors: list[str]) -> N
             continue
         route = matches[0]
         label = f"account-service {route_name}"
+        if route.get("auth_path") != "control_ui_plus_current_tenant_role":
+            errors.append(
+                f"{label} must declare auth_path control_ui_plus_current_tenant_role"
+            )
+        if route.get("method_policy") != "exact_declared_route":
+            errors.append(f"{label} must declare method_policy exact_declared_route")
         if route.get("tenant_billing_authority_generation_applies") is not True:
             errors.append(
                 f"{label} must apply tenant billing authority generation"
@@ -832,6 +910,49 @@ def validate_profile_authority_routes(routes: list[Any], errors: list[str]) -> N
         for required_check in ("membership", "membership_generation", "tenant_generation"):
             if required_check not in checks:
                 errors.append(f"{label} must require live check {required_check}")
+
+
+def validate_refresh_roles_routes(routes: list[Any], errors: list[str]) -> None:
+    grpc_route = resolve_unique_route(
+        routes, "game-session-service", "RefreshRoles", errors
+    )
+    if grpc_route is not None:
+        label = "game-session-service RefreshRoles"
+        if grpc_route.get("auth_path") != "exact_mtls_workload_plus_account_operator_authorization_reference":
+            errors.append(
+                f"{label} must use Account-redeemed operator authorization auth_path"
+            )
+        if grpc_route.get("operator_authorization_reference") != "required_and_redeemed_with_account":
+            errors.append(
+                f"{label} must require Account operator authorization redemption"
+            )
+        checks = set(route_live_checks(grpc_route, label, errors))
+        for required_check in (
+            "current_operator_authorization",
+            "current_session",
+            "current_account_roles",
+        ):
+            if required_check not in checks:
+                errors.append(f"{label} must require live check {required_check}")
+        raw_required_fields = grpc_route.get("required_fields", [])
+        required_fields = set(raw_required_fields) if isinstance(raw_required_fields, list) else set()
+        if "mutation_digest" not in required_fields:
+            errors.append(f"{label} must require mutation_digest for idempotency")
+        outcomes = grpc_route.get("canonical_errors", {})
+        if not isinstance(outcomes, dict) or "IDEMPOTENCY_CONFLICT" not in outcomes.get("any_of", []):
+            errors.append(f"{label} must declare IDEMPOTENCY_CONFLICT")
+
+    http_route = resolve_unique_route(
+        routes, "game-session-service", "POST /sessions/{sessionId}/refresh-roles", errors
+    )
+    if http_route is not None:
+        label = "game-session-service POST /sessions/{sessionId}/refresh-roles"
+        if http_route.get("operator_authorization_reference") != "account_issued_bounded_reference":
+            errors.append(f"{label} must require an Account-issued operator reference")
+        raw_required_fields = http_route.get("required_fields", [])
+        required_fields = set(raw_required_fields) if isinstance(raw_required_fields, list) else set()
+        if "mutation_digest" not in required_fields:
+            errors.append(f"{label} must require mutation_digest for idempotency")
 
 
 def validate_known_drift(value: Any, field: str, errors: list[str]) -> None:
@@ -866,6 +987,24 @@ def matching_routes(
         and route.get("service") == service
         and route.get("route") == route_name
     ]
+
+
+def resolve_unique_route(
+    routes: list[Any],
+    service: str,
+    route_name: str,
+    errors: list[str],
+    cardinality_errors: set[str] | None = None,
+) -> dict[str, Any] | None:
+    matches = matching_routes(routes, service, route_name)
+    if len(matches) != 1:
+        key = f"{service}|{route_name}"
+        if cardinality_errors is None or key not in cardinality_errors:
+            errors.append(f"matrix must contain exactly one {service} {route_name} route")
+            if cardinality_errors is not None:
+                cardinality_errors.add(key)
+        return None
+    return matches[0]
 
 
 def applicability_value(
@@ -1001,14 +1140,21 @@ def validate_join_routes(routes: list[Any], errors: list[str]) -> None:
             errors.append(f"{service} {name} must declare ADMISSION_POINTER_UNAVAILABLE")
 
 
-def validate_delegated_entitlements(routes: list[Any], errors: list[str]) -> None:
-    entitlement_routes = matching_routes(routes, "account-service", "GetTenantEntitlementsForRuntime")
-    if len(entitlement_routes) != 1:
-        errors.append(
-            "matrix must contain exactly one account-service GetTenantEntitlementsForRuntime route"
-        )
+def validate_delegated_entitlements(
+    routes: list[Any],
+    errors: list[str],
+    cardinality_errors: set[str] | None = None,
+) -> None:
+    entitlement_route = resolve_unique_route(
+        routes,
+        "account-service",
+        "GetTenantEntitlementsForRuntime",
+        errors,
+        cardinality_errors,
+    )
+    if entitlement_route is None:
         return
-    caller_policies = entitlement_routes[0].get("caller_policies")
+    caller_policies = entitlement_route.get("caller_policies")
     if not isinstance(caller_policies, list):
         errors.append(
             "GetTenantEntitlementsForRuntime caller_policies must be a list"
@@ -1126,15 +1272,17 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     validate_required_fields(routes, errors)
     validate_generation_applicability(routes, errors)
     validate_profile_authority_routes(routes, errors)
+    validate_refresh_roles_routes(routes, errors)
     validate_receiver_predicates(routes, token_profiles, errors)
     validate_role_assurance_references(routes, role_assurance_predicates, errors)
     validate_tenant_generation_policy(document, routes, errors)
-    validate_entitlement_contract(document, routes, errors)
+    cardinality_errors: set[str] = set()
+    validate_entitlement_contract(document, routes, errors, cardinality_errors)
 
     validate_ws_game_routes(routes, errors)
     validate_issue_connect_token(routes, errors)
     validate_join_routes(routes, errors)
-    validate_delegated_entitlements(routes, errors)
+    validate_delegated_entitlements(routes, errors, cardinality_errors)
 
     return errors, route_keys
 

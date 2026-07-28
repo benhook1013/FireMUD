@@ -1357,6 +1357,77 @@ invalid_baseline_cases = {
             ],
         }
     },
+    "overlay-type": {
+        "erasureOverlayReconciliation": ["not-an-object"],
+    },
+    "overlay-entry-type": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": ["not-an-object"],
+        }
+    },
+    "overlay-entry-bool-sequence": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                {
+                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+                    "sequence": True,
+                }
+            ],
+        }
+    },
+    "overlay-entry-non-int-sequence": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                {
+                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+                    "sequence": "12",
+                }
+            ],
+        }
+    },
+    "overlay-boundary-bool-sequence": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "artifactErasureHighWater": {"stream": "erasures", "sequence": True},
+        }
+    },
+    "overlay-boundary-non-int-sequence": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "restoreHighWater": {"stream": "erasures", "sequence": "12"},
+        }
+    },
+    "overlay-verification-bounds": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceVerification": {
+                **valid_baseline["erasureOverlayReconciliation"]["sequenceVerification"],
+                "inclusiveEnd": 12,
+            },
+        }
+    },
+    "overlay-integrity-failed": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "integrityVerification": {"status": "fail", "verified": False},
+        }
+    },
+    "overlay-bound-ordering": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "artifactErasureHighWater": {"stream": "erasures", "sequence": 12},
+            "initialCatchupHighWater": {"stream": "erasures", "sequence": 11},
+            "restoreHighWater": {"stream": "erasures", "sequence": 12},
+        }
+    },
+    "retained-backlog": {
+        "durableParticipantConvergence": {
+            "gameplay": {"disposition": "fenced_disabled_backlog_retained"},
+        }
+    },
 }
 expected_invalid_baseline_messages = {
     "controller": "controller lineage must be finalized",
@@ -1382,11 +1453,21 @@ expected_invalid_baseline_messages = {
     "overlay-duplicate": "contains duplicate sequence 12",
     "overlay-missing-entry": "missing=[12]",
     "overlay-dispositions-type": "sequenceDispositions must be a list",
-    "overlay-gap": "sequenceVerification must prove the ordered, contiguous, complete, gap-free, duplicate-free initial catch-up interval",
+    "overlay-gap": "sequenceVerification must prove the canonical bounds and ordered, contiguous, complete, gap-free, duplicate-free initial catch-up interval",
     "overlay-out-of-range": "sequenceDispositions[0] sequence is outside the final interval",
     "overlay-owner-missing": "sequenceDispositions[0] owner must be non-empty",
     "overlay-owner-blank": "sequenceDispositions[0] owner must be non-empty",
     "overlay-disposition": "has an invalid canonical disposition",
+    "overlay-type": "erasureOverlayReconciliation must be an object",
+    "overlay-entry-type": "sequenceDispositions[0] must be an object",
+    "overlay-entry-bool-sequence": "sequenceDispositions[0] sequence must be an integer",
+    "overlay-entry-non-int-sequence": "sequenceDispositions[0] sequence must be an integer",
+    "overlay-boundary-bool-sequence": "artifactErasureHighWater.sequence must be an integer",
+    "overlay-boundary-non-int-sequence": "restoreHighWater.sequence must be an integer",
+    "overlay-verification-bounds": "sequenceVerification must prove the canonical bounds",
+    "overlay-integrity-failed": "integrityVerification must be verified with status pass",
+    "overlay-bound-ordering": "erasure high-water sequences must be ordered",
+    "retained-backlog": "unsafe or missing disposition: gameplay",
 }
 for case_name, replacement in invalid_baseline_cases.items():
     invalid_baseline = copy.deepcopy(valid_baseline)

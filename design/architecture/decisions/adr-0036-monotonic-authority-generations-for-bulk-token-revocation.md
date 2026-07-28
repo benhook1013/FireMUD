@@ -110,6 +110,12 @@ Short expiry avoids revocation state but cannot meet immediate account-security,
 - Prove the closed route-class allowlist: tenant-generation advances deny every non-allowlisted route; `billing_safe_tenant` still requires issuer, account, membership generation, exact tenant binding, and live `tenantAdmin`; support-safe routes reject missing issuer/account/current global role and reject support's use of billing or data-bearing routes; billing-safe cross-tenant routes reject missing issuer/account/global billing role, wrong target scope, and missing `privileged_control`. Add negative tests proving a newly named class or route cannot inherit an allowlist entry.
 - Preserve the no-per-command gameplay-read boundary and prove the active-session 60-second reconciliation limit separately.
 
+## Required Documentation Alignment
+
+- [Authentication and authorization](../system-architecture-authentication.md)
+- [JWT and token contracts](../system-architecture-jwt-and-token-contracts.md)
+- [Redis architecture](../system-architecture-redis.md)
+
 ## Reversibility and Revisit Triggers
 
 The generation claims and Redis values are versioned integers and can be widened without changing public gameplay protocols. Revisit only if Account token authority moves to an external identity/session provider or a different ordered revocation primitive can provide the same scope-specific cutoff and proof with lower operational cost.

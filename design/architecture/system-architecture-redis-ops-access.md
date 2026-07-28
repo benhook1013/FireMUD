@@ -124,6 +124,8 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
 
 The high-level recovery operation internally owns durable epoch handling, Account authority-projection rebuild, ledger and command convergence, Redis clearing, metadata initialization, session invalidation or rebinding, post-reset verification, and the final atomic success release. Its operation record lives in a durable control store outside the target Redis deployment and records the scope inventory, current and expected phase, phase evidence, lock identity, and terminal status. Internal phases may expose APIs for orchestration, resumability, and focused proof, but they are not public operator verbs. After the selected workflow's recovery, projection, cleanup, and smoke proofs, the operation atomically records `ready_to_reopen` while retaining its lock and fence. Public `continueRecovery(... expectedPhase=ready_to_reopen ...)` advances that same operation to `AWAITING_RESUME`; public `resume` records `RESUME_AUTHORIZED`; only the internal final phase may then reopen traffic, release the lock, and record `SUCCEEDED`.
 
+The Account projection-rebuild phase explicitly includes every affected issued-token projection at `session:auth:token:<tokenHash>` in addition to issuer, account, tenant, and membership generation projections. Recovery must verify exact-token state before protected admission or representative-region smoke can proceed.
+
 The tool advertises and accepts only scope forms implemented and proved by the runtime. Unsupported region, tenant, or cluster scope must be rejected explicitly. A wider scope becomes supported only when its authoritative durable affected-region inventory, pause fencing, recovery ordering, audit output, and resume gate have end-to-end proof.
 
 - Required internal control-plane operations:
@@ -135,7 +137,7 @@ The tool advertises and accepts only scope forms implemented and proved by the r
   - `ConvergeCommandRecords(operationId, scope, maintenanceLockToken, oldRegionEpoch | oldRegionEpochMap)`
   - `InitializeRegionMeta(operationId, scope, maintenanceLockToken, regionEpoch | regionEpochMap, currentTickId, currentTickState, currentTickTerminalAtMs)`
   - `RebindRegionSessions(operationId, scope, maintenanceLockToken, regionEpoch | regionEpochMap)`
-  - `RebuildAccountAuthorityProjections(operationId, scope, maintenanceLockToken)`
+  - `RebuildAccountAuthorityAndIssuedTokenProjections(operationId, scope, maintenanceLockToken)`
   - `RunPostResetSmokeCheck(operationId, scope, maintenanceLockToken)`
 - The public CLI surface is the high-level `recover`, `status`, `continueRecovery`, `resume`, and audited `release-lock` contract defined above; the detailed operations listed here are internal phases rather than separate public verbs.
 - Scope grammar:

@@ -8,6 +8,8 @@ Membership-change event delivery and generation-aware session consumption are no
 
 Account Service is the sole writer of account authority-generation advances and their `session:auth:generation:account:<accountId>` projections. Game Session and other downstream services consume Account-owned generation events and projections; they must not advance the account generation or write that projection directly.
 
+For account security events, Account alone advances the durable authority generation, projects the committed generation, and emits the corresponding committed outbox event in the same Account transaction. Game Session consumes that event idempotently and revokes only its owned gameplay bindings through the bounded account, tenant, and uniqueness indexes plus their ordered repair/CAS protocol; it must not scan Redis, advance Account authority, or infer revocation from a missing projection.
+
 ## Multi-Client Behavior and Session Takeover
 
 Each gameplay identity can only be controlled by one session at a time, keyed by `{tenantId, gameInstanceId, characterId}`.
