@@ -46,7 +46,7 @@ The current JWT profile names are `control-ui`, `player-bootstrap`, the one-use 
   - Once the source-stable inventory gate above passes, fail if the same-run generated route inventory (OpenAPI/proto) differs from the YAML matrix for auth/session and billing/subscription domains. Before that gate passes, record the difference as drift without treating the incomplete inventory as an enforceable registry.
 - **Governance vocabulary**:
   - `route_status` is optional; when present, it must use one of the closed values declared by the YAML `route_status_vocabulary`: `current_openapi_operator_surface` for a currently exposed operator route or `target_not_currently_routable` for target-only coverage. An omitted value does not imply current or target routability.
-  - Authority-generation applicability uses the explicit `*_authority_generation_applies` fields, including `issuer_authority_generation_applies`, `account_authority_generation_applies`, `tenant_billing_authority_generation_applies`, and `membership_authority_generation_applies`. Pending-deletion routes must set account, tenant-billing, and membership authority-generation applicability explicitly to `false`; the non-registry-backed gameplay-connect exception explicitly sets issuer and account applicability to `false`.
+  - Authority-generation applicability uses the explicit `*_authority_generation_applies` fields, including `issuer_authority_generation_applies`, `account_authority_generation_applies`, `tenant_billing_authority_generation_applies`, and `membership_authority_generation_applies`. Pending-deletion routes must set issuer, account, tenant-billing, and membership authority-generation applicability explicitly to `false`; the non-registry-backed gameplay-connect exception explicitly sets issuer and account applicability to `false`.
 - **Default-deny behavior**:
   - The declared-entry `default_action: deny` is normative only for entries in the YAML; the canonical incomplete-inventory rule above governs routes absent from the validated inventory.
   - Runtime classification and CI/deployment inventory registration are separate gates; both follow the canonical incomplete-inventory rule above.
@@ -74,6 +74,8 @@ Critical-domain inventory artifacts (required):
 
 ## Classification Rules
 
+Strict issued-token-registry and applicable authority-generation middleware applies to protected control-plane operations, fresh admission, `PLAY`, reconnect, and resume. Routine commands within an already-admitted gameplay binding use the validated bound context and bounded reconciliation instead of repeating those middleware lookups; the binding remains valid only within its existing bounded lease and invalid or conflicting evidence still invalidates it.
+
 | Classification | Required issued-token state | Tenant/Membership authority generations applied? | Notes |
 | --- | --- | --- | --- |
 | `public` | none | No | No JWT required |
@@ -88,7 +90,7 @@ Critical-domain inventory artifacts (required):
 | `cross_tenant_billing_safe` | One matching token record for the exact profile declared by the route | No tenant or membership generation; Account-owned issuer/account authority and live global role still apply | Billing operations for global roles; the surviving authority is the current Account-owned global `billingAdmin` role and global token scope, plus the required `privileged_control` window for cross-tenant use |
 | `cross_tenant_data_bearing` | One matching token record for the exact profile declared by the route | Yes when operation targets tenant-scoped data | Platform-admin-only data-bearing operations |
 | `internal_workload` | Route-specific: explicitly `none` or one exact delegated profile | Route-specific | Internal-only RPCs require exact mTLS workload identity and a method caller allowlist, and both constraints must pass. Each entry declares whether it carries delegated subject authority; this class never inherits an end-user token requirement implicitly. |
-| `pending_deletion_scoped` | No JWT; one Account-issued `pending-deletion-access` credential | No account, tenant, or membership generation | Account-owned opaque credential validator and workflow registry only. The credential is bound to the account and pending-deletion workflow and authorizes status, cancellation, export, or necessary billing settlement; normal account, tenant, and gameplay authority is never a fallback. |
+| `pending_deletion_scoped` | No JWT; one Account-issued `pending-deletion-access` credential | No issuer, account, tenant, or membership generation | Account-owned opaque credential validator and workflow registry only. The credential is bound to the account and pending-deletion workflow and authorizes status, cancellation, export, or necessary billing settlement; normal issuer, account, tenant, and gameplay authority is never a fallback. |
 
 ### Route-Class Branches
 

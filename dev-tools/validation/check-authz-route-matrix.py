@@ -564,6 +564,7 @@ def validate_membership_policy(
     routes: list[Any],
     errors: list[str],
     live_checks_cache: LiveChecksCache | None = None,
+    cardinality_errors: set[str] | None = None,
 ) -> None:
     policy = document.get("tenant_membership_policy")
     if not isinstance(policy, dict):
@@ -613,7 +614,9 @@ def validate_membership_policy(
         )
 
     for service, route_name in sorted(expected_routes):
-        route = resolve_unique_route(routes, service, route_name, errors)
+        route = resolve_unique_route(
+            routes, service, route_name, errors, cardinality_errors
+        )
         if route is None:
             continue
         label = f"{service} {route_name}"
@@ -640,15 +643,22 @@ def validate_authority_evidence_policy(
     if not isinstance(fresh, dict):
         errors.append("authority_evidence_policy.fail_closed_fresh_evidence must be a mapping")
     else:
-        if set(fresh.get("applies_to", [])) != {
+        applies_to = string_list(
+            fresh.get("applies_to"),
+            "authority_evidence_policy.fail_closed_fresh_evidence.applies_to",
+            errors,
+        )
+        if set(applies_to) != {
             "admission",
+            "play",
             "renewal",
             "reconnect",
-            "tenant_scoped_control_plane_mutation",
+            "resume",
+            "protected_control_plane_mutation",
         }:
             errors.append(
-                "authority_evidence_policy fresh evidence must cover admission, renewal, "
-                "reconnect, and tenant-scoped control-plane mutations"
+                "authority_evidence_policy fresh evidence must cover admission, PLAY, "
+                "renewal, reconnect, resume, and protected control-plane mutations"
             )
         if fresh.get("unavailable_or_ambiguous") != "AUTH_UNAVAILABLE":
             errors.append(
@@ -666,14 +676,22 @@ def validate_authority_evidence_policy(
             errors.append(
                 "authority_evidence_policy bound gameplay must not reread pointer authority"
             )
-        if set(bound.get("required_fences", [])) != {"bound_game_instance", "runtime_fence"}:
+        required_fences = string_list(
+            bound.get("required_fences"),
+            "authority_evidence_policy.bound_ordinary_gameplay.required_fences",
+            errors,
+        )
+        if set(required_fences) != {"bound_game_instance", "runtime_fence"}:
             errors.append(
                 "authority_evidence_policy bound gameplay must require bound_game_instance and runtime_fence"
             )
 
 
 def validate_elevation_bootstrap(
-    document: dict[str, Any], routes: list[Any], errors: list[str]
+    document: dict[str, Any],
+    routes: list[Any],
+    errors: list[str],
+    cardinality_errors: set[str] | None = None,
 ) -> None:
     contracts = document.get("elevation_contracts")
     privileged = contracts.get("privileged_control") if isinstance(contracts, dict) else None
@@ -689,7 +707,13 @@ def validate_elevation_bootstrap(
         if bootstrap.get("requires_existing_window") is not False:
             errors.append("privileged_control bootstrap exemption must not require an existing window")
 
-    route = resolve_unique_route(routes, "account-service", "EnterPrivilegedControlWindow", errors)
+    route = resolve_unique_route(
+        routes,
+        "account-service",
+        "EnterPrivilegedControlWindow",
+        errors,
+        cardinality_errors,
+    )
     if route is not None and route.get("privileged_control") != "establishes_window":
         errors.append(
             "account-service EnterPrivilegedControlWindow must declare privileged_control=establishes_window"
@@ -1710,17 +1734,18 @@ def validate_join_routes(
     routes: list[Any],
     errors: list[str],
     live_checks_cache: LiveChecksCache | None = None,
+    cardinality_errors: set[str] | None = None,
 ) -> None:
     for service, name in sorted(JOIN_ROUTES_REQUIRING_POINTER_ERROR):
-        matches = matching_routes(routes, service, name)
-        if len(matches) != 1:
-            errors.append(f"matrix must contain exactly one {service} {name} route")
+        route = resolve_unique_route(
+            routes, service, name, errors, cardinality_errors
+        )
+        if route is None:
             continue
-        canonical_errors = matches[0].get("canonical_errors", {})
+        canonical_errors = route.get("canonical_errors", {})
         outcomes = canonical_errors.get("any_of", []) if isinstance(canonical_errors, dict) else []
         if "ADMISSION_POINTER_UNAVAILABLE" not in outcomes:
             errors.append(f"{service} {name} must declare ADMISSION_POINTER_UNAVAILABLE")
-        route = matches[0]
         checks = route_live_checks(
             route,
             f"{service} {name}",
@@ -1740,27 +1765,6 @@ def validate_join_routes(
             errors.append(
                 f"{service} {name} must disable membership_authority_generation_applies"
             )
-
-
-def validate_privileged_control_bootstrap(
-    routes: list[Any],
-    errors: list[str],
-    cardinality_errors: set[str] | None = None,
-) -> None:
-    route = resolve_unique_route(
-        routes,
-        "account-service",
-        "EnterPrivilegedControlWindow",
-        errors,
-        cardinality_errors,
-    )
-    if route is None:
-        return
-    if route.get("privileged_control") != "establishes_window":
-        errors.append(
-            "account-service EnterPrivilegedControlWindow must declare "
-            "privileged_control: establishes_window"
-        )
 
 
 def validate_delegated_entitlements(
@@ -1908,15 +1912,18 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     validate_receiver_predicates(routes, token_profiles, errors)
     validate_role_assurance_references(routes, role_assurance_predicates, errors)
     validate_tenant_generation_policy(document, routes, errors, live_checks_cache)
-    validate_membership_policy(document, routes, errors, live_checks_cache)
-    validate_elevation_bootstrap(document, routes, errors)
     cardinality_errors: set[str] = set()
+    validate_membership_policy(
+        document, routes, errors, live_checks_cache, cardinality_errors
+    )
+    validate_elevation_bootstrap(
+        document, routes, errors, cardinality_errors
+    )
     validate_entitlement_contract(document, routes, errors, cardinality_errors)
 
     validate_ws_game_routes(routes, errors, live_checks_cache, cardinality_errors)
     validate_issue_connect_token(routes, errors, live_checks_cache, cardinality_errors)
-    validate_join_routes(routes, errors, live_checks_cache)
-    validate_privileged_control_bootstrap(routes, errors, cardinality_errors)
+    validate_join_routes(routes, errors, live_checks_cache, cardinality_errors)
     validate_delegated_entitlements(
         routes, errors, live_checks_cache, cardinality_errors
     )

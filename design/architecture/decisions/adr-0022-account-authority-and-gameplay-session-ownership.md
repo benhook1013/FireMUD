@@ -50,6 +50,8 @@ Game Session owns:
 
 Game Session consumes authoritative Account membership, entitlement, and revocation state. It stores only the token identity and freshness metadata needed to validate a binding, such as token hash, issued-at time, and `membershipVersion`; it must not make a persisted raw backend JWT the durable session authority.
 
+The strict issued-token-registry and authority-generation middleware boundary applies to protected control-plane operations, fresh gameplay admission, `PLAY`, reconnect, and resume. Once a gameplay binding has been admitted, routine gameplay commands use the validated bound Game Session context, binding fences, and domain authorization; they do not repeat registry or authority-generation middleware lookups for every command. Bounded reconciliation still consumes subsequent revocation or authority changes, and any invalid or conflicting evidence invalidates the binding rather than being treated as routine continuity.
+
 ### Gateway Boundary
 
 Gateway is not a general identity, membership, entitlement, or gameplay-binding authority. It may perform only the authentication work owned by its bounded edge surfaces:
@@ -92,7 +94,7 @@ Relying only on short token expiry removes the registry, allowlists, and authori
 
 ## Implementation and Proof Obligations
 
-- Enforce strict token profile, audience, issued-token registry, allowlist, and applicable authority-generation checks in shared middleware rather than signature-only parsing.
+- Enforce strict token profile, audience, issued-token registry, allowlist, and applicable authority-generation checks in shared middleware for protected control-plane operations, fresh admission, `PLAY`, reconnect, and resume rather than signature-only parsing. Do not impose a fresh registry or authority-generation lookup on every routine command after a binding is admitted; use the validated bound context and bounded reconciliation instead.
 - Implement all Account-owned durable authority-generation writers/projections and prove logout-all, account, tenant, membership, and signing-key compromise revocation paths.
 - Replace persisted raw gameplay JWTs with token hash/issued-at identity and freshly rebound backend credentials.
 - Make `membershipVersion` and entitlement version/sequence monotonic state-change values rather than row identifiers.

@@ -81,8 +81,12 @@ tenant_generation_policy:
   no_target_tenant_classifications:
     pending_deletion_scoped:
       target_tenant_generation: false
+      issuer_authority_generation_applies: false
+      account_authority_generation_applies: false
+      tenant_billing_authority_generation_applies: false
+      membership_authority_generation_applies: false
       required_authority: [pending_deletion_state, pending_deletion_credential_registry]
-      contract_justification: Dedicated pending-deletion credentials are bound to the account and deletion workflow; tenant generation is not an authority input for these account-owned recovery actions.
+      contract_justification: Dedicated Account-issued opaque pending-deletion credentials are bound to the account and deletion workflow; issuer, account, tenant, and membership generations are not authority inputs for these account-owned recovery actions.
       negative_proof:
         required:
           - pending_deletion_route_denied_after_target_tenant_generation_advance
@@ -109,12 +113,15 @@ tenant_membership_policy:
       - [account-service, EnsurePublicProductionPlayerMembership]
 authority_evidence_policy:
   fail_closed_fresh_evidence:
-    applies_to: [admission, renewal, reconnect, tenant_scoped_control_plane_mutation]
+    applies_to: [admission, play, renewal, reconnect, resume, protected_control_plane_mutation]
     unavailable_or_ambiguous: AUTH_UNAVAILABLE
   bound_ordinary_gameplay:
     applies_to: already_bound_instance_runtime
+    strict_registry_middleware: false
+    authority_generation_reread: false
     pointer_authority_reread: false
     required_fences: [bound_game_instance, runtime_fence]
+    continuity: existing_validated_bounded_lease_only
 entitlement_contract:
   owner: account-service
   binding: exact_tenant_id
@@ -1089,6 +1096,7 @@ routes:
     accepted_token_profiles: []
     accepted_credentials: [pending-deletion-access]
     subject_binding: pending_deletion_credential_account_id
+    issuer_authority_generation_applies: false
     account_authority_generation_applies: false
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
@@ -1106,6 +1114,7 @@ routes:
     accepted_token_profiles: []
     accepted_credentials: [pending-deletion-access]
     subject_binding: pending_deletion_credential_account_id
+    issuer_authority_generation_applies: false
     account_authority_generation_applies: false
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
@@ -1123,6 +1132,7 @@ routes:
     accepted_token_profiles: []
     accepted_credentials: [pending-deletion-access]
     subject_binding: pending_deletion_credential_account_id
+    issuer_authority_generation_applies: false
     account_authority_generation_applies: false
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
@@ -1140,6 +1150,7 @@ routes:
     accepted_token_profiles: []
     accepted_credentials: [pending-deletion-access]
     subject_binding: pending_deletion_credential_account_id
+    issuer_authority_generation_applies: false
     account_authority_generation_applies: false
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false

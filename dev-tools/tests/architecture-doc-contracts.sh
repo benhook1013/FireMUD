@@ -294,8 +294,9 @@ require_contains(
     [
         "Any smoke tick exercised by the recovery or `continueRecovery` path is synthetic maintenance traffic only.",
         "must not authorize player ingress or real `tickId=0` admission",
-        "Through `AWAITING_RESUME`, `RESUME_AUTHORIZED`, and the internal release phase, the traffic fence remains active",
-        "Only successful internal release may clear the fence and reopen normal admission.",
+        "Through `AWAITING_RESUME`, `RESUME_AUTHORIZED`, `releasing`, and `PARTIAL_RELEASE_RECONCILING`, the traffic fence remains active",
+        "Only complete per-effect apply-and-readback verification may clear the fence and reopen normal admission.",
+        "persisted as `partial_release_reconciling`",
         "--maintenance-lock-token-file <permissioned-token-file>",
     ],
 )

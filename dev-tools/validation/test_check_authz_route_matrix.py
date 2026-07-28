@@ -518,12 +518,43 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         fresh = document["authority_evidence_policy"]["fail_closed_fresh_evidence"]
         self.assertEqual(
-            {"admission", "renewal", "reconnect", "tenant_scoped_control_plane_mutation"},
+            {
+                "admission",
+                "play",
+                "renewal",
+                "reconnect",
+                "resume",
+                "protected_control_plane_mutation",
+            },
             set(fresh["applies_to"]),
         )
         bound = document["authority_evidence_policy"]["bound_ordinary_gameplay"]
         self.assertFalse(bound["pointer_authority_reread"])
         self.assertEqual({"bound_game_instance", "runtime_fence"}, set(bound["required_fences"]))
+
+    def test_authority_evidence_vocabularies_reject_malformed_values(self):
+        cases = (
+            (
+                "fail_closed_fresh_evidence",
+                "applies_to",
+                "authority_evidence_policy.fail_closed_fresh_evidence.applies_to",
+            ),
+            (
+                "bound_ordinary_gameplay",
+                "required_fences",
+                "authority_evidence_policy.bound_ordinary_gameplay.required_fences",
+            ),
+        )
+        for section, field, error_field in cases:
+            for malformed in (None, 7, {"value": "invalid"}, ["valid", 7]):
+                with self.subTest(section=section, field=field, malformed=malformed):
+                    document = self.validator.yaml.safe_load(
+                        MATRIX.read_text(encoding="utf-8")
+                    )
+                    document["authority_evidence_policy"][section][field] = malformed
+                    errors = []
+                    self.validator.validate_authority_evidence_policy(document, errors)
+                    self.assertIn(f"{error_field} must be a list of strings", errors)
 
     def test_ws_game_defers_membership_to_downstream_admission(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -910,6 +941,55 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertEqual(
             ["matrix must contain exactly one account-service GetTenantEntitlementsForRuntime route"],
             errors,
+        )
+
+    def test_join_route_cardinality_error_is_shared_once(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        routes = [
+            route
+            for route in document["routes"]
+            if not (
+                route.get("service") == "game-session-service"
+                and route.get("route") == "JOIN"
+            )
+        ]
+        errors = []
+        cardinality_errors = set()
+        self.validator.validate_membership_policy(
+            document, routes, errors, cardinality_errors=cardinality_errors
+        )
+        self.validator.validate_join_routes(
+            routes, errors, cardinality_errors=cardinality_errors
+        )
+        self.assertEqual(
+            ["matrix must contain exactly one game-session-service JOIN route"],
+            [error for error in errors if "exactly one game-session-service JOIN" in error],
+        )
+
+    def test_privileged_control_cardinality_error_uses_shared_set(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        routes = [
+            route
+            for route in document["routes"]
+            if not (
+                route.get("service") == "account-service"
+                and route.get("route") == "EnterPrivilegedControlWindow"
+            )
+        ]
+        errors = []
+        cardinality_errors = set()
+        self.validator.validate_elevation_bootstrap(
+            document, routes, errors, cardinality_errors
+        )
+        self.validator.validate_elevation_bootstrap(
+            document, routes, errors, cardinality_errors
+        )
+        self.assertEqual(
+            1,
+            errors.count(
+                "matrix must contain exactly one account-service "
+                "EnterPrivilegedControlWindow route"
+            ),
         )
 
     def test_caller_policy_method_policy_error_is_not_duplicated(self):

@@ -36,7 +36,7 @@ Every subscription is identified solely by its immutable internal `subscriptionI
 
 Only the billing-owner subject may view or attach instruments in its account wallet. Possession of `tenantAdmin` alone does not permit a subject to inspect another account's instruments. A `billingAdmin` performing cross-tenant billing administration must use the dedicated audited route rather than inheriting wallet access through tenant authority.
 
-An instrument cannot be detached while any subscription references it. The owner must first select replacement instruments for every referencing subscription.
+An instrument cannot be detached while any active or potentially chargeable subscription references it. Terminal canceled-subscription cleanup retires that subscription's instrument binding as non-chargeable and releases its reservation; that retired binding no longer blocks detach. The owner must first select replacement instruments for every remaining chargeable reference.
 
 A billing-owner transfer is an explicit, audited handoff through the dedicated `cross_tenant_billing_safe` route, recording the actor, current owner, new owner, affected subscription, reason, effective boundary, and outcome. It moves future billing to the new owner’s Stripe customer and a payment instrument selected by that owner. Cards and other payment instruments are never transferred between account wallets.
 
@@ -83,7 +83,7 @@ Focused contract and integration proof must demonstrate that:
 - wallet reads and attachment are limited to the billing-owner subject, `tenantAdmin` alone is denied, and cross-tenant `billingAdmin` operations use the audited route;
 - `CreateSubscription` resolves the authoritative billing owner before creating its subscription row, commits one durable `pending` intent and outbox item with an explicit instrument/version reservation and stable provider-operation idempotency before provider creation, atomically revalidates ownership, version, and attachability at worker claim, defines the detach-vs-provision race, performs idempotent terminal cleanup for permanent failure, expiry, or abandonment by validating and advancing the instrument version while releasing the reservation in the cleanup commit, blocks detach and terminal responses until that cleanup commits, reconciles ambiguous provider outcomes without duplicate creation, records a confirmed provider subscription ID before activation or billing, and does not use provider or customer defaults;
 - updating one subscription does not change any other subscription;
-- detachment fails until every referencing subscription has a replacement binding;
+- detachment fails until every active or potentially chargeable referencing subscription has a replacement binding; terminal canceled-subscription cleanup retires its non-chargeable binding before it ceases to block detach;
 - billing-owner transfer is an explicit audited, row-version-guarded replacement state machine through the dedicated `cross_tenant_billing_safe` route, schedules old termination and new-owner billing at one paid-through boundary, reconciles partial or ambiguous provider outcomes without duplicate billing or entitlement, and never copies or transfers instruments;
 - FireMUD persists provider identifiers and safe display metadata only, never raw card data;
 - gameplay-issued checkout URLs use the ADR 0045 HTTPS handoff, expire, are single-use, and bind account, session, tenant, action, product, amount, currency, and `requestId`; and
