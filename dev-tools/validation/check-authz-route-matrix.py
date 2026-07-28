@@ -310,197 +310,258 @@ def validate_required_fields(routes: list[Any], errors: list[str]) -> None:
             )
 
 
+def validate_multi_profile_predicates(
+    entry: dict[str, Any],
+    label: str,
+    profiles: list[str],
+    token_profiles: dict[str, dict[str, str]],
+    errors: list[str],
+) -> None:
+    known_profiles = [token_profiles.get(profile_name) for profile_name in profiles]
+    if not all(profile is not None for profile in known_profiles):
+        errors.append(f"{label} must declare exactly one token profile per receiver policy")
+        return
+    shared_type_issuer = {
+        (profile.get("type"), profile.get("issuer"))
+        for profile in known_profiles
+        if profile is not None
+    }
+    token_predicates = (entry.get("token_type"), entry.get("token_issuer"))
+    if token_predicates == (None, None):
+        return
+    if len(shared_type_issuer) != 1 or token_predicates != next(iter(shared_type_issuer)):
+        errors.append(
+            f"{label} multi-profile token predicates must match the shared token_type/token_issuer"
+        )
+        return
+    audience_map = entry.get("accepted_token_profile_audiences")
+    if isinstance(audience_map, dict) and not (
+        set(audience_map) == set(profiles)
+        and all(
+            audience_map.get(profile_name) == token_profiles[profile_name]["audience"]
+            for profile_name in profiles
+        )
+    ):
+        errors.append(
+            f"{label} multi-profile receiver requires accepted_token_profile_audiences "
+            "matching every accepted profile"
+        )
+
+
+def validate_token_fields(
+    entry: dict[str, Any],
+    label: str,
+    profiles: list[str],
+    token_profiles: dict[str, dict[str, str]],
+    errors: list[str],
+    reported_unknown_profiles: set[str] | None = None,
+    allow_multi_profile: bool = False,
+) -> None:
+    token_predicates = (
+        entry.get("token_type"),
+        entry.get("token_issuer"),
+        entry.get("token_audience"),
+    )
+    if not profiles:
+        if token_predicates != ("none", "none", "none"):
+            errors.append(
+                f"{label} must declare token_type/token_issuer/token_audience as none"
+            )
+        return
+    if len(profiles) != 1:
+        if allow_multi_profile and len(profiles) > 1:
+            validate_multi_profile_predicates(
+                entry, label, profiles, token_profiles, errors
+            )
+            return
+        errors.append(f"{label} must declare exactly one token profile per receiver policy")
+        return
+    profile = token_profiles.get(profiles[0])
+    if profile is None:
+        if reported_unknown_profiles is None or profiles[0] not in reported_unknown_profiles:
+            errors.append(f"{label} uses unknown token profiles: {[profiles[0]]}")
+        return
+    expected = (profile.get("type"), profile.get("issuer"), profile.get("audience"))
+    if token_predicates != expected:
+        errors.append(
+            f"{label} token predicates must exactly match profile {profiles[0]!r}"
+        )
+
+
+def validate_route_profile_declaration(
+    route: dict[str, Any],
+    index: int,
+    token_profiles: dict[str, dict[str, str]],
+    errors: list[str],
+) -> tuple[Any, list[str], list[str]]:
+    profiles_value = route.get("accepted_token_profiles")
+    if profiles_value is None:
+        return (None, [], [])
+    label = f"matrix.routes[{index}]"
+    profiles = string_list(
+        profiles_value, f"{label} accepted_token_profiles", errors
+    )
+    unknown_profiles = sorted(set(profiles) - set(token_profiles))
+    if unknown_profiles:
+        errors.append(f"{label} uses unknown token profiles: {unknown_profiles}")
+    audience_map = route.get("accepted_token_profile_audiences")
+    if len(profiles) > 1 and not isinstance(audience_map, dict):
+        errors.append(
+            f"{label} multi-profile receiver requires accepted_token_profile_audiences"
+        )
+    if isinstance(audience_map, dict):
+        if set(audience_map) != set(profiles):
+            errors.append(
+                f"{label} accepted token audience keys must equal accepted profiles"
+            )
+        for profile_name in profiles:
+            expected_audience = token_profiles.get(profile_name, {}).get("audience")
+            if audience_map.get(profile_name) != expected_audience:
+                errors.append(
+                    f"{label} audience for {profile_name!r} must match token_profiles"
+                )
+    return (profiles_value, profiles, unknown_profiles)
+
+
+def validate_caller_policies(
+    caller_policies: Any,
+    label: str,
+    token_profiles: dict[str, dict[str, str]],
+    errors: list[str],
+) -> None:
+    if not isinstance(caller_policies, list) or not caller_policies:
+        errors.append(f"{label} caller_policies must be a non-empty list")
+        return
+    for policy_index, policy in enumerate(caller_policies):
+        policy_label = f"{label} caller_policies[{policy_index}]"
+        if not isinstance(policy, dict):
+            errors.append(f"{policy_label} must be a mapping")
+            continue
+        caller = policy.get("caller")
+        if not isinstance(caller, str) or not caller.strip():
+            errors.append(f"{policy_label}.caller must be a non-empty string")
+        mtls_identity = policy.get("mtls_identity")
+        if (
+            not isinstance(mtls_identity, str)
+            or not mtls_identity.startswith("spiffe://")
+            or "/sa/" not in mtls_identity
+        ):
+            errors.append(
+                f"{policy_label}.mtls_identity must be a concrete spiffe:// identity"
+            )
+        if policy.get("method_policy") != "exact_declared_route":
+            errors.append(f"{policy_label} must declare method_policy exact_declared_route")
+        policy_profiles_value = policy.get("accepted_token_profiles")
+        policy_profiles = string_list(
+            policy_profiles_value,
+            f"{policy_label} accepted_token_profiles",
+            errors,
+        )
+        if isinstance(policy_profiles_value, list) and all(
+            isinstance(profile_name, str) for profile_name in policy_profiles_value
+        ):
+            validate_token_fields(
+                policy, policy_label, policy_profiles, token_profiles, errors
+            )
+
+
+def validate_internal_route_callers(
+    route: dict[str, Any],
+    label: str,
+    profiles_value: Any,
+    profiles: list[str],
+    unknown_profiles: list[str],
+    token_profiles: dict[str, dict[str, str]],
+    errors: list[str],
+) -> None:
+    allowed_callers = route.get("allowed_callers")
+    mtls_callers = route.get("mtls_callers")
+    for field, value in (
+        ("allowed_callers", allowed_callers),
+        ("mtls_callers", mtls_callers),
+    ):
+        values = value.get("any_of") if isinstance(value, dict) else None
+        if not isinstance(values, list) or not values or any(
+            not isinstance(item, str) or not item.strip() for item in values
+        ):
+            errors.append(f"{label} {field}.any_of must be a non-empty list of strings")
+    if not isinstance(mtls_callers, dict) or any(
+        not isinstance(item, str)
+        or not item.startswith("spiffe://")
+        or "/sa/" not in item
+        for item in mtls_callers.get("any_of", [])
+    ):
+        errors.append(
+            f"{label} mtls_callers.any_of must contain concrete spiffe:// identities"
+        )
+    if route.get("method_policy") != "exact_declared_route":
+        errors.append(f"{label} must declare method_policy exact_declared_route")
+    if profiles_value is None or (
+        isinstance(profiles_value, list)
+        and all(isinstance(profile_name, str) for profile_name in profiles_value)
+    ):
+        validate_token_fields(
+            route,
+            label,
+            profiles,
+            token_profiles,
+            errors,
+            set(unknown_profiles),
+            allow_multi_profile=True,
+        )
+
+
 def validate_receiver_predicates(
     routes: list[Any], token_profiles: dict[str, dict[str, str]], errors: list[str]
 ) -> None:
-    def validate_multi_profile_predicates(
-        entry: dict[str, Any], label: str, profiles: list[str]
-    ) -> None:
-        known_profiles = [token_profiles.get(profile_name) for profile_name in profiles]
-        if not all(profile is not None for profile in known_profiles):
-            errors.append(f"{label} must declare exactly one token profile per receiver policy")
-            return
-        shared_type_issuer = {
-            (profile.get("type"), profile.get("issuer"))
-            for profile in known_profiles
-        }
-        token_predicates = (entry.get("token_type"), entry.get("token_issuer"))
-        if token_predicates == (None, None):
-            return
-        if len(shared_type_issuer) != 1 or token_predicates != next(iter(shared_type_issuer)):
-            errors.append(
-                f"{label} multi-profile token predicates must match the shared token_type/token_issuer"
-            )
-            return
-        audience_map = entry.get("accepted_token_profile_audiences")
-        if isinstance(audience_map, dict) and not (
-            set(audience_map) == set(profiles)
-            and all(
-                audience_map.get(profile_name) == token_profiles[profile_name]["audience"]
-                for profile_name in profiles
-            )
-        ):
-            errors.append(
-                f"{label} multi-profile receiver requires accepted_token_profile_audiences "
-                "matching every accepted profile"
-            )
-
-    def validate_token_fields(
-        entry: dict[str, Any],
-        label: str,
-        profiles: list[str],
-        reported_unknown_profiles: set[str] | None = None,
-        allow_multi_profile: bool = False,
-    ) -> None:
-        token_type = entry.get("token_type")
-        token_issuer = entry.get("token_issuer")
-        token_audience = entry.get("token_audience")
-        if not profiles:
-            if (token_type, token_issuer, token_audience) != ("none", "none", "none"):
-                errors.append(
-                    f"{label} must declare token_type/token_issuer/token_audience as none"
-                )
-            return
-        if len(profiles) != 1:
-            if allow_multi_profile and len(profiles) > 1:
-                known_profiles = [token_profiles.get(profile_name) for profile_name in profiles]
-                if all(profile is not None for profile in known_profiles):
-                    validate_multi_profile_predicates(entry, label, profiles)
-                else:
-                    errors.append(
-                        f"{label} must declare exactly one token profile per receiver policy"
-                    )
-                return
-            errors.append(f"{label} must declare exactly one token profile per receiver policy")
-            return
-        profile = token_profiles.get(profiles[0])
-        if profile is None:
-            if reported_unknown_profiles is None or profiles[0] not in reported_unknown_profiles:
-                errors.append(
-                    f"{label} uses unknown token profiles: {[profiles[0]]}"
-                )
-            return
-        expected = (profile.get("type"), profile.get("issuer"), profile.get("audience"))
-        if (token_type, token_issuer, token_audience) != expected:
-            errors.append(
-                f"{label} token predicates must exactly match profile {profiles[0]!r}"
-            )
-
     for index, route in enumerate(routes):
         if not isinstance(route, dict):
             continue
-        profiles_value = route.get("accepted_token_profiles")
-        profiles: list[str] = []
-        unknown_profiles: list[str] = []
-        if profiles_value is not None:
-            profiles = string_list(profiles_value, f"matrix.routes[{index}] accepted_token_profiles", errors)
-            unknown_profiles = sorted(set(profiles) - set(token_profiles))
-            if unknown_profiles:
-                errors.append(
-                    f"matrix.routes[{index}] uses unknown token profiles: {unknown_profiles}"
-                )
-            audience_map = route.get("accepted_token_profile_audiences")
-            if len(profiles) > 1 and not isinstance(audience_map, dict):
-                errors.append(
-                    f"matrix.routes[{index}] multi-profile receiver requires accepted_token_profile_audiences"
-                )
-            if isinstance(audience_map, dict):
-                if set(audience_map) != set(profiles):
-                    errors.append(
-                        f"matrix.routes[{index}] accepted token audience keys must equal accepted profiles"
-                    )
-                for profile_name in profiles:
-                    expected_audience = token_profiles.get(profile_name, {}).get("audience")
-                    if audience_map.get(profile_name) != expected_audience:
-                        errors.append(
-                            f"matrix.routes[{index}] audience for {profile_name!r} must match token_profiles"
-                        )
-
+        profiles_value, profiles, unknown_profiles = validate_route_profile_declaration(
+            route, index, token_profiles, errors
+        )
         if route.get("classification") != "internal_workload":
-            if len(profiles) > 1 and all(isinstance(profile_name, str) for profile_name in profiles):
+            if len(profiles) > 1:
                 validate_token_fields(
                     route,
                     f"matrix.routes[{index}]",
                     profiles,
+                    token_profiles,
+                    errors,
                     set(unknown_profiles),
                     allow_multi_profile=True,
                 )
             continue
-
         label = f"{route.get('service')} {route.get('route')}"
         caller_policies = route.get("caller_policies")
         if caller_policies is not None:
-            if not isinstance(caller_policies, list) or not caller_policies:
-                errors.append(f"{label} caller_policies must be a non-empty list")
-                continue
-            for policy_index, policy in enumerate(caller_policies):
-                policy_label = f"{label} caller_policies[{policy_index}]"
-                if not isinstance(policy, dict):
-                    errors.append(f"{policy_label} must be a mapping")
-                    continue
-                if not isinstance(policy.get("caller"), str) or not policy["caller"].strip():
-                    errors.append(f"{policy_label}.caller must be a non-empty string")
-                if (
-                    not isinstance(policy.get("mtls_identity"), str)
-                    or not policy["mtls_identity"].startswith("spiffe://")
-                    or "/sa/" not in policy["mtls_identity"]
-                ):
-                    errors.append(f"{policy_label}.mtls_identity must be a concrete spiffe:// identity")
-                if policy.get("method_policy") != "exact_declared_route":
-                    errors.append(f"{policy_label} must declare method_policy exact_declared_route")
-                policy_profiles = string_list(
-                    policy.get("accepted_token_profiles"),
-                    f"{policy_label} accepted_token_profiles",
-                    errors,
-                )
-                if isinstance(policy.get("accepted_token_profiles"), list) and all(
-                    isinstance(profile_name, str)
-                    for profile_name in policy["accepted_token_profiles"]
-                ):
-                    validate_token_fields(policy, policy_label, policy_profiles)
-            continue
-
-        allowed_callers = route.get("allowed_callers")
-        mtls_callers = route.get("mtls_callers")
-        for field, value in (("allowed_callers", allowed_callers), ("mtls_callers", mtls_callers)):
-            values = value.get("any_of") if isinstance(value, dict) else None
-            if not isinstance(values, list) or not values or any(
-                not isinstance(item, str) or not item.strip() for item in values
-            ):
-                errors.append(f"{label} {field}.any_of must be a non-empty list of strings")
-        if not isinstance(mtls_callers, dict) or any(
-            not isinstance(item, str)
-            or not item.startswith("spiffe://")
-            or "/sa/" not in item
-            for item in mtls_callers.get("any_of", [])
-        ):
-            errors.append(f"{label} mtls_callers.any_of must contain concrete spiffe:// identities")
-        if route.get("method_policy") != "exact_declared_route":
-            errors.append(f"{label} must declare method_policy exact_declared_route")
-        if profiles_value is None or (
-            isinstance(profiles_value, list)
-            and all(isinstance(profile_name, str) for profile_name in profiles_value)
-        ):
-            validate_token_fields(
-                route,
-                label,
-                profiles,
-                set(unknown_profiles),
-                allow_multi_profile=True,
+            validate_caller_policies(
+                caller_policies, label, token_profiles, errors
             )
+            continue
+        validate_internal_route_callers(
+            route,
+            label,
+            profiles_value,
+            profiles,
+            unknown_profiles,
+            token_profiles,
+            errors,
+        )
 
 
-def validate_tenant_generation_policy(document: dict[str, Any], routes: list[Any], errors: list[str]) -> None:
-    policy = document.get("tenant_generation_policy")
-    if not isinstance(policy, dict) or policy.get("applies_by_default") is not True:
-        errors.append("tenant_generation_policy must enable applies_by_default")
-        return
+def validate_tenant_generation_allowlist(
+    policy: dict[str, Any], errors: list[str]
+) -> None:
     allowlist = policy.get("exception_allowlist")
     if not isinstance(allowlist, dict):
         errors.append("tenant_generation_policy.exception_allowlist must be a mapping")
         return
     if set(allowlist) != set(REQUIRED_TENANT_GENERATION_EXCEPTIONS):
-        errors.append("tenant_generation_policy.exception_allowlist must be exactly the closed route-class allowlist")
+        errors.append(
+            "tenant_generation_policy.exception_allowlist must be exactly "
+            "the closed route-class allowlist"
+        )
     for classification, expected in REQUIRED_TENANT_GENERATION_EXCEPTIONS.items():
         entry = allowlist.get(classification)
         if not isinstance(entry, dict):
@@ -510,15 +571,28 @@ def validate_tenant_generation_policy(document: dict[str, Any], routes: list[Any
             )
             continue
         if entry.get("target_tenant_generation") is not expected["target_tenant_generation"]:
-            errors.append(f"tenant_generation_policy exception {classification} has the wrong target generation setting")
-        required_checks = set(string_list(
-            entry.get("required_authority"),
-            f"tenant_generation_policy.exception_allowlist.{classification}.required_authority",
-            errors,
-        ))
+            errors.append(
+                f"tenant_generation_policy exception {classification} "
+                "has the wrong target generation setting"
+            )
+        required_checks = set(
+            string_list(
+                entry.get("required_authority"),
+                "tenant_generation_policy.exception_allowlist."
+                f"{classification}.required_authority",
+                errors,
+            )
+        )
         if required_checks != expected["required_live_checks"]:
-            errors.append(f"tenant_generation_policy exception {classification} has the wrong required authority checks")
+            errors.append(
+                f"tenant_generation_policy exception {classification} "
+                "has the wrong required authority checks"
+            )
 
+
+def validate_tenant_generation_exception_routes(
+    routes: list[Any], errors: list[str]
+) -> None:
     for route in routes:
         if not isinstance(route, dict):
             continue
@@ -530,22 +604,58 @@ def validate_tenant_generation_policy(document: dict[str, Any], routes: list[Any
             continue
         label = f"{route.get('service')} {route.get('route')}"
         if route.get("tenant_billing_authority_generation_applies") is not False:
-            errors.append(f"{label} must explicitly disable target tenant generation for {classification}")
-        if classification == "billing_safe_tenant" and route.get("membership_authority_generation_applies") is not True:
-            errors.append(f"{label} must require membership generation for {classification}")
-        if classification != "billing_safe_tenant" and route.get("membership_authority_generation_applies") is not False:
-            errors.append(f"{label} must explicitly disable membership generation for {classification}")
-        checks = set(string_list(route.get("required_live_checks"), f"{label} required_live_checks", errors))
+            errors.append(
+                f"{label} must explicitly disable target tenant generation "
+                f"for {classification}"
+            )
+        membership_generation = route.get(
+            "membership_authority_generation_applies"
+        )
+        if classification == "billing_safe_tenant":
+            if membership_generation is not True:
+                errors.append(
+                    f"{label} must require membership generation for {classification}"
+                )
+        elif membership_generation is not False:
+            errors.append(
+                f"{label} must explicitly disable membership generation "
+                f"for {classification}"
+            )
+        checks = set(
+            string_list(
+                route.get("required_live_checks"),
+                f"{label} required_live_checks",
+                errors,
+            )
+        )
         missing = sorted(expected["required_live_checks"] - checks)
         if missing:
             errors.append(f"{label} is missing route-class authority checks: {missing}")
-        if classification in {"cross_tenant_support_safe", "cross_tenant_billing_safe"}:
-            target_membership_checks = checks & {"membership", "membership_generation", "tenant_generation"}
-            if target_membership_checks:
+        if classification in {
+            "cross_tenant_support_safe",
+            "cross_tenant_billing_safe",
+        }:
+            target_checks = checks & {
+                "membership",
+                "membership_generation",
+                "tenant_generation",
+            }
+            if target_checks:
                 errors.append(
-                    f"{label} must not require target membership or tenant generation checks "
-                    f"for {classification}: {sorted(target_membership_checks)}"
+                    f"{label} must not require target membership or tenant "
+                    f"generation checks for {classification}: {sorted(target_checks)}"
                 )
+
+
+def validate_tenant_generation_policy(
+    document: dict[str, Any], routes: list[Any], errors: list[str]
+) -> None:
+    policy = document.get("tenant_generation_policy")
+    if not isinstance(policy, dict) or policy.get("applies_by_default") is not True:
+        errors.append("tenant_generation_policy must enable applies_by_default")
+        return
+    validate_tenant_generation_allowlist(policy, errors)
+    validate_tenant_generation_exception_routes(routes, errors)
 
 
 def validate_entitlement_contract(document: dict[str, Any], routes: list[Any], errors: list[str]) -> None:
