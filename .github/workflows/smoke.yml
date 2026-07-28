@@ -409,6 +409,9 @@ jobs:
                     await new Promise((resolve) => setTimeout(resolve, sleepMs));
                     continue;
                   }
+                  if (await isCurrentPullRequestObsolete("Stopping obsolete stale-snapshot smoke gate for")) {
+                    return;
+                  }
                   core.setFailed(
                     `Runtime images run ${matching.id} did not expose a terminal PR Full-Stack Smoke job after ` +
                     `${maxCompletedJobSnapshotRetries} retries: ` +

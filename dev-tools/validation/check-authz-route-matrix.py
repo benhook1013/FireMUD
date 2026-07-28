@@ -730,6 +730,14 @@ def validate_tenant_generation_allowlist(
                 f"tenant_generation_policy exception {classification} "
                 "has the wrong required authority checks"
             )
+        if classification in (
+            "cross_tenant_support_safe",
+            "cross_tenant_billing_safe",
+        ) and entry.get("role_assurance_policy") != PRIVILEGED_OPERATOR_ROLE_ASSURANCE:
+            errors.append(
+                f"tenant_generation_policy exception {classification} "
+                f"must reference {PRIVILEGED_OPERATOR_ROLE_ASSURANCE}"
+            )
         if classification == "pending_deletion_scoped":
             justification = entry.get("contract_justification")
             if not isinstance(justification, str) or not justification.strip():
@@ -762,7 +770,7 @@ def validate_tenant_generation_exception_routes(
         label = f"{route.get('service')} {route.get('route')}"
         if route.get("tenant_billing_authority_generation_applies") is not False:
             errors.append(
-                f"{label} must explicitly disable target tenant generation "
+                f"{label} must explicitly disable tenant_billing_authority_generation_applies "
                 f"for {classification}"
             )
         membership_generation = route.get(
@@ -927,8 +935,9 @@ def validate_refresh_roles_routes(routes: list[Any], errors: list[str]) -> None:
         ):
             if required_check not in checks:
                 errors.append(f"{label} must require live check {required_check}")
-        raw_required_fields = grpc_route.get("required_fields", [])
-        required_fields = set(raw_required_fields) if isinstance(raw_required_fields, list) else set()
+        required_fields = set(
+            string_list(grpc_route.get("required_fields"), f"{label} required_fields", errors)
+        )
         if "mutation_digest" not in required_fields:
             errors.append(f"{label} must require mutation_digest for idempotency")
         outcomes = grpc_route.get("canonical_errors", {})
@@ -942,8 +951,9 @@ def validate_refresh_roles_routes(routes: list[Any], errors: list[str]) -> None:
         label = "game-session-service POST /sessions/{sessionId}/refresh-roles"
         if http_route.get("operator_authorization_reference") != "account_issued_bounded_reference":
             errors.append(f"{label} must require an Account-issued operator reference")
-        raw_required_fields = http_route.get("required_fields", [])
-        required_fields = set(raw_required_fields) if isinstance(raw_required_fields, list) else set()
+        required_fields = set(
+            string_list(http_route.get("required_fields"), f"{label} required_fields", errors)
+        )
         if "mutation_digest" not in required_fields:
             errors.append(f"{label} must require mutation_digest for idempotency")
 

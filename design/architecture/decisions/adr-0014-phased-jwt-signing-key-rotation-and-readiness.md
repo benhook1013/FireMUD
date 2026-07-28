@@ -55,6 +55,14 @@ Account issuance and refresh read the durable record and capture its exact `issu
 
 Startup and recovery always reconcile from the durable Account issuer record first. Account must not infer the current generation or active authority from signer/JWKS agreement, a Redis key that lacks freshness evidence, token timestamps, or registry presence. A missing, unavailable, malformed, regressed, or conflicting durable record, projection evidence, token claim, or signer/JWKS generation keeps issuance and protected traffic quarantined until Account completes the required reconciliation and correspondence proof.
 
+### Crash-Safe Issuance And Registry Projection
+
+Issuance is a durable Account operation, not a process-local sequence. Before signing or exposing a JWT, Account creates a compare-and-set protected issuance-intent record containing an operation ID, token identity digest, exact profile and subject, the expected durable issuer-authority record version, and the exact positive `issuerAuthGeneration`. The intent is the durable fence for the issuance attempt; a Redis projection, signer response, or signed JWT never creates issuance authority by inference.
+
+Account then applies the single issued-token registry projection with the same exact `issuerAuthGeneration` and the Account authority source version/freshness evidence. It must read back and verify the complete postcondition: the durable intent still owns the expected authority version, the registry record is the exact token identity and profile, its state is authorizing as required, and its issuer generation and source-version evidence match the durable Account record. Only after that postcondition is verified may Account CAS-transition the issuance intent to `COMMITTED` and return the JWT. Any failed, stale, ambiguous, or unavailable projection or readback leaves issuance quarantined and the token unexposed; it is not repaired by treating Redis presence as success.
+
+After a crash or ambiguous response, Account reconciles unresolved issuance intents from durable state. Reconciliation may commit only when the exact durable authority version, token identity, registry projection, source-version/freshness evidence, and required postcondition all match the intent; otherwise it revokes or removes the candidate projection and records terminal failure without returning or authorizing the token. Startup and recovery therefore quarantine issuance until incomplete intents are reconciled, and neither Redis, a JWT claim, nor a matching signer/JWKS pair can bypass that durable decision.
+
 ### Planned Rotation
 
 A normal rotation uses these ordered phases:

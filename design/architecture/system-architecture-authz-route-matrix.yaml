@@ -73,12 +73,11 @@ tenant_generation_policy:
     cross_tenant_support_safe:
       target_tenant_generation: false
       required_authority: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
-      role_assurance:
-        support: none
-        platformAdmin: privileged_control
+      role_assurance_policy: privileged_control_when_global_role
     cross_tenant_billing_safe:
       target_tenant_generation: false
       required_authority: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
+      role_assurance_policy: privileged_control_when_global_role
     pending_deletion_scoped:
       target_tenant_generation: false
       required_authority: [pending_deletion_state, pending_deletion_credential_registry]

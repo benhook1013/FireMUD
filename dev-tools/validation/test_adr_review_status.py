@@ -435,6 +435,21 @@ class AdrReviewStatusTests(unittest.TestCase):
             self.assertEqual(set(reviews), {12, 14})
             self.assertEqual(reviews[14][0].key, "TEST-COUPLED")
 
+    def test_checked_queue_rejects_duplicate_adr_links_in_one_row(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [x] `TEST-DUP-LINK` — `revised` on 2026-07-27; "
+                "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md); "
+                "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md)",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.checked_reviews(queue_path(root)),
+                "contains duplicate ADR outcome links",
+            )
+
     def test_checked_queue_rejects_mismatched_adr_link_provenance(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)

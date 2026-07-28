@@ -251,6 +251,28 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.validator.validate_refresh_roles_routes(document["routes"], errors)
         self.assertTrue(any("operator authorization redemption" in error for error in errors))
 
+    def test_refresh_roles_rejects_malformed_required_fields(self):
+        for route_name in (
+            "RefreshRoles",
+            "POST /sessions/{sessionId}/refresh-roles",
+        ):
+            with self.subTest(route_name=route_name):
+                document = self.validator.yaml.safe_load(
+                    MATRIX.read_text(encoding="utf-8")
+                )
+                route = next(
+                    route
+                    for route in document["routes"]
+                    if route.get("route") == route_name
+                )
+                route["required_fields"] = [{"invalid": "field"}]
+                errors = []
+                self.validator.validate_refresh_roles_routes(document["routes"], errors)
+                self.assertTrue(
+                    any("required_fields must be a list of strings" in error for error in errors)
+                )
+                self.assertTrue(any("must require mutation_digest" in error for error in errors))
+
     def test_privileged_operator_routes_require_live_global_role_and_assurance(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = next(
@@ -1212,6 +1234,25 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors = self.validator.validate(path)
         self.assertIn(
             "tenant_generation_policy.exception_allowlist.billing_safe_tenant must be a mapping",
+            errors,
+        )
+
+    def test_cross_tenant_generation_exceptions_reference_role_assurance_policy(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        exception = document["tenant_generation_policy"]["exception_allowlist"][
+            "cross_tenant_support_safe"
+        ]
+        exception.pop("role_assurance_policy")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(
+                self.validator.yaml.safe_dump(document, sort_keys=False),
+                encoding="utf-8",
+            )
+            errors = self.validator.validate(path)
+        self.assertIn(
+            "tenant_generation_policy exception cross_tenant_support_safe "
+            "must reference privileged_control_when_global_role",
             errors,
         )
 
