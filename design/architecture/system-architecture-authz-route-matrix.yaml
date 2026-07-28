@@ -169,12 +169,9 @@ classifications:
   - internal_workload
   - pending_deletion_scoped
 role_assurance:
-  vocabulary:
-    privileged_control_when_global_role:
-      resolution: role_specific_global_role_assurance
-      applies_when: caller_authorizes_via_global_role
   privileged_control_when_global_role:
     resolution: role_specific_global_role_assurance
+    applies_when: caller_authorizes_via_global_role
     requirements:
       platformAdmin:
         role_check: current_global_role
@@ -1351,6 +1348,7 @@ routes:
     route: POST /reports
     scope: tenant
     classification: player_bootstrap_tenant
+    route_status: target_not_currently_routable
     auth_path: player_bootstrap
     accepted_token_profiles: [player-bootstrap]
     tenant_billing_authority_generation_applies: false
@@ -1360,7 +1358,7 @@ routes:
     mutation_contract: caller_bound_durable_report_record
     implementation_status:
       known_drift:
-        - Current OpenAPI/controller accepts caller-supplied tenantId and reporterAccountId; the target player-bootstrap route derives both from the authenticated caller and live membership.
+        - Public report submission is unavailable; the target player-bootstrap route must derive tenantId and reporterAccountId from the authenticated caller and live membership before it becomes routable.
   - service: logging-admin-service
     route: POST /feature-flags/toggle
     scope: tenant

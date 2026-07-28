@@ -26,9 +26,16 @@ PENDING_REVIEW_FIELDS = {
     "Human review disposition": "Pending",
     "Review source": "`AI-AUTHORED-PENDING`",
 }
+STATUS_TO_HUMAN_REVIEW_DISPOSITIONS = {
+    PENDING_ADR_STATUS: frozenset({"Pending"}),
+    "Accepted": frozenset({"Accepted", "Revised"}),
+    "Superseded": frozenset({"Superseded"}),
+    "Withdrawn": frozenset({"Withdrawn"}),
+}
 ADR_REFERENCE = r"(?:ADR \d{4}|\[ADR \d{4}\]\([^)]+\))"
-TERMINAL_ADR_STATUS_RE = re.compile(
-    rf"^(?:Accepted|Superseded by {ADR_REFERENCE}|"
+TERMINAL_ADR_STATUS_RE = re.compile(r"^(?:Accepted|Superseded|Withdrawn)$")
+LEGACY_PRE_FORMAL_STATUS_RE = re.compile(
+    rf"^(?:Superseded by {ADR_REFERENCE}|"
     rf"Withdrawn(?:; superseded by {ADR_REFERENCE}| \(superseded by {ADR_REFERENCE}\))?)$"
 )
 ADR_PATH_RE = re.compile(r"adr-(\d{4})-.*\.md$")
@@ -96,6 +103,41 @@ def review_fields(text: str) -> dict[str, str]:
 
 def is_terminal_status(status: str) -> bool:
     return TERMINAL_ADR_STATUS_RE.fullmatch(status) is not None
+
+
+def status_kind(
+    context: Path,
+    status: str,
+    number: int,
+    has_checked_review: bool,
+) -> str:
+    if status in STATUS_TO_HUMAN_REVIEW_DISPOSITIONS:
+        return status
+    if (
+        number in PRE_FORMAL_REVIEW_RECORDS
+        and not has_checked_review
+        and LEGACY_PRE_FORMAL_STATUS_RE.fullmatch(status)
+    ):
+        return "Superseded" if status.startswith("Superseded") else "Withdrawn"
+    fail(
+        f"{context}: status must be exactly one of "
+        f"{sorted(STATUS_TO_HUMAN_REVIEW_DISPOSITIONS)}"
+    )
+
+
+def validate_status_review_mapping(
+    context: Path,
+    status: str,
+    fields: dict[str, str],
+) -> None:
+    disposition = fields.get("Human review disposition")
+    allowed = STATUS_TO_HUMAN_REVIEW_DISPOSITIONS[status]
+    if disposition not in allowed:
+        fail(
+            f"{context}: ADR status {status!r} does not allow human review "
+            f"disposition {disposition!r}; allowed dispositions are "
+            f"{sorted(allowed)}"
+        )
 
 
 def checked_reviews(path: Path) -> dict[int, list[Review]]:
@@ -239,26 +281,30 @@ def validate(root: Path = ROOT) -> None:
             fail(f"{path.relative_to(root)}: {error}")
 
         linked_reviews = reviews.get(number, [])
+        context = path.relative_to(root)
+        normalized_status = status_kind(
+            context,
+            status,
+            number,
+            bool(linked_reviews),
+        )
         if linked_reviews:
             validate_completed_review(
-                path.relative_to(root),
+                context,
                 fields,
                 linked_reviews,
             )
+            validate_status_review_mapping(context, normalized_status, fields)
         elif fields.get("Human review status") == "Completed":
             fail(
-                f"{path.relative_to(root)}: completed human review is not backed "
+                f"{context}: completed human review is not backed "
                 "by a checked review-queue entry"
             )
 
-        context = path.relative_to(root)
-        if status == PENDING_ADR_STATUS:
+        if normalized_status == PENDING_ADR_STATUS:
             validate_pending_review(context, fields)
-        elif not is_terminal_status(status):
-            fail(
-                f"{context}: status must be exactly {PENDING_ADR_STATUS!r} "
-                "or a recognized terminal status"
-            )
+        elif not is_terminal_status(normalized_status):
+            fail(f"{context}: status is not a recognized terminal status")
         elif number not in PRE_FORMAL_REVIEW_RECORDS and not linked_reviews:
             fail(
                 f"{context}: terminal ADR status lacks a checked "

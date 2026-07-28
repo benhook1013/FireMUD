@@ -4,11 +4,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 class GlobalExceptionHandlerTest {
   @Test
@@ -98,5 +100,20 @@ class GlobalExceptionHandlerTest {
     Assertions.assertNotNull(response);
     assertEquals("INVALID_ARGUMENT", response.error().code());
     assertEquals("pointerVersion must be positive", response.error().message());
+  }
+
+  @Test
+  void handleNoResourceFoundPreservesNotFoundEnvelope() {
+    GlobalExceptionHandler handler = new GlobalExceptionHandler();
+
+    ApiResponse<ErrorDetail> response =
+        handler
+            .handleNoResourceFound(
+                new NoResourceFoundException(HttpMethod.POST, "/reports", "reports"))
+            .getBody();
+
+    Assertions.assertNotNull(response);
+    assertEquals("NOT_FOUND", response.error().code());
+    assertEquals("Resource not found", response.error().message());
   }
 }

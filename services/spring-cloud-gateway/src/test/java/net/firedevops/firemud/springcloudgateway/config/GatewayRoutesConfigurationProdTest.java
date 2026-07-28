@@ -42,7 +42,6 @@ class GatewayRoutesConfigurationProdTest {
           "admin-feature-flags",
           "admin-logs",
           "admin-moderation",
-          "admin-reports",
           "admin-remote-followups",
           "admin-sagas",
           "admin-tick-remediation",

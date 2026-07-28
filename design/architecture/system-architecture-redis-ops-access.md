@@ -257,7 +257,8 @@ The external AOF/deployment reset handoff may execute only after the same durabl
 - `scope_paused_and_locked` – the scope is canonical `PAUSED`, command and batch intake are blocked, in-flight executor work is drained, and no old-epoch writer can create coordination state.
 - `account_authority_token_cutover` – protected admission is closed and Account's durable authority/token identity cutover and required immutable evidence are complete for the operation's scope.
 - `replay_domain_quarantine_fence` – the replay domain is verified untouched for a narrower reset or quarantined/fenced for the destructive reset, with immutable fence evidence recorded.
-- `immutable_external_handoff_evidence` – old and intended new deployment identities, the fenced old endpoint, authorized operator/action/time, tooling digest, and independent replacement verification are recorded.
+- `immutable_external_handoff_evidence` – old and intended new deployment identities, the fenced old endpoint, authorized operator/action/time, and tooling digest are recorded before the wipe. This is pre-wipe authorization and fencing evidence only; it must not contain facts that can be observed only after replacement startup.
+- `post_reset_replacement_verification` – after the replacement starts, a separate immutable record verifies replacement endpoint identity, ACL/configuration, empty-keyspace state, and deployment health. It is bound to the same `operationId`, scope, and server-issued `maintenanceLockToken`, but it does not authorize the pre-wipe handoff.
 
 These names identify evidence groups, not additional public CLI verbs. Redis key absence, a new empty endpoint, or a caller-supplied scope cannot satisfy any gate, and every gate remains bound to the same `operationId` and server-issued `maintenanceLockToken`.
 

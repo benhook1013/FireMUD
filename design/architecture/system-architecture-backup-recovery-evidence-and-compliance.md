@@ -10,6 +10,8 @@ Backup readiness is an evidence chain, not an artifact-shaped timestamp record. 
 
 The artifact-integrity, recovery-participant, and reopen-attempt metrics in this document are target-state contracts, not evidence that the current runtime emits them. No reliable emitter for `backup_artifact_lineage_valid`, `backup_artifact_restore_readable`, `recovery_participant_convergence_state`, or `recovery_reopen_attempt_total` is currently implemented or proven. The reference Prometheus ruleset includes fail-safe missing-source alerts, but those alerts cannot identify an environment or participant after an entire family disappears and must not be interpreted as recovery state; partial source loss must remain a blocked readiness condition rather than becoming an apparent pass. Recovery observability remains unproved; the durable recovery controller and retained evidence records remain the readiness authority.
 
+Partial participant-series disappearance is a participant-specific coverage failure, not total family absence. The durable source projection must retain the complete required inventory and coverage state; if that projection cannot be retained, the controller must write an explicit environment/participant readiness blocker and keep quarantine closed. Only complete disappearance of a required source family may use the global `recovery_participant_convergence_source_missing{source_family}` monitoring-gap signal, and that signal must never replace the participant-specific fail-closed blocker.
+
 ## Restore-Cutover Actor Contract
 
 Before any restore-hardening observer or validator probe runs, the durable recovery controller must persist exactly one idempotent restore-cutover request for the target environment. The request contains a stable `restoreCutoverOperationId`, immutable request digest, target boundary, requested compromise/restore mode, and expected current authority context. A retry or lost response reuses that persisted request; failure to durably establish it or ambiguity about its identity keeps quarantine closed.
@@ -288,7 +290,7 @@ Required top-level fields:
 - `environment`
 - `recoveryRef`
 - `operationId`
-- `recoveryStatus` uses lower-snake-case persisted values: `collecting`, `ready_to_reopen`, `awaiting_resume`, `resume_authorized`, `releasing`, and `finalized`. `AWAITING_RESUME` and `RESUME_AUTHORIZED` are uppercase control-plane transition labels used by the public continuation contract, not persisted `recoveryStatus` values.
+- `recoveryStatus` is the checked-in evidence projection of the durable controller phase and uses lower-snake-case rendering (`paused`, `collecting`, `ready_to_reopen`, `awaiting_resume`, `resume_authorized`, `releasing`, `partial_release_reconciling`, or `finalized`). It does not rename the durable controller phases `PAUSED`, `AWAITING_RESUME`, `RESUME_AUTHORIZED`, or `PARTIAL_RELEASE_RECONCILING`; the projection validator maps those exact phases to these external values and rejects aliases.
 - `recoveryPurpose` (`production-equivalent-drill` or `actual-recovery`)
 - `sourceEnvironmentBinding`
 - `targetBoundary`

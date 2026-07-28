@@ -70,7 +70,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Game moderation report review and player tooling (target-only; current caller-bound external/player report submission is unavailable) | | | | | | | | | ✔ | | |
 | Game moderation policy definition, synchronous evaluation, persistence, and audit investigation (live) | | | | | | | | | ✔ | | |
 | Moderation enforcement (`GAMEPLAY_ADMISSION` / `CHAT_SEND`; live synchronous evaluation, with versioned snapshot propagation and broader coverage missing) | | | | ✔ | | | | ✔ | ✔ | | |
-| Authoritative owner: subscription entitlements, plan-driven quota values, and effective quota override overlay (`GetTenantEntitlements`) | | | ✔ | | | | | | | | |
+| Authoritative owner: subscription entitlements, plan-driven quota values, and effective quota override overlay (`GetTenantEntitlementsForRuntime`) | | | ✔ | | | | | | | | |
 | Operator quota override ingress, UX, and audit (hypothetical target; Logging & Admin forwards to the Account-owned entitlement overlay; no current owner route) | | | ✔ | | | | | | ✔ | | |
 | Enforcement of gameplay bans at `GAMEPLAY_ADMISSION` (live synchronous policy evaluation; Game Session owns enforcement) | | | | ✔ | | | | | | | |
 | Enforcement of chat mutes/bans at `CHAT_SEND` (live synchronous policy evaluation; Social & Groups owns enforcement) | | | | | | | | ✔ | | | |

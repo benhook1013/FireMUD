@@ -62,12 +62,6 @@ public class CanonicalGatewayRoutesConfiguration {
                 "/api/admin/moderation/**",
                 2),
             route(
-                "admin-reports",
-                environment.getProperty(
-                    "FIREMUD_GATEWAY_ROUTE_ADMIN_URI", "http://logging-admin-service:8080"),
-                "/api/admin/reports/**",
-                2),
-            route(
                 "admin-remote-followups",
                 environment.getProperty(
                     "FIREMUD_GATEWAY_ROUTE_ADMIN_URI", "http://logging-admin-service:8080"),

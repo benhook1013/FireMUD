@@ -111,6 +111,24 @@ def append_queue_row(root: Path, row: str) -> None:
     )
 
 
+def set_review_status(root: Path, status: str, disposition: str) -> None:
+    queue = queue_path(root)
+    queue.write_text(
+        queue.read_text(encoding="utf-8").replace(
+            "`revised`", f"`{disposition.lower()}`", 1
+        ),
+        encoding="utf-8",
+    )
+    path = root / "design/architecture/decisions/adr-0012-reviewed.md"
+    text = path.read_text(encoding="utf-8")
+    text = text.replace("Accepted\n\n## Decision Record", f"{status}\n\n## Decision Record")
+    text = text.replace(
+        "Human review disposition: Revised",
+        f"Human review disposition: {disposition}",
+    )
+    path.write_text(text, encoding="utf-8")
+
+
 def expect_failure(test_case: unittest.TestCase, call, expected: str) -> None:
     with test_case.assertRaisesRegex(
         test_case.validator.ValidationError,
@@ -180,10 +198,8 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_all_terminal_statuses_require_checked_review(self) -> None:
         for status in (
             "Accepted",
-            "Superseded by ADR 0099",
+            "Superseded",
             "Withdrawn",
-            "Withdrawn; superseded by ADR 0099",
-            "Withdrawn (superseded by ADR 0099)",
         ):
             with self.subTest(status=status), fixture_root() as fixture:
                 root = Path(fixture)
@@ -200,20 +216,15 @@ class AdrReviewStatusTests(unittest.TestCase):
                 )
 
     def test_checked_review_provenance_accepts_all_terminal_statuses(self) -> None:
-        for status in (
-            "Accepted",
-            "Superseded by ADR 0099",
-            "Withdrawn",
-            "Withdrawn; superseded by ADR 0099",
-            "Withdrawn (superseded by ADR 0099)",
+        for status, disposition in (
+            ("Accepted", "Accepted"),
+            ("Accepted", "Revised"),
+            ("Superseded", "Superseded"),
+            ("Withdrawn", "Withdrawn"),
         ):
-            with self.subTest(status=status), fixture_root() as fixture:
+            with self.subTest(status=status, disposition=disposition), fixture_root() as fixture:
                 root = Path(fixture)
-                path = root / "design/architecture/decisions/adr-0012-reviewed.md"
-                path.write_text(
-                    path.read_text(encoding="utf-8").replace("Accepted", status),
-                    encoding="utf-8",
-                )
+                set_review_status(root, status, disposition)
                 self.validator.validate(root)
 
     def test_pre_formal_terminal_statuses_are_exempt(self) -> None:
@@ -239,7 +250,7 @@ class AdrReviewStatusTests(unittest.TestCase):
             "Deferred",
             "Proposed - Pending Human review",
             "Accepted with caveat",
-            "Superseded",
+            "Superseded by ADR 0099",
         ):
             with self.subTest(status=status), fixture_root() as fixture:
                 root = Path(fixture)
@@ -253,6 +264,24 @@ class AdrReviewStatusTests(unittest.TestCase):
                 expect_failure(self,
                     lambda root=root: self.validator.validate(root),
                     "status must be exactly",
+                )
+
+    def test_status_and_review_disposition_mapping_is_enforced(self) -> None:
+        invalid_pairs = (
+            ("Accepted", "Superseded"),
+            ("Accepted", "Withdrawn"),
+            ("Accepted", "Deferred"),
+            ("Superseded", "Revised"),
+            ("Withdrawn", "Revised"),
+        )
+        for status, disposition in invalid_pairs:
+            with self.subTest(status=status, disposition=disposition), fixture_root() as fixture:
+                root = Path(fixture)
+                set_review_status(root, status, disposition)
+                expect_failure(
+                    self,
+                    lambda root=root: self.validator.validate(root),
+                    "does not allow human review disposition",
                 )
 
     def test_checked_review_requires_completed_metadata(self) -> None:
@@ -383,6 +412,27 @@ class AdrReviewStatusTests(unittest.TestCase):
             expect_failure(self,
                 lambda: self.validator.validate(root),
                 "completed human review is not backed",
+            )
+
+    def test_unchecked_queue_row_does_not_back_terminal_record(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [ ] `TEST-UNCHECKED` — `revised` on 2026-07-27; "
+                "[ADR 0013](../../architecture/decisions/adr-0013-pending.md)",
+            )
+            path = root / "design/architecture/decisions/adr-0013-pending.md"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "Proposed - Pending Human Review", "Accepted"
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "terminal ADR status lacks a checked human-review queue entry",
             )
 
     def test_duplicate_adr_number_is_rejected(self) -> None:

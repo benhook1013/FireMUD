@@ -21,8 +21,8 @@ Tick and coordination remediation remains a Game Session responsibility. Logging
 
 The current shipped scope is narrower than this target contract:
 
-- The service exposes core admin/moderation, administrative report-persistence, saga-inspection, and coordination-health surfaces, plus observability-backed integrations; it does not yet provide the complete target control-plane workflow for every recovery, regional, or aggregate operation.
-- Current report support is administrative/internal persistence only: the current controller accepts its existing caller-supplied `tenantId` and `reporterAccountId` fields and persists the report. The target caller-bound external/player submission route is unavailable; this is not a claim that the current controller itself is disabled.
+- The service exposes core admin/moderation, internal report-persistence, saga-inspection, and coordination-health surfaces, plus observability-backed integrations; it does not yet provide the complete target control-plane workflow for every recovery, regional, or aggregate operation.
+- Public administrative report persistence is unavailable: the HTTP controller and Gateway route were removed because canonical authorization and live reference validation are not implemented. The internal `CreateReport` gRPC ingress remains behind the existing mTLS/workload boundary; the caller-bound external/player submission route is also unavailable.
 - Admission-pointer reads, audit, and preparation are live; open/close/retarget CAS and cutover remain target-only and are not current endpoint capabilities.
 - Current tick pause/resume support is the shipped `<tenantId, gameInstanceId>` boundary. Regional pause/resume and regional remediation remain target-only behavior, with no claim that the live instance control implicitly expands to a region or aggregate scope; they are tracked in [Game Session runtime and tick coordination](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status).
 - Logging & Admin consumes Game Session health and requests Game Session-owned control APIs; it does not directly mutate Redis or runtime coordination state.
@@ -65,7 +65,7 @@ The core operator control plane must remain available when Elasticsearch, Promet
 
 The architecture treats these as two runtime partitions even when they are delivered from one deployable:
 
-- Core control-plane endpoints include moderation policy-input persistence and synchronous evaluation, live feature-flag controls, saga inspection, live admission-pointer reads/audit/preparation, target-only admission open/close/retarget CAS and cutover, and live tick-remediation pause/resume APIs. These paths must not block on Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager for request success. The current administrative `/reports` persistence seam has its own availability contract; the target caller-bound player-submission surface is unavailable and is not a current player-facing data path. Quota override, versioned moderation propagation, and broader remediation are target families.
+- Core control-plane endpoints include moderation policy-input persistence and synchronous evaluation, live feature-flag controls, saga inspection, live admission-pointer reads/audit/preparation, target-only admission open/close/retarget CAS and cutover, and live tick-remediation pause/resume APIs. These paths must not block on Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager for request success. Public administrative `/reports` persistence is unavailable pending canonical checks; the internal gRPC report ingress is separate, and the target caller-bound player-submission surface is unavailable and is not a current player-facing data path. Quota override, versioned moderation propagation, and broader remediation are target families.
 - Observability-backed endpoints include log search, embedded dashboards, traces, metric exploration, and alert investigation views. These paths may degrade independently or return explicit backend-unavailable states.
 - Readiness and degradation reporting must distinguish these partitions so an observability outage does not mark the entire operator service unavailable.
 - Thread pools, connection pools, and timeout budgets for observability integrations must be isolated from the core control plane so expensive search/dashboard failures cannot starve moderation or remediation requests.
@@ -85,7 +85,7 @@ Logging & Admin does not write to Redis directly and does not define a competing
 
 - `log_events` stores log data and is mirrored into Elasticsearch indexes for search.
 - `moderation_actions` records moderation policy input and audit evidence with timestamps and includes a `tenant_id` column; it does not represent owner-side enforcement state.
-- `player_reports` stores abuse and bug reports submitted through the current administrative/internal persistence seam, with a `tenant_id` column; target caller-bound external/player submission remains unavailable.
+- `player_reports` stores abuse and bug reports submitted through the internal report-persistence seam, with a `tenant_id` column; public administrative and target caller-bound external/player submission remain unavailable.
 - Runtime feature-flag truth is owned by Game Session. Logging & Admin records operator intent and audit context for feature-flag requests, then forwards the mutation to Game Session rather than maintaining a competing `feature_flag` runtime table.
 
 ## Moderation Workflow

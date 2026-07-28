@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -75,6 +76,14 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ApiResponse<ErrorDetail>> handleHttpMessageNotReadable(
       HttpMessageNotReadableException ex) {
     return invalidArgument("Request body is malformed");
+  }
+
+  @ExceptionHandler(NoResourceFoundException.class)
+  public ResponseEntity<ApiResponse<ErrorDetail>> handleNoResourceFound(
+      NoResourceFoundException ex) {
+    HttpStatus status = HttpStatus.valueOf(ex.getStatusCode().value());
+    ErrorDetail detail = new ErrorDetail("NOT_FOUND", "Resource not found");
+    return new ResponseEntity<>(ApiResponse.error(detail), status);
   }
 
   @ExceptionHandler(Exception.class)

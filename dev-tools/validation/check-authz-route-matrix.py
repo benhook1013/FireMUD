@@ -118,6 +118,8 @@ REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS = {
 PRIVILEGED_OPERATOR_ROLE_ASSURANCE = "privileged_control_when_global_role"
 CANONICAL_OPERATOR_INGRESS = "logging-admin-service"
 DIRECT_OWNER_ROUTE_POLICY = "deny_at_edge_and_migrate_to_logging_admin"
+# Maps id(route/parent mapping) to parsed checks for one loaded matrix document.
+# Never reuse across documents or temporary mappings: id reuse can return stale entries.
 LiveChecksCache = dict[int, set[str]]
 
 
@@ -244,21 +246,23 @@ def validate_role_assurance(document: dict[str, Any], errors: list[str]) -> set[
     if not isinstance(raw_assurance, dict):
         errors.append("role_assurance must be a mapping")
         return set()
+    if not raw_assurance:
+        errors.append("role_assurance must be a non-empty mapping")
 
-    vocabulary = raw_assurance.get("vocabulary")
-    if not isinstance(vocabulary, dict) or not vocabulary:
-        errors.append("role_assurance.vocabulary must be a non-empty mapping")
-        predicates: set[str] = set()
-    else:
-        predicates = set()
-        for name, definition in vocabulary.items():
-            if not isinstance(name, str) or not name.strip():
-                errors.append("role_assurance.vocabulary keys must be non-empty strings")
-                continue
-            if not isinstance(definition, dict):
-                errors.append(f"role_assurance.vocabulary.{name} must be a mapping")
-                continue
-            predicates.add(name)
+    predicates: set[str] = set()
+    for name, definition in raw_assurance.items():
+        if not isinstance(name, str) or not name.strip():
+            errors.append("role_assurance keys must be non-empty strings")
+            continue
+        if name == "vocabulary":
+            errors.append(
+                "role_assurance must use one canonical predicate mapping; vocabulary is not supported"
+            )
+            continue
+        if not isinstance(definition, dict):
+            errors.append(f"role_assurance.{name} must be a mapping")
+            continue
+        predicates.add(name)
     predicate = raw_assurance.get("privileged_control_when_global_role")
     if not isinstance(predicate, dict):
         errors.append(
@@ -266,14 +270,6 @@ def validate_role_assurance(document: dict[str, Any], errors: list[str]) -> set[
         )
         return predicates
     requirements = predicate.get("requirements")
-    if "requirements" in predicate and not (
-        isinstance(vocabulary, dict)
-        and PRIVILEGED_OPERATOR_ROLE_ASSURANCE in vocabulary
-    ):
-        errors.append(
-            "role_assurance.vocabulary must declare predicate "
-            f"{PRIVILEGED_OPERATOR_ROLE_ASSURANCE} when requirements are present"
-        )
     if not isinstance(requirements, dict):
         errors.append(
             "role_assurance.privileged_control_when_global_role.requirements must be a mapping"
@@ -1169,6 +1165,7 @@ def validate_ws_game_routes(
     routes: list[Any],
     errors: list[str],
     live_checks_cache: LiveChecksCache | None = None,
+    cardinality_errors: set[str] | None = None,
 ) -> None:
     ws_routes = matching_routes(routes, "spring-cloud-gateway", "/ws/game/**")
     by_mode: dict[str, list[dict[str, Any]]] = {}
@@ -1239,28 +1236,26 @@ def validate_ws_game_routes(
                 f"{missing_trusted_proxy}"
             )
 
-    revoke_routes = matching_routes(
+    revoke_route = resolve_unique_route(
         routes,
         "spring-cloud-gateway",
         "POST /ws/game/connect-token/revoke",
+        errors,
+        cardinality_errors,
     )
-    if len(revoke_routes) != 1:
-        errors.append(
-            "matrix must contain exactly one spring-cloud-gateway "
-            "POST /ws/game/connect-token/revoke route"
-        )
+    if revoke_route is None:
         return
     missing_revoke = sorted(
         REQUIRED_CONNECT_TOKEN_REVOKE_CHECKS
         - route_live_checks(
-            revoke_routes[0],
+            revoke_route,
             "POST /ws/game/connect-token/revoke",
             errors,
             live_checks_cache,
         )
     )
     validate_applicability(
-        revoke_routes[0],
+        revoke_route,
         "POST /ws/game/connect-token/revoke",
         REQUIRED_REVOKE_APPLICABILITY,
         errors,
@@ -1276,15 +1271,21 @@ def validate_issue_connect_token(
     routes: list[Any],
     errors: list[str],
     live_checks_cache: LiveChecksCache | None = None,
+    cardinality_errors: set[str] | None = None,
 ) -> None:
-    issue_connect_routes = matching_routes(routes, "account-service", "IssueConnectToken")
-    if len(issue_connect_routes) != 1:
-        errors.append("matrix must contain exactly one account-service IssueConnectToken route")
+    issue_connect_route = resolve_unique_route(
+        routes,
+        "account-service",
+        "IssueConnectToken",
+        errors,
+        cardinality_errors,
+    )
+    if issue_connect_route is None:
         return
     missing_checks = sorted(
         REQUIRED_ISSUE_CONNECT_TOKEN_CHECKS
         - route_live_checks(
-            issue_connect_routes[0], "IssueConnectToken", errors, live_checks_cache
+            issue_connect_route, "IssueConnectToken", errors, live_checks_cache
         )
     )
     if missing_checks:
@@ -1449,8 +1450,8 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     cardinality_errors: set[str] = set()
     validate_entitlement_contract(document, routes, errors, cardinality_errors)
 
-    validate_ws_game_routes(routes, errors, live_checks_cache)
-    validate_issue_connect_token(routes, errors, live_checks_cache)
+    validate_ws_game_routes(routes, errors, live_checks_cache, cardinality_errors)
+    validate_issue_connect_token(routes, errors, live_checks_cache, cardinality_errors)
     validate_join_routes(routes, errors)
     validate_delegated_entitlements(
         routes, errors, cardinality_errors, live_checks_cache

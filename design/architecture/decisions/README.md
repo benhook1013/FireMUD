@@ -5,12 +5,46 @@ Architecture decision records explain why consequential FireMUD product and arch
 ## Status Rules
 
 - `Accepted` records explain current consequential choices and must remain aligned with canonical design.
-- `Superseded` records are historical context only and must identify a replacement decision. `Withdrawn` records are historical context only, may omit a replacement decision, and must state the rationale for withdrawal.
+- `Superseded` and `Withdrawn` records are historical context only. Both status values are valid on their own; replacement detail is never appended to the `Status` value. If replacement detail is recorded, it uses the separate strict `Supersession` section defined below. A withdrawn record may omit that section and must state its rationale for withdrawal.
 - `Proposed` records are not current target state until explicitly accepted and reflected in canonical design. An AI-authored ADR awaiting human review must use the exact pending metadata shape defined below: `Proposed - Pending Human Review`, `Human review status: Pending`, `Human review date: Not yet reviewed`, `Human review disposition: Pending`, and a `Review source` value of `AI-AUTHORED-PENDING`.
 - An agent may set an ADR to `Accepted`, `Superseded`, or `Withdrawn` only when the checked review queue in the [consequential decision inventory](../../project-management/design-alignment/consequential-decision-inventory.md) names that ADR as provenance, except for pre-formal ADRs `0001` through `0011`, which predate the checked queue. Every ADR linked as provenance by such a row must record all four matching fields: review status, date, disposition, and backtick-delimited decision key. An agent must never infer those values.
 - Reversible work may continue while an AI-authored ADR awaits review only when existing canonical design already supports that work and the implementation does not depend on treating the proposal as accepted. Work that changes an accepted decision, selects between competing target states, or creates a consequential commitment waits for human review.
 - A new ADR is warranted for a cross-cutting, authority-setting, security-sensitive, expensive-to-reverse, or genuinely contested decision. Routine local implementation choices belong in code and the owning design document.
 - Changing an accepted decision requires explicit human design review, a new or superseding ADR, and updates to every affected canonical design source.
+
+### Machine-Readable Status Grammar
+
+The value immediately following `## Status` is exactly one of these strings:
+
+```text
+Status ::= "Proposed - Pending Human Review"
+         | "Accepted"
+         | "Superseded"
+         | "Withdrawn"
+```
+
+Status values do not contain replacement links, parentheticals, or other prose. When replacement detail is needed, the ADR may contain this separate machine-readable section with exactly one line:
+
+```text
+## Supersession
+
+- Replacement ADR: [ADR NNNN](./adr-NNNN-example.md)
+```
+
+The replacement link must use the exact `ADR NNNN` label and an `adr-NNNN-*.md` target whose number matches the label. A `Superseded` or `Withdrawn` status remains valid without this section. The pre-formal ADRs `0001` through `0011` retain their existing historical replacement prose as a validation-only legacy exception; that prose is not part of the grammar and is not permitted for reviewed ADRs.
+
+### Status-to-Review Mapping
+
+For an ADR linked by a checked queue row, the aggregate human-review disposition must be allowed by its status:
+
+| ADR Status | Human review status | Allowed human review disposition |
+| --- | --- | --- |
+| `Proposed - Pending Human Review` | `Pending` | `Pending`, with no checked provenance row |
+| `Accepted` | `Completed` | `Accepted` or `Revised` |
+| `Superseded` | `Completed` | `Superseded` |
+| `Withdrawn` | `Completed` | `Withdrawn` |
+
+`Deferred` has no ADR status mapping. A checked `deferred` queue row may record a canonical-design outcome, but it must not use an exact `[ADR NNNN]` provenance link until a status and mapping are added deliberately. The pending row is the sole pre-review exception; it cannot carry completed queue evidence.
 
 ## Review Metadata Contract
 
@@ -18,7 +52,7 @@ The `Decision Record` section of a reviewed ADR is machine-readable. A completed
 
 - `Human review status: Completed`
 - `Human review date: YYYY-MM-DD`
-- `Human review disposition: Accepted`, `Revised`, `Deferred`, `Superseded`, or `Withdrawn`
+- `Human review disposition: Accepted`, `Revised`, `Superseded`, or `Withdrawn` for an ADR provenance record
 - `Review source:` followed by one or more backtick-delimited checked-queue decision keys separated by commas, or exactly `AI-AUTHORED-PENDING` for an AI-authored pending record
 
 The authoritative provenance is the checked review queue in the [consequential decision inventory](../../project-management/design-alignment/consequential-decision-inventory.md), not the ADR metadata alone. A checked queue row has this exact shape:
@@ -34,7 +68,7 @@ For any ADR linked by an exact `[ADR NNNN]` provenance label in a checked queue 
 
 - `Human review status: Completed`
 - `Human review date: YYYY-MM-DD`
-- `Human review disposition: Accepted`, `Revised`, `Deferred`, `Superseded`, or `Withdrawn`
+- `Human review disposition: Accepted`, `Revised`, `Superseded`, or `Withdrawn` for an ADR provenance record
 - `Review source: DECISION-KEY` (one or more queue keys)
 
 The pre-formal records `0001` through `0011` are the explicit exception only when no checked queue row links them; those historical records may omit review metadata. An AI-authored pending record is not review evidence and must use this exact shape instead:
@@ -61,9 +95,9 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0001](./adr-0001-scripting-event-ingress-idempotency-identity.md) | Accepted | `AS-1` | `SF-1`, `SF-2` | Canonical scripting trigger identity and retry deduplication boundary |
 | [ADR 0002](./adr-0002-automation-handoff-reliability-and-success-semantics.md) | Accepted | `AS-1` | `GR-1`, `SF-2`, `PO-4` | Durable automation-to-tick handoff and success semantics |
 | [ADR 0003](./adr-0003-reload-backpressure-and-retry-contract.md) | Accepted | `AS-1` | `AR-3`, `GR-1`, `PO-4` | Reload backpressure, bounded retry, and timer behavior |
-| [ADR 0004](./adr-0004-gameplay-reroute-vs-backend-unavailable.md) | Superseded by ADR 0007 | `PO-2` | `AA-2`, `GR-1`, `PO-4` | Historical distinct reroute close taxonomy |
+| [ADR 0004](./adr-0004-gameplay-reroute-vs-backend-unavailable.md) | Superseded | `PO-2` | `AA-2`, `GR-1`, `PO-4` | Historical distinct reroute close taxonomy |
 | [ADR 0005](./adr-0005-tenant-identifiers-in-gameplay-protocol.md) | Accepted | `AA-3` | `EA-1`, `SF-1` | Internal tenant identity and player-facing world selector boundary |
-| [ADR 0006](./adr-0006-gameplay-shard-routing-key-transport.md) | Withdrawn; superseded by ADR 0007 | `PO-2` | `AA-3`, `GR-1`, `SF-1` | Historical client-carried gameplay shard routing proposal |
+| [ADR 0006](./adr-0006-gameplay-shard-routing-key-transport.md) | Withdrawn | `PO-2` | `AA-3`, `GR-1`, `SF-1` | Historical client-carried gameplay shard routing proposal |
 | [ADR 0007](./adr-0007-edge-sharding-and-close-taxonomy.md) | Accepted | `PO-2` | `AA-2`, `GR-1`, `PO-4` | Shard-unaware edge and unified client-visible close taxonomy |
 | [ADR 0008](./adr-0008-multi-cluster-gameplay-sharding-scope.md) | Accepted | `GR-1` | `PO-2`, `PO-3`, `SF-2` | Single-cluster gameplay execution and multi-cluster adoption gate |
 | [ADR 0009](./adr-0009-coordination-redis-ownership-boundary.md) | Accepted | `SF-2` | `AA-2`, `GR-1`, `AS-1` | Coordination Redis ownership and participation boundaries |
@@ -110,6 +144,15 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0050](./adr-0050-versioned-export-retention-and-erasure-policy.md) | Accepted | `AA-1` | `AA-2`, `PO-1`, `PO-3`, `SF-2` | Versioned cross-service export and finite category-specific retention and erasure policy |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
+
+### Supersession Registry
+
+Replacement details are maintained separately from the machine-readable status values:
+
+| ADR | Replacement ADR |
+| --- | --- |
+| [ADR 0004](./adr-0004-gameplay-reroute-vs-backend-unavailable.md) | [ADR 0007](./adr-0007-edge-sharding-and-close-taxonomy.md) |
+| [ADR 0006](./adr-0006-gameplay-shard-routing-key-transport.md) | [ADR 0007](./adr-0007-edge-sharding-and-close-taxonomy.md) |
 
 ## Record Shape For New Decisions
 

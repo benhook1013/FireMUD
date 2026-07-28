@@ -63,6 +63,12 @@ After the signer returns the compact JWT, Account computes its exact token hash 
 
 After a crash or ambiguous response, Account reconciles unresolved issuance intents from durable state. Reconciliation may commit only when the exact durable authority version, post-sign compact-JWT hash binding, token identity, registry projection, source-version/freshness evidence, and required postcondition all match the intent; otherwise it revokes or removes the candidate projection and records terminal failure without returning or authorizing the token. Startup and recovery therefore quarantine issuance until incomplete intents are reconciled, and neither Redis, a JWT claim, nor a matching signer/JWKS pair can bypass that durable decision.
 
+### Committed Response-Loss Recovery
+
+A `COMMITTED` issuance intent is never signed or issued again. To recover a response lost after the registry postcondition committed, Account may retain a separate bounded response envelope under Account-owned application encryption, using the same exception and binding discipline as ADR 0031. The envelope contains the compact JWT and is bound to the exact request identity, pre-sign request fingerprint, token hash, profile, subject, authority-record version, and issuer generation; it is not issuance evidence, registry state, or authorization authority. A retry with the exact request identity returns that same JWT only while the envelope is present and within its bounded lifetime, after revalidating the durable intent, registry record, authority version, profile, subject, and current revocation state. Account never re-signs or creates a second registry record for that request.
+
+If the envelope is missing, unreadable, expired, or mismatched, Account revokes or removes the exact candidate registry record through a bounded, idempotent cleanup and records terminal `FAILED` evidence with stable outcome `ISSUANCE_RESPONSE_UNRECOVERABLE`; it returns no token. An ambiguous cleanup remains quarantined and non-replayable until durable reconciliation proves cleanup, and a later issuance requires a new request identity. This prevents a lost response from causing duplicate reissue while ensuring an unreturned committed token cannot remain usable indefinitely.
+
 ### Planned Rotation
 
 A normal rotation uses these ordered phases:

@@ -34,7 +34,7 @@ The current implementation writes account and tenant keys but does not consisten
 
 - Account Service creates exactly one Coordination Redis record for each issued `control-ui`, `player-bootstrap`, or receiver-specific private player-delegation JWT: `session:auth:token:<tokenHash>`.
 - `tokenHash` is a fixed-length SHA-256 digest of the complete compact JWT. Raw token contents never appear in Redis keys, values, logs, metrics, traces, or audit evidence.
-- Every supported version of the bounded record contains `schemaVersion`, a positive non-empty JWT `kid`, `accountId`, exact token profile/audience, `jti`, `iat`, `exp`, the JWT's positive `tokenGeneration`, the positive `issuerAuthGeneration`, and the explicit `state` defined below. The stored `kid` must be the exact verified JWT header key identifier. The record does not duplicate tenant-role maps or global-role grants from the signed token.
+- Every supported version of the bounded record contains `schemaVersion`, a non-empty string JWT `kid`, `accountId`, exact token profile/audience, `jti`, `iat`, `exp`, the profile-defined positive `tokenGeneration`, the positive `issuerAuthGeneration`, and the explicit `state` defined below. The stored `kid` must be the exact verified JWT header key identifier; it is a string identifier, not a numeric generation. The record does not duplicate tenant-role maps or global-role grants from the signed token.
 - A receiver-specific private player-delegation record created by rotation has a mandatory conditional field set: `rotationOperationId`, `leaseId`, positive `leaseVersion`, exact `gameplayBindingId`, and positive `installationFence`. These fields are required whenever the record participates in `TOKEN_ROTATION`; they are not optional metadata. Account compares them with the durable rotation operation, replacement lease, exact Game Session binding, and Account-owned installation fence before activation, installation, authorization, or retry. Missing, malformed, unavailable, expired, or mismatched conditional evidence fails closed, and the record cannot fall back to JWT claims, mTLS identity, token hash, or registry presence alone.
 - `issuerAuthGeneration` is the canonical registry field name and must equal the JWT `issuerAuthGeneration` claim and the value in Account's durable issuer-authority record at issuance or refresh. Account owns that durable record and its monotonic advances; the registry value is a snapshot whose Redis projection is accepted only with Account-provided source-version and freshness evidence. The registry does not become a second issuer authority and may not advance, repair, or override the durable record.
 - Its absolute expiry is the JWT `exp` plus the bounded validation-skew/safety margin. Activity does not extend it.
@@ -60,6 +60,16 @@ The current implementation writes account and tenant keys but does not consisten
 - `control-ui`, player-bootstrap, and receiver-specific private player-delegation JWTs use the registry because they require individual logout or generation-bound refresh. The current private profile is `game-session-account-delegation` with audience `account-service`.
 - The 30-second gameplay connect token uses its dedicated Gateway-owned atomic single-use/replay contract from ADR 0029 and does not also receive an issued-token registry record.
 - Gateway-to-Game-Session signed connect context is a separate short-lived workload assertion, not an Account JWT session, and does not use this registry.
+
+### Token Generation Semantics
+
+`tokenGeneration` is a positive integer only for the registry-backed JWT profiles and is distinct from issuer, account, tenant, membership, and private-realm authority generations:
+
+- `control-ui` and `player-bootstrap` have no refresh or restoration lineage. Each independently issued token uses `tokenGeneration=1`; a later login or bootstrap flow creates a new token and new registry record rather than incrementing an old lineage.
+- `game-session-account-delegation` has one generation lineage per protected gameplay binding. The first token uses `tokenGeneration=1`, and each committed refresh or rebind replacement increments that lineage exactly once. A retry or reconciliation of the same operation preserves the already committed generation and cannot allocate another one.
+- `gameplay-connect` has no `tokenGeneration` claim and no registry record. Its single-use replay contract from ADR 0029 supplies its separate admission identity and fence; this exception is not inherited by any registry-backed profile.
+
+For every registry-backed profile, the JWT claim, registry field, and applicable Account-owned operation or binding evidence must agree exactly. `tokenGeneration` orders one applicable issuance lineage; it does not grant scope, replace authority-generation checks, or act as restart authority by itself.
 
 ### Revocation And Rotation
 
@@ -111,7 +121,7 @@ Opaque tokens can provide the same server-side revocation but require the state 
 ## Implementation and Proof Obligations
 
 - Replace account/tenant/global per-token keys with the single canonical `session:auth:token:<tokenHash>` record and remove obsolete key builders and compatibility reads directly in this pre-v1 system.
-- Define one versioned bounded record schema with a positive JWT `kid` on every supported version and mandatory conditional rotation fields, and validate every field against the cryptographically verified token and matching Account-owned evidence.
+- Define one versioned bounded record schema with a non-empty string JWT `kid` on every supported version, profile-specific `tokenGeneration` semantics, and mandatory conditional rotation fields, and validate every field against the cryptographically verified token and matching Account-owned evidence.
 - Make issuance return contingent on record creation; prove store failure never leaks a usable unregistered token.
 - Update shared validators so every applicable protected route performs local token-profile validation and exactly one registry lookup before scope authorization.
 - Prove missing, expired, malformed, unsupported-version, missing/wrong `kid`, state-specific `pending`/`active`/`retiring`/`revoked`, wrong-profile, wrong-account, wrong-generation, missing/mismatched conditional rotation evidence, deleted, and unavailable registry state fails closed with stable errors.

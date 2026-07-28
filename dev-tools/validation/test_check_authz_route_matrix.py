@@ -191,13 +191,16 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         drifted_route = routes["POST /sessions"][0]
         for missing_check in ("tenant_generation", "target_tenant_generation"):
             with self.subTest(missing_check=missing_check):
-                drifted_route["required_live_checks"].remove(missing_check)
-                errors = []
-                self.validator.validate_generation_applicability(document["routes"], errors)
-                self.assertTrue(
-                    any(f"operator route must require {missing_check}" in error for error in errors)
-                )
-                drifted_route["required_live_checks"].append(missing_check)
+                checks = drifted_route["required_live_checks"]
+                checks.remove(missing_check)
+                try:
+                    errors = []
+                    self.validator.validate_generation_applicability(document["routes"], errors)
+                    self.assertTrue(
+                        any(f"operator route must require {missing_check}" in error for error in errors)
+                    )
+                finally:
+                    checks.append(missing_check)
 
     def test_profile_routes_require_generation_checks(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -1289,11 +1292,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors = self.validator.validate(path)
         self.assertTrue(any("contains unexpected role keys" in error for error in errors))
 
-    def test_role_assurance_requirements_require_vocabulary_predicate(self):
+    def test_role_assurance_requires_canonical_predicate(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        document["role_assurance"]["vocabulary"].pop(
-            "privileged_control_when_global_role"
-        )
+        document["role_assurance"].pop("privileged_control_when_global_role")
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
             path.write_text(
@@ -1302,8 +1303,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
             errors = self.validator.validate(path)
         self.assertIn(
-            "role_assurance.vocabulary must declare predicate "
-            "privileged_control_when_global_role when requirements are present",
+            "role_assurance.privileged_control_when_global_role must be a mapping",
             errors,
         )
         self.assertTrue(
@@ -1311,6 +1311,18 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "role_assurance must reference a declared predicate" in error
                 for error in errors
             )
+        )
+
+    def test_role_assurance_rejects_legacy_vocabulary_shape(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        document["role_assurance"]["vocabulary"] = {
+            "privileged_control_when_global_role": {}
+        }
+        errors = []
+        self.validator.validate_role_assurance(document, errors)
+        self.assertIn(
+            "role_assurance must use one canonical predicate mapping; vocabulary is not supported",
+            errors,
         )
 
     def test_legacy_target_only_route_declaration_is_rejected(self):

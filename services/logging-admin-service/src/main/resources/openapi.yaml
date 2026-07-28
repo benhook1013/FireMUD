@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Logging & Admin Service API
-  description: Operator-facing moderation, reporting, cutover, and runtime-control APIs
+  description: Operator-facing moderation, cutover, and runtime-control APIs
   version: 1.0.0
   license:
     name: MIT
@@ -69,40 +69,6 @@ components:
           type: string
           format: date-time
           nullable: true
-    CreateReportRequest:
-      type: object
-      properties:
-        tenantId:
-          type: integer
-        reporterAccountId:
-          type: integer
-        targetAccountId:
-          type: integer
-          nullable: true
-        type:
-          type: string
-        description:
-          type: string
-      required: [tenantId, reporterAccountId, type, description]
-    ReportDto:
-      type: object
-      properties:
-        id:
-          type: integer
-        tenantId:
-          type: integer
-        reporterAccountId:
-          type: integer
-        targetAccountId:
-          type: integer
-          nullable: true
-        type:
-          type: string
-        description:
-          type: string
-        createdAt:
-          type: string
-          format: date-time
     ToggleFeatureFlagRequest:
       type: object
       properties:
@@ -1710,30 +1676,6 @@ paths:
                     $ref: '#/components/schemas/BuiltInCommandAliasValidationDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
-  /reports:
-    post:
-      summary: Create a player report
-      operationId: createReport
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateReportRequest'
-      responses:
-        '200':
-          description: Created report
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    $ref: '#/components/schemas/ResultStatus'
-                  data:
-                    $ref: '#/components/schemas/ReportDto'
-                  error:
-                    $ref: '#/components/schemas/ErrorDetail'
   /feature-flags/toggle:
     post:
       summary: Toggle a runtime feature flag
@@ -1786,7 +1728,8 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
   /moderation/actions:
     post:
-      summary: Apply a moderation action
+      summary: Persist moderation policy input and audit
+      description: Persists moderation policy input and audit only. EvaluateModerationPolicy is the separate evaluation contract consumed by enforcement owners.
       operationId: applyModerationAction
       requestBody:
         required: true
@@ -1796,7 +1739,7 @@ paths:
               $ref: '#/components/schemas/ApplyModerationActionRequest'
       responses:
         '200':
-          description: Applied moderation action
+          description: Persisted moderation policy input and audit
           content:
             application/json:
               schema:

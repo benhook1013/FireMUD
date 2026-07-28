@@ -80,6 +80,23 @@ class LoggingAdminApplicationIntegrationTest {
   }
 
   @Test
+  void publicReportPersistenceEndpointIsUnavailable() throws Exception {
+    String token =
+        JWT_UTIL.generateToken(
+            "logging-admin-test", Map.of("globalRoles", java.util.List.of("platformAdmin")));
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/reports"))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString("{}"))
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(404);
+  }
+
+  @Test
   void remoteFollowupsRejectMalformedPointerVersionWithInvalidArgumentEnvelope() throws Exception {
     String token = tenantAdminToken(1L);
     HttpRequest request =

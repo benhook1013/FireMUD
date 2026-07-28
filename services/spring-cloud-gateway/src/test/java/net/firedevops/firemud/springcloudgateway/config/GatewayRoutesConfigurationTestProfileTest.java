@@ -42,7 +42,6 @@ class GatewayRoutesConfigurationTestProfileTest {
           "admin-feature-flags",
           "admin-logs",
           "admin-moderation",
-          "admin-reports",
           "admin-remote-followups",
           "admin-sagas",
           "admin-tick-remediation",
@@ -90,7 +89,6 @@ class GatewayRoutesConfigurationTestProfileTest {
         .containsExactly("/api/admin/feature-flags/**");
     assertThat(pathArgs("admin-logs").values()).containsExactly("/api/admin/logs/**");
     assertThat(pathArgs("admin-moderation").values()).containsExactly("/api/admin/moderation/**");
-    assertThat(pathArgs("admin-reports").values()).containsExactly("/api/admin/reports/**");
     assertThat(pathArgs("admin-remote-followups").values())
         .containsExactly("/api/admin/remote-followups/**");
     assertThat(pathArgs("admin-sagas").values()).containsExactly("/api/admin/sagas/**");
@@ -124,7 +122,6 @@ class GatewayRoutesConfigurationTestProfileTest {
     assertHasStripPrefix("admin-feature-flags", "2");
     assertHasStripPrefix("admin-logs", "2");
     assertHasStripPrefix("admin-moderation", "2");
-    assertHasStripPrefix("admin-reports", "2");
     assertHasStripPrefix("admin-remote-followups", "2");
     assertHasStripPrefix("admin-sagas", "2");
     assertHasStripPrefix("admin-tick-remediation", "2");

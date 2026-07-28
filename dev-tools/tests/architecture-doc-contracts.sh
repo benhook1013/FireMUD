@@ -8,12 +8,14 @@ import re
 
 root = pathlib.Path(".")
 obsolete_public_resume_signature = "`resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)`"
-maintenance_lock_token_syntax = re.compile(r"--maintenance-lock-token(?:\s|=|$)")
+maintenance_lock_token_syntax = re.compile(r"--maintenance-lock-token(?![A-Za-z0-9_-])")
 
 for example in (
     "--maintenance-lock-token <token>",
     "--maintenance-lock-token=<token>",
     "--maintenance-lock-token = <token>",
+    "`--maintenance-lock-token`",
+    "--maintenance-lock-token,",
 ):
     if not maintenance_lock_token_syntax.search(example):
         raise SystemExit(f"maintenance token syntax fixture was not rejected: {example}")
