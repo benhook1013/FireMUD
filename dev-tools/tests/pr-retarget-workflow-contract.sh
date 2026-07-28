@@ -553,8 +553,8 @@ require_contains "$smoke_path" 'pullRequest.base?.sha === baseSha'
 require_contains "$smoke_path" 'pullRequest.head?.sha === headSha'
 require_contains "$smoke_path" 'github.rest.actions.listJobsForWorkflowRun'
 require_contains "$smoke_path" 'job.name === "PR Full-Stack Smoke"'
-require_contains "$smoke_path" 'fullSmokeJob.status !== "completed"'
-require_contains "$smoke_path" 'fullSmokeJob.conclusion !== "success"'
+require_contains "$smoke_path" 'fullSmokeJob?.status === "completed"'
+require_contains "$smoke_path" 'fullSmokeJob?.conclusion !== "success"'
 require_contains "$smoke_path" 'Stopping obsolete completed smoke gate for'
 require_contains "$smoke_path" 'Stopping obsolete stale-snapshot smoke gate for'
 require_ordered_sequence \
@@ -564,7 +564,7 @@ require_ordered_sequence \
 require_branch_return "$smoke_path" 'if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {'
 require_ordered_sequence \
   "$smoke_path" \
-  'completedJobSnapshotRetries <= maxCompletedJobSnapshotRetries' \
+  'completedJobSnapshotAttempt < maxCompletedJobSnapshotRetries' \
   'if (await isCurrentPullRequestObsolete("Stopping obsolete stale-snapshot smoke gate for")) {' \
   'core.setFailed('
 require_branch_return "$smoke_path" 'if (await isCurrentPullRequestObsolete("Stopping obsolete stale-snapshot smoke gate for")) {'
@@ -620,6 +620,30 @@ full_files = quoted_entries(
     "const fullRelevantFiles = new Set([",
     "]);",
 )
+
+job_name_literals = re.findall(
+    r'job[.]name\s*===\s*["\']([^"\']+)["\']',
+    smoke,
+)
+if job_name_literals != ["PR Full-Stack Smoke"]:
+    raise SystemExit(
+        "smoke.yml must look up exactly one full-stack PR smoke job name literal: "
+        + repr(job_name_literals)
+    )
+
+try:
+    runtime_workflow = yaml.load(runtime_images, Loader=yaml.BaseLoader)
+    runtime_job_name = runtime_workflow["jobs"]["pr-local-smoke"]["name"]
+except (KeyError, TypeError, yaml.YAMLError) as exc:
+    raise AssertionError(
+        "runtime-images.yml must define the pr-local-smoke job name used by Smoke Gate"
+    ) from exc
+if runtime_job_name != job_name_literals[0]:
+    raise SystemExit(
+        "smoke.yml full-stack PR job lookup does not match runtime-images.yml: "
+        f"smoke={job_name_literals[0]!r}, runtime={runtime_job_name!r}"
+    )
+
 runtime_paths = pull_request_paths(runtime_images, "runtime-images.yml")
 
 runtime_images_fixture = """on:

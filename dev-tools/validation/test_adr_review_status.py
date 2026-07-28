@@ -125,6 +125,20 @@ class AdrReviewStatusTests(unittest.TestCase):
         with fixture_root() as fixture:
             self.validator.validate(Path(fixture))
 
+    def test_pre_formal_record_requires_completed_metadata_when_checked(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [x] `TEST-LEGACY` — `revised` on 2026-07-27; "
+                "[ADR 0001](../../architecture/decisions/adr-0001-legacy.md)",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "checked human review requires",
+            )
+
     def test_missing_adr_directory_fails_clearly(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)

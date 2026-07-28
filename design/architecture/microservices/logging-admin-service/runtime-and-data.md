@@ -21,11 +21,12 @@ Tick and coordination remediation remains a Game Session responsibility. Logging
 
 The current shipped scope is narrower than this target contract:
 
-- The service exposes core admin/moderation, report, saga-inspection, and coordination-health surfaces, plus observability-backed integrations; it does not yet provide the complete target control-plane workflow for every recovery, regional, or aggregate operation.
+- The service exposes core admin/moderation, administrative report-persistence, saga-inspection, and coordination-health surfaces, plus observability-backed integrations; it does not yet provide the complete target control-plane workflow for every recovery, regional, or aggregate operation.
+- Current report support is administrative/internal persistence only: the current controller accepts its existing caller-supplied `tenantId` and `reporterAccountId` fields and persists the report. The target caller-bound external/player submission route is unavailable; this is not a claim that the current controller itself is disabled.
 - Admission-pointer reads, audit, and preparation are live; open/close/retarget CAS and cutover remain target-only and are not current endpoint capabilities.
 - Current tick pause/resume support is the shipped `<tenantId, gameInstanceId>` boundary. Regional pause/resume and regional remediation remain target-only behavior, with no claim that the live instance control implicitly expands to a region or aggregate scope; they are tracked in [Game Session runtime and tick coordination](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status).
 - Logging & Admin consumes Game Session health and requests Game Session-owned control APIs; it does not directly mutate Redis or runtime coordination state.
-- Moderation policy input, audit data, and operator history remain owned here, while Account, Game Session, and Social & Groups own enforcement and runtime mutation. Quota/limit override is hypothetical target UX only; no current Account owner mutation route exists.
+- Moderation policy input, audit data, and operator history remain owned here, while Account, Game Session, and Social & Groups are the target-state enforcement owners for their respective scopes. Quota/limit override is hypothetical target UX only; no current Account owner mutation route exists.
 - The current moderation action path persists policy input and audit only; it does not forward or enforce a mutation, no owner-side enforcement RPC is exposed, and executable moderation routes remain prohibited until an owning contract exists.
 - The core/observability availability split is a design contract; exact independent deployment and pool isolation remain implementation obligations rather than a claim that every backend integration is already isolated in production.
 
@@ -40,8 +41,8 @@ In addition to log and moderation tooling, the service acts as a control-plane c
   - pause or resume tick execution for the shipped `<tenantId, gameInstanceId>` boundary; regional pause/resume controls remain target-state behavior and are tracked against the current Game Session implementation status in [Game Session runtime and tick coordination](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status); and
   - request the live scoped tick pause/resume operation through Game Session control APIs; broader reset/remediate actions are hypothetical target routes and remain unavailable until the owner API exists.
 - Implements guarded automation that:
-  - automatically pauses ticks and marks regions as unhealthy when dual-leader or split-brain signals are detected; and
-  - may request the live pause/resume operation without requiring an operator to be present, while still emitting audit events for every action. Any broader safe remediation is target-state only. Unattended requests use the typed Account authorization path with the exact Logging and Admin mTLS identity plus the current versioned automation policy; they never synthesize a human `control-ui` token or operator identity.
+  - enumerates the affected game instances from coordination-health signals and calls the live Game Session `PauseTicksForScope`/`ResumeTicksForScope` operation for each exact `<tenantId, gameInstanceId>` scope; regional pause/resume and other regional mutations remain target-state only; and
+  - may issue those live per-instance requests without requiring an operator to be present, while still emitting audit events for every action. Any broader safe remediation is target-state only. Unattended requests use the typed Account authorization path with the exact Logging and Admin mTLS identity plus the current versioned automation policy; they never synthesize a human `control-ui` token or operator identity.
 
 Game Session remains the only service allowed to mutate gameplay coordination state or execute tick pause/resume behavior. Logging & Admin owns operator UX, automation policy, and audit only; it does not become the runtime state owner for remediation.
 
@@ -64,7 +65,7 @@ The core operator control plane must remain available when Elasticsearch, Promet
 
 The architecture treats these as two runtime partitions even when they are delivered from one deployable:
 
-- Core control-plane endpoints include moderation policy-input persistence actions, live feature-flag controls, saga inspection, live admission-pointer reads/audit/preparation, target-only admission open/close/retarget CAS and cutover, and live tick-remediation pause/resume APIs. These paths must not block on Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager for request success. Player-bootstrap and player-delegation surfaces such as `/reports` are player-facing data paths with their own availability contract, not core operator control-plane endpoints. Quota override, moderation enforcement, and broader remediation are hypothetical target families, not current endpoints.
+- Core control-plane endpoints include moderation policy-input persistence actions, live feature-flag controls, saga inspection, live admission-pointer reads/audit/preparation, target-only admission open/close/retarget CAS and cutover, and live tick-remediation pause/resume APIs. These paths must not block on Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager for request success. The current administrative/internal `/reports` persistence seam has its own availability contract; the target caller-bound player-submission surface is unavailable and is not a current player-facing data path. Quota override, moderation enforcement, and broader remediation are hypothetical target families, not current endpoints.
 - Observability-backed endpoints include log search, embedded dashboards, traces, metric exploration, and alert investigation views. These paths may degrade independently or return explicit backend-unavailable states.
 - Readiness and degradation reporting must distinguish these partitions so an observability outage does not mark the entire operator service unavailable.
 - Thread pools, connection pools, and timeout budgets for observability integrations must be isolated from the core control plane so expensive search/dashboard failures cannot starve moderation or remediation requests.
@@ -83,8 +84,8 @@ Logging & Admin does not write to Redis directly and does not define a competing
 ## Data Model
 
 - `log_events` stores log data and is mirrored into Elasticsearch indexes for search.
-- `moderation_actions` records bans and warnings with timestamps and includes a `tenant_id` column.
-- `player_reports` stores abuse and bug reports with a `tenant_id` column.
+- `moderation_actions` records moderation policy input and audit evidence with timestamps and includes a `tenant_id` column; it does not represent owner-side enforcement state.
+- `player_reports` stores abuse and bug reports submitted through the current administrative/internal persistence seam, with a `tenant_id` column; target caller-bound external/player submission remains unavailable.
 - Runtime feature-flag truth is owned by Game Session. Logging & Admin records operator intent and audit context for feature-flag requests, then forwards the mutation to Game Session rather than maintaining a competing `feature_flag` runtime table.
 
 ## Moderation Workflow
@@ -92,10 +93,10 @@ Logging & Admin does not write to Redis directly and does not define a competing
 - Operators review flagged logs through the web UI.
 - The current `POST /moderation/actions` path validates and persists policy input and audit data only; it does not invoke an owner-side enforcement RPC.
 - A future target path may propagate a versioned moderation policy to the owning enforcement service once its owner contract exists; that owner would validate and commit the authoritative runtime effect.
-- Enforcement follows the ban taxonomy:
-  - `account_security_ban` events are applied by Account Service.
-  - `gameplay_ban` events are enforced by Game Session Service.
-  - `chat_mute` and `chat_ban` events are enforced by Social & Groups Service.
+- Target-state enforcement follows the ban taxonomy:
+  - `account_security_ban` events would be applied by Account Service.
+  - `gameplay_ban` events would be enforced by Game Session Service.
+  - `chat_mute` and `chat_ban` events would be enforced by Social & Groups Service.
 
 All moderation actions are audit-recorded for compliance.
 

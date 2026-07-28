@@ -3,12 +3,11 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 import importlib.util
 import tempfile
 import unittest
+from collections import defaultdict
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "dev-tools/validation/check-authz-route-matrix.py"
@@ -563,7 +562,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_multi_profile_route_with_audience_map_is_accepted(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        route = configure_multi_profile_route(document)
+        configure_multi_profile_route(document)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
             path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
@@ -666,7 +665,13 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_pending_deletion_generation_exception_has_bounded_negative_proof(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        exception = document["tenant_generation_policy"]["exception_allowlist"]["pending_deletion_scoped"]
+        self.assertNotIn(
+            "pending_deletion_scoped",
+            document["tenant_generation_policy"]["exception_allowlist"],
+        )
+        exception = document["tenant_generation_policy"][
+            "no_target_tenant_classifications"
+        ]["pending_deletion_scoped"]
         self.assertFalse(exception["target_tenant_generation"])
         self.assertIn("pending_deletion_state", exception["required_authority"])
         self.assertTrue(exception["contract_justification"])
@@ -680,7 +685,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             path = Path(directory) / "matrix.yaml"
             path.write_text(self.validator.yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
             errors = self.validator.validate(path)
-        self.assertTrue(any("bounded contract_justification" in error for error in errors))
+        self.assertTrue(any("no_target_tenant_classifications" in error for error in errors))
 
     def test_multi_profile_route_requires_shared_type_and_issuer(self):
         for field in ("token_type", "token_issuer"):
@@ -969,11 +974,21 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         for field, value, expected in mutations:
             with self.subTest(expected=expected):
                 document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-                route = route_for(document, "spring-cloud-gateway", "/ws/game/**")
+                route = next(
+                    route
+                    for route in document["routes"]
+                    if route.get("service") == "spring-cloud-gateway"
+                    and route.get("route") == "/ws/game/**"
+                    and route.get("applicability", {}).get("all_of") == [
+                        {"connection_mode": "first_party_web"},
+                        {"operation": "websocket_upgrade"},
+                        {"admission_flow": "connect_token_bootstrap"},
+                    ]
+                )
                 route[field] = value
                 errors = []
                 self.validator.validate_ws_game_routes(document["routes"], errors)
-            self.assertTrue(any(expected in error for error in errors))
+                self.assertTrue(any(expected in error for error in errors))
 
     def test_malformed_ws_game_route_counts_do_not_suppress_revoke_checks(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1300,6 +1315,32 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             "tenant_generation_policy.exception_allowlist.billing_safe_tenant must be a mapping",
             errors,
         )
+
+    def test_invalid_tenant_generation_policy_does_not_skip_route_checks(self):
+        for malformed_policy in (None, {"applies_by_default": False}):
+            with self.subTest(policy=malformed_policy):
+                document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+                document["tenant_generation_policy"] = malformed_policy
+                route = next(
+                    route
+                    for route in document["routes"]
+                    if route.get("classification") == "cross_tenant_support_safe"
+                )
+                route["required_live_checks"] = []
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "matrix.yaml"
+                    path.write_text(
+                        self.validator.yaml.safe_dump(document, sort_keys=False),
+                        encoding="utf-8",
+                    )
+                    errors = self.validator.validate(path)
+                self.assertIn(
+                    "tenant_generation_policy must enable applies_by_default",
+                    errors,
+                )
+                self.assertTrue(
+                    any("missing route-class authority checks" in error for error in errors)
+                )
 
     def test_cross_tenant_generation_exceptions_reference_role_assurance_policy(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

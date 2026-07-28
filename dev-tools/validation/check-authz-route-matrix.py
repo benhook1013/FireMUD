@@ -11,7 +11,6 @@ from typing import Any
 
 import yaml
 
-
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MATRIX = ROOT / "design/architecture/system-architecture-authz-route-matrix.yaml"
 REQUIRED_WS_GAME_CHECKS = {
@@ -106,6 +105,8 @@ REQUIRED_TENANT_GENERATION_EXCEPTIONS = {
             "role_appropriate_assurance",
         },
     },
+}
+REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS = {
     "pending_deletion_scoped": {
         "target_tenant_generation": False,
         "required_live_checks": {
@@ -403,6 +404,20 @@ def validate_pending_deletion_generation(
         errors.append(
             f"{label} pending_deletion_scoped routes must set "
             "membership_authority_generation_applies=false"
+        )
+    checks = set(
+        string_list(route.get("required_live_checks"), f"{label} required_live_checks", errors)
+    )
+    missing = REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS["pending_deletion_scoped"][
+        "required_live_checks"
+    ] - checks
+    if missing:
+        errors.append(f"{label} is missing no-target authority checks: {sorted(missing)}")
+    forbidden_checks = checks & {"tenant_generation", "target_tenant_generation"}
+    if forbidden_checks:
+        errors.append(
+            f"{label} must not require tenant-generation checks for pending_deletion_scoped: "
+            f"{sorted(forbidden_checks)}"
         )
 
 
@@ -742,21 +757,46 @@ def validate_tenant_generation_allowlist(
                 f"tenant_generation_policy exception {classification} "
                 f"must reference {PRIVILEGED_OPERATOR_ROLE_ASSURANCE}"
             )
-        if classification == "pending_deletion_scoped":
-            justification = entry.get("contract_justification")
-            if not isinstance(justification, str) or not justification.strip():
-                errors.append(
-                    "tenant_generation_policy exception pending_deletion_scoped "
-                    "must declare a bounded contract_justification"
-                )
-            proof = entry.get("negative_proof")
-            if not isinstance(proof, list) or not proof or any(
-                not isinstance(item, str) or not item.strip() for item in proof
-            ):
-                errors.append(
-                    "tenant_generation_policy exception pending_deletion_scoped "
-                    "must declare non-empty negative_proof"
-                )
+
+
+def validate_no_target_tenant_classifications(
+    policy: dict[str, Any], errors: list[str]
+) -> None:
+    classifications = policy.get("no_target_tenant_classifications")
+    if not isinstance(classifications, dict):
+        errors.append(
+            "tenant_generation_policy.no_target_tenant_classifications must be a mapping"
+        )
+        return
+    if set(classifications) != set(REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS):
+        errors.append(
+            "tenant_generation_policy.no_target_tenant_classifications must be exactly "
+            "the closed no-target classification set"
+        )
+    for classification, expected in REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS.items():
+        entry = classifications.get(classification)
+        label = (
+            "tenant_generation_policy.no_target_tenant_classifications."
+            f"{classification}"
+        )
+        if not isinstance(entry, dict):
+            errors.append(f"{label} must be a mapping")
+            continue
+        if entry.get("target_tenant_generation") is not expected["target_tenant_generation"]:
+            errors.append(f"{label} must set target_tenant_generation=false")
+        required_checks = set(
+            string_list(entry.get("required_authority"), f"{label}.required_authority", errors)
+        )
+        if required_checks != expected["required_live_checks"]:
+            errors.append(f"{label} has the wrong required authority checks")
+        justification = entry.get("contract_justification")
+        if not isinstance(justification, str) or not justification.strip():
+            errors.append(f"{label} must declare a bounded contract_justification")
+        proof = entry.get("negative_proof")
+        if not isinstance(proof, list) or not proof or any(
+            not isinstance(item, str) or not item.strip() for item in proof
+        ):
+            errors.append(f"{label} must declare non-empty negative_proof")
 
 
 def validate_tenant_generation_exception_routes(
@@ -822,8 +862,9 @@ def validate_tenant_generation_policy(
     policy = document.get("tenant_generation_policy")
     if not isinstance(policy, dict) or policy.get("applies_by_default") is not True:
         errors.append("tenant_generation_policy must enable applies_by_default")
-        return
-    validate_tenant_generation_allowlist(policy, errors)
+    else:
+        validate_tenant_generation_allowlist(policy, errors)
+        validate_no_target_tenant_classifications(policy, errors)
     validate_tenant_generation_exception_routes(routes, errors)
 
 

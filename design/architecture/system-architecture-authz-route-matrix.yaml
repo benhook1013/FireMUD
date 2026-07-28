@@ -78,6 +78,7 @@ tenant_generation_policy:
       target_tenant_generation: false
       required_authority: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
       role_assurance_policy: privileged_control_when_global_role
+  no_target_tenant_classifications:
     pending_deletion_scoped:
       target_tenant_generation: false
       required_authority: [pending_deletion_state, pending_deletion_credential_registry]
@@ -91,7 +92,6 @@ tenant_generation_policy:
       - support_safe_denied_without_live_support_or_platform_admin_and_global_scope
       - support_safe_denied_without_role_appropriate_assurance
       - billing_safe_denied_without_live_billing_admin_or_platform_admin_and_privileged_control
-      - pending_deletion_route_denied_after_target_tenant_generation_advance
       - new_route_class_does_not_inherit_exception
 entitlement_contract:
   owner: account-service
@@ -697,7 +697,7 @@ routes:
     required_fields: [control_plane_request_id, actor_from_session, reason, session_id, mutation_digest]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
-    mutation_contract: owner_atomic_idempotent_role_refresh
+    mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: account-service
@@ -1361,7 +1361,7 @@ routes:
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
-    required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
+    required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation, runtime_entitlements]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation

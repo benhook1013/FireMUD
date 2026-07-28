@@ -86,19 +86,25 @@ require_smoke_pattern \
   'const[[:space:]]+matching[[:space:]]*=[[:space:]]+matchingRuns[.]reduce[[:space:]]*[(]' \
   "Smoke Gate must select the newest matching workflow run explicitly"
 require_smoke_pattern \
-  'let[[:space:]]+completedJobSnapshotRunId[[:space:]]*=[[:space:]]*null;' \
-  "Smoke Gate must bind completed-job snapshot retries to a workflow run ID"
+  'let[[:space:]]+fullSmokeJob[[:space:]]*=[[:space:]]*null;' \
+  "Smoke Gate must retain the selected full-stack job across bounded snapshot retries"
 require_smoke_pattern \
-  'completedJobSnapshotRunId[[:space:]]*!==[[:space:]]*matching[.]id' \
-  "Smoke Gate must reset stale snapshot retries when the selected run changes"
+  'completedJobSnapshotAttempt[[:space:]]*<=[[:space:]]*maxCompletedJobSnapshotRetries' \
+  "Smoke Gate must bound the inner job-snapshot retry loop"
 require_smoke_pattern \
-  'completedJobSnapshotRetries[[:space:]]*\+=[[:space:]]*1;' \
-  "Smoke Gate must count stale completed-workflow job snapshots for retry"
+  'run_id:[[:space:]]*matching[.]id' \
+  "Smoke Gate must retry job snapshots for the already-selected workflow run"
 require_smoke_pattern \
-  'completedJobSnapshotRetries[[:space:]]*<=[[:space:]]*maxCompletedJobSnapshotRetries' \
-  "Smoke Gate must bound stale completed-workflow snapshot retries"
+  'completedJobSnapshotAttempt[[:space:]]*<[[:space:]]*maxCompletedJobSnapshotRetries' \
+  "Smoke Gate must retry only before the bounded final snapshot attempt"
 require_smoke_pattern \
   'did not expose a terminal PR Full-Stack Smoke job after' \
   "Smoke Gate must fail closed after bounded snapshot retries"
+require_smoke_pattern \
+  'Runtime images run \$\{matching[.]id\} succeeded, but PR Full-Stack Smoke job did not complete successfully:' \
+  "Smoke Gate must describe the full-stack job failure after the runtime run succeeded"
+require_smoke_pattern \
+  'Stopping obsolete failed full-smoke gate for' \
+  "Smoke Gate must preserve the obsolete-PR-head check before full-stack job failure"
 
 echo "PR required-gate context contract checks passed"

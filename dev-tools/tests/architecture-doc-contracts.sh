@@ -203,6 +203,23 @@ require_contains(
     ],
 )
 
+require_contains(
+    "design/architecture/system-architecture-redis-reset-and-recovery.md",
+    [
+        "Any smoke tick exercised by the recovery or `continueRecovery` path is synthetic maintenance traffic only.",
+        "must not authorize player ingress or real `tickId=0` admission",
+        "Through `AWAITING_RESUME`, `RESUME_AUTHORIZED`, and the internal release phase, the traffic fence remains active",
+        "Only successful internal release may clear the fence and reopen normal admission.",
+        "--maintenance-lock-token-file <permissioned-token-file>",
+    ],
+)
+for path in (root / "design").rglob("*.md"):
+    if "--maintenance-lock-token <" in path.read_text(encoding="utf-8"):
+        raise SystemExit(
+            f"{path.relative_to(root)}: recovery examples must not expose "
+            "maintenanceLockToken on the command line"
+        )
+
 print("architecture doc contracts passed")
 PY
 

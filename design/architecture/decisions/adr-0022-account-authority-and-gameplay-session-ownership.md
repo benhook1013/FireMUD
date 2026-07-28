@@ -62,7 +62,8 @@ These checks do not allow Gateway to issue account authority, infer membership, 
 
 ### Failure and Freshness Rules
 
-- Admission and sensitive mutations fail closed when authoritative membership, entitlement, token-profile, issued-token registry, allowlist, or applicable authority-generation state cannot be established.
+- Fresh gameplay admission, new gameplay bindings, and sensitive mutations fail closed when authoritative Account membership, entitlement, token-profile, issued-token registry, allowlist, or applicable authority-generation state cannot be established.
+- The only entitlement-freshness exception is the exact-binding grace-resume path defined by [ADR 0028](./adr-0028-differentiated-entitlement-freshness.md) and [ADR 0030](./adr-0030-risk-based-active-session-revocation.md): reconnect/resume of the same still-resumable binding may use an eligible positive entitlement snapshot for bounded continuity when fresh entitlement evaluation is unavailable. Account must still be reachable to validate fresh current lifecycle, security, membership, applicable grant, billing, and revocation authority and to commit the exact-binding `resumeActivationLease`; the snapshot cannot substitute for that authority, and any missing, stale, mismatched, or ambiguous authority fails closed. This exception never authorizes a new binding, target, instance, scale-out, or quota-increasing commitment.
 - `membershipVersion` advances on every membership or role change that can alter gameplay or tenant authority; a database row identifier that does not advance is not a valid version.
 - Ongoing sessions must consume authority, revocation, and membership changes through bounded indexes/events plus authoritative reconciliation; JWT expiry alone is insufficient for immediate revocation.
 - Design acceptance and implementation status remain separate. Missing authority-generation enforcement, raw-JWT persistence, or non-monotonic versions are recorded implementation gaps, not alternate authority.
@@ -95,7 +96,7 @@ Relying only on short token expiry removes the registry, allowlists, and authori
 - Implement all Account-owned durable authority-generation writers/projections and prove logout-all, account, tenant, membership, and signing-key compromise revocation paths.
 - Replace persisted raw gameplay JWTs with token hash/issued-at identity and freshly rebound backend credentials.
 - Make `membershipVersion` and entitlement version/sequence monotonic state-change values rather than row identifiers.
-- Prove `PLAY`, reconnect/resume, role changes, membership removal, and billing cutoff consume current Account authority and fail closed when it is unavailable.
+- Prove `PLAY`, reconnect/resume, role changes, membership removal, and billing cutoff consume current Account authority and fail closed when it is unavailable, with only the ADR 0028/0030 exact-binding entitlement-snapshot exception for grace resume.
 - Prove Gateway cannot create account or gameplay authority and that untrusted identity/scope headers cannot reach internal services as trusted context.
 
 ## Required Documentation Alignment

@@ -317,20 +317,6 @@ def validate_erasure_overlay_reconciliation(
     if not isinstance(value, dict):
         return ("fail", f"{label} must be an object")
 
-    overlay_boundaries = {}
-    for boundary_name in (
-        "artifactErasureHighWater",
-        "initialCatchupHighWater",
-        "restoreHighWater",
-    ):
-        boundary = value.get(boundary_name)
-        if not isinstance(boundary, dict):
-            return ("fail", f"{label} {boundary_name} must be an object")
-        sequence = boundary.get("sequence")
-        if not isinstance(sequence, int) or isinstance(sequence, bool):
-            return ("fail", f"{label} {boundary_name}.sequence must be an integer")
-        overlay_boundaries[boundary_name] = sequence
-
     canonical_boundaries = {
         "artifactErasureHighWater": artifact_high_water,
         "initialCatchupHighWater": initial_catchup_high_water,
@@ -354,20 +340,10 @@ def validate_erasure_overlay_reconciliation(
             "fail",
             f"{label} canonical erasure high-water sequences must be ordered",
         )
-    # Check overlay ordering before exact equality so malformed overlay metadata
-    # fails closed on its own ordering contract.
-    if not (
-        overlay_boundaries["artifactErasureHighWater"]
-        <= overlay_boundaries["initialCatchupHighWater"]
-        <= overlay_boundaries["restoreHighWater"]
-    ):
-        return (
-            "fail",
-            f"{label} overlay erasure high-water sequences must be ordered",
-        )
-
     if value.get("stream") != stream:
         return ("fail", f"{label} stream must match the canonical erasure stream")
+    # Exact equality preserves boundary shape, fields, values, and ordering
+    # because the canonical boundaries above have already been validated.
     if value.get("artifactErasureHighWater") != artifact_high_water:
         return ("fail", f"{label} artifactErasureHighWater must match the canonical bound exactly")
     if value.get("initialCatchupHighWater") != initial_catchup_high_water:

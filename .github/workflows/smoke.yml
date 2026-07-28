@@ -248,8 +248,6 @@ jobs:
             const maxCompletedJobSnapshotRetries = 8;
             const retryableStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
             let pollIteration = 0;
-            let completedJobSnapshotRunId = null;
-            let completedJobSnapshotRetries = 0;
 
             async function withTransientGitHubRetry(label, operation) {
               const maxAttempts = 4;
@@ -361,10 +359,6 @@ jobs:
                 return Number(candidate.id) > Number(newest.id) ? candidate : newest;
               }, null);
               if (matching) {
-                if (completedJobSnapshotRunId !== matching.id) {
-                  completedJobSnapshotRunId = matching.id;
-                  completedJobSnapshotRetries = 0;
-                }
                 core.info(`Found runtime-images run ${matching.id} with status=${matching.status} conclusion=${matching.conclusion}`);
                 if (matching.status !== "completed") {
                   await new Promise((resolve) => setTimeout(resolve, sleepMs));
@@ -380,31 +374,38 @@ jobs:
                   return;
                 }
 
-                const jobs = await withTransientGitHubRetry(
-                  "runtime-images job lookup",
-                  () => github.paginate(
-                    github.rest.actions.listJobsForWorkflowRun,
-                    {
-                      owner,
-                      repo,
-                      run_id: matching.id,
-                      per_page: 100,
-                    }
-                  )
-                );
-                if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {
-                  return;
-                }
-                const fullSmokeJob = jobs.find(
-                  (job) => job.name === "PR Full-Stack Smoke"
-                );
-                if (!fullSmokeJob || fullSmokeJob.status !== "completed") {
-                  completedJobSnapshotRetries += 1;
-                  if (completedJobSnapshotRetries <= maxCompletedJobSnapshotRetries) {
+                let fullSmokeJob = null;
+                for (
+                  let completedJobSnapshotAttempt = 0;
+                  completedJobSnapshotAttempt <= maxCompletedJobSnapshotRetries;
+                  completedJobSnapshotAttempt += 1
+                ) {
+                  const jobs = await withTransientGitHubRetry(
+                    "runtime-images job lookup",
+                    () => github.paginate(
+                      github.rest.actions.listJobsForWorkflowRun,
+                      {
+                        owner,
+                        repo,
+                        run_id: matching.id,
+                        per_page: 100,
+                      }
+                    )
+                  );
+                  if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {
+                    return;
+                  }
+                  fullSmokeJob = jobs.find(
+                    (job) => job.name === "PR Full-Stack Smoke"
+                  ) ?? null;
+                  if (fullSmokeJob?.status === "completed") {
+                    break;
+                  }
+                  if (completedJobSnapshotAttempt < maxCompletedJobSnapshotRetries) {
                     core.info(
                       `Runtime images run ${matching.id} succeeded but its PR Full-Stack Smoke job snapshot is not terminal yet: ` +
                       `${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}; ` +
-                      `retrying ${completedJobSnapshotRetries}/${maxCompletedJobSnapshotRetries}`
+                      `retrying ${completedJobSnapshotAttempt + 1}/${maxCompletedJobSnapshotRetries}`
                     );
                     await new Promise((resolve) => setTimeout(resolve, sleepMs));
                     continue;
@@ -420,12 +421,13 @@ jobs:
                   return;
                 }
 
-                if (fullSmokeJob.conclusion !== "success") {
+                if (fullSmokeJob?.conclusion !== "success") {
                   if (await isCurrentPullRequestObsolete("Stopping obsolete failed full-smoke gate for")) {
                     return;
                   }
                   core.setFailed(
-                    `Runtime images/full smoke run ${matching.id} did not complete successfully: run=${matching.conclusion}, full-smoke=${fullSmokeJob.status}/${fullSmokeJob.conclusion}`
+                    `Runtime images run ${matching.id} succeeded, but PR Full-Stack Smoke job did not complete successfully: ` +
+                    `job=${fullSmokeJob.status}/${fullSmokeJob.conclusion}`
                   );
                   return;
                 }
