@@ -50,9 +50,9 @@ Every listed HTTPS-sensitive action requires recent ordinary reauthentication us
 
 ### Gameplay-to-HTTPS handoff
 
-Telnet or gameplay may explicitly initiate a sensitive action. FireMUD may then return a short-lived, single-use, opaque HTTPS URL. The URL contains no secret and grants no authority by itself; its opaque handle resolves to server-side state bound to the initiating account, session, tenant, action, product, amount, currency, and `requestId`.
+Telnet or gameplay may explicitly initiate a sensitive action. FireMUD may then return a short-lived HTTPS URL containing a high-entropy, unguessable, single-use opaque handoff handle. The URL contains no independently authorizing credential; the handle is only a server-side lookup key for state bound to the initiating account, gameplay session, tenant, action, product, amount, currency, and `requestId`.
 
-The HTTPS client authenticates the user and performs any required recent reauthentication, elevation, or payment-provider flow. FireMUD completes the action asynchronously only after receiving and verifying the authenticated result or provider result. The gameplay session may observe the eventual success, failure, expiry, or cancellation, but it cannot approve the action itself. Reusing, altering, or opening an expired handoff cannot change or complete the bound intent.
+The HTTPS client authenticates the user over HTTPS before FireMUD discloses the bound action, tenant, product, amount, or currency details, and then performs any required recent reauthentication, elevation, or payment-provider flow. FireMUD verifies the authenticated account, gameplay-session, tenant, and `requestId` bindings, completes the action asynchronously only after receiving and verifying the authenticated result or provider result, and atomically consumes the handoff when the action completes. Any later reuse, alteration, or opening of an expired handoff is rejected; retries and duplicate callbacks may converge through the bound `requestId` idempotency record but cannot reopen the consumed handoff. The gameplay session may observe the eventual success, failure, expiry, or cancellation, but it cannot approve the action itself.
 
 ### Existing premium balances
 
@@ -93,7 +93,7 @@ Focused contract and integration proof must demonstrate that:
 - an active gameplay session cannot solicit another ordinary factor, TOTP, or elevated control-plane authority;
 - every listed sensitive route, including account deletion and global administration, rejects absent or stale ordinary reauthentication and keeps its mutations HTTPS-only;
 - `platformAdmin` and cross-tenant `billingAdmin` elevation require independent TOTP before a bounded elevated window is issued;
-- a handoff is opaque, non-authorizing, short-lived, single-use, bound to every declared field, and safe against replay or parameter substitution;
+- a handoff handle is high-entropy, unguessable, server-side, opaque, non-authorizing, short-lived, single-use, bound to every declared field, atomically consumed on completion, and rejected on reuse or parameter substitution;
 - completion occurs only after a verified authenticated or provider result and is idempotent under retries and duplicate callbacks; and
 - premium-balance spending proves explicit confirmation, idempotency, and cap enforcement without introducing per-purchase factor prompts.
 

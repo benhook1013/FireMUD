@@ -118,6 +118,7 @@ REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS = {
 PRIVILEGED_OPERATOR_ROLE_ASSURANCE = "privileged_control_when_global_role"
 CANONICAL_OPERATOR_INGRESS = "logging-admin-service"
 DIRECT_OWNER_ROUTE_POLICY = "deny_at_edge_and_migrate_to_logging_admin"
+LiveChecksCache = dict[int, set[str]]
 
 
 def route_key(route: dict[str, Any]) -> str | None:
@@ -135,18 +136,36 @@ def string_list(value: Any, field: str, errors: list[str]) -> list[str]:
     return value
 
 
-def collect_live_checks(value: Any, field: str, errors: list[str]) -> list[str]:
+def collect_live_checks(
+    value: Any,
+    field: str,
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> list[str]:
     checks: list[str] = []
     if isinstance(value, dict):
         for key, child in value.items():
             child_field = f"{field}.{key}" if field else key
             if key == "required_live_checks":
-                checks.extend(string_list(child, child_field, errors))
+                parsed_checks = (
+                    live_checks_cache.get(id(value))
+                    if live_checks_cache is not None
+                    else None
+                )
+                if parsed_checks is None:
+                    parsed_checks = set(string_list(child, child_field, errors))
+                    if live_checks_cache is not None:
+                        live_checks_cache[id(value)] = parsed_checks
+                checks.extend(parsed_checks)
             else:
-                checks.extend(collect_live_checks(child, child_field, errors))
+                checks.extend(
+                    collect_live_checks(child, child_field, errors, live_checks_cache)
+                )
     elif isinstance(value, list):
         for index, child in enumerate(value):
-            checks.extend(collect_live_checks(child, f"{field}[{index}]", errors))
+            checks.extend(
+                collect_live_checks(child, f"{field}[{index}]", errors, live_checks_cache)
+            )
     return checks
 
 
@@ -247,6 +266,14 @@ def validate_role_assurance(document: dict[str, Any], errors: list[str]) -> set[
         )
         return predicates
     requirements = predicate.get("requirements")
+    if "requirements" in predicate and not (
+        isinstance(vocabulary, dict)
+        and PRIVILEGED_OPERATOR_ROLE_ASSURANCE in vocabulary
+    ):
+        errors.append(
+            "role_assurance.vocabulary must declare predicate "
+            f"{PRIVILEGED_OPERATOR_ROLE_ASSURANCE} when requirements are present"
+        )
     if not isinstance(requirements, dict):
         errors.append(
             "role_assurance.privileged_control_when_global_role.requirements must be a mapping"
@@ -387,6 +414,7 @@ def validate_pending_deletion_generation(
     label: str,
     account_generation: Any,
     errors: list[str],
+    checks: set[str] | None = None,
 ) -> None:
     if route.get("classification") != "pending_deletion_scoped":
         return
@@ -405,9 +433,8 @@ def validate_pending_deletion_generation(
             f"{label} pending_deletion_scoped routes must set "
             "membership_authority_generation_applies=false"
         )
-    checks = set(
-        string_list(route.get("required_live_checks"), f"{label} required_live_checks", errors)
-    )
+    if checks is None:
+        checks = route_live_checks(route, label, errors)
     missing = REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS["pending_deletion_scoped"][
         "required_live_checks"
     ] - checks
@@ -447,7 +474,11 @@ def validate_membership_generation(
 
 
 def validate_conditional_operator_route(
-    route: dict[str, Any], label: str, value: Any, errors: list[str]
+    route: dict[str, Any],
+    label: str,
+    value: Any,
+    errors: list[str],
+    checks: set[str] | None = None,
 ) -> None:
     route_key_value = (route.get("service"), route.get("route"))
     if route_key_value not in CONDITIONAL_OPERATOR_ROUTES:
@@ -461,9 +492,8 @@ def validate_conditional_operator_route(
         errors.append(
             f"{label} must set global_platform_admin_membership_required=false"
         )
-    checks = set(
-        string_list(route.get("required_live_checks"), f"{label} required_live_checks", errors)
-    )
+    if checks is None:
+        checks = route_live_checks(route, label, errors)
     if "membership_when_tenant_role" not in checks:
         errors.append(
             f"{label} tenant-role branch must require membership_when_tenant_role"
@@ -804,7 +834,9 @@ def validate_no_target_tenant_classifications(
 
 
 def validate_tenant_generation_exception_routes(
-    routes: list[Any], errors: list[str]
+    routes: list[Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
 ) -> None:
     for route in routes:
         if not isinstance(route, dict):
@@ -834,13 +866,7 @@ def validate_tenant_generation_exception_routes(
                 f"{label} must explicitly disable membership generation "
                 f"for {classification}"
             )
-        checks = set(
-            string_list(
-                route.get("required_live_checks"),
-                f"{label} required_live_checks",
-                errors,
-            )
-        )
+        checks = route_live_checks(route, label, errors, live_checks_cache)
         missing = sorted(expected["required_live_checks"] - checks)
         if missing:
             errors.append(f"{label} is missing route-class authority checks: {missing}")
@@ -861,7 +887,10 @@ def validate_tenant_generation_exception_routes(
 
 
 def validate_tenant_generation_policy(
-    document: dict[str, Any], routes: list[Any], errors: list[str]
+    document: dict[str, Any],
+    routes: list[Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
 ) -> None:
     policy = document.get("tenant_generation_policy")
     if not isinstance(policy, dict) or policy.get("applies_by_default") is not True:
@@ -869,7 +898,7 @@ def validate_tenant_generation_policy(
     else:
         validate_tenant_generation_allowlist(policy, errors)
         validate_no_target_tenant_classifications(policy, errors)
-    validate_tenant_generation_exception_routes(routes, errors)
+    validate_tenant_generation_exception_routes(routes, errors, live_checks_cache)
 
 
 def validate_entitlement_contract(
@@ -918,7 +947,11 @@ def validate_role_assurance_references(
             )
 
 
-def validate_generation_applicability(routes: list[Any], errors: list[str]) -> None:
+def validate_generation_applicability(
+    routes: list[Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> None:
     for index, route in enumerate(routes):
         if not isinstance(route, dict):
             continue
@@ -931,14 +964,23 @@ def validate_generation_applicability(routes: list[Any], errors: list[str]) -> N
         account_generation = route.get("account_authority_generation_applies")
         if account_generation is not None and not isinstance(account_generation, bool):
             errors.append(f"{label} account_authority_generation_applies must be boolean")
-        validate_pending_deletion_generation(
-            route, label, account_generation, errors
-        )
+        route_key_value = (route.get("service"), route.get("route"))
+        checks = None
+        if (
+            route.get("classification") == "pending_deletion_scoped"
+            or route_key_value in CONDITIONAL_OPERATOR_ROUTES
+        ):
+            checks = route_live_checks(route, label, errors, live_checks_cache)
+        validate_pending_deletion_generation(route, label, account_generation, errors, checks)
         value = validate_membership_generation(route, label, errors)
-        validate_conditional_operator_route(route, label, value, errors)
+        validate_conditional_operator_route(route, label, value, errors, checks)
 
 
-def validate_profile_authority_routes(routes: list[Any], errors: list[str]) -> None:
+def validate_profile_authority_routes(
+    routes: list[Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> None:
     for route_name in ("GetProfile", "UpdateProfile"):
         route = resolve_unique_route(routes, "account-service", route_name, errors)
         if route is None:
@@ -956,13 +998,17 @@ def validate_profile_authority_routes(routes: list[Any], errors: list[str]) -> N
             )
         if route.get("membership_authority_generation_applies") is not True:
             errors.append(f"{label} must apply membership authority generation")
-        checks = set(string_list(route.get("required_live_checks"), f"{label} required_live_checks", errors))
+        checks = route_live_checks(route, label, errors, live_checks_cache)
         for required_check in ("membership", "membership_generation", "tenant_generation"):
             if required_check not in checks:
                 errors.append(f"{label} must require live check {required_check}")
 
 
-def validate_refresh_roles_routes(routes: list[Any], errors: list[str]) -> None:
+def validate_refresh_roles_routes(
+    routes: list[Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> None:
     grpc_route = resolve_unique_route(
         routes, "game-session-service", "RefreshRoles", errors
     )
@@ -976,7 +1022,7 @@ def validate_refresh_roles_routes(routes: list[Any], errors: list[str]) -> None:
             errors.append(
                 f"{label} must require Account operator authorization redemption"
             )
-        checks = set(route_live_checks(grpc_route, label, errors))
+        checks = route_live_checks(grpc_route, label, errors, live_checks_cache)
         for required_check in (
             "current_operator_authorization",
             "current_session",
@@ -1090,8 +1136,22 @@ def applicability_value(
     return values[0]
 
 
-def route_live_checks(route: dict[str, Any], label: str, errors: list[str]) -> set[str]:
-    return set(string_list(route.get("required_live_checks"), f"{label} required_live_checks", errors))
+def route_live_checks(
+    route: dict[str, Any],
+    label: str,
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> set[str]:
+    if live_checks_cache is not None:
+        parsed_checks = live_checks_cache.get(id(route))
+        if parsed_checks is not None:
+            return parsed_checks
+    parsed_checks = set(
+        string_list(route.get("required_live_checks"), f"{label} required_live_checks", errors)
+    )
+    if live_checks_cache is not None:
+        live_checks_cache[id(route)] = parsed_checks
+    return parsed_checks
 
 
 def validate_applicability(
@@ -1105,7 +1165,11 @@ def validate_applicability(
             )
 
 
-def validate_ws_game_routes(routes: list[Any], errors: list[str]) -> None:
+def validate_ws_game_routes(
+    routes: list[Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> None:
     ws_routes = matching_routes(routes, "spring-cloud-gateway", "/ws/game/**")
     by_mode: dict[str, list[dict[str, Any]]] = {}
     for route in ws_routes:
@@ -1130,7 +1194,12 @@ def validate_ws_game_routes(routes: list[Any], errors: list[str]) -> None:
         )
         missing_first_party = sorted(
             REQUIRED_WS_GAME_CHECKS
-            - route_live_checks(first_party, "/ws/game/** first_party_web", errors)
+            - route_live_checks(
+                first_party,
+                "/ws/game/** first_party_web",
+                errors,
+                live_checks_cache,
+            )
         )
         if missing_first_party:
             errors.append(f"/ws/game/** is missing required live checks: {missing_first_party}")
@@ -1157,7 +1226,12 @@ def validate_ws_game_routes(routes: list[Any], errors: list[str]) -> None:
         trusted_proxy = by_mode["trusted_tcp_proxy"][0]
         missing_trusted_proxy = sorted(
             REQUIRED_TRUSTED_PROXY_CHECKS
-            - route_live_checks(trusted_proxy, "/ws/game/** trusted_tcp_proxy", errors)
+            - route_live_checks(
+                trusted_proxy,
+                "/ws/game/** trusted_tcp_proxy",
+                errors,
+                live_checks_cache,
+            )
         )
         if missing_trusted_proxy:
             errors.append(
@@ -1178,7 +1252,12 @@ def validate_ws_game_routes(routes: list[Any], errors: list[str]) -> None:
         return
     missing_revoke = sorted(
         REQUIRED_CONNECT_TOKEN_REVOKE_CHECKS
-        - route_live_checks(revoke_routes[0], "POST /ws/game/connect-token/revoke", errors)
+        - route_live_checks(
+            revoke_routes[0],
+            "POST /ws/game/connect-token/revoke",
+            errors,
+            live_checks_cache,
+        )
     )
     validate_applicability(
         revoke_routes[0],
@@ -1193,14 +1272,20 @@ def validate_ws_game_routes(routes: list[Any], errors: list[str]) -> None:
         )
 
 
-def validate_issue_connect_token(routes: list[Any], errors: list[str]) -> None:
+def validate_issue_connect_token(
+    routes: list[Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> None:
     issue_connect_routes = matching_routes(routes, "account-service", "IssueConnectToken")
     if len(issue_connect_routes) != 1:
         errors.append("matrix must contain exactly one account-service IssueConnectToken route")
         return
     missing_checks = sorted(
         REQUIRED_ISSUE_CONNECT_TOKEN_CHECKS
-        - route_live_checks(issue_connect_routes[0], "IssueConnectToken", errors)
+        - route_live_checks(
+            issue_connect_routes[0], "IssueConnectToken", errors, live_checks_cache
+        )
     )
     if missing_checks:
         errors.append(f"IssueConnectToken is missing required live checks: {missing_checks}")
@@ -1222,6 +1307,7 @@ def validate_delegated_entitlements(
     routes: list[Any],
     errors: list[str],
     cardinality_errors: set[str] | None = None,
+    live_checks_cache: LiveChecksCache | None = None,
 ) -> None:
     entitlement_route = resolve_unique_route(
         routes,
@@ -1254,6 +1340,7 @@ def validate_delegated_entitlements(
             game_session_policies[0],
             "GetTenantEntitlementsForRuntime game-session",
             errors,
+            live_checks_cache,
         )
     )
     if missing_checks:
@@ -1263,7 +1350,11 @@ def validate_delegated_entitlements(
         )
 
 
-def validate_live_check_vocabulary(document: dict[str, Any], errors: list[str]) -> set[str]:
+def validate_live_check_vocabulary(
+    document: dict[str, Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> set[str]:
     vocabulary = document.get("required_live_check_vocabulary")
     if not isinstance(vocabulary, list) or not vocabulary or any(
         not isinstance(item, str) for item in vocabulary
@@ -1275,7 +1366,7 @@ def validate_live_check_vocabulary(document: dict[str, Any], errors: list[str]) 
         if len(allowed_checks) != len(vocabulary):
             errors.append("required_live_check_vocabulary must not contain duplicates")
 
-    live_checks = collect_live_checks(document, "matrix", errors)
+    live_checks = collect_live_checks(document, "matrix", errors, live_checks_cache)
     unknown_checks = sorted(
         {
             check
@@ -1336,7 +1427,8 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     token_profiles = validate_token_profiles(document, errors)
     role_assurance_predicates = validate_role_assurance(document, errors)
     validate_known_drift(document, "matrix", errors)
-    validate_live_check_vocabulary(document, errors)
+    live_checks_cache: LiveChecksCache = {}
+    validate_live_check_vocabulary(document, errors, live_checks_cache)
     allowed_route_statuses = validate_route_status_vocabulary(document, errors)
 
     routes = document.get("routes")
@@ -1348,19 +1440,21 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     route_keys = validate_route_variants(routes, set(classifications), errors)
     validate_route_statuses(routes, allowed_route_statuses, errors)
     validate_required_fields(routes, errors)
-    validate_generation_applicability(routes, errors)
-    validate_profile_authority_routes(routes, errors)
-    validate_refresh_roles_routes(routes, errors)
+    validate_generation_applicability(routes, errors, live_checks_cache)
+    validate_profile_authority_routes(routes, errors, live_checks_cache)
+    validate_refresh_roles_routes(routes, errors, live_checks_cache)
     validate_receiver_predicates(routes, token_profiles, errors)
     validate_role_assurance_references(routes, role_assurance_predicates, errors)
-    validate_tenant_generation_policy(document, routes, errors)
+    validate_tenant_generation_policy(document, routes, errors, live_checks_cache)
     cardinality_errors: set[str] = set()
     validate_entitlement_contract(document, routes, errors, cardinality_errors)
 
-    validate_ws_game_routes(routes, errors)
-    validate_issue_connect_token(routes, errors)
+    validate_ws_game_routes(routes, errors, live_checks_cache)
+    validate_issue_connect_token(routes, errors, live_checks_cache)
     validate_join_routes(routes, errors)
-    validate_delegated_entitlements(routes, errors, cardinality_errors)
+    validate_delegated_entitlements(
+        routes, errors, cardinality_errors, live_checks_cache
+    )
 
     return errors, route_keys
 

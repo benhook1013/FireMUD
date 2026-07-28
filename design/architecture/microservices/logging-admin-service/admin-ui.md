@@ -18,7 +18,7 @@ This document outlines the administration interface delivered as a lightweight R
 - Reference [Moderation Policies](./moderation-policies.md) when recording policy input and audit evidence; owner-side enforcement remains target coverage.
 - View analytics dashboards built with Grafana and Kibana.
 
-These capabilities map to REST endpoints exposed by the service. The route set includes both live read/observability surfaces and executable operator mutations; the current UI-listed executable mutation set is limited to feature-flag and tick pause/resume forwarding.
+These capabilities map to REST endpoints exposed by the service. The route set includes live read/observability surfaces and two distinct mutation categories: moderation persistence/audit and owner-forwarding mutations. Target or unavailable mutation families are not presented as UI controls.
 
 Routes include:
 
@@ -31,6 +31,12 @@ POST /tick-remediation/resume
 GET  /sagas
 GET  /sagas/{id}/steps
 ```
+
+Mutation inventory:
+
+- Live persistence/audit mutation: `POST /moderation/actions` records moderation policy input and audit only; it does not call an enforcement owner.
+- Live owner-forwarding mutations: `POST /feature-flags/toggle`, `POST /tick-remediation/pause`, and `POST /tick-remediation/resume` forward operator mutations to Game Session owner APIs.
+- Target or unavailable mutations not presented by this UI: admission-pointer writes, session-lifecycle controls, quota overrides, broader remediation, and owner-side moderation enforcement.
 
 The live admission-pointer backend family is intentionally excluded from this UI inventory: no corresponding React/admin surface is implemented in this module. Operators must use the documented `/admission-pointers` API until that UI is implemented.
 

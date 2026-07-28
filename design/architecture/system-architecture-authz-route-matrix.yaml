@@ -63,7 +63,7 @@ receiver_predicate_contract:
   issuer: exact_account_issuer_or_none
   audience: exact_registered_audience_or_none
   mtls_caller: concrete_certificate_identity_for_internal_methods
-  method_policy: exact_declared_route_and_caller_policy
+  method_policy_rule: exact_declared_route_and_caller_policy
 tenant_generation_policy:
   applies_by_default: true
   exception_allowlist:
@@ -171,7 +171,7 @@ classifications:
 role_assurance:
   vocabulary:
     privileged_control_when_global_role:
-      elevation_contract: privileged_control
+      resolution: role_specific_global_role_assurance
       applies_when: caller_authorizes_via_global_role
   privileged_control_when_global_role:
     resolution: role_specific_global_role_assurance
@@ -199,6 +199,9 @@ elevation_contracts:
     state: server_side_role_scoped_window
     required_bindings: [account_id, token_jti, account_generation, requested_global_role, issued_at, expires_at]
     invalidated_by: [token_revocation, account_generation_change, role_loss, expiry]
+    implementation_status:
+      known_drift:
+        - EnterPrivilegedControlWindow is not currently routable or implemented; route branches requiring the window fail closed, and platformAdmin cannot currently obtain it.
 pending_deletion_contract:
   validator: account_service_pending_deletion_credential_validator
   credential: pending-deletion-access
@@ -208,7 +211,8 @@ pending_deletion_contract:
   normal_authority: rejected
   rejection:
     invalid_expired_or_revoked: AUTH_SESSION_REVOKED
-    unavailable: AUTH_UNAVAILABLE
+    binding_mismatch_or_wrong_workflow_state: AUTH_SESSION_REVOKED
+    unavailable_credential_or_workflow_authority: AUTH_UNAVAILABLE
     account_state_disclosure: prohibited
 unauthenticated_recovery_contract:
   account_state_disclosure: prohibited
@@ -545,7 +549,7 @@ routes:
     direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
     delegated_subject: operator_authorization_reference
     operator_authorization_reference: required_and_redeemed_with_account
-    required_live_checks: [current_operator_authorization, runtime_entitlements]
+    required_live_checks: [current_operator_authorization, runtime_entitlements, runtime_ownership]
     mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
     required_fields: [control_plane_request_id, actor, reason, session_id, mutation_digest]
     canonical_errors:
@@ -623,6 +627,8 @@ routes:
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
     required_fields: [control_plane_request_id, actor_from_session, reason, tenant_id, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: game-session-service
@@ -649,6 +655,8 @@ routes:
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
     required_fields: [control_plane_request_id, actor_from_session, reason, session_id, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: game-session-service
@@ -668,12 +676,14 @@ routes:
     subject_binding: authenticated_operator
     canonical_external_ingress: logging-admin-service
     direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
-    required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation, runtime_entitlements]
+    required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation, runtime_entitlements, runtime_ownership]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
     required_fields: [control_plane_request_id, actor_from_session, reason, session_id, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: game-session-service
@@ -897,7 +907,7 @@ routes:
     platform_admin_override: platformAdmin_only
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
-    required_live_checks: [recent_account_authentication]
+    required_live_checks: [recent_account_authentication, current_global_role, role_appropriate_assurance]
     response_profile: asynchronous_versioned_cross_owner_export_manifest
     response_contract: reports_owner_completion_retries_omissions_and_policy_retention
     implementation_status:
@@ -914,7 +924,7 @@ routes:
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     required_live_checks:
-      [recent_account_authentication, explicit_deletion_confirmation, export_availability, no_nonterminal_owned_subscriptions]
+      [recent_account_authentication, current_global_role, role_appropriate_assurance, explicit_deletion_confirmation, export_availability, no_nonterminal_owned_subscriptions]
     mutation_contract: pending_delete_advances_account_generation_then_runs_retryable_cross_owner_erasure
     completion_contract: terminal_only_after_all_owner_steps_complete_or_policy_retained
     canonical_errors:

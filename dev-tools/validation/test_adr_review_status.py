@@ -593,6 +593,30 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "ambiguous duplicate checked review rows for ADR 0012",
             )
 
+    def test_matching_duplicate_adr_rows_require_all_review_sources(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [x] `TEST-02` — `revised` on 2026-07-27; "
+                "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md)",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "review source keys",
+            )
+
+            path = root / "design/architecture/decisions/adr-0012-reviewed.md"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "Review source: `TEST-01`",
+                    "Review source: `TEST-01`, `TEST-02`",
+                ),
+                encoding="utf-8",
+            )
+            self.validator.validate(root)
+
 
 if __name__ == "__main__":
     unittest.main()

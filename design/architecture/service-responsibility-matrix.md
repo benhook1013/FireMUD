@@ -71,8 +71,8 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Game moderation policy-action persistence and audit investigation (live persistence/audit only; no enforcement) | | | | | | | | | ✔ | | |
 | Game moderation policy definition and audit (live persistence-only API ingress) | | | | | | | | | ✔ | | |
 | Moderation policy propagation and enforcement contract (target; current route is persistence-only) | | | | ✔ | | | | ✔ | ✔ | | |
-| Subscription entitlements and plan-driven quota values (`GetTenantEntitlements`) | | | ✔ | | | | | | | | |
-| Operator quota overrides, auditing, and dashboards (hypothetical target; overlay on entitlements; no current Account owner route) | | | | | | | | | ✔ | | |
+| Authoritative owner: subscription entitlements, plan-driven quota values, and effective quota override overlay (`GetTenantEntitlements`) | | | ✔ | | | | | | | | |
+| Operator quota override ingress, UX, and audit (hypothetical target; Logging & Admin forwards to the Account-owned entitlement overlay; no current owner route) | | | ✔ | | | | | | ✔ | | |
 | Enforcement of gameplay bans at login/command level (target; owner RPC not currently exposed) | | | | ✔ | | | | | | | |
 | Enforcement of chat mutes/bans at message send time (target; owner RPC not currently exposed) | | | | | | | | ✔ | | | |
 | Authoritative owner: gameplay-ban enforcement (target; policy remains Logging & Admin-owned) | | | | ✔ | | | | | | | |

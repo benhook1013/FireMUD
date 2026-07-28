@@ -154,7 +154,8 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         routes = grouped_routes(document, "game-session-service")
         for route_key in self.validator.GAME_SESSION_OPERATOR_ROUTES:
-            _, route_name = route_key
+            service, route_name = route_key
+            self.assertEqual("game-session-service", service)
             self.assertTrue(routes[route_name])
             for route in routes[route_name]:
                 self.assertEqual(
@@ -857,6 +858,30 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
         )
 
+    def test_malformed_route_live_checks_are_reported_once_across_validators(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "game-session-service", "POST /sessions")
+        route["required_live_checks"] = "not-a-list"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(
+                self.validator.yaml.safe_dump(document, sort_keys=False),
+                encoding="utf-8",
+            )
+            errors = self.validator.validate(path)
+        structural_errors = [
+            error
+            for error in errors
+            if error.endswith("required_live_checks must be a list of strings")
+        ]
+        self.assertEqual(1, len(structural_errors))
+        self.assertTrue(
+            any(
+                "tenant-role branch must require membership_when_tenant_role" in error
+                for error in errors
+            )
+        )
+
     def test_ws_game_live_checks_are_required(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"
@@ -991,11 +1016,8 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     for route in document["routes"]
                     if route.get("service") == "spring-cloud-gateway"
                     and route.get("route") == "/ws/game/**"
-                    and route.get("applicability", {}).get("all_of") == [
-                        {"connection_mode": "first_party_web"},
-                        {"operation": "websocket_upgrade"},
-                        {"admission_flow": "connect_token_bootstrap"},
-                    ]
+                    and {"connection_mode": "first_party_web"}
+                    in route.get("applicability", {}).get("all_of", [])
                 )
                 route[field] = value
                 errors = []
@@ -1266,6 +1288,30 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
             errors = self.validator.validate(path)
         self.assertTrue(any("contains unexpected role keys" in error for error in errors))
+
+    def test_role_assurance_requirements_require_vocabulary_predicate(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        document["role_assurance"]["vocabulary"].pop(
+            "privileged_control_when_global_role"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(
+                self.validator.yaml.safe_dump(document, sort_keys=False),
+                encoding="utf-8",
+            )
+            errors = self.validator.validate(path)
+        self.assertIn(
+            "role_assurance.vocabulary must declare predicate "
+            "privileged_control_when_global_role when requirements are present",
+            errors,
+        )
+        self.assertTrue(
+            any(
+                "role_assurance must reference a declared predicate" in error
+                for error in errors
+            )
+        )
 
     def test_legacy_target_only_route_declaration_is_rejected(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

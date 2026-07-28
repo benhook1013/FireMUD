@@ -1474,7 +1474,7 @@ invalid_baseline_cases = {
             "integrityVerification": {"status": "fail", "verified": False},
         }
     },
-    "overlay-object-boundary-ordering-mismatch": {
+    "overlay-object-artifact-canonical-boundary-equality-mismatch": {
         "erasureOverlayReconciliation": {
             **valid_baseline["erasureOverlayReconciliation"],
             "artifactErasureHighWater": {"stream": "erasures", "sequence": 12},
@@ -1530,7 +1530,7 @@ expected_invalid_baseline_messages = {
     "overlay-sequence-verification-status": "sequenceVerification must prove the canonical bounds",
     "overlay-sequence-verification-unordered": "sequenceVerification must prove the canonical bounds",
     "overlay-integrity-failed": "integrityVerification must be verified with status pass",
-    "overlay-object-boundary-ordering-mismatch": "artifactErasureHighWater must match the canonical bound exactly",
+    "overlay-object-artifact-canonical-boundary-equality-mismatch": "artifactErasureHighWater must match the canonical bound exactly",
     "retained-backlog": "unsafe or missing disposition: gameplay",
 }
 for case_name, replacement in invalid_baseline_cases.items():
