@@ -848,11 +848,16 @@ def validate_no_target_tenant_classifications(
         justification = entry.get("contract_justification")
         if not isinstance(justification, str) or not justification.strip():
             errors.append(f"{label} must declare a bounded contract_justification")
-        proof = entry.get("negative_proof")
+        proof_contract = entry.get("negative_proof")
+        proof = (
+            proof_contract.get("required")
+            if isinstance(proof_contract, dict)
+            else None
+        )
         if not isinstance(proof, list) or not proof or any(
             not isinstance(item, str) or not item.strip() for item in proof
         ):
-            errors.append(f"{label} must declare non-empty negative_proof")
+            errors.append(f"{label} must declare non-empty negative_proof.required")
 
 
 def validate_tenant_generation_exception_routes(
@@ -1320,8 +1325,8 @@ def validate_join_routes(routes: list[Any], errors: list[str]) -> None:
 def validate_delegated_entitlements(
     routes: list[Any],
     errors: list[str],
-    cardinality_errors: set[str] | None = None,
     live_checks_cache: LiveChecksCache | None = None,
+    cardinality_errors: set[str] | None = None,
 ) -> None:
     entitlement_route = resolve_unique_route(
         routes,
@@ -1467,7 +1472,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     validate_issue_connect_token(routes, errors, live_checks_cache, cardinality_errors)
     validate_join_routes(routes, errors)
     validate_delegated_entitlements(
-        routes, errors, cardinality_errors, live_checks_cache
+        routes, errors, live_checks_cache, cardinality_errors
     )
 
     return errors, route_keys

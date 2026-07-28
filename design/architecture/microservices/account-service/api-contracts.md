@@ -276,7 +276,7 @@ Billing, entitlement, and subscription APIs must expose distinct route/method va
 
 ## Login Modes
 
-Account Service supports `PASSWORD` and verified-email `EMAIL_OTP` as account-selected ordinary login modes. Both modes must also be accepted by first-party player bootstrap when enabled for the account. `/auth/login` and internal `Authenticate` accept one login secret; Account Service first recognizes an active eligible email-login code and otherwise verifies a password when that mode is enabled. Authenticator TOTP and a separate `otp` field are not ordinary gameplay contracts; TOTP is target-state only for entering bounded `platformAdmin` or cross-tenant `billingAdmin` elevation.
+Account Service supports `PASSWORD` and verified-email `EMAIL_OTP` as account-enabled ordinary primary-login mechanisms. Both mechanisms must also be accepted by first-party player bootstrap when enabled for the account. `/auth/login` and internal `Authenticate` accept one login secret: when both mechanisms are enabled, either one valid supplied password or valid email-login code authenticates, rather than requiring sequential multi-factor authentication. Account Service may recognize an active eligible email-login code or verify a password according to the supplied secret and enabled mechanism; no `BOTH` enum is introduced. Authenticator TOTP and a separate `otp` field are not ordinary gameplay contracts; TOTP is target-state only for entering bounded `platformAdmin` or cross-tenant `billingAdmin` elevation.
 
 ### Sensitive Actions and Gameplay Handoff
 

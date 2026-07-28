@@ -6,7 +6,7 @@ Centralized logging and administration tools for the platform. The service colle
 
 ## Implementation Status
 
-Logging & Admin owns moderation policy persistence, evaluation, and audit. `GAMEPLAY_ADMISSION` is the gameplay enforcement decision boundary consumed by Game Session, and `CHAT_SEND` is the chat enforcement decision boundary consumed by Social & Groups; applicable high-risk decisions fail closed when a fresh policy result is unavailable. Versioned snapshot/event propagation and broader owner-side enforcement remain missing, so the current operator action route persists policy input and audit but is not itself an enforcement mutation. Automated remediation is live only as per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` forwarding; regional reset and general remediation are not live capabilities.
+Logging & Admin owns moderation policy persistence, evaluation, and audit. `GAMEPLAY_ADMISSION` is the gameplay enforcement decision boundary consumed by Game Session, and `CHAT_SEND` is the chat enforcement decision boundary consumed by Social & Groups; applicable high-risk decisions fail closed when a fresh policy result is unavailable. Versioned snapshot/event propagation and broader owner-side enforcement remain missing, so the current operator action route persists policy input and audit but is not itself an enforcement mutation. Per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` forwarding is implemented, but it is not a canonically supported or externally enableable operator mutation until its action schema and shared `mutationDigest/v1` golden vectors exist. Regional reset and general remediation are not live capabilities.
 
 ## Responsibilities
 
@@ -14,7 +14,7 @@ Logging & Admin owns moderation policy persistence, evaluation, and audit. `GAME
 - Offer dashboards and search for operators and moderators by embedding Kibana and Grafana views.
 - Define moderation policy, record moderation actions, and keep auditable moderation records.
 - Record audit trails for feature flag changes and account events.
-- Monitor coordination and tick health across tenant and region scopes. Automated remediation is live only as per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` forwarding; regional pause/resume, regional reset, and broader/general remediation remain target-only.
+- Monitor coordination and tick health across tenant and region scopes. Automated per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` forwarding exists but remains externally disabled pending action-schema and digest-vector conformance; regional pause/resume, regional reset, and broader/general remediation remain target-only.
 
 ## Key Features
 

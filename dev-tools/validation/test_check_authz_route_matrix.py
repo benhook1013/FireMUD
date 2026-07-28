@@ -682,7 +682,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertTrue(exception["contract_justification"])
         self.assertIn(
             "pending_deletion_route_denied_after_target_tenant_generation_advance",
-            exception["negative_proof"],
+            exception["negative_proof"]["required"],
         )
 
         exception.pop("contract_justification")
@@ -769,7 +769,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.validator.validate_entitlement_contract(
             document, routes, errors, cardinality_errors
         )
-        self.validator.validate_delegated_entitlements(routes, errors, cardinality_errors)
+        self.validator.validate_delegated_entitlements(
+            routes, errors, cardinality_errors=cardinality_errors
+        )
         self.assertEqual(
             ["matrix must contain exactly one account-service GetTenantEntitlementsForRuntime route"],
             errors,

@@ -361,6 +361,38 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "checked human review requires",
             )
 
+    def test_pending_record_rejects_completed_revised_queue_mismatch(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [x] `TEST-PENDING` — `revised` on 2026-07-27; "
+                "[ADR 0013](../../architecture/decisions/adr-0013-pending.md)",
+            )
+            path = root / "design/architecture/decisions/adr-0013-pending.md"
+            text = path.read_text(encoding="utf-8")
+            text = text.replace(
+                "Human review status: Pending", "Human review status: Completed"
+            )
+            text = text.replace(
+                "Human review date: Not yet reviewed",
+                "Human review date: 2026-07-27",
+            )
+            text = text.replace(
+                "Human review disposition: Pending",
+                "Human review disposition: Revised",
+            )
+            text = text.replace(
+                "Review source: `AI-AUTHORED-PENDING`",
+                "Review source: `TEST-PENDING`",
+            )
+            path.write_text(text, encoding="utf-8")
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "does not allow human review disposition 'Revised'",
+            )
+
     def test_checked_deferred_row_with_exact_adr_provenance_is_rejected(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)

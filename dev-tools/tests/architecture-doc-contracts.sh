@@ -9,6 +9,28 @@ import re
 root = pathlib.Path(".")
 obsolete_public_resume_signature = "`resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)`"
 maintenance_lock_token_syntax = re.compile(r"--maintenance-lock-token(?![A-Za-z0-9_-])")
+maintenance_lock_token_prohibition = re.compile(
+    r"(?:"
+    r"\b(?:must|may|should|can|does|do|is|are)\s+not\b"
+    r"|\bnever\b"
+    r"|\b(?:forbid|forbids|forbidden|prohibit|prohibits|prohibited|"
+    r"disallow|disallows|disallowed)\b"
+    r")[^\r\n]*--maintenance-lock-token(?![A-Za-z0-9_-])"
+    r"|--maintenance-lock-token(?![A-Za-z0-9_-])[^\r\n]*"
+    r"\b(?:forbidden|prohibited|disallowed)\b"
+)
+
+
+def has_forbidden_maintenance_lock_token_syntax(text):
+    for match in maintenance_lock_token_syntax.finditer(text):
+        line_start = text.rfind("\n", 0, match.start()) + 1
+        line_end = text.find("\n", match.end())
+        if line_end == -1:
+            line_end = len(text)
+        line = text[line_start:line_end]
+        if not maintenance_lock_token_prohibition.search(line):
+            return True
+    return False
 
 for example in (
     "--maintenance-lock-token <token>",
@@ -17,10 +39,14 @@ for example in (
     "`--maintenance-lock-token`",
     "--maintenance-lock-token,",
 ):
-    if not maintenance_lock_token_syntax.search(example):
+    if not has_forbidden_maintenance_lock_token_syntax(example):
         raise SystemExit(f"maintenance token syntax fixture was not rejected: {example}")
-if maintenance_lock_token_syntax.search("--maintenance-lock-token-file <token-file>"):
+if has_forbidden_maintenance_lock_token_syntax("--maintenance-lock-token-file <token-file>"):
     raise SystemExit("maintenance token file syntax was incorrectly rejected")
+if has_forbidden_maintenance_lock_token_syntax(
+    "The public command must not accept `--maintenance-lock-token` as a value."
+):
+    raise SystemExit("explicit maintenance token prohibition was incorrectly rejected")
 
 def require_contains(path, snippets):
     text = (root / path).read_text(encoding="utf-8")
@@ -34,10 +60,11 @@ for path in (root / "design").rglob("*.md"):
         raise SystemExit(f"{path}: use the canonical <deploymentEventId> path placeholder")
     if obsolete_public_resume_signature in text:
         raise SystemExit(f"{path}: uses obsolete caller-supplied recovery scope")
-    if maintenance_lock_token_syntax.search(text):
+    if has_forbidden_maintenance_lock_token_syntax(text):
         raise SystemExit(
-            f"{path.relative_to(root)}: recovery examples must not expose "
-            "maintenanceLockToken command-line syntax"
+            f"{path.relative_to(root)}: recovery command examples must not expose "
+            "`--maintenance-lock-token` command-line syntax; explicit prose "
+            "prohibitions are allowed"
         )
 
 canonical_world_dynamic = "world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>"
@@ -159,9 +186,19 @@ required_reset_contract = [
 ]
 cursor = 0
 previous = "<start of canonical reset contract>"
+
+
+def find_clause(text, clause, start=0):
+    pattern = re.compile(
+        rf"(?m)^[ \t]*{re.escape(clause)}(?=[ \t,.;:)]|$).*$"
+    )
+    match = pattern.search(text, start)
+    return -1 if match is None else match.start()
+
+
 for clause in required_reset_contract:
-    first_position = canonical_reset_text.find(clause)
-    position = canonical_reset_text.find(clause, cursor)
+    first_position = find_clause(canonical_reset_text, clause)
+    position = find_clause(canonical_reset_text, clause, cursor)
     if position == -1:
         if first_position == -1:
             raise SystemExit(

@@ -30,7 +30,7 @@ The design must also distinguish a new real-money charge from spending an existi
 
 ### Ordinary login
 
-Ordinary Telnet/gameplay login and ordinary HTTPS account/control login use the factors selected for the account: `PASSWORD`, verified `EMAIL_OTP`, or both.
+Ordinary Telnet/gameplay login and ordinary HTTPS account/control login use the account-enabled primary-login mechanisms: `PASSWORD` and/or verified `EMAIL_OTP`. Each enabled mechanism is independently sufficient; when both are enabled, a valid password or a valid email OTP may authenticate the login. Both secrets are not required, this is not sequential multi-factor authentication, and the contract does not introduce a `BOTH` enum. TOTP is not an ordinary primary-login mechanism; it is reserved for the separate HTTPS sensitive-action elevation described below.
 
 Gameplay `LOGIN` is ordinary authentication only. After it succeeds, FireMUD does not prompt for another password, verified email code, or TOTP during the active gameplay session, does not perform per-command reauthentication, and does not elevate the gameplay session into an account/control session. A reconnect `LOGIN` restores or rebinds gameplay only when the separate gameplay-session checks permit it; it is not an elevation mechanism.
 
@@ -46,7 +46,7 @@ The following actions complete only on the HTTPS account/control plane:
 
 The HTTPS client may be a web, native, or CLI client. A pure Telnet client cannot complete these actions.
 
-Every listed HTTPS-sensitive action requires recent ordinary reauthentication using the account's selected ordinary factor policy, including account deletion and global administration. Initial elevation to `platformAdmin`, or to `billingAdmin` authority that crosses tenant boundaries, additionally requires an independent TOTP. That TOTP step occurs once per bounded elevated window, not once per action, and never appears in gameplay. Tenant-scoped `tenantAdmin` and `moderator` operator actions continue to require current tenant membership and role at the action boundary; they do not acquire or claim the global `privileged_control` window merely to make the shared operator-delegation protocol work.
+Every listed HTTPS-sensitive action requires recent ordinary reauthentication using the account's enabled primary-login mechanism policy, including account deletion and global administration. If both `PASSWORD` and `EMAIL_OTP` are enabled, either one valid supplied secret satisfies this ordinary reauthentication; the request is not a sequential multi-factor exchange. Initial elevation to `platformAdmin`, or to `billingAdmin` authority that crosses tenant boundaries, additionally requires an independent TOTP. That TOTP step occurs once per bounded elevated window, not once per action, and never appears in gameplay. Tenant-scoped `tenantAdmin` and `moderator` operator actions continue to require current tenant membership and role at the action boundary; they do not acquire or claim the global `privileged_control` window merely to make the shared operator-delegation protocol work.
 
 ### Gameplay-to-HTTPS handoff
 
@@ -89,7 +89,7 @@ Rejected as the only mechanism because an explicit, bound handoff preserves the 
 
 Focused contract and integration proof must demonstrate that:
 
-- ordinary Telnet and HTTPS login honor the account-selected `PASSWORD` and/or verified `EMAIL_OTP` policy;
+- ordinary Telnet and HTTPS login honor the account-enabled `PASSWORD` and/or verified `EMAIL_OTP` primary-login policy, with either one valid secret sufficient when both are enabled and no sequential-MFA or `BOTH` interpretation;
 - an active gameplay session cannot solicit another ordinary factor, TOTP, or elevated control-plane authority;
 - every listed sensitive route, including account deletion and global administration, rejects absent or stale ordinary reauthentication and keeps its mutations HTTPS-only;
 - `platformAdmin` and cross-tenant `billingAdmin` elevation require independent TOTP before a bounded elevated window is issued;

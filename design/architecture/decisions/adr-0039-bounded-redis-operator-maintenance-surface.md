@@ -28,7 +28,7 @@ Coordination Redis contains correctness-sensitive, short-lived runtime state. Th
 
 - Coordination and Cache Redis remain separate deployments and ACL domains. Human operator accounts are read-only by default.
 - Application writes use owned, typed key and mutation helpers. Registered Lua scripts are required where atomic multi-key behavior needs them, not for every ordinary single-key mutation.
-- Normal operator mutations use version-matched, owner-supported tooling. The initial public maintenance surface is bounded to `status`, one `recover --mode <replay-first|reset|session-schema-cleanup>` operation, `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`, `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`, and a maintenance-lock release operation. Pause-and-lock is an internal fenced phase of the durable recovery operation, not a standalone public verb.
+- Normal operator mutations use version-matched, owner-supported tooling. The initial public maintenance surface is bounded to `status`, one `recover --mode <replay-first|reset|session-schema-cleanup>` operation, `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`, `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`, and the canonical `releaseMaintenanceLock(operationId, scope, maintenanceLockToken, reason, evidenceRef)` operation. Pause-and-lock is an internal fenced phase of the durable recovery operation, not a standalone public verb.
 - The single public recover/reset operation owns the required ordered phases, including durable epoch handling, Account authority-projection rebuild, ledger and command convergence, metadata initialization, session policy, and the post-reset smoke gate. Reset recovery must rebuild and verify the issuer, account, tenant, and membership generation projections plus issued-token projections from Account durable authority before smoke can pass or `resume` can authorize release. Those phases may have internal APIs and focused tests, but `reset`, `reconcile-ledger`, `converge-commands`, `init-meta`, `rebind-sessions`, `smoke-check`, and `session-cleanup` are not separately public operator verbs.
 - Each recovery mode has an explicit phase contract, and mode selection never bypasses safety gates:
   - `replay-first` may replay only the declared coherent durable work and must still complete authority/projection proof, affected-scope reconciliation, and the post-recovery smoke gate before any gameplay-capable `resume`.
@@ -42,22 +42,51 @@ Coordination Redis contains correctness-sensitive, short-lived runtime state. Th
 
 ### Recovery Phase Representation
 
-This maintenance surface uses the recovery phase representation defined by [ADR 0015](./adr-0015-online-backup-and-environment-wide-cold-start-recovery.md). The durable controller preserves the broader recovery contract's exact phase identifiers: `PAUSED`, `collecting`, `ready_to_reopen`, `AWAITING_RESUME`, `RESUME_AUTHORIZED`, `releasing`, and `finalized`; `PAUSED` is the fenced pause state and `collecting` is the pre-release failure/retry phase. `SUCCEEDED` is a separate terminal operation-status field, not a controller phase or valid `expectedPhase`; it may be recorded only after phase `finalized` and all release postconditions are durably observed. Public `expectedPhase` is a lower-snake-case wire precondition mapped exactly as follows; case variants and aliases are invalid:
+This maintenance surface uses the recovery phase representation defined by [ADR 0015](./adr-0015-online-backup-and-environment-wide-cold-start-recovery.md). The durable controller preserves the broader recovery contract's exact phase identifiers: `PAUSED`, `collecting`, `ready_to_reopen`, `AWAITING_RESUME`, `RESUME_AUTHORIZED`, `releasing`, `PARTIAL_RELEASE_RECONCILING`, and `finalized`; `PAUSED` is the fenced pause state and `collecting` is the pre-release failure/retry phase. `SUCCEEDED` is a separate terminal operation-status field, not a controller phase or valid `expectedPhase`; it may be recorded only after phase `finalized` and all release postconditions are durably observed. Public `expectedPhase` is a lower-snake-case wire precondition mapped exactly as follows; case variants and aliases are invalid:
 
 | Public wire `expectedPhase` | Durable controller state checked or recorded |
 | --- | --- |
 | `ready_to_reopen` | `ready_to_reopen` |
 | `awaiting_resume` | `AWAITING_RESUME` |
 
-`continueRecovery` accepts only `ready_to_reopen` and records `AWAITING_RESUME`; `resume` accepts only `awaiting_resume` and records `RESUME_AUTHORIZED`. `PAUSED`, `collecting`, `RESUME_AUTHORIZED`, `releasing`, and `finalized` remain internal durable phases and are never caller-supplied `expectedPhase` values. Durable phase state and audit use these exact spellings; terminal status validation separately requires `phase=finalized` before `status=SUCCEEDED`. Public request parsing and examples use the wire spelling, with no case normalization or aliasing.
+`continueRecovery` accepts only `ready_to_reopen` and records `AWAITING_RESUME`; `resume` accepts only `awaiting_resume` and records `RESUME_AUTHORIZED`. `PAUSED`, `collecting`, `RESUME_AUTHORIZED`, `releasing`, `PARTIAL_RELEASE_RECONCILING`, and `finalized` remain internal durable phases and are never caller-supplied `expectedPhase` values. Durable phase state and audit use these exact spellings; terminal status validation separately requires `phase=finalized` before `status=SUCCEEDED`. Public request parsing and examples use the wire spelling, with no case normalization or aliasing.
 
 ### Public Release-Lock Safety Contract
+
+The canonical public maintenance-lock release operation is `releaseMaintenanceLock`. Its CLI spelling is `coordination-maintenance release-lock`. The request wire fields are exactly:
+
+| Field | Contract |
+| --- | --- |
+| `operationId` | The existing durable recovery operation identifier. |
+| `scope` | The typed scope kind and exact recorded selectors; missing, extra, or non-matching selectors are rejected. |
+| `maintenanceLockToken` | The server-issued opaque lock token for that operation, supplied to the CLI through the permissioned token-file or protected-FD form rather than a command-line value. |
+| `reason` | A non-empty operator reason recorded in the abandonment audit. |
+| `evidenceRef` | The immutable evidence reference for the abandonment decision. |
+
+The authenticated actor or workload identity, deployment boundary, and authorization are request context, not caller-supplied wire fields. `releaseMaintenanceLock` has no public `expectedPhase` field: the controller resolves the current durable phase for `operationId` and compare-and-sets only from that exact observed phase. It accepts `PAUSED`, `collecting`, `ready_to_reopen`, or `AWAITING_RESUME`; it rejects `RESUME_AUTHORIZED`, `releasing`, `PARTIAL_RELEASE_RECONCILING`, `finalized`, unknown phases, and any operation whose current state cannot be resolved unambiguously. `RUNNING`, `FAILED`, and `SUCCEEDED` are operation statuses, not phases; status does not replace the exact phase check.
+
+After durable abandonment and lock-release observation, the response is the stable record:
+
+```json
+{
+  "operationId": "...",
+  "scope": { "kind": "...", "selectors": {} },
+  "phase": "collecting",
+  "outcome": "ABANDONED",
+  "maintenanceLockReleased": true,
+  "gameplayResumeAuthorized": false,
+  "evidenceRef": "...",
+  "recordedAt": "..."
+}
+```
+
+The response contains no raw maintenance-lock token. A retry while the durable abandonment record exists returns the recorded result after observing the same lock-release effect; it never repeats a release effect.
 
 The public maintenance-lock release control is an audited abandonment operation, not a shortcut to resume or a general unlock API. It must satisfy all of the following gates:
 
 - The request names the existing `operationId`, exact recorded scope selectors, server-issued `maintenanceLockToken`, an authenticated authorized actor, a non-empty reason, and an immutable `evidenceRef`. The operation record and its fencing generation are the authorities; caller-supplied scope or token metadata cannot create or transfer ownership.
-- The controller resolves the token to the active operation's stored token digest and fence, verifies the deployment boundary, operation class, actor authorization, and exact scope, then compare-and-sets from the exact durable phase it observed. Release is permitted only for a paused/fenced `PAUSED`, `collecting`, `ready_to_reopen`, or `AWAITING_RESUME`; it rejects `RUNNING`, `RESUME_AUTHORIZED`, `releasing`, `finalized`, concurrent advancement, and every phase/evidence mismatch.
-- A release request is idempotent on the exact operation-owned tuple `(operationId, recorded scope, lock identity, actor, reason digest, and evidence identity)`. A duplicate returns the recorded abandonment result without repeating release effects; a different tuple, stale token, expired lock, missing evidence, or ambiguous external state fails closed and leaves the fence in place.
+- The controller resolves the token to the active operation's stored token digest and fence, verifies the deployment boundary, operation class, actor authorization, and exact scope, then compare-and-sets from the exact durable phase it observed. Release is permitted only for a paused/fenced `PAUSED`, `collecting`, `ready_to_reopen`, or `AWAITING_RESUME`; it rejects `RESUME_AUTHORIZED`, `releasing`, `PARTIAL_RELEASE_RECONCILING`, `finalized`, concurrent advancement, and every phase/evidence mismatch.
+- A release request is idempotent on exactly `(operationName=releaseMaintenanceLock, operationId, recorded scope selectors, maintenance-lock identity, authenticated actor/workload identity, reasonDigest, evidenceRef identity)`, where `reasonDigest` is the canonical digest of the supplied reason and maintenance-lock identity is the stored token digest plus fencing generation. A duplicate returns the recorded abandonment result without repeating release effects; any different tuple, stale token, expired lock, missing evidence, or ambiguous external state is an idempotency conflict or fails closed and leaves the fence in place.
 - Successful abandonment records the actor, reason, evidence, phase, and fence outcome durably before any lock-release effect is observed. It retains the paused/non-gameplay-safe state and cannot authorize `resume`, `AWAITING_RESUME`, traffic reopening, or a new operation implicitly.
 
 ## Consequences

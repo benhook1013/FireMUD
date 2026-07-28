@@ -34,4 +34,4 @@ Entry format:
 - `2026-07-28`: ADR review eligibility is not human acceptance
   - Context: delegated edits encountered accepted ADR metadata while reconciling the consequential-decision inventory.
   - Observation: an ADR reference establishes eligibility for recorded review, but does not prove a human disposition by itself.
-  - Expected pattern: agents preserve pending status unless the checked review queue records the completed human disposition; delegated workers never infer acceptance or mutate external review state.
+  - Expected pattern: agents preserve pending status unless the checked review queue records the completed human disposition; delegated workers may mutate external review state only when the exact scope and authorization explicitly permit it; otherwise they must not.

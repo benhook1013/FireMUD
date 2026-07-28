@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import re
 import sys
-from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
@@ -148,7 +147,7 @@ def validate_status_review_mapping(
 
 
 def checked_reviews(path: Path) -> dict[int, list[Review]]:
-    reviews: dict[int, list[Review]] = defaultdict(list)
+    reviews: dict[int, list[Review]] = {}
     seen_keys: set[str] = set()
     for line_number, line in enumerate(
         path.read_text(encoding="utf-8").splitlines(), start=1
@@ -208,7 +207,7 @@ def checked_reviews(path: Path) -> dict[int, list[Review]]:
         # Exact [ADR NNNN] labels carry provenance for every disposition,
         # including superseded rows. Replacement links use other labels.
         for number in outcome_adr_numbers:
-            existing = reviews[number]
+            existing = reviews.setdefault(number, [])
             if existing and any(
                 (prior.date, prior.disposition)
                 != (review.date, review.disposition)
@@ -283,6 +282,9 @@ def validate(root: Path = ROOT) -> None:
         text = path.read_text(encoding="utf-8")
         try:
             status = section_value(text, "Status")
+        except ValidationError as error:
+            fail(f"{path.relative_to(root)}: {error}")
+        try:
             fields = review_fields(text)
         except ValidationError as error:
             fail(f"{path.relative_to(root)}: {error}")

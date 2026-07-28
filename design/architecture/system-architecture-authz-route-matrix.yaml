@@ -84,7 +84,8 @@ tenant_generation_policy:
       required_authority: [pending_deletion_state, pending_deletion_credential_registry]
       contract_justification: Dedicated pending-deletion credentials are bound to the account and deletion workflow; tenant generation is not an authority input for these account-owned recovery actions.
       negative_proof:
-        - pending_deletion_route_denied_after_target_tenant_generation_advance
+        required:
+          - pending_deletion_route_denied_after_target_tenant_generation_advance
   negative_proof:
     required:
       - non_allowlisted_route_denied_after_target_tenant_generation_advance
@@ -428,10 +429,15 @@ routes:
         - connection_mode: trusted_tcp_proxy
         - listener: internal_mtls
     auth_path: exact_mtls_workload
+    issued_token_state: none
     accepted_token_profiles: []
     accepted_carriers: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/tcp-proxy-service"]
+    end_user_token_required: false
     edge_consumer: spring_cloud_gateway_internal_mtls_websocket
     connect_context_output: trusted_tcp_proxy_mode
     required_live_checks: [trusted_proxy_identity]

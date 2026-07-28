@@ -1214,19 +1214,19 @@ invalid_baseline_cases = {
             "replayConsumeEvidenceRef": "",
         }
     },
-    "overlay-restore-high-water-mismatch": {
+    "overlay-restore-boundary-equality-mismatch": {
         "erasureOverlayReconciliation": {
             **valid_baseline["erasureOverlayReconciliation"],
             "restoreHighWater": {"stream": "erasures", "sequence": 11},
         }
     },
-    "overlay-artifact-high-water-mismatch": {
+    "overlay-artifact-boundary-equality-mismatch": {
         "erasureOverlayReconciliation": {
             **valid_baseline["erasureOverlayReconciliation"],
             "artifactErasureHighWater": {"stream": "erasures", "sequence": 9},
         }
     },
-    "overlay-initial-catchup-high-water-mismatch": {
+    "overlay-initial-catchup-boundary-equality-mismatch": {
         "erasureOverlayReconciliation": {
             **valid_baseline["erasureOverlayReconciliation"],
             "initialCatchupHighWater": {"stream": "erasures", "sequence": 10},
@@ -1503,7 +1503,7 @@ invalid_baseline_cases = {
             "integrityVerification": {"status": "fail", "verified": False},
         }
     },
-    "overlay-object-artifact-canonical-boundary-equality-mismatch": {
+    "overlay-artifact-boundary-equality-mismatch-at-restore-boundary": {
         "erasureOverlayReconciliation": {
             **valid_baseline["erasureOverlayReconciliation"],
             "artifactErasureHighWater": {"stream": "erasures", "sequence": 12},
@@ -1525,9 +1525,9 @@ expected_invalid_baseline_messages = {
     "participant": "unsafe or missing disposition: gameplay",
     "coordination-account-projections": "coordination recovery must prove",
     "coordination-replay-evidence": "coordination recovery must prove",
-    "overlay-restore-high-water-mismatch": "restoreHighWater must match the canonical bound exactly",
-    "overlay-artifact-high-water-mismatch": "artifactErasureHighWater must match the canonical bound exactly",
-    "overlay-initial-catchup-high-water-mismatch": "initialCatchupHighWater must match the canonical bound exactly",
+    "overlay-restore-boundary-equality-mismatch": "restoreHighWater must match the canonical bound exactly",
+    "overlay-artifact-boundary-equality-mismatch": "artifactErasureHighWater must match the canonical bound exactly",
+    "overlay-initial-catchup-boundary-equality-mismatch": "initialCatchupHighWater must match the canonical bound exactly",
     "lineage-pre-snapshot": "artifact lineage must include a valid",
     "lineage-artifact-high-water-mismatch": "artifactErasureHighWater must match the snapshot-bound",
     "lineage-snapshot-bound": "erasureHighWaterSnapshotBound must be true",
@@ -1560,7 +1560,7 @@ expected_invalid_baseline_messages = {
     "overlay-sequence-verification-unordered": "sequenceVerification must prove the canonical bounds",
     "overlay-sequence-verification-bool-endpoint": "sequenceVerification must prove the canonical bounds",
     "overlay-integrity-failed": "integrityVerification must be verified with status pass",
-    "overlay-object-artifact-canonical-boundary-equality-mismatch": "artifactErasureHighWater must match the canonical bound exactly",
+    "overlay-artifact-boundary-equality-mismatch-at-restore-boundary": "artifactErasureHighWater must match the canonical bound exactly",
     "retained-backlog": "unsafe or missing disposition: gameplay",
 }
 if set(invalid_baseline_cases) != set(expected_invalid_baseline_messages):
