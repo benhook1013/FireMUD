@@ -185,6 +185,27 @@ for path in [
 ]:
     require_contains(path, [canonical_public_resume_signature])
 
+for path in [
+    "design/operations/deployments/hobby-self-hosted/recovery/README.md",
+    "design/operations/deployments/production/recovery/README.md",
+    "design/operations/deployments/staging/recovery/README.md",
+]:
+    require_contains(path, [canonical_public_resume_signature])
+require_contains(
+    "design/operations/deployments/production/backup-readiness/README.md",
+    [
+        "`resume(operationId, expectedPhase=AWAITING_RESUME, "
+        "maintenanceLockToken, evidenceRef)`",
+    ],
+)
+require_contains(
+    "design/operations/deployments/production/traffic-open/README.md",
+    [
+        "`resume(operationId, expectedPhase=AWAITING_RESUME, "
+        "maintenanceLockToken, evidenceRef)`",
+    ],
+)
+
 require_contains(
     "design/architecture/system-architecture-redis-ops-access.md",
     [

@@ -390,15 +390,10 @@ def validate_erasure_overlay_reconciliation(
                 20,
             )
         )
-        unexpected_sequences = sorted(
-            sequence
-            for sequence in observed_sequences
-            if sequence <= initial_catchup_sequence or sequence > restore_sequence
-        )
         return (
             "fail",
             f"{label} sequenceDispositions must cover the exact final interval; "
-            f"missing={missing_sequences}, unexpected={unexpected_sequences}",
+            f"missing={missing_sequences}",
         )
     return ("pass", "")
 

@@ -288,18 +288,25 @@ jobs:
               );
             }
 
+            async function isCurrentPullRequestObsolete(label) {
+              const { data: currentPullRequest } = await withTransientGitHubRetry(
+                "current pull request lookup",
+                () => github.rest.pulls.get({
+                  owner,
+                  repo,
+                  pull_number: Number(prNumber),
+                })
+              );
+              if (!isObsoletePullRequest(currentPullRequest)) {
+                return false;
+              }
+              logObsoletePullRequest(label, currentPullRequest);
+              return true;
+            }
+
             while (Date.now() - started < timeoutMs) {
               if (pollIteration % pullRequestCheckInterval === 0) {
-                const { data: currentPullRequest } = await withTransientGitHubRetry(
-                  "current pull request lookup",
-                  () => github.rest.pulls.get({
-                    owner,
-                    repo,
-                    pull_number: Number(prNumber),
-                  })
-                );
-                if (isObsoletePullRequest(currentPullRequest)) {
-                  logObsoletePullRequest("Stopping obsolete smoke gate for", currentPullRequest);
+                if (await isCurrentPullRequestObsolete("Stopping obsolete smoke gate for")) {
                   return;
                 }
               }
@@ -364,6 +371,9 @@ jobs:
                   continue;
                 }
                 if (matching.conclusion !== "success") {
+                  if (await isCurrentPullRequestObsolete("Stopping obsolete failed smoke gate for")) {
+                    return;
+                  }
                   core.setFailed(
                     `Runtime images run ${matching.id} did not complete successfully: run=${matching.conclusion}`
                   );
@@ -420,6 +430,9 @@ jobs:
                 }
 
                 if (fullSmokeJob.conclusion !== "success") {
+                  if (await isCurrentPullRequestObsolete("Stopping obsolete failed full-smoke gate for")) {
+                    return;
+                  }
                   core.setFailed(
                     `Runtime images/full smoke run ${matching.id} did not complete successfully: run=${matching.conclusion}, full-smoke=${fullSmokeJob.status}/${fullSmokeJob.conclusion}`
                   );

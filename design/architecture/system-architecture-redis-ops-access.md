@@ -128,7 +128,7 @@ The tool advertises and accepts only scope forms implemented and proved by the r
 
 - Required internal control-plane operations:
   - `PauseTicks(operationId, scope, maintenanceLockToken)`
-  - `ResumeTicks(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)`
+  - `ResumeTicks(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`; the controller derives scope from the durable operation record
   - `GetRegionTickStatus(scope, operationId)`
   - `RunScopedCoordinationReset(operationId, scope, maintenanceLockToken)`
   - `ReconcileTickLedger(operationId, scope, maintenanceLockToken, oldRegionEpoch | oldRegionEpochMap)`

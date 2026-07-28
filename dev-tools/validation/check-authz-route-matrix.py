@@ -442,6 +442,7 @@ def validate_token_fields(
     errors: list[str],
     reported_unknown_profiles: set[str] | None = None,
     allow_multi_profile: bool = False,
+    allow_implicit_profile: bool = False,
 ) -> None:
     token_predicates = (
         entry.get("token_type"),
@@ -466,6 +467,8 @@ def validate_token_fields(
     if profile is None:
         if reported_unknown_profiles is None or profiles[0] not in reported_unknown_profiles:
             errors.append(f"{label} uses unknown token profiles: {[profiles[0]]}")
+        return
+    if allow_implicit_profile and token_predicates == (None, None, None):
         return
     expected = (profile.get("type"), profile.get("issuer"), profile.get("audience"))
     if token_predicates != expected:
@@ -571,11 +574,13 @@ def validate_internal_route_callers(
             not isinstance(item, str) or not item.strip() for item in values
         ):
             errors.append(f"{label} {field}.any_of must be a non-empty list of strings")
-    if not isinstance(mtls_callers, dict) or any(
-        not isinstance(item, str)
-        or not item.startswith("spiffe://")
-        or "/sa/" not in item
-        for item in mtls_callers.get("any_of", [])
+    mtls_values = mtls_callers.get("any_of") if isinstance(mtls_callers, dict) else None
+    mtls_values_valid = isinstance(mtls_values, list) and bool(mtls_values) and all(
+        isinstance(item, str) and item.strip() for item in mtls_values
+    )
+    if mtls_values_valid and any(
+        not item.startswith("spiffe://") or "/sa/" not in item
+        for item in mtls_values
     ):
         errors.append(
             f"{label} mtls_callers.any_of must contain concrete spiffe:// identities"
@@ -607,7 +612,10 @@ def validate_receiver_predicates(
             route, index, token_profiles, errors
         )
         if route.get("classification") != "internal_workload":
-            if len(profiles) > 1:
+            if profiles and (
+                isinstance(profiles_value, list)
+                and all(isinstance(profile_name, str) for profile_name in profiles_value)
+            ):
                 validate_token_fields(
                     route,
                     f"matrix.routes[{index}]",
@@ -616,6 +624,7 @@ def validate_receiver_predicates(
                     errors,
                     set(unknown_profiles),
                     allow_multi_profile=True,
+                    allow_implicit_profile=True,
                 )
             continue
         label = f"{route.get('service')} {route.get('route')}"

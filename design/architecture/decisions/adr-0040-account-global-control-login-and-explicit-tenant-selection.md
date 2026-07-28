@@ -28,8 +28,9 @@ An account may hold different roles in multiple tenants and global platform role
 
 - `/auth/login` authenticates the global platform account and issues the exact `control-ui` token profile. Its request does not accept an authoritative `tenantId`.
 - A selected tenant is first-party UI navigation state, not token scope or authorization evidence. Switching tenants does not require reauthentication or token replacement.
-- Every tenant-targeted request names its target tenant in the route or request contract and independently validates the exact token profile, account subject, scoped roles, current membership and authority generations, and route class.
-- Global-role actions use explicit global or cross-tenant routes. They never inherit authority from the UI's currently selected tenant.
+- Every tenant-bound request names its target tenant in the route or request contract and independently validates the exact token profile, account subject, scoped roles, current membership, and applicable authority generations for that target.
+- Explicit global and cross-tenant routes do not require current membership in every target tenant unless their declared contract says so. They must instead enforce their declared target scope, global role, assurance requirement, and current Account-owned issuer/account/target authority generations under [ADR 0036](./adr-0036-monotonic-authority-generations-for-bulk-token-revocation.md) and the route matrix.
+- Global-role actions never inherit authority from the UI's currently selected tenant, and a global role does not implicitly create tenant membership.
 - Gameplay authentication remains the separate `player-bootstrap` profile and admission flow.
 
 ## Consequences

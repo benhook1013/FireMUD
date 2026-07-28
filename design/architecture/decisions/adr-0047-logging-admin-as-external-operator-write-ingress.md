@@ -53,6 +53,8 @@ Unattended operator automation uses the typed Account `IssueAutomationOperatorAu
 
 For each supported executable mutation request, Logging and Admin computes `mutationDigest` as SHA-256 over a versioned canonical encoding of every scope, target, expected-version, mutation, and audit-reason field, excluding only transport credentials and the authorization reference. It forwards the reference unchanged with the typed request, digest, and same `controlPlaneRequestId`. The owner recomputes the digest, redeems and validates the exact reference with Account, then independently checks current domain facts, ownership, fencing, and idempotency. Logging and Admin's asserted actor, role, tenant, or scope is request context and audit input, not authority. Owner-side operator mutation RPCs are classified `internal_workload` and require the exact Logging and Admin mTLS identity plus Account redemption. A human request may carry only the Account-validated `control-ui` authorization evidence; an unattended request carries no end-user JWT or human identity.
 
+Idempotency is bound to validated authority, not to a globally unique caller identifier alone. Account and the owner derive a non-reversible `authorizationReferenceFingerprint` from the exact opaque authorization reference and validate that it matches the reference's bound actor or automation identity. The durable operation record binds `controlPlaneRequestId`, `mutationDigest`, and that fingerprint; when the request is automated or crosses the internal owner boundary, it also binds the exact authenticated `workloadIdentity` and applicable automation-policy identity. A retry with a changed digest, authorization fingerprint, workload identity, or bound scope is an idempotency conflict with no mutation, while a retry with the same validated tuple replays the stored outcome.
+
 This protocol applies to the current executable feature-flag, admission-pointer/version-upgrade, and tick pause/resume families, and defines the target ingress for the following deferred families. It does not provide executable forwarding for the current moderation policy-input/audit route; no executable moderation route may be added until an owning enforcement contract exists:
 
 | Action family | Current boundary | Target boundary |
@@ -117,7 +119,7 @@ Implementation and focused proof must:
 - prove Account issues and owns the bounded operator authorization reference and that the owner redeems it rather than trusting Logging and Admin assertions;
 - prove Logging and Admin records actor, scope, action, reason, request identity, and final outcome without trusting caller-supplied actor identity;
 - prove the owner performs the authoritative validation and durable mutation without Logging and Admin writing owner state;
-- prove retries, duplicate delivery, owner timeout, audit failure, and uncertain completion converge through correlated idempotent outcomes rather than duplicate mutation;
+- prove retries, duplicate delivery, owner timeout, audit failure, and uncertain completion converge through correlated idempotent outcomes bound to the validated authorization-reference fingerprint and applicable workload identity rather than duplicate mutation;
 - prove core operator writes continue when each observability dependency is unavailable;
 - maintain an explicit inventory and focused audit proof for every bypass-safe external write; and
 - prove ordinary gameplay and owner-local enforcement do not call Logging and Admin merely to process a command or commit domain state.

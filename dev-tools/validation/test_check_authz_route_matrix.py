@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 import importlib.util
 import tempfile
 import unittest
@@ -30,6 +31,14 @@ def replace_or_fail(text: str, old: str, new: str) -> str:
     return text.replace(old, new, 1)
 
 
+def grouped_routes(document, service):
+    routes = defaultdict(list)
+    for route in document["routes"]:
+        if route.get("service") == service:
+            routes[route["route"]].append(route)
+    return routes
+
+
 class AuthzRouteMatrixValidationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -40,12 +49,13 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_owner_route_metadata_is_explicit(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        routes = {
-            route["route"]: route
-            for route in document["routes"]
-            if route.get("service") == "game-session-service"
-        }
-        self.assertEqual(["current_operator_authorization", "runtime_ownership"], routes["StopSession"]["required_live_checks"])
+        routes = grouped_routes(document, "game-session-service")
+        self.assertTrue(routes["StopSession"])
+        for route in routes["StopSession"]:
+            self.assertEqual(
+                ["current_operator_authorization", "runtime_ownership"],
+                route["required_live_checks"],
+            )
         for route_name in (
             "ToggleFeatureFlag",
             "PauseTicksForScope",
@@ -54,7 +64,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             "ExecutePreparedVersionCutover",
             "PrepareVersionUpgrade",
         ):
-            self.assertEqual("grpc", routes[route_name]["transport"])
+            self.assertTrue(routes[route_name])
+            for route in routes[route_name]:
+                self.assertEqual("grpc", route["transport"])
 
     def test_operator_ingress_uses_conditional_membership_generation(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -63,24 +75,21 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             for service, route in self.validator.OPERATOR_INGRESS_ROUTES
             if service == "logging-admin-service"
         }
-        routes = {
-            route["route"]: route
-            for route in document["routes"]
-            if route.get("service") == "logging-admin-service"
-        }
+        routes = grouped_routes(document, "logging-admin-service")
         for route_name in route_names:
-            route = routes[route_name]
-            self.assertEqual(
-                "conditional_by_operator_role",
-                route["membership_authority_generation_applies"],
-            )
-            self.assertEqual(
-                {"tenant_role": True, "platformAdmin_global": False},
-                route["membership_authority_generation_condition"],
-            )
-            self.assertFalse(route["global_platform_admin_membership_required"])
-            self.assertIn("membership_when_tenant_role", route["required_live_checks"])
-            self.assertIn("membership_generation", route["required_live_checks"])
+            self.assertTrue(routes[route_name])
+            for route in routes[route_name]:
+                self.assertEqual(
+                    "conditional_by_operator_role",
+                    route["membership_authority_generation_applies"],
+                )
+                self.assertEqual(
+                    {"tenant_role": True, "platformAdmin_global": False},
+                    route["membership_authority_generation_condition"],
+                )
+                self.assertFalse(route["global_platform_admin_membership_required"])
+                self.assertIn("membership_when_tenant_role", route["required_live_checks"])
+                self.assertIn("membership_generation", route["required_live_checks"])
 
     def test_operator_ingress_conditional_shape_is_validated(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -106,37 +115,34 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_game_session_operator_routes_match_ingress_authority_shape(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        routes = {
-            (route["service"], route["route"]): route
-            for route in document["routes"]
-            if route.get("service") == "game-session-service"
-            and route.get("route", "").startswith("POST /sessions")
-        }
+        routes = grouped_routes(document, "game-session-service")
         for route_key in self.validator.GAME_SESSION_OPERATOR_ROUTES:
-            route = routes[route_key]
-            self.assertEqual(
-                "conditional_by_operator_role",
-                route["membership_authority_generation_applies"],
-            )
-            self.assertEqual(
-                {"tenant_role": True, "platformAdmin_global": False},
-                route["membership_authority_generation_condition"],
-            )
-            self.assertTrue(route["tenant_billing_authority_generation_applies"])
-            self.assertFalse(route["global_platform_admin_membership_required"])
-            self.assertEqual(
-                "target_tenant_generation",
-                route["global_platform_admin_reference_generation_binding"],
-            )
-            self.assertTrue(
-                {
-                    "membership_when_tenant_role",
-                    "membership_generation",
+            _, route_name = route_key
+            self.assertTrue(routes[route_name])
+            for route in routes[route_name]:
+                self.assertEqual(
+                    "conditional_by_operator_role",
+                    route["membership_authority_generation_applies"],
+                )
+                self.assertEqual(
+                    {"tenant_role": True, "platformAdmin_global": False},
+                    route["membership_authority_generation_condition"],
+                )
+                self.assertTrue(route["tenant_billing_authority_generation_applies"])
+                self.assertFalse(route["global_platform_admin_membership_required"])
+                self.assertEqual(
                     "target_tenant_generation",
-                }.issubset(route["required_live_checks"])
-            )
+                    route["global_platform_admin_reference_generation_binding"],
+                )
+                self.assertTrue(
+                    {
+                        "membership_when_tenant_role",
+                        "membership_generation",
+                        "target_tenant_generation",
+                    }.issubset(route["required_live_checks"])
+                )
 
-        drifted_route = routes[("game-session-service", "POST /sessions")]
+        drifted_route = routes["POST /sessions"][0]
         drifted_route["required_live_checks"].remove("target_tenant_generation")
         errors = []
         self.validator.validate_generation_applicability(document["routes"], errors)
@@ -146,22 +152,19 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_profile_routes_require_generation_checks(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        routes = {
-            route["route"]: route
-            for route in document["routes"]
-            if route.get("service") == "account-service"
-        }
+        routes = grouped_routes(document, "account-service")
         for route_name in ("GetProfile", "UpdateProfile"):
-            route = routes[route_name]
-            self.assertTrue(route["tenant_billing_authority_generation_applies"])
-            self.assertTrue(route["membership_authority_generation_applies"])
-            self.assertTrue(
-                {"membership", "membership_generation", "tenant_generation"}.issubset(
-                    route["required_live_checks"]
+            self.assertTrue(routes[route_name])
+            for route in routes[route_name]:
+                self.assertTrue(route["tenant_billing_authority_generation_applies"])
+                self.assertTrue(route["membership_authority_generation_applies"])
+                self.assertTrue(
+                    {"membership", "membership_generation", "tenant_generation"}.issubset(
+                        route["required_live_checks"]
+                    )
                 )
-            )
 
-        routes["GetProfile"]["required_live_checks"].remove("tenant_generation")
+        routes["GetProfile"][0]["required_live_checks"].remove("tenant_generation")
         errors = []
         self.validator.validate_profile_authority_routes(document["routes"], errors)
         self.assertIn("account-service GetProfile must require live check tenant_generation", errors)
@@ -191,6 +194,57 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertFalse(
             any("exactly one token profile per receiver policy" in error for error in errors)
         )
+
+    def test_non_internal_single_profile_predicates_are_validated(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route
+            for route in document["routes"]
+            if route.get("service") == "logging-admin-service"
+            and route.get("route") == "POST /feature-flags/toggle"
+        )
+        route["token_type"] = "wrong_token_type"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(
+                self.validator.yaml.safe_dump(document, sort_keys=False),
+                encoding="utf-8",
+            )
+            errors = self.validator.validate(path)
+        self.assertTrue(
+            any(
+                "token predicates must exactly match profile 'control-ui'"
+                in error
+                for error in errors
+            )
+        )
+
+    def test_malformed_mtls_shape_does_not_emit_duplicate_spiffe_error(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route
+            for route in document["routes"]
+            if route.get("service") == "game-session-service"
+            and route.get("route") == "StartSession"
+        )
+        route["mtls_callers"]["any_of"] = "not-a-list"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(
+                self.validator.yaml.safe_dump(document, sort_keys=False),
+                encoding="utf-8",
+            )
+            errors = self.validator.validate(path)
+        structural_error = (
+            "game-session-service StartSession mtls_callers.any_of "
+            "must be a non-empty list of strings"
+        )
+        concrete_error = (
+            "game-session-service StartSession mtls_callers.any_of "
+            "must contain concrete spiffe:// identities"
+        )
+        self.assertEqual(1, errors.count(structural_error))
+        self.assertNotIn(concrete_error, errors)
 
     def test_route_without_caller_policies_reports_method_policy_once(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

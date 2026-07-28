@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import sys
 import tempfile
 import textwrap
@@ -115,6 +116,26 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_valid_reviewed_pending_and_legacy_records(self) -> None:
         with fixture_root() as fixture:
             self.validator.validate(Path(fixture))
+
+    def test_missing_adr_directory_fails_clearly(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            shutil.rmtree(root / "design/architecture/decisions")
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "ADR directory missing",
+            )
+
+    def test_missing_review_queue_fails_clearly(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            queue_path(root).unlink()
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "ADR review queue missing",
+            )
 
     def test_accepted_record_requires_checked_review(self) -> None:
         with fixture_root() as fixture:

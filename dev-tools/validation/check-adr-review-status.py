@@ -18,7 +18,7 @@ REVIEW_QUEUE = (
 )
 # These records predate the formal human-review queue. Later reviewed parcels
 # either affirm them directly or supersede them with queue-backed ADRs.
-PRE_FORMAL_REVIEW_RECORDS = set(range(1, 12))
+PRE_FORMAL_REVIEW_RECORDS = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11})
 PENDING_ADR_STATUS = "Proposed - Pending Human Review"
 PENDING_REVIEW_FIELDS = {
     "Human review status": "Pending",
@@ -206,6 +206,10 @@ def validate_pending_review(context: Path, fields: dict[str, str]) -> None:
 def validate(root: Path = ROOT) -> None:
     adr_dir = root / ADR_DIR.relative_to(ROOT)
     queue = root / REVIEW_QUEUE.relative_to(ROOT)
+    if not adr_dir.is_dir():
+        fail(f"ADR directory missing: {adr_dir.relative_to(root)}")
+    if not queue.is_file():
+        fail(f"ADR review queue missing: {queue.relative_to(root)}")
     reviews = checked_reviews(queue)
     seen_numbers: set[int] = set()
 
