@@ -92,9 +92,15 @@ def checked_reviews(path: Path) -> dict[int, list[Review]]:
     for line_number, line in enumerate(
         path.read_text(encoding="utf-8").splitlines(), start=1
     ):
-        if not line.startswith("- [x]"):
+        stripped = line.lstrip()
+        if not stripped.startswith("- [x]"):
             continue
-        match = REVIEW_ROW_RE.fullmatch(line)
+        if stripped != line:
+            fail(
+                f"{path}: indented checked review queue row at line {line_number}; "
+                "checked review rows must be top-level"
+            )
+        match = REVIEW_ROW_RE.fullmatch(stripped)
         if not match:
             fail(f"{path}: malformed checked review queue row at line {line_number}")
 

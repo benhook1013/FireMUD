@@ -56,6 +56,106 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         ):
             self.assertEqual("grpc", routes[route_name]["transport"])
 
+    def test_operator_ingress_uses_conditional_membership_generation(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route_names = {
+            "POST /feature-flags/toggle",
+            "POST /moderation/actions",
+            "POST /tick-remediation/pause",
+            "POST /tick-remediation/resume",
+            "POST /admission-pointers",
+            "POST /admission-pointers/cutover",
+            "POST /admission-pointers/version-upgrades",
+        }
+        routes = {
+            route["route"]: route
+            for route in document["routes"]
+            if route.get("service") == "logging-admin-service"
+        }
+        for route_name in route_names:
+            route = routes[route_name]
+            self.assertEqual(
+                "conditional_by_operator_role",
+                route["membership_authority_generation_applies"],
+            )
+            self.assertEqual(
+                {"tenant_role": True, "platformAdmin_global": False},
+                route["membership_authority_generation_condition"],
+            )
+            self.assertFalse(route["global_platform_admin_membership_required"])
+            self.assertIn("membership_when_tenant_role", route["required_live_checks"])
+            self.assertIn("membership_generation", route["required_live_checks"])
+
+    def test_operator_ingress_conditional_shape_is_validated(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route
+            for route in document["routes"]
+            if route.get("route") == "POST /feature-flags/toggle"
+        )
+        route["membership_authority_generation_condition"]["platformAdmin_global"] = True
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(
+                self.validator.yaml.safe_dump(document, sort_keys=False),
+                encoding="utf-8",
+            )
+            errors = self.validator.validate(path)
+        self.assertTrue(
+            any(
+                "conditional membership generation requires" in error
+                for error in errors
+            )
+        )
+
+    def test_multi_profile_unknown_name_is_not_resolved(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route
+            for route in document["routes"]
+            if route.get("route") == "ToggleFeatureFlag"
+        )
+        route["accepted_token_profiles"] = ["control-ui", "unknown-profile"]
+        route["accepted_token_profile_audiences"] = {
+            "control-ui": "control-ui",
+            "unknown-profile": "unknown",
+        }
+        route["token_type"] = "control_plane_user"
+        route["token_issuer"] = "firemud-account-service"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(
+                self.validator.yaml.safe_dump(document, sort_keys=False),
+                encoding="utf-8",
+            )
+            errors = self.validator.validate(path)
+        self.assertTrue(any("uses unknown token profiles" in error for error in errors))
+        self.assertTrue(
+            any("exactly one token profile per receiver policy" in error for error in errors)
+        )
+
+    def test_route_without_caller_policies_reports_method_policy_once(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route
+            for route in document["routes"]
+            if route.get("route") == "ToggleFeatureFlag"
+        )
+        route["method_policy"] = "all_methods"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.yaml"
+            path.write_text(
+                self.validator.yaml.safe_dump(document, sort_keys=False),
+                encoding="utf-8",
+            )
+            errors = self.validator.validate(path)
+        self.assertEqual(
+            1,
+            errors.count(
+                "game-session-service ToggleFeatureFlag must declare method_policy exact_declared_route"
+            ),
+        )
+
     def test_profile_routes_distinguish_self_only_subjects(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         for route_name in ("GetProfile", "UpdateProfile"):

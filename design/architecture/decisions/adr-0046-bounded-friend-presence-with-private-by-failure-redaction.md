@@ -36,6 +36,10 @@ Gameplay `WHO` remains a current-game-instance view. It is separate from Account
 
 Player-facing friend presence does not expose disconnect disposition. Internal operational and recovery consumers may retain that fact within their authorized service boundary.
 
+## Implementation Status
+
+This decision is partially implemented. Social & Groups has friend relationship and presence surfaces, but the complete target contract remains in follow-through: snapshot-bound continuation, current relationship and policy revalidation, bounded chunked bulk reads, atomic no-partial-page failure behavior, and private-by-failure redaction are not all fully implemented and proven in the current runtime. This status does not change the human-reviewed decision metadata above.
+
 ## Consequences
 
 - Account remains the authority for player-selected profile privacy, Game Session remains the raw-presence owner, and Social & Groups owns relationship-aware projection.

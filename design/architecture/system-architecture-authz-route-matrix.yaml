@@ -202,7 +202,7 @@ operator_delegation:
   registry: account-owned_server-side_operator_authorization_registry
   issuance_paths:
     human:
-      auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
+      auth_path: exact_mtls_workload_plus_forwarded_control_ui
       bindings:
         [actor_account_id, control_ui_jti, account_generation, role, tenant_scope, action_family, control_plane_request_id, issued_at, expires_at]
     unattended_automation:
@@ -929,6 +929,10 @@ routes:
     issued_credential: pending-deletion-access
     required_live_checks: [pending_deletion_state]
     normal_login_or_gameplay_authority: false
+    account_state_disclosure: prohibited
+    response_profile: uniform_regardless_of_account_or_deletion_state
+    canonical_errors:
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
   - service: account-service
     route: IssueConnectToken
     scope: tenant
@@ -1256,12 +1260,15 @@ routes:
     scope: tenant
     classification: tenant_regular
     tenant_billing_authority_generation_applies: true
-    membership_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
-    required_live_checks: [membership_when_tenant_role, current_operator_roles, target_tenant_generation]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
@@ -1275,12 +1282,15 @@ routes:
     scope: tenant
     classification: tenant_regular
     tenant_billing_authority_generation_applies: true
-    membership_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
-    required_live_checks: [membership_when_tenant_role, current_operator_roles, target_tenant_generation]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_moderation_record_idempotency
@@ -1294,12 +1304,15 @@ routes:
     scope: tenant
     classification: tenant_regular
     tenant_billing_authority_generation_applies: true
-    membership_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
-    required_live_checks: [membership_when_tenant_role, current_operator_roles, target_tenant_generation, runtime_ownership]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation, runtime_ownership]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
@@ -1313,12 +1326,15 @@ routes:
     scope: tenant
     classification: tenant_regular
     tenant_billing_authority_generation_applies: true
-    membership_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
-    required_live_checks: [membership_when_tenant_role, current_operator_roles, target_tenant_generation, runtime_ownership]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation, runtime_ownership]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
@@ -1332,12 +1348,15 @@ routes:
     scope: tenant
     classification: tenant_regular
     tenant_billing_authority_generation_applies: true
-    membership_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
-    required_live_checks: [membership_when_tenant_role, current_operator_roles, target_tenant_generation]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_owner_idempotent_compare_and_set
@@ -1351,12 +1370,15 @@ routes:
     scope: tenant
     classification: tenant_regular
     tenant_billing_authority_generation_applies: true
-    membership_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
-    required_live_checks: [membership_when_tenant_role, current_operator_roles, target_tenant_generation, prepared_version_upgrade]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation, prepared_version_upgrade]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_owner_idempotent_compare_and_set
@@ -1370,12 +1392,15 @@ routes:
     scope: tenant
     classification: tenant_regular
     tenant_billing_authority_generation_applies: true
-    membership_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
-    required_live_checks: [membership_when_tenant_role, current_operator_roles, target_tenant_generation]
+    required_live_checks: [membership_when_tenant_role, membership_generation, current_operator_roles, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_owner_idempotent_preparation

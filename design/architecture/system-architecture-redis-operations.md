@@ -50,7 +50,7 @@ Supported external controls use the following canonical API-to-CLI mapping:
 
 - `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` maps to the continuation control for retrying the same durable operation after a controller restart or an external infrastructure step. The release-boundary invocation uses canonical `expectedPhase=ready_to_reopen`, may reconcile only into `AWAITING_RESUME`, and must match the active operation, phase, server-issued lock, and immutable evidence. It is not the public release authorization.
 - `resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)` maps to `coordination-maintenance resume --operation-id <operationId> --expected-phase <expectedPhase> --scope <scope> ... --maintenance-lock-token <maintenanceLockToken> --evidence-ref <evidenceRef>` and is a separate post-recovery safety gate. It uses canonical `expectedPhase=AWAITING_RESUME`, validates the exact operation, scope, lock, and evidence, durably audits the authenticated actor, atomically records `RESUME_AUTHORIZED`, and does not release the lock or reopen traffic. Any mismatch or missing evidence fails closed.
-- `releaseMaintenanceLock(operationId, scope, maintenanceLockToken, reason, evidenceRef)` maps to `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason> --evidence-ref <evidenceRef>` for audited operator abandonment. It retains the paused/fenced state and never reopens the scope.
+- `releaseMaintenanceLock(operationId, scope, maintenanceLockToken, reason, evidenceRef)` maps to `coordination-maintenance release-lock --operation-id <operationId> --scope <scope> ... --maintenance-lock-token <token> --reason <reason> --evidence-ref <evidenceRef>` for audited operator abandonment. The concrete scope selector (for example, `--tenant <tenantId> --region <regionId>` for a region scope) must match the durable operation exactly. It retains the paused/fenced state and never reopens the scope.
 
 No public command may select or invoke an internal phase. The CLI exposes the same controls as `continue-recovery`, `resume`, and `release-lock`; the API names above remain the canonical control-plane names.
 
@@ -225,15 +225,15 @@ Session schema cleanup is a hygiene and recovery tool, not a normal steady-state
 - delete via `UNLINK` where possible to avoid blocking the event loop
 - acquire a short-lived per-tenant cleanup lock such as `session-cleanup-lock:<tenantId>`
 - yield between batches and abort early when Redis latency or load is elevated
-- resume from the last cursor or continuation token across bounded runs
+- resume from durable operation cursor/continuation state across bounded runs; callers do not supply an independent resume token
 - emit cleanup metrics such as `session.cleanup_scanned_total`, `session.cleanup_deleted_total`, and `session.cleanup_duration_seconds`, with tenant context in logs
 - provide a dry-run mode before modifying keys in operator-driven cleanup tooling
 
 Canonical cleanup operation:
 
-`coordination-maintenance recover --mode session-schema-cleanup --scope tenant --tenant <tenantId> --invalidate-sessions [--dry-run] [--resume-token <token>]`
+`coordination-maintenance recover --mode session-schema-cleanup --scope tenant --tenant <tenantId> --invalidate-sessions [--dry-run]`
 
-The bounded high-level `recover` operation owns the lock, internal session-cleanup phase, continuation, abort, and release behavior. Ad hoc cleanup Jobs must call this operation rather than encoding their own lock, continuation, or abort behavior. `session-cleanup` is an internal phase name, not a public command.
+The bounded high-level `recover` operation owns the lock, durable cursor/continuation state, internal session-cleanup phase, continuation, abort, and release behavior. Ad hoc cleanup Jobs must call this operation rather than encoding their own lock, continuation, or abort behavior. `session-cleanup` is an internal phase name, not a public command; retry uses the same `operationId` and server-issued `maintenanceLockToken` through `continueRecovery`, not a caller-supplied resume token.
 
 When the cleanup workflow reaches `AWAITING_RESUME`, the public `resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)` gate must use `expectedPhase=AWAITING_RESUME` and verify the immutable cleanup completion evidence for the exact tenant and operation, including visited prefixes, scanned/deleted counts, final cursor or continuation state, schema disposition, and completion reason. Missing, partial, ambiguous, or mismatched cleanup evidence retains the lock and fence and fails closed.
 
@@ -309,7 +309,7 @@ Goal: change how `tenantId` / `gameInstanceId` / `regionId` normalization and ha
 4. invoke one bounded `coordination-maintenance recover --mode reset --operation migration --scope ... (--preserve-sessions|--invalidate-sessions)` operation and require the controller to validate that every participant reports the persisted version set and migration contract before reset begins
 5. start a fresh Coordination Redis deployment or logical database with an empty keyspace as the active recovery operation's recorded external-infrastructure step
 6. rebuild coordination state from PostgreSQL plus fresh activity, then validate normalization, shard locality, Lua registry compatibility, and migration evidence before calling `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` with canonical `expectedPhase=ready_to_reopen`; continuation reaches `AWAITING_RESUME`, after which public `resume(... expectedPhase=AWAITING_RESUME ...)` and the internal release phase are required
-7. if the migration cannot safely continue, call the audited `coordination-maintenance release-lock --operation-id <operationId> --maintenance-lock-token <token> --reason <reason> --evidence-ref <evidenceRef>` abort control; it retains the fence and does not reopen traffic
+7. if the migration cannot safely continue, call the audited `coordination-maintenance release-lock --operation-id <operationId> --scope <scope> ... --maintenance-lock-token <token> --reason <reason> --evidence-ref <evidenceRef>` abort control; its concrete scope selector must match the migration operation exactly, and it retains the fence and does not reopen traffic
 
 ### Runbook: In-Place Normalization Migration
 

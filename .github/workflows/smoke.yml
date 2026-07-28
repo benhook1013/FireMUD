@@ -248,6 +248,7 @@ jobs:
             const maxCompletedJobSnapshotRetries = 8;
             const retryableStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
             let pollIteration = 0;
+            let completedJobSnapshotRunId = null;
             let completedJobSnapshotRetries = 0;
 
             async function withTransientGitHubRetry(label, operation) {
@@ -319,7 +320,7 @@ jobs:
                 )
               );
 
-              const matching = runs.find((run) => {
+              const matchingRuns = runs.filter((run) => {
                 if (
                   run.event !== "pull_request" ||
                   run.head_sha !== headSha ||
@@ -334,7 +335,29 @@ jobs:
                   pullRequest.head?.sha === headSha
                 );
               });
+              const matching = matchingRuns.reduce((newest, candidate) => {
+                if (!newest) {
+                  return candidate;
+                }
+                const parsedNewestCreatedAt = Date.parse(newest.created_at ?? "");
+                const parsedCandidateCreatedAt = Date.parse(candidate.created_at ?? "");
+                const newestCreatedAt = Number.isNaN(parsedNewestCreatedAt) ? 0 : parsedNewestCreatedAt;
+                const candidateCreatedAt = Number.isNaN(parsedCandidateCreatedAt) ? 0 : parsedCandidateCreatedAt;
+                if (candidateCreatedAt !== newestCreatedAt) {
+                  return candidateCreatedAt > newestCreatedAt ? candidate : newest;
+                }
+                const newestRunNumber = Number(newest.run_number ?? 0);
+                const candidateRunNumber = Number(candidate.run_number ?? 0);
+                if (candidateRunNumber !== newestRunNumber) {
+                  return candidateRunNumber > newestRunNumber ? candidate : newest;
+                }
+                return Number(candidate.id) > Number(newest.id) ? candidate : newest;
+              }, null);
               if (matching) {
+                if (completedJobSnapshotRunId !== matching.id) {
+                  completedJobSnapshotRunId = matching.id;
+                  completedJobSnapshotRetries = 0;
+                }
                 core.info(`Found runtime-images run ${matching.id} with status=${matching.status} conclusion=${matching.conclusion}`);
                 if (matching.status !== "completed") {
                   await new Promise((resolve) => setTimeout(resolve, sleepMs));

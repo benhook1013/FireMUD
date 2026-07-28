@@ -49,6 +49,24 @@ ROUTE_STATUS_VALUES = {
     "target_not_currently_routable",
 }
 TOKEN_ISSUER = "firemud-account-service"
+MEMBERSHIP_GENERATION_APPLICABILITY_VALUES = {
+    True,
+    False,
+    "conditional_by_operator_role",
+}
+CONDITIONAL_OPERATOR_MEMBERSHIP_SHAPE = {
+    "tenant_role": True,
+    "platformAdmin_global": False,
+}
+OPERATOR_INGRESS_ROUTES = {
+    ("logging-admin-service", "POST /feature-flags/toggle"),
+    ("logging-admin-service", "POST /moderation/actions"),
+    ("logging-admin-service", "POST /tick-remediation/pause"),
+    ("logging-admin-service", "POST /tick-remediation/resume"),
+    ("logging-admin-service", "POST /admission-pointers"),
+    ("logging-admin-service", "POST /admission-pointers/cutover"),
+    ("logging-admin-service", "POST /admission-pointers/version-upgrades"),
+}
 REQUIRED_ROLE_ASSURANCE_ROLES = {"platformAdmin", "billingAdmin", "support"}
 REQUIRED_TENANT_GENERATION_EXCEPTIONS = {
     "billing_safe_tenant": {
@@ -271,6 +289,7 @@ def validate_receiver_predicates(
         if len(profiles) != 1:
             audience_map = entry.get("accepted_token_profile_audiences")
             known_profiles = [token_profiles.get(profile_name) for profile_name in profiles]
+            all_profiles_resolved = all(profile is not None for profile in known_profiles)
             shared_type_issuer = {
                 (profile.get("type"), profile.get("issuer"))
                 for profile in known_profiles
@@ -279,7 +298,7 @@ def validate_receiver_predicates(
             if (
                 allow_multi_profile
                 and len(profiles) > 1
-                and len(known_profiles) == len(profiles)
+                and all_profiles_resolved
                 and len(shared_type_issuer) == 1
                 and (token_type, token_issuer) == next(iter(shared_type_issuer))
                 and isinstance(audience_map, dict)
@@ -291,7 +310,7 @@ def validate_receiver_predicates(
                 )
             ):
                 return
-            if allow_multi_profile and len(profiles) > 1 and len(known_profiles) == len(profiles):
+            if allow_multi_profile and len(profiles) > 1 and all_profiles_resolved:
                 if len(shared_type_issuer) != 1 or (token_type, token_issuer) != next(iter(shared_type_issuer)):
                     errors.append(
                         f"{label} multi-profile token predicates must match the shared token_type/token_issuer"
@@ -346,8 +365,6 @@ def validate_receiver_predicates(
             continue
 
         label = f"{route.get('service')} {route.get('route')}"
-        if route.get("method_policy") != "exact_declared_route" and "caller_policies" not in route:
-            errors.append(f"{label} must declare method_policy exact_declared_route")
         caller_policies = route.get("caller_policies")
         if caller_policies is not None:
             if not isinstance(caller_policies, list) or not caller_policies:
@@ -504,6 +521,54 @@ def validate_role_assurance_references(
         if not isinstance(assurance, str) or assurance not in predicates:
             errors.append(
                 f"routes[{index}] role_assurance must reference a declared predicate"
+            )
+
+
+def validate_generation_applicability(routes: list[Any], errors: list[str]) -> None:
+    for index, route in enumerate(routes):
+        if not isinstance(route, dict):
+            continue
+        label = f"routes[{index}] {route.get('service')} {route.get('route')}"
+        value = route.get("membership_authority_generation_applies")
+        valid_scalar = isinstance(value, bool) or value == "conditional_by_operator_role"
+        if value is not None and not valid_scalar:
+            errors.append(
+                f"{label} membership_authority_generation_applies must be one of "
+                f"{sorted(MEMBERSHIP_GENERATION_APPLICABILITY_VALUES, key=str)}"
+            )
+        condition = route.get("membership_authority_generation_condition")
+        if value == "conditional_by_operator_role":
+            if condition != CONDITIONAL_OPERATOR_MEMBERSHIP_SHAPE:
+                errors.append(
+                    f"{label} conditional membership generation requires "
+                    "tenant_role=true and platformAdmin_global=false"
+                )
+        elif condition is not None:
+            errors.append(
+                f"{label} declares membership_authority_generation_condition without "
+                "conditional_by_operator_role"
+            )
+
+        route_key_value = (route.get("service"), route.get("route"))
+        if route_key_value not in OPERATOR_INGRESS_ROUTES:
+            continue
+        if value != "conditional_by_operator_role":
+            errors.append(
+                f"{label} operator ingress must use conditional_by_operator_role "
+                "membership generation"
+            )
+        if route.get("global_platform_admin_membership_required") is not False:
+            errors.append(
+                f"{label} must set global_platform_admin_membership_required=false"
+            )
+        checks = set(string_list(route.get("required_live_checks"), f"{label} required_live_checks", errors))
+        if "membership_when_tenant_role" not in checks:
+            errors.append(
+                f"{label} tenant-role branch must require membership_when_tenant_role"
+            )
+        if "membership_generation" not in checks:
+            errors.append(
+                f"{label} tenant-role branch must require membership_generation"
             )
 
 
@@ -795,6 +860,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     classifications = string_list(document.get("classifications"), "classifications", errors)
     route_keys = validate_route_variants(routes, set(classifications), errors)
     validate_route_statuses(routes, errors)
+    validate_generation_applicability(routes, errors)
     validate_receiver_predicates(routes, token_profiles, errors)
     validate_role_assurance_references(routes, role_assurance_predicates, errors)
     validate_tenant_generation_policy(document, routes, errors)

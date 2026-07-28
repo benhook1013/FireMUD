@@ -36,6 +36,10 @@ A billing-owner transfer is an explicit, audited handoff through the dedicated `
 
 Card management and every new real-money charge complete through HTTPS and the payment-provider flow. Telnet or gameplay may initiate the operation and return a short-lived, single-use checkout URL. The URL is bound to the initiating account and intended operation. FireMUD recognizes payment completion only from a verified provider webhook, then applies the resulting durable entitlement idempotently.
 
+## Implementation Status
+
+This decision is partially implemented. Account has payment and subscription persistence plus Stripe/payment-operation foundations, but the complete target path is not yet converged: explicit owner-authorized instrument binding, audited billing-owner handoff, provider creation without customer or provider defaults, replacement-before-detach enforcement, verified webhook entitlement completion, and their end-to-end proof remain incomplete. This status describes implementation coverage only and does not change the human-reviewed decision metadata above.
+
 ## Consequences
 
 - Payment-instrument ownership and authorization remain global-account concerns, while subscription billing choices remain tenant-subscription concerns.

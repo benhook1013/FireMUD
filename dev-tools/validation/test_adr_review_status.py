@@ -326,6 +326,21 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "must contain at least one Markdown outcome link",
             )
 
+    def test_indented_checked_queue_rows_are_rejected(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = queue_path(root)
+            path.write_text(
+                path.read_text(encoding="utf-8")
+                + "\n  - [x] `TEST-INDENTED` — `revised` on 2026-07-27; "
+                "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md)\n",
+                encoding="utf-8",
+            )
+            expect_failure(
+                lambda: self.validator.checked_reviews(path),
+                "indented checked review queue row",
+            )
+
     def test_duplicate_checked_review_source_is_rejected(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)

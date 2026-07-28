@@ -196,7 +196,7 @@ This matrix is canonical for high-level architecture docs and must remain aligne
 
 Core operator actions must not rely on observability backends for write success. Logging & Admin is the operator-facing entry point for these actions, but it is not allowed to become the runtime state owner for other domains.
 
-Under [ADR 0048](./decisions/adr-0048-durable-idempotent-operator-write-execution.md), Logging & Admin first durably records actor, reason, scope, mutation, and one `controlPlaneRequestId`, then forwards that same identifier to the owner. The owner alone validates current authority and durably commits the domain mutation and idempotent result. Success is reported only after that commit is confirmed. A lost response or final audit-update failure is reconciled with the same identifier; it never invites an uncorrelated duplicate mutation. If the initial intent record is unavailable, the mutation fails before forwarding. Protobuf contracts may use the wire spelling `control_plane_request_id`, which maps directly to the canonical `controlPlaneRequestId`; it is not a second request identity.
+Under [ADR 0048](./decisions/adr-0048-durable-idempotent-operator-write-execution.md), Logging & Admin first durably records actor, reason, scope, mutation, one `controlPlaneRequestId`, and the canonical digest of the normalized request, then forwards that same identity/digest pair to the owner. The owner alone validates current authority and durably commits the domain mutation and idempotent result. Success is reported only after that commit is confirmed. A lost response or final audit-update failure is reconciled only with the same identifier and exact digest; it never invites an uncorrelated or differently shaped duplicate mutation. If the initial intent record is unavailable, the mutation fails before forwarding. Protobuf contracts may use the wire spelling `control_plane_request_id`, which maps directly to the canonical `controlPlaneRequestId`; it is not a second request identity.
 
 | Operator action | Operator-facing entry point | Runtime/policy owner | Required write path | Required durable store(s) for success | Observability dependency allowed for write success |
 | --- | --- | --- | --- | --- | --- |
@@ -503,6 +503,8 @@ From the perspective of admin and moderation tooling there are two broad classes
 Implementations of Logging & Admin must preserve this separation with independent readiness/degradation behavior and resource isolation so observability outages do not take down the operator-facing paths on the external admin/creator API plane.
 
 Current implementation status: Logging & Admin has live read and investigation surfaces for logs, reports, saga state, admission-pointer state/audit, and observability dashboards, plus executable forwarding for the supported feature-flag, admission-pointer, and tick pause/resume mutations. Moderation policy recording is live, while owner-side enforcement propagation remains an explicit target-state gap.
+
+The current `/reports` route is not caller-bound: its OpenAPI/controller still accepts caller-supplied `tenantId` and `reporterAccountId`. The target player route derives both identities from the validated `player-bootstrap` session and fails closed until that contract is implemented.
 
 For gameplay/chat moderation specifically, the operator policy plane and enforcement plane must remain aligned under the canonical moderation propagation contract:
 

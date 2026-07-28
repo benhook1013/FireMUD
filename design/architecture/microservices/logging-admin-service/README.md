@@ -8,7 +8,7 @@ Centralized logging and administration tools for the platform. The service colle
 
 Moderation owner enforcement is not implemented. Logging & Admin currently persists moderation policy input and audit records, but does not forward gameplay or chat enforcement to an owning domain service. The owner-side enforcement contract and its executable routes remain target work.
 
-### Responsibilities
+## Responsibilities
 
 - Aggregate logs from every microservice via Fluent Bit sidecars and expose search APIs.
 - Offer dashboards and search for operators and moderators by embedding Kibana and Grafana views.

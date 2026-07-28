@@ -54,6 +54,10 @@ The HTTPS client authenticates the user and performs any required recent reauthe
 
 Spending an existing non-withdrawable premium balance remains a gameplay action. It uses an explicit purchase confirmation, an idempotent request identity, and applicable spending caps, but does not trigger general reauthentication or HTTPS step-up. Any future withdrawal, cash redemption, or cash-equivalent transfer capability is outside this decision.
 
+## Implementation Status
+
+This decision is partially implemented. Account has live password and verified-email-code authentication foundations and HTTPS control-plane surfaces, but the full selected-factor policy, recent-reauthentication and independent-TOTP elevation windows, gameplay-to-HTTPS handoff completion, replay/idempotency proof, and registry-backed logout behavior are not yet fully converged. The current implementation must not be read as proof that every sensitive action already satisfies this target contract. This status does not change the human-reviewed decision metadata above.
+
 ## Consequences
 
 - Normal Telnet play remains usable without browser-style authentication prompts.

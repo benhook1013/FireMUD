@@ -71,6 +71,22 @@ grep -Fq 'const maxCompletedJobSnapshotRetries = 8;' "$SMOKE_WORKFLOW" || {
   echo "Smoke Gate must bound retries for eventually consistent completed-job snapshots" >&2
   exit 1
 }
+grep -Fq 'const matchingRuns = runs.filter((run) =>' "$SMOKE_WORKFLOW" || {
+  echo "Smoke Gate must collect all current matching workflow runs before selecting one" >&2
+  exit 1
+}
+grep -Fq 'const matching = matchingRuns.reduce((newest, candidate) =>' "$SMOKE_WORKFLOW" || {
+  echo "Smoke Gate must select the newest matching workflow run explicitly" >&2
+  exit 1
+}
+grep -Fq 'let completedJobSnapshotRunId = null;' "$SMOKE_WORKFLOW" || {
+  echo "Smoke Gate must bind completed-job snapshot retries to a workflow run ID" >&2
+  exit 1
+}
+grep -Fq 'if (completedJobSnapshotRunId !== matching.id)' "$SMOKE_WORKFLOW" || {
+  echo "Smoke Gate must reset stale snapshot retries when the selected run changes" >&2
+  exit 1
+}
 grep -Fq 'succeeded but its PR Full-Stack Smoke job snapshot is not terminal yet' "$SMOKE_WORKFLOW" || {
   echo "Smoke Gate must retry a stale completed-workflow job snapshot" >&2
   exit 1
