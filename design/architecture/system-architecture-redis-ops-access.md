@@ -206,7 +206,8 @@ The tool advertises and accepts only scope forms implemented and proved by the r
   - Internal session-rebind phase
     - accepts either `--region-epoch <epoch>` for `--scope region` or `--region-epoch-map <path>` for tenant/cluster scopes.
     - is permitted when the reset's explicitly recorded session policy is `--preserve-sessions`; every region, tenant, and cluster request must record either `--preserve-sessions` or `--invalidate-sessions` rather than relying on scope inference. It recreates region-authoritative bindings from the durable affected-session inventory and must refresh the same maintenance lock rather than acquiring another lock.
-    - Before recreating a binding, it validates the exact active, unrevoked `session:auth:token:<tokenHash>` registry record and exact equality of every applicable authority tuple: `issuerAuthGeneration`, `accountAuthorityGeneration`, `tenantAuthorityGeneration`, caller-bound `{accountId, tenantId}` `membershipAuthorityGeneration`, and private-realm `grantVersion` when applicable, together with account identity and binding generation from durable owner state; `session:game:*` and `sessionctx:*` are not authority substitutes. A missing, stale, ambiguous, or mismatched value leaves the session connected but not gameplay-admitted and produces the terminal/non-applied `REGION_REBIND_REQUIRED` outcome until fresh `LOGIN` / `PLAY` succeeds.
+    - Before recreating a binding, it validates the complete canonical preserved-session rebind predicate: a complete target `schemaVersion=2` session payload with `rebindHandleEnvelope`, `continuityBindingExpiresAt`, `membershipVersion`, and `membershipAuthorityGeneration`; an exact active, unrevoked, unexpired `session:auth:token:<tokenHash>` registry record matching token, account, profile, audience, and time identity; current account identity, entitlement, revocation, authority-freshness lease, and committed checkpoint; exact equality of every applicable authority tuple (`issuerAuthGeneration`, `accountAuthorityGeneration`, `tenantAuthorityGeneration`, caller-bound `{accountId, tenantId}` `membershipAuthorityGeneration`, and private-realm `grantVersion` when applicable); and the expected `binding_generation`, current operation/region epoch, and lease fence from durable owner state. `session:game:*` and `sessionctx:*` are not authority substitutes. A missing, stale, ambiguous, or mismatched value leaves the session connected but not gameplay-admitted and produces the terminal/non-applied `REGION_REBIND_REQUIRED` outcome until fresh `LOGIN` / `PLAY` succeeds.
+    - A failed preserved-session predicate never implicitly changes the recorded session policy. The operation remains paused and fenced under the same `operationId` and `maintenanceLockToken`; an explicit audited preserve-to-invalidate transition may compare-and-set the policy under that same lock, recording actor, reason, and immutable evidence before invalidation. If that same-lock transition is unavailable, complete audited `release-lock` abandonment and start an explicit new `recover` operation with `--invalidate-sessions`. Rebind failure alone is never invalidation proof.
   - Internal session-cleanup phase
     - is owned by the bounded high-level `recover` operation; `session-cleanup` is an internal phase, not a public operation or command. Its continuation, abort, and release behavior use the parent operation's durable identity and lock lifecycle.
     - accepts only `--scope tenant --tenant <tenantId>` in first implementation; broader cleanup scopes are out of contract until explicitly designed.
@@ -244,6 +245,17 @@ The tool advertises and accepts only scope forms implemented and proved by the r
   - If a phase loses the lock, every later mutation must fail closed until an operator explicitly restores the same fenced operation or abandons it through audited `release-lock`; abandonment does not authorize resume.
   - A `replay_first` workflow starts with compatibility class `cleanup`. Escalation to `reset_first` must atomically compare-and-match that same token and upgrade the class to `reset` without releasing or reacquiring the lock. The upgrade audit record, including scope, old/new class, token/workflow lineage, actor, reason, and resulting epoch transition, must be durable before the epoch bump or reset-key mutation is allowed.
   - If the same-token upgrade or its audit write cannot complete, the workflow remains paused and no reset mutation may proceed; the operator must use the explicit failure/abort path. A second lock cannot be used to bypass the failed upgrade.
+
+### Canonical Pre-Wipe Gates
+
+The external AOF/deployment reset handoff may execute only after the same durable recover operation and maintenance lock have passed these named internal evidence gates:
+
+- `scope_paused_and_locked` – the scope is canonical `PAUSED`, command and batch intake are blocked, in-flight executor work is drained, and no old-epoch writer can create coordination state.
+- `account_authority_token_cutover` – protected admission is closed and Account's durable authority/token identity cutover and required immutable evidence are complete for the operation's scope.
+- `replay_domain_quarantine_fence` – the replay domain is verified untouched for a narrower reset or quarantined/fenced for the destructive reset, with immutable fence evidence recorded.
+- `immutable_external_handoff_evidence` – old and intended new deployment identities, the fenced old endpoint, authorized operator/action/time, tooling digest, and independent replacement verification are recorded.
+
+These names identify evidence groups, not additional public CLI verbs. Redis key absence, a new empty endpoint, or a caller-supplied scope cannot satisfy any gate, and every gate remains bound to the same `operationId` and server-issued `maintenanceLockToken`.
 
 Canonical epoch-map examples:
 
@@ -333,7 +345,7 @@ The recover operation's internal `PauseTicks` phase, `GetRegionTickStatus`, and 
   - region scope: the target region satisfies the pass criteria above.
   - tenant scope: every region owned by the tenant satisfies the pass criteria above.
   - cluster scope: every active region on the deployment satisfies the pass criteria above.
-  - `ResumeTicks(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` required behavior:
+- `ResumeTicks(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` required behavior:
   - Reject requests that do not match the active operation, expected phase, operation-owned scope, immutable evidence reference, and maintenance lock; the operation record supplies the scope.
   - Resolve the server-issued token against the durable operation record, persist the authenticated actor and gate result in the operation audit, and keep the affected scope fenced until the internal success-release phase observes every release postcondition.
   - Refuse to resume any region that has not passed the canonical post-reset resume gate.

@@ -4,9 +4,9 @@ This document outlines the administration interface delivered as a lightweight R
 
 ## Implementation Status
 
-- The admin UI is a lightweight operator surface. Its live scope is log search, saga inspection, analytics, feature-flag toggles, and tick-remediation pause/resume forwarding.
+- The admin UI is a lightweight operator surface. Its live scope is log search, saga inspection, analytics, feature-flag toggles, moderation policy/audit persistence, and tick-remediation pause/resume forwarding.
 - Player report review is target coverage. The current `/reports` route is disabled or fails closed because no caller-bound player submission path is available; the existing administrative persistence path is not evidence of a complete player report capability.
-- Admission-pointer operations, broader remediation, owner-side moderation enforcement, and richer dashboards remain API-only or unavailable to this UI. The target inventory below remains canonical and must not be read as proof that those surfaces are live.
+- Admission-pointer operations, session-lifecycle controls, broader remediation, owner-side moderation enforcement, and richer dashboards remain API-only or unavailable to this UI. The target inventory below remains canonical and must not be read as proof that those surfaces are live.
 
 ## Features
 
@@ -35,7 +35,7 @@ GET  /sagas/{id}/steps
 
 The live admission-pointer backend family is intentionally excluded from this UI inventory: no corresponding React/admin surface is implemented in this module. Operators must use the documented `/admission-pointers` API until that UI is implemented.
 
-Current-state note: `POST /tick-remediation/pause` and `POST /tick-remediation/resume` are backed by live Logging & Admin forwarding endpoints. Quota override and broader remediation are coverage drift: no current routes or owner-side contracts exist, so the UI must not present placeholder controls.
+Current-state note: `POST /tick-remediation/pause` and `POST /tick-remediation/resume` are backed by live Logging & Admin forwarding endpoints. Game Session `/sessions*` lifecycle routes are current owner-local hooks, not current UI or Logging & Admin ingress. Quota override and broader remediation are coverage drift: no current routes or owner-side contracts exist, so the UI must not present placeholder controls.
 
 `POST /moderation/actions` is a live persistence/audit-only support surface for a selected target player. It is independent of player report submission and remains available according to its own authorization contract even while `/reports` is disabled or fail-closed. The UI does not issue bans or warnings, and owner-side gameplay/chat enforcement forwarding remains unavailable until the owning enforcement contracts exist. Log search, saga inspection, admission-pointer reads/audit, and analytics dashboards remain read or investigation surfaces; `POST /reports` is a player-facing write that creates a report and is not an investigation surface.
 

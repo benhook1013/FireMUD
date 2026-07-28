@@ -948,6 +948,33 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             any("POST /ws/game/connect-token/revoke is missing" in error for error in errors)
         )
 
+    def test_gameplay_connect_bounded_registry_and_generation_exception_is_required(self):
+        mutations = (
+            (
+                "issued_token_state",
+                "none",
+                "issued-token-state exception",
+            ),
+            (
+                "issuer_authority_generation_applies",
+                True,
+                "issuer_authority_generation_applies",
+            ),
+            (
+                "account_authority_generation_applies",
+                True,
+                "account_authority_generation_applies",
+            ),
+        )
+        for field, value, expected in mutations:
+            with self.subTest(expected=expected):
+                document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+                route = route_for(document, "spring-cloud-gateway", "/ws/game/**")
+                route[field] = value
+                errors = []
+                self.validator.validate_ws_game_routes(document["routes"], errors)
+            self.assertTrue(any(expected in error for error in errors))
+
     def test_malformed_ws_game_route_counts_do_not_suppress_revoke_checks(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"

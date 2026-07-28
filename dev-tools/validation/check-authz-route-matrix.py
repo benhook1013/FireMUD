@@ -45,6 +45,7 @@ REQUIRED_REVOKE_APPLICABILITY = {
     "connection_mode": "first_party_web",
     "operation": "connect_token_cookie_revoke",
 }
+GAMEPLAY_CONNECT_ISSUED_TOKEN_STATE = "none_bounded_single_use_replay_exception"
 REQUIRED_FIELD_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 ROUTE_STATUS_VALUES = {
     "current_openapi_operator_surface",
@@ -1087,6 +1088,21 @@ def validate_ws_game_routes(routes: list[Any], errors: list[str]) -> None:
         outcomes = handshake_classes.get("any_of", []) if isinstance(handshake_classes, dict) else []
         if "POLICY_PRESSURE" not in outcomes:
             errors.append("/ws/game/** handshake outcomes must include POLICY_PRESSURE")
+        if first_party.get("issued_token_state") != GAMEPLAY_CONNECT_ISSUED_TOKEN_STATE:
+            errors.append(
+                "/ws/game/** first_party_web must declare the bounded single-use "
+                "gameplay-connect issued-token-state exception"
+            )
+        if first_party.get("issuer_authority_generation_applies") is not False:
+            errors.append(
+                "/ws/game/** first_party_web must explicitly disable "
+                "issuer_authority_generation_applies"
+            )
+        if first_party.get("account_authority_generation_applies") is not False:
+            errors.append(
+                "/ws/game/** first_party_web must explicitly disable "
+                "account_authority_generation_applies"
+            )
 
         trusted_proxy = by_mode["trusted_tcp_proxy"][0]
         missing_trusted_proxy = sorted(

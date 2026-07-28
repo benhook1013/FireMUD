@@ -17,10 +17,17 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "dev-tools/validation/check-adr-review-status.py"
 
 
+class ValidatorLoadError(AssertionError):
+    """Raised when the ADR review status validator cannot be loaded."""
+
+    def __init__(self) -> None:
+        super().__init__("could not load ADR review status validator")
+
+
 def load_validator():
     spec = importlib.util.spec_from_file_location("adr_review_status_validator", SCRIPT)
     if spec is None or spec.loader is None:
-        raise AssertionError("could not load ADR review status validator")
+        raise ValidatorLoadError()
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)

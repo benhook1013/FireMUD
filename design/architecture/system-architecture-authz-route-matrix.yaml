@@ -246,6 +246,7 @@ coverage_drift:
     note: Current ApplyModerationAction records policy input in Logging and Admin, but no current owner-side enforcement RPC is exposed.
   - family: game-session-session-lifecycle-external-ingress
     status: drift-found
+    current_ingress: game-session-service_owner_local_only
     current_routes:
       - POST /sessions
       - POST /sessions/{sessionId}/stop
@@ -388,6 +389,9 @@ routes:
     accepted_token_profiles: [gameplay-connect]
     accepted_token_profile_audiences:
       gameplay-connect: gameplay-connect
+    issued_token_state: none_bounded_single_use_replay_exception
+    issuer_authority_generation_applies: false
+    account_authority_generation_applies: false
     accepted_carriers: [first_party_cookie, classified_non_browser_header]
     edge_consumer: spring_cloud_gateway_public_non_proxy_websocket
     connect_context_output: signed_connect_context
@@ -1610,7 +1614,7 @@ routes:
     operator_authorization_reference: required_and_redeemed_with_account
     required_live_checks: [current_operator_authorization, expected_pointer_version, prepared_version_upgrade]
     mutation_contract: owner_atomic_idempotent_compare_and_set_with_durable_result
-    required_fields: [control_plane_request_id, actor, reason, prepared_version_upgrade_id, mutation_digest]
+    required_fields: [control_plane_request_id, actor, reason, expected_pointer_version, prepared_version_upgrade_id, mutation_digest]
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
