@@ -1217,6 +1217,104 @@ if pre_snapshot_after_artifact_status != "pass":
         + pre_snapshot_after_artifact_message
     )
 
+intervening_coverage_entry = {
+    "sequence": 10,
+    "snapshotVisibleLedger": {
+        "identity": "erasure-10",
+        "digest": "sha256:erasure-10",
+    },
+    "externalJournal": {
+        "identity": "erasure-10",
+        "digest": "sha256:erasure-10",
+    },
+}
+pre_snapshot_before_artifact = copy.deepcopy(valid_baseline)
+pre_snapshot_before_artifact["backupArtifactLineage"]["preSnapshotJournalHighWater"] = {
+    "stream": "erasures",
+    "sequence": 9,
+}
+pre_snapshot_before_artifact["backupArtifactLineage"]["interveningErasureCoverageProof"] = {
+    "stream": "erasures",
+    "exclusiveStart": 9,
+    "inclusiveEnd": 10,
+    "snapshotLedgerEvidenceRef": "evidence/snapshot-ledger-9-10.json",
+    "externalJournalEvidenceRef": "evidence/external-journal-9-10.json",
+    "entries": [intervening_coverage_entry],
+}
+pre_snapshot_before_artifact_path = recovery_dir / "pre-snapshot-before-artifact-baseline.json"
+pre_snapshot_before_artifact_path.write_text(json.dumps(pre_snapshot_before_artifact), encoding="utf-8")
+pre_snapshot_before_artifact_status, pre_snapshot_before_artifact_message = module.validate_recovery_baseline(
+    tmp,
+    str(pre_snapshot_before_artifact_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if pre_snapshot_before_artifact_status != "pass":
+    raise SystemExit(
+        "complete intervening erasure coverage proof did not pass: "
+        + pre_snapshot_before_artifact_message
+    )
+
+missing_intervening_proof = copy.deepcopy(pre_snapshot_before_artifact)
+del missing_intervening_proof["backupArtifactLineage"]["interveningErasureCoverageProof"]
+missing_intervening_proof_path = recovery_dir / "missing-intervening-proof-baseline.json"
+missing_intervening_proof_path.write_text(json.dumps(missing_intervening_proof), encoding="utf-8")
+missing_intervening_proof_status, missing_intervening_proof_message = module.validate_recovery_baseline(
+    tmp,
+    str(missing_intervening_proof_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if missing_intervening_proof_status != "fail" or "interveningErasureCoverageProof" not in (
+    missing_intervening_proof_message
+):
+    raise SystemExit(
+        "lower pre-snapshot high-water passed without intervening coverage proof: "
+        + missing_intervening_proof_message
+    )
+
+mismatched_intervening_proof = copy.deepcopy(pre_snapshot_before_artifact)
+mismatched_intervening_proof["backupArtifactLineage"]["interveningErasureCoverageProof"]["entries"][0][
+    "externalJournal"
+]["digest"] = "sha256:mismatch"
+mismatched_intervening_proof_path = recovery_dir / "mismatched-intervening-proof-baseline.json"
+mismatched_intervening_proof_path.write_text(json.dumps(mismatched_intervening_proof), encoding="utf-8")
+mismatched_intervening_proof_status, mismatched_intervening_proof_message = module.validate_recovery_baseline(
+    tmp,
+    str(mismatched_intervening_proof_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if mismatched_intervening_proof_status != "fail" or "matching identity and digest" not in (
+    mismatched_intervening_proof_message
+):
+    raise SystemExit(
+        "mismatched intervening erasure identity/digest proof passed: "
+        + mismatched_intervening_proof_message
+    )
+
+unneeded_intervening_proof = copy.deepcopy(valid_baseline)
+unneeded_intervening_proof["backupArtifactLineage"]["interveningErasureCoverageProof"] = (
+    pre_snapshot_before_artifact["backupArtifactLineage"]["interveningErasureCoverageProof"]
+)
+unneeded_intervening_proof_path = recovery_dir / "unneeded-intervening-proof-baseline.json"
+unneeded_intervening_proof_path.write_text(json.dumps(unneeded_intervening_proof), encoding="utf-8")
+unneeded_intervening_proof_status, unneeded_intervening_proof_message = module.validate_recovery_baseline(
+    tmp,
+    str(unneeded_intervening_proof_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if unneeded_intervening_proof_status != "fail" or "must be absent" not in unneeded_intervening_proof_message:
+    raise SystemExit(
+        "unneeded intervening erasure coverage proof passed: "
+        + unneeded_intervening_proof_message
+    )
+
 rollback_compatibility_status, rollback_compatibility_message = module.recovery_compatibility_check(
     {
         "generatedAt": past_timestamp,
@@ -1587,7 +1685,7 @@ expected_invalid_baseline_messages = {
     "lineage-snapshot-bound": "erasureHighWaterSnapshotBound must be true",
     "lineage-pre-snapshot-stream": "preSnapshotJournalHighWater.stream must match",
     "lineage-pre-snapshot-sequence": "preSnapshotJournalHighWater.sequence must be an integer",
-    "lineage-pre-snapshot-below-artifact-high-water": "preSnapshotJournalHighWater.sequence must be at or above",
+    "lineage-pre-snapshot-below-artifact-high-water": "interveningErasureCoverageProof must be an object",
     "lineage-pre-snapshot-above-restore-high-water": "preSnapshotJournalHighWater.sequence must be at or below",
     "overlay-stream": "stream must match the canonical erasure stream",
     "overlay-entry-stream": "sequenceDispositions[0] stream must match the canonical erasure stream",

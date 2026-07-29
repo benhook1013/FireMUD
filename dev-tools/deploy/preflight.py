@@ -307,6 +307,105 @@ def validate_safe_dispositions(value: Any, label: str) -> tuple[str, str]:
     return ("pass", "")
 
 
+def validate_intervening_erasure_coverage_header(
+    value: Any,
+    stream: str,
+    exclusive_start: int,
+    inclusive_end: int,
+) -> tuple[str, str, JsonObject | None]:
+    label = "Recovery compatibility baseline interveningErasureCoverageProof"
+    if not isinstance(value, dict):
+        return ("fail", f"{label} must be an object when the pre-snapshot high-water is lower", None)
+    if (
+        value.get("stream") != stream
+        or value.get("exclusiveStart") != exclusive_start
+        or value.get("inclusiveEnd") != inclusive_end
+    ):
+        return ("fail", f"{label} must match the exact pre-snapshot-to-artifact interval", None)
+    for field in ("snapshotLedgerEvidenceRef", "externalJournalEvidenceRef"):
+        field_value = value.get(field)
+        if not isinstance(field_value, str) or not field_value.strip():
+            return ("fail", f"{label}.{field} must be a non-empty immutable evidence reference", None)
+    return ("pass", "", value)
+
+
+def validate_intervening_erasure_coverage_entry(
+    value: Any,
+    label: str,
+) -> tuple[str, str, int | None]:
+    if not isinstance(value, dict):
+        return ("fail", f"{label}.entries must contain objects", None)
+    sequence = value.get("sequence")
+    if not isinstance(sequence, int) or isinstance(sequence, bool):
+        return ("fail", f"{label}.entries[].sequence must be an integer", None)
+
+    snapshot_entry = value.get("snapshotVisibleLedger")
+    journal_entry = value.get("externalJournal")
+    if not isinstance(snapshot_entry, dict) or not isinstance(journal_entry, dict):
+        return (
+            "fail",
+            f"{label} sequence {sequence} must include snapshotVisibleLedger and externalJournal evidence",
+            None,
+        )
+    for source_name, source_entry in (
+        ("snapshotVisibleLedger", snapshot_entry),
+        ("externalJournal", journal_entry),
+    ):
+        for field in ("identity", "digest"):
+            field_value = source_entry.get(field)
+            if not isinstance(field_value, str) or not field_value.strip():
+                return (
+                    "fail",
+                    f"{label} sequence {sequence} {source_name}.{field} must be non-empty",
+                    None,
+                )
+    if (
+        snapshot_entry["identity"] != journal_entry["identity"]
+        or snapshot_entry["digest"] != journal_entry["digest"]
+    ):
+        return (
+            "fail",
+            f"{label} sequence {sequence} must have matching identity and digest in both sources",
+            None,
+        )
+    return ("pass", "", sequence)
+
+
+def validate_intervening_erasure_coverage_proof(
+    value: Any,
+    stream: str,
+    exclusive_start: int,
+    inclusive_end: int,
+) -> tuple[str, str]:
+    label = "Recovery compatibility baseline interveningErasureCoverageProof"
+    header_status, header_message, proof = validate_intervening_erasure_coverage_header(
+        value,
+        stream,
+        exclusive_start,
+        inclusive_end,
+    )
+    if header_status != "pass" or proof is None:
+        return (header_status, header_message)
+    entries = proof.get("entries")
+    if not isinstance(entries, list):
+        return ("fail", f"{label}.entries must be an ordered list")
+    if len(entries) != inclusive_end - exclusive_start:
+        return (
+            "fail",
+            f"{label}.entries must cover every sequence in order exactly once",
+        )
+    for offset, entry in enumerate(entries, start=1):
+        entry_status, entry_message, sequence = validate_intervening_erasure_coverage_entry(entry, label)
+        if entry_status != "pass" or sequence is None:
+            return (entry_status, entry_message)
+        if sequence != exclusive_start + offset:
+            return (
+                "fail",
+                f"{label}.entries must cover every sequence in order exactly once",
+            )
+    return ("pass", "")
+
+
 def validate_erasure_overlay_boundaries(
     value: JsonObject,
     artifact_high_water: JsonObject,
@@ -700,15 +799,28 @@ def validate_recovery_baseline(
                 "must be an integer"
             ),
         )
-    if pre_snapshot_sequence < artifact_sequence:
-        return (
-            "fail",
-            "Recovery compatibility baseline preSnapshotJournalHighWater.sequence must be at or above artifactErasureHighWater",
-        )
     if pre_snapshot_sequence > restore_sequence:
         return (
             "fail",
             "Recovery compatibility baseline preSnapshotJournalHighWater.sequence must be at or below restoreHighWater",
+        )
+    intervening_coverage_proof = backup_artifact_lineage.get("interveningErasureCoverageProof")
+    if pre_snapshot_sequence < artifact_sequence:
+        proof_status, proof_message = validate_intervening_erasure_coverage_proof(
+            intervening_coverage_proof,
+            high_water_stream,
+            pre_snapshot_sequence,
+            artifact_sequence,
+        )
+        if proof_status != "pass":
+            return (proof_status, proof_message)
+    elif intervening_coverage_proof is not None:
+        return (
+            "fail",
+            (
+                "Recovery compatibility baseline interveningErasureCoverageProof must be absent "
+                "when preSnapshotJournalHighWater is at or above artifactErasureHighWater"
+            ),
         )
 
     coordination_evidence = baseline.get("coordinationRecoveryEvidence")

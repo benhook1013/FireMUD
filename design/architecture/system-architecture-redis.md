@@ -209,11 +209,10 @@ Operational details (failover behavior, AOF expectations, and tail-loss observab
 
 Multi-key coordination operations in FireMUD must remain **shard-local, idempotent, and lease-guarded**:
 
-- All mutating operations on coordination prefixes (tick queues, `pending` sets, timers, retry structures, locks, leases, and session keys) always go through owned **typed key and mutation helpers**. Lua is mandatory only when a helper must provide atomic multi-key behavior; those registered scripts:
+- All mutating operations on coordination prefixes (tick queues, `pending` sets, timers, retry structures, locks, leases, and session keys) always go through owned **typed key and mutation helpers**. Raw Redis commands are prohibited. Registered Lua is mandatory for atomic multi-key behavior and may be used for a single-key mutation only when an explicitly documented atomic guard or compare-and-set contract requires it; ordinary single-key mutations use typed helpers without Lua. Registered scripts:
   - Validate lease tokens, lock tokens, and monotonic guards (`tickId`, epochs) before writing.
   - Operate only on keys that share the same hash tag and cluster slot.
   - Are deterministic and idempotent with respect to their `KEYS`/`ARGV` arguments and current Redis state.
-- Ordinary single-key mutations use the typed helpers without Lua, and application code and maintenance tooling must not bypass those helpers with raw Redis commands.
 - Application code and maintenance tooling must **not** issue ad-hoc multi-key Redis commands (including `MULTI/EXEC`) over coordination prefixes.
 - Cross-region workflows are implemented as per-region operations or higher-level sagas, not as cross-region Redis transactions.
 
@@ -468,7 +467,7 @@ The **Redis Cheat Sheet** maintains a representative prefix → role/owner mappi
 
 When designing or reviewing coordination flows, use this shard-local checklist:
 
-- All coordination mutations use typed key and mutation helpers. Lua is mandatory only when atomic multi-key behavior requires it; single-key mutations may use a registered Lua implementation but do not require one. Any Lua multi-key operation must be shard-local, with all `KEYS` sharing the same `{tenantRegionTag}`, `{tenantInstanceTag}`, or `{tenantGameplayTag}` hash tag and Redis Cluster slot.
+- All coordination mutations use owned typed key and mutation helpers; raw Redis commands are prohibited. Registered Lua is mandatory for atomic multi-key behavior and may be used for a single-key mutation only when an explicitly documented atomic guard or compare-and-set contract requires it; ordinary single-key mutations use typed helpers without Lua. Any Lua multi-key operation must be shard-local, with all `KEYS` sharing the same `{tenantRegionTag}`, `{tenantInstanceTag}`, or `{tenantGameplayTag}` hash tag and Redis Cluster slot.
 - Cross-region behavior is implemented via per-region operations and durable follow-up records in PostgreSQL, **not** via cross-region multi-key scripts.
 - Callers always construct keys via shared key helpers (for example, builders in `firemud-common`) so `{tenantRegionTag}`, `{tenantGameplayTag}`, prefixes, and slots remain consistent; scripts and callers must not hand-roll key strings with embedded hostnames, region names, or ad-hoc hash tags.
 - CI and the Lua Script Registry:

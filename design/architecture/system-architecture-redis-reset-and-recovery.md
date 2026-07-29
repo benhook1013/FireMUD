@@ -360,7 +360,7 @@ Symptoms:
 Recommended actions:
 
 - Treat the affected scope as “coordination state may be inconsistent”.
-- Execute the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) for the smallest safe region or tenant scope with an explicit `--preserve-sessions` or `--invalidate-sessions` choice.
+- Select the smallest valid domain-specific recovery workflow for every mutated prefix rather than assuming a region or tenant reset can repair all keys. Region-local coordination keys use the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) with an explicit session-policy choice. Account-owned `session:auth:*` edits require Account-owned projection repair or cluster reset, and replay-marker edits require replay quarantine, fencing, and durable consume acknowledgement. Because those target workflows are not yet shipped end to end, current operators must preserve evidence, keep all affected scopes fenced, and use the [Current Operator Fallback](#current-operator-fallback) instead of attempting a reset.
 - Record the incident using the standard audit fields (who, when, why, which prefixes/tenants/regions).
 
 Expected impact:

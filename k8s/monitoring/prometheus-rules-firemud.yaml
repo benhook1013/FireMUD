@@ -441,7 +441,7 @@ spec:
             runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
           annotations:
             summary: Recovery participant convergence coverage is incomplete
-            description: At least one required participant has no current convergence-state series, or an environment inventory projection is incomplete. Keep that environment's recovery-readiness decisions blocked.
+            description: At least one required participant is absent from the current convergence-coverage projection, or an environment inventory projection is incomplete. Keep that environment's recovery-readiness decisions blocked.
         - alert: RecoveryParticipantConvergenceMetricsAbsent
           expr: recovery_participant_convergence_source_missing > 0
           for: 5m
