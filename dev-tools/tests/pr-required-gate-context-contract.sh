@@ -22,6 +22,7 @@ while IFS='|' read -r workflow gate; do
     echo "$workflow metadata preservation must inspect exact-head check runs" >&2
     exit 1
   fi
+  # shellcheck disable=SC2016 # Assert literal workflow interpolation syntax.
   if ! grep -Fq '.app.slug == \"github-actions\"' "$path" ||
     ! grep -Fq 'contains(\"/actions/runs/${GITHUB_RUN_ID}/\") | not' "$path" ||
     ! grep -Fq 'sort_by(.started_at // .created_at) | last' "$path" ||
@@ -29,6 +30,7 @@ while IFS='|' read -r workflow gate; do
     echo "$workflow metadata preservation must follow the latest prior GitHub Actions gate result" >&2
     exit 1
   fi
+  # shellcheck disable=SC2016 # Assert literal workflow shell syntax.
   if ! grep -Fq 'for attempt in $(seq 1 80)' "$path" ||
     ! grep -Fq 'sleep 15' "$path" ||
     ! grep -Fq 'Timed out waiting for the prior' "$path"; then
