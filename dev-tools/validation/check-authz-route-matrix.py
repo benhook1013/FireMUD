@@ -85,6 +85,10 @@ OPERATOR_INGRESS_ROUTES = {
     ("logging-admin-service", "POST /admission-pointers/cutover"),
     ("logging-admin-service", "POST /admission-pointers/version-upgrades"),
 }
+ADMISSION_POINTER_MUTATION_ROUTE = (
+    "logging-admin-service",
+    "POST /admission-pointers",
+)
 GAME_SESSION_OPERATOR_ROUTES = {
     ("game-session-service", "POST /sessions"),
     ("game-session-service", "POST /sessions/{sessionId}/stop"),
@@ -869,6 +873,14 @@ def validate_conditional_operator_route(
                 f"{label} privileged operator route must require live check "
                 f"{required_check}"
             )
+    if (
+        route_key_value == ADMISSION_POINTER_MUTATION_ROUTE
+        and "expected_pointer_version" not in checks
+    ):
+        errors.append(
+            f"{label} admission-pointer mutation must require live check "
+            "expected_pointer_version"
+        )
     if route_key_value in GAME_SESSION_OPERATOR_ROUTES:
         if route.get("canonical_external_ingress") != CANONICAL_OPERATOR_INGRESS:
             errors.append(
@@ -1337,9 +1349,16 @@ def validate_profile_authority_routes(
     routes: list[Any],
     errors: list[str],
     live_checks_cache: LiveChecksCache | None = None,
+    cardinality_errors: set[str] | None = None,
 ) -> None:
     for route_name in ("GetProfile", "UpdateProfile"):
-        route = resolve_unique_route(routes, "account-service", route_name, errors)
+        route = resolve_unique_route(
+            routes,
+            "account-service",
+            route_name,
+            errors,
+            cardinality_errors,
+        )
         if route is None:
             continue
         label = f"account-service {route_name}"
@@ -1365,6 +1384,7 @@ def validate_refresh_roles_routes(
     routes: list[Any],
     errors: list[str],
     live_checks_cache: LiveChecksCache | None = None,
+    cardinality_errors: set[str] | None = None,
 ) -> None:
     def validate_idempotency(route: dict[str, Any], label: str) -> None:
         required_fields = set(
@@ -1379,7 +1399,11 @@ def validate_refresh_roles_routes(
             errors.append(f"{label} must declare IDEMPOTENCY_CONFLICT")
 
     grpc_route = resolve_unique_route(
-        routes, "game-session-service", "RefreshRoles", errors
+        routes,
+        "game-session-service",
+        "RefreshRoles",
+        errors,
+        cardinality_errors,
     )
     if grpc_route is not None:
         label = "game-session-service RefreshRoles"
@@ -1402,7 +1426,11 @@ def validate_refresh_roles_routes(
         validate_idempotency(grpc_route, label)
 
     http_route = resolve_unique_route(
-        routes, "game-session-service", "POST /sessions/{sessionId}/refresh-roles", errors
+        routes,
+        "game-session-service",
+        "POST /sessions/{sessionId}/refresh-roles",
+        errors,
+        cardinality_errors,
     )
     if http_route is not None:
         label = "game-session-service POST /sessions/{sessionId}/refresh-roles"
@@ -1876,13 +1904,17 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     route_keys = validate_route_variants(routes, set(classifications), errors)
     validate_route_statuses(routes, allowed_route_statuses, errors)
     validate_required_fields(routes, errors)
+    cardinality_errors: set[str] = set()
     validate_generation_applicability(routes, errors, live_checks_cache)
-    validate_profile_authority_routes(routes, errors, live_checks_cache)
-    validate_refresh_roles_routes(routes, errors, live_checks_cache)
+    validate_profile_authority_routes(
+        routes, errors, live_checks_cache, cardinality_errors
+    )
+    validate_refresh_roles_routes(
+        routes, errors, live_checks_cache, cardinality_errors
+    )
     validate_receiver_predicates(routes, token_profiles, errors)
     validate_role_assurance_references(routes, role_assurance_predicates, errors)
     validate_tenant_generation_policy(document, routes, errors, live_checks_cache)
-    cardinality_errors: set[str] = set()
     validate_membership_policy(document, errors)
     validate_elevation_bootstrap(
         document, routes, errors, cardinality_errors

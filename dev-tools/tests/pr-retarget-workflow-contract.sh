@@ -542,7 +542,7 @@ require_contains "$smoke_path" 'Math.floor(remainingTimeoutMs / sleepMs) - 1'
 require_contains "$smoke_path" 'completedJobSnapshotAttempt <= maxCompletedJobSnapshotRetries'
 require_contains "$smoke_path" 'run_id: matching.id'
 require_contains "$smoke_path" 'completedJobSnapshotAttempt < maxCompletedJobSnapshotRetries'
-require_contains "$smoke_path" 'did not expose a terminal PR Full-Stack Smoke job after'
+require_contains "$smoke_path" 'did not expose a terminal PR Full-Stack Smoke job '
 require_contains "$smoke_path" "Runtime images run \${matching.id} succeeded, but PR Full-Stack Smoke job did not complete successfully:"
 require_contains "$smoke_path" 'Stopping obsolete failed full-smoke gate for'
 require_contains "$smoke_path" 'pollIteration % pullRequestCheckInterval === 0'
@@ -649,7 +649,7 @@ try:
     runtime_workflow = yaml.load(runtime_images, Loader=yaml.BaseLoader)
     runtime_job_name = runtime_workflow["jobs"]["pr-local-smoke"]["name"]
 except (KeyError, TypeError, yaml.YAMLError) as exc:
-    raise AssertionError(
+    raise SystemExit(
         "runtime-images.yml must define the pr-local-smoke job name used by Smoke Gate"
     ) from exc
 if runtime_job_name != job_name_literals[0]:

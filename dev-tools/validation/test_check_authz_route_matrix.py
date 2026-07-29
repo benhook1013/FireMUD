@@ -153,6 +153,23 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
         )
 
+    def test_admission_pointer_mutation_requires_expected_version_check(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            document, "logging-admin-service", "POST /admission-pointers"
+        )
+        self.assertIn("expected_pointer_version", route["required_live_checks"])
+
+        route["required_live_checks"].remove("expected_pointer_version")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "admission-pointer mutation must require live check "
+                "expected_pointer_version" in error
+                for error in errors
+            )
+        )
+
     def test_game_session_operator_routes_match_ingress_authority_shape(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         routes = grouped_routes(document, "game-session-service")

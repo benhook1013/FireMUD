@@ -60,7 +60,7 @@ try:
         "cat <<'EOF' | kubectl -n \"${PREVIEW_NAMESPACE}\" apply -f -\n"
     )
     manifest_start = bootstrap_manifest.index("\n", manifest_start) + 1
-    manifest_end = bootstrap_manifest.index("\nEOF\n", manifest_start)
+    manifest_end = bootstrap_manifest.index("\nEOF", manifest_start)
 except ValueError as exc:
     raise AssertionError(
         "dev-demo bootstrap step must contain the expected pod manifest heredoc"

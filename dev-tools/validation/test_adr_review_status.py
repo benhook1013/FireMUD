@@ -24,6 +24,15 @@ class ValidatorLoadError(AssertionError):
         super().__init__("could not load ADR review status validator")
 
 
+class ReplacementCountError(AssertionError):
+    """Raised when a fixture replacement does not match exactly once."""
+
+    def __init__(self, old: str, occurrences: int) -> None:
+        super().__init__(
+            f"expected exactly one occurrence of {old!r}, found {occurrences}"
+        )
+
+
 def load_validator():
     spec = importlib.util.spec_from_file_location("adr_review_status_validator", SCRIPT)
     if spec is None or spec.loader is None:
@@ -121,9 +130,7 @@ def append_queue_row(root: Path, row: str) -> None:
 def replace_once(text: str, old: str, new: str) -> str:
     occurrences = text.count(old)
     if occurrences != 1:
-        raise AssertionError(
-            f"expected exactly one occurrence of {old!r}, found {occurrences}"
-        )
+        raise ReplacementCountError(old, occurrences)
     return text.replace(old, new, 1)
 
 

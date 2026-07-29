@@ -17,7 +17,7 @@ The account-owned wallet contracts are also target state. Per-subscription instr
 
 ## Domain Model
 
-The Account Service owns billing records and maps them to Stripe resources. Records use immutable internal IDs for stable identity; for `subscription`, the internal `subscriptionId` is the sole stable identity. `accountId`, `tenantId`, and `plan_code` are mutable lookup, authorization, and constraint fields, not key material.
+The Account Service owns billing records and maps them to Stripe resources. Records use immutable internal IDs for stable identity; for `subscription`, the internal `subscriptionId` is the sole stable identity and `tenantId` is its immutable tenant-scope binding. `accountId` and `plan_code` are mutable lookup, authorization, and constraint fields, not key material. No generic update or billing-owner transfer may change `tenantId`.
 
 - `payment_transaction`  
   - Represents a single payment attempt or completed charge, including one-time purchases, hosting fees, and donations.  
@@ -44,7 +44,7 @@ The Account Service owns billing records and maps them to Stripe resources. Reco
 
 - `subscription`  
   - Represents a recurring billing agreement between a creator (platform account) and the platform for a specific tenant’s hosting plan.  
-  - Key fields: immutable internal `subscriptionId`, `accountId`, `tenantId`, `plan_code`, `status` (`pending`, `provisioning`, `trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`), current period start/end, `provider_subscription_id` (Stripe `subscription` ID), `provider_customer_id` (Stripe `customer` ID), an immutable `subscription_provisioning_request_id`/subscription-operation idempotency identity, the reserved payment-instrument version, a reference to the separately immutable customer-provisioning request identity, and a non-null persisted subscription-specific binding to the selected account-owned payment instrument. Only `subscriptionId` is stable identity; `accountId`, `tenantId`, and `plan_code` remain mutable lookup/constraint fields.
+  - Key fields: immutable internal `subscriptionId`, immutable `tenantId`, `accountId`, `plan_code`, `status` (`pending`, `provisioning`, `trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`), current period start/end, `provider_subscription_id` (Stripe `subscription` ID), `provider_customer_id` (Stripe `customer` ID), an immutable `subscription_provisioning_request_id`/subscription-operation idempotency identity, the reserved payment-instrument version, a reference to the separately immutable customer-provisioning request identity, and a non-null persisted subscription-specific binding to the selected account-owned payment instrument. `accountId` and `plan_code` remain mutable lookup/constraint fields; only the explicit billing-owner handoff may replace `accountId`, and no supported operation relocates a subscription to another tenant.
   - `pending` and `provisioning` are durable pre-activation states. `pending` means the local subscription intent and provider work item have committed but provider creation has not been claimed; `provisioning` means the provider call is in progress or awaiting recovery. Neither state grants hosting entitlements or permits billing.
   - Plan metadata defines quota-related attributes (for example, maximum active sessions, world size tiers) that the platform uses to drive per-tenant resource limits as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md#tenant-configuration--scaling).
 
@@ -144,7 +144,8 @@ The Account Service exposes gRPC and REST endpoints for initiating and inspectin
 
 - `CreatePaymentIntent` – Initiate a one-time payment or donation and return the client-facing Stripe Payment Intent details.  
 - `RefundPayment` – Create or recover the durable refund operation for an existing `payment_transaction`; provider mutation, local status, entitlement effects, and webhook reconciliation converge through that operation.
-- `CreateSubscription` – Start or update a recurring hosting subscription for a specific `tenantId` and `plan_code`.  
+- `CreateSubscription` – Create one recurring hosting subscription for an immutable `tenantId` and initial `plan_code` through its dedicated provisioning identity; creation rejects update-only fields.
+- `UpdateSubscription` – Apply a plan, instrument, cancellation, or other supported mutation to an existing immutable `subscriptionId` using a distinct operation identity and expected row version; it rejects creation-only fields and any `tenantId` change.
 - `TransferBillingOwner` – Start or recover the audited provider-replacement handoff through the `subscription_transfer` state machine and guarded update of the canonical subscription row.
 - Subscription and transaction query APIs – Must be split into explicit tenant-scoped billing-safe, cross-tenant support-safe, and cross-tenant billing-safe variants (no mixed-mode endpoint behavior). Per-tenant caller-bound billing history is visible to `tenantAdmin`; global `platformAdmin`/`billingAdmin` access uses cross-tenant billing-safe variants only.
 

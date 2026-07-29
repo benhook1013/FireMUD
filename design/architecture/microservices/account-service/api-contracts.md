@@ -44,7 +44,7 @@ The account lifecycle API, export surfaces, and deletion-precondition contracts 
 - `GetCallerTenantMembership` – return authoritative caller-bound account-tenant membership and roles for billing-safe mutation checks.
 - `GetTenantMembershipForAccount` – cross-tenant membership lookup for billing/reporting workflows (`billingAdmin`/`platformAdmin` only).
 - `GetTenantMembershipForRuntime` – authoritative internal membership read for gameplay admission, reconnect/resume, and membership-gap reconciliation.
-- `GetTenantEntitlementsForRuntime` – unredacted internal runtime/admission entitlement snapshot for exact Game Session and World Management workload identities. Game Session supplies current private delegation for player-scoped admission; World Management supplies tenant/operation-bound instance-lifecycle context. Logging and Admin and `control-ui` callers must use the redacted route variants instead.
+- `GetTenantEntitlementsForRuntime(tenantId, requestId)` – unredacted internal runtime/admission entitlement snapshot for exact Game Session and World Management workload identities. Game Session supplies current private delegation for player-scoped admission; World Management supplies tenant/operation-bound instance-lifecycle context. Logging and Admin and `control-ui` callers must use the redacted route variants instead.
 - `GetRealmAccessGrant` / `ListRealmAccessGrantsForAccount` – authoritative internal realm-grant reads for non-public realm bootstrap discovery and gameplay admission.
 - `GetTenantEntitlementsTenant` – caller-bound tenant-admin entitlement view for billing-safe control-plane UX.
 - `GetTenantEntitlementsCrossTenantSupportSafe` – cross-tenant support-safe entitlement view with redacted, high-level fields only.
@@ -219,7 +219,7 @@ Required semantics:
 - If grant authority is unavailable, discovery/admission for non-public realms fails closed.
 - The current implementation has the internal Account Service-owned grant substrate and runtime enforcement in place. Tenant-admin list/grant/revoke APIs, expiry handling, and user-facing account search/selection remain the product control-plane work needed to make the creator playtest journey complete.
 
-Illustrative `GetTenantEntitlementsForRuntime(tenantId)` response:
+Illustrative `GetTenantEntitlementsForRuntime(tenantId, requestId)` response:
 
 ```json
 {
