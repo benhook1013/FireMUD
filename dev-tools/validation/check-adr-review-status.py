@@ -182,7 +182,7 @@ def provenance_adr_number(
 def checked_reviews(path: Path, adr_dir: Path) -> dict[int, list[Review]]:
     reviews: dict[int, list[Review]] = {}
     seen_keys: set[str] = set()
-    open_fence: tuple[str, int] | None = None
+    open_fence: tuple[str, int, int] | None = None
     for line_number, line in enumerate(
         path.read_text(encoding="utf-8").splitlines(), start=1
     ):
@@ -191,7 +191,7 @@ def checked_reviews(path: Path, adr_dir: Path) -> dict[int, list[Review]]:
         if fence_match:
             fence = fence_match.group("fence")
             if open_fence is None:
-                open_fence = (fence[0], len(fence))
+                open_fence = (fence[0], len(fence), line_number)
             elif fence[0] == open_fence[0] and len(fence) >= open_fence[1]:
                 open_fence = None
             continue
@@ -260,6 +260,12 @@ def checked_reviews(path: Path, adr_dir: Path) -> dict[int, list[Review]]:
                     f"ADR {number:04d}"
                 )
             existing.append(review)
+    if open_fence is not None:
+        fence_character, fence_length, opening_line = open_fence
+        fail(
+            f"{path}: unterminated code fence opened at line {opening_line} "
+            f"with {fence_character * fence_length}"
+        )
     return reviews
 
 

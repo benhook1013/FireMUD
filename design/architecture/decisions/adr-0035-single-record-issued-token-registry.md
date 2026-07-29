@@ -28,15 +28,48 @@ Tenant and global authorization already comes from strictly validated signed cla
 
 The current implementation writes account and tenant keys but does not consistently enforce the complete registry contract in downstream validators. Global entries, full authority-generation enforcement, and end-to-end revocation proof remain incomplete.
 
+### Canonical Authority Tuple
+
+Every JWT claim set, registry record, revocation event, Account lease, gameplay binding, refresh request, rebind proof, and installation acknowledgement uses the same logical `authorityTuple` and exact field names:
+
+```text
+authorityTuple: {
+  issuerAuthGeneration,
+  accountAuthorityGeneration,
+  tenantAuthorityGeneration: { tenantId: generation },
+  membershipAuthorityGeneration: { tenantId: generation },
+  privateRealmGrantVersions: [
+    { tenantId, worldSlug, realmSlug, grantVersion }
+  ],
+  accountSecurityCutoff: {
+    accountAuthorityGeneration,
+    outboxStreamKey,
+    outboxSequence
+  }?,
+  tenantBillingCutoff: {
+    tenantId: {
+      tenantAuthorityGeneration,
+      tenantBillingSequence,
+      outboxStreamKey,
+      outboxSequence
+    }
+  }
+}
+```
+
+`issuerAuthGeneration` and `accountAuthorityGeneration` are positive Account-owned generations. `tenantAuthorityGeneration` and `membershipAuthorityGeneration` are independent maps keyed by exact tenant IDs; each map's applicable keys are determined separately by the token profile and route classification. The closed `billing_safe_tenant` exception can therefore require a membership entry while deliberately omitting the target-tenant generation. Explicitly unscoped artifacts use empty maps. `privateRealmGrantVersions` contains exact `{tenantId, worldSlug, realmSlug, grantVersion}` entries and is empty for public production. `accountSecurityCutoff` and `tenantBillingCutoff` are optional cutoff evidence, not replacement authorities. `membershipVersion` is separate membership projection/version data and must be compared independently from `membershipAuthorityGeneration`; neither field substitutes for the other. A missing applicable field, extra scope, malformed value, or mismatch fails closed.
+
+The tuple is copied without renaming or reinterpretation into every applicable registry record/claim, payload, lease, binding, refresh request, rebind proof, and installation acknowledgement. `issuanceFence` is copied alongside the tuple as the Account composite authority fence captured by the issuance transaction or CAS; it is not a substitute for any tuple member.
+
 ## Decision
 
 ### One Registry Record Per Revocable JWT
 
 - Account Service creates exactly one Coordination Redis record for each issued `control-ui`, `player-bootstrap`, or receiver-specific private player-delegation JWT: `session:auth:token:<tokenHash>`.
 - `tokenHash` is a fixed-length SHA-256 digest of the complete compact JWT. Raw token contents never appear in Redis keys, values, logs, metrics, traces, or audit evidence.
-- Every supported version of the bounded record contains `schemaVersion`, a non-empty string JWT `kid`, `accountId`, exact token profile/audience, `jti`, `iat`, `exp`, the profile-defined positive `tokenGeneration`, the positive `issuerAuthGeneration`, and the explicit `state` defined below. The stored `kid` must be the exact verified JWT header key identifier; it is a string identifier, not a numeric generation. The record does not duplicate tenant-role maps or global-role grants from the signed token.
-- A receiver-specific private player-delegation record created by rotation has a mandatory conditional field set: `rotationOperationId`, `leaseId`, positive `leaseVersion`, exact `gameplayBindingId`, and positive `installationFence`. These fields are required whenever the record participates in `TOKEN_ROTATION`; they are not optional metadata. Account compares them with the durable rotation operation, replacement lease, exact Game Session binding, and Account-owned installation fence before activation, installation, authorization, or retry. Missing, malformed, unavailable, expired, or mismatched conditional evidence fails closed, and the record cannot fall back to JWT claims, mTLS identity, token hash, or registry presence alone.
-- `issuerAuthGeneration` is the canonical registry field name and must equal the JWT `issuerAuthGeneration` claim and the value in Account's durable issuer-authority record at issuance or refresh. Account owns that durable record and its monotonic advances; the registry value is a snapshot whose Redis projection is accepted only with Account-provided source-version and freshness evidence. The registry does not become a second issuer authority and may not advance, repair, or override the durable record.
+- Every supported version of the bounded record contains `schemaVersion`, a non-empty string JWT `kid`, `accountId`, exact token profile/audience, `jti`, `iat`, `exp`, the profile-defined positive `tokenGeneration`, the complete applicable `authorityTuple`, positive `issuanceFence`, and the explicit `state` defined below. The stored `kid` must be the exact verified JWT header key identifier; it is a string identifier, not a numeric generation. The record does not duplicate tenant-role maps or global-role grants from the signed token.
+- A receiver-specific private player-delegation record created by rotation has a mandatory conditional field set: `rotationOperationId`, `leaseId`, positive `leaseVersion`, exact `gameplayBindingId`, positive `installationFence`, positive `issuanceFence`, and the complete applicable `authorityTuple`. These fields are required whenever the record participates in `TOKEN_ROTATION`; they are not optional metadata. Account compares them with the durable rotation operation, replacement lease, exact Game Session binding, and Account-owned installation fence before activation, installation, authorization, or retry. Reachable missing, expired, malformed, stale, or mismatched conditional evidence is invalid/revoked; dependency unavailability is classified as retryable `AUTH_UNAVAILABLE` under the dependency-outcome rules below. The record cannot fall back to JWT claims, mTLS identity, token hash, or registry presence alone.
+- `authorityTuple.issuerAuthGeneration` is the canonical registry field name and must equal the JWT `authorityTuple.issuerAuthGeneration` claim and the value in Account's durable issuer-authority record at issuance or refresh. Account owns that durable record and its monotonic advances; the registry value is a snapshot whose Redis projection is accepted only with Account-provided source-version and freshness evidence. The registry does not become a second issuer authority and may not advance, repair, or override the durable record.
 - Its absolute expiry is the JWT `exp` plus the bounded validation-skew/safety margin. Activity does not extend it.
 - Account atomically establishes the record before returning the JWT. If registration fails, issuance fails and the token is never exposed to the caller.
 
@@ -49,11 +82,41 @@ The current implementation writes account and tenant keys but does not consisten
 ### Validation And Authorization
 
 - A consumer first validates signature and `kid`, issuer, exact audience/profile, required claims, time bounds, and claim types locally.
-- A protected control-plane or admission operation then performs one issued-token registry lookup and verifies that the record uses a supported `schemaVersion`, satisfies the operation-appropriate state rules above, and matches the token hash, `kid`, account, profile, `jti`, `tokenGeneration`, `issuerAuthGeneration`, and time claims. A rotated private-delegation record must contain the mandatory `rotationOperationId`, `leaseId`, `leaseVersion`, `gameplayBindingId`, and `installationFence` fields, and Account validation fails closed when any field is absent, unavailable, stale, malformed, or mismatched with the durable operation, lease, exact gameplay binding, or installation fence. The matching Account lease must be `INSTALLED` before the replacement authorizes protected use. Missing, `pending`, `revoked`, unsupported-version, or mismatched state denies the token, except for the bounded no-op logout retry classifications defined by ADR 0031.
-- The same validation must obtain Account-provided source-version/freshness evidence bound to the current durable issuer-authority record. The evidence must identify the exact issuer authority, source version, and positive `issuerAuthGeneration` against which the registry snapshot and JWT claim are checked; it must not be inferred from Redis, the JWT, `iat`, JWKS, or registry presence. A stale, regressed, missing, unavailable, or otherwise unverifiable Redis projection fails closed: an unavailable authority dependency is retryable `AUTH_UNAVAILABLE`, while reachable but invalid or stale evidence is authoritative invalid/revoked evidence.
+- A protected control-plane or admission operation then performs one issued-token registry lookup and verifies that the record uses a supported `schemaVersion`, satisfies the operation-appropriate state rules above, and matches the token hash, `kid`, account, profile, `jti`, `tokenGeneration`, complete `authorityTuple`, `issuanceFence`, and time claims. A rotated private-delegation record must contain the mandatory `rotationOperationId`, `leaseId`, `leaseVersion`, `gameplayBindingId`, `installationFence`, `issuanceFence`, and complete `authorityTuple`, and Account validation fails closed when reachable evidence is absent, stale, malformed, regressed, or mismatched with the durable operation, lease, exact gameplay binding, or installation fence. The matching Account lease must be `INSTALLED` before the replacement authorizes protected use. Missing, `pending`, `revoked`, unsupported-version, or mismatched state denies the token, except for the bounded no-op logout retry classifications defined by ADR 0031.
+- The same validation must obtain Account-provided evidence for every applicable field in `authorityTuple`, both cutoff objects, `issuanceFence`, and the registry lease/binding/fence relationships. Evidence must identify the exact Account scope, source version, and committed value against which the registry snapshot and JWT claim are checked; it must not be inferred from Redis, the JWT, `iat`, JWKS, or registry presence. Dependency unavailability is retryable `AUTH_UNAVAILABLE`; reachable missing, malformed, stale, regressed, expired, or mismatched evidence is authoritative invalid/revoked evidence.
 - The registry proves that Account issued this exact token and its lifecycle state permits the requested operation; it does not independently grant tenant or global authority. Consumers authorize the requested scope from the validated token profile/claims and the separate Account-owned revocation/version contract reviewed under JWT-02 and [ADR 0036](./adr-0036-monotonic-authority-generations-for-bulk-token-revocation.md).
 - Account Service is the sole writer and repair/reprojection authority for the durable issuer record and its registry projections. Consumers, Redis repair jobs, and other services may not advance, overwrite, or reinterpret `issuerAuthGeneration` or source-version evidence.
 - Registry lookup is not part of ordinary gameplay-command processing. Gameplay-domain delegation retains the mTLS workload and typed execution-context boundary from ADR 0024.
+
+### Registry Field And Claim Mapping
+
+The registry and JWT use the same nested names under `authorityTuple`; no legacy aliases or renamed map fields are accepted. The registry snapshot and verified JWT must have identical applicable scope sets and values:
+
+| Canonical field | JWT claim | Registry field | Scope rule |
+| --- | --- | --- | --- |
+| `issuerAuthGeneration` | `authorityTuple.issuerAuthGeneration` | `authorityTuple.issuerAuthGeneration` | One positive issuer value |
+| `accountAuthorityGeneration` | `authorityTuple.accountAuthorityGeneration` | `authorityTuple.accountAuthorityGeneration` | One positive account value |
+| `tenantAuthorityGeneration` | `authorityTuple.tenantAuthorityGeneration` | `authorityTuple.tenantAuthorityGeneration` | Exact tenant-ID map; empty only when explicitly unscoped |
+| `membershipAuthorityGeneration` | `authorityTuple.membershipAuthorityGeneration` | `authorityTuple.membershipAuthorityGeneration` | Exact independently applicable tenant-ID map; may contain the caller-membership tenant when a closed route class omits target-tenant generation |
+| `privateRealmGrantVersions` | `authorityTuple.privateRealmGrantVersions` | `authorityTuple.privateRealmGrantVersions` | Exact `{tenantId, worldSlug, realmSlug, grantVersion}` entries; empty for public production |
+| `accountSecurityCutoff` | `authorityTuple.accountSecurityCutoff` | `authorityTuple.accountSecurityCutoff` | Present only when applicable, with exact cutoff checkpoint |
+| `tenantBillingCutoff` | `authorityTuple.tenantBillingCutoff` | `authorityTuple.tenantBillingCutoff` | Exact tenant-ID map and checkpoint values when applicable |
+| `issuanceFence` | `issuanceFence` | `issuanceFence` | Positive Account fence captured with the tuple; never substitutes for it |
+
+For an explicitly unscoped profile, `tenantAuthorityGeneration`, `membershipAuthorityGeneration`, and `tenantBillingCutoff` are empty maps and `privateRealmGrantVersions` is an empty list in both JWT and registry. A tenant-bound profile has exactly the applicable tenant and realm keys; no account ID, wildcard, bare realm, fabricated tenant, or differently keyed entry is accepted. Any missing, extra, malformed, stale, regressed, or mismatched field fails closed. Rotation captures the same snapshot and `issuanceFence` in the pending registry record, replacement lease, binding-installation evidence, and response-envelope binding; a newer Account fence or any tuple mismatch invalidates the replacement and prevents activation.
+
+### Dependency Outcomes
+
+Validation classifies dependency results by whether the dependency was reachable, not by whether a cache or empty response was available:
+
+| Evidence source | Unavailable or timed out | Reachable but invalid, stale, missing, or malformed |
+| --- | --- | --- |
+| Issued-token registry | Retryable `AUTH_UNAVAILABLE`; deny the operation and do not mark the token revoked solely because Redis is unavailable | `AUTH_SESSION_REVOKED` or invalid-token outcome; absence is default denial |
+| Account lease or rotation operation | Retryable `AUTH_UNAVAILABLE`; no activation, installation, or stored-success response | Invalid/revoked; pending, expired, aborted, superseded, missing, or mismatched evidence cannot authorize |
+| Gameplay binding or binding CAS/fence | Retryable `AUTH_UNAVAILABLE`; no rebind or replacement admission | Invalid/revoked; wrong binding, version, `issuanceFence`, tuple, or installation state fails closed |
+| Account token-identity fence and authority evidence | Retryable `AUTH_UNAVAILABLE`; no refresh, logout completion, or replacement issuance | Invalid/revoked; missing, regressed, stale, malformed, or mismatched fence/tuple evidence fails closed |
+
+The same classification applies to every registry, lease, binding, fence, and Account evidence read used by a retry or reconciler. An ambiguous mutation response is reconciled by immutable operation ID and digest; it is never treated as success from registry presence or absence alone. A separate bounded Account-encrypted response envelope may retain the exact response credential for a matching retry after reconciliation, but it is not durable operation evidence, registry state, or authority.
 
 ### Profile Boundaries
 

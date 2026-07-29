@@ -727,7 +727,6 @@ def validate_multi_profile_predicates(
     profiles: list[str],
     token_profiles: dict[str, dict[str, str]],
     errors: list[str],
-    allow_implicit_profile: bool = False,
 ) -> None:
     if entry.get("token_audience") is not None:
         errors.append(
@@ -736,17 +735,47 @@ def validate_multi_profile_predicates(
         )
     token_type = entry.get("token_type")
     token_issuer = entry.get("token_issuer")
+    known_profiles = [token_profiles.get(profile_name) for profile_name in profiles]
+    if not all(profile is not None for profile in known_profiles):
+        return
+    type_issuer_pairs = {
+        (profile.get("type"), profile.get("issuer"))
+        for profile in known_profiles
+        if profile is not None
+    }
+    if len(type_issuer_pairs) > 1:
+        for field, profile_key in (
+            ("accepted_token_profile_types", "type"),
+            ("accepted_token_profile_issuers", "issuer"),
+        ):
+            predicate_map = entry.get(field)
+            if not isinstance(predicate_map, dict):
+                errors.append(
+                    f"{label} differing multi-profile predicates require {field}"
+                )
+                continue
+            if set(predicate_map) != set(profiles):
+                errors.append(
+                    f"{label} {field} keys must equal accepted token profiles"
+                )
+                continue
+            for profile_name in profiles:
+                expected = token_profiles[profile_name].get(profile_key)
+                if predicate_map.get(profile_name) != expected:
+                    errors.append(
+                        f"{label} {field} for {profile_name!r} must match token_profiles"
+                    )
+        if token_type is not None or token_issuer is not None:
+            errors.append(
+                f"{label} differing multi-profile predicates must use per-profile type/issuer maps"
+            )
+        return
     if token_type is None or token_issuer is None:
-        if allow_implicit_profile and token_type is None and token_issuer is None:
-            return
         errors.append(
             f"{label} multi-profile routes must declare token_type/token_issuer"
         )
         return
 
-    known_profiles = [token_profiles.get(profile_name) for profile_name in profiles]
-    if not all(profile is not None for profile in known_profiles):
-        return
     shared_type_issuer = {
         (profile.get("type"), profile.get("issuer"))
         for profile in known_profiles
@@ -900,7 +929,6 @@ def validate_token_fields(
     errors: list[str],
     reported_unknown_profiles: set[str] | None = None,
     allow_multi_profile: bool = False,
-    allow_implicit_profile: bool = False,
 ) -> None:
     token_predicates = (
         entry.get("token_type"),
@@ -921,7 +949,6 @@ def validate_token_fields(
                 profiles,
                 token_profiles,
                 errors,
-                allow_implicit_profile,
             )
             return
         errors.append(f"{label} must declare exactly one token profile per receiver policy")
@@ -930,8 +957,6 @@ def validate_token_fields(
     if profile is None:
         if reported_unknown_profiles is None or profiles[0] not in reported_unknown_profiles:
             errors.append(f"{label} uses unknown token profiles: {[profiles[0]]}")
-        return
-    if allow_implicit_profile and token_predicates == (None, None, None):
         return
     expected = (profile.get("type"), profile.get("issuer"), profile.get("audience"))
     if token_predicates != expected:
@@ -1087,7 +1112,6 @@ def validate_receiver_predicates(
                     errors,
                     set(unknown_profiles),
                     allow_multi_profile=True,
-                    allow_implicit_profile=True,
                 )
             continue
         label = f"{route.get('service')} {route.get('route')}"

@@ -183,34 +183,17 @@ jobs:
     needs: [changes, analyze]
     if: ${{ always() && github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main') }}
     steps:
+      - name: Check out required-gate action
+        if: ${{ github.event.action == 'edited' && github.event.changes.base.ref == null }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
       - name: Preserve successful required gate on metadata-only edit
         if: ${{ github.event.action == 'edited' && github.event.changes.base.ref == null }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          REQUIRED_GATE_NAME: CodeQL Gate
-        run: |
-          for attempt in $(seq 1 80); do
-            prior_state=$(gh api --method GET \
-              "/repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs" \
-              -f check_name="${REQUIRED_GATE_NAME}" \
-              -f filter=all \
-              -f per_page=100 \
-              --jq "[.check_runs[] | select(.app.slug == \"github-actions\" and (.details_url | contains(\"/actions/runs/${GITHUB_RUN_ID}/\") | not))] | sort_by(.started_at // .created_at) | last | [(.status // \"\"), (.conclusion // \"\")] | @tsv")
-            IFS=$'\t' read -r prior_status prior_conclusion <<< "${prior_state}"
-            if [ "${prior_status}" = "completed" ]; then
-              if [ "${prior_conclusion}" = "success" ]; then
-                exit 0
-              fi
-              echo "Latest prior ${REQUIRED_GATE_NAME} for unchanged head ${HEAD_SHA} concluded ${prior_conclusion:-unknown}." >&2
-              exit 1
-            fi
-            if [ "${attempt}" -eq 80 ]; then
-              echo "Timed out waiting for the prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA}." >&2
-              exit 1
-            fi
-            sleep 15
-          done
+        uses: ./.github/actions/preserve-required-gate
+        with:
+          gate-name: CodeQL Gate
 
       - name: Harden runner
         if: ${{ github.event.action != 'edited' || github.event.changes.base.ref != null }}

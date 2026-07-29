@@ -176,6 +176,17 @@ class AdrReviewStatusTests(unittest.TestCase):
         with fixture_root() as fixture:
             self.validator.validate(Path(fixture))
 
+    def test_cli_accepts_valid_fixture_root(self) -> None:
+        with fixture_root() as fixture:
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), str(fixture)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertIn("ADR review status validation passed", result.stdout)
+
     def test_repository_corpus_passes(self) -> None:
         self.validator.validate(ROOT)
 
@@ -494,6 +505,20 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "```",
             )
             self.validator.validate(root)
+
+    def test_unterminated_code_fence_fails_closed_with_path_and_opening_line(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            queue = queue_path(root)
+            queue.write_text(
+                queue.read_text(encoding="utf-8") + "\n```text\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(self.validator.ValidationError) as raised:
+                self.validator.validate(root)
+            message = str(raised.exception)
+            self.assertIn(str(queue), message)
+            self.assertRegex(message, r"unterminated code fence opened at line [0-9]+")
 
     def test_checked_review_target_must_be_in_canonical_adr_directory(self) -> None:
         with fixture_root() as fixture:

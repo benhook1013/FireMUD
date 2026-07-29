@@ -405,6 +405,36 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
         )
 
+    def test_non_internal_single_profile_predicates_cannot_be_implicit(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            document, "logging-admin-service", "POST /feature-flags/toggle"
+        )
+        for field in ("token_type", "token_issuer", "token_audience"):
+            route.pop(field)
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "token predicates must exactly match profile 'control-ui'"
+                in error
+                for error in errors
+            )
+        )
+
+    def test_non_internal_multi_profile_predicates_cannot_be_implicit(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = configure_multi_profile_route(document)
+        route.pop("token_type")
+        route.pop("token_issuer")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "multi-profile routes must declare token_type/token_issuer"
+                in error
+                for error in errors
+            )
+        )
+
     def test_malformed_mtls_shape_does_not_emit_duplicate_spiffe_error(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = route_for(document, "game-session-service", "StartSession")
@@ -928,6 +958,19 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         route.pop("token_issuer")
         errors = validate_document(self.validator, document)
         self.assertTrue(any("must not declare scalar token_audience" in error for error in errors))
+
+    def test_differing_multi_profile_predicates_require_exact_maps(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "account-service", "AuthLogout")
+        route.pop("accepted_token_profile_types")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "differing multi-profile predicates require accepted_token_profile_types"
+                in error
+                for error in errors
+            )
+        )
 
     def test_caller_policy_shape_errors_are_not_duplicated(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

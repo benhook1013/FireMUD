@@ -23,7 +23,8 @@ Accounts span multiple hosted games. The [Multi-Tenancy](./system-architecture-m
 - [6. Purchases and Subscriptions](#6-purchases-and-subscriptions)
 - [7. Password Resets & Account Recovery](#7-password-resets--account-recovery)
 - [8. Switch Games or Manage Multiple Games](#8-switch-games-or-manage-multiple-games)
-- [9. Account Data Export & Deletion](#9-account-data-export--deletion)
+- [9. Account Data Export](#9-account-data-export)
+- [10. Account Deletion](#10-account-deletion)
 - [Related Documentation](#related-documentation)
 
 ---
@@ -54,7 +55,8 @@ Realm-aware character discovery and the current creation-policy decision are imp
 - [Purchases and Subscriptions](#6-purchases-and-subscriptions) – Manage subscriptions and in-game purchases.
 - [Password Resets & Account Recovery](#7-password-resets--account-recovery) – Recover access when credentials are lost.
 - [Switch Games or Manage Multiple Games](#8-switch-games-or-manage-multiple-games) – Move between games under one account.
-- [Account Data Export & Deletion](#9-account-data-export--deletion) – Request exports or complete account deletion.
+- [Account Data Export](#9-account-data-export) – Request and retrieve a durable asynchronous account export.
+- [Account Deletion](#10-account-deletion) – Request separate account erasure after billing obligations are resolved.
 
 Creator-focused design flows are described in the [Creator Journeys](./user-journeys-creators.md). Operational and moderation flows are described in the [Operator Journeys](./user-journeys-operators.md), including how outages and recoveries surface to players.
 
@@ -288,11 +290,19 @@ Account Service → Game Design Service (select tenant) → Game Session Service
 
 ---
 
-## 9. Account Data Export & Deletion
+## 9. Account Data Export
 
-These are target-state journey contracts. Players may request a full account data export or permanently delete an account through the [Account Service](./microservices/account-service/README.md). Under [ADR 0050](./decisions/adr-0050-versioned-export-retention-and-erasure-policy.md), full export is an asynchronous versioned JSON manifest of portable data contributed by every required owning service; partial or omitted categories are reported rather than presented as complete. Tenant admins have two separate tenant-wide export routes. The regular operational export is classified `tenant_regular`, requires live caller membership and `tenant_generation` freshness for the target tenant, and is unavailable while billing-blocked. The recovery export is classified `billing_safe_tenant`, requires live caller-bound `tenantAdmin` membership and membership-generation authority, deliberately omits target-tenant generation under the closed billing-safe exception, and remains reachable while the tenant is `suspended` or `canceled`. Both contain only tenant-owned exportable recovery data and minimum stable subject references; neither exposes global credentials, email, external identities, security state, or unrelated account data from other games.
+Players request a full account data export through the [Account Service](./microservices/account-service/README.md). Under [ADR 0050](./decisions/adr-0050-versioned-export-retention-and-erasure-policy.md), export initiation is durable and asynchronous: Account records the request, gathers the portable contributions from every required owning service, and permits manifest retrieval only after required owner fan-in completes. Partial, omitted, failed, or separately retained categories remain explicit in the versioned JSON manifest and are never presented as a complete export. Tenant admins have two separate tenant-wide export routes. The regular operational export is classified `tenant_regular`, requires live caller membership and `tenant_generation` freshness for the target tenant, and is unavailable while billing-blocked. The recovery export is classified `billing_safe_tenant`, requires live caller-bound `tenantAdmin` membership and membership-generation authority, deliberately omits target-tenant generation under the closed billing-safe exception, and remains reachable while the tenant is `suspended` or `canceled`. Both contain only tenant-owned exportable recovery data and minimum stable subject references; neither exposes global credentials, email, external identities, security state, or unrelated account data from other games.
 
-Account deletion requires confirmation, revokes active sessions, and is recorded by the [Logging & Admin Service](./microservices/logging-admin-service/README.md) for audit purposes. Deletion is blocked until billing authority has no nonterminal work: while the account owns any nonterminal tenant subscription, while it is the old or proposed owner in a nonterminal billing-owner transfer, or while related customer, subscription, webhook, outbox, cancellation, or provider-reconciliation work remains unresolved. The creator must first transfer billing ownership or cancel the subscription terminally and allow all related provider and durable-work items to reconcile so payment instruments, invoices, refunds, and tenant hosting responsibility are not orphaned. Direct identity is erased after the cancellation cutoff, while shared or legally/policy-required evidence may remain only in the minimized form and finite duration declared by the canonical retention registry.
+```plaintext
+Player → Account Service (durable export initiation) → required owner fan-in → manifest retrieval
+```
+
+---
+
+## 10. Account Deletion
+
+Account deletion is a separate confirmed operation. It revokes active sessions and is recorded by the [Logging & Admin Service](./microservices/logging-admin-service/README.md) for audit purposes. Deletion is blocked until billing authority has no nonterminal work: while the account owns any nonterminal tenant subscription, while it is the old or proposed owner in a nonterminal billing-owner transfer, or while related customer, subscription, webhook, outbox, cancellation, or provider-reconciliation work remains unresolved. The creator must first transfer billing ownership or cancel the subscription terminally and allow all related provider and durable-work items to reconcile so payment instruments, invoices, refunds, and tenant hosting responsibility are not orphaned. Direct identity is erased after the cancellation cutoff, while shared or legally/policy-required evidence may remain only in the minimized form and finite duration declared by the canonical retention registry. A durably scheduled step is intermediate pending evidence only and must not be reported as terminal deletion.
 
 ```plaintext
 Player → Account Service → Logging & Admin Service (audit)

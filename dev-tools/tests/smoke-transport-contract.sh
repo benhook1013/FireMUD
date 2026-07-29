@@ -35,7 +35,42 @@ sys.path.insert(0, str(root / "dev-tools" / "smoke"))
 import smoke_common
 from smoke_common import run_telnet_smoke_session, run_transport_session, run_websocket_smoke_session
 
-dev_demo_workflow = (root / ".github" / "workflows" / "dev-demo.yml").read_text()
+dev_demo_workflow_path = root / ".github" / "workflows" / "dev-demo.yml"
+if not dev_demo_workflow_path.is_file():
+    raise AssertionError(
+        f"dev-demo workflow is missing: expected {dev_demo_workflow_path}"
+    )
+dev_demo_workflow = dev_demo_workflow_path.read_text(encoding="utf-8")
+try:
+    workflow = yaml.safe_load(dev_demo_workflow)
+except yaml.YAMLError as exc:
+    raise AssertionError(f"dev-demo workflow is not valid YAML: {exc}") from exc
+
+jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
+if not isinstance(jobs, dict) or "dev-demo-deploy" not in jobs:
+    raise AssertionError(
+        "dev-demo workflow missing required 'dev-demo-deploy' job"
+    )
+deploy_job = jobs["dev-demo-deploy"]
+if not isinstance(deploy_job, dict) or not isinstance(deploy_job.get("steps"), list):
+    raise AssertionError(
+        "dev-demo-deploy job missing its required steps list"
+    )
+bootstrap_step = next(
+    (
+        step
+        for step in deploy_job["steps"]
+        if isinstance(step, dict)
+        and step.get("name") == "Create dev-demo smoke account"
+    ),
+    None,
+)
+if bootstrap_step is None:
+    raise AssertionError(
+        "dev-demo-deploy job missing required bootstrap step "
+        "'Create dev-demo smoke account'"
+    )
+
 for expected in (
     'create secret generic dev-demo-bootstrap-env',
     '--from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email"',
@@ -48,19 +83,13 @@ for expected in (
             f"dev-demo bootstrap environment contract missing: {expected}"
         )
 
-workflow = yaml.safe_load(dev_demo_workflow)
-bootstrap_step = next(
-    step
-    for step in workflow["jobs"]["dev-demo-deploy"]["steps"]
-    if step.get("name") == "Create dev-demo smoke account"
-)
 bootstrap_manifest = bootstrap_step["run"]
 try:
     manifest_start = bootstrap_manifest.index(
         "cat <<'EOF' | kubectl -n \"${PREVIEW_NAMESPACE}\" apply -f -\n"
     )
     manifest_start = bootstrap_manifest.index("\n", manifest_start) + 1
-    manifest_end = bootstrap_manifest.index("\nEOF", manifest_start)
+    manifest_end = bootstrap_manifest.index("\nEOF\n", manifest_start)
 except ValueError as exc:
     raise AssertionError(
         "dev-demo bootstrap step must contain the expected pod manifest heredoc"

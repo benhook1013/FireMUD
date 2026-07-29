@@ -234,6 +234,33 @@ require_contains(
     ],
 )
 require_contains(
+    "design/architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md",
+    [
+        "`/moderation/actions` is unavailable/gated",
+        "The accepted numeric source grammar is ASCII",
+        "Game Session session lifecycle (`/sessions*`)",
+    ],
+)
+require_contains(
+    "design/architecture/microservices/logging-admin-service/api-contracts.md",
+    [
+        "`/moderation/actions` is an unavailable/gated implementation path",
+        "Game instance session lifecycle remains a current Game Session owner-local route family",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-authz-route-matrix.md",
+    [
+        "Operator mutation rows that require an Account-issued authorization reference",
+        "`PaymentInstrumentWalletAccount`",
+        "`PaymentInstrumentWalletCrossTenant`",
+    ],
+)
+require_contains(
+    "design/project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md",
+    ["obsolete non-authorizing gameplay-attestation implementation debt"],
+)
+require_contains(
     "design/architecture/system-architecture-cicd.md",
     [
         "built and smoke-tested locally without registry credentials",
