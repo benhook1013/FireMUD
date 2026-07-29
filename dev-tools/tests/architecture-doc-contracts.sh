@@ -22,16 +22,26 @@ maintenance_lock_token_prohibition = re.compile(
 fence_start = re.compile(r"^[ \t]*(`{3,}|~{3,})")
 
 
-def line_or_paragraph_containing(text, position):
-    line_start = text.rfind("\n", 0, position) + 1
-    line_end = text.find("\n", position)
-    if line_end == -1:
-        line_end = len(text)
-    paragraph_start = text.rfind("\n\n", 0, line_start) + 2
-    paragraph_end = text.find("\n\n", line_end)
-    if paragraph_end == -1:
-        paragraph_end = len(text)
-    return text[paragraph_start:paragraph_end]
+def is_sentence_boundary(text, position):
+    character = text[position]
+    if character in "!?\n":
+        return True
+    if character != ".":
+        return False
+    if position + 1 < len(text) and not text[position + 1].isspace():
+        return False
+    prefix = text[max(0, position - 7) : position + 1].lower()
+    return not any(prefix.endswith(abbreviation) for abbreviation in ("e.g.", "i.e.", "etc."))
+
+
+def sentence_containing(text, position):
+    start = position - 1
+    while start >= 0 and not is_sentence_boundary(text, start):
+        start -= 1
+    end = position
+    while end < len(text) and not is_sentence_boundary(text, end):
+        end += 1
+    return text[start + 1 : min(end + 1, len(text))]
 
 
 def has_forbidden_maintenance_lock_token_syntax(text):
@@ -53,7 +63,7 @@ def has_forbidden_maintenance_lock_token_syntax(text):
 
     for match in maintenance_lock_token_syntax.finditer(text):
         if maintenance_lock_token_prohibition.search(
-            line_or_paragraph_containing(text, match.start())
+            sentence_containing(text, match.start())
         ) is None:
             return True
     return False
@@ -73,6 +83,10 @@ if has_forbidden_maintenance_lock_token_syntax(
     "The public command must not accept `--maintenance-lock-token` as a value."
 ):
     raise SystemExit("explicit maintenance token prohibition was incorrectly rejected")
+if has_forbidden_maintenance_lock_token_syntax(
+    "The public command must not accept, e.g., `--maintenance-lock-token` as a value."
+):
+    raise SystemExit("abbreviated maintenance token prohibition was incorrectly rejected")
 if not has_forbidden_maintenance_lock_token_syntax(
     "The option is forbidden. `--maintenance-lock-token`"
 ):
