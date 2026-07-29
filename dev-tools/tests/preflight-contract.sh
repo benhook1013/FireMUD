@@ -1134,6 +1134,7 @@ if baseline_status != "pass":
 wide_restore_high_water = {"stream": "erasures", "sequence": 40}
 wide_overlay = copy.deepcopy(valid_baseline["erasureOverlayReconciliation"])
 wide_overlay["restoreHighWater"] = wide_restore_high_water
+wide_display_limit = module.MISSING_SEQUENCE_DISPLAY_LIMIT
 wide_overlay_status, wide_overlay_message = module.validate_erasure_overlay_reconciliation(
     wide_overlay,
     valid_baseline["artifactErasureHighWater"],
@@ -1144,8 +1145,8 @@ wide_overlay_status, wide_overlay_message = module.validate_erasure_overlay_reco
 if (
     wide_overlay_status != "fail"
     or "missingCount=28" not in wide_overlay_message
-    or f"missing={list(range(13, 33))}" not in wide_overlay_message
-    or "omittedCount=8" not in wide_overlay_message
+    or f"missing={list(range(13, 13 + wide_display_limit))}" not in wide_overlay_message
+    or f"omittedCount={28 - wide_display_limit}" not in wide_overlay_message
 ):
     raise SystemExit(
         "wide missing sequence interval did not report the true count with a truncated display: "
@@ -1175,6 +1176,26 @@ if (
     )
 ):
     raise SystemExit(f"unordered canonical overlay boundaries did not fail at the ordering guard: {unordered_message}")
+
+for boundary_sequence in ("10", True):
+    direct_boundary_overlay = copy.deepcopy(valid_baseline["erasureOverlayReconciliation"])
+    direct_boundary = {"stream": "erasures", "sequence": boundary_sequence}
+    direct_boundary_overlay["artifactErasureHighWater"] = direct_boundary
+    direct_boundary_status, direct_boundary_message = module.validate_erasure_overlay_reconciliation(
+        direct_boundary_overlay,
+        direct_boundary,
+        valid_baseline["initialCatchupHighWater"],
+        valid_baseline["restoreHighWater"],
+        "erasures",
+    )
+    if (
+        direct_boundary_status != "fail"
+        or "canonical artifactErasureHighWater.sequence must be an integer" not in direct_boundary_message
+    ):
+        raise SystemExit(
+            "direct overlay canonical boundary type guard did not reject the invalid sequence: "
+            + direct_boundary_message
+        )
 
 pre_snapshot_after_artifact = copy.deepcopy(valid_baseline)
 pre_snapshot_after_artifact["backupArtifactLineage"]["preSnapshotJournalHighWater"] = {
@@ -1241,6 +1262,10 @@ invalid_baseline_cases = {
     },
     "canonical-high-water-non-int-sequence": {
         "artifactErasureHighWater": {"stream": "erasures", "sequence": "10"},
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "artifactErasureHighWater": {"stream": "erasures", "sequence": "10"},
+        },
     },
     "overlay-restore-boundary-equality-mismatch": {
         "erasureOverlayReconciliation": {

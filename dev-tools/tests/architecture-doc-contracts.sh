@@ -15,20 +15,23 @@ maintenance_lock_token_prohibition = re.compile(
     r"|\bnever\b"
     r"|\b(?:forbid|forbids|forbidden|prohibit|prohibits|prohibited|"
     r"disallow|disallows|disallowed)\b"
-    r")[^\r\n]*--maintenance-lock-token(?![A-Za-z0-9_-])"
-    r"|--maintenance-lock-token(?![A-Za-z0-9_-])[^\r\n]*"
+    r")(?:\b[eE]\.g\.|[^.!?\r\n])*--maintenance-lock-token(?![A-Za-z0-9_-])"
+    r"|--maintenance-lock-token(?![A-Za-z0-9_-])(?:\b[eE]\.g\.|[^.!?\r\n])*"
     r"\b(?:forbidden|prohibited|disallowed)\b"
 )
 fence_start = re.compile(r"^[ \t]*(`{3,}|~{3,})")
 
 
-def sentence_containing(text, position):
-    boundaries = ".!?\n"
-    start = max((text.rfind(boundary, 0, position) for boundary in boundaries), default=-1)
-    ends = [text.find(boundary, position) for boundary in boundaries]
-    ends = [end for end in ends if end != -1]
-    end = min(ends, default=len(text))
-    return text[start + 1 : end + 1]
+def line_or_paragraph_containing(text, position):
+    line_start = text.rfind("\n", 0, position) + 1
+    line_end = text.find("\n", position)
+    if line_end == -1:
+        line_end = len(text)
+    paragraph_start = text.rfind("\n\n", 0, line_start) + 2
+    paragraph_end = text.find("\n\n", line_end)
+    if paragraph_end == -1:
+        paragraph_end = len(text)
+    return text[paragraph_start:paragraph_end]
 
 
 def has_forbidden_maintenance_lock_token_syntax(text):
@@ -41,7 +44,7 @@ def has_forbidden_maintenance_lock_token_syntax(text):
             if not in_fenced_example:
                 in_fenced_example = True
                 fence_marker = marker
-            elif marker[0] == fence_marker[0] and len(marker) >= len(fence_marker):
+            elif marker == fence_marker:
                 in_fenced_example = False
                 fence_marker = None
         if in_fenced_example:
@@ -50,7 +53,7 @@ def has_forbidden_maintenance_lock_token_syntax(text):
 
     for match in maintenance_lock_token_syntax.finditer(text):
         if maintenance_lock_token_prohibition.search(
-            sentence_containing(text, match.start())
+            line_or_paragraph_containing(text, match.start())
         ) is None:
             return True
     return False
@@ -200,7 +203,7 @@ if len(canonical_reset_matches) != 1:
 canonical_reset_text = canonical_reset_matches[0].group("section")
 required_reset_contract = [
     "Canonical public operation:",
-    "`coordination-maintenance recover --mode reset --scope ... (--preserve-sessions|--invalidate-sessions)`",
+    "`coordination-maintenance recover --mode reset --scope ... <session-policy-option>`",
     "1. internal pause-and-lock phase",
     "2. internal epoch-bump and scope-safe coordination-reset phase",
     "3. internal ledger-reconciliation phase",
@@ -219,28 +222,32 @@ cursor = 0
 previous = "<start of canonical reset contract>"
 
 
-def find_clause(text, clause, start=0):
+def find_clause_matches(text, clause):
     pattern = re.compile(
         rf"(?m)^[ \t]*{re.escape(clause)}(?=[ \t,.;:)]|$).*$"
     )
-    match = pattern.search(text, start)
-    return -1 if match is None else match.start()
+    return list(pattern.finditer(text))
 
 
 for clause in required_reset_contract:
-    first_position = find_clause(canonical_reset_text, clause)
-    position = find_clause(canonical_reset_text, clause, cursor)
-    if position == -1:
-        if first_position == -1:
-            raise SystemExit(
-                "design/architecture/system-architecture-redis-operations.md: canonical reset contract missing: "
-                f"[{clause!r}] after {previous!r}"
-            )
+    matches = find_clause_matches(canonical_reset_text, clause)
+    if not matches:
+        raise SystemExit(
+            "design/architecture/system-architecture-redis-operations.md: canonical reset contract missing: "
+            f"[{clause!r}] after {previous!r}"
+        )
+    if len(matches) != 1:
+        raise SystemExit(
+            "design/architecture/system-architecture-redis-operations.md: canonical reset contract clause must match exactly once: "
+            f"[{clause!r}], found {len(matches)}"
+        )
+    match = matches[0]
+    if match.start() < cursor:
         raise SystemExit(
             "design/architecture/system-architecture-redis-operations.md: canonical reset contract out of order: "
             f"expected {clause!r} after {previous!r}"
         )
-    cursor = position + len(clause)
+    cursor = match.end()
     previous = clause
 
 for clause in [

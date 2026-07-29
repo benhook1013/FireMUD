@@ -476,9 +476,11 @@ def validate_erasure_overlay_reconciliation(
         restore_high_water,
         stream,
     )
-    if boundary_status != "pass":
-        return ("fail", boundary_message)
-    assert boundary_sequences is not None
+    if boundary_status != "pass" or boundary_sequences is None:
+        return (
+            "fail",
+            boundary_message or f"{label} canonical boundaries could not be resolved",
+        )
     artifact_sequence, initial_catchup_sequence, restore_sequence = boundary_sequences
 
     verification_status, verification_message = validate_erasure_overlay_verification(

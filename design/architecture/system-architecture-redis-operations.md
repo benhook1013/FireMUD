@@ -28,7 +28,9 @@ This section is the normative source for the multi-step Coordination Redis reset
 
 Canonical public operation:
 
-`coordination-maintenance recover --mode reset --scope ... (--preserve-sessions|--invalidate-sessions)`
+`coordination-maintenance recover --mode reset --scope ... <session-policy-option>`
+
+Choose exactly one session-policy option for each reset: `--preserve-sessions` or `--invalidate-sessions`. These are separate valid command forms, not a shell alternation expression.
 
 This one public operation acquires the maintenance lock, fences the scope, and runs these ordered phases. The public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` safety gate is required between pre-release continuation and the internal success release:
 
@@ -192,7 +194,7 @@ Runbook:
    - red: `redis_replication_lag_ms >= tail_loss_budget_ms`
 3. If lag is in the acceptable band, promotion is acceptable from a replay perspective.
 4. If lag is in the warning band, investigate immediately and delay promotion unless the failover risk of waiting is worse than accepting a wider tail-loss window.
-5. If lag crosses the red line, either wait for recovery or treat promotion as a deliberate drop-recent-coordination-state event handled by one bounded `coordination-maintenance recover --mode reset --scope <scope> (--preserve-sessions|--invalidate-sessions)` operation under the normal maintenance-lock and epoch-fencing workflow.
+5. If lag crosses the red line, either wait for recovery or treat promotion as a deliberate drop-recent-coordination-state event handled by one bounded `coordination-maintenance recover --mode reset --scope <scope> <session-policy-option>` operation under the normal maintenance-lock and epoch-fencing workflow, with exactly one of `--preserve-sessions` or `--invalidate-sessions` selected.
 
 ## Key Shape Mistakes and Coordination Resets
 
@@ -324,7 +326,7 @@ Goal: change how `tenantId` / `gameInstanceId` / `regionId` normalization and ha
 1. define an immutable migration contract containing the old and new normalization/hash-tag versions, affected scope, maintenance CLI and control-plane build digests, every participating service image digest, and the Lua Script Registry version/digest
 2. explicitly upgrade the maintenance CLI, control plane, services, and Lua registry as one coordinated version set; mixed-version migration is unsupported
 3. schedule a maintenance window and persist the migration contract in the durable recovery operation before mutating Coordination Redis
-4. invoke one bounded `coordination-maintenance recover --mode reset --operation migration --scope ... (--preserve-sessions|--invalidate-sessions)` operation and require the controller to validate that every participant reports the persisted version set and migration contract before reset begins
+4. invoke one bounded `coordination-maintenance recover --mode reset --operation migration --scope ... <session-policy-option>` operation, selecting exactly one of `--preserve-sessions` or `--invalidate-sessions`, and require the controller to validate that every participant reports the persisted version set and migration contract before reset begins
 5. complete the protected Account authority/token cutover and establish replay-domain quarantine/fencing for that same durable recovery operation; persist immutable evidence binding both protections and the pre-wipe authorization/fencing evidence to its operation identity, migration contract, exact scope, and server-issued maintenance lock, and keep admission closed while any result is missing or ambiguous
 6. only after validating that bound pre-wipe evidence, start a fresh Coordination Redis deployment or logical database with an empty keyspace as the operation's recorded external-infrastructure step
 7. after the replacement starts, record and validate separate immutable `post_reset_replacement_verification` for endpoint identity, ACL/configuration, empty-keyspace state, and health after startup. Rebuild coordination state from PostgreSQL plus fresh activity, then validate normalization, shard locality, Lua registry compatibility, and migration evidence before calling `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` with canonical `expectedPhase=ready_to_reopen`; the controller must validate both external evidence groups before continuation and public `resume(... expectedPhase=awaiting_resume ...)`, after which the internal release phase is required
