@@ -891,6 +891,7 @@ def validate_pending_deletion_generation(
     account_generation: Any,
     errors: list[str],
     checks: set[str] | None = None,
+    live_checks_cache: LiveChecksCache | None = None,
 ) -> None:
     if route.get("classification") != "pending_deletion_scoped":
         return
@@ -920,7 +921,7 @@ def validate_pending_deletion_generation(
             "membership_authority_generation_applies=false"
         )
     if checks is None:
-        checks = route_live_checks(route, label, errors)
+        checks = route_live_checks(route, label, errors, live_checks_cache)
     missing = REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS["pending_deletion_scoped"][
         "required_live_checks"
     ] - checks
@@ -1659,7 +1660,9 @@ def validate_generation_applicability(
             or route_key_value in ACCOUNT_SUBJECT_BOUND_ROUTES
         ):
             checks = route_live_checks(route, label, errors, live_checks_cache)
-        validate_pending_deletion_generation(route, label, account_generation, errors, checks)
+        validate_pending_deletion_generation(
+            route, label, account_generation, errors, checks, live_checks_cache
+        )
         value = validate_membership_generation(route, label, errors)
         validate_conditional_operator_route(
             route, label, value, errors, checks, live_checks_cache
@@ -1788,6 +1791,86 @@ def validate_known_drift(value: Any, field: str, errors: list[str]) -> None:
     elif isinstance(value, list):
         for index, child in enumerate(value):
             validate_known_drift(child, f"{field}[{index}]", errors)
+
+
+def route_identity(value: Any, field: str, errors: list[str]) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        errors.append(f"{field} must be a non-empty service/route identity")
+        return None
+    service, separator, route = value.partition("/")
+    if not separator or not service.strip() or not route.strip():
+        errors.append(f"{field} must be a non-empty service/route identity")
+        return None
+    return f"{service}/{route}"
+
+
+def validate_operator_mutation_support_gate(
+    document: dict[str, Any], routes: list[Any], errors: list[str]
+) -> None:
+    gate = document.get("operator_mutation_support_gate")
+    if not isinstance(gate, dict):
+        errors.append("operator_mutation_support_gate must be a mapping")
+        return
+
+    route_identities = {
+        f"{route.get('service')}/{route.get('route')}"
+        for route in routes
+        if isinstance(route, dict)
+        and isinstance(route.get("service"), str)
+        and isinstance(route.get("route"), str)
+    }
+    gate_identities: list[str] = []
+    for field in ("applies_to", "live_exceptions"):
+        values = string_list(gate.get(field), f"operator_mutation_support_gate.{field}", errors)
+        for index, value in enumerate(values):
+            identity = route_identity(
+                value,
+                f"operator_mutation_support_gate.{field}[{index}]",
+                errors,
+            )
+            if identity is not None:
+                gate_identities.append(identity)
+
+    coverage_drift = gate.get("coverage_drift")
+    if not isinstance(coverage_drift, list) or not coverage_drift:
+        errors.append(
+            "operator_mutation_support_gate.coverage_drift must be a non-empty list"
+        )
+        coverage_drift = []
+
+    drift_identities: list[str] = []
+    for index, entry in enumerate(coverage_drift):
+        label = f"operator_mutation_support_gate.coverage_drift[{index}]"
+        if not isinstance(entry, dict):
+            errors.append(f"{label} must be a mapping")
+            continue
+        identity = route_identity(entry.get("identity"), f"{label}.identity", errors)
+        if identity is not None:
+            drift_identities.append(identity)
+        if entry.get("status") != "drift-found":
+            errors.append(f"{label}.status must be drift-found")
+        note = entry.get("note")
+        if not isinstance(note, str) or not note.strip():
+            errors.append(f"{label}.note must be a non-empty string")
+
+    if len(set(gate_identities)) != len(gate_identities):
+        errors.append(
+            "operator_mutation_support_gate applies_to/live_exceptions must not duplicate identities"
+        )
+    if len(set(drift_identities)) != len(drift_identities):
+        errors.append(
+            "operator_mutation_support_gate.coverage_drift must not duplicate identities"
+        )
+    for identity in sorted(set(gate_identities) - route_identities - set(drift_identities)):
+        errors.append(
+            "operator_mutation_support_gate identity is neither a route nor explicit "
+            f"coverage drift: {identity}"
+        )
+    for identity in sorted(set(drift_identities) - set(gate_identities)):
+        errors.append(
+            "operator_mutation_support_gate.coverage_drift identity is not listed in "
+            f"applies_to/live_exceptions: {identity}"
+        )
 
 
 def matching_routes(
@@ -2229,6 +2312,8 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     if not isinstance(routes, list):
         errors.append("routes must be a list")
         routes = []
+
+    validate_operator_mutation_support_gate(document, routes, errors)
 
     classifications = string_list(document.get("classifications"), "classifications", errors)
     validate_route_class_branch_table(document, errors)

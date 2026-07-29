@@ -36,6 +36,22 @@ operator_mutation_support_gate:
     - logging-admin-service/GET /admission-pointers/{tenantId}/{worldSlug}/{realmSlug}/audit
     - logging-admin-service/GET /admission-pointers/version-upgrades/{tenantId}/{preparationId}
     - logging-admin-service/EvaluateModerationPolicy
+  coverage_drift:
+    - identity: logging-admin-service/ApplyModerationAction
+      status: drift-found
+      note: The gRPC action is documented but unavailable/gated and has no current route entry until its mutation schema and Account authorization-reference flow converge.
+    - identity: logging-admin-service/GET /admission-pointers
+      status: drift-found
+      note: This live read is documented and implemented, but its source-stable route inventory is not yet represented in the matrix.
+    - identity: logging-admin-service/GET /admission-pointers/{tenantId}/{worldSlug}/{realmSlug}/audit
+      status: drift-found
+      note: This live audit read is documented and implemented, but its source-stable route inventory is not yet represented in the matrix.
+    - identity: logging-admin-service/GET /admission-pointers/version-upgrades/{tenantId}/{preparationId}
+      status: drift-found
+      note: This live prepared-upgrade proof read is documented and implemented, but its source-stable route inventory is not yet represented in the matrix.
+    - identity: logging-admin-service/EvaluateModerationPolicy
+      status: drift-found
+      note: This live internal policy-evaluation read is documented and consumed by enforcement owners, but its source-stable route inventory is not yet represented in the matrix.
 default_deny_generation:
   enabled: false
   blocked_until: source_stable_openapi_protobuf_coverage_complete_and_validated
@@ -170,6 +186,7 @@ required_live_check_vocabulary:
   - account_state_login_eligible
   - admission_pointer
   - browser_origin
+  - capacity_admission_fence
   - cancellation_window
   - conditional_realm_access_grant
   - connect_scope_match
@@ -1540,6 +1557,33 @@ routes:
         delegated_subject: instance_lifecycle_context
         required_live_checks: [runtime_entitlements]
     end_user_token_required: false
+  - service: account-service
+    route: CommitTenantCapacityAdmission
+    scope: tenant
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload
+    issued_token_state: none
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [game-session-service, world-management-service]
+    mtls_callers:
+      any_of:
+        - "spiffe://firemud/ns/{namespace}/sa/game-session-service"
+        - "spiffe://firemud/ns/{namespace}/sa/world-management-service"
+    caller_context: tenant_and_capacity_admission_bound_context
+    delegated_subject: instance_lifecycle_context
+    end_user_token_required: false
+    required_fields:
+      [tenant_id, request_id, mutation_digest, expected_tenant_authority_generation, expected_tenant_billing_sequence, expected_entitlement_version, capacity_delta]
+    required_live_checks: [tenant_generation, runtime_entitlements, capacity_admission_fence, idempotency]
+    mutation_contract: account_owned_fenced_capacity_reservation_create_or_replay
+    canonical_errors:
+      any_of: [CAPACITY_ADMISSION_STALE, CAPACITY_QUOTA_EXCEEDED, IDEMPOTENCY_CONFLICT, ENTITLEMENT_UNAVAILABLE]
   - service: account-service
     route: GetTenantEntitlementsTenant
     scope: tenant

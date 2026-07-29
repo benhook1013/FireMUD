@@ -276,6 +276,7 @@ jobs:
           bash ./dev-tools/tests/pr-retarget-workflow-contract.sh
           bash ./dev-tools/tests/static-analysis-summary-contract.sh
           bash ./dev-tools/tests/pr-required-gate-context-contract.sh
+          bash ./dev-tools/tests/smoke-transport-contract.sh
           bash ./dev-tools/tests/reset-service-db-contract.sh
           bash ./dev-tools/tests/preview-eligibility-contract.sh
           bash ./dev-tools/tests/worktree-topology-contract.sh
@@ -835,8 +836,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
-      checks: read
-      contents: read
+      checks: read # Preserve a prior successful required context on metadata-only edits.
+      contents: read # Check out the shared required-gate composite action.
     needs: [changes, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, docs-check, frontend-checks, build-and-test]
     if: ${{ always() }}
     steps:

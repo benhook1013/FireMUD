@@ -169,6 +169,31 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
         )
 
+    def test_operator_mutation_gate_identities_are_routes_or_explicit_drift(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        errors = []
+        self.validator.validate_operator_mutation_support_gate(
+            document, document["routes"], errors
+        )
+        self.assertEqual([], errors)
+
+    def test_operator_mutation_gate_rejects_unclassified_identity(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        document["operator_mutation_support_gate"]["coverage_drift"] = [
+            entry
+            for entry in document["operator_mutation_support_gate"]["coverage_drift"]
+            if entry["identity"] != "logging-admin-service/EvaluateModerationPolicy"
+        ]
+        errors = []
+        self.validator.validate_operator_mutation_support_gate(
+            document, document["routes"], errors
+        )
+        self.assertIn(
+            "operator_mutation_support_gate identity is neither a route nor explicit "
+            "coverage drift: logging-admin-service/EvaluateModerationPolicy",
+            errors,
+        )
+
     def test_operator_routes_declare_branch_qualified_live_checks(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         expected = {
@@ -758,10 +783,11 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         duplicate = copy.deepcopy(document["route_class_branch_table"][0])
         duplicate["privileged_control"] = "unsupported"
+        duplicate_index = len(document["route_class_branch_table"])
         document["route_class_branch_table"].append(duplicate)
         errors = validate_document(self.validator, document)
         self.assertIn(
-            "route_class_branch_table[9] duplicates route-class branch "
+            f"route_class_branch_table[{duplicate_index}] duplicates route-class branch "
             "('account_scoped', 'platformAdmin_global')",
             errors,
         )

@@ -223,8 +223,14 @@ jobs:
         with:
           gate-name: Smoke Gate
 
+      - name: Classify smoke gate execution
+        id: smoke_gate_context
+        run: |
+          echo "required=${{ github.event.action != 'edited' || github.event.changes.base.ref != null }}" >> "$GITHUB_OUTPUT"
+          echo "execute=${{ (github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.result == 'success' }}" >> "$GITHUB_OUTPUT"
+
       - name: Fail when smoke dependencies did not succeed
-        if: ${{ (github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.result != 'success' }}
+        if: ${{ steps.smoke_gate_context.outputs.required == 'true' && steps.smoke_gate_context.outputs.execute != 'true' }}
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
         run: |
@@ -232,17 +238,17 @@ jobs:
           exit 1
 
       - name: Harden runner
-        if: ${{ (github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.result == 'success' }}
+        if: ${{ steps.smoke_gate_context.outputs.execute == 'true' }}
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
         with:
           egress-policy: audit
 
       - name: Record skipped runtime smoke
-        if: ${{ (github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.result == 'success' && needs.changes.outputs.run_smoke_full != 'true' }}
+        if: ${{ steps.smoke_gate_context.outputs.execute == 'true' && needs.changes.outputs.run_smoke_full != 'true' }}
         run: echo "No runtime-stack smoke proof is required for this change."
 
       - name: Track full-stack smoke result from Build Runtime Images
-        if: ${{ (github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.result == 'success' && needs.changes.outputs.run_smoke_full == 'true' }}
+        if: ${{ steps.smoke_gate_context.outputs.execute == 'true' && needs.changes.outputs.run_smoke_full == 'true' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
@@ -287,8 +293,7 @@ jobs:
               return (
                 pullRequest.state !== "open" ||
                 pullRequest.head.sha !== headSha ||
-                pullRequest.base.ref !== baseRef ||
-                pullRequest.base.sha !== baseSha
+                pullRequest.base.ref !== baseRef
               );
             }
 

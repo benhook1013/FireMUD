@@ -46,6 +46,12 @@ OUTCOME_LINK_RE = re.compile(r"\[[^\]\r\n]+\]\([^)\r\n]+\)")
 ADR_LINK_RE = re.compile(
     r"\[ADR (?P<number>\d{4})\]\((?P<target>[^)\r\n]+)\)"
 )
+MARKDOWN_LINK_RE = re.compile(
+    r"\[(?P<label>[^\]\r\n]+)\]\((?P<target>[^)\r\n]+)\)"
+)
+ADR_LABEL_RE = re.compile(r"^ADR (?P<number>\d{4})$")
+REPLACEMENT_ADR_LABEL_RE = re.compile(r"^replacement ADR (?P<number>\d{4})$")
+DECISION_KEY_LABEL_RE = re.compile(r"^[A-Z0-9][A-Z0-9-]*$")
 REVIEW_FIELD_RE = re.compile(
     r"^- (?P<name>Human review status|Human review date|"
     r"Human review disposition|Review source): (?P<value>.+)$"
@@ -215,6 +221,90 @@ def provenance_adr_number(
     return displayed_number
 
 
+def validate_replacement_adr_target(
+    path: Path,
+    adr_dir: Path,
+    line_number: int,
+    displayed_number: int,
+    target: str,
+) -> None:
+    target_ref = re.split(r"[?#]", target, maxsplit=1)[0]
+    target_filename = target_ref.rsplit("/", 1)[-1]
+    target_match = ADR_PATH_RE.fullmatch(target_filename)
+    if target_match is None or int(target_match.group(1)) != displayed_number:
+        fail(
+            f"{path}: malformed superseded scan-alias replacement at line "
+            f"{line_number}; replacement ADR {displayed_number:04d} does not "
+            f"match target {target!r}"
+        )
+
+    target_path = Path(target_ref)
+    resolved_target = (path.parent / target_path).resolve()
+    if (
+        target_path.is_absolute()
+        or resolved_target.parent != adr_dir.resolve()
+        or not resolved_target.is_file()
+    ):
+        fail(
+            f"{path}: superseded scan-alias replacement at line {line_number} "
+            f"must target the canonical ADR directory: {target!r}"
+        )
+
+
+def validate_decision_key_target(path: Path, line_number: int, target: str) -> None:
+    target_ref = re.split(r"[?#]", target, maxsplit=1)[0]
+    target_path = Path(target_ref)
+    resolved_target = (path.parent / target_path).resolve()
+    if (
+        target_path.is_absolute()
+        or target_path.suffix.lower() != ".md"
+        or not resolved_target.is_file()
+    ):
+        fail(
+            f"{path}: superseded scan-alias replacement at line {line_number} "
+            f"must target an existing Markdown decision document: {target!r}"
+        )
+
+
+def validate_superseded_scan_alias_outcome(
+    path: Path,
+    adr_dir: Path,
+    line_number: int,
+    outcome: str,
+) -> None:
+    links = list(MARKDOWN_LINK_RE.finditer(outcome))
+    if not links:
+        fail(
+            f"{path}: superseded scan-alias row at line {line_number} must "
+            "contain replacement-decision Markdown links"
+        )
+
+    for link in links:
+        label = link.group("label")
+        target = link.group("target")
+        if ADR_LABEL_RE.fullmatch(label):
+            fail(
+                f"{path}: superseded scan-alias row at line {line_number} "
+                "must not use exact [ADR NNNN] provenance labels"
+            )
+        replacement_adr = REPLACEMENT_ADR_LABEL_RE.fullmatch(label)
+        if replacement_adr is not None:
+            validate_replacement_adr_target(
+                path,
+                adr_dir,
+                line_number,
+                int(replacement_adr.group("number")),
+                target,
+            )
+            continue
+        if DECISION_KEY_LABEL_RE.fullmatch(label) is None:
+            fail(
+                f"{path}: superseded scan-alias row at line {line_number} "
+                f"has non-replacement link label {label!r}"
+            )
+        validate_decision_key_target(path, line_number, target)
+
+
 def is_superseded_scan_alias(key: str, outcome: str, disposition: str) -> bool:
     return (
         disposition == "Superseded"
@@ -307,6 +397,13 @@ def checked_reviews(path: Path, adr_dir: Path) -> dict[int, list[Review]]:
             match.group("outcome"),
             review.disposition,
         )
+        if is_scan_alias:
+            validate_superseded_scan_alias_outcome(
+                path,
+                adr_dir,
+                line_number,
+                match.group("outcome"),
+            )
         outcome_adr_numbers: list[int] = []
         for adr_match in ADR_LINK_RE.finditer(match.group("outcome")):
             outcome_adr_numbers.append(

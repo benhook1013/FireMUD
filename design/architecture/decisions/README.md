@@ -35,7 +35,7 @@ The replacement link must use the exact `ADR NNNN` label and an `adr-NNNN-*.md` 
 
 ### Status-to-Review Mapping
 
-For an ADR linked by a checked queue row, the aggregate human-review disposition must be allowed by its status:
+Every formal ADR must obey the status-to-review mapping below. Terminal statuses require checked queue evidence and completed review metadata; `Proposed - Pending Human Review` is the sole no-queue exception and must retain the exact pending metadata shape. Pre-formal ADRs `0001` through `0011` remain the separate historical exception:
 
 | ADR Status | Human review status | Allowed human review disposition |
 | --- | --- | --- |
@@ -44,7 +44,7 @@ For an ADR linked by a checked queue row, the aggregate human-review disposition
 | `Superseded` | `Completed` | `Superseded` |
 | `Withdrawn` | `Completed` | `Withdrawn` |
 
-`Deferred` has no ADR status mapping. A checked `deferred` queue row may record a canonical-design outcome, but it must not use an exact `[ADR NNNN]` provenance link until a status and mapping are added deliberately. The pending row is the sole pre-review exception; it cannot carry completed queue evidence.
+`Deferred` has no ADR status mapping. A checked `deferred` queue row may record a canonical-design outcome, but it must not use an exact `[ADR NNNN]` provenance link until a status and mapping are added deliberately. A pending ADR cannot carry completed queue evidence.
 
 ## Review Metadata Contract
 
@@ -62,7 +62,7 @@ The authoritative provenance is the checked review queue in the [consequential d
 - [x] `DECISION-KEY` — `accepted` on YYYY-MM-DD by [ADR NNNN](./adr-NNNN-example.md)
 ```
 
-`OUTCOME` must be non-empty, use either the semicolon or `by` form shown in the queue, and contain one or more Markdown links. Provenance is label-based, not disposition-based: an ADR provenance reference is specifically a link labeled `[ADR NNNN]` whose target filename is `adr-NNNN-*.md`, and every such ADR link in any checked row receives that row's source key, date, and disposition. Every checked non-alias row with an `accepted`, `revised`, `superseded`, or `withdrawn` disposition must contain at least one exact `[ADR NNNN]` provenance link. A superseded scan alias is a historical replacement mapping, not a separate ADR decision: it is exempt from separate ADR provenance and may link only to replacement decisions using non-provenance labels such as `[replacement ADR NNNN]` or a decision-key label. Replacement links do not inherit provenance from that row, and a replacement ADR receives provenance only from its own checked row. Other outcome prose and canonical-design links may follow. Distinct coupled queue rows may reference the same ADR only when their date and disposition agree. Duplicate source keys, conflicting duplicate ADR provenance, duplicate ADR links in one row, malformed checked rows, and checked rows without an outcome link are invalid. Unchecked rows are not parsed as completed review evidence.
+`OUTCOME` must be non-empty, use either the semicolon or `by` form shown in the queue, and contain one or more Markdown links. Provenance is label-based, not disposition-based: an ADR provenance reference is specifically a link labeled `[ADR NNNN]` whose target filename is `adr-NNNN-*.md`, and every such ADR link in any checked row receives that row's source key, date, and disposition. Every checked non-alias row with an `accepted`, `revised`, `superseded`, or `withdrawn` disposition must contain at least one exact `[ADR NNNN]` provenance link. A superseded scan alias is a historical replacement mapping, not a separate ADR decision: every Markdown link in its outcome must be a replacement decision with either a non-provenance `[replacement ADR NNNN]` label targeting that exact canonical ADR, or a decision-key label such as `[JWT-01]` targeting an existing Markdown decision document. Exact `[ADR NNNN]` labels, arbitrary labels, external targets, and non-Markdown replacement references are invalid. Alias links do not contribute provenance to the historical row, and a replacement ADR receives provenance only from its own checked row. Other outcome prose may follow. Distinct coupled queue rows may reference the same ADR only when their date and disposition agree. Duplicate source keys, conflicting duplicate ADR provenance, duplicate ADR links in one row, malformed checked rows, and checked rows without an outcome link are invalid. Unchecked rows are not parsed as completed review evidence.
 
 For any ADR linked by an exact `[ADR NNNN]` provenance label in a checked queue row, all four completed review fields are mandatory and must match the aggregate queue evidence exactly:
 

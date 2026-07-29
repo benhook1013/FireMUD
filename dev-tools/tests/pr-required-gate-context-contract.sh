@@ -92,13 +92,13 @@ while IFS='|' read -r workflow gate; do
     echo "$workflow must pass its required gate name to the shared action" >&2
     exit 1
   }
-  # shellcheck disable=SC2016 # Assert literal polling syntax is absent from callers.
-  if grep -Fq 'gh api' "$path" || grep -Fq 'for attempt in $(seq 1 80)' "$path"; then
+  gate_block="$(awk '/^  [A-Za-z0-9_-]+:/{in_gate=0} /    name: '"$gate"'$/{in_gate=1} in_gate{print}' "$path")"
+  # shellcheck disable=SC2016 # Assert literal polling syntax is absent from gate callers.
+  if grep -Fq 'gh api' <<<"$gate_block" || grep -Fq 'for attempt in $(seq 1 80)' <<<"$gate_block"; then
     echo "$workflow must delegate required-gate polling to the shared action" >&2
     exit 1
   fi
 
-  gate_block="$(awk '/^  [A-Za-z0-9_-]+:/{in_gate=0} /    name: '"$gate"'$/{in_gate=1} in_gate{print}' "$path")"
   case "$workflow" in
     ci.yml|security.yml|license-scan.yml|codeql.yml)
       first_step="$(awk '/^    steps:$/ {in_steps=1; next} in_steps && /^      - name:/ {print; exit}' <<<"$gate_block")"

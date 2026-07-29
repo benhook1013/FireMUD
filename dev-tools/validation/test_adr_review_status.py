@@ -538,6 +538,41 @@ class AdrReviewStatusTests(unittest.TestCase):
             self.assertEqual({"TEST-01"}, {review.key for review in reviews[12]})
             self.assertNotIn(14, reviews)
 
+    def test_superseded_scan_alias_rejects_arbitrary_replacement_label(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27 by "
+                "[notes](https://example.com); retained as a historical "
+                "service-scan alias.",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "has non-replacement link label 'notes'",
+            )
+
+    def test_superseded_scan_alias_rejects_exact_adr_provenance_label(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(
+                root / "design/architecture/decisions/adr-0014-replacement.md",
+                "# ADR 0014\n",
+            )
+            append_queue_row(
+                root,
+                "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27 by "
+                "[ADR 0014](../../architecture/decisions/"
+                "adr-0014-replacement.md); retained as a historical "
+                "service-scan alias.",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "must not use exact [ADR NNNN] provenance labels",
+            )
+
     def test_superseded_alias_marker_does_not_exempt_non_scan_key(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)

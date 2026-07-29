@@ -30,11 +30,15 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Account-security ban policy (`account_security_ban`) and account authority-generation revocation | | | ✔ | | | | | | | | |
 | Gameplay-ban policy definition and audit (`gameplay_ban`) | | | | | | | | | ✔ | | |
 | Chat mute/chat-ban policy definition and audit (`chat_mute`, `chat_ban`) | | | | | | | | | ✔ | | |
+| Authoritative owner: moderation policy input persistence and audit (current internal/control-plane path) | | | | | | | | | ✔ | | |
+| External `POST /moderation/actions` enforcement ingress (target only; unavailable) | | | | | | | | | `target only` | | |
 | Account security policy (password rules, lockout, MFA requirements) | | | ✔ | | | | | | | | |
 | Gameplay login command handling and session binding (Redis) | | | | ✔ | | | | | | | |
 | Login throttling, lockout, password reset, and email verification | | | ✔ | | | | | | | | |
 | WebSocket transport connection lifecycle (upgrade, routing, DMZ edges) | | | | | | | | | | ✔ | ✔ |
 | Gameplay session lifecycle (login, resume, takeover) | | | | ✔ | | | | | | | |
+| Owner-local Game Session session-lifecycle routes (`/sessions*`, current internal surface) | | | | ✔ | | | | | | | |
+| External session-lifecycle operator forwarding through Logging & Admin (target; not current route) | | | | | | | | | `target only` | | |
 | Reconnection handling (resume gameplay) | | | | ✔ | | | | | | | |
 | Command queuing and dispatch | | | | ✔ | | | | | | | |
 | Session state storage (volatile, Redis gameplay bindings) | | | | ✔ | | | | | | | |
@@ -97,7 +101,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Authoritative owner: edge admin/creator API allowlist policy | | | | | | | | | | | ✔ |
 | Admin/creator API participation (edge-routable domain APIs) | ✔ | | ✔ | ✔ | | | | ✔ | ✔ | | ✔ |
 | External operator read/preparation ingress | | | | | | | | | ✔ | | ✔ |
-| External operator mutating ingress | | | | | | | | | ✔ | | ✔ |
+| External operator write ingress for moderation, quota overrides, runtime feature flags, tick remediation, and session lifecycle (target boundary; only selected families live) | | | | | | | | | ✔ | | ✔ |
 | API gateway rate limiting and abuse filters | | | | | | | | | | | ✔ |
 
 The `<tenantId, gameInstanceId, regionId>` tuple in the tick and coordination health metrics row is the diagnostic scope Game Session must support through control-plane status, structured logs, and audit records. It is not a Prometheus label tuple: metric series must use bounded `scope`, `scope_bucket`, `region_class`, or equivalent operational buckets under the cardinality policy, while exact identities remain in diagnostic records.
