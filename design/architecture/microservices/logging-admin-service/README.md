@@ -23,7 +23,7 @@ Logging & Admin owns moderation policy persistence, evaluation, and audit. `GAME
 - Tools for reviewing and recording account restrictions.
 - [Role-based admin UI](./admin-ui.md) for moderators.
 - [Moderation policies](./moderation-policies.md) including profanity filters.
-- UI for requesting runtime feature-flag overrides through owning domain control-plane APIs.
+- Target-only UI for requesting runtime feature-flag overrides through owning domain control-plane APIs; no externally supported override action family is implemented.
 - Audit trail for account actions, world changes, and moderation actions.
 - Transaction logs for purchases and subscription events.
 - Operator review of failed login attempts and suspicious activity reported by Game Session.

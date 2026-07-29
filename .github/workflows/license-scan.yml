@@ -210,6 +210,7 @@ jobs:
     needs: [changes, ort-gradle, ort-npm]
     if: ${{ always() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     permissions:
       checks: read
       contents: read
@@ -221,16 +222,27 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REQUIRED_GATE_NAME: License Gate
         run: |
-          prior_conclusion=$(gh api --method GET \
-            "/repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs" \
-            -f check_name="${REQUIRED_GATE_NAME}" \
-            -f filter=all \
-            -f per_page=100 \
-            --jq '[.check_runs[] | select(.status == "completed" and .app.slug == "github-actions")] | sort_by(.completed_at) | last | .conclusion // ""')
-          if [ "${prior_conclusion}" != "success" ]; then
-            echo "Latest completed ${REQUIRED_GATE_NAME} for unchanged head ${HEAD_SHA} was not successful." >&2
-            exit 1
-          fi
+          for attempt in $(seq 1 80); do
+            prior_state=$(gh api --method GET \
+              "/repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs" \
+              -f check_name="${REQUIRED_GATE_NAME}" \
+              -f filter=all \
+              -f per_page=100 \
+              --jq "[.check_runs[] | select(.app.slug == \"github-actions\" and (.details_url | contains(\"/actions/runs/${GITHUB_RUN_ID}/\") | not))] | sort_by(.started_at // .created_at) | last | [(.status // \"\"), (.conclusion // \"\")] | @tsv")
+            IFS=$'\t' read -r prior_status prior_conclusion <<< "${prior_state}"
+            if [ "${prior_status}" = "completed" ]; then
+              if [ "${prior_conclusion}" = "success" ]; then
+                exit 0
+              fi
+              echo "Latest prior ${REQUIRED_GATE_NAME} for unchanged head ${HEAD_SHA} concluded ${prior_conclusion:-unknown}." >&2
+              exit 1
+            fi
+            if [ "${attempt}" -eq 80 ]; then
+              echo "Timed out waiting for the prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA}." >&2
+              exit 1
+            fi
+            sleep 15
+          done
 
       - name: Harden runner
         if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}

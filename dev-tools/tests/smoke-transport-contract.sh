@@ -55,11 +55,16 @@ bootstrap_step = next(
     if step.get("name") == "Create dev-demo smoke account"
 )
 bootstrap_manifest = bootstrap_step["run"]
-manifest_start = bootstrap_manifest.index(
-    "cat <<'EOF' | kubectl -n \"${PREVIEW_NAMESPACE}\" apply -f -\n"
-)
-manifest_start = bootstrap_manifest.index("\n", manifest_start) + 1
-manifest_end = bootstrap_manifest.index("\nEOF\n", manifest_start)
+try:
+    manifest_start = bootstrap_manifest.index(
+        "cat <<'EOF' | kubectl -n \"${PREVIEW_NAMESPACE}\" apply -f -\n"
+    )
+    manifest_start = bootstrap_manifest.index("\n", manifest_start) + 1
+    manifest_end = bootstrap_manifest.index("\nEOF\n", manifest_start)
+except ValueError as exc:
+    raise AssertionError(
+        "dev-demo bootstrap step must contain the expected pod manifest heredoc"
+    ) from exc
 bootstrap_pod = yaml.safe_load(bootstrap_manifest[manifest_start:manifest_end])
 env_from = bootstrap_pod["spec"]["containers"][0].get("envFrom", [])
 if env_from != [{"secretRef": {"name": "dev-demo-bootstrap-env"}}]:

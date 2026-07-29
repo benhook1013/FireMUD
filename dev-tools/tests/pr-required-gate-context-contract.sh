@@ -22,9 +22,17 @@ while IFS='|' read -r workflow gate; do
     echo "$workflow metadata preservation must inspect exact-head check runs" >&2
     exit 1
   fi
-  if ! grep -Fq '.app.slug == "github-actions"' "$path" ||
-    ! grep -Fq 'sort_by(.completed_at) | last | .conclusion' "$path"; then
-    echo "$workflow metadata preservation must require the latest completed GitHub Actions gate result" >&2
+  if ! grep -Fq '.app.slug == \"github-actions\"' "$path" ||
+    ! grep -Fq 'contains(\"/actions/runs/${GITHUB_RUN_ID}/\") | not' "$path" ||
+    ! grep -Fq 'sort_by(.started_at // .created_at) | last' "$path" ||
+    ! grep -Fq 'prior_status' "$path"; then
+    echo "$workflow metadata preservation must follow the latest prior GitHub Actions gate result" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'for attempt in $(seq 1 80)' "$path" ||
+    ! grep -Fq 'sleep 15' "$path" ||
+    ! grep -Fq 'Timed out waiting for the prior' "$path"; then
+    echo "$workflow metadata preservation must wait boundedly for a running prior gate" >&2
     exit 1
   fi
 
