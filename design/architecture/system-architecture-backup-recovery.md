@@ -186,7 +186,9 @@ Ambiguous or mixed-timeline restore behavior is not allowed:
 - Manual restore guidance still includes the concrete bootstrap sequence, but application workloads must remain stopped or restore-safe-fenced until recovery-mode gating completes. Restoring manifests is allowed; starting normal Game Session, Gateway, TCP Proxy, automation, and outbound processors before the chosen recovery mode is proven is not allowed.
 - If dumps live in `PG_DUMP_BUCKET`, download them first with `aws s3 cp ...`, adding `--endpoint-url` for MinIO-backed buckets as needed.
 
-Manual bootstrap example sequence:
+The following controller-backed sequence is target state and is unavailable until the durable recovery controller and its end-to-end proof path are implemented. Current operators must keep normal workloads stopped or restore-safe-fenced and use the fail-closed [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback); they must not invoke the unavailable `continueRecovery` or `resume` controls.
+
+Manual bootstrap example sequence (target state only):
 
 1. Enter restore-safe quarantine as described in `system-architecture-post-restore-hardening.md` so player ingress, background processors, and outbound integrations cannot run with snapshot-era state.
 2. Copy or download the desired dump.
@@ -206,7 +208,7 @@ Manual bootstrap example sequence:
 - The compose stack includes `pg-dump-cron` running every 15 minutes to mirror the production schedule.
 - For local clusters without cloud storage, operators may deploy `k8s/velero/minio.yaml` and run `dev-tools/backups/setup-local-backup.sh` to bootstrap MinIO plus Velero. `defaultVolumesToFsBackup` must remain `false`.
 
-Docker Compose restore is not a reduced recovery mode. It must enter restore-safe quarantine, restore the environment-wide PostgreSQL artifact, clear Coordination Redis, reconcile Account's durable Account-session and authority/delegation-lineage invalidation result plus the separate Game Session-owned gameplay-binding invalidation result, reset every gameplay-region epoch and fence, converge every declared and enabled durable participant and external-effect family, run equivalent post-restore hardening, external-credential validation, secret-compliance refresh, and smoke checks, then use `continueRecovery(... expectedPhase=ready_to_reopen ...)` to reach `AWAITING_RESUME`, public `resume(... expectedPhase=awaiting_resume ...)` to record `RESUME_AUTHORIZED`, and the internal release phase to reach `finalized`. When Kubernetes is unavailable, a Compose-native controller must provide those same durable semantics and remain fail-closed on an incomplete or ambiguous result; a one-shot command may only invoke or retry that controller and must not replace it.
+The target-state Docker Compose restore is not a reduced recovery mode. It must enter restore-safe quarantine, restore the environment-wide PostgreSQL artifact, clear Coordination Redis, reconcile Account's durable Account-session and authority/delegation-lineage invalidation result plus the separate Game Session-owned gameplay-binding invalidation result, reset every gameplay-region epoch and fence, converge every declared and enabled durable participant and external-effect family, run equivalent post-restore hardening, external-credential validation, secret-compliance refresh, and smoke checks, then use `continueRecovery(... expectedPhase=ready_to_reopen ...)` to reach `AWAITING_RESUME`, public `resume(... expectedPhase=awaiting_resume ...)` to record `RESUME_AUTHORIZED`, and the internal release phase to reach `finalized`. When Kubernetes is unavailable, a Compose-native controller must provide those same durable semantics and remain fail-closed on an incomplete or ambiguous result; a one-shot command may only invoke or retry that controller and must not replace it. Until that controller is implemented and proved, local restore remains fenced under the same [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback).
 
 ## Backup Verification & Restoration Testing
 
@@ -226,6 +228,8 @@ Run a full production-equivalent drill at least every 30 days. Ordinary rollback
 Backup observability, restore-proof artifacts, and traffic-open evidence are defined in [`system-architecture-backup-recovery-evidence-and-compliance.md`](./system-architecture-backup-recovery-evidence-and-compliance.md).
 
 ## Restore Workflow Summary
+
+This table summarizes the target controller-backed workflow, not currently executable operator commands. The fail-closed current path is the [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback).
 
 | Environment | Steps |
 | --- | --- |

@@ -461,7 +461,7 @@ spec:
             runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
           annotations:
             summary: Recovery participant convergence source metrics are absent
-            description: An entire required recovery inventory source family is absent globally. This is a monitoring gap, not environment controller state; do not use the affected telemetry as readiness evidence until the source is restored.
+            description: An entire required recovery inventory or coverage source family is absent globally. This is a monitoring gap, not environment controller state; do not use the affected telemetry as readiness evidence until the source is restored.
         - alert: RecoveryReopenAttemptBlocked
           expr: increase(recovery_reopen_attempt_total{result="blocked",reason="incomplete_convergence"}[5m]) > 0
           for: 0m
