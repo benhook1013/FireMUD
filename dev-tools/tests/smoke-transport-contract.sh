@@ -71,19 +71,46 @@ if bootstrap_step is None:
         "'Create dev-demo smoke account'"
     )
 
+try:
+    bootstrap_manifest = bootstrap_step["run"]
+except KeyError as exc:
+    raise AssertionError(
+        "dev-demo bootstrap step must expose its shell script as run"
+    ) from exc
+if not isinstance(bootstrap_manifest, str):
+    raise AssertionError("dev-demo bootstrap step run must be a string")
+
 for expected in (
     'create secret generic dev-demo-bootstrap-env',
     '--from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email"',
     '--from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password"',
     '--from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username"',
+    'cleanup_bootstrap_temp_dir() {',
+    'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then',
+    'echo "::error::Failed to remove dev-demo bootstrap credential files"',
+    'if ! cleanup_bootstrap_temp_dir; then',
     'cleanup_bootstrap_secret',
 ):
-    if expected not in dev_demo_workflow:
+    if expected not in bootstrap_manifest:
         raise AssertionError(
-            f"dev-demo bootstrap environment contract missing: {expected}"
+            f"dev-demo bootstrap step contract missing: {expected}"
         )
+if (
+    'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then\n'
+    '    BOOTSTRAP_SECRET_DIR=\n'
+    '    return 0'
+) not in bootstrap_manifest:
+    raise AssertionError(
+        "dev-demo bootstrap temp directory must clear its variable only after rm succeeds"
+    )
+if (
+    'echo "::error::Failed to remove dev-demo bootstrap credential files" >&2\n'
+    '  return 1'
+) not in bootstrap_manifest:
+    raise AssertionError(
+        "dev-demo bootstrap temp directory removal failure must return failure"
+    )
 
-bootstrap_manifest = bootstrap_step["run"]
 try:
     manifest_start = bootstrap_manifest.index(
         "cat <<'EOF' | kubectl -n \"${PREVIEW_NAMESPACE}\" apply -f -\n"
@@ -100,8 +127,19 @@ if env_from != [{"secretRef": {"name": "dev-demo-bootstrap-env"}}]:
     raise AssertionError(
         "dev-demo bootstrap pod must import dev-demo-bootstrap-env"
     )
-if "Demo login password: ${DEMO_SMOKE_PASSWORD}" in dev_demo_workflow:
-    raise AssertionError("dev-demo summary must not print the smoke password")
+summary_runs = [
+    step["run"]
+    for step in deploy_job["steps"]
+    if isinstance(step, dict)
+    and isinstance(step.get("run"), str)
+    and "GITHUB_STEP_SUMMARY" in step["run"]
+]
+if not summary_runs:
+    raise AssertionError("dev-demo workflow must define summary-writing steps")
+if any("DEMO_SMOKE_PASSWORD" in run for run in summary_runs):
+    raise AssertionError(
+        "dev-demo summaries must not reference DEMO_SMOKE_PASSWORD"
+    )
 
 
 class FakeHttpResponse:

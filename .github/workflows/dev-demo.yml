@@ -476,6 +476,17 @@ jobs:
           PY
           BOOTSTRAP_POD_LOG=/tmp/dev-demo-bootstrap-pod.log
           BOOTSTRAP_SECRET_DIR=
+          cleanup_bootstrap_temp_dir() {
+            if [[ -z "${BOOTSTRAP_SECRET_DIR}" ]]; then
+              return 0
+            fi
+            if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then
+              BOOTSTRAP_SECRET_DIR=
+              return 0
+            fi
+            echo "::error::Failed to remove dev-demo bootstrap credential files" >&2
+            return 1
+          }
           cleanup_bootstrap_secret() {
             local attempt
             for attempt in 1 2 3; do
@@ -493,9 +504,8 @@ jobs:
             set +e
             kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1
             kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1
-            if [[ -n "${BOOTSTRAP_SECRET_DIR}" ]]; then
-              rm -rf "${BOOTSTRAP_SECRET_DIR}"
-              BOOTSTRAP_SECRET_DIR=
+            if ! cleanup_bootstrap_temp_dir; then
+              status=1
             fi
             if ! cleanup_bootstrap_secret; then
               status=1
@@ -520,8 +530,9 @@ jobs:
             --from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password" \
             --from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username" \
             --dry-run=client -o yaml | kubectl apply -f -
-          rm -rf "${BOOTSTRAP_SECRET_DIR}"
-          BOOTSTRAP_SECRET_DIR=
+          if ! cleanup_bootstrap_temp_dir; then
+            exit 1
+          fi
           kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true
           cat <<'EOF' | kubectl -n "${PREVIEW_NAMESPACE}" apply -f -
           apiVersion: v1

@@ -2,11 +2,11 @@
 
 ## Overview
 
-Centralized logging and administration tools for the platform. The service collects log data from all services, provides moderation capabilities for game operators, embeds shared observability tools, and acts as the operator-facing coordinator for coordination-health monitoring. Per-instance tick pause/resume forwarding is implemented but externally disabled pending action-schema and `mutationDigest/v1` conformance.
+Centralized logging and administration tools for the platform. The service collects log data from all services, provides moderation capabilities for game operators, embeds shared observability tools, and acts as the operator-facing coordinator for coordination-health monitoring. Per-instance tick pause/resume forwarding is implemented but unavailable as supported operator mutation until the action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account authorization-reference issuance/redemption flow all exist.
 
 ## Implementation Status
 
-Logging & Admin owns moderation policy persistence, evaluation, and audit. `GAMEPLAY_ADMISSION` is the gameplay enforcement decision boundary consumed by Game Session, and `CHAT_SEND` is the chat enforcement decision boundary consumed by Social & Groups; applicable high-risk decisions fail closed when a fresh policy result is unavailable. Versioned snapshot/event propagation and broader owner-side enforcement remain missing, so the current operator action route persists policy input and audit but is not itself an enforcement mutation. Per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` forwarding is implemented, but it is not a canonically supported or externally enableable operator mutation until its action schema and shared `mutationDigest/v1` golden vectors exist. Regional reset and general remediation are not live capabilities.
+Logging & Admin owns moderation policy persistence, evaluation, and audit. `GAMEPLAY_ADMISSION` is the gameplay enforcement decision boundary consumed by Game Session, and `CHAT_SEND` is the chat enforcement decision boundary consumed by Social & Groups; applicable high-risk decisions fail closed when a fresh policy result is unavailable. Versioned snapshot/event propagation and broader owner-side enforcement remain missing. `/moderation/actions` and `ApplyModerationAction` are unavailable/gated implementation paths, not supported operator mutations, until their action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account authorization-reference issuance/redemption flow all exist. The separate `EvaluateModerationPolicy` read remains live for the two enforcement boundaries. Per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` forwarding is implemented, but it is unavailable under the same three-part gate. `ToggleFeatureFlag` is unavailable under that gate as well. Regional reset and general remediation are not live capabilities.
 
 ## Responsibilities
 
@@ -14,7 +14,7 @@ Logging & Admin owns moderation policy persistence, evaluation, and audit. `GAME
 - Offer dashboards and search for operators and moderators by embedding Kibana and Grafana views.
 - Define moderation policy, record moderation actions, and keep auditable moderation records.
 - Record audit trails for feature flag changes and account events.
-- Monitor coordination and tick health across tenant and region scopes. Automated per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` forwarding exists but remains externally disabled pending action-schema and digest-vector conformance; regional pause/resume, regional reset, and broader/general remediation remain target-only.
+- Monitor coordination and tick health across tenant and region scopes. Automated per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` forwarding exists but remains unavailable pending the action schema, shared digest vectors, and Account authorization-reference issuance/redemption; regional pause/resume, regional reset, and broader/general remediation remain target-only.
 
 ## Key Features
 
@@ -23,7 +23,7 @@ Logging & Admin owns moderation policy persistence, evaluation, and audit. `GAME
 - Tools for reviewing and recording account restrictions.
 - [Role-based admin UI](./admin-ui.md) for moderators.
 - [Moderation policies](./moderation-policies.md) including profanity filters.
-- Target-only UI for requesting runtime feature-flag overrides through owning domain control-plane APIs; no externally supported override action family is implemented.
+- Target-only UI for requesting runtime feature-flag overrides through owning domain control-plane APIs; `ToggleFeatureFlag` is not externally supported until the three-part mutation gate is complete.
 - Audit trail for account actions, world changes, and moderation actions.
 - Transaction logs for purchases and subscription events.
 - Operator review of failed login attempts and suspicious activity reported by Game Session.

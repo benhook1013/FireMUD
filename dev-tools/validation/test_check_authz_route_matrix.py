@@ -536,6 +536,21 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
         )
 
+    def test_route_class_branch_table_reports_non_string_keys_without_raising(self):
+        for field, value in (
+            ("classification", ["tenant_regular"]),
+            ("branch", {"name": "tenant_role"}),
+        ):
+            with self.subTest(field=field):
+                document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+                entry = document["route_class_branch_table"][0]
+                entry[field] = value
+                errors = validate_document(self.validator, document)
+                self.assertIn(
+                    f"route_class_branch_table[0].{field} must be a string",
+                    errors,
+                )
+
     def test_join_pre_membership_contract_is_explicit(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         expected = {

@@ -16,15 +16,63 @@ runs:
       run: |
         set -euo pipefail
 
+        if [[ "${GITHUB_EVENT_NAME:-}" != "pull_request" ]]; then
+          echo "Required-gate preservation requires pull_request context; refusing to poll." >&2
+          exit 1
+        fi
+        for required_variable in GH_TOKEN HEAD_SHA REQUIRED_GATE_NAME GITHUB_REPOSITORY GITHUB_RUN_ID; do
+          if [[ -z "${!required_variable:-}" ]]; then
+            echo "Required-gate preservation is missing ${required_variable}; refusing to poll." >&2
+            exit 1
+          fi
+        done
+        if [[ -z "${HEAD_SHA//[[:space:]]/}" ]]; then
+          echo "Required-gate preservation requires a nonempty pull request head SHA; refusing to poll." >&2
+          exit 1
+        fi
+
+        is_retryable_gh_failure() {
+          local exit_status="$1"
+          local error_text="${2,,}"
+          if [[ "$error_text" =~ http[[:space:]]+5[0-9]{2} ]]; then
+            return 0
+          fi
+          if [[ "$error_text" =~ http[[:space:]]+(403|429) ]] &&
+            [[ "$error_text" =~ (rate[[:space:]-]*limit|abuse) ]]; then
+            return 0
+          fi
+          if [[ "$exit_status" -ne 0 ]] &&
+            [[ "$error_text" =~ (could[[:space:]]not[[:space:]]resolve|failed[[:space:]]to[[:space:]](connect|make[[:space:]]request)|error[[:space:]]connecting|unable[[:space:]]to[[:space:]]connect|connection[[:space:]](reset|refused|timed|closed)|network[[:space:]]is[[:space:]]unreachable|timed[[:space:]]out|timeout|temporary[[:space:]]failure|tls|eof) ]]; then
+            return 0
+          fi
+          return 1
+        }
+
+        api_error_file="$(mktemp)"
+        trap 'rm -f "$api_error_file"' EXIT
         for attempt in $(seq 1 80); do
           prior_state=""
-          if ! prior_state="$(gh api --method GET \
+          : >"${api_error_file}"
+          set +e
+          prior_state="$(gh api --method GET \
             "/repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs" \
             -f check_name="${REQUIRED_GATE_NAME}" \
             -f filter=all \
             -f per_page=100 \
-            --jq "[.check_runs[] | select(.app.slug == \"github-actions\" and (.details_url // \"\" | contains(\"/actions/runs/${GITHUB_RUN_ID}/\") | not))] | sort_by(.started_at // .created_at) | last | [(.status // \"\"), (.conclusion // \"\")] | @tsv")"; then
-            echo "Transient GitHub API failure while checking the prior ${REQUIRED_GATE_NAME}; retrying attempt ${attempt}/80." >&2
+            --paginate \
+            --slurp \
+            --jq "[.[].check_runs[]? | select(.app.slug == \"github-actions\" and (.details_url // \"\" | contains(\"/actions/runs/${GITHUB_RUN_ID}/\") | not))] | sort_by(.started_at // .created_at) | last | [(.status // \"\"), (.conclusion // \"\")] | @tsv" \
+            2>"${api_error_file}")"
+          api_status=$?
+          set -e
+          if [[ "${api_status}" -ne 0 ]]; then
+            api_error="$(<"${api_error_file}")"
+            if ! is_retryable_gh_failure "${api_status}" "${api_error}"; then
+              echo "Permanent GitHub API/configuration failure while checking the prior ${REQUIRED_GATE_NAME}; refusing to retry." >&2
+              [[ -z "${api_error}" ]] || printf '%s\n' "${api_error}" >&2
+              exit 1
+            fi
+            echo "Retryable GitHub API failure while checking the prior ${REQUIRED_GATE_NAME}; retrying attempt ${attempt}/80." >&2
             if [ "${attempt}" -eq 80 ]; then
               echo "Timed out waiting for the prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA}." >&2
               exit 1

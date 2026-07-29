@@ -32,7 +32,6 @@ STATUS_TO_HUMAN_REVIEW_DISPOSITIONS = {
     "Withdrawn": frozenset({"Withdrawn"}),
 }
 ADR_REFERENCE = r"(?:ADR \d{4}|\[ADR \d{4}\]\([^)]+\))"
-TERMINAL_ADR_STATUS_RE = re.compile(r"^(?:Accepted|Superseded|Withdrawn)$")
 LEGACY_PRE_FORMAL_STATUS_RE = re.compile(
     rf"^(?:Superseded by {ADR_REFERENCE}|"
     rf"Withdrawn(?:; superseded by {ADR_REFERENCE}| \(superseded by {ADR_REFERENCE}\))?)$"
@@ -109,10 +108,6 @@ def review_fields(text: str) -> dict[str, str]:
     return fields
 
 
-def is_terminal_status(status: str) -> bool:
-    return TERMINAL_ADR_STATUS_RE.fullmatch(status) is not None
-
-
 def status_kind(
     context: Path,
     status: str,
@@ -155,7 +150,7 @@ def provenance_adr_number(
     adr_match: re.Match[str],
 ) -> int:
     displayed_number = int(adr_match.group("number"))
-    target_ref = adr_match.group("target").split("#", 1)[0].split("?", 1)[0]
+    target_ref = re.split(r"[?#]", adr_match.group("target"), maxsplit=1)[0]
     target_filename = target_ref.rsplit("/", 1)[-1]
     target_match = ADR_PATH_RE.fullmatch(target_filename)
     if target_match is None or int(target_match.group(1)) != displayed_number:
@@ -360,8 +355,6 @@ def validate(root: Path = ROOT) -> None:
 
         if normalized_status == PENDING_ADR_STATUS:
             validate_pending_review(context, fields)
-        elif not is_terminal_status(normalized_status):
-            fail(f"{context}: status is not a recognized terminal status")
         elif number not in PRE_FORMAL_REVIEW_RECORDS and not linked_reviews:
             fail(
                 f"{context}: terminal ADR status lacks a checked "

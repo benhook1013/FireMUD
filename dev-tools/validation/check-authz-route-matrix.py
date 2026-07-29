@@ -525,7 +525,15 @@ def validate_route_class_branch_table(
         if not isinstance(entry, dict):
             errors.append(f"{label} must be a mapping")
             continue
-        key = (entry.get("classification"), entry.get("branch"))
+        classification = entry.get("classification")
+        branch = entry.get("branch")
+        if not isinstance(classification, str):
+            errors.append(f"{label}.classification must be a string")
+        if not isinstance(branch, str):
+            errors.append(f"{label}.branch must be a string")
+        if not isinstance(classification, str) or not isinstance(branch, str):
+            continue
+        key = (classification, branch)
         if key in actual:
             errors.append(f"{label} duplicates route-class branch {key!r}")
         actual[key] = entry

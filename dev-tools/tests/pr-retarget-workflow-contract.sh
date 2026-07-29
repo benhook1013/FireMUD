@@ -264,11 +264,13 @@ done
 
 require_contains "$ci_path" 'PR Metadata Edit (Validation Summary)'
 require_contains "$ci_path" '    name: Validation Gate'
-require_contains "$ci_path" 'REQUIRED_GATE_NAME: Validation Gate'
+require_contains "$ci_path" 'uses: ./.github/actions/preserve-required-gate'
+require_contains "$ci_path" 'gate-name: Validation Gate'
 require_contains "$ci_path" 'Preserve successful required gate on metadata-only edit'
 require_contains "$smoke_path" 'PR Metadata Edit (Smoke Summary)'
 require_contains "$smoke_path" '    name: Smoke Gate'
-require_contains "$smoke_path" 'REQUIRED_GATE_NAME: Smoke Gate'
+require_contains "$smoke_path" 'uses: ./.github/actions/preserve-required-gate'
+require_contains "$smoke_path" 'gate-name: Smoke Gate'
 require_contains "$smoke_path" 'Preserve successful required gate on metadata-only edit'
 if grep -Eq '^  smoke-lite:' "$smoke_path"; then
   echo "smoke.yml must not restore the redundant smoke-lite job" >&2

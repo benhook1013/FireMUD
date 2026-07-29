@@ -7,7 +7,7 @@ Architecture decision records explain why consequential FireMUD product and arch
 - `Accepted` records explain current consequential choices and must remain aligned with canonical design.
 - `Superseded` and `Withdrawn` records are historical context only. Both status values are valid on their own; replacement detail is never appended to the `Status` value. If replacement detail is recorded, it uses the separate strict `Supersession` section defined below. A withdrawn record may omit that section and must state its rationale for withdrawal.
 - `Proposed` records are not current target state until explicitly accepted and reflected in canonical design. An AI-authored ADR awaiting human review must use the exact pending metadata shape defined below: `Proposed - Pending Human Review`, `Human review status: Pending`, `Human review date: Not yet reviewed`, `Human review disposition: Pending`, and a `Review source` value of `AI-AUTHORED-PENDING`.
-- An agent may set an ADR to `Accepted`, `Superseded`, or `Withdrawn` only when the checked review queue in the [consequential decision inventory](../../project-management/design-alignment/consequential-decision-inventory.md) names that ADR as provenance, except for pre-formal ADRs `0001` through `0011`, which predate the checked queue. Every ADR linked as provenance by such a row must record all four matching fields: review status, date, disposition, and backtick-delimited decision key. An agent must never infer those values.
+- An agent may set an ADR to `Accepted`, `Superseded`, or `Withdrawn` only when the checked review queue in the [consequential decision inventory](../../project-management/design-alignment/consequential-decision-inventory.md) names that ADR as provenance, except for pre-formal ADRs `0001` through `0011`, which predate the checked queue. Every ADR linked as provenance by such a row must record all four matching fields: review status, date, disposition, and backtick-delimited decision keys. An agent must never infer those values.
 - Reversible work may continue while an AI-authored ADR awaits review only when existing canonical design already supports that work and the implementation does not depend on treating the proposal as accepted. Work that changes an accepted decision, selects between competing target states, or creates a consequential commitment waits for human review.
 - A new ADR is warranted for a cross-cutting, authority-setting, security-sensitive, expensive-to-reverse, or genuinely contested decision. Routine local implementation choices belong in code and the owning design document.
 - Changing an accepted decision requires explicit human design review, a new or superseding ADR, and updates to every affected canonical design source.
@@ -161,7 +161,7 @@ New ADRs should include:
 - status and decision dates;
 - primary and affected capabilities;
 - decision owner and consulted decision makers;
-- machine-readable human-review status, date, disposition, and review-source decision key;
+- machine-readable human-review status, date, disposition, and review-source decision keys;
 - context, constraints, assumptions, and decision drivers;
 - the accepted decision stated without historical alternatives mixed into it;
 - strongest credible alternatives, including doing nothing where meaningful;

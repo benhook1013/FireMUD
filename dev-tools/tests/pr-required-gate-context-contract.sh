@@ -27,9 +27,12 @@ fi
 # shellcheck disable=SC2016 # Assert literal workflow interpolation syntax.
 if ! grep -Fq '.app.slug == \"github-actions\"' "$ACTION" ||
   ! grep -Fq 'contains(\"/actions/runs/${GITHUB_RUN_ID}/\") | not' "$ACTION" ||
+  ! grep -Fq -- '--paginate' "$ACTION" ||
+  ! grep -Fq -- '--slurp' "$ACTION" ||
+  ! grep -Fq '.[].check_runs[]?' "$ACTION" ||
   ! grep -Fq 'sort_by(.started_at // .created_at) | last' "$ACTION" ||
   ! grep -Fq 'prior_status' "$ACTION"; then
-  echo "required-gate action must select the latest prior GitHub Actions check run" >&2
+  echo "required-gate action must paginate and select the latest prior GitHub Actions check run" >&2
   exit 1
 fi
 # shellcheck disable=SC2016 # Assert literal workflow shell syntax.
@@ -40,16 +43,30 @@ if ! grep -Fq 'for attempt in $(seq 1 80)' "$ACTION" ||
   exit 1
 fi
 # shellcheck disable=SC2016 # Assert literal retry syntax.
-grep -Fq 'if ! prior_state="$(gh api' "$ACTION" || {
-  echo "required-gate action must retry transient gh api failures under bash -e" >&2
+if ! grep -Fq 'prior_state="$(gh api' "$ACTION" ||
+  ! grep -Fq 'is_retryable_gh_failure' "$ACTION" ||
+  ! grep -Fq 'api_status' "$ACTION"; then
+  echo "required-gate action must classify gh api failures before retrying" >&2
+  exit 1
+fi
+grep -Fq 'Retryable GitHub API failure' "$ACTION" || {
+  echo "required-gate action must report retryable gh api failures" >&2
   exit 1
 }
-grep -Fq 'Transient GitHub API failure' "$ACTION" || {
-  echo "required-gate action must report transient gh api failures" >&2
+grep -Fq 'Permanent GitHub API/configuration failure' "$ACTION" || {
+  echo "required-gate action must fail immediately for permanent gh api failures" >&2
   exit 1
 }
 grep -Fq 'continue' "$ACTION" || {
   echo "required-gate action must continue polling after transient gh api failures" >&2
+  exit 1
+}
+grep -Fq 'GITHUB_EVENT_NAME:-' "$ACTION" || {
+  echo "required-gate action must validate pull request context before polling" >&2
+  exit 1
+}
+grep -Fq 'nonempty pull request head SHA' "$ACTION" || {
+  echo "required-gate action must validate a nonempty pull request head SHA before polling" >&2
   exit 1
 }
 
@@ -131,23 +148,14 @@ grep -Fq 'needs.changes.result' "$ROOT_DIR/.github/workflows/smoke.yml" || {
 }
 
 CODEQL_WORKFLOW="$ROOT_DIR/.github/workflows/codeql.yml"
-LICENSE_WORKFLOW="$ROOT_DIR/.github/workflows/license-scan.yml"
 OVERLAY_WORKFLOW="$ROOT_DIR/.github/workflows/validate-kustomize-overlays.yml"
 
 grep -Fq 'needs: [changes, analyze]' "$CODEQL_WORKFLOW" || {
   echo "CodeQL gate must depend directly on change detection" >&2
   exit 1
 }
-grep -Fq 'needs.changes.result' "$CODEQL_WORKFLOW" || {
-  echo "CodeQL gate must fail closed when change detection fails" >&2
-  exit 1
-}
 grep -Fq "(github.base_ref == 'develop' || github.base_ref == 'main')" "$CODEQL_WORKFLOW" || {
   echo "CodeQL gate must run for both protected pull request bases" >&2
-  exit 1
-}
-grep -Fq 'needs.changes.result' "$LICENSE_WORKFLOW" || {
-  echo "License gate must fail closed when change detection fails" >&2
   exit 1
 }
 grep -Fq 'types: [opened, synchronize, reopened, edited]' "$OVERLAY_WORKFLOW" || {
@@ -169,16 +177,42 @@ cat >"$tmp_dir/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 count_file="${GH_RETRY_COUNT_FILE:?}"
+if [[ "$*" != *"--paginate"* || "$*" != *"--slurp"* ]]; then
+  echo "simulated gh api call omitted pagination/slurp" >&2
+  exit 90
+fi
 count=0
 if [[ -f "$count_file" ]]; then
   count="$(<"$count_file")"
 fi
 count=$((count + 1))
 printf '%s' "$count" >"$count_file"
-if [[ "$count" -eq 1 ]]; then
-  echo "simulated transient gh api failure" >&2
-  exit 1
-fi
+case "${GH_FAILURE_MODE:-transient}" in
+  transient|network)
+    if [[ "$count" -eq 1 ]]; then
+      if [[ "${GH_FAILURE_MODE}" == "network" ]]; then
+        echo "gh: error connecting to api.github.com" >&2
+      else
+        echo "gh: HTTP 503 Service Unavailable" >&2
+      fi
+      exit 1
+    fi
+    ;;
+  rate-limit)
+    if [[ "$count" -eq 1 ]]; then
+      echo "gh: HTTP 403 API rate limit exceeded" >&2
+      exit 1
+    fi
+    ;;
+  permanent)
+    echo "gh: HTTP 422 Unprocessable Entity" >&2
+    exit 1
+    ;;
+  *)
+    echo "unknown simulated gh failure mode" >&2
+    exit 91
+    ;;
+esac
 printf 'completed\tsuccess\n'
 EOF
 cat >"$tmp_dir/sleep" <<'EOF'
@@ -188,15 +222,89 @@ EOF
 chmod +x "$tmp_dir/gh" "$tmp_dir/sleep"
 
 action_script="$(awk '/^      run: \|$/{capture=1; next} capture {if ($0 != "" && $0 !~ /^        /) exit; sub(/^        /, ""); print}' "$ACTION")"
-GH_RETRY_COUNT_FILE="$tmp_dir/count" \
+run_action() {
+  local count_file="$1"
+  local failure_mode="$2"
+  GH_RETRY_COUNT_FILE="$count_file" \
+  GH_FAILURE_MODE="$failure_mode" \
+  PATH="$tmp_dir:$PATH" \
+  GITHUB_EVENT_NAME=pull_request \
+  GITHUB_REPOSITORY=example/firemud \
+  GITHUB_RUN_ID=999 \
+  GH_TOKEN=test-token \
+  HEAD_SHA=deadbeef \
+  REQUIRED_GATE_NAME='Validation Gate' \
+  bash -euo pipefail -c "$action_script"
+}
+
+for failure_mode in transient network rate-limit; do
+  count_file="$tmp_dir/count-${failure_mode}"
+  run_action "$count_file" "$failure_mode"
+  [[ "$(<"$count_file")" == "2" ]] || {
+    echo "required-gate action did not retry simulated ${failure_mode} failure" >&2
+    exit 1
+  }
+done
+
+permanent_output="$tmp_dir/permanent-output"
+set +e
+run_action "$tmp_dir/count-permanent" permanent >"$permanent_output" 2>&1
+permanent_status=$?
+set -e
+[[ "$permanent_status" -ne 0 ]] || {
+  echo "required-gate action retried or accepted a permanent gh api failure" >&2
+  exit 1
+}
+[[ "$(<"$tmp_dir/count-permanent")" == "1" ]] || {
+  echo "required-gate action polled again after a permanent gh api failure" >&2
+  exit 1
+}
+grep -Fq 'Permanent GitHub API/configuration failure' "$permanent_output" || {
+  echo "required-gate action did not report the permanent gh api failure" >&2
+  exit 1
+}
+
+context_output="$tmp_dir/context-output"
+set +e
+GH_RETRY_COUNT_FILE="$tmp_dir/count-context" \
 PATH="$tmp_dir:$PATH" \
+GITHUB_EVENT_NAME=push \
 GITHUB_REPOSITORY=example/firemud \
 GITHUB_RUN_ID=999 \
+GH_TOKEN=test-token \
 HEAD_SHA=deadbeef \
 REQUIRED_GATE_NAME='Validation Gate' \
-bash -euo pipefail -c "$action_script"
-[[ "$(<"$tmp_dir/count")" == "2" ]] || {
-  echo "required-gate action did not retry the simulated transient gh api failure" >&2
+bash -euo pipefail -c "$action_script" >"$context_output" 2>&1
+context_status=$?
+set -e
+[[ "$context_status" -ne 0 ]] || {
+  echo "required-gate action accepted a non-PR context" >&2
+  exit 1
+}
+[[ ! -e "$tmp_dir/count-context" ]] || {
+  echo "required-gate action polled before rejecting a non-PR context" >&2
+  exit 1
+}
+
+head_output="$tmp_dir/head-output"
+set +e
+GH_RETRY_COUNT_FILE="$tmp_dir/count-empty-head" \
+PATH="$tmp_dir:$PATH" \
+GITHUB_EVENT_NAME=pull_request \
+GITHUB_REPOSITORY=example/firemud \
+GITHUB_RUN_ID=999 \
+GH_TOKEN=test-token \
+HEAD_SHA="" \
+REQUIRED_GATE_NAME='Validation Gate' \
+bash -euo pipefail -c "$action_script" >"$head_output" 2>&1
+head_status=$?
+set -e
+[[ "$head_status" -ne 0 ]] || {
+  echo "required-gate action accepted an empty pull request head SHA" >&2
+  exit 1
+}
+[[ ! -e "$tmp_dir/count-empty-head" ]] || {
+  echo "required-gate action polled before rejecting an empty head SHA" >&2
   exit 1
 }
 

@@ -6,6 +6,32 @@ unlisted_route_status: drift
 route_status_vocabulary:
   - current_openapi_operator_surface
   - target_not_currently_routable
+operator_mutation_support_gate:
+  status: target_not_currently_routable
+  required_before_enablement:
+    - published_action_family_schema
+    - shared_cross_language_mutationDigest_v1_golden_vectors
+    - account_issued_authorization_reference_issuance_and_owner_redemption
+  applies_to:
+    - logging-admin-service/POST /feature-flags/toggle
+    - logging-admin-service/POST /moderation/actions
+    - logging-admin-service/ApplyModerationAction
+    - logging-admin-service/POST /tick-remediation/pause
+    - logging-admin-service/POST /tick-remediation/resume
+    - logging-admin-service/POST /admission-pointers
+    - logging-admin-service/POST /admission-pointers/cutover
+    - logging-admin-service/POST /admission-pointers/version-upgrades
+    - game-session-service/ToggleFeatureFlag
+    - game-session-service/PauseTicksForScope
+    - game-session-service/ResumeTicksForScope
+    - game-session-service/SetAdmissionPointer
+    - game-session-service/PrepareVersionUpgrade
+    - game-session-service/ExecutePreparedVersionCutover
+  live_exceptions:
+    - logging-admin-service/GET /admission-pointers
+    - logging-admin-service/GET /admission-pointers/{tenantId}/{worldSlug}/{realmSlug}/audit
+    - logging-admin-service/GET /admission-pointers/version-upgrades/{tenantId}/{preparationId}
+    - logging-admin-service/EvaluateModerationPolicy
 default_deny_generation:
   enabled: false
   blocked_until: source_stable_openapi_protobuf_coverage_complete_and_validated
@@ -135,6 +161,7 @@ entitlement_contract:
 required_live_check_vocabulary:
   # Captured in a private delegation and compared by the receiving owner.
   - account_generation
+  - account_owned_wallet_customer_mapping
   - account_state_bootstrap_eligible
   - account_state_login_eligible
   - admission_pointer
@@ -153,9 +180,11 @@ required_live_check_vocabulary:
   - current_operator_roles
   - current_session
   - current_token_generation
+  - billing_ownership_transfer
   - expected_pointer_version
   - explicit_deletion_confirmation
   - export_availability
+  - explicit_per_subscription_binding
   - grant_version
   - idempotency
   - independent_totp
@@ -179,6 +208,7 @@ required_live_check_vocabulary:
   - role_appropriate_assurance
   - runtime_entitlements
   - runtime_ownership
+  - safe_instrument_detachment
   - settlement_scope
   - subscription_binding_integrity
   - target_tenant_generation
@@ -377,7 +407,7 @@ coverage_drift:
     current_routes: []
     target_ingress: logging-admin-service
     target_owner: account-service_or_gameplay_policy_owner
-    note: ApplyModerationAction has an implementation path for policy input, but POST /moderation/actions is unavailable/gated pending the action schema, shared mutationDigest/v1 vectors, and Account authorization-reference flow; no current owner-side enforcement RPC is exposed.
+    note: ApplyModerationAction has an implementation path for policy input, but POST /moderation/actions and the gRPC action are unavailable/gated pending the action schema, shared mutationDigest/v1 vectors, and Account authorization-reference issuance/redemption flow; no current owner-side enforcement RPC is exposed.
   - family: game-session-session-lifecycle-external-ingress
     status: drift-found
     current_ingress: game-session-service_owner_local_only
@@ -417,8 +447,12 @@ coverage_drift:
         accepted_token_profiles: [control-ui]
         role_assurance: privileged_control_when_global_role
         roles: [billingAdmin, platformAdmin]
+        target_binding: explicit_target_account_and_affected_subscription_ids
+        required_fields: [control_plane_request_id, target_account_id, affected_subscription_ids, new_billing_owner_account_id, replacement_payment_instrument_bindings, expected_subscription_row_versions, effective_boundary, reason]
+        required_live_checks: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance, account_owned_wallet_customer_mapping, explicit_per_subscription_binding, safe_instrument_detachment, billing_ownership_transfer]
         audit_contract: required_cross_tenant_actor_scope_reason_and_outcome
-        mutation_contract: audited_cross_tenant_billing_intervention
+        forbidden_authority: [tenant_membership, shared_instrument_acknowledgement]
+        mutation_contract: audited_cross_tenant_billing_owner_transfer_with_verified_provider_replacement_before_cutover
     note: Payment/subscription foundations exist, but the ADR-0044 wallet and payment-instrument contract is not currently routable.
 routes:
   - service: game-session-service

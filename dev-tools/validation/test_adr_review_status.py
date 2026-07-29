@@ -536,6 +536,42 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "canonical ADR directory",
             )
 
+    def test_checked_review_rejects_absolute_target(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [x] `TEST-ABSOLUTE` — `accepted` on 2026-07-27; "
+                "[ADR 0013](/design/architecture/decisions/adr-0013-pending.md)",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(
+                    self.validator,
+                    root,
+                ),
+                "canonical ADR directory",
+            )
+
+    def test_checked_review_normalizes_query_and_anchor_suffixes(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            for index, suffix in enumerate(("?view=full#status", "#status?view=full")):
+                append_queue_row(
+                    root,
+                    f"- [x] `TEST-SUFFIX-{index}` — `accepted` on 2026-07-27; "
+                    "[ADR 0013](../../architecture/decisions/"
+                    f"adr-0013-pending.md{suffix})",
+                )
+            reviews = checked_reviews(
+                self.validator,
+                root,
+            )
+            self.assertEqual(
+                {"TEST-SUFFIX-0", "TEST-SUFFIX-1"},
+                {review.key for review in reviews[13]},
+            )
+
     def test_checked_review_date_must_match_queue(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
