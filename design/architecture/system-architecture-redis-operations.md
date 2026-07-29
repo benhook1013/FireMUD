@@ -11,9 +11,11 @@ The canonical reset/recovery contract below is target state, not a claim that th
 ## Default Operator Flows
 
 - select the appropriate AOF profile (`dev_local`, `hobby_self_hosted`, or `production_clustered`) and watch the associated size/restart targets
-- run named coordination reset and script-upgrade flows when metrics or the Lua Compatibility Registry indicate they are required
+- once the bounded recovery controller is implemented and proved, run the named coordination reset and script-upgrade flows when metrics or the Lua Compatibility Registry indicate they are required
 
 Other procedures and tuning advice here are advanced and should not be expanded into bespoke one-off sequences. New remediation paths should be expressed in terms of these named flows wherever possible.
+
+Current operator boundary: every Coordination Redis `recover`, `continueRecovery`, `resume`, `release-lock`, destructive AOF reset, scoped reset, split-brain recovery, and normalization migration flow below is target-state-only. Current operators must use the fail-closed [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback): preserve the AOF and incident evidence, keep affected admission and mutation fenced, use only the shipped pause/status and read-only inspection surfaces, and escalate rather than attempting an unavailable reset or unlock. Cache/Rate-Limit Redis's separately documented disposable reset remains outside that Coordination Redis restriction.
 
 ## Documentation Map
 
@@ -283,7 +285,7 @@ Redis maintenance flows such as session cleanup, scoped resets, normalization mi
 Canonical maintenance-lock behavior:
 
 - lock identity: one active record per Coordination Redis deployment / gameplay environment boundary
-- minimum fields: `operationId`, `environmentId` (the canonical deployment/gameplay boundary), `operation`, `scope_type`, `tenantId`, `gameInstanceId`, `regionId`, `actor`, `startedAt`, `expiresAt`, `compatibilityClass`, and an evidence or incident reference; `tenantId`, `gameInstanceId`, and `regionId` are nullable or omitted for a deployment-wide lock, and each is required when its corresponding tenant, game-instance, or region scope is included
+- minimum fields: `operationId`, `environmentId` (the canonical deployment/gameplay boundary), `operation`, `scope_type`, `tenantId`, `gameInstanceId`, `regionId`, `actor`, `maintenanceLockTokenDigest` (or the canonical opaque lock reference where that representation is selected), `startedAt`, `expiresAt`, `compatibilityClass`, and an evidence or incident reference; `tenantId`, `gameInstanceId`, and `regionId` are nullable or omitted for a deployment-wide lock, and each is required when its corresponding tenant, game-instance, or region scope is included
 - token contract: `maintenanceLockToken` is an opaque, high-entropy, server-issued capability. The durable operation/lock record stores its token digest together with the operation, environment, scope, authenticated operator principal, expiry, and any absolute operation deadline; callers cannot mint the token or change those bindings by supplying matching-looking fields.
 - trust and validation: the token is trusted only after the control plane resolves it to the active durable operation record and validates the presented `operationId`, environment, operation, scope, compatibility class, and authenticated operator against that record. The token value alone is never authorization.
 - expiry and replay protection: the token is valid only while that exact operation remains active and unexpired. Mutating retries use the same operation/token and durable phase or idempotency record; a duplicate returns the recorded outcome without repeating an external effect, while a stale phase, terminal operation, expired token, or mismatched binding fails closed. Public-transition idempotency records are scoped by verb plus the exact operation-owned tuple, not by `operationId` alone. Refresh may extend the lease only before expiry and within the operation deadline; it does not create a new lock or revive an expired token.
