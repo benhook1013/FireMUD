@@ -52,15 +52,11 @@ REVIEW_FIELD_RE = re.compile(
 )
 CHECKED_ROW_PREFIX_RE = re.compile(r"^[-*+] \[[xX]\]")
 FENCE_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})")
+FENCE_CLOSER_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})[ \t]*$")
 LEVEL_TWO_HEADING_RE = re.compile(r"^## [^\r\n]*$")
 REVIEW_QUEUE_HEADING_RE = re.compile(r"^## Adversarial Review Queue[ \t]*$")
 SUPERSEDED_SCAN_ALIAS_KEY_RE = re.compile(r"^MS-[A-Z0-9]+(?:-[A-Z0-9]+)+$")
 SUPERSEDED_SCAN_ALIAS_SUFFIX = "; retained as a historical service-scan alias."
-DECISION_RECORD_RE = re.compile(
-    r"^## Decision Record[ \t]*\r?\n"
-    r"(?P<body>.*?)(?=^## |\Z)",
-    flags=re.MULTILINE | re.DOTALL,
-)
 
 
 @dataclass(frozen=True)
@@ -123,12 +119,26 @@ def section_value(text: str, heading: str) -> str:
     return match.group("value").strip()
 
 
+def markdown_section(text: str, heading: str) -> str:
+    matches = list(
+        re.finditer(
+            rf"^## {re.escape(heading)}[ \t]*\r?$",
+            text,
+            flags=re.MULTILINE,
+        )
+    )
+    if len(matches) != 1:
+        fail(f"expected exactly one section {heading!r}, found {len(matches)}")
+    match = matches[0]
+    following = re.search(r"^## ", text[match.end() :], re.MULTILINE)
+    end = match.end() + following.start() if following else len(text)
+    return text[match.end() : end]
+
+
 def review_fields(text: str) -> dict[str, str]:
     fields: dict[str, str] = {}
-    section = DECISION_RECORD_RE.search(text)
-    if section is None:
-        return fields
-    for line in section.group("body").splitlines():
+    section = markdown_section(text, "Decision Record")
+    for line in section.splitlines():
         match = REVIEW_FIELD_RE.fullmatch(line)
         if not match:
             continue
@@ -218,14 +228,15 @@ def advance_markdown_fence(
     line: str,
     line_number: int,
 ) -> tuple[MarkdownFence | None, bool]:
-    fence_match = FENCE_RE.match(line.lstrip())
+    stripped = line.lstrip()
+    fence_match = FENCE_RE.match(stripped)
     if fence_match is None:
         return open_fence, False
 
     fence = fence_match.group("fence")
     if open_fence is None:
         return MarkdownFence(fence[0], len(fence), line_number), True
-    if open_fence.closes(fence):
+    if open_fence.closes(fence) and FENCE_CLOSER_RE.fullmatch(stripped):
         return None, True
     return open_fence, True
 
@@ -410,23 +421,30 @@ def validate(root: Path = ROOT) -> None:
         seen_numbers.add(number)
 
         text = path.read_text(encoding="utf-8")
+        linked_reviews = reviews.get(number, [])
+        context = path.relative_to(root)
         try:
             status = section_value(text, "Status")
         except ValidationError as error:
             fail(f"{path.relative_to(root)}: {error}")
-        try:
-            fields = review_fields(text)
-        except ValidationError as error:
-            fail(f"{path.relative_to(root)}: {error}")
-
-        linked_reviews = reviews.get(number, [])
-        context = path.relative_to(root)
         normalized_status = status_kind(
             context,
             status,
             number,
             bool(linked_reviews),
         )
+        has_decision_record = re.search(
+            r"^## Decision Record[ \t]*\r?$",
+            text,
+            flags=re.MULTILINE,
+        ) is not None
+        if number in PRE_FORMAL_REVIEW_RECORDS and not has_decision_record:
+            fields = {}
+        else:
+            try:
+                fields = review_fields(text)
+            except ValidationError as error:
+                fail(f"{path.relative_to(root)}: {error}")
         if linked_reviews:
             validate_completed_review(
                 context,

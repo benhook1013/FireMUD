@@ -96,6 +96,10 @@ GAME_SESSION_OPERATOR_ROUTES = {
     ("game-session-service", "POST /sessions/{sessionId}/refresh-roles"),
 }
 CONDITIONAL_OPERATOR_ROUTES = OPERATOR_INGRESS_ROUTES | GAME_SESSION_OPERATOR_ROUTES
+ACCOUNT_SUBJECT_BOUND_ROUTES = {
+    ("account-service", "ExportAccount"),
+    ("account-service", "DeleteAccount"),
+}
 OPERATOR_AUTHORIZATION_BRANCHES = {
     "tenant_role": {
         "membership_when_tenant_role",
@@ -107,6 +111,19 @@ OPERATOR_AUTHORIZATION_BRANCHES = {
         "current_global_role",
         "role_appropriate_assurance",
         "target_tenant_generation",
+    },
+}
+ACCOUNT_AUTHORIZATION_BRANCHES = {
+    "self_service": {
+        "target_subject_binding": "exact_caller_account_id",
+        "required_live_checks": {"current_account_generation"},
+    },
+    "platformAdmin_override": {
+        "target_subject_binding": "explicit_target_account_id",
+        "required_live_checks": {
+            "current_global_role",
+            "role_appropriate_assurance",
+        },
     },
 }
 REQUIRED_ROLE_ASSURANCE_ROLES = {"platformAdmin", "billingAdmin", "support"}
@@ -1085,6 +1102,120 @@ def validate_conditional_operator_route(
             )
 
 
+def account_authorization_branch_checks(
+    route: dict[str, Any],
+    label: str,
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> dict[str, list[set[str]]]:
+    raw_branches = route.get("account_authorization_branches")
+    if not isinstance(raw_branches, list):
+        errors.append(
+            f"{label} account_authorization_branches must be a list of mappings"
+        )
+        return {}
+
+    branches: dict[str, list[set[str]]] = {}
+    for index, raw_branch in enumerate(raw_branches):
+        branch_label = f"{label} account_authorization_branches[{index}]"
+        if not isinstance(raw_branch, dict):
+            errors.append(f"{branch_label} must be a mapping")
+            continue
+        branch = raw_branch.get("branch")
+        if not isinstance(branch, str) or not branch.strip():
+            errors.append(f"{branch_label}.branch must be a non-empty string")
+            continue
+        if branch not in ACCOUNT_AUTHORIZATION_BRANCHES:
+            errors.append(
+                f"{branch_label}.branch must be one of "
+                f"{sorted(ACCOUNT_AUTHORIZATION_BRANCHES)}"
+            )
+        if branch in branches:
+            errors.append(f"{branch_label} duplicates account branch {branch!r}")
+
+        expected = ACCOUNT_AUTHORIZATION_BRANCHES.get(branch)
+        target_subject_binding = raw_branch.get("target_subject_binding")
+        if (
+            expected is not None
+            and target_subject_binding != expected["target_subject_binding"]
+        ):
+            errors.append(
+                f"{branch_label} ({branch}).target_subject_binding must be "
+                f"{expected['target_subject_binding']!r}"
+            )
+        checks = cached_live_checks(
+            raw_branch,
+            raw_branch.get("required_live_checks"),
+            f"{branch_label}.required_live_checks",
+            errors,
+            live_checks_cache,
+        )
+        if expected is not None and checks != expected["required_live_checks"]:
+            errors.append(
+                f"{branch_label} ({branch}).required_live_checks must equal "
+                f"{sorted(expected['required_live_checks'])}"
+            )
+        branches.setdefault(branch, []).append(checks)
+
+    expected_branches = set(ACCOUNT_AUTHORIZATION_BRANCHES)
+    if set(branches) != expected_branches:
+        errors.append(
+            f"{label} account_authorization_branches must contain exactly "
+            f"{sorted(expected_branches)}"
+        )
+    return branches
+
+
+def validate_account_authorization_route(
+    route: dict[str, Any],
+    label: str,
+    errors: list[str],
+    checks: set[str] | None = None,
+    live_checks_cache: LiveChecksCache | None = None,
+) -> None:
+    route_key_value = (route.get("service"), route.get("route"))
+    if route_key_value not in ACCOUNT_SUBJECT_BOUND_ROUTES:
+        return
+    if route.get("subject_binding") != "caller_account_id":
+        errors.append(
+            f"{label} account routes must bind self-service to caller_account_id"
+        )
+    if route.get("platform_admin_override") != "platformAdmin_only":
+        errors.append(
+            f"{label} account routes must declare platform_admin_override platformAdmin_only"
+        )
+    if route.get("role_assurance") != PRIVILEGED_OPERATOR_ROLE_ASSURANCE:
+        errors.append(
+            f"{label} account routes must declare role_assurance "
+            f"{PRIVILEGED_OPERATOR_ROLE_ASSURANCE}"
+        )
+    if checks is None:
+        checks = route_live_checks(route, label, errors, live_checks_cache)
+    branch_checks = account_authorization_branch_checks(
+        route, label, errors, live_checks_cache
+    )
+    branch_only_checks = set().union(
+        *(
+            branch["required_live_checks"]
+            for branch in ACCOUNT_AUTHORIZATION_BRANCHES.values()
+        )
+    )
+    duplicated_checks = sorted(checks & branch_only_checks)
+    if duplicated_checks:
+        errors.append(
+            f"{label} required_live_checks must not duplicate branch-qualified "
+            f"checks: {duplicated_checks}"
+        )
+    for branch_name, expected in ACCOUNT_AUTHORIZATION_BRANCHES.items():
+        actual = set().union(*branch_checks.get(branch_name, []))
+        missing = sorted(expected["required_live_checks"] - actual)
+        if missing:
+            errors.append(
+                f"{label} {branch_name} branch is missing required live checks: "
+                f"{missing}"
+            )
+
+
 def validate_token_fields(
     entry: dict[str, Any],
     label: str,
@@ -1525,12 +1656,16 @@ def validate_generation_applicability(
         if (
             route.get("classification") == "pending_deletion_scoped"
             or route_key_value in CONDITIONAL_OPERATOR_ROUTES
+            or route_key_value in ACCOUNT_SUBJECT_BOUND_ROUTES
         ):
             checks = route_live_checks(route, label, errors, live_checks_cache)
         validate_pending_deletion_generation(route, label, account_generation, errors, checks)
         value = validate_membership_generation(route, label, errors)
         validate_conditional_operator_route(
             route, label, value, errors, checks, live_checks_cache
+        )
+        validate_account_authorization_route(
+            route, label, errors, checks, live_checks_cache
         )
 
 

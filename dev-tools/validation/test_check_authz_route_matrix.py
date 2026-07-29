@@ -555,6 +555,120 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             self.assertEqual("same_tenant_profile_for_tenantAdmin", route["target_subject_binding"])
             self.assertEqual("forbidden", route["platform_admin_override"])
 
+    def test_account_subject_routes_use_explicit_self_service_and_override_branches(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        expected_branches = {
+            "self_service": {
+                "target_subject_binding": "exact_caller_account_id",
+                "required_live_checks": {"current_account_generation"},
+            },
+            "platformAdmin_override": {
+                "target_subject_binding": "explicit_target_account_id",
+                "required_live_checks": {
+                    "current_global_role",
+                    "role_appropriate_assurance",
+                },
+            },
+        }
+        for route_name in ("ExportAccount", "DeleteAccount"):
+            with self.subTest(route=route_name):
+                route = route_for(document, "account-service", route_name)
+                self.assertEqual("account_scoped", route["classification"])
+                self.assertEqual("caller_account_id", route["subject_binding"])
+                self.assertEqual("platformAdmin_only", route["platform_admin_override"])
+                branches = {
+                    branch["branch"]: {
+                        "target_subject_binding": branch["target_subject_binding"],
+                        "required_live_checks": set(branch["required_live_checks"]),
+                    }
+                    for branch in route["account_authorization_branches"]
+                }
+                self.assertEqual(expected_branches, branches)
+                self.assertNotIn("current_global_role", route["required_live_checks"])
+                self.assertNotIn(
+                    "role_appropriate_assurance", route["required_live_checks"]
+                )
+                self.assertNotIn(
+                    "current_account_generation", route["required_live_checks"]
+                )
+
+        export = route_for(document, "account-service", "ExportAccount")
+        self.assertEqual(
+            "asynchronous_versioned_cross_owner_export_manifest",
+            export["response_profile"],
+        )
+        delete = route_for(document, "account-service", "DeleteAccount")
+        self.assertEqual(
+            "pending_delete_advances_account_generation_then_runs_retryable_cross_owner_erasure",
+            delete["mutation_contract"],
+        )
+        self.assertEqual("control-ui", export["token_audience"])
+        self.assertEqual("firemud-account-service", export["token_issuer"])
+
+    def test_account_subject_routes_reject_missing_or_mixed_branch_checks(self):
+        for route_name in ("ExportAccount", "DeleteAccount"):
+            with self.subTest(route=route_name):
+                document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+                route = route_for(document, "account-service", route_name)
+                route["account_authorization_branches"] = [
+                    route["account_authorization_branches"][0]
+                ]
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(
+                        "account_authorization_branches must contain exactly" in error
+                        for error in errors
+                    )
+                )
+
+                document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+                route = route_for(document, "account-service", route_name)
+                self_service = next(
+                    branch
+                    for branch in route["account_authorization_branches"]
+                    if branch["branch"] == "self_service"
+                )
+                self_service["required_live_checks"] = ["current_global_role"]
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(
+                        "self_service" in error
+                        and "required_live_checks must equal" in error
+                        for error in errors
+                    )
+                )
+
+                document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+                route = route_for(document, "account-service", route_name)
+                platform_branch = next(
+                    branch
+                    for branch in route["account_authorization_branches"]
+                    if branch["branch"] == "platformAdmin_override"
+                )
+                platform_branch["required_live_checks"].remove(
+                    "role_appropriate_assurance"
+                )
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(
+                        "platformAdmin_override" in error
+                        and "required_live_checks must equal" in error
+                        for error in errors
+                    )
+                )
+
+    def test_account_subject_routes_reject_branch_only_checks_in_common_checks(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "account-service", "ExportAccount")
+        route["required_live_checks"].append("role_appropriate_assurance")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "required_live_checks must not duplicate branch-qualified checks" in error
+                for error in errors
+            )
+        )
+
     def test_export_tenant_data_is_tenant_generation_bound(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = route_for(document, "account-service", "ExportTenantData")

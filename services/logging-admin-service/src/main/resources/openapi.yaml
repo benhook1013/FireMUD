@@ -1679,7 +1679,7 @@ paths:
   /feature-flags/toggle:
     post:
       summary: Request a runtime feature-flag toggle (externally gated)
-      description: The implementation path participates in the operator control plane, but this mutation is unavailable for external enablement until its action-family schema and shared cross-language mutationDigest/v1 golden vectors are published and every participant has conformant evidence.
+      description: "The implementation path participates in the operator control plane, but this mutation is externally gated and unavailable for external enablement until all three are complete: its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption."
       operationId: toggleFeatureFlag
       requestBody:
         required: true
@@ -1730,7 +1730,7 @@ paths:
   /moderation/actions:
     post:
       summary: Persist moderation policy input and audit
-      description: Persists moderation policy input and audit only. EvaluateModerationPolicy is the separate evaluation contract consumed by enforcement owners.
+      description: "The current implementation path is limited to moderation policy input and audit persistence; externally, this mutation is gated and unavailable until all three are complete: its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption. Once enabled, it may persist policy input and audit; EvaluateModerationPolicy remains the separate evaluation contract consumed by enforcement owners."
       operationId: applyModerationAction
       requestBody:
         required: true
@@ -1936,7 +1936,7 @@ paths:
   /admission-pointers/version-upgrades:
     post:
       summary: Prepare a version-upgrade compatibility proof (externally gated)
-      description: This preparation mutation is implemented for operator participation but is unavailable for external enablement until its action-family schema and shared cross-language mutationDigest/v1 golden vectors are published and every participant has conformant evidence. Prepared-proof reads remain live.
+      description: "This preparation mutation is implemented for operator participation but is externally gated and unavailable for external enablement until all three are complete: its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption. Prepared-proof reads remain live."
       operationId: prepareVersionUpgrade
       requestBody:
         required: true
@@ -2823,7 +2823,7 @@ paths:
   /tick-remediation/pause:
     post:
       summary: Request per-instance tick pause (externally gated)
-      description: The per-instance forwarding path participates in the control plane, but this mutation is unavailable for external enablement until its action-family schema and shared cross-language mutationDigest/v1 golden vectors are published and every participant has conformant evidence.
+      description: "The per-instance forwarding path participates in the control plane, but this mutation is externally gated and unavailable for external enablement until all three are complete: its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption."
       operationId: pauseTicksForScope
       requestBody:
         required: true
@@ -2883,7 +2883,7 @@ paths:
   /tick-remediation/resume:
     post:
       summary: Request per-instance tick resume (externally gated)
-      description: The per-instance forwarding path participates in the control plane, but this mutation is unavailable for external enablement until its action-family schema and shared cross-language mutationDigest/v1 golden vectors are published and every participant has conformant evidence.
+      description: "The per-instance forwarding path participates in the control plane, but this mutation is externally gated and unavailable for external enablement until all three are complete: its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption."
       operationId: resumeTicksForScope
       requestBody:
         required: true

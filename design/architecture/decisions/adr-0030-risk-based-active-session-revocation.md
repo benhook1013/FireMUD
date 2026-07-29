@@ -51,11 +51,11 @@ authorityTuple: {
       outboxStreamKey,
       outboxSequence
     }
-  }
+  }?
 }
 ```
 
-`issuerAuthGeneration` and `accountAuthorityGeneration` are positive Account-owned generations. `tenantAuthorityGeneration` and `membershipAuthorityGeneration` are independent maps keyed by exact tenant IDs; each map's applicable keys are determined separately by the token profile and route classification. The closed `billing_safe_tenant` exception can therefore require a membership entry while deliberately omitting the target-tenant generation. Explicitly unscoped artifacts use empty maps. `privateRealmGrantVersions` contains exact `{tenantId, worldSlug, realmSlug, grantVersion}` entries and is empty for public production. `accountSecurityCutoff` and `tenantBillingCutoff` are optional cutoff evidence, not new authority sources. `membershipVersion` is separate membership projection/version data and must be compared independently from `membershipAuthorityGeneration`; neither field substitutes for the other. A missing applicable field, extra scope, malformed value, or mismatch fails closed.
+`issuerAuthGeneration` and `accountAuthorityGeneration` are positive Account-owned generations. `tenantAuthorityGeneration` and `membershipAuthorityGeneration` are independent maps keyed by exact tenant IDs; each map's applicable keys are determined separately by the token profile and route classification. The closed `billing_safe_tenant` exception can therefore require a membership entry while deliberately omitting the target-tenant generation. Explicitly unscoped artifacts use empty maps. `privateRealmGrantVersions` contains exact `{tenantId, worldSlug, realmSlug, grantVersion}` entries and is empty for public production. `accountSecurityCutoff` and `tenantBillingCutoff` are optional cutoff evidence, not new authority sources; each is omitted when it is not applicable, and a present `tenantBillingCutoff` retains only its exact applicable tenant-ID entry or entries. `membershipVersion` is separate membership projection/version data and must be compared independently from `membershipAuthorityGeneration`; neither field substitutes for the other. A missing applicable field, extra scope, malformed value, or mismatch fails closed.
 
 The tuple is copied without renaming or reinterpretation into every applicable payload, lease, binding, refresh request, rebind proof, and registry record/claim. `issuanceFence` is copied alongside the tuple as the Account composite authority fence captured by the issuance transaction or CAS; it is not a substitute for any tuple member.
 

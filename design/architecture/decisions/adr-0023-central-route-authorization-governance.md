@@ -54,6 +54,18 @@ Until source-stable OpenAPI/protobuf coverage is complete and the generated comp
 - Gateway routes only reviewed external surfaces. Prefix routing may be a transport convenience only when the exact reachable endpoint inventory is generated and unclassified/internal endpoints are denied; a broad wildcard is not itself an exposure policy.
 - Logging & Admin remains the external ingress for sensitive operator writes unless a separate owned surface is explicitly classified.
 
+### Credential-Path Partition
+
+The issued-token registry applies only when a protected control-plane, bootstrap, or admission operation presents a registry-backed JWT (`control-ui`, `player-bootstrap`, or a named private delegation). It is not universal gameplay middleware. The route matrix must preserve these separate partitions:
+
+- The one-use `gameplay-connect` token uses Gateway's replay fence, quarantine cutoff, deny marker, and exact-`jti` atomic consume contract; it does not create or consult an Account issued-token registry record.
+- Non-JWT `LOGIN` uses credentials and, for first-party WebSocket use, the verified connect context. Game Session performs the current Account checks and creates the authenticated session context; no registry lookup is invented.
+- Non-JWT `PLAY` and fresh gameplay admission use the exact bound Game Session context, current membership/entitlement/grant and routing authority, and the Account exact-binding admission lease/CAS; they do not use the issued-token registry.
+- Reconnect, resume, or rebind without a presented JWT use the exact existing gameplay binding and resume/rebind proof plus current Account authority. Stale, missing, or conflicting binding evidence denies the operation; no registry lookup is added.
+- Routine gameplay commands use the validated bound context, binding/coordination fences, typed workload context, and domain authorization. They do not repeat registry or Account generation lookups per command; bounded reconciliation consumes later authority changes.
+
+These partitions preserve ADR 0022's gameplay ownership and replay-fence boundary and ADR 0035's registry exception. A protected route must not acquire a registry check merely because it is gameplay-related, and a JWT-presenting control-plane/bootstrap/admission route must not bypass the registry by being treated as gameplay traffic.
+
 ### Change and Proof Policy
 
 Adding or changing an endpoint includes its policy entry and focused enforcement proof in the same change. The maintenance and release-testing cost is an accepted security tradeoff. AI-assisted implementation may reduce mechanical upkeep but does not weaken review or proof requirements.
@@ -87,6 +99,7 @@ Enforcing everything at Gateway misses internal service calls and cannot safely 
 - Build source-stable candidate inventories from authoritative OpenAPI, protobuf, protocol, and operator registrations and compare them with the YAML matrix in CI before enabling generated default-deny/full-fail enforcement; until then, prove unclassified protected/external routes are denied or unreachable without deriving that safeguard from incomplete YAML.
 - Compile or validate shared HTTP/gRPC middleware metadata from the matrix and reject unknown route identities at runtime.
 - Enforce strict token profile/audience, issued-token registry, allowlist, authority-generation, tenant, role, and cross-tenant response-profile rules.
+- Prove the registry is required only for JWT-presenting control-plane/bootstrap/admission operations and that gameplay-connect replay protection plus non-JWT `LOGIN`, `PLAY`, reconnect, and resume/rebind remain their separate ADR 0022/0035 partitions.
 - Replace or constrain broad Gateway wildcards so exact externally reachable endpoints are known and internal/unclassified additions remain unreachable.
 - Correct implementation trackers that currently describe route-matrix enforcement as proven before these checks exist.
 - Prove representative public, account-scoped, tenant, billing-safe, support-safe, cross-tenant data-bearing, internal-service, gameplay-admission, and operator-write routes, including negative wrong-profile/wrong-scope cases.

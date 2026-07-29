@@ -320,6 +320,10 @@ public class FriendServiceImpl implements FriendService {
       long friendAccountId,
       AccountPresenceEntry entry,
       FriendPresenceVisibilityPolicyValue visibilityPolicy) {
+    if (visibilityPolicy != FriendPresenceVisibilityPolicyValue.PUBLIC
+        && visibilityPolicy != FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY) {
+      return defaultPresence(friendAccountId, FriendPresenceVisibilityPolicyValue.PRIVATE);
+    }
     return new FriendPresenceDto(
         friendAccountId,
         visibleOnline(entry, visibilityPolicy),
@@ -334,7 +338,7 @@ public class FriendServiceImpl implements FriendService {
         visibleCharacterName(entry, visibilityPolicy),
         visibilityPolicy.name(),
         visibleActivityState(entry, visibilityPolicy),
-        entry.getLastSeenAtMs() > 0 ? Instant.ofEpochMilli(entry.getLastSeenAtMs()) : null,
+        visibleLastSeenAt(entry, visibilityPolicy),
         visibleRecentDisposition(entry, visibilityPolicy));
   }
 
@@ -370,7 +374,7 @@ public class FriendServiceImpl implements FriendService {
   private boolean visibleOnline(
       AccountPresenceEntry entry, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     return switch (visibilityPolicy) {
-      case HIDDEN_STAFF -> false;
+      case PRIVATE, HIDDEN_STAFF -> false;
       default -> entry.getOnline();
     };
   }
@@ -460,17 +464,39 @@ public class FriendServiceImpl implements FriendService {
     };
   }
 
+  private Instant visibleLastSeenAt(
+      AccountPresenceEntry entry, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
+    return switch (visibilityPolicy) {
+      case PRIVATE, HIDDEN_STAFF -> null;
+      default -> entry.getLastSeenAtMs() > 0 ? Instant.ofEpochMilli(entry.getLastSeenAtMs()) : null;
+    };
+  }
+
   private FriendRecentPresenceDisposition visibleRecentDisposition(
       AccountPresenceEntry entry, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     return switch (visibilityPolicy) {
-      case HIDDEN_STAFF -> null;
+      case PRIVATE, HIDDEN_STAFF -> null;
       default -> mapRecentDisposition(entry.getRecentDisposition());
     };
   }
 
   private FriendPresenceVisibilityPolicyValue visibilityPolicyFor(
       long accountId, Map<Long, FriendPresenceVisibilityPolicyValue> visibilityPolicies) {
-    return visibilityPolicies.getOrDefault(accountId, FriendPresenceVisibilityPolicyValue.PRIVATE);
+    if (visibilityPolicies == null) {
+      return FriendPresenceVisibilityPolicyValue.PRIVATE;
+    }
+    return normalizeVisibilityPolicy(visibilityPolicies.get(accountId));
+  }
+
+  private FriendPresenceVisibilityPolicyValue normalizeVisibilityPolicy(
+      FriendPresenceVisibilityPolicyValue visibilityPolicy) {
+    if (visibilityPolicy == null) {
+      return FriendPresenceVisibilityPolicyValue.PRIVATE;
+    }
+    return switch (visibilityPolicy) {
+      case PUBLIC, FRIENDS_ONLY, PRIVATE -> visibilityPolicy;
+      default -> FriendPresenceVisibilityPolicyValue.PRIVATE;
+    };
   }
 
   private Long parseOptionalPositivePresenceId(String value, String fieldName) {

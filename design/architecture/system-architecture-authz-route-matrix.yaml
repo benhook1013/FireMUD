@@ -1207,7 +1207,14 @@ routes:
     token_issuer: firemud-account-service
     token_audience: control-ui
     role_assurance: privileged_control_when_global_role
-    required_live_checks: [recent_account_authentication, current_global_role, role_appropriate_assurance]
+    required_live_checks: [recent_account_authentication]
+    account_authorization_branches:
+      - branch: self_service
+        target_subject_binding: exact_caller_account_id
+        required_live_checks: [current_account_generation]
+      - branch: platformAdmin_override
+        target_subject_binding: explicit_target_account_id
+        required_live_checks: [current_global_role, role_appropriate_assurance]
     response_profile: asynchronous_versioned_cross_owner_export_manifest
     response_contract: reports_owner_completion_retries_omissions_and_policy_retention
     implementation_status:
@@ -1227,7 +1234,14 @@ routes:
     token_audience: control-ui
     role_assurance: privileged_control_when_global_role
     required_live_checks:
-      [recent_account_authentication, current_global_role, role_appropriate_assurance, explicit_deletion_confirmation, export_availability, billing_deletion_clearance]
+      [recent_account_authentication, explicit_deletion_confirmation, export_availability, billing_deletion_clearance]
+    account_authorization_branches:
+      - branch: self_service
+        target_subject_binding: exact_caller_account_id
+        required_live_checks: [current_account_generation]
+      - branch: platformAdmin_override
+        target_subject_binding: explicit_target_account_id
+        required_live_checks: [current_global_role, role_appropriate_assurance]
     mutation_contract: pending_delete_advances_account_generation_then_runs_retryable_cross_owner_erasure
     completion_contract: terminal_only_after_all_owner_steps_complete_or_policy_retained
     canonical_errors:

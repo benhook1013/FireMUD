@@ -565,6 +565,22 @@ class AdrReviewStatusTests(unittest.TestCase):
             )
             self.validator.validate(root)
 
+    def test_nested_fence_with_info_string_does_not_expose_checked_row(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "````text\n"
+                "```text\n"
+                "- [x] `FAKE-NESTED` — `accepted` on 2026-07-27; "
+                "[ADR 0013](../../architecture/decisions/adr-0013-pending.md)\n"
+                "````text\n"
+                "- [x] `FAKE-SAME-LENGTH` — `accepted` on 2026-07-27; "
+                "[ADR 0013](../../architecture/decisions/adr-0013-pending.md)\n"
+                "````",
+            )
+            self.validator.validate(root)
+
     def test_fenced_level_two_heading_does_not_end_review_queue(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
@@ -799,6 +815,36 @@ class AdrReviewStatusTests(unittest.TestCase):
             expect_failure(self,
                 lambda: self.validator.validate(root),
                 "duplicate ADR review field 'Human review status'",
+            )
+
+    def test_decision_record_section_is_required(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = root / "design/architecture/decisions/adr-0012-reviewed.md"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "## Decision Record\n", "", 1
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "expected exactly one section 'Decision Record', found 0",
+            )
+
+    def test_duplicate_decision_record_section_is_rejected(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = root / "design/architecture/decisions/adr-0012-reviewed.md"
+            path.write_text(
+                path.read_text(encoding="utf-8") + "\n## Decision Record\n",
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "expected exactly one section 'Decision Record', found 2",
             )
 
     def test_review_metadata_is_bounded_to_decision_record(self) -> None:

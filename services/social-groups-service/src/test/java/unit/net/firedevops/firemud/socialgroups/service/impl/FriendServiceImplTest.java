@@ -718,16 +718,15 @@ class FriendServiceImplTest {
 
     assertEquals(2, result.totalCount());
     assertEquals(2, result.matchCount());
-    assertEquals(true, result.presences().get(0).online());
+    assertEquals(false, result.presences().get(0).online());
     assertEquals(null, result.presences().get(0).characterName());
     assertEquals(null, result.presences().get(0).gameInstanceId());
     assertEquals(null, result.presences().get(0).worldSlug());
     assertEquals(null, result.presences().get(0).worldDisplayName());
     assertEquals(null, result.presences().get(0).realmSlug());
     assertEquals(null, result.presences().get(0).realmDisplayName());
-    assertEquals(Instant.parse("2026-04-11T06:15:30Z"), result.presences().get(0).lastSeenAt());
-    assertEquals(
-        FriendRecentPresenceDisposition.LOGOUT, result.presences().get(0).recentDisposition());
+    assertEquals(null, result.presences().get(0).lastSeenAt());
+    assertEquals(null, result.presences().get(0).recentDisposition());
     assertEquals(false, result.presences().get(1).online());
     assertEquals(null, result.presences().get(1).characterName());
     assertEquals(null, result.presences().get(1).lastSeenAt());
@@ -751,21 +750,43 @@ class FriendServiceImplTest {
                         .setAccountId("3")
                         .setOnline(true)
                         .setGameInstanceId("9")
+                        .setPlayableStateScope(
+                            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                                .PLAYABLE_STATE_SCOPE_SHARED)
                         .setWorldSlug("demo")
+                        .setWorldDisplayName("Demo World")
                         .setRealmSlug("production")
+                        .setRealmDisplayName("Live Realm")
+                        .setPointerVersion(17)
                         .setCharacterId("99")
                         .setCharacterName("Ben")
+                        .setActivityState(
+                            AccountPresenceActivityState.ACCOUNT_PRESENCE_ACTIVITY_STATE_AUTO_AFK)
+                        .setLastSeenAtMs(Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
+                        .setRecentDisposition(
+                            net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition
+                                .ACCOUNT_RECENT_PRESENCE_DISPOSITION_LOGOUT)
                         .build())
                 .build());
 
     var result = service.listFriendPresence(11L, 2L);
 
+    assertEquals(1, result.totalCount());
+    assertEquals(1, result.matchCount());
+    assertEquals(3L, result.presences().get(0).friendAccountId());
     assertEquals("PRIVATE", result.presences().get(0).visibilityPolicy());
-    assertEquals(true, result.presences().get(0).online());
+    assertEquals(false, result.presences().get(0).online());
     assertEquals(null, result.presences().get(0).gameInstanceId());
+    assertEquals(null, result.presences().get(0).playableStateScope());
     assertEquals(null, result.presences().get(0).worldSlug());
+    assertEquals(null, result.presences().get(0).worldDisplayName());
     assertEquals(null, result.presences().get(0).realmSlug());
+    assertEquals(null, result.presences().get(0).realmDisplayName());
+    assertEquals(null, result.presences().get(0).pointerVersion());
     assertEquals(null, result.presences().get(0).characterId());
     assertEquals(null, result.presences().get(0).characterName());
+    assertEquals(null, result.presences().get(0).activityState());
+    assertEquals(null, result.presences().get(0).lastSeenAt());
+    assertEquals(null, result.presences().get(0).recentDisposition());
   }
 }

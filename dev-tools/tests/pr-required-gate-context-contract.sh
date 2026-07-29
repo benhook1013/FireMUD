@@ -30,9 +30,12 @@ if ! grep -Fq '.app.slug == \"github-actions\"' "$ACTION" ||
   ! grep -Fq -- '--paginate' "$ACTION" ||
   ! grep -Fq -- '--slurp' "$ACTION" ||
   ! grep -Fq '.[].check_runs[]?' "$ACTION" ||
+  ! grep -Fq 'map(select(.status == \"completed\"))' "$ACTION" ||
+  ! grep -Fq '[\"pending\"' "$ACTION" ||
+  ! grep -Fq '[\"none\", \"\"]' "$ACTION" ||
   ! grep -Fq 'sort_by(.started_at // .created_at) | last' "$ACTION" ||
   ! grep -Fq 'prior_status' "$ACTION"; then
-  echo "required-gate action must paginate and select the latest prior GitHub Actions check run" >&2
+  echo "required-gate action must prefer the latest completed prior GitHub Actions check run" >&2
   exit 1
 fi
 # shellcheck disable=SC2016 # Assert literal workflow shell syntax.
@@ -203,33 +206,54 @@ if [[ -f "$count_file" ]]; then
 fi
 count=$((count + 1))
 printf '%s' "$count" >"$count_file"
-case "${GH_FAILURE_MODE:-transient}" in
-  transient|network)
+case "${GH_SCENARIO:-failure-retry}" in
+  completed-preferred)
+    printf 'completed\tsuccess\n'
+    ;;
+  pending-predecessor)
     if [[ "$count" -eq 1 ]]; then
-      if [[ "${GH_FAILURE_MODE}" == "network" ]]; then
-        echo "gh: error connecting to api.github.com" >&2
-      else
-        echo "gh: HTTP 503 Service Unavailable" >&2
-      fi
-      exit 1
+      printf 'pending\tin_progress\n'
+    else
+      printf 'completed\tsuccess\n'
     fi
     ;;
-  rate-limit)
-    if [[ "$count" -eq 1 ]]; then
-      echo "gh: HTTP 403 API rate limit exceeded" >&2
-      exit 1
-    fi
+  no-prior)
+    printf 'none\t\n'
     ;;
-  permanent)
-    echo "gh: HTTP 422 Unprocessable Entity" >&2
-    exit 1
+  failure-retry)
+    case "${GH_FAILURE_MODE:-transient}" in
+      transient|network)
+        if [[ "$count" -eq 1 ]]; then
+          if [[ "${GH_FAILURE_MODE}" == "network" ]]; then
+            echo "gh: error connecting to api.github.com" >&2
+          else
+            echo "gh: HTTP 503 Service Unavailable" >&2
+          fi
+          exit 1
+        fi
+        ;;
+      rate-limit)
+        if [[ "$count" -eq 1 ]]; then
+          echo "gh: HTTP 403 API rate limit exceeded" >&2
+          exit 1
+        fi
+        ;;
+      permanent)
+        echo "gh: HTTP 422 Unprocessable Entity" >&2
+        exit 1
+        ;;
+      *)
+        echo "unknown simulated gh failure mode" >&2
+        exit 91
+        ;;
+    esac
+    printf 'completed\tsuccess\n'
     ;;
   *)
-    echo "unknown simulated gh failure mode" >&2
+    echo "unknown simulated gh scenario" >&2
     exit 91
     ;;
 esac
-printf 'completed\tsuccess\n'
 EOF
 cat >"$tmp_dir/sleep" <<'EOF'
 #!/usr/bin/env bash
@@ -241,8 +265,10 @@ action_script="$(awk '/^      run: \|$/{capture=1; next} capture {if ($0 != "" &
 run_action() {
   local count_file="$1"
   local failure_mode="$2"
+  local scenario="${3:-failure-retry}"
   GH_RETRY_COUNT_FILE="$count_file" \
   GH_FAILURE_MODE="$failure_mode" \
+  GH_SCENARIO="$scenario" \
   PATH="$tmp_dir:$PATH" \
   GITHUB_EVENT_NAME=pull_request \
   GITHUB_REPOSITORY=example/firemud \
@@ -255,7 +281,7 @@ run_action() {
 
 for failure_mode in transient network rate-limit; do
   count_file="$tmp_dir/count-${failure_mode}"
-  run_action "$count_file" "$failure_mode"
+  run_action "$count_file" "$failure_mode" failure-retry
   [[ "$(<"$count_file")" == "2" ]] || {
     echo "required-gate action did not retry simulated ${failure_mode} failure" >&2
     exit 1
@@ -277,6 +303,38 @@ set -e
 }
 grep -Fq 'Permanent GitHub API/configuration failure' "$permanent_output" || {
   echo "required-gate action did not report the permanent gh api failure" >&2
+  exit 1
+}
+
+completed_count="$tmp_dir/count-completed-preferred"
+run_action "$completed_count" none completed-preferred
+[[ "$(<"$completed_count")" == "1" ]] || {
+  echo "required-gate action did not prefer the completed prior run over a concurrent run" >&2
+  exit 1
+}
+
+pending_count="$tmp_dir/count-pending-predecessor"
+run_action "$pending_count" none pending-predecessor
+[[ "$(<"$pending_count")" == "2" ]] || {
+  echo "required-gate action did not poll the relevant prior run while it was finishing" >&2
+  exit 1
+}
+
+no_prior_output="$tmp_dir/no-prior-output"
+set +e
+run_action "$tmp_dir/count-no-prior" none no-prior >"$no_prior_output" 2>&1
+no_prior_status=$?
+set -e
+[[ "$no_prior_status" -ne 0 ]] || {
+  echo "required-gate action accepted the absence of a prior completed run" >&2
+  exit 1
+}
+[[ "$(<"$tmp_dir/count-no-prior")" == "1" ]] || {
+  echo "required-gate action silently exhausted polling attempts with no prior run" >&2
+  exit 1
+}
+grep -Fq 'No prior completed' "$no_prior_output" || {
+  echo "required-gate action did not clearly report the absence of a prior completed run" >&2
   exit 1
 }
 
