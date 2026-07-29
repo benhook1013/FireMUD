@@ -12,6 +12,15 @@ Every record must follow the [canonical recovery record](../../../../architectur
 - The promotion path still stops fail closed before `PREFLIGHT-BACKUP-001` can accept nested dispositions or freshness as promotion authority; those deeper checks remain target-state validation.
 - The executable cannot yet read durable recovery-controller authority, validate complete inventory membership and linked immutable evidence, or reconcile `collecting` -> `ready_to_reopen` -> `AWAITING_RESUME` -> `RESUME_AUTHORIZED` -> `releasing` -> `finalized`; `validate_recovery_baseline` therefore returns fail closed and production traffic-open preflight is unconditionally unavailable.
 - The checked-in record is a post-finalization immutable projection, not runtime authority.
+- The `coordination-maintenance recover`, `continue-recovery`, `resume`, and `release-lock` surface is target-state-only and unavailable until the durable controller, Account projection repair/replacement, replay/evidence path, and end-to-end proof are implemented. Current operators must not invoke any of those commands; in particular, `release-lock` is prohibited until it is implemented and proven and is not a current unlock or reopen substitute.
+
+## Current Operator Fallback
+
+For a current production Redis outage, cold start, or incomplete recovery:
+
+- Keep protected admission, gameplay mutation, command intake, and affected coordination writers fenced or stopped.
+- Use only the shipped `PauseTicksForScope` pause and `GetRuntimeOwnershipStatus` status surface for the supported `{tenantId, gameInstanceId}` boundary, plus read-only `coord_ops_ro` Redis inspection. Follow the current failover/AOF procedures and escalation path in the [Redis incident runbook](../../../../architecture/system-architecture-redis-incident-runbook.md) and [Redis Operations](../../../../architecture/system-architecture-redis-operations.md); do not use target-state reset or reopen commands.
+- If the durable recovery controller, Account projection repair/replacement, replay quarantine/fence, or immutable evidence path is unavailable, stale, or ambiguous, abort any destructive wipe, recovery continuation, `resume`, or reopen attempt. Preserve the AOF and incident evidence, leave the fence in place, and escalate. There is no supported current full-wipe or unlock substitute.
 
 Production-specific requirements:
 
@@ -37,12 +46,12 @@ Production-specific requirements:
 
 `backupConfidentialityEvidence` must prove encrypted transport/storage, environment-scoped least-privilege access and audit, and retention/secure deletion. Whenever production-origin data is exercised outside production, quarantine, sanitization, validation, and deletion controls are mandatory.
 
-The plaintext `maintenanceLockToken` must be supplied to recovery tooling only through protected stdin, a file descriptor, or a permissioned `0600` token file. It must never be passed as a command-line argument or appear in shell history, process listings, logs, URLs, or evidence.
+In the target-state workflow, the plaintext `maintenanceLockToken` must be supplied to recovery tooling only through protected stdin, a file descriptor, or a permissioned `0600` token file. It must never be passed as a command-line argument or appear in shell history, process listings, logs, URLs, or evidence.
 
-## Controlled Reopen Sequence
+## Controlled Reopen Sequence (Target State Only; Unavailable Today)
 
-The durable recovery operation does not reopen production traffic directly from continuation. After all recovery evidence and pre-release gates pass:
+The following is a target-state sequence, not a current production operator instruction. The durable recovery operation does not reopen production traffic directly from continuation. Current operators must not invoke `continueRecovery`, `resume`, or `release-lock`; keep production fenced and use the current fallback above until the complete controller and proof path is implemented and proven. After all recovery evidence and pre-release gates pass in that future workflow:
 
 1. `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` uses `expectedPhase=ready_to_reopen` and transitions the operation to `AWAITING_RESUME` without releasing its fence or maintenance lock.
 2. The authenticated public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` uses the lowercase wire-form `expectedPhase=awaiting_resume`, which the server compares with the internal durable phase `AWAITING_RESUME`, and records `RESUME_AUTHORIZED` for the exact operation and its recorded scope; it does not release the lock or reopen traffic.
-3. Only the internal success-release phase applies and verifies the reopen postconditions, then transitions the operation to `finalized`. A failed or abandoned operation remains fenced and uses the exact-scope audited `coordination-maintenance release-lock --operation-id <operationId> --scope <scope> --maintenance-lock-token-file <permissioned-token-file> --reason <reason> --evidence-ref <evidenceRef>` control.
+3. Only the internal success-release phase applies and verifies the reopen postconditions, then transitions the operation to `finalized`. In the future target-state workflow, a failed or abandoned operation remains fenced and uses the exact-scope audited `coordination-maintenance release-lock --operation-id <operationId> --scope <scope> --maintenance-lock-token-file <permissioned-token-file> --reason <reason> --evidence-ref <evidenceRef>` control. That control is unavailable today; current operators must leave the fence in place and follow the fallback above.

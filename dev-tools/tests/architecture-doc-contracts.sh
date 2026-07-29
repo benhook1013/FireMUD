@@ -44,7 +44,7 @@ def has_forbidden_maintenance_lock_token_syntax(text):
             if not in_fenced_example:
                 in_fenced_example = True
                 fence_marker = marker
-            elif marker == fence_marker:
+            elif marker[0] == fence_marker[0] and len(marker) >= len(fence_marker):
                 in_fenced_example = False
                 fence_marker = None
         if in_fenced_example:
@@ -81,6 +81,14 @@ if not has_forbidden_maintenance_lock_token_syntax(
     "```text\n--maintenance-lock-token <token>\n```"
 ):
     raise SystemExit("fenced maintenance token example was incorrectly accepted")
+if has_forbidden_maintenance_lock_token_syntax(
+    "```text\nsafe example\n````\nThe `--maintenance-lock-token` option is forbidden."
+):
+    raise SystemExit("longer CommonMark closing fence was not recognized")
+if not has_forbidden_maintenance_lock_token_syntax(
+    "````text\n```\nThe `--maintenance-lock-token` option is forbidden.\n````"
+):
+    raise SystemExit("shorter nested fence incorrectly closed the outer fence")
 
 def require_contains(path, snippets):
     text = (root / path).read_text(encoding="utf-8")
@@ -185,6 +193,20 @@ require_contains(
 require_contains(
     "design/architecture/system-architecture-redis-ops-access.md",
     ["Region- and tenant-scoped coordination resets preserve Account-owned `session:auth:token:<tokenHash>` records"],
+)
+require_contains(
+    "design/architecture/system-architecture-redis.md",
+    [
+        "matches the session's exact `jti`, `tokenGeneration`",
+        "verified JWT's required `nbf` also valid",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-incident-runbook.md",
+    [
+        "non-admissible provisional renewal",
+        "cannot extend the deadline",
+    ],
 )
 
 operations_text = (root / "design/architecture/system-architecture-redis-operations.md").read_text(encoding="utf-8")
