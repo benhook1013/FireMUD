@@ -631,11 +631,25 @@ def validate_membership_policy(
         )
     raw_routes = exception.get("routes")
     expected_routes = set(JOIN_ROUTES_REQUIRING_POINTER_ERROR)
-    actual_routes = {
-        tuple(item)
-        for item in raw_routes
-        if isinstance(item, list) and len(item) == 2
-    } if isinstance(raw_routes, list) else set()
+    actual_routes: set[tuple[str, str]] = set()
+    if not isinstance(raw_routes, list):
+        errors.append(
+            "tenant_membership_policy.public_production_join_exception.routes "
+            "must be a list of two-item lists of strings"
+        )
+    else:
+        for index, item in enumerate(raw_routes):
+            if (
+                not isinstance(item, list)
+                or len(item) != 2
+                or any(not isinstance(value, str) for value in item)
+            ):
+                errors.append(
+                    "tenant_membership_policy.public_production_join_exception.routes["
+                    f"{index}] must be a two-item list of strings"
+                )
+                continue
+            actual_routes.add((item[0], item[1]))
     if actual_routes != expected_routes:
         errors.append(
             "tenant_membership_policy public-production exception must enumerate "

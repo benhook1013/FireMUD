@@ -598,6 +598,41 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         errors = validate_document(self.validator, document)
         self.assertTrue(any("game-session-service JOIN is missing pre-membership checks" in error for error in errors))
 
+    def test_join_exception_routes_reject_unhashable_and_non_string_entries(self):
+        for malformed_entry in (
+            ["game-session-service", {"route": "JOIN"}],
+            ["game-session-service", ["JOIN"]],
+            ["game-session-service", 7],
+        ):
+            with self.subTest(malformed_entry=malformed_entry):
+                document = self.validator.yaml.safe_load(
+                    MATRIX.read_text(encoding="utf-8")
+                )
+                exception = document["tenant_membership_policy"][
+                    "public_production_join_exception"
+                ]
+                exception["routes"][0] = malformed_entry
+                errors = validate_document(self.validator, document)
+                self.assertIn(
+                    "tenant_membership_policy.public_production_join_exception."
+                    "routes[0] must be a two-item list of strings",
+                    errors,
+                )
+
+    def test_join_exception_routes_keep_exact_valid_route_set_comparison(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        exception = document["tenant_membership_policy"][
+            "public_production_join_exception"
+        ]
+        exception["routes"].append(["account-service", "UnexpectedRoute"])
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "public-production exception must enumerate exactly" in error
+                for error in errors
+            )
+        )
+
     def test_fresh_authority_evidence_excludes_bound_ordinary_gameplay_rereads(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         fresh = document["authority_evidence_policy"]["fail_closed_fresh_evidence"]

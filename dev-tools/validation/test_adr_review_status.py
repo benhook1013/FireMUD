@@ -506,16 +506,52 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "must contain at least one exact [ADR NNNN] outcome link",
             )
 
-    def test_superseded_alias_may_link_only_to_replacement_decisions(self) -> None:
+    def test_checked_superseded_row_requires_exact_adr_provenance(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [x] `TEST-SUPERSEDED` — `superseded` on 2026-07-27 by "
+                "[notes](https://example.com)",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "must contain at least one exact [ADR NNNN] outcome link",
+            )
+
+    def test_superseded_scan_alias_links_replacements_without_provenance(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(
+                root / "design/architecture/decisions/adr-0014-replacement.md",
+                "# ADR 0014\n",
+            )
+            append_queue_row(
+                root,
+                "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27 by "
+                "[replacement ADR 0014](../../architecture/decisions/"
+                "adr-0014-replacement.md); retained as a historical "
+                "service-scan alias.",
+            )
+            reviews = checked_reviews(self.validator, root)
+            self.assertEqual({"TEST-01"}, {review.key for review in reviews[12]})
+            self.assertNotIn(14, reviews)
+
+    def test_superseded_alias_marker_does_not_exempt_non_scan_key(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
             append_queue_row(
                 root,
                 "- [x] `TEST-ALIAS` — `superseded` on 2026-07-27 by "
-                "[replacement](../../architecture/decisions/adr-0012-reviewed.md)",
+                "[replacement](https://example.com); retained as a historical "
+                "service-scan alias.",
             )
-            reviews = checked_reviews(self.validator, root)
-            self.assertEqual({"TEST-01"}, {review.key for review in reviews[12]})
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "must contain at least one exact [ADR NNNN] outcome link",
+            )
 
     def test_checked_row_inside_fenced_example_is_ignored(self) -> None:
         with fixture_root() as fixture:
@@ -528,6 +564,23 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "```",
             )
             self.validator.validate(root)
+
+    def test_fenced_level_two_heading_does_not_end_review_queue(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "```text\n"
+                "## Example heading inside the fenced block\n"
+                "```\n"
+                "- [x] `TEST-AFTER-FENCE` — `revised` on 2026-07-27; "
+                "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md)",
+            )
+            reviews = checked_reviews(self.validator, root)
+            self.assertIn(
+                "TEST-AFTER-FENCE",
+                {review.key for review in reviews[12]},
+            )
 
     def test_unterminated_code_fence_fails_closed_with_path_and_opening_line(self) -> None:
         with fixture_root() as fixture:

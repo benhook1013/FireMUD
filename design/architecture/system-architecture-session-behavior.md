@@ -4,44 +4,17 @@ This document defines gameplay takeover, reconnect, token refresh, membership-ve
 
 ## Canonical Authority Tuple
 
-Every membership or revocation event, JWT payload, registry record, Account lease, gameplay binding, refresh request, rebind proof, and installation acknowledgement uses the same logical `authorityTuple` and exact field names:
+The canonical `authorityTuple` schema, exact nested field names, profile requirements, and registry mapping are defined in [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md#canonical-authority-tuple). This document does not duplicate that schema. Session behavior copies the canonical tuple unchanged into applicable events, leases, bindings, refresh requests, rebind proofs, registry records/claims, and installation acknowledgements; missing applicable evidence, extra scope, malformed values, or mismatches fail closed.
 
-```text
-authorityTuple: {
-  issuerAuthGeneration,
-  accountAuthorityGeneration,
-  tenantAuthorityGeneration: { tenantId: generation },
-  membershipAuthorityGeneration: { tenantId: generation },
-  privateRealmGrantVersions: [
-    { tenantId, worldSlug, realmSlug, grantVersion }
-  ],
-  accountSecurityCutoff: {
-    accountAuthorityGeneration,
-    outboxStreamKey,
-    outboxSequence
-  }?,
-  tenantBillingCutoff: {
-    tenantId: {
-      tenantAuthorityGeneration,
-      tenantBillingSequence,
-      outboxStreamKey,
-      outboxSequence
-    }
-  }?
-}
-```
-
-`issuerAuthGeneration` and `accountAuthorityGeneration` are positive Account-owned generations. `tenantAuthorityGeneration` and `membershipAuthorityGeneration` are independent maps keyed by exact tenant IDs; each map's applicable keys are determined separately by the token profile and route classification. The closed `billing_safe_tenant` exception can therefore require a membership entry while deliberately omitting the target-tenant generation. Explicitly unscoped artifacts use empty maps. `privateRealmGrantVersions` contains exact `{tenantId, worldSlug, realmSlug, grantVersion}` entries and is empty for public production. `accountSecurityCutoff` and `tenantBillingCutoff` are optional cutoff evidence, not replacement authorities. `membershipVersion` is separate membership projection/version data and must be compared independently from `membershipAuthorityGeneration`; neither field substitutes for the other. A missing applicable field, extra scope, malformed value, or mismatch fails closed.
-
-The tuple is copied without renaming or reinterpretation into every applicable event/payload, lease, binding, refresh request, rebind proof, registry record/claim, and installation acknowledgement. `issuanceFence` is copied alongside it as the Account composite authority fence captured by the issuance transaction or CAS; it is not a substitute for any tuple member.
+Session-local rules are that `membershipVersion` is an independent Account-owned membership projection value and must be compared separately from `membershipAuthorityGeneration`. The `billing_safe_tenant` exception omits the target-tenant generation only from route comparison, never from a required canonical claim or tuple shape. Account owns all canonical authority-generation projections; Game Session may maintain only the distinct derived issuer projection and schema defined by [ADR 0022](./decisions/adr-0022-account-authority-and-gameplay-session-ownership.md).
 
 ## Implementation Status
 
 Membership-change event delivery and generation-aware session consumption are not yet live. The current Account runtime response exposes `membershipVersion` without `membershipAuthorityGeneration`, so Game Session must not treat the contract below as implemented until the Account producer, event payload, consumer, and focused proof converge. The target Account-durable-intent-before-Gateway-marker logout ordering and final Account token-fence invalidation are also not currently proven; the current fallback is Account logout plus local cleanup and bounded expiry, not proof of complete logout.
 
-Account Service is the sole writer of account authority-generation advances and their `session:auth:generation:account:<accountId>` projections. Account commits every applicable `authorityTuple` field, cutoff, `issuanceFence`, and monotonic outbox event together; the generation projection is an asynchronous outbox output, not an atomically committed part of that durable generation/event transaction. Game Session and other downstream services consume Account-owned generation events and projections; they must not advance the account generation or write that projection directly, and they fail closed while projection or freshness/source evidence is missing, stale, malformed, regressed, or ambiguous.
+Account Service is the sole writer of account authority-generation advances and all canonical `session:auth:generation:*` projections, including `session:auth:generation:account:<accountId>`. Account commits every applicable canonical tuple field, cutoff, `issuanceFence`, and monotonic outbox event together; the generation projection is an asynchronous outbox output, not an atomically committed part of that durable generation/event transaction. Game Session and other downstream services consume Account-owned generation events and projections; they must not advance canonical authority or write canonical projections directly, and they fail closed while projection or freshness/source evidence is missing, stale, malformed, regressed, or ambiguous. Game Session's only generation projection write is its derived `session:game:auth:issuer-generation:v1:<issuerId>` consumer-local record under the ADR 0022 schema.
 
-For account security events, Account alone advances the durable authority tuple, applicable cutoff, and `issuanceFence` and emits the corresponding committed outbox event in the same Account transaction; an asynchronous projection consumer later applies the generation set-if-greater. Game Session consumes that event and projection idempotently and revokes only its owned gameplay bindings through the bounded account, tenant, and uniqueness indexes plus their ordered repair/CAS protocol; it must not scan Redis, advance Account authority, or infer authorization from a missing or stale projection.
+For account security events, Account alone advances the durable authority tuple, applicable cutoff, and `issuanceFence` and emits the corresponding committed outbox event in the same Account transaction; an asynchronous projection consumer later applies each canonical generation set-if-greater. Game Session consumes that event and projection idempotently, applies the separate derived issuer projection set-if-greater, and revokes only its owned gameplay bindings through the bounded account, tenant, and uniqueness indexes plus their ordered repair/CAS protocol; it must not scan Redis, advance Account authority, write canonical projections, or infer authorization from a missing or stale projection.
 
 ## Multi-Client Behavior and Session Takeover
 

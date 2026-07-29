@@ -994,8 +994,9 @@ routes:
       any_of: [logging-admin-service]
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
-    required_live_checks: [current_account_generation, current_token_generation, current_operator_roles, role_appropriate_assurance]
+    required_live_checks: [current_account_generation, current_token_generation, current_operator_roles, role_appropriate_assurance, tenant_generation, target_tenant_generation]
     required_fields: [tenant_scope, action_family, control_plane_request_id, mutation_digest]
+    tenant_role_reference_generation_binding: current_tenant_generation
     global_tenant_operation_binding: current_target_tenant_generation_without_membership
     mutation_contract: create_bounded_human_operator_authorization_reference
   - service: account-service
@@ -1015,8 +1016,10 @@ routes:
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
     end_user_token_required: false
-    required_live_checks: [current_automation_policy, workload_action_scope]
+    required_live_checks: [current_automation_policy, workload_action_scope, tenant_generation]
     required_fields: [automation_policy_id, automation_policy_version, tenant_scope, action_family, control_plane_request_id, mutation_digest]
+    automation_tenant_generation_binding: current_tenant_generation
+    automation_privileged_control: prohibited
     mutation_contract: create_bounded_workload_operator_authorization_reference
   - service: account-service
     route: POST /auth/bootstrap/join

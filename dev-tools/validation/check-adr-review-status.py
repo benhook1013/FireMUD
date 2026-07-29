@@ -52,7 +52,10 @@ REVIEW_FIELD_RE = re.compile(
 )
 CHECKED_ROW_PREFIX_RE = re.compile(r"^[-*+] \[[xX]\]")
 FENCE_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})")
+LEVEL_TWO_HEADING_RE = re.compile(r"^## [^\r\n]*$")
 REVIEW_QUEUE_HEADING_RE = re.compile(r"^## Adversarial Review Queue[ \t]*$")
+SUPERSEDED_SCAN_ALIAS_KEY_RE = re.compile(r"^MS-[A-Z0-9]+(?:-[A-Z0-9]+)+$")
+SUPERSEDED_SCAN_ALIAS_SUFFIX = "; retained as a historical service-scan alias."
 DECISION_RECORD_RE = re.compile(
     r"^## Decision Record[ \t]*\r?\n"
     r"(?P<body>.*?)(?=^## |\Z)",
@@ -175,6 +178,32 @@ def provenance_adr_number(
     return displayed_number
 
 
+def is_superseded_scan_alias(key: str, outcome: str, disposition: str) -> bool:
+    return (
+        disposition == "Superseded"
+        and SUPERSEDED_SCAN_ALIAS_KEY_RE.fullmatch(key) is not None
+        and outcome.endswith(SUPERSEDED_SCAN_ALIAS_SUFFIX)
+    )
+
+
+def review_queue_end(lines: list[str], queue_start: int) -> int:
+    open_fence: tuple[str, int, int] | None = None
+    for index in range(queue_start + 1, len(lines)):
+        line = lines[index]
+        stripped = line.lstrip()
+        fence_match = FENCE_RE.match(stripped)
+        if fence_match:
+            fence = fence_match.group("fence")
+            if open_fence is None:
+                open_fence = (fence[0], len(fence), index + 1)
+            elif fence[0] == open_fence[0] and len(fence) >= open_fence[1]:
+                open_fence = None
+            continue
+        if open_fence is None and LEVEL_TWO_HEADING_RE.fullmatch(line):
+            return index
+    return len(lines)
+
+
 def checked_reviews(path: Path, adr_dir: Path) -> dict[int, list[Review]]:
     reviews: dict[int, list[Review]] = {}
     seen_keys: set[str] = set()
@@ -188,14 +217,7 @@ def checked_reviews(path: Path, adr_dir: Path) -> dict[int, list[Review]]:
         )
     except StopIteration:
         fail(f"{path}: missing 'Adversarial Review Queue' section")
-    queue_end = next(
-        (
-            index
-            for index in range(queue_start + 1, len(lines))
-            if lines[index].startswith("## ")
-        ),
-        len(lines),
-    )
+    queue_end = review_queue_end(lines, queue_start)
     for line_number, line in enumerate(
         lines[queue_start + 1 : queue_end], start=queue_start + 2
     ):
@@ -221,6 +243,16 @@ def checked_reviews(path: Path, adr_dir: Path) -> dict[int, list[Review]]:
         if not match:
             fail(f"{path}: malformed checked review queue row at line {line_number}")
 
+        review = Review(
+            key=match.group("key"),
+            date=match.group("date"),
+            disposition=match.group("disposition").capitalize(),
+        )
+        is_scan_alias = is_superseded_scan_alias(
+            review.key,
+            match.group("outcome"),
+            review.disposition,
+        )
         outcome_adr_numbers: list[int] = []
         for adr_match in ADR_LINK_RE.finditer(match.group("outcome")):
             outcome_adr_numbers.append(
@@ -237,17 +269,16 @@ def checked_reviews(path: Path, adr_dir: Path) -> dict[int, list[Review]]:
                 "contains duplicate ADR outcome links"
             )
 
-        review = Review(
-            key=match.group("key"),
-            date=match.group("date"),
-            disposition=match.group("disposition").capitalize(),
-        )
         if review.disposition == "Deferred" and outcome_adr_numbers:
             fail(
                 f"{path}: checked deferred review row at line {line_number} "
                 "must not use exact ADR provenance"
             )
-        if review.disposition in {"Accepted", "Revised", "Withdrawn"} and not outcome_adr_numbers:
+        if (
+            review.disposition in {"Accepted", "Revised", "Superseded", "Withdrawn"}
+            and not outcome_adr_numbers
+            and not is_scan_alias
+        ):
             fail(
                 f"{path}: checked review queue row at line {line_number} "
                 "must contain at least one exact [ADR NNNN] outcome link"
@@ -259,9 +290,10 @@ def checked_reviews(path: Path, adr_dir: Path) -> dict[int, list[Review]]:
             )
         seen_keys.add(review.key)
 
-        # Exact labels identify a reviewed ADR. A superseded scan alias may
-        # instead point only to its replacement decisions.
-        for number in outcome_adr_numbers:
+        # A superseded scan alias points to replacement decisions; those ADRs
+        # are not provenance for the historical alias row itself.
+        review_adr_numbers = [] if is_scan_alias else outcome_adr_numbers
+        for number in review_adr_numbers:
             existing = reviews.setdefault(number, [])
             if existing and any(
                 (prior.date, prior.disposition)

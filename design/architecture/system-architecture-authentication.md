@@ -12,36 +12,9 @@ The canonical target is Account-owned authentication and authority, exact JWT pr
 
 ### Canonical Authority Tuple
 
-Every JWT payload, issued-token registry record, revocation event, Account lease, gameplay binding, refresh request, rebind proof, and installation acknowledgement uses the same logical `authorityTuple` and exact field names:
+The canonical `authorityTuple` schema, exact nested field names, profile requirements, and registry mapping are defined in [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md#canonical-authority-tuple). This document does not duplicate that schema. Authentication applies the canonical tuple unchanged to JWT claims, issued-token records, revocation events, Account leases, gameplay bindings, refresh requests, rebind proofs, and installation acknowledgements; a missing applicable field, extra scope, malformed value, or mismatch fails closed.
 
-```text
-authorityTuple: {
-  issuerAuthGeneration,
-  accountAuthorityGeneration,
-  tenantAuthorityGeneration: { tenantId: generation },
-  membershipAuthorityGeneration: { tenantId: generation },
-  privateRealmGrantVersions: [
-    { tenantId, worldSlug, realmSlug, grantVersion }
-  ],
-  accountSecurityCutoff: {
-    accountAuthorityGeneration,
-    outboxStreamKey,
-    outboxSequence
-  }?,
-  tenantBillingCutoff: {
-    tenantId: {
-      tenantAuthorityGeneration,
-      tenantBillingSequence,
-      outboxStreamKey,
-      outboxSequence
-    }
-  }
-}
-```
-
-`issuerAuthGeneration` and `accountAuthorityGeneration` are positive Account-owned generations. `tenantAuthorityGeneration` and `membershipAuthorityGeneration` are independent maps keyed by exact tenant IDs; each map's applicable keys are determined separately by the token profile and route classification. The closed `billing_safe_tenant` exception can therefore require a membership entry while deliberately omitting the target-tenant generation. Explicitly unscoped artifacts use empty maps. `privateRealmGrantVersions` contains exact `{tenantId, worldSlug, realmSlug, grantVersion}` entries and is empty for public production. `accountSecurityCutoff` and `tenantBillingCutoff` are optional cutoff evidence, not replacement authorities. `membershipVersion` is separate membership projection/version data and must be compared independently from `membershipAuthorityGeneration`; neither field substitutes for the other. A missing applicable field, extra scope, malformed value, or mismatch fails closed.
-
-The tuple is copied without renaming or reinterpretation into every applicable payload, lease, binding, refresh request, rebind proof, registry record/claim, and installation acknowledgement. `issuanceFence` is copied alongside it as the Account composite authority fence captured by the issuance transaction or CAS; it is not a substitute for any tuple member.
+Authentication-local rules are that Account owns every canonical authority-generation field and every canonical `session:auth:generation:*` projection, while Game Session may keep only the derived consumer-local issuer projection defined by [ADR 0022](./decisions/adr-0022-account-authority-and-gameplay-session-ownership.md). The `billing_safe_tenant` route exception can omit the target-tenant generation from route comparison only; it does not remove a required canonical claim key. `membershipVersion` remains separate membership projection/version data and never substitutes for `membershipAuthorityGeneration`.
 
 ## Implementation Status
 
@@ -60,7 +33,7 @@ The tuple is copied without renaming or reinterpretation into every applicable p
 
 The following contract decisions are mandatory and resolve cross-document ambiguity:
 
-- **Authority-generation writer** – The Account Service owns durable issuer, account, tenant, and `{accountId, tenantId}` membership authority generations and is the sole writer of every applicable `authorityTuple` field, cutoff, and `issuanceFence`, plus their `session:auth:generation:*` projections. Account commits the durable tuple/fence, applicable account-security or tenant-billing cutoff, and monotonic outbox event together; the projection is an asynchronous outbox output, not part of that atomic durable transaction. Consumers fail closed while the projection or its freshness/source evidence is missing, stale, malformed, regressed, or ambiguous. Other services must publish billing/security events and must not write authority-generation state or projection keys directly.
+- **Authority-generation writer** – The Account Service owns durable issuer, account, tenant, and `{accountId, tenantId}` membership authority generations and is the sole writer of every applicable canonical `authorityTuple` field, cutoff, and `issuanceFence`, plus their canonical `session:auth:generation:*` projections. Account commits the durable tuple/fence, applicable account-security or tenant-billing cutoff, and monotonic outbox event together; the projection is an asynchronous outbox output, not part of that atomic durable transaction. Consumers fail closed while the projection or its freshness/source evidence is missing, stale, malformed, regressed, or ambiguous. Other services must publish billing/security events and must not write canonical authority-generation state or projection keys; Game Session may write only its distinct derived issuer projection under the ADR 0022 schema.
 - **Authority outbox stream** – Account emits each revocation payload on exactly `account:auth-authority:v1:<scopeId>`, where `scopeId` is `issuer/<issuerId>`, `account/<accountId>`, `tenant/<tenantId>`, `membership/<accountId>/<tenantId>`, or `grant/<accountId>/<tenantId>/<worldSlug>/<realmSlug>`. `outboxSequence` starts at `1` independently for each exact stream key; `tenantBillingSequence` remains the separate tenant billing sequence. Consumers keep watermarks per exact stream key: matching duplicates at or below the watermark are no-ops, the next sequence is contiguous, a higher sequence is a gap only within that same key, and an unrelated scope never creates a gap. Conflicting duplicate evidence or a same-key gap stops affected validation/admission until Account reconciliation proves the exact checkpoint.
 - **Authority validation outcomes** – A registry, lease, gameplay binding, token-identity fence, Account authority source, or authority-projection freshness fence that cannot be reached or times out is a retryable `AUTH_UNAVAILABLE` / HTTP 503 condition; it does not revoke the client's authentication and no cached authority may authorize the failed operation. Reachable missing, malformed, expired, revoked, stale, regressed, or mismatched evidence is an authentication failure (`AUTH_SESSION_REVOKED` or the specific invalid-token outcome) and requires reauthentication. Registry presence or absence never overrides this classification.
 - **Tenant authority-generation scope** – `session:auth:generation:tenant:<tenantId>` applies by default to tenant-scoped regular and gameplay-affecting operations. Only the closed route-class allowlist in [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md#explicit-route-class-generation-allowlist) may omit the target tenant generation. The `billing_safe_tenant` class intentionally omits that target-tenant generation only under this closed exception; it still requires issuer/account and caller-bound membership generations plus a live `tenantAdmin` check. `cross_tenant_support_safe` requires issuer/account generations, a live `support` role without elevation or an explicitly allowed `platformAdmin` role with `privileged_control` backed by independent TOTP, and global token scope; and `cross_tenant_billing_safe` requires issuer/account generations, a live `billingAdmin` or explicitly allowed `platformAdmin` role, global token scope, and `privileged_control`. None of these routes may use cached authorization, and no newly named route class inherits the allowlist.

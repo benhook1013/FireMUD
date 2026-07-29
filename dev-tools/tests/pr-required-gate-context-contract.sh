@@ -96,6 +96,22 @@ while IFS='|' read -r workflow gate; do
   fi
 
   gate_block="$(awk '/^  [A-Za-z0-9_-]+:/{in_gate=0} /    name: '"$gate"'$/{in_gate=1} in_gate{print}' "$path")"
+  case "$workflow" in
+    ci.yml|security.yml|license-scan.yml|codeql.yml)
+      first_step="$(awk '/^    steps:$/ {in_steps=1; next} in_steps && /^      - name:/ {print; exit}' <<<"$gate_block")"
+      [[ "$first_step" == '      - name: Harden runner' ]] || {
+        echo "$workflow $gate must harden the runner as its unconditional first step" >&2
+        exit 1
+      }
+      harden_block="$(awk '/^      - name: Harden runner$/{in_harden=1} in_harden{if (/^      - name:/ && $0 != "      - name: Harden runner") exit; print}' <<<"$gate_block")"
+      if grep -Fq '        if:' <<<"$harden_block" ||
+        ! grep -Eq '        uses: step-security/harden-runner@[0-9a-f]{40}$' <<<"$harden_block" ||
+        ! grep -Fq '          egress-policy: audit' <<<"$harden_block"; then
+        echo "$workflow $gate hardening must remain unconditional and retain its pinned audit configuration" >&2
+        exit 1
+      fi
+      ;;
+  esac
   grep -Fq '      checks: read' <<<"$gate_block" || {
     echo "$workflow $gate caller must retain checks: read" >&2
     exit 1
