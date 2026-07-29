@@ -224,6 +224,7 @@ Illustrative `GetTenantEntitlementsForRuntime(tenantId)` response:
 ```json
 {
   "tenantId": 7,
+  "provisioningStatus": null,
   "subscriptionStatus": "active",
   "gameplayAvailable": true,
   "allowPublicJoin": true,
@@ -241,7 +242,8 @@ Illustrative `GetTenantEntitlementsForRuntime(tenantId)` response:
 
 Required semantics:
 
-- `subscriptionStatus` uses the canonical billing lifecycle values (`trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`).
+- `provisioningStatus` is either `pending`, `provisioning`, or null. While it is non-null, `subscriptionStatus` is null and every gameplay/admission/instance-start flag is false because provider provisioning grants no hosting entitlement.
+- `subscriptionStatus` is null during provisioning and otherwise uses the canonical billing lifecycle values (`trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`). It never carries `pending` or `provisioning`.
 - `gameplayAvailable` reports whether already-authorized gameplay may continue; callers must also enforce the operation-specific flag for a new commitment.
 - `allowPublicJoin`, `allowNewGameplayBindings`, `allowNewInstanceStarts`, and quota fields distinguish new admission/load from permission to continue already-entitled capacity. In `grace`, general gameplay availability may remain true while all three new-commitment flags are false.
 - `entitlementVersion` identifies the evaluated entitlement snapshot.

@@ -681,15 +681,7 @@ Gameplay identity is single-mode and canonical: uniqueness key `{tenantId, gameI
 
 ## Logout Ordering
 
-Account remains the authority for ordinary token logout, while Gateway owns the edge-only deny marker for a known gameplay-connect `jti`. The same high-entropy `requestId` and immutable request digest bind the Account and Gateway operations. A changed digest, token identity, account, or operation conflicts without mutation.
-
-For per-token logout, the coordinator first asks Account to commit a durable server-side `PENDING` logout intent keyed by `(accountId, requestId)` and bound to the exact presented token hash, `jti`, profile, and digest. This intent, including its monotonic exact-token fence state, must commit before Gateway is asked to record the deny marker. If the session has a gameplay-connect credential, the client then sends that exact `requestId`, digest, and connect-token `jti` to Gateway; Gateway atomically records the deny marker and clears the cookie, returning the stored result for a retry rather than creating another marker. Gateway's marker is edge-only and does not mutate the ordinary Account registry.
-
-After the Gateway result (or immediately when no gameplay-connect credential exists), Account idempotently finalizes the same intent: it advances the Account-owned token-identity fence, invalidates the underlying `player-bootstrap` or control-plane token by deleting its `session:auth:token:<tokenHash>` record, and commits the `COMMITTED` tombstone, audit, and outbox evidence before reporting success. `PENDING` or `COMMITTED` fence state blocks refresh, rebind, installation, and reconciliation from recreating the logged-out identity. Account's reconciler may complete or abort only the matching intent and removes/quarantines orphaned edge or binding state; local cleanup, cookie clearing, registry absence, and token expiry alone are not logout proof.
-
-If either response is lost, the client retries Gateway and Account with the same `requestId`, digest, and token identity. Gateway returns its committed marker outcome, and Account returns its committed tombstone or resumes the pending intent without another fence advance, registry mutation, audit, or outbox duplicate. Account may use the durable intent/tombstone for this lifecycle-only retry after the underlying registry record is gone; no retry creates authorization context. Reusing the request ID with changed meaning is rejected, and a new logout attempt uses a new request ID.
-
-For `POST /auth/logout-all`, Account uses the same durable request-id/digest rule and commits the account-generation advance, logout event, audit, and outbox exactly once in one Account transaction. A retry returns the stored result without another generation advance. Completion requires that durable authority evidence and bounded downstream gameplay-binding reconciliation; local cleanup or expiry is never sufficient.
+The canonical per-token and logout-all ordering, retry, token-fence, Gateway deny-marker, and reconciliation contract is defined once in [Session Behavior](./system-architecture-session-behavior.md#control-plane-logout). Authentication surfaces must follow that contract rather than restating or weakening it here.
 
 ---
 

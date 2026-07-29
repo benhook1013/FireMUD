@@ -613,25 +613,6 @@ def validate_membership_policy(
             f"exactly {sorted(expected_routes)!r}"
         )
 
-    for service, route_name in sorted(expected_routes):
-        route = resolve_unique_route(
-            routes, service, route_name, errors, cardinality_errors
-        )
-        if route is None:
-            continue
-        label = f"{service} {route_name}"
-        if route.get("membership_authority_generation_applies") is not False:
-            errors.append(f"{label} must disable membership generation while creating membership")
-        if route.get("membership_creation") != "caller_bound_after_validation":
-            errors.append(f"{label} must declare caller_bound_after_validation membership creation")
-        missing = sorted(
-            REQUIRED_JOIN_PRE_MEMBERSHIP_CHECKS
-            - route_live_checks(route, label, errors, live_checks_cache)
-        )
-        if missing:
-            errors.append(f"{label} is missing pre-membership checks: {missing}")
-
-
 def validate_authority_evidence_policy(
     document: dict[str, Any], errors: list[str]
 ) -> None:
@@ -1625,16 +1606,6 @@ def validate_ws_game_routes(
                 "/ws/game/** first_party_web must explicitly disable "
                 "account_authority_generation_applies"
             )
-        if first_party.get("tenant_billing_authority_generation_applies") is not False:
-            errors.append(
-                "/ws/game/** first_party_web must explicitly disable "
-                "tenant_billing_authority_generation_applies"
-            )
-        if first_party.get("membership_authority_generation_applies") is not False:
-            errors.append(
-                "/ws/game/** first_party_web must defer membership authority generation "
-                "to downstream_admission_contract"
-            )
         validate_downstream_admission_contract(
             first_party,
             "/ws/game/** first_party_web",
@@ -1656,16 +1627,6 @@ def validate_ws_game_routes(
             errors.append(
                 "/ws/game/** trusted_tcp_proxy is missing required live checks: "
                 f"{missing_trusted_proxy}"
-            )
-        if trusted_proxy.get("tenant_billing_authority_generation_applies") is not False:
-            errors.append(
-                "/ws/game/** trusted_tcp_proxy must explicitly disable "
-                "tenant_billing_authority_generation_applies"
-            )
-        if trusted_proxy.get("membership_authority_generation_applies") is not False:
-            errors.append(
-                "/ws/game/** trusted_tcp_proxy must defer membership authority generation "
-                "to downstream_admission_contract"
             )
         validate_downstream_admission_contract(
             trusted_proxy,

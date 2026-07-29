@@ -33,6 +33,19 @@ sys.path.insert(0, str(root / "dev-tools" / "smoke"))
 import smoke_common
 from smoke_common import run_telnet_smoke_session, run_transport_session, run_websocket_smoke_session
 
+dev_demo_workflow = (root / ".github" / "workflows" / "dev-demo.yml").read_text()
+for expected in (
+    'create secret generic dev-demo-bootstrap-env',
+    '--from-literal=DEMO_SMOKE_EMAIL="${DEMO_SMOKE_EMAIL}"',
+    '--from-literal=DEMO_SMOKE_PASSWORD="${DEMO_SMOKE_PASSWORD}"',
+    '--from-literal=DEMO_SMOKE_USERNAME="${DEMO_SMOKE_USERNAME}"',
+    'envFrom:\n                  - secretRef:\n                      name: dev-demo-bootstrap-env',
+    'delete secret dev-demo-bootstrap-env --ignore-not-found',
+):
+    assert expected in dev_demo_workflow, (
+        f"dev-demo bootstrap environment contract missing: {expected}"
+    )
+
 
 class FakeHttpResponse:
     status = 200

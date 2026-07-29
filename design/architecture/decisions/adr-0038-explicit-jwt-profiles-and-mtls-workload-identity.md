@@ -37,7 +37,7 @@ The target gameplay-domain delegation boundary uses concrete mTLS identity, exac
 - Delegated-token receiving endpoints make the registered token profile/type, exact Account issuer, exact audience, concrete mTLS caller identity, and method-level policy mandatory predicates. A matching audience without the registered profile/type, issuer, caller certificate, or method allowlist is insufficient. Workload-only methods declare token profile/type/issuer/audience as `none` and still require the concrete mTLS identity and exact method policy; they do not require a JWT issuer. Private delegation methods require all five delegated-token predicates.
 - Gameplay-domain calls use mTLS plus typed `PlayerExecutionContext`; raw gameplay clients never receive or carry gameplay-command JWTs, and ordinary commands perform no token validation.
 - `gameplay-connect` remains a short-lived Account-signed, Gateway-only, single-use admission artifact. Gateway signed connect context remains a separate Gateway key family and assertion. Neither is an issued-token-registry auth session.
-- Player-facing and shared environments require asymmetric Account signing and JWKS validation. HMAC is allowed only for local/dev and explicitly ephemeral CI. Account is the only application workload with the Account JWT private key.
+- Player-facing and shared environments require asymmetric Account signing and JWKS validation. Their startup and readiness gates fail before accepting traffic if shared-HMAC Account signing or validation material is configured, if asymmetric signing/JWKS configuration is absent, or if both modes are enabled. HMAC is allowed only when the environment is explicitly classified as local/dev, or when an ephemeral CI profile separately opts in to HMAC for that run; it is never inferred from missing asymmetric configuration. Account is the only application workload with the Account JWT private key.
 
 ### mTLS Identity And Certificate Lifecycle
 
@@ -86,7 +86,7 @@ This exposes internal authority to raw clients and creates a per-command validat
 - Prove that no DNS-SAN fallback is reachable in player-facing environments and that any separately approved bridge exception is bounded by its identity/method allowlist, expiry, migration evidence, and explicit removal proof.
 - Prove workload-only calls use mTLS caller policy without JWTs, every receiver applies an exact per-method policy, and gameplay commands retain no JWT hot path.
 - Separate Account JWT, gameplay-connect, and Gateway connect-context key families and deployment mounts.
-- Prove asymmetric JWKS startup/readiness in player-facing environments and rejection of HMAC-only configuration.
+- Prove asymmetric JWKS startup/readiness in player-facing and shared environments; reject HMAC-only, mixed HMAC/asymmetric, and missing-asymmetric configurations before traffic. Prove that local/dev and ephemeral CI accept HMAC only under their explicit environment/profile opt-in.
 - Align secondary Account, service, frontend, deployment, and tracker documentation during implementation without treating current HMAC/generic-token code as target behavior.
 
 ## Reversibility and Revisit Triggers

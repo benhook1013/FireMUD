@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from dataclasses import dataclass
@@ -346,9 +347,25 @@ def validate(root: Path = ROOT) -> None:
     )
 
 
-if __name__ == "__main__":
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Validate ADR human-review provenance."
+    )
+    parser.add_argument(
+        "root",
+        nargs="?",
+        type=Path,
+        default=ROOT,
+        help="repository root (defaults to the root containing this script)",
+    )
+    arguments = parser.parse_args(argv)
     try:
-        validate()
+        validate(arguments.root)
     except ValidationError as error:
         print(error, file=sys.stderr)
-        raise SystemExit(1)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

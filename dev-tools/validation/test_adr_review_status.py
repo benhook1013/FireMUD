@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -110,18 +111,34 @@ def append_queue_row(root: Path, row: str) -> None:
     )
 
 
+def replace_once(text: str, old: str, new: str) -> str:
+    occurrences = text.count(old)
+    if occurrences != 1:
+        raise AssertionError(
+            f"expected exactly one occurrence of {old!r}, found {occurrences}"
+        )
+    return text.replace(old, new, 1)
+
+
 def set_review_status(root: Path, status: str, disposition: str) -> None:
     queue = queue_path(root)
     queue.write_text(
-        queue.read_text(encoding="utf-8").replace(
-            "`revised`", f"`{disposition.lower()}`", 1
+        replace_once(
+            queue.read_text(encoding="utf-8"),
+            "`revised`",
+            f"`{disposition.lower()}`",
         ),
         encoding="utf-8",
     )
     path = root / "design/architecture/decisions/adr-0012-reviewed.md"
     text = path.read_text(encoding="utf-8")
-    text = text.replace("Accepted\n\n## Decision Record", f"{status}\n\n## Decision Record")
-    text = text.replace(
+    text = replace_once(
+        text,
+        "Accepted\n\n## Decision Record",
+        f"{status}\n\n## Decision Record",
+    )
+    text = replace_once(
+        text,
         "Human review disposition: Revised",
         f"Human review disposition: {disposition}",
     )
@@ -147,6 +164,19 @@ class AdrReviewStatusTests(unittest.TestCase):
 
     def test_repository_corpus_passes(self) -> None:
         self.validator.validate(ROOT)
+
+    def test_script_entrypoint_accepts_fixture_root_and_reports_failure(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            queue_path(root).unlink()
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), str(root)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("ADR review queue missing", result.stderr)
 
     def test_section_value_accepts_lf_and_crlf_without_carriage_return(self) -> None:
         for newline in ("\n", "\r\n"):
