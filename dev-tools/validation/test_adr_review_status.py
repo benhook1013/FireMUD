@@ -55,6 +55,8 @@ def fixture_root() -> tempfile.TemporaryDirectory[str]:
         root
         / "design/project-management/design-alignment/consequential-decision-inventory.md",
         """
+        ## Adversarial Review Queue
+
         - [x] `TEST-01` — `revised` on 2026-07-27; [ADR 0012](../../architecture/decisions/adr-0012-reviewed.md)
         """,
     )
@@ -221,6 +223,27 @@ class AdrReviewStatusTests(unittest.TestCase):
                 self,
                 lambda: self.validator.validate(root),
                 "checked human review requires",
+            )
+
+    def test_pre_formal_legacy_status_with_checked_row_is_rejected(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [x] `TEST-LEGACY` — `superseded` on 2026-07-27; "
+                "[ADR 0001](../../architecture/decisions/adr-0001-legacy.md)",
+            )
+            path = root / "design/architecture/decisions/adr-0001-legacy.md"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "Accepted", "Superseded by ADR 0012"
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "status must be exactly one of",
             )
 
     def test_missing_adr_directory_fails_clearly(self) -> None:
@@ -775,6 +798,34 @@ class AdrReviewStatusTests(unittest.TestCase):
             )
             reviews = checked_reviews(self.validator, root)
             self.assertEqual(reviews[12][-1].key, "TEST-UPPERCASE")
+
+    def test_checked_queue_accepts_all_top_level_markers(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            for index, marker in enumerate(("-", "*", "+")):
+                append_queue_row(
+                    root,
+                    f"{marker} [x] `TEST-MARKER-{index}` — "
+                    "`accepted` on 2026-07-27; "
+                    "[ADR 0013](../../architecture/decisions/adr-0013-pending.md)",
+                )
+            reviews = checked_reviews(self.validator, root)
+            self.assertEqual(
+                {"TEST-MARKER-0", "TEST-MARKER-1", "TEST-MARKER-2"},
+                {review.key for review in reviews[13]},
+            )
+
+    def test_checked_items_outside_review_queue_are_ignored(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = queue_path(root)
+            path.write_text(
+                "- [x] `OUTSIDE` — malformed checked item\n\n"
+                + path.read_text(encoding="utf-8")
+                + "\n## Notes\n\n- [x] `OUTSIDE-2` — also unrelated\n",
+                encoding="utf-8",
+            )
+            self.validator.validate(root)
 
     def test_checked_queue_rejects_duplicate_adr_links_in_one_row(self) -> None:
         with fixture_root() as fixture:

@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @RestControllerAdvice
@@ -81,9 +82,12 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(NoResourceFoundException.class)
   public ResponseEntity<ApiResponse<ErrorDetail>> handleNoResourceFound(
       NoResourceFoundException ex) {
-    HttpStatus status = HttpStatus.valueOf(ex.getStatusCode().value());
-    ErrorDetail detail = new ErrorDetail("NOT_FOUND", "Resource not found");
-    return new ResponseEntity<>(ApiResponse.error(detail), status);
+    return notFound();
+  }
+
+  @ExceptionHandler(NoHandlerFoundException.class)
+  public ResponseEntity<ApiResponse<ErrorDetail>> handleNoHandlerFound(NoHandlerFoundException ex) {
+    return notFound();
   }
 
   @ExceptionHandler(Exception.class)
@@ -95,6 +99,11 @@ public class GlobalExceptionHandler {
   private ResponseEntity<ApiResponse<ErrorDetail>> invalidArgument(String message) {
     ErrorDetail detail = new ErrorDetail("INVALID_ARGUMENT", message);
     return new ResponseEntity<>(ApiResponse.error(detail), HttpStatus.BAD_REQUEST);
+  }
+
+  private ResponseEntity<ApiResponse<ErrorDetail>> notFound() {
+    ErrorDetail detail = new ErrorDetail("NOT_FOUND", "Resource not found");
+    return new ResponseEntity<>(ApiResponse.error(detail), HttpStatus.NOT_FOUND);
   }
 
   private String firstFieldErrorMessage(FieldError fieldError) {

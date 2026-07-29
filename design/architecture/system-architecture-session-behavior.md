@@ -27,7 +27,7 @@ authorityTuple: {
       outboxStreamKey,
       outboxSequence
     }
-  }
+  }?
 }
 ```
 

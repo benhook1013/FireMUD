@@ -38,7 +38,7 @@ LEGACY_PRE_FORMAL_STATUS_RE = re.compile(
 )
 ADR_PATH_RE = re.compile(r"adr-(\d{4})-.*\.md$")
 REVIEW_ROW_RE = re.compile(
-    r"^- \[[xX]\] `(?P<key>[A-Z0-9][A-Z0-9-]*)` — "
+    r"^[-*+] \[[xX]\] `(?P<key>[A-Z0-9][A-Z0-9-]*)` — "
     r"`(?P<disposition>accepted|revised|deferred|superseded|withdrawn)` "
     r"on (?P<date>\d{4}-\d{2}-\d{2})(?P<outcome>(?:;| by) .+)$"
 )
@@ -50,8 +50,9 @@ REVIEW_FIELD_RE = re.compile(
     r"^- (?P<name>Human review status|Human review date|"
     r"Human review disposition|Review source): (?P<value>.+)$"
 )
-CHECKED_ROW_PREFIX_RE = re.compile(r"^- \[[xX]\]")
+CHECKED_ROW_PREFIX_RE = re.compile(r"^[-*+] \[[xX]\]")
 FENCE_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})")
+REVIEW_QUEUE_HEADING_RE = re.compile(r"^## Adversarial Review Queue[ \t]*$")
 DECISION_RECORD_RE = re.compile(
     r"^## Decision Record[ \t]*\r?\n"
     r"(?P<body>.*?)(?=^## |\Z)",
@@ -178,8 +179,25 @@ def checked_reviews(path: Path, adr_dir: Path) -> dict[int, list[Review]]:
     reviews: dict[int, list[Review]] = {}
     seen_keys: set[str] = set()
     open_fence: tuple[str, int, int] | None = None
+    lines = path.read_text(encoding="utf-8").splitlines()
+    try:
+        queue_start = next(
+            index
+            for index, line in enumerate(lines)
+            if REVIEW_QUEUE_HEADING_RE.fullmatch(line)
+        )
+    except StopIteration:
+        fail(f"{path}: missing 'Adversarial Review Queue' section")
+    queue_end = next(
+        (
+            index
+            for index in range(queue_start + 1, len(lines))
+            if lines[index].startswith("## ")
+        ),
+        len(lines),
+    )
     for line_number, line in enumerate(
-        path.read_text(encoding="utf-8").splitlines(), start=1
+        lines[queue_start + 1 : queue_end], start=queue_start + 2
     ):
         stripped = line.lstrip()
         fence_match = FENCE_RE.match(stripped)

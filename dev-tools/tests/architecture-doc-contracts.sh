@@ -258,7 +258,9 @@ require_contains(
 )
 require_contains(
     "design/project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md",
-    ["obsolete non-authorizing gameplay-attestation implementation debt"],
+    [
+        "legacy gameplay-attestation helpers remain only as deprecated, non-authorizing implementation debt"
+    ],
 )
 require_contains(
     "design/architecture/system-architecture-cicd.md",

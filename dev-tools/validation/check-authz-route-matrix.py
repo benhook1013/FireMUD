@@ -519,7 +519,8 @@ def validate_route_class_branch_table(
         errors.append("route_class_branch_table must be a list of mappings")
         return
 
-    actual: dict[tuple[Any, Any], dict[str, Any]] = {}
+    actual: dict[tuple[str, str], dict[str, Any]] = {}
+    invalid_key_shape = False
     for index, entry in enumerate(raw_table):
         label = f"route_class_branch_table[{index}]"
         if not isinstance(entry, dict):
@@ -529,8 +530,10 @@ def validate_route_class_branch_table(
         branch = entry.get("branch")
         if not isinstance(classification, str):
             errors.append(f"{label}.classification must be a string")
+            invalid_key_shape = True
         if not isinstance(branch, str):
             errors.append(f"{label}.branch must be a string")
+            invalid_key_shape = True
         if not isinstance(classification, str) or not isinstance(branch, str):
             continue
         key = (classification, branch)
@@ -539,7 +542,7 @@ def validate_route_class_branch_table(
         actual[key] = entry
 
     expected_keys = set(EXPECTED_ROUTE_CLASS_BRANCHES)
-    if set(actual) != expected_keys:
+    if not invalid_key_shape and set(actual) != expected_keys:
         errors.append(
             "route_class_branch_table must contain exactly the canonical route-class "
             f"branches: {sorted(expected_keys)!r}"
@@ -550,11 +553,22 @@ def validate_route_class_branch_table(
         if entry is None:
             continue
         label = f"route_class_branch_table {key[0]} {key[1]}"
-        for field in ("scope", "role", "privileged_control"):
+        for field in ("scope", "role"):
             if entry.get(field) != expected[field]:
                 errors.append(
                     f"{label} must declare {field}={expected[field]!r}"
                 )
+        privileged_control = entry.get("privileged_control")
+        if privileged_control not in PRIVILEGED_CONTROL_VALUES:
+            errors.append(
+                f"{label}.privileged_control must be one of "
+                f"{sorted(PRIVILEGED_CONTROL_VALUES)}"
+            )
+        elif privileged_control != expected["privileged_control"]:
+            errors.append(
+                f"{label} must declare "
+                f"privileged_control={expected['privileged_control']!r}"
+            )
         generations = entry.get("generations")
         if not isinstance(generations, dict):
             errors.append(f"{label}.generations must be a mapping")
@@ -575,11 +589,6 @@ def validate_route_class_branch_table(
                 errors.append(
                     f"{label}.generations.{generation} must be {expected_value!r}"
                 )
-        if entry.get("privileged_control") not in PRIVILEGED_CONTROL_VALUES:
-            errors.append(
-                f"{label}.privileged_control must be one of "
-                f"{sorted(PRIVILEGED_CONTROL_VALUES)}"
-            )
 
 
 def validate_membership_policy(
@@ -715,16 +724,26 @@ def validate_elevation_bootstrap(
         errors,
         cardinality_errors,
     )
-    if route is not None and route.get("privileged_control") != "establishes_window":
-        errors.append(
-            "account-service EnterPrivilegedControlWindow must declare privileged_control=establishes_window"
-        )
-    for route in routes:
-        if not isinstance(route, dict) or "privileged_control" not in route:
-            continue
-        if route.get("privileged_control") not in PRIVILEGED_CONTROL_VALUES:
+    if route is not None:
+        privileged_control = route.get("privileged_control")
+        if "privileged_control" not in route or (
+            privileged_control in PRIVILEGED_CONTROL_VALUES
+            and privileged_control != "establishes_window"
+        ):
             errors.append(
-                f"{route.get('service')} {route.get('route')} privileged_control must be one of "
+                "account-service EnterPrivilegedControlWindow must declare "
+                "privileged_control=establishes_window"
+            )
+    for candidate_route in routes:
+        if (
+            not isinstance(candidate_route, dict)
+            or "privileged_control" not in candidate_route
+        ):
+            continue
+        if candidate_route.get("privileged_control") not in PRIVILEGED_CONTROL_VALUES:
+            errors.append(
+                f"{candidate_route.get('service')} {candidate_route.get('route')} "
+                "privileged_control must be one of "
                 f"{sorted(PRIVILEGED_CONTROL_VALUES)}"
             )
 
@@ -784,13 +803,8 @@ def validate_multi_profile_predicates(
         )
         return
 
-    shared_type_issuer = {
-        (profile.get("type"), profile.get("issuer"))
-        for profile in known_profiles
-        if profile is not None
-    }
     token_predicates = (token_type, token_issuer)
-    if len(shared_type_issuer) != 1 or token_predicates != next(iter(shared_type_issuer)):
+    if token_predicates != next(iter(type_issuer_pairs)):
         errors.append(
             f"{label} multi-profile token predicates must match the shared token_type/token_issuer"
         )

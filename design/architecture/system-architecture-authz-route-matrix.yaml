@@ -27,6 +27,10 @@ operator_mutation_support_gate:
     - game-session-service/SetAdmissionPointer
     - game-session-service/PrepareVersionUpgrade
     - game-session-service/ExecutePreparedVersionCutover
+    - game-session-service/StartSession
+    - game-session-service/RestartSession
+    - game-session-service/StopSession
+    - game-session-service/RefreshRoles
   live_exceptions:
     - logging-admin-service/GET /admission-pointers
     - logging-admin-service/GET /admission-pointers/{tenantId}/{worldSlug}/{realmSlug}/audit

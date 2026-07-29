@@ -641,11 +641,13 @@ job_name_literals = re.findall(
     r'job[.]name\s*===\s*["\']([^"\']+)["\']',
     smoke,
 )
-if job_name_literals != ["PR Full-Stack Smoke"]:
+distinct_job_name_literals = set(job_name_literals)
+if distinct_job_name_literals != {"PR Full-Stack Smoke"}:
     raise SystemExit(
-        "smoke.yml must look up exactly one full-stack PR smoke job name literal: "
+        "smoke.yml must use exactly one distinct full-stack PR smoke job name literal: "
         + repr(job_name_literals)
     )
+job_name_literal = next(iter(distinct_job_name_literals))
 
 try:
     runtime_workflow = yaml.load(runtime_images, Loader=yaml.BaseLoader)
@@ -654,10 +656,10 @@ except (KeyError, TypeError, yaml.YAMLError) as exc:
     raise SystemExit(
         "runtime-images.yml must define the pr-local-smoke job name used by Smoke Gate"
     ) from exc
-if runtime_job_name != job_name_literals[0]:
+if runtime_job_name != job_name_literal:
     raise SystemExit(
         "smoke.yml full-stack PR job lookup does not match runtime-images.yml: "
-        f"smoke={job_name_literals[0]!r}, runtime={runtime_job_name!r}"
+        f"smoke={job_name_literal!r}, runtime={runtime_job_name!r}"
     )
 
 runtime_paths = pull_request_paths(runtime_images, "runtime-images.yml")

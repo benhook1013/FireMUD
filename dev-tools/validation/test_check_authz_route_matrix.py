@@ -39,11 +39,16 @@ def grouped_routes(document, service):
 
 
 def route_for(document, service, route_name):
-    return next(
+    matches = [
         route
         for route in document["routes"]
         if route.get("service") == service and route.get("route") == route_name
-    )
+    ]
+    if len(matches) != 1:
+        raise AssertionError(
+            f"expected exactly one {service} {route_name} route, found {len(matches)}"
+        )
+    return matches[0]
 
 
 def validate_document(validator, document):
@@ -355,23 +360,15 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors,
         )
 
-    def test_route_live_checks_cache_is_identity_bound_and_returns_fresh_sets(self):
+    def test_route_live_checks_cache_rejects_stale_identity_entries(self):
         route = {"required_live_checks": ["first_check"]}
         cache = {}
         errors = []
 
-        first = self.validator.route_live_checks(route, "route", errors, cache)
-        first.add("caller_mutation")
-        second = self.validator.route_live_checks(route, "route", errors, cache)
-        self.assertEqual({"first_check"}, second)
-        self.assertIsNot(first, second)
+        cache[id(route)] = (object(), {"stale_check"})
+        checks = self.validator.route_live_checks(route, "route", errors, cache)
+        self.assertEqual({"first_check"}, checks)
         self.assertIs(cache[id(route)][0], route)
-
-        equivalent_route = {"required_live_checks": ["second_check"]}
-        equivalent = self.validator.route_live_checks(
-            equivalent_route, "equivalent-route", errors, cache
-        )
-        self.assertEqual({"second_check"}, equivalent)
         self.assertEqual([], errors)
 
     def test_multi_profile_unknown_name_is_not_resolved(self):
@@ -550,6 +547,33 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     f"route_class_branch_table[0].{field} must be a string",
                     errors,
                 )
+                self.assertFalse(
+                    any(
+                        "must contain exactly the canonical route-class branches" in error
+                        for error in errors
+                    )
+                )
+
+    def test_route_class_branch_table_reports_invalid_privileged_control_once(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        entry = document["route_class_branch_table"][0]
+        entry["privileged_control"] = "unsupported"
+        errors = validate_document(self.validator, document)
+        self.assertEqual(
+            1,
+            errors.count(
+                "route_class_branch_table account_scoped "
+                "platformAdmin_global.privileged_control must be one of "
+                "['establishes_window', 'not_required', 'required']"
+            ),
+        )
+        self.assertFalse(
+            any(
+                "account_scoped platformAdmin_global must declare privileged_control="
+                in error
+                for error in errors
+            )
+        )
 
     def test_join_pre_membership_contract_is_explicit(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -878,6 +902,22 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
         )
 
+    def test_invalid_privileged_control_does_not_cascade(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "account-service", "EnterPrivilegedControlWindow")
+        route["privileged_control"] = "unsupported"
+        errors = []
+        self.validator.validate_elevation_bootstrap(document, document["routes"], errors)
+        self.assertEqual(
+            [
+                (
+                    "account-service EnterPrivilegedControlWindow privileged_control "
+                    "must be one of ['establishes_window', 'not_required', 'required']"
+                )
+            ],
+            errors,
+        )
+
     def test_pending_deletion_uses_canonical_account_generation_field(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = next(
@@ -1072,11 +1112,13 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             document, routes, errors, cardinality_errors
         )
         self.assertEqual(
-            1,
-            errors.count(
-                "matrix must contain exactly one account-service "
-                "EnterPrivilegedControlWindow route"
-            ),
+            [
+                (
+                    "matrix must contain exactly one account-service "
+                    "EnterPrivilegedControlWindow route"
+                )
+            ],
+            errors,
         )
 
     def test_caller_policy_method_policy_error_is_not_duplicated(self):

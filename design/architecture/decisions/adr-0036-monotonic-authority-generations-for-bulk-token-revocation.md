@@ -38,7 +38,7 @@ The Account domain already requires monotonic versions and durable ordered secur
   - `session:auth:generation:account:<accountId>`
   - `session:auth:generation:tenant:<tenantId>`
   - `session:auth:generation:membership:<accountId>:<tenantId>`
-- Missing, malformed, unavailable, stale, or regressed generation state never means generation zero. For every protected operation, the consumer makes one bounded synchronous Account read that returns the current durable values and source versions for all applicable issuer, account, tenant, and membership generations. It then requires each Redis projection value and source version to match that durable response exactly before using the projection. A prior cached Account response, token claim, event position, or Redis timestamp cannot satisfy this check. Account unavailability and a Redis projection timeout, connection failure, or other inability to reach the projection return `AUTH_UNAVAILABLE`. When Account and Redis are reachable, missing, malformed, regressed, or mismatched durable or projected evidence is authoritative invalid/revoked evidence for the affected scope and fails closed with `AUTH_SESSION_REVOKED` or the route's canonical invalid/revoked outcome.
+- Missing, malformed, unavailable, stale, or regressed generation state never means generation zero. For every JWT-bearing control-plane or admission operation, and for every explicit authority check required by a route, token issuance, refresh, logout, or admission contract, the consumer makes one bounded synchronous Account read that returns the current durable values and source versions for all applicable issuer, account, tenant, and membership generations. It then requires each Redis projection value and source version to match that durable response exactly before using the projection. A prior cached Account response, token claim, event position, or Redis timestamp cannot satisfy this check. Account unavailability and a Redis projection timeout, connection failure, or other inability to reach the projection return `AUTH_UNAVAILABLE`. When Account and Redis are reachable, missing, malformed, regressed, or mismatched durable or projected evidence is authoritative invalid/revoked evidence for the affected scope and fails closed with `AUTH_SESSION_REVOKED` or the route's canonical invalid/revoked outcome.
 
 ### Token Capture And Validation
 
@@ -86,8 +86,8 @@ Every other tenant-bearing classification, including a newly introduced classifi
 
 ### Gameplay Boundary
 
-- Protected control-plane and admission operations compare current applicable generations; reads may be pipelined or batched but remain default-deny.
-- Routine gameplay commands do not read generation state. Account events are the fast cutoff path for active bindings, while ADR 0030's periodic batched reconciliation bounds missed-event authority to 60 seconds.
+- JWT-bearing protected control-plane and admission operations, plus the explicit authority checks named by their contracts, compare current applicable generations; reads may be pipelined or batched but remain default-deny. This does not put in-band `PLAY` through generic JWT registry/generation middleware: `PLAY` performs only its explicit bound-session membership, lease, entitlement, routing, and authority-freshness admission checks. Routine gameplay commands add no Account or generation reads, and active-gameplay outage behavior remains governed by ADR 0037.
+- Routine gameplay commands do not read generation state. Account events are the fast cutoff path for active bindings, while ADR 0030's periodic batched reconciliation bounds missed-event authority to 60 seconds as preserved by ADR 0037.
 
 ## Consequences
 
@@ -122,7 +122,7 @@ Short expiry avoids revocation state but cannot meet immediate account-security,
 - Replace `session:auth:revoked_after:*` timestamp projections and comparisons directly in this pre-v1 system; do not retain dual timestamp/generation authority.
 - Prove same-second issuance/revocation ordering, concurrent issuance and generation advancement, set-if-greater replay, missing state, reset/rebuild, and multi-tenant target-scope validation.
 - Prove the closed route-class omission set: tenant-generation advances deny every tenant-bearing route outside the exact three-class allowlist; the explicit `tenant_regular` `platformAdmin` branch requires the route-declared `control-ui` profile, current issuer/account/global role, exact target scope, target-tenant generation, and active `privileged_control` while requiring no membership, and tenant-role branches require live membership and membership generation; `billing_safe_tenant` still requires issuer, account, membership generation, exact tenant binding, and live `tenantAdmin`; support-safe routes reject missing issuer/account/current global role and reject support's use of billing or data-bearing routes; billing-safe cross-tenant routes reject missing issuer/account/global billing role, wrong target scope, and missing `privileged_control`; `pending_deletion_scoped` is separately proven as a no-target classification and is not treated as an allowlist member. Add negative tests proving a newly named class or route cannot inherit an allowlist entry.
-- Preserve the no-per-command gameplay-read boundary and prove the active-session 60-second reconciliation limit separately.
+- Preserve the no-per-command gameplay-read boundary and prove the active-session 60-second reconciliation limit separately, including the bounded active-gameplay outage behavior in ADR 0037.
 
 ## Required Documentation Alignment
 
