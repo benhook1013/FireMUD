@@ -540,6 +540,31 @@ require_message(
     "RecoveryReopenAttemptBlocked must query blocked recovery reopen attempts with reason=incomplete_convergence",
 )
 
+blocked_record = """        - record: recovery_participant_convergence_blocked
+          expr: |
+            (
+              recovery_participant_convergence_state{state="blocked"} == 1
+              and on (environment)
+              recovery_required_participant_inventory_complete == 1
+            )
+            or on (environment, participant)
+            (
+              recovery_participant_convergence_coverage_missing > 0
+            )"""
+if blocked_record not in valid_text:
+    raise AssertionError("canonical participant blocked-convergence recording was not found")
+unguarded_blocked_record = valid_text.replace(
+    blocked_record,
+    """        - record: recovery_participant_convergence_blocked
+          expr: |
+            recovery_participant_convergence_state{state="blocked"} == 1""",
+    1,
+)
+require_message(
+    findings_for(unguarded_blocked_record, validator._validate_reference_prometheus_recordings),
+    "blocked convergence recording must combine current blocked participant state under a complete inventory with fail-closed coverage-missing state",
+)
+
 environment_record = """        - record: recovery_environment_convergence_blocked
           expr: |
             max by (environment) (recovery_participant_convergence_blocked)"""

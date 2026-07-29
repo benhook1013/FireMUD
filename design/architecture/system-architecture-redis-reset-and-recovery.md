@@ -9,7 +9,7 @@ This document describes the intended reset/recovery end state. The currently shi
 - Game Session already has a durable current-boundary ownership row, epoch/fence bumping on pause/resume, durable command status lookup, and startup convergence of accepted-but-unstaged commands to `LOST_BEFORE_STAGING`.
 - Those live surfaces operate on the current `{tenantId, gameInstanceId}` queue boundary rather than the full region/tenant/cluster reset grammar described below.
 - The full `coordination-maintenance recover --mode reset --scope <scope> <session-policy-option>` operation, with exactly one of `--preserve-sessions` or `--invalidate-sessions`, and its internal pause, epoch/reset, ledger-reconciliation, command-convergence, metadata, smoke-check, and release phases remain the target-state operator model; it should not be read as fully implemented tooling in this repository today. Every reset request records one explicit session policy; it is never inferred from scope. Those internal phases are not separate public commands; continuation and abort use the supported controls for the same durable operation. Initial `recover` issues the server-side maintenance lock; every subsequent control in the examples below presents it through `--maintenance-lock-token-file <permissioned-token-file>` (or the documented protected FD form), never as a command-line token value.
-- The canonical preservation vocabulary is `session:game:*` plus pre-auth transport context. The current implementation still stores some pre-auth and lookup details in transitional `sessionctx:*` records/indexes; that implementation mapping is not a separate preservation domain or target-state contract.
+- The canonical preservation vocabulary is `session:game:*` plus pre-auth transport context. The current implementation stores pre-auth/bootstrap transport context in transitional `sessionctx:*` records; gameplay lookup indexes belong to `session:game:index:*`. Neither implementation mapping is a separate preservation domain or target-state contract.
 - The Account-owned authority-generation projections and their repair/replacement workflow are also target state and are not currently implemented and proven end to end. The rules below are the required behavior: set-if-greater is valid only for a missing or lower Redis projection; a projection greater than Account durable authority is poisoned and must be quarantined or replaced through an Account-owned audited workflow.
 
 Operator invocation boundary: every `coordination-maintenance recover`, `continue-recovery`, `resume`, and `release-lock` command shown in this document, including the cold-start and recovery worked examples below, is a target-state-only future example and is unavailable today. The CLI is not currently shipped or proven, so current operators must not invoke it; use the fail-closed fallback below, the shipped Redis recovery procedures in [Redis Operations](./system-architecture-redis-operations.md), and the normal incident escalation path instead.
@@ -323,7 +323,7 @@ Symptoms:
 
 Recommended actions:
 
-- Execute the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) at region scope with an explicit session policy; this example chooses `--preserve-sessions`.
+- Target state only: once the bounded recovery controller and region scope are implemented and proved, it executes the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) at region scope with an explicit session policy; this example chooses `--preserve-sessions`.
 - Apply the explicitly recorded region reset session policy:
   - Leave sessions and other non-region-scoped keys intact unless a broader documented workflow is explicitly chosen.
   - Recreate region-local gameplay bindings for preserved sessions through the rebind step before normal command intake resumes.
@@ -343,8 +343,8 @@ Symptoms:
 Recommended actions:
 
 - Roll out a fixed script version.
-- Execute the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) at tenant scope.
-- Record exactly one tenant session policy, `--preserve-sessions` or `--invalidate-sessions`, when executing the affected tenant reset; never infer it from tenant scope.
+- Target state only: once the bounded recovery controller and tenant scope are implemented and proved, it executes the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) at tenant scope.
+- The future controller records exactly one tenant session policy, `--preserve-sessions` or `--invalidate-sessions`, for the affected tenant reset; it never infers the policy from tenant scope.
 
 Expected impact:
 
@@ -375,8 +375,8 @@ Symptoms:
 
 Recommended actions:
 
-- Plan a **cluster‑scoped reset** as part of a controlled maintenance window.
-- Execute the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) at cluster scope with an explicit session policy; this example chooses `--invalidate-sessions`. The recover operation performs the storage-level wipe only after `scope_paused_and_locked`, the protected Account cutover, replay-fence advance, replay quarantine for at least the maximum gameplay-connect lifetime plus two configured clock-skew intervals from the recorded detection cutoff, durable replay-consume proof, and immutable pre-wipe external authorization/fencing evidence are complete for the same operation and maintenance lock. After replacement startup, it must record and validate separate post-reset replacement verification before continuation or reopen; the replacement facts are not pre-wipe evidence and are not part of the earlier epoch-bump or scope-safe coordination-reset phase.
+- Target state only: once the bounded recovery controller and cluster scope are implemented and proved, it plans a **cluster-scoped reset** as part of a controlled maintenance window.
+- The future controller executes the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) at cluster scope with explicit `--invalidate-sessions`. The recover operation performs the storage-level wipe only after `scope_paused_and_locked`, the protected Account cutover, replay-fence advance, replay quarantine for at least the maximum gameplay-connect lifetime plus two configured clock-skew intervals from the recorded detection cutoff, durable replay-consume proof, and immutable pre-wipe external authorization/fencing evidence are complete for the same operation and maintenance lock. After replacement startup, it must record and validate separate post-reset replacement verification before continuation or reopen; the replacement facts are not pre-wipe evidence and are not part of the earlier epoch-bump or scope-safe coordination-reset phase.
 - Communicate expected impact to tenants and players.
 
 Expected impact:

@@ -290,7 +290,7 @@ require_contains(
 operations_text = (root / "design/architecture/system-architecture-redis-operations.md").read_text(encoding="utf-8")
 
 
-def extract_unique_markdown_section(text, heading):
+def extract_unique_markdown_section(text, heading, source_label):
     heading_pattern = re.compile(rf"^## {re.escape(heading)}[ \t]*(?:\r?\n)?$")
     level_two_heading = re.compile(r"^## ")
     sections = []
@@ -321,8 +321,7 @@ def extract_unique_markdown_section(text, heading):
         sections.append("".join(current_section))
     if len(sections) != 1:
         raise SystemExit(
-            "design/architecture/system-architecture-redis-operations.md: expected exactly one canonical reset section, "
-            f"found {len(sections)}"
+            f"{source_label}: expected exactly one {heading!r} section, found {len(sections)}"
         )
     return sections[0]
 
@@ -338,13 +337,17 @@ fenced_heading_fixture = (
     "## Following section\n"
 )
 fenced_heading_section = extract_unique_markdown_section(
-    fenced_heading_fixture, "Canonical Coordination Reset Sequence"
+    fenced_heading_fixture,
+    "Canonical Coordination Reset Sequence",
+    "fenced heading fixture",
 )
 if "## Not a real section heading" not in fenced_heading_section or "after\n" not in fenced_heading_section:
     raise SystemExit("fenced heading fixture was incorrectly treated as a section boundary")
 
 canonical_reset_text = extract_unique_markdown_section(
-    operations_text, "Canonical Coordination Reset Sequence"
+    operations_text,
+    "Canonical Coordination Reset Sequence",
+    "design/architecture/system-architecture-redis-operations.md",
 )
 required_reset_contract = [
     "Canonical public operation:",

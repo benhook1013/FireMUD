@@ -36,8 +36,18 @@ REQUIRED_BACKUP_RECORDINGS = {
     "recovery_participant_convergence_coverage_missing",
     "recovery_participant_convergence_source_missing",
 }
-CURRENT_BLOCKED_CONVERGENCE_EXPR = re.compile(
-    r'recovery_participant_convergence_state\s*\{\s*state\s*=\s*["\']blocked["\']\s*\}'
+CURRENT_BLOCKED_CONVERGENCE_EXPR = _compact_promql(
+    """
+    (
+      recovery_participant_convergence_state{state="blocked"} == 1
+      and on (environment)
+      recovery_required_participant_inventory_complete == 1
+    )
+    or on (environment, participant)
+    (
+      recovery_participant_convergence_coverage_missing > 0
+    )
+    """
 )
 REQUIRED_ABSENT_ALERT_METRICS = {
     "BackupLastSuccessMetricsAbsent": "backup_last_success_timestamp_seconds",
@@ -1265,11 +1275,14 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
         if len(expressions) == 1
     }
     blocked_convergence_expr = recordings.get("recovery_participant_convergence_blocked") or ""
-    if not CURRENT_BLOCKED_CONVERGENCE_EXPR.search(blocked_convergence_expr):
+    if _compact_promql(blocked_convergence_expr) != CURRENT_BLOCKED_CONVERGENCE_EXPR:
         findings.append(
             Finding(
                 path=path,
-                message="blocked convergence recording must use the current participant state gauge",
+                message=(
+                    "blocked convergence recording must combine current blocked participant state under a complete "
+                    "inventory with fail-closed coverage-missing state"
+                ),
             )
         )
 

@@ -54,12 +54,6 @@ spec:
         - record: backup_artifact_restore_unreadable
           expr: |
             1 - backup_artifact_restore_readable
-        - record: recovery_participant_convergence_blocked
-          expr: |
-            recovery_participant_convergence_state{state="blocked"} == 1
-        - record: recovery_environment_convergence_blocked
-          expr: |
-            max by (environment) (recovery_participant_convergence_blocked)
         - record: recovery_participant_convergence_coverage_missing
           expr: |
             (
@@ -106,6 +100,20 @@ spec:
               ),
               "participant", "__environment__", "", ""
             )
+        - record: recovery_participant_convergence_blocked
+          expr: |
+            (
+              recovery_participant_convergence_state{state="blocked"} == 1
+              and on (environment)
+              recovery_required_participant_inventory_complete == 1
+            )
+            or on (environment, participant)
+            (
+              recovery_participant_convergence_coverage_missing > 0
+            )
+        - record: recovery_environment_convergence_blocked
+          expr: |
+            max by (environment) (recovery_participant_convergence_blocked)
         - record: recovery_participant_convergence_source_missing
           expr: |
             label_replace(
