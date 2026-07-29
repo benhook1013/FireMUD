@@ -9,8 +9,19 @@ Every record must follow `design/architecture/system-architecture-backup-recover
 ## Implementation Status
 
 - `dev-tools/restores/validate-external-credentials.sh hobby-self-hosted` validates the canonical `certificateReissuance`, `jwtHardening`, and `databaseCredentialRotation` control groups; passing this credential check is not complete recovery proof.
-- The checked-in hobby evidence and writer do not yet export or validate the durable controller's complete cold-start recovery state, including `collecting` -> `ready_to_reopen` -> `releasing` -> `finalized`; player-facing reopen remains blocked. The checked-in record is a post-finalization immutable projection, not runtime authority.
-- Recovery continuation is public only as `continueRecovery(operationId, expectedPhase, evidenceRef)`; pause/lock remains an internal durable phase, not a public recovery verb.
+- The checked-in hobby evidence and writer do not yet export or validate the durable controller's complete cold-start recovery state, including `collecting` -> `ready_to_reopen` -> `AWAITING_RESUME` -> `RESUME_AUTHORIZED` -> `releasing` -> `finalized`; player-facing reopen remains blocked. The checked-in record is a post-finalization immutable projection, not runtime authority.
+
+The plaintext `maintenanceLockToken` must be supplied to recovery tooling only through protected stdin, a file descriptor, or a permissioned `0600` token file. It must never be passed as a command-line argument or appear in shell history, process listings, logs, URLs, or evidence.
+
+Public recovery uses `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` followed by `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`; pause/lock and success release remain internal durable phases, not public recovery verbs.
+
+## Controlled Reopen Sequence
+
+The durable recovery operation does not reopen player traffic directly from continuation. After all recovery and pre-release gates pass:
+
+1. `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` uses `expectedPhase=ready_to_reopen` and transitions the operation to `AWAITING_RESUME` without releasing its fence or maintenance lock.
+2. The authenticated public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` uses persisted-form `expectedPhase=awaiting_resume` and records `RESUME_AUTHORIZED` for the exact operation and its recorded scope; it does not release the lock or reopen traffic.
+3. Only the internal success-release phase applies and verifies the reopen postconditions, then transitions the operation to `finalized`. A failed or abandoned operation remains fenced and uses the exact-scope audited `coordination-maintenance release-lock --operation-id <operationId> --scope <scope> --maintenance-lock-token-file <permissioned-token-file> --reason <reason> --evidence-ref <evidenceRef>` control.
 
 Hobby-specific requirements:
 

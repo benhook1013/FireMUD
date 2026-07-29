@@ -4,6 +4,10 @@ This document captures the canonical operator model for Coordination Redis. It c
 
 The invariants and contracts in [`system-architecture-redis.md`](./system-architecture-redis.md) remain authoritative. This doc focuses on named operational flows and migration posture.
 
+## Implementation Status
+
+The canonical reset/recovery contract below is target state, not a claim that the complete durable recovery controller is already shipped. The repository currently has partial control-plane pause/status support and supporting reset/reconciliation components, but does not yet expose the complete public `recover`, `continueRecovery`, `resume`, and audited abandonment surface end to end. The target remains one durable operation with one server-issued maintenance lock: `continueRecovery(... expectedPhase=ready_to_reopen ...)` reconciles pre-release work into `AWAITING_RESUME`, public `resume(... expectedPhase=awaiting_resume ...)` records `RESUME_AUTHORIZED`, and only the internal release phase reaches `finalized`. The Account-owned authority-generation projection repair/replacement workflow described below is likewise target state and is not currently implemented and proven end to end. Current implementation and proof status must be reported separately from this target contract.
+
 ## Default Operator Flows
 
 - select the appropriate AOF profile (`dev_local`, `hobby_self_hosted`, or `production_clustered`) and watch the associated size/restart targets
@@ -22,27 +26,64 @@ Other procedures and tuning advice here are advanced and should not be expanded 
 
 This section is the normative source for the multi-step Coordination Redis reset/recovery workflow. Other runbooks should point here and then describe only scope choice, session policy, evidence, and scenario-specific abort or storage steps.
 
-Canonical sequence:
+Canonical public operation:
 
-1. `coordination-maintenance pause --operation reset ...`
-2. `coordination-maintenance reset ...`
-3. `coordination-maintenance reconcile-ledger ...`
-4. `coordination-maintenance converge-commands ...`
-5. `coordination-maintenance init-meta ...`
-6. `coordination-maintenance rebind-sessions ...` when the chosen scope preserves gameplay sessions after clearing region-local bindings
-7. `coordination-maintenance smoke-check ...`
-8. `coordination-maintenance resume ...`
+`coordination-maintenance recover --mode reset --scope ... (--preserve-sessions|--invalidate-sessions)`
+
+This one public operation acquires the maintenance lock, fences the scope, and runs these ordered phases. The public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` safety gate is required between pre-release continuation and the internal success release:
+
+1. internal pause-and-lock phase
+2. internal epoch-bump and scope-safe coordination-reset phase
+3. internal ledger-reconciliation phase
+4. internal command-convergence phase
+5. internal protected-domain cutover-fencing phase for Account durable authority/token identity and replay-domain quarantine, with immutable evidence
+6. external AOF/deployment reset handoff, when the selected reset requires destructive storage cleanup
+7. internal metadata-initialization phase
+8. internal Account authority and issued-token projection-rebuild phase
+9. internal session-policy phase, including invalidation or preserved-session rebind according to the selected policy
+10. internal post-reset smoke-check phase, with protected admission still closed until this phase passes
+11. `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` with canonical `expectedPhase=ready_to_reopen`, reconciling the controller into `AWAITING_RESUME`
+12. public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` with canonical `expectedPhase=awaiting_resume`, which resolves the operation's recorded scope and records `RESUME_AUTHORIZED` without releasing the lock or traffic fence
+13. internal resume-and-success-release phase
+
+The internal pause-and-lock phase is not a public command or a standalone operation. Only `recover` creates the durable `operationId` and maintenance-lock identity; an interrupted workflow resumes through that same operation or is explicitly abandoned through the audited maintenance-lock release control.
+
+Supported external controls use the following canonical API-to-CLI mapping:
+
+- `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` maps to the continuation control for retrying the same durable operation after a controller restart or an external infrastructure step. The release-boundary invocation uses canonical `expectedPhase=ready_to_reopen`, may reconcile only into `AWAITING_RESUME`, and must match the active operation, phase, server-issued lock, and immutable evidence. It is not the public release authorization.
+- `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` maps to `coordination-maintenance resume --operation-id <operationId> --expected-phase <expectedPhase> --maintenance-lock-token-file <permissioned-token-file> --evidence-ref <evidenceRef>` and is a separate post-recovery safety gate. It uses canonical `expectedPhase=awaiting_resume`, resolves the operation's recorded scope, validates the exact operation, lock, and evidence, durably audits the authenticated actor, atomically records `RESUME_AUTHORIZED`, and does not release the lock or reopen traffic. Any mismatch or missing evidence fails closed.
+- `releaseMaintenanceLock(operationId, scope, maintenanceLockToken, reason, evidenceRef)` maps to `coordination-maintenance release-lock --operation-id <operationId> --scope <scope> ... --maintenance-lock-token-file <permissioned-token-file> --reason <reason> --evidence-ref <evidenceRef>` for audited operator abandonment. The concrete scope selector (for example, `--tenant <tenantId> --region <regionId>` for a region scope) must match the durable operation exactly. It retains the paused/fenced state and never reopens the scope.
+
+No public command may select or invoke an internal phase. The CLI exposes the same controls as `continue-recovery`, `resume`, and `release-lock`; the API names above remain the canonical control-plane names.
+
+The audited abandonment control never runs automatically; an operator must supply the matching operation, scope, maintenance-lock token, reason, and immutable evidence reference.
 
 Rules:
 
-- `pause` is the canonical lock-acquiring step and must drive the chosen scope to canonical `PAUSED` before storage-level wipe or prefix deletion occurs.
-- Capture the `maintenanceLockToken` returned by `pause` and pass it as `--maintenance-lock-token <token>` to every subsequent mutating verb in the workflow: `reset`, `reconcile-ledger`, `converge-commands`, `init-meta`, conditional `rebind-sessions`, `smoke-check`, and `resume`.
-- `reset` is the only supported step that bumps `region_epoch` and emits the authoritative old/new epoch evidence for downstream reconciliation.
-- `reconcile-ledger` and `converge-commands` are required before traffic resumes; replay-first workflows may use those verbs without a preceding `reset`, but reset workflows must not skip them.
-- `init-meta` re-establishes `tick:{tenantRegionTag}:meta` from the durable baseline after the reset step; `{tenantRegionTag}` is the opaque full-scope tag for `<tenantId, gameInstanceId, regionId>`.
-- `rebind-sessions` is conditional. Region-scoped resets preserve gameplay sessions by default, tenant-scoped resets do so only when `--preserve-sessions` is recorded, and cluster-scoped resets invalidate gameplay sessions by default.
-- `smoke-check` is the resume gate proving the new epoch can acquire leases, stage work, converge, and clean up correctly.
-- `resume` is the canonical success-path release step. If the workflow aborts before `resume`, operators must use `coordination-maintenance release-lock ...` rather than inventing an alternate unlock sequence.
+- The operation record and maintenance-lock authority live in a durable control store outside the target Redis deployment so the workflow remains resumable after that deployment is replaced or emptied.
+- The internal pause-and-lock phase must drive the chosen scope to canonical `PAUSED` before storage-level wipe or prefix deletion occurs.
+- Capture the `maintenanceLockToken` returned by that phase and pass it to every subsequent internal phase; no phase reacquires the deployment lock independently.
+- The internal epoch-bump and coordination-reset phase is the only phase that bumps `region_epoch` and emits authoritative old/new epoch evidence for downstream reconciliation.
+- The early epoch-bump/reset phase may perform only scope-safe coordination cleanup after the scope is fenced. It must not delete or recreate a full Coordination Redis deployment or AOF volume.
+- Internal ledger reconciliation and command convergence are required before traffic resumes; replay-first workflows use those same phases without a preceding epoch bump, but reset workflows must not skip them.
+- Internal metadata initialization re-establishes `tick:{tenantRegionTag}:meta` from the durable baseline after scope-safe cleanup and, where applicable, the external AOF/deployment reset; `{tenantRegionTag}` is the opaque full-scope tag for `<tenantId, gameInstanceId, regionId>`.
+- Reset-mode recovery requests Account Service to rebuild and verify the Account issuer, account, tenant, and membership generation projections from Account durable authority and to rebuild and verify the affected `session:auth:token:<tokenHash>` issued-token projections before the smoke phase. Recovery awaits the durable Account result and verifies its returned freshness/generation evidence; it is not a writer of Account-owned projections. Account-owned projection repair may use idempotent set-if-greater only for a missing or lower Redis projection. If a Redis generation is greater than Account durable authority, it is poisoned; the workflow must quarantine or replace that exact scope through an Account-owned audited workflow, recreate it from durable authority, and emit immutable per-scope repair evidence and verification rather than preserving it with set-if-greater. Region- and tenant-scoped resets preserve unaffected Account-owned records but still require exact-generation validation; a cluster reset verifies the Account repair/reset cutover that preceded physical cleanup, then registers replacement issued-token projections and proves exact-token validation before representative-region smoke. The phase emits immutable projection evidence and fails closed on any missing, stale, malformed, mismatched, or poisoned generation or token record.
+- Internal session rebinding is conditional and occurs only after the Account projection phase succeeds. Every region-, tenant-, and cluster-scoped reset records either `--preserve-sessions` or `--invalidate-sessions`; only the former permits preserved-session rebind, and no scope infers the policy.
+- A fresh Coordination Redis keyspace reset, including a destructive full-deployment/AOF reset that produces an empty keyspace, is permitted only after the protected Account authority/token cutover and replay-domain quarantine/fence have completed and their immutable pre-wipe evidence has been recorded. The pre-wipe external evidence is limited to authorization, scope, intended target, and fencing of the old deployment; post-reset replacement facts are not required or available at this gate. It is the external AOF/deployment-reset phase in the canonical sequence, never an early pause/reset step; the external handoff is part of the same durable operation, is not authorized by an empty keyspace, and does not add another public continuation phase.
+- After the replacement starts, the operator records separate immutable `post_reset_replacement_verification` containing replacement endpoint identity, ACL/configuration, empty-keyspace proof, and health after startup. The controller validates both evidence groups against the same `operationId`, scope, and `maintenanceLockToken` before the internal recovery worker proceeds to `ready_to_reopen`; it validates them again as part of the public `resume(... expectedPhase=awaiting_resume ...)` gate. The internal post-reset smoke-check phase proves the new epoch can acquire leases, stage work, converge, and clean up correctly, proves replay-domain quarantine/fencing and durable consume acknowledgement where the reset affects replay admission, and for tenant/cluster scopes samples the required representative regions only after the Account projection and exact-token gates pass. Protected admission remains closed through those projection, token, replacement-verification, and smoke gates; the operation then atomically enters `ready_to_reopen` without dropping the maintenance lock or traffic fence. Its evidence must include the completed Account projection rebuild and any required session-schema-cleanup completion evidence. Only the public `continueRecovery(... expectedPhase=ready_to_reopen ...)` transition may advance it to `AWAITING_RESUME`.
+- The internal resume-and-success-release phase is unreachable until the external public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` control records `RESUME_AUTHORIZED` for the same operation, expected phase, recorded scope, lock, both immutable external evidence groups, Account projection evidence, and replay-domain proof where applicable. Its durable controller transition is atomic, but the external Game Session, Coordination Redis, ingress, affected-scope, and maintenance-lock effects are not one distributed transaction. The phase must durably audit the authorization, retain the fence and lock until each release postcondition is observed, idempotently apply and read back each required postcondition, and may record terminal `SUCCEEDED` only after every current observation succeeds. If a later effect fails, is missing, stale, or ambiguous after an earlier effect was released, the operation enters durable `PARTIAL_RELEASE_RECONCILING`: unreleased effects remain fenced, already-released workloads are re-fenced or otherwise contained, and traffic and normal side effects stay closed until complete containment is observed. Retry uses the same operation and per-effect identities, reconciles already-applied effects without duplication, and may resume release only after the partial-release inventory and containment evidence are durable.
+- If the workflow aborts before terminal success, operators must use the audited `coordination-maintenance release-lock ...` control rather than inventing an alternate unlock sequence.
+
+### External AOF-Reset Handoff
+
+An AOF reset or replacement of the Coordination Redis deployment is an external infrastructure step inside the durable recovery operation. It must not race the recovery controller or use the empty keyspace as evidence that the operation is paused:
+
+1. The recover operation first durably records the resolved operation, scope inventory, maintenance-lock digest/fence, expected target deployment identity, and a paused/fenced phase in the external control store. Protected admission and affected coordination writes remain closed; any early reset work is limited to scope-safe cleanup.
+2. Before destructive reset, the operation establishes the protected Account authority/token cutover and replay-domain quarantine/fence, records their immutable evidence, and verifies that the cutovers are bound to the same operation and scope. It also records immutable pre-wipe authorization/fencing evidence for the authorized action, exact scope, old deployment identity, intended replacement target, and old-endpoint fence. An AOF wipe must not occur before `scope_paused_and_locked` and these same-operation/same-lock fences and evidence exist.
+3. The authorized operator performs the AOF reset or replacement only after the pre-wipe authorization/fencing evidence has been accepted. That evidence cannot include endpoint, ACL/configuration, empty-keyspace, or health facts that do not exist until replacement startup.
+4. The replacement starts with the required empty keyspace and protected credentials/ACLs. After startup, the operator records a separate immutable `post_reset_replacement_verification` containing independent verification of endpoint identity, ACL/configuration, empty-keyspace state, and deployment health after replacement starts. Redis key absence alone is not the pause or ownership proof.
+5. The operator binds both evidence groups to the same durable `operationId`, scope, and server-issued `maintenanceLockToken`. The controller validates `scope_paused_and_locked`, the protected-domain cutover evidence, the immutable pre-wipe authorization/fencing evidence, and the post-reset replacement verification before its internal recovery worker resumes rebuild phases; it never reconstructs the operation or releases the fence from the new empty keyspace. This handoff is durable operation evidence, not an additional public `continueRecovery` phase.
+6. A missing, stale, mismatched, or ambiguous evidence group leaves the operation paused and gameplay admission closed. Internal retries use the same operation-owned state and do not repeat the AOF reset or begin rebuild concurrently. The controller must validate both evidence groups again before public `resume` can record `RESUME_AUTHORIZED`; the only public `continueRecovery` invocation remains the later `expectedPhase=ready_to_reopen` transition into `AWAITING_RESUME`, and the separate internal release is still required before reopening.
 
 ## Redis SLOs & Budgets
 
@@ -85,10 +126,11 @@ Operators should wire alerts directly to these metrics and treat sustained growt
 1. Confirm via metrics or `INFO` that AOF size, restart time, or daily growth is outside the agreed budget.
 2. Schedule a maintenance window.
 3. Keep the control-plane path and maintenance tooling alive long enough to execute the canonical reset handshake; do not stop the very components required to pause, fence, audit, and verify the workflow.
-4. Start the [Canonical Coordination Reset Sequence](#canonical-coordination-reset-sequence) for the affected scope and keep the same maintenance lock token through the full workflow.
-5. Perform the storage-level reset between the canonical `reset` and `reconcile-ledger` steps by stopping Redis, deleting or recreating the AOF volume, and restarting Redis with the desired AOF configuration.
-6. Finish the canonical sequence, including `smoke-check`, before resuming ticks and player traffic.
-7. If the workflow aborts before `resume`, release the lock explicitly with `coordination-maintenance release-lock ...`.
+4. Start the [Canonical Coordination Reset Sequence](#canonical-coordination-reset-sequence) for the affected scope with exactly one explicit session-policy choice, `--preserve-sessions` or `--invalidate-sessions`.
+5. Complete every protected-domain cutover owned by Account Service and any replay-domain quarantine/fence before destructive storage cleanup; the recover operation must receive and verify the returned Account projection and replay evidence while admission remains closed.
+6. Perform the storage-level reset only in the external AOF/deployment reset handoff after `scope_paused_and_locked`, the protected-domain cutovers, replay fencing, and immutable pre-wipe authorization/fencing evidence are established for the same operation and lock, by stopping Redis, deleting or recreating the AOF volume, and restarting Redis with the desired AOF configuration. Record post-reset replacement verification only after the replacement starts. The earlier internal reset phase may perform only scope-safe cleanup; a full-AOF deletion must never precede the protected-domain cutovers or be treated as their authorization boundary.
+7. Allow the single recover operation to complete its internal reconciliation and smoke-check phases to `ready_to_reopen`, then require public `continueRecovery(... expectedPhase=ready_to_reopen ...)` to reach `AWAITING_RESUME`, followed by public `resume(... expectedPhase=awaiting_resume ...)` before the separate internal release phase may finalize and permit ticks or player traffic.
+8. If the workflow aborts, use only the separately audited maintenance-lock release control; do not invoke an internal recovery phase as a public command.
 
 Manual AOF surgery is not supported. Either the AOF is trusted and replayed as-is, or it is discarded and Redis restarts from a clean keyspace.
 
@@ -150,7 +192,7 @@ Runbook:
    - red: `redis_replication_lag_ms >= tail_loss_budget_ms`
 3. If lag is in the acceptable band, promotion is acceptable from a replay perspective.
 4. If lag is in the warning band, investigate immediately and delay promotion unless the failover risk of waiting is worse than accepting a wider tail-loss window.
-5. If lag crosses the red line, either wait for recovery or treat promotion as a deliberate drop-recent-coordination-state event with `pause -> promote -> scoped reset/rebuild` under the normal maintenance-lock and epoch-fencing workflow.
+5. If lag crosses the red line, either wait for recovery or treat promotion as a deliberate drop-recent-coordination-state event handled by one bounded `coordination-maintenance recover --mode reset --scope <scope> (--preserve-sessions|--invalidate-sessions)` operation under the normal maintenance-lock and epoch-fencing workflow.
 
 ## Key Shape Mistakes and Coordination Resets
 
@@ -199,17 +241,19 @@ Session schema cleanup is a hygiene and recovery tool, not a normal steady-state
 - delete via `UNLINK` where possible to avoid blocking the event loop
 - acquire a short-lived per-tenant cleanup lock such as `session-cleanup-lock:<tenantId>`
 - yield between batches and abort early when Redis latency or load is elevated
-- resume from the last cursor or continuation token across bounded runs
+- resume from durable operation cursor/continuation state across bounded runs; callers do not supply an independent resume token
 - emit cleanup metrics such as `session.cleanup_scanned_total`, `session.cleanup_deleted_total`, and `session.cleanup_duration_seconds`, with tenant context in logs
 - provide a dry-run mode before modifying keys in operator-driven cleanup tooling
 
-Canonical cleanup workflow:
+Canonical cleanup operation:
 
-1. `coordination-maintenance pause --operation cleanup --scope tenant --tenant <tenantId>`
-2. `coordination-maintenance session-cleanup --scope tenant --tenant <tenantId> --maintenance-lock-token <token> [--dry-run] [--resume-token <token>]`
-3. `coordination-maintenance resume --scope tenant --tenant <tenantId> --maintenance-lock-token <token>` on success, or `coordination-maintenance release-lock --maintenance-lock-token <token>` on failure or operator abort
+`coordination-maintenance recover --mode session-schema-cleanup --scope tenant --tenant <tenantId> --invalidate-sessions [--dry-run]`
 
-The cleanup command is the only supported mutating path for session-schema cleanup. Ad hoc cleanup Jobs must call this verb rather than encoding their own lock, continuation, or abort behavior.
+The bounded high-level `recover` operation owns the lock, durable cursor/continuation state, internal session-cleanup phase, continuation, abort, and release behavior for a mutating cleanup. Ad hoc cleanup Jobs must call this operation rather than encoding their own lock, continuation, or abort behavior. `session-cleanup` is an internal phase name, not a public command; retry uses the same `operationId` and server-issued `maintenanceLockToken` through `continueRecovery`, not a caller-supplied resume token.
+
+`--dry-run` is a distinct terminal no-mutation path. It may establish the operation-owned inspection boundary and temporary lock/fence, but it must not write, delete, unlink, expire, invalidate, or rebind session data, and it must not apply the session policy. After the bounded inspection, a dedicated internal dry-run finalizer atomically records the no-mutation result, clears only that operation's temporary lock/fence, reaches phase `finalized`, and records status `SUCCEEDED`. The dry run cannot enter `AWAITING_RESUME`, invoke public `resume`, or invoke the abandonment controls `release-lock` / `releaseMaintenanceLock`; it does not require cleanup-completion evidence because no cleanup was performed.
+
+When a mutating cleanup workflow reaches `AWAITING_RESUME`, the public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` gate must use `expectedPhase=awaiting_resume`, resolve the operation's recorded tenant scope, and verify the immutable cleanup completion evidence for the exact tenant and operation, including visited prefixes, scanned/deleted counts, final cursor or continuation state, schema disposition, and completion reason. Missing, partial, ambiguous, or mismatched cleanup evidence retains the lock and fence and fails closed. This completion-evidence gate does not apply to the terminal dry-run path.
 
 Default runbooks should still prefer fixing deployments and relying on TTL over aggressive keyspace scrubbing.
 
@@ -235,14 +279,17 @@ Redis maintenance flows such as session cleanup, scoped resets, normalization mi
 Canonical maintenance-lock behavior:
 
 - lock identity: one active record per Coordination Redis deployment / gameplay environment boundary
-- minimum fields: `operation`, `scope_type`, `tenantId`, `gameInstanceId`, `regionId`, `actor`, `startedAt`, `expiresAt`, `compatibilityClass`, and an evidence or incident reference; `tenantId`, `gameInstanceId`, and `regionId` are nullable or omitted for a deployment-wide lock, and each is required when its corresponding tenant, game-instance, or region scope is included
+- minimum fields: `operationId`, `environmentId` (the canonical deployment/gameplay boundary), `operation`, `scope_type`, `tenantId`, `gameInstanceId`, `regionId`, `actor`, `startedAt`, `expiresAt`, `compatibilityClass`, and an evidence or incident reference; `tenantId`, `gameInstanceId`, and `regionId` are nullable or omitted for a deployment-wide lock, and each is required when its corresponding tenant, game-instance, or region scope is included
+- token contract: `maintenanceLockToken` is an opaque, high-entropy, server-issued capability. The durable operation/lock record stores its token digest together with the operation, environment, scope, authenticated operator principal, expiry, and any absolute operation deadline; callers cannot mint the token or change those bindings by supplying matching-looking fields.
+- trust and validation: the token is trusted only after the control plane resolves it to the active durable operation record and validates the presented `operationId`, environment, operation, scope, compatibility class, and authenticated operator against that record. The token value alone is never authorization.
+- expiry and replay protection: the token is valid only while that exact operation remains active and unexpired. Mutating retries use the same operation/token and durable phase or idempotency record; a duplicate returns the recorded outcome without repeating an external effect, while a stale phase, terminal operation, expired token, or mismatched binding fails closed. Public-transition idempotency records are scoped by verb plus the exact operation-owned tuple, not by `operationId` alone. Refresh may extend the lease only before expiry and within the operation deadline; it does not create a new lock or revive an expired token.
 - acquisition is fail-closed for incompatible operations; operators may only break the lock with an explicit stale-lock or break-glass evidence record
-- acquisition owner: `coordination-maintenance pause --operation ...` is the canonical lock-acquiring command for multi-step restore, reset, cleanup, migration, topology-change, and exceptional backup-related maintenance workflows
-- refresh owner: every subsequent mutating CLI verb in that workflow refreshes the same lock using `maintenanceLockToken`; lock refresh is not a second independent acquisition
-- success release owner: `coordination-maintenance resume ...` is the canonical success-path release step once the scope has safely returned to `RUNNING`
-- failure release owner: `coordination-maintenance release-lock ...` is the canonical failure or operator-abort release step when the workflow stops before resume
+- acquisition owner: the single `coordination-maintenance recover --mode ...` operation acquires the lock for multi-step restore, reset, cleanup, migration, topology-change, and exceptional backup-related maintenance workflows
+- refresh owner: every subsequent internal phase in that workflow refreshes the same lock using `maintenanceLockToken`; lock refresh is not a second independent acquisition or a public phase command
+- success release owner: the recover operation's internal release phase is the canonical success-path release once the scope has safely returned to `RUNNING`
+- failure disposition owner: a failed workflow retains its fence and maintenance lock while its durable operation record remains resumable. `coordination-maintenance release-lock ...` is the explicit audited abandonment step when an operator decides not to resume; it never runs automatically and does not make the scope safe to reopen
 - exceptional backup-related maintenance treats lock-acquisition failure as a skipped/failed maintenance attempt; routine online backup health is independent of this lock and is measured through artifact freshness, lineage, integrity, and restore readability
-- restore recovery and reset tooling must refresh or complete the lock before TTL expiry so another actor cannot start a conflicting pause/reset sequence mid-flow
+- restore recovery and reset tooling must refresh or complete the lock before TTL expiry so another actor cannot start a conflicting maintenance workflow mid-flow
 
 Canonical maintenance-active signal:
 
@@ -262,11 +309,11 @@ Signals include:
 
 Runbook:
 
-1. pause tick scheduling for affected scope
-2. verify PostgreSQL and Redis have converged on a single authoritative epoch and primary
-3. perform scoped coordination reset for each affected region
-4. if the deployment cannot be isolated safely, perform a cluster-scoped reset
-5. resume ticks only once Redis, PostgreSQL, and epoch metadata are consistent
+1. fence every conflicting Redis primary at the infrastructure or network layer and retain external evidence that only the selected primary can accept coordination traffic; do not ask the affected Redis deployment to prove its own fencing
+2. verify PostgreSQL authority and the surviving Redis primary have converged on one authoritative epoch
+3. invoke one `coordination-maintenance recover --mode reset --scope region ... --preserve-sessions` operation for each safely isolated affected region; it clears region-local bindings and blocks normal command intake until preserved sessions complete rebind
+4. if region isolation cannot be proved, retain the external primary fence and invoke one cluster-scoped `recover --mode reset --scope cluster --invalidate-sessions` operation; the cluster fallback keeps traffic blocked and invalidates gameplay sessions according to its explicit policy
+5. let the recover operation own its internal pause/fencing, reset, reconciliation, rebind or invalidation, and smoke verification; then require the external public `resume(operationId, expectedPhase=awaiting_resume, maintenanceLockToken, evidenceRef)` gate before the separate internal success-release phase permits ticks or command intake to resume
 
 ## Normalization and Hash-Tag Migration
 
@@ -274,12 +321,14 @@ Goal: change how `tenantId` / `gameInstanceId` / `regionId` normalization and ha
 
 ### Runbook: Normalization Migration via Reset
 
-1. implement the new normalization version in shared helpers
-2. schedule a maintenance window
-3. drive the affected scope to canonical `PAUSED` through `coordination-maintenance pause --operation migration ...`, then continue using the [Canonical Coordination Reset Sequence](#canonical-coordination-reset-sequence)
-4. deploy services using the new normalization helpers before the canonical `reset` step
-5. start a fresh Coordination Redis deployment or logical database with an empty keyspace after the canonical `reset` step
-6. finish the remaining canonical sequence with the same maintenance lock token and rebuild coordination state from PostgreSQL plus fresh activity
+1. define an immutable migration contract containing the old and new normalization/hash-tag versions, affected scope, maintenance CLI and control-plane build digests, every participating service image digest, and the Lua Script Registry version/digest
+2. explicitly upgrade the maintenance CLI, control plane, services, and Lua registry as one coordinated version set; mixed-version migration is unsupported
+3. schedule a maintenance window and persist the migration contract in the durable recovery operation before mutating Coordination Redis
+4. invoke one bounded `coordination-maintenance recover --mode reset --operation migration --scope ... (--preserve-sessions|--invalidate-sessions)` operation and require the controller to validate that every participant reports the persisted version set and migration contract before reset begins
+5. complete the protected Account authority/token cutover and establish replay-domain quarantine/fencing for that same durable recovery operation; persist immutable evidence binding both protections and the pre-wipe authorization/fencing evidence to its operation identity, migration contract, exact scope, and server-issued maintenance lock, and keep admission closed while any result is missing or ambiguous
+6. only after validating that bound pre-wipe evidence, start a fresh Coordination Redis deployment or logical database with an empty keyspace as the operation's recorded external-infrastructure step
+7. after the replacement starts, record and validate separate immutable `post_reset_replacement_verification` for endpoint identity, ACL/configuration, empty-keyspace state, and health after startup. Rebuild coordination state from PostgreSQL plus fresh activity, then validate normalization, shard locality, Lua registry compatibility, and migration evidence before calling `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` with canonical `expectedPhase=ready_to_reopen`; the controller must validate both external evidence groups before continuation and public `resume(... expectedPhase=awaiting_resume ...)`, after which the internal release phase is required
+8. if the migration cannot safely continue, call the audited abort control with the exact recorded scope selectors: for a region migration, `coordination-maintenance release-lock --operation-id <operationId> --scope region --tenant <tenantId> --game-instance <gameInstanceId> --region <regionId> --maintenance-lock-token-file <permissioned-token-file> --reason <reason> --evidence-ref <evidenceRef>`; tenant migrations use `--scope tenant --tenant <tenantId>`, and cluster migrations use `--scope cluster`. It retains the fence and does not reopen traffic.
 
 ### Runbook: In-Place Normalization Migration
 

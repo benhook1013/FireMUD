@@ -26,6 +26,7 @@ This document is the **conceptual hub** for Redis in FireMUD. It explains the me
 ## Table of Contents
 
 - [How to Use This Hub](#how-to-use-this-hub)
+- [Implementation Status](#implementation-status)
 - [Redis Coordination Invariants](#redis-coordination-invariants)
 - [Redis Profiles](#redis-profiles)
 - [Redis as a Volatile State Layer](#redis-as-a-volatile-state-layer)
@@ -34,6 +35,14 @@ This document is the **conceptual hub** for Redis in FireMUD. It explains the me
 - [Topology Compatibility Overview](#topology-compatibility-overview)
 - [External Invariants Redis Depends On](#external-invariants-redis-depends-on)
 - [Related Documentation](#related-documentation)
+
+---
+
+## Implementation Status
+
+The target authenticated gameplay-session contract below is not fully implemented. Current Game Session runtime state remains in the implementation-local `sessionctx:*` family, including bootstrap context and lookup indexes, rather than the canonical `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` family. The target complete session schema, session-only CAS, and region-binding bridge have not yet converged end to end. The current runtime also derives Redis session TTL directly from `FIREMUD_AUTH_SESSION_EXPIRATION_MS`, with a `3,600,000` ms default, and does not enforce the target five-minute cap.
+
+The target issued-token registry contract and Account-owned authority-generation enforcement are also incomplete and not fully proven. The `session:auth:token:<tokenHash>` registry, issuer/account/tenant/membership generation projections, freshness fences, and their fail-closed consumers must not be treated as live merely because the target key names and validation rules are documented; current runtime coverage and focused proof remain separate implementation gaps.
 
 ---
 
@@ -79,6 +88,7 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
 - Coordination Redis holds volatile structures such as tick queues, `pending` sets, timers, region leases, tick event streams, and scheduler offsets; these structures are expected to be subject to bounded tail-loss and scoped resets as defined in this document and the Redis reset/runbook docs.
 - Application and ops designs must not treat AOF contents or Redis key history as the primary log for audits, analytics, or long-term effect replay; those concerns belong in PostgreSQL-backed ledgers and domain stores.
 - `session:auth:token:<tokenHash>` is a narrow security exception: its exact-token registry record is authoritative for runtime protected admission and per-token revocation. A cryptographically valid JWT is denied when its exact active, permitted registry record is absent or revoked. This runtime authority is distinct from Account's durable issuer, account, tenant, and membership generations; those generations remain Account-owned, and Redis must not advance or recreate them.
+- Account issuer, account, tenant, and membership generation projections are an approved global/account exception to ordinary Coordination Redis reset handling. Account durable authority remains the sole writer and source of truth; Redis is only a required projection. Region- and tenant-scoped resets preserve these projections and re-project/verify exact generations, while a cluster reset may discard them only after the Account repair/reset cutover, then must rebuild and verify them before protected admission reopens.
 - Spring Cloud Gateway has one narrow Coordination Redis authority: one-use connect-token replay consumption under `gateway:connect-token:jti:*` plus its replay-readiness fence. The Gateway fails closed when that replay authority is unavailable, owns the key TTL and reset contract, and must not expand this exception into ownership of gameplay sessions, Account auth state, or general coordination policy.
 
 - **Coordination timeline = `(regionEpoch, tickId)`**
@@ -199,10 +209,11 @@ Operational details (failover behavior, AOF expectations, and tail-loss observab
 
 Multi-key coordination operations in FireMUD must remain **shard-local, idempotent, and lease-guarded**:
 
-- All mutating operations on coordination prefixes (tick queues, `pending` sets, timers, retry structures, locks, leases, and session keys) are performed via registered **Lua scripts** that:
+- All mutating operations on coordination prefixes (tick queues, `pending` sets, timers, retry structures, locks, leases, and session keys) always go through owned **typed key and mutation helpers**. Lua is mandatory only when a helper must provide atomic multi-key behavior; those registered scripts:
   - Validate lease tokens, lock tokens, and monotonic guards (`tickId`, epochs) before writing.
   - Operate only on keys that share the same hash tag and cluster slot.
   - Are deterministic and idempotent with respect to their `KEYS`/`ARGV` arguments and current Redis state.
+- Ordinary single-key mutations use the typed helpers without Lua, and application code and maintenance tooling must not bypass those helpers with raw Redis commands.
 - Application code and maintenance tooling must **not** issue ad-hoc multi-key Redis commands (including `MULTI/EXEC`) over coordination prefixes.
 - Cross-region workflows are implemented as per-region operations or higher-level sagas, not as cross-region Redis transactions.
 
@@ -214,23 +225,27 @@ The detailed scripting rules and categories (region-lease scripts, session-only 
 
 Game Session uses Redis for two related but distinct session concerns:
 
-- **Bootstrap/pre-auth transport context** is created when a socket connects and before gameplay authentication completes. Current Game Session implementations store this context under the `sessionctx:*` key family, such as `sessionctx:session:<sessionId>:context` and `sessionctx:<tenantId>:<sessionId>:context`, with unauthenticated fields such as `accountId = 0`, no `authTokenHash`, no `membershipVersion`, and only bootstrap scope such as tenant, locale, or initial game-instance hints. Gameplay commands must treat these entries as unauthenticated until `LOGIN` succeeds.
+- **Bootstrap/pre-auth transport context** is created when a socket connects and before gameplay authentication completes. It contains only unauthenticated bootstrap scope such as tenant, locale, or initial game-instance hints. Gameplay commands must treat this context as unauthenticated until `LOGIN` succeeds.
 - **Authenticated gameplay session state** is created or promoted after successful `LOGIN` and `PLAY`. The canonical target key family for this state is `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`.
 
-The authenticated gameplay key family is a target-state contract; the current runtime still uses the implementation-local `sessionctx:*` family described above. When the target family is introduced, its payload must use the migration rules below.
+The authenticated gameplay key family is the canonical session-state contract.
 
 Authenticated gameplay session keys capture:
 
 - Socket binding metadata and transport details.
 - Active `characterId` / `tenantId` context.
-- Server-side auth token identity used for Account and other control-plane calls on behalf of this session (`authTokenHash`, `authTokenIssuedAt`, and `authTokenExpiresAt`), so planned refresh, resume, and mid-session revocation checks can be performed without exposing JWTs to gameplay clients.
-- Authoritative tenant membership freshness metadata (for example `membershipVersion`) so reconnect/resume can verify that gameplay admission authority still exists before rebinding.
+- Server-side auth token identity used for Account and other control-plane calls on behalf of this session (`authTokenHash`, `authTokenIssuedAt`, `authTokenExpiresAt`, and `authTokenGeneration`), so planned refresh, resume, and mid-session revocation checks can be performed without exposing JWTs to gameplay clients.
+- The protected `rebindHandleEnvelope`, immutable continuity anchor `continuityBindingExpiresAt`, and authoritative tenant membership freshness metadata (`membershipVersion` and `membershipAuthorityGeneration`) required to complete a restart or resume rotation and verify that gameplay admission authority still exists without exposing the private delegation JWT to gameplay clients.
 - Tick-region participation metadata (for example active region bindings and reconnect context). Per-entity command queues remain under `tick:{tenantRegionTag}:queue:<entityId>` and are reset-tolerant coordination state, not durable session payload.
 - Session-local coordination metadata (for example reconnect state, transport-level pacing, and other per-connection ephemeral fields).
 
-Adding `authTokenExpiresAt` is a target payload-schema change, not an unversioned optional field. Existing or missing-version payloads are treated as `schemaVersion=1`; the target payload carrying the expiry field is `schemaVersion=2`. Readers and CAS scripts that understand both versions must be deployed before writers begin emitting version 2. A version-1 record without `authTokenExpiresAt` is never treated as having an unbounded token lifetime and is not eligible for token refresh or resumable admission; it must be re-established through fresh `LOGIN`/`PLAY` (or an explicitly audited migration that obtains the exact Account-issued expiry). Unknown versions fail closed. This is a target rollout rule; the current `sessionctx:*` implementation has no such canonical `session:game:*` schema migration yet.
+The authenticated gameplay payload is versioned as a complete contract, not by individual fields. The common socket/binding, active character/tenant, tick-region participation, and session-local fields listed above remain required in every version. Existing or missing-version payloads are interpreted as `schemaVersion=1`; its authentication-specific required fields are exactly `authTokenHash` and `authTokenIssuedAt`. Version 1 does not contain the target authority, rebind, membership-freshness, or token-expiry fields. A `schemaVersion=1` record is storage-only and is never eligible for token refresh, resumable admission, or backend authorization; it must be re-established through fresh `LOGIN`/`PLAY` or an explicitly audited migration.
 
-The pre-auth `sessionctx:*` family is a bootstrap/session-context implementation surface, not region-local gameplay authority. It must not be used to admit commands, route tick participation, or bypass the authenticated `session:game:*` / `tick:{tenantRegionTag}:session-binding:<entityId>` contract. When the implementation converges key names, the same semantic split remains: pre-auth transport context may exist before `LOGIN`, but authenticated gameplay binding semantics begin only after successful authentication and gameplay admission.
+`schemaVersion=2` is the target authenticated-session contract and requires the same common fields plus exactly `authTokenHash`, `authTokenIssuedAt`, `authTokenExpiresAt`, `authTokenGeneration`, `rebindHandleEnvelope`, `continuityBindingExpiresAt`, `membershipVersion`, and `membershipAuthorityGeneration` for its authentication-specific payload. Those six newly required fields are not optional extensions: readers, refresh, resume, and admission must reject a version-2 record when any of the eight authentication-specific fields is absent, malformed, or unavailable. Readers and CAS scripts that understand both complete versions must be deployed before writers emit version 2; unknown versions fail closed.
+
+Token rotation summary (normative): Game Session may install a replacement only with a current token-identity fence covering the expected prior `authTokenHash` and `authTokenGeneration`, the expected prior `membershipVersion` and `membershipAuthorityGeneration`, and the binding/rebind lineage. At the rotation CAS linearization point, the prior token's `authTokenExpiresAt` must be present, valid, and later than the trusted current time; an elapsed prior JWT is rejected even if its Redis session record remains. One session-only CAS must atomically compare those expected prior fields and replace `authTokenHash`, `authTokenIssuedAt`, `authTokenExpiresAt`, `authTokenGeneration`, and `rebindHandleEnvelope`, together with refreshed `membershipVersion` and `membershipAuthorityGeneration`. A stale or unavailable fence produces no partial update and fails closed; rotation cannot extend `continuityBindingExpiresAt` or `resumeDeadline`.
+
+Pre-auth transport context is not region-local gameplay authority. It must not be used to admit commands, route tick participation, or bypass the authenticated `session:game:*` / `tick:{tenantRegionTag}:session-binding:<entityId>` contract. Authenticated gameplay binding semantics begin only after successful authentication and gameplay admission.
 
 ### Session and Region-Binding Contract
 
@@ -249,10 +264,30 @@ Session and region participation updates are intentionally **two-phase and monot
    - If `session:game:*` says a newer generation is active, any older `tick:{tenantRegionTag}:session-binding:<entityId>` entry is stale and must be ignored or cleaned up by the next region-lease script.
    - If a region binding survives after the session key is deleted or expires, the next lease-holder treats it as stale and removes it as part of region-local cleanup.
 5. Region reset reconciliation is also generation-based:
-   - A region-scoped coordination reset clears the region-local binding keys for the affected `tick:{tenantRegionTag}:*` family but preserves `session:game:*` and bootstrap `sessionctx:*` entries by default.
-   - Before normal command intake resumes for the affected region, Game Session must run a bounded rebind phase for preserved sessions that still intend to participate in that region. The rebind phase reads authenticated session context, validates current account/membership/revocation state, increments or verifies `binding_generation`, and invokes the same region-lease bridge script that normal `PLAY` / reconnect uses.
-   - Until the rebind succeeds, gameplay admission for that entity/region must return a stage-aware non-applied outcome such as `"REGION_REBIND_REQUIRED"` or require the client to re-`PLAY`; it must not fall back to advisory `session:game:*` or `sessionctx:*` fields as gameplay authority.
+   - A region-scoped coordination reset clears the region-local binding keys for the affected `tick:{tenantRegionTag}:*` family and must carry exactly one explicit session policy, `--preserve-sessions` or `--invalidate-sessions`; there is no implicit default. `--preserve-sessions` retains authenticated gameplay-session and bootstrap transport-context entries for bounded rebind, while `--invalidate-sessions` makes those records non-resumable and requires fresh admission.
+   - Before normal command intake resumes for the affected region, Game Session must run a bounded rebind phase for preserved sessions that still intend to participate in that region. The rebind phase evaluates the complete canonical preserved-session rebind predicate below, increments or verifies `binding_generation`, and invokes the same region-lease bridge script that normal `PLAY` / reconnect uses.
+   - Until the rebind succeeds, gameplay admission for that entity/region must return a stage-aware non-applied outcome such as `"REGION_REBIND_REQUIRED"` or require the client to re-`PLAY`; it must not fall back to advisory session fields as gameplay authority.
    - If preserved session state cannot be validated during the rebind phase, the session remains connected but is no longer admitted to that region until fresh `LOGIN` / `PLAY` succeeds.
+
+The canonical preserved-session rebind predicate requires all of the following before the region bridge may recreate a binding:
+
+- A complete target `schemaVersion=2` authenticated gameplay session payload, including `rebindHandleEnvelope`, `continuityBindingExpiresAt`, `membershipVersion`, and `membershipAuthorityGeneration`; a `schemaVersion=1` or incomplete record is storage-only and cannot be rebound.
+- An exact `session:auth:token:<tokenHash>` registry record that is present, active, unrevoked, unexpired, and matches the session's token identity, account identity, profile, audience, and time fields.
+- Current Account authority for the exact account and tenant, including the applicable `issuerAuthGeneration`, `accountAuthorityGeneration`, `tenantAuthorityGeneration`, caller-bound `membershipAuthorityGeneration`, and private-realm `grantVersion` when applicable, plus current `membershipVersion`, entitlement, revocation, authority-freshness lease, and committed checkpoint evidence.
+- A valid `continuityBindingExpiresAt` and applicable `resumeDeadline` that the rebind does not extend, together with the expected monotonic `binding_generation` and the current operation/region epoch and lease-fence evidence.
+- A successful invocation of the region-lease bridge with the validated identity and generation; `session:game:*` and `sessionctx:*` are not authority substitutes.
+
+A failed preserved-session predicate never implicitly changes the recorded session policy. The operation remains paused and fenced under its existing `operationId` and `maintenanceLockToken`; an explicit audited preserve-to-invalidate transition may compare-and-set the policy under that same lock, recording actor, reason, and immutable evidence before invalidation. If that same-lock transition is unavailable, the operator must complete audited abandonment and start an explicit new recover operation with `--invalidate-sessions`. The invalidation proof is not inferred from rebind failure.
+
+### Canonical Pre-Wipe Gates
+
+For a destructive full-deployment or AOF reset, the canonical pre-wipe gates are named `scope_paused_and_locked`, `account_authority_token_cutover`, `replay_domain_quarantine_fence`, and `immutable_external_handoff_evidence`. These are internal evidence gates, not public commands; every gate must be durably bound to the same `operationId` and server-issued `maintenanceLockToken` before the external storage action occurs.
+
+- `scope_paused_and_locked` proves canonical `PAUSED`, blocked command and batch intake, no in-flight executor work, and no old-epoch coordination writer.
+- `account_authority_token_cutover` proves protected admission is closed and Account's durable authority/token identity cutover and required immutable evidence are complete for the operation's scope.
+- `replay_domain_quarantine_fence` proves the shared replay domain is either verified untouched for a narrower reset or quarantined and fenced for the destructive reset, with its immutable fence evidence recorded.
+- `immutable_external_handoff_evidence` contains only pre-wipe authorization and fencing facts: the old and intended new deployment, fenced endpoint, authorized operator and action, time, and tooling digest. It contains no post-wipe health or replacement observations.
+- `post_reset_replacement_verification` is a separate evidence group recorded after the replacement starts; it proves the replacement endpoint identity, health, ACL/configuration, and empty keyspace before recovery continuation.
 
 This contract keeps region-local correctness shard-safe while still letting reconnect and takeover flows carry session-wide intent. It also means the system tolerates brief mismatches between `session:game:*` and region-local bindings: the region-local binding key is authoritative for gameplay, while `session:game:*` remains authoritative for reconnect semantics.
 
@@ -264,7 +299,6 @@ Key properties:
 - Session entries use a **derived physical Redis TTL** computed from authentication settings (see `infrastructure/environment-and-secrets-catalog.md#authentication--jwt`):
 
   - **Target state:** `session_expiration_ms = min(FIREMUD_AUTH_SESSION_EXPIRATION_MS, 300000)`.
-  - **Current runtime drift:** The live runtime currently uses `sessionExpirationMs` directly, with a `3,600,000` ms default; it does not enforce the target five-minute cap. Treat the five-minute cap above as target-state drift, not as live behavior.
   - `session_expiration_ms` derives the initial gameplay continuity-retention and cleanup horizon. It is not a JWT validity period or a cutoff for healthy uninterrupted play.
   - On successful gameplay admission at `admissionAt`, the session value stores an immutable logical expiry anchor:
 
@@ -277,7 +311,7 @@ Key properties:
   `resumeDeadline = min(continuityBindingExpiresAt, disconnectAt + effective firemud.reconnection.policy.resume-window-ms)`
 
   Resume also requires current account identity, membership authority, entitlement, and revocation checks. The pair is immutable for that disconnection episode: failed reconnects, takeover attempts, and server-token rotation cannot change it. Successful resume consumes the episode; a later connected-to-disconnected transition creates a new pair bounded by the original continuity anchor. A genuinely fresh `PLAY` admission creates a new binding and anchor only after ordinary admission succeeds.
-- JWT validity remains bounded by each token's own `exp` claim. Game Session may atomically rotate `authTokenHash`, `authTokenIssuedAt`, and `authTokenExpiresAt` only after Account validates the token generation and current authority, but token rotation cannot cross blocking revocation authority or extend continuity-binding expiry or resume eligibility.
+- JWT validity remains bounded by each token's own `exp` claim. Game Session may atomically rotate the complete token identity and rebind envelope only after Account validates the current token-identity fence, token lineage generation, and current authority generations, but rotation cannot cross a blocking generation advance or extend continuity-binding expiry or resume eligibility.
 
 Session design assumes **reasonably synchronized clocks** on Game Session nodes (for example, via NTP); large clock skew is treated as an infrastructure misconfiguration, not a normal edge case of the session protocol. The effective disconnected-resume window is the stricter of the remaining continuity-binding lifetime and `firemud.reconnection.policy.resume-window-ms`.
 
@@ -434,9 +468,7 @@ The **Redis Cheat Sheet** maintains a representative prefix → role/owner mappi
 
 When designing or reviewing coordination flows, use this shard-local checklist:
 
-- All mutating Lua scripts for coordination prefixes are either:
-  - Single-key operations, or
-  - Shard-local multi-key operations where all `KEYS` share the same `{tenantRegionTag}`, `{tenantInstanceTag}`, or `{tenantGameplayTag}` hash tag and Redis Cluster slot.
+- All coordination mutations use typed key and mutation helpers. Lua is mandatory only when atomic multi-key behavior requires it; single-key mutations may use a registered Lua implementation but do not require one. Any Lua multi-key operation must be shard-local, with all `KEYS` sharing the same `{tenantRegionTag}`, `{tenantInstanceTag}`, or `{tenantGameplayTag}` hash tag and Redis Cluster slot.
 - Cross-region behavior is implemented via per-region operations and durable follow-up records in PostgreSQL, **not** via cross-region multi-key scripts.
 - Callers always construct keys via shared key helpers (for example, builders in `firemud-common`) so `{tenantRegionTag}`, `{tenantGameplayTag}`, prefixes, and slots remain consistent; scripts and callers must not hand-roll key strings with embedded hostnames, region names, or ad-hoc hash tags.
 - CI and the Lua Script Registry:
@@ -467,7 +499,7 @@ This table lists representative coordination keys and their responsibilities. Fu
 | `automation:timer:{tenantRegionTag}` | Region-scoped Automation & Scripting timer index for `onInterval` and timer coordination. Stored entries remain instance-aware in payload and durable identity (`gameInstanceId`, and plugin identifiers when applicable) even though the Redis key is region-scoped for slotting and reset targeting. |
 | `script-scheduler:{tenantRegionTag}:lastTickId` | Automation & Scripting derived discovery hint for “every N ticks” triggers. Its value contains `{regionEpoch, latestTickId}` and is rejected/rebuilt when the stored epoch differs from the authoritative epoch. It never stores or owns `streamOffset`; `tick-events-offset:{tenantRegionTag}:<consumerId>` is the sole event-stream offset record for each consumer. Durable automation schedules, quotas, and trigger-instance de-duplication live in PostgreSQL; this key is not the source of truth for which scripts should eventually run or whether a due trigger was already emitted. |
 
-Region‑scoped coordination metadata keys share the same full-scope `{tenantRegionTag}` hash tag and therefore carry `<tenantId, gameInstanceId, regionId>` while landing in the same Redis Cluster slot. Instance-scoped projections use `{tenantInstanceTag}` for `<tenantId, gameInstanceId>`, and tenant-scoped gameplay session keys share `{tenantGameplayTag}` for session-only CAS/index updates. Pre-auth `sessionctx:*` and tenant-only auth/quotas are intentionally outside the runtime region scope and must retain their documented lifecycle scope.
+Region‑scoped coordination metadata keys share the same full-scope `{tenantRegionTag}` hash tag and therefore carry `<tenantId, gameInstanceId, regionId>` while landing in the same Redis Cluster slot. Instance-scoped projections use `{tenantInstanceTag}` for `<tenantId, gameInstanceId>`, and tenant-scoped gameplay session keys share `{tenantGameplayTag}` for session-only CAS/index updates. Pre-auth transport context and tenant-only auth/quotas are intentionally outside the runtime region scope and must retain their documented lifecycle scope.
 
 ---
 

@@ -643,6 +643,7 @@ PY
 done
 
 python3 - <<'PY' "$ROOT_DIR" "$TMP_DIR"
+import copy
 import json
 import importlib.util
 import pathlib
@@ -986,9 +987,36 @@ def canonical_recovery_record(finalized_at):
             "replayedThrough": 12,
             "gapFree": True,
         },
+        "erasureOverlayReconciliation": {
+            "stream": "erasures",
+            "artifactErasureHighWater": {"stream": "erasures", "sequence": 10},
+            "initialCatchupHighWater": {"stream": "erasures", "sequence": 11},
+            "restoreHighWater": {"stream": "erasures", "sequence": 12},
+            "sequenceVerification": {
+                "status": "pass",
+                "exclusiveStart": 10,
+                "inclusiveEnd": 11,
+                "ordered": True,
+                "contiguous": True,
+                "complete": True,
+                "gapFree": True,
+                "duplicateFree": True,
+            },
+            "integrityVerification": {"status": "pass", "verified": True},
+            "sequenceDispositions": [
+                {
+                    "stream": "erasures",
+                    "sequence": 12,
+                    "owner": "account-service",
+                    "disposition": "invalidated",
+                    "integrityVerified": True,
+                },
+            ],
+        },
         "backupArtifactLineage": {
             "databaseIdentity": "production",
             "snapshotAt": credential_validated_at,
+            "preSnapshotJournalHighWater": {"stream": "erasures", "sequence": 10},
             "artifactErasureHighWater": {"stream": "erasures", "sequence": 10},
             "erasureHighWaterSnapshotBound": True,
         },
@@ -1017,6 +1045,11 @@ def canonical_recovery_record(finalized_at):
             "targetEnvironmentBound": True,
             "snapshotCredentialsRejected": True,
             "regionEpochFences": "advanced-or-recreated",
+            "accountAuthorityProjections": "rebuilt-and-verified",
+            "accountAuthorityProjectionEvidenceRef": "evidence/account-authority-projections.json",
+            "replayAdmissionFence": "advanced",
+            "replayQuarantine": "lifetime-plus-skew-observed",
+            "replayConsumeEvidenceRef": "evidence/replay-consume.json",
         },
         "backupConfidentialityEvidence": {"status": "pass", "transport": "encrypted", "storage": "encrypted"},
         "durableParticipantConvergence": {"gameplay": {"disposition": "converged"}},
@@ -1098,6 +1131,47 @@ baseline_status, baseline_message = module.validate_recovery_baseline(
 if baseline_status != "pass":
     raise SystemExit(f"valid recovery baseline did not pass: {baseline_message}")
 
+wide_restore_high_water = {"stream": "erasures", "sequence": 40}
+wide_overlay = copy.deepcopy(valid_baseline["erasureOverlayReconciliation"])
+wide_overlay["restoreHighWater"] = wide_restore_high_water
+wide_overlay_status, wide_overlay_message = module.validate_erasure_overlay_reconciliation(
+    wide_overlay,
+    valid_baseline["artifactErasureHighWater"],
+    valid_baseline["initialCatchupHighWater"],
+    wide_restore_high_water,
+    "erasures",
+)
+if (
+    wide_overlay_status != "fail"
+    or "missingCount=28" not in wide_overlay_message
+    or f"missing={list(range(13, 33))}" not in wide_overlay_message
+    or "omittedCount=8" not in wide_overlay_message
+):
+    raise SystemExit(
+        "wide missing sequence interval did not report the true count with a truncated display: "
+        + wide_overlay_message
+    )
+
+pre_snapshot_after_artifact = copy.deepcopy(valid_baseline)
+pre_snapshot_after_artifact["backupArtifactLineage"]["preSnapshotJournalHighWater"] = {
+    "stream": "erasures",
+    "sequence": 12,
+}
+pre_snapshot_after_artifact_path = recovery_dir / "pre-snapshot-after-artifact-baseline.json"
+pre_snapshot_after_artifact_path.write_text(json.dumps(pre_snapshot_after_artifact), encoding="utf-8")
+pre_snapshot_after_artifact_status, pre_snapshot_after_artifact_message = module.validate_recovery_baseline(
+    tmp,
+    str(pre_snapshot_after_artifact_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if pre_snapshot_after_artifact_status != "pass":
+    raise SystemExit(
+        "preSnapshotJournalHighWater above artifact high-water did not pass: "
+        + pre_snapshot_after_artifact_message
+    )
+
 rollback_compatibility_status, rollback_compatibility_message = module.recovery_compatibility_check(
     {
         "generatedAt": past_timestamp,
@@ -1129,9 +1203,375 @@ invalid_baseline_cases = {
         }
     },
     "participant": {"durableParticipantConvergence": {"gameplay": {"disposition": "unknown"}}},
+    "coordination-account-projections": {
+        "coordinationRecoveryEvidence": {
+            **valid_baseline["coordinationRecoveryEvidence"],
+            "accountAuthorityProjections": "missing",
+        }
+    },
+    "coordination-replay-evidence": {
+        "coordinationRecoveryEvidence": {
+            **valid_baseline["coordinationRecoveryEvidence"],
+            "replayConsumeEvidenceRef": "",
+        }
+    },
+    "overlay-restore-boundary-equality-mismatch": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "restoreHighWater": {"stream": "erasures", "sequence": 11},
+        }
+    },
+    "overlay-artifact-boundary-equality-mismatch": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "artifactErasureHighWater": {"stream": "erasures", "sequence": 9},
+        }
+    },
+    "overlay-initial-catchup-boundary-equality-mismatch": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "initialCatchupHighWater": {"stream": "erasures", "sequence": 10},
+        }
+    },
+    "lineage-pre-snapshot": {
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "preSnapshotJournalHighWater": None,
+        }
+    },
+    "lineage-artifact-high-water-mismatch": {
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "artifactErasureHighWater": {"stream": "erasures", "sequence": 9},
+        }
+    },
+    "lineage-snapshot-bound": {
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "erasureHighWaterSnapshotBound": False,
+        }
+    },
+    "lineage-pre-snapshot-stream": {
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "preSnapshotJournalHighWater": {"stream": "other-stream", "sequence": 10},
+        }
+    },
+    "lineage-pre-snapshot-sequence": {
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "preSnapshotJournalHighWater": {"stream": "erasures", "sequence": "10"},
+        }
+    },
+    "lineage-pre-snapshot-below-artifact-high-water": {
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "preSnapshotJournalHighWater": {"stream": "erasures", "sequence": 9},
+        }
+    },
+    "lineage-pre-snapshot-above-restore-high-water": {
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "preSnapshotJournalHighWater": {"stream": "erasures", "sequence": 13},
+        }
+    },
+    "overlay-stream": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "stream": "other-stream",
+        }
+    },
+    "overlay-entry-stream": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                {
+                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+                    "stream": "other-stream",
+                }
+            ],
+        }
+    },
+    "overlay-integrity": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "integrityVerification": {"status": "pass", "verified": False},
+        }
+    },
+    "overlay-entry-integrity": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                {
+                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+                    "integrityVerified": False,
+                }
+            ],
+        }
+    },
+    "overlay-duplicate": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+                valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+            ],
+        }
+    },
+    "overlay-missing-entry": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [],
+        }
+    },
+    "overlay-dispositions-type": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": {},
+        }
+    },
+    "overlay-gap": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceVerification": {
+                **valid_baseline["erasureOverlayReconciliation"]["sequenceVerification"],
+                "gapFree": False,
+            },
+        }
+    },
+    "overlay-sequence-verification-absent": {
+        "erasureOverlayReconciliation": {
+            key: value
+            for key, value in valid_baseline["erasureOverlayReconciliation"].items()
+            if key != "sequenceVerification"
+        }
+    },
+    "overlay-sequence-verification-type": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceVerification": [],
+        }
+    },
+    "overlay-sequence-verification-status": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceVerification": {
+                **valid_baseline["erasureOverlayReconciliation"]["sequenceVerification"],
+                "status": "fail",
+            },
+        }
+    },
+    "overlay-sequence-verification-unordered": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceVerification": {
+                **valid_baseline["erasureOverlayReconciliation"]["sequenceVerification"],
+                "ordered": False,
+            },
+        }
+    },
+    "overlay-out-of-range": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                {
+                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+                    "sequence": 11,
+                }
+            ],
+        }
+    },
+    "overlay-owner-missing": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                {
+                    key: value
+                    for key, value in valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0].items()
+                    if key != "owner"
+                }
+            ],
+        }
+    },
+    "overlay-owner-blank": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                {
+                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+                    "owner": "   ",
+                }
+            ],
+        }
+    },
+    "overlay-disposition": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                {
+                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+                    "disposition": "unknown",
+                }
+            ],
+        }
+    },
+    "overlay-type": {
+        "erasureOverlayReconciliation": ["not-an-object"],
+    },
+    "overlay-entry-type": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": ["not-an-object"],
+        }
+    },
+    "overlay-entry-bool-sequence": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                {
+                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+                    "sequence": True,
+                }
+            ],
+        }
+    },
+    "overlay-entry-non-int-sequence": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceDispositions": [
+                {
+                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+                    "sequence": "12",
+                }
+            ],
+        }
+    },
+    "overlay-object-artifact-boundary-bool-sequence": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "artifactErasureHighWater": {"stream": "erasures", "sequence": True},
+        }
+    },
+    "overlay-object-restore-boundary-non-int-sequence": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "restoreHighWater": {"stream": "erasures", "sequence": "12"},
+        }
+    },
+    "overlay-verification-bounds": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "sequenceVerification": {
+                **valid_baseline["erasureOverlayReconciliation"]["sequenceVerification"],
+                "inclusiveEnd": 12,
+            },
+        }
+    },
+    "overlay-sequence-verification-bool-endpoint": {
+        "artifactErasureHighWater": {"stream": "erasures", "sequence": 1},
+        "initialCatchupHighWater": {"stream": "erasures", "sequence": 1},
+        "erasureReplay": {
+            **valid_baseline["erasureReplay"],
+            "exclusiveStart": 1,
+            "initialCatchupThrough": 1,
+        },
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "artifactErasureHighWater": {"stream": "erasures", "sequence": 1},
+            "initialCatchupHighWater": {"stream": "erasures", "sequence": 1},
+            "sequenceVerification": {
+                **valid_baseline["erasureOverlayReconciliation"]["sequenceVerification"],
+                "exclusiveStart": True,
+                "inclusiveEnd": True,
+            },
+            "sequenceDispositions": [
+                {
+                    **valid_baseline["erasureOverlayReconciliation"]["sequenceDispositions"][0],
+                    "sequence": sequence,
+                }
+                for sequence in range(2, 13)
+            ],
+        },
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "preSnapshotJournalHighWater": {"stream": "erasures", "sequence": 1},
+            "artifactErasureHighWater": {"stream": "erasures", "sequence": 1},
+        },
+    },
+    "overlay-integrity-failed": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "integrityVerification": {"status": "fail", "verified": False},
+        }
+    },
+    "overlay-artifact-boundary-equality-mismatch-at-restore-boundary": {
+        "erasureOverlayReconciliation": {
+            **valid_baseline["erasureOverlayReconciliation"],
+            "artifactErasureHighWater": {"stream": "erasures", "sequence": 12},
+            "initialCatchupHighWater": {"stream": "erasures", "sequence": 11},
+            "restoreHighWater": {"stream": "erasures", "sequence": 12},
+        }
+    },
+    "retained-backlog": {
+        "durableParticipantConvergence": {
+            "gameplay": {"disposition": "fenced_disabled_backlog_retained"},
+        }
+    },
 }
+expected_invalid_baseline_messages = {
+    "controller": "controller lineage must be finalized",
+    "erasure": "erasure replay must be gap-free through restoreHighWater",
+    "coordination": "coordination recovery must prove",
+    "confidentiality": "backup confidentiality evidence must pass",
+    "participant": "unsafe or missing disposition: gameplay",
+    "coordination-account-projections": "coordination recovery must prove",
+    "coordination-replay-evidence": "coordination recovery must prove",
+    "overlay-restore-boundary-equality-mismatch": "restoreHighWater must match the canonical bound exactly",
+    "overlay-artifact-boundary-equality-mismatch": "artifactErasureHighWater must match the canonical bound exactly",
+    "overlay-initial-catchup-boundary-equality-mismatch": "initialCatchupHighWater must match the canonical bound exactly",
+    "lineage-pre-snapshot": "artifact lineage must include a valid",
+    "lineage-artifact-high-water-mismatch": "artifactErasureHighWater must match the snapshot-bound",
+    "lineage-snapshot-bound": "erasureHighWaterSnapshotBound must be true",
+    "lineage-pre-snapshot-stream": "preSnapshotJournalHighWater.stream must match",
+    "lineage-pre-snapshot-sequence": "preSnapshotJournalHighWater.sequence must be an integer",
+    "lineage-pre-snapshot-below-artifact-high-water": "preSnapshotJournalHighWater.sequence must be at or above",
+    "lineage-pre-snapshot-above-restore-high-water": "preSnapshotJournalHighWater.sequence must be at or below",
+    "overlay-stream": "stream must match the canonical erasure stream",
+    "overlay-entry-stream": "sequenceDispositions[0] stream must match the canonical erasure stream",
+    "overlay-integrity": "integrityVerification must be verified with status pass",
+    "overlay-entry-integrity": "sequenceDispositions[0] integrity must be verified",
+    "overlay-duplicate": "contains duplicate sequence 12",
+    "overlay-missing-entry": "missingCount=1, missing=[12]",
+    "overlay-dispositions-type": "sequenceDispositions must be a list",
+    "overlay-gap": "sequenceVerification must prove the canonical bounds and ordered, contiguous, complete, gap-free, duplicate-free initial catch-up interval",
+    "overlay-out-of-range": "sequenceDispositions[0] sequence is outside the final interval",
+    "overlay-owner-missing": "sequenceDispositions[0] owner must be non-empty",
+    "overlay-owner-blank": "sequenceDispositions[0] owner must be non-empty",
+    "overlay-disposition": "has an invalid canonical disposition",
+    "overlay-type": "erasureOverlayReconciliation must be an object",
+    "overlay-entry-type": "sequenceDispositions[0] must be an object",
+    "overlay-entry-bool-sequence": "sequenceDispositions[0] sequence must be an integer",
+    "overlay-entry-non-int-sequence": "sequenceDispositions[0] sequence must be an integer",
+    "overlay-object-artifact-boundary-bool-sequence": "artifactErasureHighWater must match the canonical bound exactly",
+    "overlay-object-restore-boundary-non-int-sequence": "restoreHighWater must match the canonical bound exactly",
+    "overlay-verification-bounds": "sequenceVerification must prove the canonical bounds",
+    "overlay-sequence-verification-absent": "sequenceVerification must prove the canonical bounds",
+    "overlay-sequence-verification-type": "sequenceVerification must prove the canonical bounds",
+    "overlay-sequence-verification-status": "sequenceVerification must prove the canonical bounds",
+    "overlay-sequence-verification-unordered": "sequenceVerification must prove the canonical bounds",
+    "overlay-sequence-verification-bool-endpoint": "sequenceVerification must prove the canonical bounds",
+    "overlay-integrity-failed": "integrityVerification must be verified with status pass",
+    "overlay-artifact-boundary-equality-mismatch-at-restore-boundary": "artifactErasureHighWater must match the canonical bound exactly",
+    "retained-backlog": "unsafe or missing disposition: gameplay",
+}
+if set(invalid_baseline_cases) != set(expected_invalid_baseline_messages):
+    raise SystemExit(
+        "invalid recovery baseline cases and expected messages must have the same exact key set: "
+        f"cases={sorted(invalid_baseline_cases)}, messages={sorted(expected_invalid_baseline_messages)}"
+    )
 for case_name, replacement in invalid_baseline_cases.items():
-    invalid_baseline = {**valid_baseline, **replacement}
+    invalid_baseline = copy.deepcopy(valid_baseline)
+    invalid_baseline.update(copy.deepcopy(replacement))
     invalid_path = recovery_dir / f"invalid-{case_name}-baseline.json"
     invalid_path.write_text(json.dumps(invalid_baseline), encoding="utf-8")
     invalid_status, invalid_message = module.validate_recovery_baseline(
@@ -1141,8 +1581,11 @@ for case_name, replacement in invalid_baseline_cases.items():
         now,
         now,
     )
-    if invalid_status != "fail":
-        raise SystemExit(f"invalid {case_name} recovery baseline was accepted: {invalid_message}")
+    expected_message = expected_invalid_baseline_messages[case_name]
+    if invalid_status != "fail" or expected_message not in invalid_message:
+        raise SystemExit(
+            f"invalid {case_name} recovery baseline failed for the wrong reason: {invalid_message}"
+        )
 
 stale_baseline = {
     **canonical_recovery_record(now - module.dt.timedelta(days=31)),

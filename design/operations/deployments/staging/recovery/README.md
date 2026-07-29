@@ -8,6 +8,11 @@ Before release, store the immutable sanitization result separately as `<recovery
 
 Every player-facing staging recovery record must follow the [canonical recovery record](../../../../architecture/system-architecture-backup-recovery-evidence-and-compliance.md#canonical-recovery-record), including snapshot-bound `artifactErasureHighWater`, immutable `initialCatchupHighWater`, immutable final-cutover `restoreHighWater`, and gap-free erasure replay before reopen. A restore sourced from production also adds the sanitization requirements below.
 
+## Implementation Status
+
+- `validate-external-credentials.sh` validates only the canonical hardening control groups and the separate sanitization-evidence path; a pass is not complete recovery proof.
+- The checked-in exporter writes `<recovery-ref>.json` only after `finalized`; the resulting immutable projection is not runtime authority, and the complete durable controller validation and player-facing staging reopen proof are not yet available.
+
 Staging production-origin requirements:
 
 - `environment` (`staging`)
@@ -36,4 +41,14 @@ Restore validation must fail closed unless `SANITIZATION_EVIDENCE_REF` is presen
 
 `backupConfidentialityEvidence` must prove environment-scoped encryption, least-privilege access and audit, retention/secure deletion, and quarantine, sanitization, validation, and deletion of production-origin data before a non-production drill can expose workloads or retain evidence.
 
-Sanitization evidence supplements the environment-wide cold-start, quarantine, convergence, hardening, smoke, erasure-replay, and controlled-reopen controller state; it does not replace those controls. Recovery continuation uses `continueRecovery(operationId, expectedPhase, evidenceRef)`; pause/lock remains internal controller state. After `finalized`, the exporter writes `<recovery-ref>.json` as the immutable recovery projection and sets its `sanitizationEvidenceRef` to the exact pre-release artifact. The finalized projection is not runtime authority.
+Sanitization evidence supplements the environment-wide cold-start, quarantine, convergence, hardening, smoke, erasure-replay, and controlled-reopen controller state; it does not replace those controls. Public recovery uses `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` followed by `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`; pause/lock and success release remain internal controller state. After `finalized`, the exporter writes `<recovery-ref>.json` as the immutable recovery projection and sets its `sanitizationEvidenceRef` to the exact pre-release artifact.
+
+The plaintext `maintenanceLockToken` must be supplied to recovery tooling only through protected stdin, a file descriptor, or a permissioned `0600` token file. It must never be passed as a command-line argument or appear in shell history, process listings, logs, URLs, or evidence.
+
+## Controlled Reopen Sequence
+
+The durable recovery operation does not reopen staging traffic directly from continuation. After sanitization and all other pre-release gates pass:
+
+1. `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` uses `expectedPhase=ready_to_reopen` and transitions the operation to `AWAITING_RESUME` without releasing its fence or maintenance lock.
+2. The authenticated public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` uses persisted-form `expectedPhase=awaiting_resume` and records `RESUME_AUTHORIZED` for the exact operation and its recorded scope; it does not release the lock or reopen traffic.
+3. Only the internal success-release phase applies and verifies the reopen postconditions, then transitions the operation to `finalized`. A failed or abandoned operation remains fenced and uses the exact-scope audited `coordination-maintenance release-lock --operation-id <operationId> --scope <scope> --maintenance-lock-token-file <permissioned-token-file> --reason <reason> --evidence-ref <evidenceRef>` control.
