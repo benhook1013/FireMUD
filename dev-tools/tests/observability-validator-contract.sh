@@ -540,6 +540,31 @@ require_message(
     "RecoveryReopenAttemptBlocked must query blocked recovery reopen attempts with reason=incomplete_convergence",
 )
 
+blocked_record = """        - record: recovery_participant_convergence_blocked
+          expr: |
+            (
+              recovery_participant_convergence_state{state="blocked"} == 1
+              and on (environment)
+              recovery_required_participant_inventory_complete == 1
+            )
+            or on (environment, participant)
+            (
+              recovery_participant_convergence_coverage_missing > 0
+            )"""
+if blocked_record not in valid_text:
+    raise AssertionError("canonical participant blocked-convergence recording was not found")
+unguarded_blocked_record = valid_text.replace(
+    blocked_record,
+    """        - record: recovery_participant_convergence_blocked
+          expr: |
+            recovery_participant_convergence_state{state="blocked"} == 1""",
+    1,
+)
+require_message(
+    findings_for(unguarded_blocked_record, validator._validate_reference_prometheus_recordings),
+    "blocked convergence recording must combine current blocked participant state under a complete inventory with fail-closed coverage-missing state",
+)
+
 environment_record = """        - record: recovery_environment_convergence_blocked
           expr: |
             max by (environment) (recovery_participant_convergence_blocked)"""
@@ -564,11 +589,15 @@ require_message(
 coverage_record = """        - record: recovery_participant_convergence_coverage_missing
           expr: |
             (
-              recovery_required_participant_inventory == 1
+              (
+                recovery_required_participant_inventory == 1
+                and on (environment)
+                recovery_required_participant_inventory_complete == 1
+              )
               unless on (environment, participant)
               (
                 count by (environment, participant) (
-                  recovery_participant_convergence_state
+                  recovery_participant_convergence_coverage
                 ) > 0
               )
             )
@@ -615,6 +644,11 @@ source_missing_record = """        - record: recovery_participant_convergence_so
             label_replace(
               absent(recovery_required_participant_inventory),
               "source_family", "participant_inventory", "", ""
+            )
+            or
+            label_replace(
+              absent(recovery_participant_convergence_coverage),
+              "source_family", "participant_coverage", "", ""
             )"""
 if source_missing_record not in valid_text:
     raise AssertionError("canonical participant source-missing recording was not found")
@@ -629,7 +663,35 @@ invalid_coverage = valid_text.replace(
 )
 require_message(
     findings_for(invalid_coverage, validator._validate_reference_prometheus_recordings),
-    "participant coverage recording must compare authoritative required-participant inventory with current participant-state coverage while preserving environment scope",
+    "participant coverage recording must compare authoritative required-participant inventory with the current participant coverage projection while preserving environment scope",
+)
+
+unguarded_inventory_coverage = valid_text.replace(
+    """(
+                recovery_required_participant_inventory == 1
+                and on (environment)
+                recovery_required_participant_inventory_complete == 1
+              )""",
+    "recovery_required_participant_inventory == 1",
+    1,
+)
+if unguarded_inventory_coverage == valid_text:
+    raise AssertionError("participant inventory completeness guard fixture did not mutate")
+require_message(
+    findings_for(unguarded_inventory_coverage, validator._validate_reference_prometheus_recordings),
+    "participant coverage recording must compare authoritative required-participant inventory with the current participant coverage projection while preserving environment scope",
+)
+
+state_backed_coverage = valid_text.replace(
+    "recovery_participant_convergence_coverage\n                ) > 0",
+    "recovery_participant_convergence_state\n                ) > 0",
+    1,
+)
+if state_backed_coverage == valid_text:
+    raise AssertionError("state-backed participant coverage fixture did not mutate")
+require_message(
+    findings_for(state_backed_coverage, validator._validate_reference_prometheus_recordings),
+    "participant coverage recording must compare authoritative required-participant inventory with the current participant coverage projection while preserving environment scope",
 )
 
 extra_coverage_branch = valid_text.replace(
@@ -639,7 +701,7 @@ extra_coverage_branch = valid_text.replace(
 )
 require_message(
     findings_for(extra_coverage_branch, validator._validate_reference_prometheus_recordings),
-    "participant coverage recording must compare authoritative required-participant inventory with current participant-state coverage while preserving environment scope",
+    "participant coverage recording must compare authoritative required-participant inventory with the current participant coverage projection while preserving environment scope",
 )
 
 invalid_source_missing = valid_text.replace(
@@ -650,7 +712,7 @@ invalid_source_missing = valid_text.replace(
 )
 require_message(
     findings_for(invalid_source_missing, validator._validate_reference_prometheus_recordings),
-    "participant source-missing recording must report globally absent inventory families with a stable source_family label",
+    "participant source-missing recording must report globally absent inventory and coverage families with a stable source_family label",
 )
 
 invalid_coverage_alert = valid_text.replace(

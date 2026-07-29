@@ -54,20 +54,18 @@ spec:
         - record: backup_artifact_restore_unreadable
           expr: |
             1 - backup_artifact_restore_readable
-        - record: recovery_participant_convergence_blocked
-          expr: |
-            recovery_participant_convergence_state{state="blocked"} == 1
-        - record: recovery_environment_convergence_blocked
-          expr: |
-            max by (environment) (recovery_participant_convergence_blocked)
         - record: recovery_participant_convergence_coverage_missing
           expr: |
             (
-              recovery_required_participant_inventory == 1
+              (
+                recovery_required_participant_inventory == 1
+                and on (environment)
+                recovery_required_participant_inventory_complete == 1
+              )
               unless on (environment, participant)
               (
                 count by (environment, participant) (
-                  recovery_participant_convergence_state
+                  recovery_participant_convergence_coverage
                 ) > 0
               )
             )
@@ -102,6 +100,20 @@ spec:
               ),
               "participant", "__environment__", "", ""
             )
+        - record: recovery_participant_convergence_blocked
+          expr: |
+            (
+              recovery_participant_convergence_state{state="blocked"} == 1
+              and on (environment)
+              recovery_required_participant_inventory_complete == 1
+            )
+            or on (environment, participant)
+            (
+              recovery_participant_convergence_coverage_missing > 0
+            )
+        - record: recovery_environment_convergence_blocked
+          expr: |
+            max by (environment) (recovery_participant_convergence_blocked)
         - record: recovery_participant_convergence_source_missing
           expr: |
             label_replace(
@@ -112,6 +124,11 @@ spec:
             label_replace(
               absent(recovery_required_participant_inventory),
               "source_family", "participant_inventory", "", ""
+            )
+            or
+            label_replace(
+              absent(recovery_participant_convergence_coverage),
+              "source_family", "participant_coverage", "", ""
             )
 
     - name: firemud.recording.player_experience
@@ -441,7 +458,7 @@ spec:
             runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
           annotations:
             summary: Recovery participant convergence coverage is incomplete
-            description: At least one required participant has no current convergence-state series, or an environment inventory projection is incomplete. Keep that environment's recovery-readiness decisions blocked.
+            description: At least one required participant is absent from the current convergence-coverage projection, or an environment inventory projection is incomplete. Keep that environment's recovery-readiness decisions blocked.
         - alert: RecoveryParticipantConvergenceMetricsAbsent
           expr: recovery_participant_convergence_source_missing > 0
           for: 5m
@@ -452,7 +469,7 @@ spec:
             runbook: design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md#backup-observability-and-alerts
           annotations:
             summary: Recovery participant convergence source metrics are absent
-            description: An entire required recovery inventory source family is absent globally. This is a monitoring gap, not environment controller state; do not use the affected telemetry as readiness evidence until the source is restored.
+            description: An entire required recovery inventory or coverage source family is absent globally. This is a monitoring gap, not environment controller state; do not use the affected telemetry as readiness evidence until the source is restored.
         - alert: RecoveryReopenAttemptBlocked
           expr: increase(recovery_reopen_attempt_total{result="blocked",reason="incomplete_convergence"}[5m]) > 0
           for: 0m

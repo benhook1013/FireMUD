@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,8 +36,18 @@ REQUIRED_BACKUP_RECORDINGS = {
     "recovery_participant_convergence_coverage_missing",
     "recovery_participant_convergence_source_missing",
 }
-CURRENT_BLOCKED_CONVERGENCE_EXPR = re.compile(
-    r'recovery_participant_convergence_state\s*\{\s*state\s*=\s*["\']blocked["\']\s*\}'
+CURRENT_BLOCKED_CONVERGENCE_EXPR = _compact_promql(
+    """
+    (
+      recovery_participant_convergence_state{state="blocked"} == 1
+      and on (environment)
+      recovery_required_participant_inventory_complete == 1
+    )
+    or on (environment, participant)
+    (
+      recovery_participant_convergence_coverage_missing > 0
+    )
+    """
 )
 REQUIRED_ABSENT_ALERT_METRICS = {
     "BackupLastSuccessMetricsAbsent": "backup_last_success_timestamp_seconds",
@@ -50,11 +59,15 @@ REQUIRED_ABSENT_ALERT_METRICS = {
 PARTICIPANT_COVERAGE_EXPR = _compact_promql(
     """
     (
-      recovery_required_participant_inventory == 1
+      (
+        recovery_required_participant_inventory == 1
+        and on (environment)
+        recovery_required_participant_inventory_complete == 1
+      )
       unless on (environment, participant)
       (
         count by (environment, participant) (
-          recovery_participant_convergence_state
+          recovery_participant_convergence_coverage
         ) > 0
       )
     )
@@ -104,6 +117,11 @@ PARTICIPANT_SOURCE_MISSING_EXPR = _compact_promql(
     label_replace(
       absent(recovery_required_participant_inventory),
       "source_family", "participant_inventory", "", ""
+    )
+    or
+    label_replace(
+      absent(recovery_participant_convergence_coverage),
+      "source_family", "participant_coverage", "", ""
     )
     """
 )
@@ -1257,11 +1275,14 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
         if len(expressions) == 1
     }
     blocked_convergence_expr = recordings.get("recovery_participant_convergence_blocked") or ""
-    if not CURRENT_BLOCKED_CONVERGENCE_EXPR.search(blocked_convergence_expr):
+    if _compact_promql(blocked_convergence_expr) != CURRENT_BLOCKED_CONVERGENCE_EXPR:
         findings.append(
             Finding(
                 path=path,
-                message="blocked convergence recording must use the current participant state gauge",
+                message=(
+                    "blocked convergence recording must combine current blocked participant state under a complete "
+                    "inventory with fail-closed coverage-missing state"
+                ),
             )
         )
 
@@ -1291,7 +1312,7 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
                 path=path,
                 message=(
                     "participant coverage recording must compare authoritative required-participant inventory "
-                    "with current participant-state coverage while preserving environment scope"
+                    "with the current participant coverage projection while preserving environment scope"
                 ),
             )
         )
@@ -1301,7 +1322,7 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
             Finding(
                 path=path,
                 message=(
-                    "participant source-missing recording must report globally absent inventory families "
+                    "participant source-missing recording must report globally absent inventory and coverage families "
                     "with a stable source_family label"
                 ),
             )
