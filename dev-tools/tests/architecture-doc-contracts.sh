@@ -15,8 +15,8 @@ maintenance_lock_token_prohibition = re.compile(
     r"|\bnever\b"
     r"|\b(?:forbid|forbids|forbidden|prohibit|prohibits|prohibited|"
     r"disallow|disallows|disallowed)\b"
-    r")(?:\b[eE]\.g\.|[^.!?\r\n])*--maintenance-lock-token(?![A-Za-z0-9_-])"
-    r"|--maintenance-lock-token(?![A-Za-z0-9_-])(?:\b[eE]\.g\.|[^.!?\r\n])*"
+    r")(?:\b(?:[eE]\.g\.|[iI]\.e\.|etc\.)|[^.!?\r\n])*--maintenance-lock-token(?![A-Za-z0-9_-])"
+    r"|--maintenance-lock-token(?![A-Za-z0-9_-])(?:\b(?:[eE]\.g\.|[iI]\.e\.|etc\.)|[^.!?\r\n])*"
     r"\b(?:forbidden|prohibited|disallowed)\b"
 )
 fence_start = re.compile(r"^[ \t]*(`{3,}|~{3,})")
@@ -87,6 +87,14 @@ if has_forbidden_maintenance_lock_token_syntax(
     "The public command must not accept, e.g., `--maintenance-lock-token` as a value."
 ):
     raise SystemExit("abbreviated maintenance token prohibition was incorrectly rejected")
+if has_forbidden_maintenance_lock_token_syntax(
+    "The public command must not accept, i.e., `--maintenance-lock-token` as a value."
+):
+    raise SystemExit("i.e. maintenance token prohibition was incorrectly rejected")
+if has_forbidden_maintenance_lock_token_syntax(
+    "The public command must not accept, etc., `--maintenance-lock-token` as a value."
+):
+    raise SystemExit("etc. maintenance token prohibition was incorrectly rejected")
 if not has_forbidden_maintenance_lock_token_syntax(
     "The option is forbidden. `--maintenance-lock-token`"
 ):
