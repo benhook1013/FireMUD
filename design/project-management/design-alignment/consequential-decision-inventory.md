@@ -160,7 +160,7 @@ Packet 2 checklist dispositions record the human review outcome, not an inventor
 - [ ] `JWT-02`
 - [ ] `JWT-03`
 - [ ] `JWT-04`
-- [ ] `REDIS-06`
+- [x] `REDIS-06` — `revised` on 2026-07-19; [ADR 0039](../../architecture/decisions/adr-0039-bounded-redis-operator-maintenance-surface.md)
 - [ ] `MS-AA-CONTROL-LOGIN-SCOPE`
 - [ ] `MS-AA-TOKEN-REVOCATION`
 

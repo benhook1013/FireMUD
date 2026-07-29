@@ -243,6 +243,9 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0035-single-record-issued-token-registry.md": adr_allocation(
         "SF-1", "Accepted", "AA-1", "AA-2", "SF-2"
     ),
+    "design/architecture/decisions/adr-0039-bounded-redis-operator-maintenance-surface.md": adr_allocation(
+        "PO-1", "Accepted", "PO-4", "SF-1", "SF-2"
+    ),
     "design/architecture/decisions/adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md": adr_allocation(
         "AA-1", "Accepted", "PO-1", "SF-2"
     ),
