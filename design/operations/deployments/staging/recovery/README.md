@@ -31,7 +31,7 @@ Staging production-origin requirements:
 - `sanitizedBy`
 - `controlsApplied` (list of redaction/anonymization controls)
 - `validationEvidence` (checks proving sanitized state before reopening traffic)
-- `sanitizationEvidenceRef` (successful-finalization projection reference to the exact pre-release sanitization artifact; the controller must have `phase=finalized` and `status=SUCCEEDED`)
+- `sanitizationEvidenceRef` (reference to the exact pre-release sanitization artifact retained by the successful-finalization projection; the controller must have `phase=finalized` and `status=SUCCEEDED`, but the reference must not identify the recovery projection itself)
 - `certificateReissuance`
 - `jwtHardening`
 - `databaseCredentialRotation`

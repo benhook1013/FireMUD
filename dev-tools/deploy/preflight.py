@@ -47,7 +47,7 @@ SAFE_RECOVERY_DISPOSITIONS = {
     "invalidated",
 }
 MISSING_SEQUENCE_DISPLAY_LIMIT = 20
-JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
+JsonValue = bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"] | None
 JsonObject = dict[str, JsonValue]
 
 # These are the policy results emitted by this executable. The two JWT policies

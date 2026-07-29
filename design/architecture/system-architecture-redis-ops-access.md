@@ -108,10 +108,10 @@ The target operator model interacts with coordination state through **supported 
   - `dump pending` and `list locks for entity` are internal-only diagnostic views, not public capabilities. Any needed evidence is returned through the canonical status/progress or operation audit surfaces.
   - `trigger scoped reset` maps to the public `recover(scope, sessionPolicy, mode=reset)` operation; it is not a separate public verb. Continuation, release authorization, and audited abandonment map to `continueRecovery`, `resume`, and `release-lock` respectively.
   - Guarantees that all keys and scripts are invoked via the shared descriptors and registry.
-- Target-state integration rule, not a current invocation instruction: after this tooling is implemented and proven, runbooks and Helm hooks may call it for any write operation on coordination prefixes. Current runbooks and Helm hooks must not invoke the unavailable CLI. Raw Redis commands remain limited to:
-  - Node-level operations such as `FLUSHALL`/AOF reset during a coordinated reset (already covered by the Redis Operations doc).
+- Target-state integration rule, not a current invocation instruction: after this tooling is implemented and proven, runbooks and Helm hooks may call it for any write operation on coordination prefixes. Current runbooks and Helm hooks must not invoke the unavailable CLI. Raw Redis access is limited to:
   - Read-only inspection via the ops user.
-  - Incident-only break-glass writes under the documented incident procedure, followed by the required scoped reset and verification; they are not normal-operation commands.
+  - The external infrastructure step of a bounded `recover` operation for node-level destructive actions such as `FLUSHALL` or AOF reset. The controller must already own the durable `operationId` and maintenance lock, have reached `scope_paused_and_locked`, completed the protected Account authority/token cutover and replay-domain quarantine/fence, and retained immutable pre-wipe evidence bound to the exact deployment and scope. The operator must then retain immutable post-reset replacement verification before continuation.
+  - Incident-only break-glass writes under the documented incident procedure, followed by the required scoped reset and verification; they are not normal-operation commands and cannot bypass the durable operation, maintenance-lock, cutover, evidence, or post-reset gates above.
 
 ### Canonical Control-Plane and CLI Contract
 

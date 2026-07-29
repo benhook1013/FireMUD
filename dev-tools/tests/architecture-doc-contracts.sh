@@ -61,7 +61,7 @@ def advance_fenced_block_state(line, in_fenced_block, fence_marker, opening_line
     return in_fenced_block, fence_marker, opening_line_number
 
 
-def has_forbidden_maintenance_lock_token_syntax(text):
+def has_forbidden_maintenance_lock_token_syntax(text, source_path=None):
     in_fenced_example = False
     fence_marker = None
     opening_line_number = None
@@ -78,8 +78,9 @@ def has_forbidden_maintenance_lock_token_syntax(text):
                 return True
 
     if in_fenced_example:
+        source_prefix = f"{source_path}: " if source_path is not None else ""
         raise SystemExit(
-            "unterminated fenced example opened at line "
+            f"{source_prefix}unterminated fenced example opened at line "
             f"{opening_line_number}"
         )
 
@@ -149,6 +150,16 @@ except SystemExit as error:
         raise SystemExit(f"unexpected unterminated fence diagnostic: {error}")
 else:
     raise SystemExit("unterminated fence was not rejected")
+try:
+    has_forbidden_maintenance_lock_token_syntax(
+        unterminated_fence_fixture,
+        "design/example.md",
+    )
+except SystemExit as error:
+    if str(error) != "design/example.md: unterminated fenced example opened at line 2":
+        raise SystemExit(f"unexpected path-aware fence diagnostic: {error}")
+else:
+    raise SystemExit("unterminated fence with source path was not rejected")
 
 def require_contains(path, snippets):
     text = (root / path).read_text(encoding="utf-8")
@@ -162,7 +173,7 @@ for path in (root / "design").rglob("*.md"):
         raise SystemExit(f"{path}: use the canonical <deploymentEventId> path placeholder")
     if obsolete_public_resume_signature in text:
         raise SystemExit(f"{path}: uses obsolete caller-supplied recovery scope")
-    if has_forbidden_maintenance_lock_token_syntax(text):
+    if has_forbidden_maintenance_lock_token_syntax(text, path):
         raise SystemExit(
             f"{path}: recovery command examples must not expose "
             "`--maintenance-lock-token` command-line syntax; explicit prose "
