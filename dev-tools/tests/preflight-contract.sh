@@ -1015,8 +1015,22 @@ def canonical_recovery_record(finalized_at):
         },
         "backupArtifactLineage": {
             "databaseIdentity": "production",
+            "snapshotIdentity": "snapshot-production-1",
             "snapshotAt": credential_validated_at,
-            "preSnapshotJournalHighWater": {"stream": "erasures", "sequence": 10},
+            "preSnapshotJournalHighWater": {
+                "stream": "erasures",
+                "sequence": 10,
+                "observationId": "observation-1",
+                "observedAt": timestamp(restored_at - module.dt.timedelta(minutes=1)),
+                "observationDigest": "sha256:observation-1",
+            },
+            "preSnapshotJournalBoundaryWitness": {
+                "observationId": "observation-1",
+                "observationDigest": "sha256:observation-1",
+                "snapshotIdentity": "snapshot-production-1",
+                "snapshotOpenedAt": credential_validated_at,
+                "evidenceRef": "evidence/pre-snapshot-journal-boundary.json",
+            },
             "artifactErasureHighWater": {"stream": "erasures", "sequence": 10},
             "erasureHighWaterSnapshotBound": True,
         },
@@ -1199,6 +1213,7 @@ for boundary_sequence in ("10", True):
 
 pre_snapshot_after_artifact = copy.deepcopy(valid_baseline)
 pre_snapshot_after_artifact["backupArtifactLineage"]["preSnapshotJournalHighWater"] = {
+    **valid_baseline["backupArtifactLineage"]["preSnapshotJournalHighWater"],
     "stream": "erasures",
     "sequence": 12,
 }
@@ -1230,6 +1245,7 @@ intervening_coverage_entry = {
 }
 pre_snapshot_before_artifact = copy.deepcopy(valid_baseline)
 pre_snapshot_before_artifact["backupArtifactLineage"]["preSnapshotJournalHighWater"] = {
+    **valid_baseline["backupArtifactLineage"]["preSnapshotJournalHighWater"],
     "stream": "erasures",
     "sequence": 9,
 }
@@ -1435,28 +1451,94 @@ invalid_baseline_cases = {
             "erasureHighWaterSnapshotBound": False,
         }
     },
+    "lineage-pre-snapshot-witness-missing": {
+        "backupArtifactLineage": {
+            key: value
+            for key, value in valid_baseline["backupArtifactLineage"].items()
+            if key != "preSnapshotJournalBoundaryWitness"
+        }
+    },
+    "lineage-pre-snapshot-observation-id-mismatch": {
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "preSnapshotJournalBoundaryWitness": {
+                **valid_baseline["backupArtifactLineage"]["preSnapshotJournalBoundaryWitness"],
+                "observationId": "observation-other",
+            },
+        }
+    },
+    "lineage-pre-snapshot-observation-digest-mismatch": {
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "preSnapshotJournalBoundaryWitness": {
+                **valid_baseline["backupArtifactLineage"]["preSnapshotJournalBoundaryWitness"],
+                "observationDigest": "sha256:observation-other",
+            },
+        }
+    },
+    "lineage-pre-snapshot-identity-mismatch": {
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "preSnapshotJournalBoundaryWitness": {
+                **valid_baseline["backupArtifactLineage"]["preSnapshotJournalBoundaryWitness"],
+                "snapshotIdentity": "snapshot-other",
+            },
+        }
+    },
+    "lineage-pre-snapshot-opening-mismatch": {
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "preSnapshotJournalBoundaryWitness": {
+                **valid_baseline["backupArtifactLineage"]["preSnapshotJournalBoundaryWitness"],
+                "snapshotOpenedAt": timestamp(
+                    now - module.dt.timedelta(minutes=29)
+                ),
+            },
+        }
+    },
+    "lineage-pre-snapshot-observation-not-before-opening": {
+        "backupArtifactLineage": {
+            **valid_baseline["backupArtifactLineage"],
+            "preSnapshotJournalHighWater": {
+                **valid_baseline["backupArtifactLineage"]["preSnapshotJournalHighWater"],
+                "observedAt": valid_baseline["backupArtifactLineage"]["snapshotAt"],
+            },
+        }
+    },
     "lineage-pre-snapshot-stream": {
         "backupArtifactLineage": {
             **valid_baseline["backupArtifactLineage"],
-            "preSnapshotJournalHighWater": {"stream": "other-stream", "sequence": 10},
+            "preSnapshotJournalHighWater": {
+                **valid_baseline["backupArtifactLineage"]["preSnapshotJournalHighWater"],
+                "stream": "other-stream",
+            },
         }
     },
     "lineage-pre-snapshot-sequence": {
         "backupArtifactLineage": {
             **valid_baseline["backupArtifactLineage"],
-            "preSnapshotJournalHighWater": {"stream": "erasures", "sequence": "10"},
+            "preSnapshotJournalHighWater": {
+                **valid_baseline["backupArtifactLineage"]["preSnapshotJournalHighWater"],
+                "sequence": "10",
+            },
         }
     },
     "lineage-pre-snapshot-below-artifact-high-water": {
         "backupArtifactLineage": {
             **valid_baseline["backupArtifactLineage"],
-            "preSnapshotJournalHighWater": {"stream": "erasures", "sequence": 9},
+            "preSnapshotJournalHighWater": {
+                **valid_baseline["backupArtifactLineage"]["preSnapshotJournalHighWater"],
+                "sequence": 9,
+            },
         }
     },
     "lineage-pre-snapshot-above-restore-high-water": {
         "backupArtifactLineage": {
             **valid_baseline["backupArtifactLineage"],
-            "preSnapshotJournalHighWater": {"stream": "erasures", "sequence": 13},
+            "preSnapshotJournalHighWater": {
+                **valid_baseline["backupArtifactLineage"]["preSnapshotJournalHighWater"],
+                "sequence": 13,
+            },
         }
     },
     "overlay-stream": {
@@ -1721,6 +1803,12 @@ expected_invalid_baseline_messages = {
     "lineage-pre-snapshot-sequence": "preSnapshotJournalHighWater.sequence must be an integer",
     "lineage-pre-snapshot-below-artifact-high-water": "interveningErasureCoverageProof must be an object",
     "lineage-pre-snapshot-above-restore-high-water": "preSnapshotJournalHighWater.sequence must be at or below",
+    "lineage-pre-snapshot-witness-missing": "preSnapshotJournalBoundaryWitness must be an object",
+    "lineage-pre-snapshot-observation-id-mismatch": "observationId must match preSnapshotJournalHighWater.observationId",
+    "lineage-pre-snapshot-observation-digest-mismatch": "observationDigest must match preSnapshotJournalHighWater.observationDigest",
+    "lineage-pre-snapshot-identity-mismatch": "snapshotIdentity must match snapshotIdentity",
+    "lineage-pre-snapshot-opening-mismatch": "snapshotOpenedAt must exactly equal snapshotAt",
+    "lineage-pre-snapshot-observation-not-before-opening": "observedAt must strictly precede snapshot opening",
     "overlay-stream": "stream must match the canonical erasure stream",
     "overlay-entry-stream": "sequenceDispositions[0] stream must match the canonical erasure stream",
     "overlay-integrity": "integrityVerification must be verified with status pass",

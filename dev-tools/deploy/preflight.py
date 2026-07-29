@@ -329,6 +329,99 @@ def validate_intervening_erasure_coverage_header(
     return ("pass", "", value)
 
 
+def validate_pre_snapshot_journal_boundary_witness(
+    lineage: JsonObject,
+    pre_snapshot_high_water: JsonObject,
+) -> tuple[str, str]:
+    label = "Recovery compatibility baseline artifact lineage"
+    snapshot_identity = lineage.get("snapshotIdentity")
+    if not isinstance(snapshot_identity, str) or not snapshot_identity.strip():
+        return ("fail", f"{label}.snapshotIdentity must be a non-empty immutable identity")
+    snapshot_at = lineage.get("snapshotAt")
+    try:
+        snapshot_opened_at = parse_timestamp(snapshot_at, f"{label}.snapshotAt")
+    except ValueError as exc:
+        return ("fail", f"{label}.snapshotAt must be a valid timestamp: {exc}")
+
+    observation_id = pre_snapshot_high_water.get("observationId")
+    if not isinstance(observation_id, str) or not observation_id.strip():
+        return ("fail", f"{label}.preSnapshotJournalHighWater.observationId must be non-empty")
+    observed_at = pre_snapshot_high_water.get("observedAt")
+    try:
+        observed_at_dt = parse_timestamp(
+            observed_at,
+            f"{label}.preSnapshotJournalHighWater.observedAt",
+        )
+    except ValueError as exc:
+        return (
+            "fail",
+            f"{label}.preSnapshotJournalHighWater.observedAt must be a valid timestamp: {exc}",
+        )
+    observation_digest = pre_snapshot_high_water.get("observationDigest")
+    if (
+        not isinstance(observation_digest, str)
+        or not observation_digest.startswith("sha256:")
+        or not observation_digest[len("sha256:") :].strip()
+    ):
+        return (
+            "fail",
+            f"{label}.preSnapshotJournalHighWater.observationDigest must be a non-empty sha256-prefixed digest",
+        )
+
+    witness = lineage.get("preSnapshotJournalBoundaryWitness")
+    if not isinstance(witness, dict):
+        return ("fail", f"{label}.preSnapshotJournalBoundaryWitness must be an object")
+    witness_observation_id = witness.get("observationId")
+    if not isinstance(witness_observation_id, str) or not witness_observation_id.strip():
+        return ("fail", f"{label}.preSnapshotJournalBoundaryWitness.observationId must be non-empty")
+    if witness_observation_id != observation_id:
+        return (
+            "fail",
+            f"{label}.preSnapshotJournalBoundaryWitness.observationId must match preSnapshotJournalHighWater.observationId",
+        )
+    witness_observation_digest = witness.get("observationDigest")
+    if not isinstance(witness_observation_digest, str) or not witness_observation_digest.strip():
+        return ("fail", f"{label}.preSnapshotJournalBoundaryWitness.observationDigest must be non-empty")
+    if witness_observation_digest != observation_digest:
+        return (
+            "fail",
+            f"{label}.preSnapshotJournalBoundaryWitness.observationDigest must match preSnapshotJournalHighWater.observationDigest",
+        )
+    witness_snapshot_identity = witness.get("snapshotIdentity")
+    if not isinstance(witness_snapshot_identity, str) or not witness_snapshot_identity.strip():
+        return ("fail", f"{label}.preSnapshotJournalBoundaryWitness.snapshotIdentity must be non-empty")
+    if witness_snapshot_identity != snapshot_identity:
+        return (
+            "fail",
+            f"{label}.preSnapshotJournalBoundaryWitness.snapshotIdentity must match snapshotIdentity",
+        )
+    witness_snapshot_opened_at = witness.get("snapshotOpenedAt")
+    try:
+        parse_timestamp(
+            witness_snapshot_opened_at,
+            f"{label}.preSnapshotJournalBoundaryWitness.snapshotOpenedAt",
+        )
+    except ValueError as exc:
+        return (
+            "fail",
+            f"{label}.preSnapshotJournalBoundaryWitness.snapshotOpenedAt must be a valid timestamp: {exc}",
+        )
+    if witness_snapshot_opened_at != snapshot_at:
+        return (
+            "fail",
+            f"{label}.preSnapshotJournalBoundaryWitness.snapshotOpenedAt must exactly equal snapshotAt",
+        )
+    evidence_ref = witness.get("evidenceRef")
+    if not isinstance(evidence_ref, str) or not evidence_ref.strip():
+        return ("fail", f"{label}.preSnapshotJournalBoundaryWitness.evidenceRef must be non-empty")
+    if observed_at_dt >= snapshot_opened_at:
+        return (
+            "fail",
+            f"{label}.preSnapshotJournalHighWater.observedAt must strictly precede snapshot opening",
+        )
+    return ("pass", "")
+
+
 def validate_intervening_erasure_coverage_entry(
     value: JsonValue,
     label: str,
@@ -804,6 +897,12 @@ def validate_recovery_baseline(
             "fail",
             "Recovery compatibility baseline preSnapshotJournalHighWater.sequence must be at or below restoreHighWater",
         )
+    witness_status, witness_message = validate_pre_snapshot_journal_boundary_witness(
+        backup_artifact_lineage,
+        pre_snapshot_journal_high_water,
+    )
+    if witness_status != "pass":
+        return (witness_status, witness_message)
     intervening_coverage_proof = backup_artifact_lineage.get("interveningErasureCoverageProof")
     if pre_snapshot_sequence < artifact_sequence:
         proof_status, proof_message = validate_intervening_erasure_coverage_proof(

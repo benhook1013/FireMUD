@@ -44,26 +44,44 @@ def sentence_containing(text, position):
     return text[start + 1 : min(end + 1, len(text))]
 
 
+def advance_fenced_block_state(line, in_fenced_block, fence_marker, opening_line_number, line_number):
+    fence = fence_start.match(line)
+    if fence is None:
+        return in_fenced_block, fence_marker, opening_line_number
+
+    marker = fence.group(1)
+    if not in_fenced_block:
+        return True, marker, line_number
+    if (
+        marker[0] == fence_marker[0]
+        and len(marker) >= len(fence_marker)
+        and line[fence.end(1) :].strip(" \t\r\n") == ""
+    ):
+        return False, None, None
+    return in_fenced_block, fence_marker, opening_line_number
+
+
 def has_forbidden_maintenance_lock_token_syntax(text):
     in_fenced_example = False
     fence_marker = None
-    for line in text.splitlines(keepends=True):
-        fence = fence_start.match(line)
-        if fence:
-            marker = fence.group(1)
-            if not in_fenced_example:
-                in_fenced_example = True
-                fence_marker = marker
-            elif (
-                marker[0] == fence_marker[0]
-                and len(marker) >= len(fence_marker)
-                and line[fence.end(1) :].strip(" \t\r\n") == ""
-            ):
-                in_fenced_example = False
-                fence_marker = None
+    opening_line_number = None
+    for line_number, line in enumerate(text.splitlines(keepends=True), start=1):
+        in_fenced_example, fence_marker, opening_line_number = advance_fenced_block_state(
+            line,
+            in_fenced_example,
+            fence_marker,
+            opening_line_number,
+            line_number,
+        )
         if in_fenced_example:
             if maintenance_lock_token_syntax.search(line):
                 return True
+
+    if in_fenced_example:
+        raise SystemExit(
+            "unterminated fenced example opened at line "
+            f"{opening_line_number}"
+        )
 
     for match in maintenance_lock_token_syntax.finditer(text):
         if maintenance_lock_token_prohibition.search(
@@ -119,6 +137,18 @@ if not has_forbidden_maintenance_lock_token_syntax(
     "```text\n```unsafe --maintenance-lock-token <token>\n```"
 ):
     raise SystemExit("fence marker with trailing text incorrectly closed the fenced example")
+if has_forbidden_maintenance_lock_token_syntax(
+    "```text\nsafe example\n```\nThe option is forbidden: --maintenance-lock-token"
+):
+    raise SystemExit("balanced fence incorrectly kept the outer text fenced")
+unterminated_fence_fixture = "preamble\n```text\nsafe example\n"
+try:
+    has_forbidden_maintenance_lock_token_syntax(unterminated_fence_fixture)
+except SystemExit as error:
+    if str(error) != "unterminated fenced example opened at line 2":
+        raise SystemExit(f"unexpected unterminated fence diagnostic: {error}")
+else:
+    raise SystemExit("unterminated fence was not rejected")
 
 def require_contains(path, snippets):
     text = (root / path).read_text(encoding="utf-8")
@@ -257,7 +287,7 @@ def extract_unique_markdown_section(text, heading):
     in_fenced_block = False
     fence_marker = None
 
-    for line in text.splitlines(keepends=True):
+    for line_number, line in enumerate(text.splitlines(keepends=True), start=1):
         is_heading = not in_fenced_block and level_two_heading.match(line)
         if is_heading:
             if current_section is not None:
@@ -268,19 +298,13 @@ def extract_unique_markdown_section(text, heading):
         elif current_section is not None:
             current_section.append(line)
 
-        fence = fence_start.match(line)
-        if fence:
-            marker = fence.group(1)
-            if not in_fenced_block:
-                in_fenced_block = True
-                fence_marker = marker
-            elif (
-                marker[0] == fence_marker[0]
-                and len(marker) >= len(fence_marker)
-                and line[fence.end(1) :].strip(" \t\r\n") == ""
-            ):
-                in_fenced_block = False
-                fence_marker = None
+        in_fenced_block, fence_marker, _ = advance_fenced_block_state(
+            line,
+            in_fenced_block,
+            fence_marker,
+            None,
+            line_number,
+        )
 
     if current_section is not None:
         sections.append("".join(current_section))
