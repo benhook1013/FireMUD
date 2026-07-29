@@ -13,7 +13,7 @@ Every record must follow `design/architecture/system-architecture-backup-recover
 
 The plaintext `maintenanceLockToken` must be supplied to recovery tooling only through protected stdin, a file descriptor, or a permissioned `0600` token file. It must never be passed as a command-line argument or appear in shell history, process listings, logs, URLs, or evidence.
 
-Public recovery uses `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` followed by `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`; pause/lock and success release remain internal durable phases, not public recovery verbs.
+The complete controller sequence below, including public `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` followed by `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`, is target-state-only and unavailable until the durable controller is implemented and proved. Current operators must not invoke either control; they must use the fail-closed [Current Operator Fallback](../../../../architecture/system-architecture-redis-reset-and-recovery.md#current-operator-fallback) and the current deployment recovery procedures. In the target state, pause/lock and success release remain internal durable phases, not public recovery verbs.
 
 ## Controlled Reopen Sequence
 

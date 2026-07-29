@@ -54,7 +54,11 @@ def has_forbidden_maintenance_lock_token_syntax(text):
             if not in_fenced_example:
                 in_fenced_example = True
                 fence_marker = marker
-            elif marker[0] == fence_marker[0] and len(marker) >= len(fence_marker):
+            elif (
+                marker[0] == fence_marker[0]
+                and len(marker) >= len(fence_marker)
+                and line[fence.end(1) :].strip(" \t\r\n") == ""
+            ):
                 in_fenced_example = False
                 fence_marker = None
         if in_fenced_example:
@@ -111,6 +115,10 @@ if not has_forbidden_maintenance_lock_token_syntax(
     "````text\n```\nThe `--maintenance-lock-token` option is forbidden.\n````"
 ):
     raise SystemExit("shorter nested fence incorrectly closed the outer fence")
+if not has_forbidden_maintenance_lock_token_syntax(
+    "```text\n```unsafe --maintenance-lock-token <token>\n```"
+):
+    raise SystemExit("fence marker with trailing text incorrectly closed the fenced example")
 
 def require_contains(path, snippets):
     text = (root / path).read_text(encoding="utf-8")

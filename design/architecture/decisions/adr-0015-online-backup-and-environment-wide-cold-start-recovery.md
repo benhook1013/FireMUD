@@ -108,7 +108,7 @@ Before normal startup, recovery must classify and converge every durable workflo
 - account/data-erasure events and their authoritative sequence;
 - restored sessions, credentials, certificates, bindings, epochs, and fences.
 
-Each declared and enabled family records a deterministic safe disposition such as replayed/converged, reconciled against external authority, terminalized, invalidated, or durably fenced and disabled with its backlog retained. Unknown, unsafe, missing, or unproved outcomes keep the environment quarantined. Recovery cannot infer safety merely because PostgreSQL restored successfully, but it also need not execute every long-lived retry before reopen when the owning participant proves a safe fenced disposition.
+Each declared and enabled family records a deterministic qualifying disposition: replayed/converged, reconciled against external authority, terminalized, or invalidated. `fenced_disabled_backlog_retained` remains representable for a disabled participant but is non-qualifying and keeps the environment quarantined until the backlog is resolved or the participant reaches a qualifying disposition. Unknown, unsafe, missing, or unproved outcomes likewise keep the environment quarantined. Recovery cannot infer safety merely because PostgreSQL restored successfully.
 
 ### Proof and Release Gates
 
