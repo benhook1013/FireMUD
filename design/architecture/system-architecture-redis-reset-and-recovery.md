@@ -12,6 +12,8 @@ This document describes the intended reset/recovery end state. The currently shi
 - The canonical preservation vocabulary is `session:game:*` plus pre-auth transport context. The current implementation still stores some pre-auth and lookup details in transitional `sessionctx:*` records/indexes; that implementation mapping is not a separate preservation domain or target-state contract.
 - The Account-owned authority-generation projections and their repair/replacement workflow are also target state and are not currently implemented and proven end to end. The rules below are the required behavior: set-if-greater is valid only for a missing or lower Redis projection; a projection greater than Account durable authority is poisoned and must be quarantined or replaced through an Account-owned audited workflow.
 
+Operator invocation boundary: every `coordination-maintenance recover`, `continue-recovery`, `resume`, and `release-lock` command shown in this document, including the worked examples below, is a target-state-only future example. The CLI is not currently shipped or proven, so current operators must not invoke it; use the shipped Redis recovery procedures in [Redis Operations](./system-architecture-redis-operations.md) and the normal incident escalation path instead.
+
 ---
 
 ## Table of Contents
