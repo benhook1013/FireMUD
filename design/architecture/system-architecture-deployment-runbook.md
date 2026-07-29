@@ -158,8 +158,8 @@ The drill evidence may be reused within the configured freshness window only whi
 2. **Run Operator Preflight**
    - Run `./dev-tools/deploy/preflight.py hobby-self-hosted`.
    - Treat required preflight checks as blocking for player-facing traffic.
-   - For the target controller-backed first-live and reopen flow, require `PREFLIGHT-BACKUP-003=pass` before requesting controller release and opening player traffic.
-   - Treat `PREFLIGHT-BACKUP-003` as a traffic-open gate for first-live and reopen events, not as a required check for ordinary steady-state hobby rollouts that do not change player-traffic status.
+   - For the target controller-backed first-live and reopen flow, require `PREFLIGHT-BACKUP-003=pass` before requesting controller continuation. The preflight result is evidence for that request; it does not authorize release or open player traffic.
+   - Treat `PREFLIGHT-BACKUP-003` as a required pre-continuation gate for first-live and reopen events, not as a required check for ordinary steady-state hobby rollouts that do not change player-traffic status. Only the controller's finalized state may authorize player-traffic exposure.
    - Store the preflight report at `design/operations/deployments/hobby-self-hosted/preflight/<deployment-ref>/<deploymentEventId>.json`. Waiver artifacts use the adjacent target-state path `<deploymentEventId>.waiver.json`, but executable waiver use remains blocked until trusted one-time consumption authority exists.
 3. **Apply Manifests/Charts**
    - Apply from a secure operator environment using the chosen manifest/chart input.

@@ -1256,6 +1256,40 @@ if pre_snapshot_before_artifact_status != "pass":
         + pre_snapshot_before_artifact_message
     )
 
+invalid_intervening_proof_shapes = [
+    ("non-list-entries", "entries", "not-a-list", ".entries must be an ordered list"),
+    ("empty-entries", "entries", [], ".entries must cover every sequence in order exactly once"),
+    (
+        "blank-snapshot-ledger-evidence-ref",
+        "snapshotLedgerEvidenceRef",
+        "   ",
+        ".snapshotLedgerEvidenceRef must be a non-empty immutable evidence reference",
+    ),
+    (
+        "blank-external-journal-evidence-ref",
+        "externalJournalEvidenceRef",
+        "   ",
+        ".externalJournalEvidenceRef must be a non-empty immutable evidence reference",
+    ),
+]
+for fixture_name, field, value, expected_message in invalid_intervening_proof_shapes:
+    invalid_proof = copy.deepcopy(pre_snapshot_before_artifact)
+    invalid_proof["backupArtifactLineage"]["interveningErasureCoverageProof"][field] = value
+    invalid_proof_path = recovery_dir / f"{fixture_name}-baseline.json"
+    invalid_proof_path.write_text(json.dumps(invalid_proof), encoding="utf-8")
+    invalid_proof_status, invalid_proof_message = module.validate_recovery_baseline(
+        tmp,
+        str(invalid_proof_path.relative_to(tmp)),
+        "sha256:recovery-contract",
+        now,
+        now,
+    )
+    if invalid_proof_status != "fail" or expected_message not in invalid_proof_message:
+        raise SystemExit(
+            f"invalid intervening erasure coverage proof {fixture_name} passed: "
+            + invalid_proof_message
+        )
+
 missing_intervening_proof = copy.deepcopy(pre_snapshot_before_artifact)
 del missing_intervening_proof["backupArtifactLineage"]["interveningErasureCoverageProof"]
 missing_intervening_proof_path = recovery_dir / "missing-intervening-proof-baseline.json"

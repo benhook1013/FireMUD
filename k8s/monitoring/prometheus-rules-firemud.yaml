@@ -63,7 +63,11 @@ spec:
         - record: recovery_participant_convergence_coverage_missing
           expr: |
             (
-              recovery_required_participant_inventory == 1
+              (
+                recovery_required_participant_inventory == 1
+                and on (environment)
+                recovery_required_participant_inventory_complete == 1
+              )
               unless on (environment, participant)
               (
                 count by (environment, participant) (
@@ -112,6 +116,11 @@ spec:
             label_replace(
               absent(recovery_required_participant_inventory),
               "source_family", "participant_inventory", "", ""
+            )
+            or
+            label_replace(
+              absent(recovery_participant_convergence_coverage),
+              "source_family", "participant_coverage", "", ""
             )
 
     - name: firemud.recording.player_experience

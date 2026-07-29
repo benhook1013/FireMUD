@@ -49,7 +49,11 @@ REQUIRED_ABSENT_ALERT_METRICS = {
 PARTICIPANT_COVERAGE_EXPR = _compact_promql(
     """
     (
-      recovery_required_participant_inventory == 1
+      (
+        recovery_required_participant_inventory == 1
+        and on (environment)
+        recovery_required_participant_inventory_complete == 1
+      )
       unless on (environment, participant)
       (
         count by (environment, participant) (
@@ -103,6 +107,11 @@ PARTICIPANT_SOURCE_MISSING_EXPR = _compact_promql(
     label_replace(
       absent(recovery_required_participant_inventory),
       "source_family", "participant_inventory", "", ""
+    )
+    or
+    label_replace(
+      absent(recovery_participant_convergence_coverage),
+      "source_family", "participant_coverage", "", ""
     )
     """
 )
@@ -1300,7 +1309,7 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
             Finding(
                 path=path,
                 message=(
-                    "participant source-missing recording must report globally absent inventory families "
+                    "participant source-missing recording must report globally absent inventory and coverage families "
                     "with a stable source_family label"
                 ),
             )

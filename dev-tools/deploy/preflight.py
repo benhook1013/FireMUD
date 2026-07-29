@@ -308,7 +308,7 @@ def validate_safe_dispositions(value: Any, label: str) -> tuple[str, str]:
 
 
 def validate_intervening_erasure_coverage_header(
-    value: Any,
+    value: JsonValue,
     stream: str,
     exclusive_start: int,
     inclusive_end: int,
@@ -330,7 +330,7 @@ def validate_intervening_erasure_coverage_header(
 
 
 def validate_intervening_erasure_coverage_entry(
-    value: Any,
+    value: JsonValue,
     label: str,
 ) -> tuple[str, str, int | None]:
     if not isinstance(value, dict):
@@ -372,7 +372,7 @@ def validate_intervening_erasure_coverage_entry(
 
 
 def validate_intervening_erasure_coverage_proof(
-    value: Any,
+    value: JsonValue,
     stream: str,
     exclusive_start: int,
     inclusive_end: int,
