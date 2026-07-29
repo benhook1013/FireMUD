@@ -2,10 +2,13 @@ package net.firedevops.firemud.loggingadmin;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.loggingadmin.client.AccountClient;
@@ -41,6 +44,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
     })
 class LoggingAdminApplicationIntegrationTest {
   private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
   private static final JwtUtil JWT_UTIL =
       new JwtUtil("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 3600000L);
 
@@ -92,10 +96,15 @@ class LoggingAdminApplicationIntegrationTest {
             .build();
 
     HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+    JsonNode responseBody = OBJECT_MAPPER.readTree(response.body());
 
-    assertThat(response.statusCode()).isEqualTo(404);
-    assertThat(response.body()).contains("\"code\":\"NOT_FOUND\"");
-    assertThat(response.body()).contains("\"message\":\"Resource not found\"");
+    assertThat(
+            List.of(
+                response.statusCode(),
+                responseBody.path("status").asText(),
+                responseBody.path("error").path("code").asText(),
+                responseBody.path("error").path("message").asText()))
+        .containsExactly(404, "ERROR", "NOT_FOUND", "Resource not found");
   }
 
   @Test

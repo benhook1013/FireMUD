@@ -145,6 +145,15 @@ All meta/control services (Account, Game Design, Logging & Admin, and similar HT
 
 A shared library helper (for example, a `TenantAccessGuard` used by `AuthTokenInterceptor`) should be used by all meta/control services so this contract is implemented in one place and kept in sync with future role/tenant model changes.
 
+### Authentication Operation Paths (Normative)
+
+Authentication is partitioned into four explicit paths; no path may substitute another path's authority:
+
+- **JWT issued-token registry path** – JWT-presenting control-plane and bootstrap operations validate the exact token profile locally, require one matching `session:auth:token:<tokenHash>` record, and compare its tuple, cutoffs, fences, `membershipVersion`, and Account source/version/freshness evidence from one coherent Account snapshot. Registry absence or reachable invalid evidence denies; an unreachable or timed-out dependency is `AUTH_UNAVAILABLE`.
+- **Pending-deletion workflow registry path** – `pending_deletion_scoped` routes use only the Account-issued opaque `pending-deletion-access` credential and its separate workflow registry. The validator binds the credential to the account and deletion workflow and checks live workflow state; it uses no JWT issuer/account/tenant/membership generations and never falls back to normal JWT or gameplay authority.
+- **In-band gameplay bound-session path** – Non-JWT `LOGIN` establishes the authenticated Game Session socket/session context, and non-JWT `PLAY`, fresh admission, reconnect, resume, and rebind use the exact bound-session identity, binding fence, current Account membership/lifecycle/revocation authority, admission/resume lease, routing/ownership evidence, and CAS contract required by the gameplay path. Routine commands use the admitted binding, typed workload context, and bounded reconciliation rather than JWT registry middleware.
+- **Gameplay-connect replay-fence path** – The one-use `gameplay-connect` token is consumed only by Gateway under its signed replay-admission fence, quarantine cutoff, deny marker, exact-`jti` atomic consume, and bounded lifetime contract. It does not create or consult the Account issued-token registry; Game Session receives only the signed connect context.
+
 ### Auth Middleware Algorithm (Normative)
 
 Any HTTP/gRPC route that depends on identity, roles, or tenant scoping must be protected by the shared auth middleware (for example, `AuthTokenInterceptor` plus a `TenantAccessGuard`). Implementations must follow the same decision logic so authorization behavior does not drift across services:

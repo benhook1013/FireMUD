@@ -88,7 +88,9 @@ This ledger maps canonical design sources to the stable capabilities in the [Fir
 
 ## Unallocated Or Ambiguous Sources
 
-No product-capability gap was found in the 76-file microservice corpus. Two files are deliberately exempt from product allocation:
+No product-capability gap was found in the covered source classes. Three files are deliberately exempt from product allocation:
+
+- The [architecture decision registry](../../architecture/decisions/README.md) is an index rather than a product capability.
 
 - `design/architecture/microservices/service-documentation-structure.md` defines documentation governance.
 - `design/architecture/microservices/service-template.md` is a documentation template.

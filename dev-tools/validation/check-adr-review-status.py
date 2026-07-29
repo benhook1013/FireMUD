@@ -70,6 +70,33 @@ class Review:
     disposition: str
 
 
+@dataclass(frozen=True)
+class MarkdownFence:
+    character: str
+    length: int
+    opening_line: int
+
+    def closes(self, fence: str) -> bool:
+        return fence[0] == self.character and len(fence) >= self.length
+
+    @property
+    def marker(self) -> str:
+        return self.character * self.length
+
+
+@dataclass(frozen=True)
+class MarkdownLine:
+    number: int
+    text: str
+
+
+@dataclass(frozen=True)
+class MarkdownSection:
+    end: int
+    visible_lines: tuple[MarkdownLine, ...]
+    open_fence: MarkdownFence | None
+
+
 class ValidationError(Exception):
     """Raised when ADR review status validation fails."""
 
@@ -186,28 +213,48 @@ def is_superseded_scan_alias(key: str, outcome: str, disposition: str) -> bool:
     )
 
 
-def review_queue_end(lines: list[str], queue_start: int) -> int:
-    open_fence: tuple[str, int, int] | None = None
+def advance_markdown_fence(
+    open_fence: MarkdownFence | None,
+    line: str,
+    line_number: int,
+) -> tuple[MarkdownFence | None, bool]:
+    fence_match = FENCE_RE.match(line.lstrip())
+    if fence_match is None:
+        return open_fence, False
+
+    fence = fence_match.group("fence")
+    if open_fence is None:
+        return MarkdownFence(fence[0], len(fence), line_number), True
+    if open_fence.closes(fence):
+        return None, True
+    return open_fence, True
+
+
+def scan_review_queue(lines: list[str], queue_start: int) -> MarkdownSection:
+    open_fence: MarkdownFence | None = None
+    visible_lines: list[MarkdownLine] = []
     for index in range(queue_start + 1, len(lines)):
         line = lines[index]
-        stripped = line.lstrip()
-        fence_match = FENCE_RE.match(stripped)
-        if fence_match:
-            fence = fence_match.group("fence")
-            if open_fence is None:
-                open_fence = (fence[0], len(fence), index + 1)
-            elif fence[0] == open_fence[0] and len(fence) >= open_fence[1]:
-                open_fence = None
+        open_fence, is_fence = advance_markdown_fence(
+            open_fence,
+            line,
+            index + 1,
+        )
+        if is_fence or open_fence is not None:
             continue
-        if open_fence is None and LEVEL_TWO_HEADING_RE.fullmatch(line):
-            return index
-    return len(lines)
+        if LEVEL_TWO_HEADING_RE.fullmatch(line):
+            return MarkdownSection(index, tuple(visible_lines), None)
+        visible_lines.append(MarkdownLine(index + 1, line))
+    return MarkdownSection(len(lines), tuple(visible_lines), open_fence)
+
+
+def review_queue_end(lines: list[str], queue_start: int) -> int:
+    return scan_review_queue(lines, queue_start).end
 
 
 def checked_reviews(path: Path, adr_dir: Path) -> dict[int, list[Review]]:
     reviews: dict[int, list[Review]] = {}
     seen_keys: set[str] = set()
-    open_fence: tuple[str, int, int] | None = None
     lines = path.read_text(encoding="utf-8").splitlines()
     try:
         queue_start = next(
@@ -217,21 +264,17 @@ def checked_reviews(path: Path, adr_dir: Path) -> dict[int, list[Review]]:
         )
     except StopIteration:
         fail(f"{path}: missing 'Adversarial Review Queue' section")
-    queue_end = review_queue_end(lines, queue_start)
-    for line_number, line in enumerate(
-        lines[queue_start + 1 : queue_end], start=queue_start + 2
-    ):
+    section = scan_review_queue(lines, queue_start)
+    if section.open_fence is not None:
+        fail(
+            f"{path}: unterminated code fence opened at line "
+            f"{section.open_fence.opening_line} with {section.open_fence.marker}"
+        )
+
+    for markdown_line in section.visible_lines:
+        line_number = markdown_line.number
+        line = markdown_line.text
         stripped = line.lstrip()
-        fence_match = FENCE_RE.match(stripped)
-        if fence_match:
-            fence = fence_match.group("fence")
-            if open_fence is None:
-                open_fence = (fence[0], len(fence), line_number)
-            elif fence[0] == open_fence[0] and len(fence) >= open_fence[1]:
-                open_fence = None
-            continue
-        if open_fence is not None:
-            continue
         if not CHECKED_ROW_PREFIX_RE.match(stripped):
             continue
         if stripped != line:
@@ -305,12 +348,6 @@ def checked_reviews(path: Path, adr_dir: Path) -> dict[int, list[Review]]:
                     f"ADR {number:04d}"
                 )
             existing.append(review)
-    if open_fence is not None:
-        fence_character, fence_length, opening_line = open_fence
-        fail(
-            f"{path}: unterminated code fence opened at line {opening_line} "
-            f"with {fence_character * fence_length}"
-        )
     return reviews
 
 

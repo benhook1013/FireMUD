@@ -582,6 +582,25 @@ class AdrReviewStatusTests(unittest.TestCase):
                 {review.key for review in reviews[12]},
             )
 
+    def test_review_queue_end_ignores_headings_inside_fences(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "```text\n"
+                "## Example heading inside the fenced block\n"
+                "```\n"
+                "## Notes\n",
+            )
+            queue = queue_path(root)
+            lines = queue.read_text(encoding="utf-8").splitlines()
+            queue_start = lines.index("## Adversarial Review Queue")
+            notes_heading = lines.index("## Notes")
+            self.assertEqual(
+                notes_heading,
+                self.validator.review_queue_end(lines, queue_start),
+            )
+
     def test_unterminated_code_fence_fails_closed_with_path_and_opening_line(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)

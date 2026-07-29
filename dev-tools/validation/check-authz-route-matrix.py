@@ -96,6 +96,19 @@ GAME_SESSION_OPERATOR_ROUTES = {
     ("game-session-service", "POST /sessions/{sessionId}/refresh-roles"),
 }
 CONDITIONAL_OPERATOR_ROUTES = OPERATOR_INGRESS_ROUTES | GAME_SESSION_OPERATOR_ROUTES
+OPERATOR_AUTHORIZATION_BRANCHES = {
+    "tenant_role": {
+        "membership_when_tenant_role",
+        "membership_generation",
+        "tenant_generation",
+        "current_operator_roles",
+    },
+    "platformAdmin_global": {
+        "current_global_role",
+        "role_appropriate_assurance",
+        "target_tenant_generation",
+    },
+}
 REQUIRED_ROLE_ASSURANCE_ROLES = {"platformAdmin", "billingAdmin", "support"}
 REQUIRED_TENANT_GENERATION_EXCEPTIONS = {
     "billing_safe_tenant": {
@@ -244,6 +257,8 @@ DIRECT_OWNER_ROUTE_POLICY = "deny_at_edge_and_migrate_to_logging_admin"
 # Maps id(route/parent mapping) to the source object and parsed checks for one document.
 # Retaining the source object prevents id reuse from returning stale entries.
 LiveChecksCache = dict[int, tuple[object, set[str]]]
+# Maps id(route/parent mapping) to the source object and parsed required fields.
+RequiredFieldsCache = dict[int, tuple[object, list[str] | None]]
 
 
 def route_key(route: dict[str, Any]) -> str | None:
@@ -276,6 +291,27 @@ def cached_live_checks(
     if live_checks_cache is not None:
         live_checks_cache[id(source)] = (source, set(parsed_checks))
     return set(parsed_checks)
+
+
+def cached_required_fields(
+    source: object,
+    value: Any,
+    field: str,
+    errors: list[str],
+    required_fields_cache: RequiredFieldsCache | None = None,
+) -> list[str]:
+    if required_fields_cache is not None:
+        cached = required_fields_cache.get(id(source))
+        if cached is not None and cached[0] is source:
+            return list(cached[1] or [])
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        errors.append(f"{field} must be a list of strings")
+        parsed_fields: list[str] | None = None
+    else:
+        parsed_fields = list(value)
+    if required_fields_cache is not None:
+        required_fields_cache[id(source)] = (source, parsed_fields)
+    return list(parsed_fields or [])
 
 
 def collect_live_checks(
@@ -499,11 +535,21 @@ def validate_route_statuses(
             )
 
 
-def validate_required_fields(routes: list[Any], errors: list[str]) -> None:
+def validate_required_fields(
+    routes: list[Any],
+    errors: list[str],
+    required_fields_cache: RequiredFieldsCache | None = None,
+) -> None:
     for index, route in enumerate(routes):
         if not isinstance(route, dict) or "required_fields" not in route:
             continue
-        fields = string_list(route.get("required_fields"), f"routes[{index}] required_fields", errors)
+        fields = cached_required_fields(
+            route,
+            route.get("required_fields"),
+            f"routes[{index}] required_fields",
+            errors,
+            required_fields_cache,
+        )
         invalid_fields = [field for field in fields if not REQUIRED_FIELD_PATTERN.fullmatch(field)]
         if invalid_fields:
             errors.append(
@@ -520,7 +566,6 @@ def validate_route_class_branch_table(
         return
 
     actual: dict[tuple[str, str], dict[str, Any]] = {}
-    invalid_key_shape = False
     for index, entry in enumerate(raw_table):
         label = f"route_class_branch_table[{index}]"
         if not isinstance(entry, dict):
@@ -530,19 +575,18 @@ def validate_route_class_branch_table(
         branch = entry.get("branch")
         if not isinstance(classification, str):
             errors.append(f"{label}.classification must be a string")
-            invalid_key_shape = True
         if not isinstance(branch, str):
             errors.append(f"{label}.branch must be a string")
-            invalid_key_shape = True
         if not isinstance(classification, str) or not isinstance(branch, str):
             continue
         key = (classification, branch)
         if key in actual:
             errors.append(f"{label} duplicates route-class branch {key!r}")
-        actual[key] = entry
+        else:
+            actual[key] = entry
 
     expected_keys = set(EXPECTED_ROUTE_CLASS_BRANCHES)
-    if not invalid_key_shape and set(actual) != expected_keys:
+    if set(actual) != expected_keys:
         errors.append(
             "route_class_branch_table must contain exactly the canonical route-class "
             f"branches: {sorted(expected_keys)!r}"
@@ -833,6 +877,16 @@ def validate_pending_deletion_generation(
 ) -> None:
     if route.get("classification") != "pending_deletion_scoped":
         return
+    if route.get("accepted_token_profiles") != []:
+        errors.append(
+            f"{label} pending_deletion_scoped routes must set "
+            "accepted_token_profiles=[]"
+        )
+    if route.get("accepted_credentials") != ["pending-deletion-access"]:
+        errors.append(
+            f"{label} pending_deletion_scoped routes must accept only "
+            "pending-deletion-access"
+        )
     if account_generation is not False:
         errors.append(
             f"{label} pending_deletion_scoped routes must set "
@@ -888,12 +942,67 @@ def validate_membership_generation(
     return value
 
 
+def operator_authorization_branch_checks(
+    route: dict[str, Any],
+    label: str,
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> dict[str, list[set[str]]]:
+    raw_branches = route.get("operator_authorization_branches")
+    if not isinstance(raw_branches, list):
+        errors.append(
+            f"{label} operator_authorization_branches must be a list of mappings"
+        )
+        return {}
+
+    branches: dict[str, list[set[str]]] = {}
+    for index, raw_branch in enumerate(raw_branches):
+        branch_label = f"{label} operator_authorization_branches[{index}]"
+        if not isinstance(raw_branch, dict):
+            errors.append(f"{branch_label} must be a mapping")
+            continue
+        branch = raw_branch.get("branch")
+        if not isinstance(branch, str) or not branch.strip():
+            errors.append(f"{branch_label}.branch must be a non-empty string")
+            continue
+        if branch not in OPERATOR_AUTHORIZATION_BRANCHES:
+            errors.append(
+                f"{branch_label}.branch must be one of "
+                f"{sorted(OPERATOR_AUTHORIZATION_BRANCHES)}"
+            )
+        if branch in branches:
+            errors.append(f"{branch_label} duplicates operator branch {branch!r}")
+        checks = cached_live_checks(
+            raw_branch,
+            raw_branch.get("required_live_checks"),
+            f"{branch_label}.required_live_checks",
+            errors,
+            live_checks_cache,
+        )
+        expected_checks = OPERATOR_AUTHORIZATION_BRANCHES.get(branch)
+        if expected_checks is not None and checks != expected_checks:
+            errors.append(
+                f"{branch_label}.required_live_checks must equal "
+                f"{sorted(expected_checks)}"
+            )
+        branches.setdefault(branch, []).append(checks)
+
+    expected_branches = set(OPERATOR_AUTHORIZATION_BRANCHES)
+    if set(branches) != expected_branches:
+        errors.append(
+            f"{label} operator_authorization_branches must contain exactly "
+            f"{sorted(expected_branches)}"
+        )
+    return branches
+
+
 def validate_conditional_operator_route(
     route: dict[str, Any],
     label: str,
     value: Any,
     errors: list[str],
     checks: set[str] | None = None,
+    live_checks_cache: LiveChecksCache | None = None,
 ) -> None:
     route_key_value = (route.get("service"), route.get("route"))
     if route_key_value not in CONDITIONAL_OPERATOR_ROUTES:
@@ -909,17 +1018,31 @@ def validate_conditional_operator_route(
         )
     if checks is None:
         checks = route_live_checks(route, label, errors)
-    if "membership_when_tenant_role" not in checks:
+    branch_checks = operator_authorization_branch_checks(
+        route, label, errors, live_checks_cache
+    )
+    tenant_branch_checks = set().union(*branch_checks.get("tenant_role", []))
+    platform_admin_branch_checks = set().union(
+        *branch_checks.get("platformAdmin_global", [])
+    )
+    branch_only_checks = set().union(*OPERATOR_AUTHORIZATION_BRANCHES.values())
+    duplicated_checks = sorted(checks & branch_only_checks)
+    if duplicated_checks:
+        errors.append(
+            f"{label} required_live_checks must not duplicate branch-qualified "
+            f"checks: {duplicated_checks}"
+        )
+    if "membership_when_tenant_role" not in tenant_branch_checks:
         errors.append(
             f"{label} tenant-role branch must require membership_when_tenant_role"
         )
-    if "membership_generation" not in checks:
+    if "membership_generation" not in tenant_branch_checks:
         errors.append(
             f"{label} tenant-role branch must require membership_generation"
         )
-    if "tenant_generation" not in checks:
+    if "tenant_generation" not in tenant_branch_checks:
         errors.append(f"{label} operator route must require tenant_generation")
-    if "target_tenant_generation" not in checks:
+    if "target_tenant_generation" not in platform_admin_branch_checks:
         errors.append(
             f"{label} operator route must require target_tenant_generation"
         )
@@ -933,11 +1056,16 @@ def validate_conditional_operator_route(
             f"{PRIVILEGED_OPERATOR_ROLE_ASSURANCE}"
         )
     for required_check in ("current_global_role", "role_appropriate_assurance"):
-        if required_check not in checks:
+        if required_check not in platform_admin_branch_checks:
             errors.append(
                 f"{label} privileged operator route must require live check "
                 f"{required_check}"
             )
+    if "current_operator_authorization" not in checks:
+        errors.append(
+            f"{label} operator route must require live check "
+            "current_operator_authorization"
+        )
     if (
         route_key_value == ADMISSION_POINTER_MUTATION_ROUTE
         and "expected_pointer_version" not in checks
@@ -1136,9 +1264,8 @@ def validate_receiver_predicates(
             route, index, token_profiles, errors
         )
         if route.get("classification") != "internal_workload":
-            if profiles and (
-                isinstance(profiles_value, list)
-                and all(isinstance(profile_name, str) for profile_name in profiles_value)
+            if isinstance(profiles_value, list) and all(
+                isinstance(profile_name, str) for profile_name in profiles_value
             ):
                 validate_token_fields(
                     route,
@@ -1402,7 +1529,9 @@ def validate_generation_applicability(
             checks = route_live_checks(route, label, errors, live_checks_cache)
         validate_pending_deletion_generation(route, label, account_generation, errors, checks)
         value = validate_membership_generation(route, label, errors)
-        validate_conditional_operator_route(route, label, value, errors, checks)
+        validate_conditional_operator_route(
+            route, label, value, errors, checks, live_checks_cache
+        )
 
 
 def validate_profile_authority_routes(
@@ -1445,10 +1574,17 @@ def validate_refresh_roles_routes(
     errors: list[str],
     live_checks_cache: LiveChecksCache | None = None,
     cardinality_errors: set[str] | None = None,
+    required_fields_cache: RequiredFieldsCache | None = None,
 ) -> None:
     def validate_idempotency(route: dict[str, Any], label: str) -> None:
         required_fields = set(
-            string_list(route.get("required_fields"), f"{label} required_fields", errors)
+            cached_required_fields(
+                route,
+                route.get("required_fields"),
+                f"{label} required_fields",
+                errors,
+                required_fields_cache,
+            )
         )
         if "mutation_digest" not in required_fields:
             errors.append(f"{label} must require mutation_digest for idempotency")
@@ -1950,6 +2086,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     role_assurance_predicates = validate_role_assurance(document, errors)
     validate_known_drift(document, "matrix", errors)
     live_checks_cache: LiveChecksCache = {}
+    required_fields_cache: RequiredFieldsCache = {}
     validate_live_check_vocabulary(document, errors, live_checks_cache)
     allowed_route_statuses = validate_route_status_vocabulary(document, errors)
 
@@ -1963,14 +2100,18 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     validate_authority_evidence_policy(document, errors)
     route_keys = validate_route_variants(routes, set(classifications), errors)
     validate_route_statuses(routes, allowed_route_statuses, errors)
-    validate_required_fields(routes, errors)
+    validate_required_fields(routes, errors, required_fields_cache)
     cardinality_errors: set[str] = set()
     validate_generation_applicability(routes, errors, live_checks_cache)
     validate_profile_authority_routes(
         routes, errors, live_checks_cache, cardinality_errors
     )
     validate_refresh_roles_routes(
-        routes, errors, live_checks_cache, cardinality_errors
+        routes,
+        errors,
+        live_checks_cache,
+        cardinality_errors,
+        required_fields_cache,
     )
     validate_receiver_predicates(routes, token_profiles, errors)
     validate_role_assurance_references(routes, role_assurance_predicates, errors)
