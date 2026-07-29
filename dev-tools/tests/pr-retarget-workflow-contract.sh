@@ -263,17 +263,13 @@ for path in "$ci_path" "$smoke_path"; do
 done
 
 require_contains "$ci_path" 'PR Metadata Edit (Validation Summary)'
-require_contains "$ci_path" 'PR Metadata Edit (Validation Gate)'
-if grep -Fq '    name: Validation Gate' "$ci_path"; then
-  echo "metadata-only CI runs must not emit the branch-protected Validation Gate name" >&2
-  exit 1
-fi
+require_contains "$ci_path" '    name: Validation Gate'
+require_contains "$ci_path" 'REQUIRED_GATE_NAME: Validation Gate'
+require_contains "$ci_path" 'Preserve successful required gate on metadata-only edit'
 require_contains "$smoke_path" 'PR Metadata Edit (Smoke Summary)'
-require_contains "$smoke_path" 'PR Metadata Edit (Smoke Gate)'
-if grep -Fq '    name: Smoke Gate' "$smoke_path"; then
-  echo "metadata-only smoke runs must not emit the branch-protected Smoke Gate name" >&2
-  exit 1
-fi
+require_contains "$smoke_path" '    name: Smoke Gate'
+require_contains "$smoke_path" 'REQUIRED_GATE_NAME: Smoke Gate'
+require_contains "$smoke_path" 'Preserve successful required gate on metadata-only edit'
 if grep -Eq '^  smoke-lite:' "$smoke_path"; then
   echo "smoke.yml must not restore the redundant smoke-lite job" >&2
   exit 1
@@ -296,12 +292,11 @@ for job in \
   docs-check \
   frontend-checks \
   build-and-test \
-  validation-summary \
-  validation-gate; do
+  validation-summary; do
   assert_job_condition ci.yml "$job" "$required_condition"
 done
 
-for job in changes smoke-summary smoke-gate; do
+for job in changes smoke-summary; do
   assert_job_condition smoke.yml "$job" "$required_condition"
 done
 assert_job_contains smoke.yml smoke-gate 'pull-requests: read'

@@ -6,9 +6,25 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 while IFS='|' read -r workflow gate; do
   [[ -n "$workflow" ]] || continue
   path="$ROOT_DIR/.github/workflows/$workflow"
-  expected="name: \${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit ($gate)' || '$gate' }}"
-  if ! grep -Fq "$expected" "$path"; then
-    echo "$workflow must isolate metadata-only edits from the required $gate context" >&2
+  if ! grep -Fq "    name: $gate" "$path"; then
+    echo "$workflow must always emit the required $gate context" >&2
+    exit 1
+  fi
+  if ! grep -Fq "REQUIRED_GATE_NAME: $gate" "$path"; then
+    echo "$workflow must verify a prior successful $gate on metadata-only edits" >&2
+    exit 1
+  fi
+  if ! grep -Fq "Preserve successful required gate on metadata-only edit" "$path"; then
+    echo "$workflow must preserve the required $gate context on metadata-only edits" >&2
+    exit 1
+  fi
+  if ! grep -Fq '/check-runs' "$path"; then
+    echo "$workflow metadata preservation must inspect exact-head check runs" >&2
+    exit 1
+  fi
+  if ! grep -Fq '.app.slug == "github-actions"' "$path" ||
+    ! grep -Fq 'sort_by(.completed_at) | last | .conclusion' "$path"; then
+    echo "$workflow metadata preservation must require the latest completed GitHub Actions gate result" >&2
     exit 1
   fi
 
@@ -35,7 +51,6 @@ security.yml|Security Gate
 license-scan.yml|License Gate
 smoke.yml|Smoke Gate
 codeql.yml|CodeQL Gate
-validate-kustomize-overlays.yml|validate-overlays
 EOF
 
 CODEQL_WORKFLOW="$ROOT_DIR/.github/workflows/codeql.yml"
@@ -64,6 +79,10 @@ grep -Fq 'types: [opened, synchronize, reopened, edited]' "$OVERLAY_WORKFLOW" ||
 }
 grep -Fq "github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null)" "$OVERLAY_WORKFLOW" || {
   echo "Overlay validation must skip metadata-only edits without replacing the required context" >&2
+  exit 1
+}
+grep -Fq "name: \${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (validate-overlays)' || 'validate-overlays' }}" "$OVERLAY_WORKFLOW" || {
+  echo "Overlay validation must isolate metadata-only edits from its optional context" >&2
   exit 1
 }
 echo "PR required-gate context contract checks passed"

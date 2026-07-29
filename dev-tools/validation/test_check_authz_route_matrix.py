@@ -432,6 +432,22 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertTrue(route["tenant_billing_authority_generation_applies"])
         self.assertIn("tenant_generation", route["required_live_checks"])
 
+    def test_play_rechecks_membership_generation(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "game-session-service", "PLAY")
+        self.assertTrue(route["membership_authority_generation_applies"])
+        self.assertIn("membership_generation", route["required_live_checks"])
+
+    def test_resume_ingress_and_owner_require_recovery_gate(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for service, route_name in (
+            ("logging-admin-service", "POST /tick-remediation/resume"),
+            ("game-session-service", "ResumeTicksForScope"),
+        ):
+            with self.subTest(service=service, route=route_name):
+                route = route_for(document, service, route_name)
+                self.assertIn("recovery_resume_gate", route["required_live_checks"])
+
     def test_route_class_branch_table_matches_canonical_branches(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         branches = {
@@ -839,6 +855,24 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors,
         )
 
+    def test_cross_tenant_safe_route_rejects_target_generation_checks(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route
+            for route in document["routes"]
+            if route.get("classification") == "cross_tenant_support_safe"
+        )
+        route["required_live_checks"].append("target_tenant_generation")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "must not require target membership or tenant generation checks"
+                in error
+                and "target_tenant_generation" in error
+                for error in errors
+            )
+        )
+
     def test_multi_profile_route_requires_shared_type_and_issuer(self):
         for field in ("token_type", "token_issuer"):
             with self.subTest(field=field):
@@ -935,9 +969,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         ]
         errors = []
         cardinality_errors = set()
-        self.validator.validate_membership_policy(
-            document, routes, errors, cardinality_errors=cardinality_errors
-        )
+        self.validator.validate_membership_policy(document, errors)
         self.validator.validate_join_routes(
             routes, errors, cardinality_errors=cardinality_errors
         )
@@ -994,14 +1026,14 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 route = route_for(document, "game-session-service", "PLAY")
                 route["implementation_status"]["known_drift"] = malformed
                 errors = validate_document(self.validator, document)
-            self.assertTrue(
-                any(
-                    error.endswith(
-                        "implementation_status.known_drift must be a non-empty list of strings"
+                self.assertTrue(
+                    any(
+                        error.endswith(
+                            "implementation_status.known_drift must be a non-empty list of strings"
+                        )
+                        for error in errors
                     )
-                    for error in errors
                 )
-            )
 
     def test_route_live_checks_must_be_a_list(self):
         with tempfile.TemporaryDirectory() as directory:

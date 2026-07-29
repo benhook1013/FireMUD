@@ -103,6 +103,13 @@ def queue_path(root: Path) -> Path:
     )
 
 
+def checked_reviews(validator, root: Path):
+    return validator.checked_reviews(
+        queue_path(root),
+        root / "design/architecture/decisions",
+    )
+
+
 def append_queue_row(root: Path, row: str) -> None:
     path = queue_path(root)
     path.write_text(
@@ -280,7 +287,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                     path.read_text(encoding="utf-8").replace("Accepted", status),
                     encoding="utf-8",
                 )
-                checked = self.validator.checked_reviews(queue_path(root))
+                checked = checked_reviews(self.validator, root)
                 self.assertIn(12, checked)
                 self.assertNotIn(1, checked)
                 self.validator.validate(root)
@@ -442,6 +449,59 @@ class AdrReviewStatusTests(unittest.TestCase):
                 self,
                 lambda: self.validator.validate(root),
                 "checked deferred review row",
+            )
+
+    def test_checked_non_deferred_row_requires_exact_adr_provenance(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [x] `TEST-NOTES` — `accepted` on 2026-07-27; "
+                "[notes](https://example.com)",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "must contain at least one exact [ADR NNNN] outcome link",
+            )
+
+    def test_superseded_alias_may_link_only_to_replacement_decisions(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [x] `TEST-ALIAS` — `superseded` on 2026-07-27 by "
+                "[replacement](../../architecture/decisions/adr-0012-reviewed.md)",
+            )
+            reviews = checked_reviews(self.validator, root)
+            self.assertEqual({"TEST-01"}, {review.key for review in reviews[12]})
+
+    def test_checked_row_inside_fenced_example_is_ignored(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "```text\n"
+                "- [x] `FAKE-ROW` — `accepted` on 2026-07-27; "
+                "[ADR 0013](../../architecture/decisions/adr-0013-pending.md)\n"
+                "```",
+            )
+            self.validator.validate(root)
+
+    def test_checked_review_target_must_be_in_canonical_adr_directory(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            outside = root / "design/architecture/adr-0013-outside.md"
+            outside.write_text("# Outside\n", encoding="utf-8")
+            append_queue_row(
+                root,
+                "- [x] `TEST-OUTSIDE` — `accepted` on 2026-07-27; "
+                "[ADR 0013](../../architecture/adr-0013-outside.md)",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "canonical ADR directory",
             )
 
     def test_checked_review_date_must_match_queue(self) -> None:
@@ -633,7 +693,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md); "
                 "[ADR 0014](../../architecture/decisions/adr-0014-other.md)",
             )
-            reviews = self.validator.checked_reviews(queue_path(root))
+            reviews = checked_reviews(self.validator, root)
             self.assertEqual(set(reviews), {12, 14})
             self.assertEqual(reviews[14][0].key, "TEST-COUPLED")
 
@@ -645,7 +705,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "- [X] `TEST-UPPERCASE` — `revised` on 2026-07-27; "
                 "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md)",
             )
-            reviews = self.validator.checked_reviews(queue_path(root))
+            reviews = checked_reviews(self.validator, root)
             self.assertEqual(reviews[12][-1].key, "TEST-UPPERCASE")
 
     def test_checked_queue_rejects_duplicate_adr_links_in_one_row(self) -> None:
@@ -659,7 +719,7 @@ class AdrReviewStatusTests(unittest.TestCase):
             )
             expect_failure(
                 self,
-                lambda: self.validator.checked_reviews(queue_path(root)),
+                lambda: checked_reviews(self.validator, root),
                 "contains duplicate ADR outcome links",
             )
 
@@ -673,7 +733,7 @@ class AdrReviewStatusTests(unittest.TestCase):
             )
             expect_failure(
                 self,
-                lambda: self.validator.checked_reviews(queue_path(root)),
+                lambda: checked_reviews(self.validator, root),
                 "malformed ADR provenance",
             )
 
@@ -691,7 +751,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "replacement: [replacement ADR 0014](../../architecture/decisions/"
                 "adr-0014-replacement.md)",
             )
-            reviews = self.validator.checked_reviews(queue_path(root))
+            reviews = checked_reviews(self.validator, root)
             self.assertEqual(reviews[13][0].key, "TEST-SUPERSEDED")
             self.assertNotIn(14, reviews)
 
@@ -706,7 +766,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 root = Path(fixture)
                 append_queue_row(root, row)
                 expect_failure(self,
-                    lambda root=root: self.validator.checked_reviews(queue_path(root)),
+                    lambda root=root: checked_reviews(self.validator, root),
                     "malformed checked review queue row",
                 )
 
@@ -716,7 +776,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "- [x] `TEST-99` — `revised` on 2026-07-27; outcome without link",
             )
             expect_failure(self,
-                lambda: self.validator.checked_reviews(queue_path(Path(fixture))),
+                lambda: checked_reviews(self.validator, Path(fixture)),
                 "must contain at least one Markdown outcome link",
             )
 
@@ -731,7 +791,10 @@ class AdrReviewStatusTests(unittest.TestCase):
                 encoding="utf-8",
             )
             expect_failure(self,
-                lambda: self.validator.checked_reviews(path),
+                lambda: self.validator.checked_reviews(
+                    path,
+                    root / "design/architecture/decisions",
+                ),
                 "indented checked review queue row",
             )
 
@@ -741,10 +804,10 @@ class AdrReviewStatusTests(unittest.TestCase):
             append_queue_row(
                 root,
                 "- [x] `TEST-01` — `revised` on 2026-07-27; "
-                "[duplicate](../../architecture/decisions/adr-0012-reviewed.md)",
+                "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md)",
             )
             expect_failure(self,
-                lambda: self.validator.checked_reviews(queue_path(root)),
+                lambda: checked_reviews(self.validator, root),
                 "ambiguous duplicate checked review source",
             )
 
@@ -757,7 +820,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md)",
             )
             expect_failure(self,
-                lambda: self.validator.checked_reviews(queue_path(root)),
+                lambda: checked_reviews(self.validator, root),
                 "ambiguous duplicate checked review rows for ADR 0012",
             )
 

@@ -27,6 +27,8 @@ from io import BytesIO, StringIO
 from pathlib import Path
 from unittest.mock import patch
 
+import yaml
+
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root / "dev-tools" / "smoke"))
 
@@ -36,15 +38,36 @@ from smoke_common import run_telnet_smoke_session, run_transport_session, run_we
 dev_demo_workflow = (root / ".github" / "workflows" / "dev-demo.yml").read_text()
 for expected in (
     'create secret generic dev-demo-bootstrap-env',
-    '--from-literal=DEMO_SMOKE_EMAIL="${DEMO_SMOKE_EMAIL}"',
-    '--from-literal=DEMO_SMOKE_PASSWORD="${DEMO_SMOKE_PASSWORD}"',
-    '--from-literal=DEMO_SMOKE_USERNAME="${DEMO_SMOKE_USERNAME}"',
-    'envFrom:\n                  - secretRef:\n                      name: dev-demo-bootstrap-env',
-    'delete secret dev-demo-bootstrap-env --ignore-not-found',
+    '--from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email"',
+    '--from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password"',
+    '--from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username"',
+    'cleanup_bootstrap_secret',
 ):
-    assert expected in dev_demo_workflow, (
-        f"dev-demo bootstrap environment contract missing: {expected}"
+    if expected not in dev_demo_workflow:
+        raise AssertionError(
+            f"dev-demo bootstrap environment contract missing: {expected}"
+        )
+
+workflow = yaml.safe_load(dev_demo_workflow)
+bootstrap_step = next(
+    step
+    for step in workflow["jobs"]["dev-demo-deploy"]["steps"]
+    if step.get("name") == "Create dev-demo smoke account"
+)
+bootstrap_manifest = bootstrap_step["run"]
+manifest_start = bootstrap_manifest.index(
+    "cat <<'EOF' | kubectl -n \"${PREVIEW_NAMESPACE}\" apply -f -\n"
+)
+manifest_start = bootstrap_manifest.index("\n", manifest_start) + 1
+manifest_end = bootstrap_manifest.index("\nEOF\n", manifest_start)
+bootstrap_pod = yaml.safe_load(bootstrap_manifest[manifest_start:manifest_end])
+env_from = bootstrap_pod["spec"]["containers"][0].get("envFrom", [])
+if env_from != [{"secretRef": {"name": "dev-demo-bootstrap-env"}}]:
+    raise AssertionError(
+        "dev-demo bootstrap pod must import dev-demo-bootstrap-env"
     )
+if "Demo login password: ${DEMO_SMOKE_PASSWORD}" in dev_demo_workflow:
+    raise AssertionError("dev-demo summary must not print the smoke password")
 
 
 class FakeHttpResponse:

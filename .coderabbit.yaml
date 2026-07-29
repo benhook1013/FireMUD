@@ -51,7 +51,7 @@ reviews:
         Architecture owns technical target state; AGENTS.md owns only repository-wide AI authority, safety, and workflow routing.
     - path: "design/architecture/decisions/**"
       instructions: |
-        Before challenging an ADR's Accepted or completed human-review metadata, check its exact linked row in design/project-management/design-alignment/consequential-decision-inventory.md and the contract enforced by dev-tools/validation/check-adr-review-status.py. A checked row that names the ADR and records its terminal disposition is human-review evidence; do not infer that evidence is absent from ADR-local text alone.
+        Before challenging an ADR's Accepted or completed human-review metadata, check every checked provenance row that names the ADR in design/project-management/design-alignment/consequential-decision-inventory.md and the aggregation contract enforced by dev-tools/validation/check-adr-review-status.py. Compare the aggregated review dates, terminal dispositions, and source keys with the ADR metadata. Checked rows that name the ADR and record its terminal disposition are human-review evidence; do not infer that evidence is absent from ADR-local text alone. A superseded scan alias may link only to its replacement decisions because it did not produce a separate ADR; Accepted, Revised, and Withdrawn outcomes require exact `[ADR NNNN]` provenance.
 knowledge_base:
   code_guidelines:
     enabled: true

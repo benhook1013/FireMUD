@@ -2,7 +2,7 @@
 
 ## Overview
 
-Centralized logging and administration tools for the platform. The service collects log data from all services, provides moderation capabilities for game operators, embeds shared observability tools, and acts as the operator-facing coordinator for coordination-health monitoring and live per-instance tick pause/resume forwarding.
+Centralized logging and administration tools for the platform. The service collects log data from all services, provides moderation capabilities for game operators, embeds shared observability tools, and acts as the operator-facing coordinator for coordination-health monitoring. Per-instance tick pause/resume forwarding is implemented but externally disabled pending action-schema and `mutationDigest/v1` conformance.
 
 ## Implementation Status
 

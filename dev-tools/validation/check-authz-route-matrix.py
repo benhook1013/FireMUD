@@ -135,6 +135,17 @@ PRIVILEGED_OPERATOR_ROLE_ASSURANCE = "privileged_control_when_global_role"
 PRIVILEGED_CONTROL_VALUES = {"required", "not_required", "establishes_window"}
 AUTHORITY_GENERATION_VALUES = {"required", "omitted", "target_tenant_generation"}
 EXPECTED_ROUTE_CLASS_BRANCHES = {
+    ("account_scoped", "platformAdmin_global"): {
+        "scope": "account",
+        "role": "platformAdmin",
+        "generations": {
+            "issuer": "required",
+            "account": "required",
+            "tenant": "omitted",
+            "membership": "omitted",
+        },
+        "privileged_control": "required",
+    },
     ("tenant_regular", "tenant_role"): {
         "scope": "tenant",
         "role": "route_declared_tenant_role",
@@ -561,10 +572,7 @@ def validate_route_class_branch_table(
 
 def validate_membership_policy(
     document: dict[str, Any],
-    routes: list[Any],
     errors: list[str],
-    live_checks_cache: LiveChecksCache | None = None,
-    cardinality_errors: set[str] | None = None,
 ) -> None:
     policy = document.get("tenant_membership_policy")
     if not isinstance(policy, dict):
@@ -1226,6 +1234,7 @@ def validate_tenant_generation_exception_routes(
                 "membership",
                 "membership_generation",
                 "tenant_generation",
+                "target_tenant_generation",
             }
             if target_checks:
                 errors.append(
@@ -1874,9 +1883,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     validate_role_assurance_references(routes, role_assurance_predicates, errors)
     validate_tenant_generation_policy(document, routes, errors, live_checks_cache)
     cardinality_errors: set[str] = set()
-    validate_membership_policy(
-        document, routes, errors, live_checks_cache, cardinality_errors
-    )
+    validate_membership_policy(document, errors)
     validate_elevation_bootstrap(
         document, routes, errors, cardinality_errors
     )

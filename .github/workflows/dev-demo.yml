@@ -475,15 +475,53 @@ jobs:
           status, session_body = bootstrap_session(account_id)
           PY
           BOOTSTRAP_POD_LOG=/tmp/dev-demo-bootstrap-pod.log
-          trap 'kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true; kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true; kubectl -n "${PREVIEW_NAMESPACE}" delete secret dev-demo-bootstrap-env --ignore-not-found >/dev/null 2>&1 || true' EXIT
+          BOOTSTRAP_SECRET_DIR=
+          cleanup_bootstrap_secret() {
+            local attempt
+            for attempt in 1 2 3; do
+              if kubectl -n "${PREVIEW_NAMESPACE}" delete secret dev-demo-bootstrap-env --ignore-not-found >/dev/null \
+                && ! kubectl -n "${PREVIEW_NAMESPACE}" get secret dev-demo-bootstrap-env >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep "${attempt}"
+            done
+            echo "::error::Failed to remove dev-demo bootstrap credentials" >&2
+            return 1
+          }
+          cleanup_bootstrap_resources() {
+            local status=$?
+            set +e
+            kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1
+            kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1
+            if [[ -n "${BOOTSTRAP_SECRET_DIR}" ]]; then
+              rm -rf "${BOOTSTRAP_SECRET_DIR}"
+              BOOTSTRAP_SECRET_DIR=
+            fi
+            if ! cleanup_bootstrap_secret; then
+              status=1
+            fi
+            trap - EXIT
+            exit "${status}"
+          }
+          trap cleanup_bootstrap_resources EXIT
           kubectl -n "${PREVIEW_NAMESPACE}" create configmap dev-demo-bootstrap-script \
             --from-file=bootstrap.py="${BOOTSTRAP_SCRIPT}" \
             --dry-run=client -o yaml | kubectl apply -f -
+          BOOTSTRAP_SECRET_DIR="$(mktemp -d)"
+          chmod 700 "${BOOTSTRAP_SECRET_DIR}"
+          (
+            umask 077
+            printf '%s' "${DEMO_SMOKE_EMAIL}" >"${BOOTSTRAP_SECRET_DIR}/email"
+            printf '%s' "${DEMO_SMOKE_PASSWORD}" >"${BOOTSTRAP_SECRET_DIR}/password"
+            printf '%s' "${DEMO_SMOKE_USERNAME}" >"${BOOTSTRAP_SECRET_DIR}/username"
+          )
           kubectl -n "${PREVIEW_NAMESPACE}" create secret generic dev-demo-bootstrap-env \
-            --from-literal=DEMO_SMOKE_EMAIL="${DEMO_SMOKE_EMAIL}" \
-            --from-literal=DEMO_SMOKE_PASSWORD="${DEMO_SMOKE_PASSWORD}" \
-            --from-literal=DEMO_SMOKE_USERNAME="${DEMO_SMOKE_USERNAME}" \
+            --from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email" \
+            --from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password" \
+            --from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username" \
             --dry-run=client -o yaml | kubectl apply -f -
+          rm -rf "${BOOTSTRAP_SECRET_DIR}"
+          BOOTSTRAP_SECRET_DIR=
           kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true
           cat <<'EOF' | kubectl -n "${PREVIEW_NAMESPACE}" apply -f -
           apiVersion: v1
@@ -520,7 +558,7 @@ jobs:
           kubectl -n "${PREVIEW_NAMESPACE}" logs dev-demo-bootstrap | tee "${BOOTSTRAP_POD_LOG}"
           kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true
           kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true
-          kubectl -n "${PREVIEW_NAMESPACE}" delete secret dev-demo-bootstrap-env --ignore-not-found >/dev/null 2>&1 || true
+          cleanup_bootstrap_secret
 
       - name: Smoke dev-demo over TCP
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
@@ -552,7 +590,7 @@ jobs:
             echo ""
             echo "- Demo login username: ${DEMO_SMOKE_USERNAME}"
             echo "- Demo login email: ${DEMO_SMOKE_EMAIL}"
-            echo "- Demo login password: ${DEMO_SMOKE_PASSWORD}"
+            echo "- Demo login password: repository smoke default (not printed)"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summarize dev-demo unavailability

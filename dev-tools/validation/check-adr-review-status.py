@@ -52,6 +52,7 @@ REVIEW_FIELD_RE = re.compile(
     r"Human review disposition|Review source): (?P<value>.+)$"
 )
 CHECKED_ROW_PREFIX_RE = re.compile(r"^- \[[xX]\]")
+FENCE_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})")
 DECISION_RECORD_RE = re.compile(
     r"^## Decision Record[ \t]*\r?\n"
     r"(?P<body>.*?)(?=^## |\Z)",
@@ -147,13 +148,55 @@ def validate_status_review_mapping(
         )
 
 
-def checked_reviews(path: Path) -> dict[int, list[Review]]:
+def provenance_adr_number(
+    path: Path,
+    adr_dir: Path,
+    line_number: int,
+    adr_match: re.Match[str],
+) -> int:
+    displayed_number = int(adr_match.group("number"))
+    target_ref = adr_match.group("target").split("#", 1)[0].split("?", 1)[0]
+    target_filename = target_ref.rsplit("/", 1)[-1]
+    target_match = ADR_PATH_RE.fullmatch(target_filename)
+    if target_match is None or int(target_match.group(1)) != displayed_number:
+        fail(
+            f"{path}: malformed ADR provenance at line {line_number}; "
+            f"displayed ADR {displayed_number:04d} does not match target "
+            f"{adr_match.group('target')!r}"
+        )
+
+    target_path = Path(target_ref)
+    resolved_target = (path.parent / target_path).resolve()
+    if (
+        target_path.is_absolute()
+        or resolved_target.parent != adr_dir.resolve()
+        or not resolved_target.is_file()
+    ):
+        fail(
+            f"{path}: ADR {displayed_number:04d} target does not exist in the "
+            f"canonical ADR directory: {target_ref!r}"
+        )
+    return displayed_number
+
+
+def checked_reviews(path: Path, adr_dir: Path) -> dict[int, list[Review]]:
     reviews: dict[int, list[Review]] = {}
     seen_keys: set[str] = set()
+    open_fence: tuple[str, int] | None = None
     for line_number, line in enumerate(
         path.read_text(encoding="utf-8").splitlines(), start=1
     ):
         stripped = line.lstrip()
+        fence_match = FENCE_RE.match(stripped)
+        if fence_match:
+            fence = fence_match.group("fence")
+            if open_fence is None:
+                open_fence = (fence[0], len(fence))
+            elif fence[0] == open_fence[0] and len(fence) >= open_fence[1]:
+                open_fence = None
+            continue
+        if open_fence is not None:
+            continue
         if not CHECKED_ROW_PREFIX_RE.match(stripped):
             continue
         if stripped != line:
@@ -167,30 +210,9 @@ def checked_reviews(path: Path) -> dict[int, list[Review]]:
 
         outcome_adr_numbers: list[int] = []
         for adr_match in ADR_LINK_RE.finditer(match.group("outcome")):
-            displayed_number = int(adr_match.group("number"))
-            target_ref = (
-                adr_match.group("target")
-                .split("#", 1)[0]
-                .split("?", 1)[0]
+            outcome_adr_numbers.append(
+                provenance_adr_number(path, adr_dir, line_number, adr_match)
             )
-            target_filename = (
-                target_ref
-                .rsplit("/", 1)[-1]
-            )
-            target_match = ADR_PATH_RE.fullmatch(target_filename)
-            if target_match is None or int(target_match.group(1)) != displayed_number:
-                fail(
-                    f"{path}: malformed ADR provenance at line {line_number}; "
-                    f"displayed ADR {displayed_number:04d} does not match target "
-                    f"{adr_match.group('target')!r}"
-                )
-            target_path = Path(target_ref)
-            if target_path.is_absolute() or not (path.parent / target_path).is_file():
-                fail(
-                    f"{path}: ADR {displayed_number:04d} target does not exist: "
-                    f"{target_ref!r}"
-                )
-            outcome_adr_numbers.append(displayed_number)
         if not OUTCOME_LINK_RE.search(match.group("outcome")):
             fail(
                 f"{path}: checked review queue row at line {line_number} "
@@ -212,6 +234,11 @@ def checked_reviews(path: Path) -> dict[int, list[Review]]:
                 f"{path}: checked deferred review row at line {line_number} "
                 "must not use exact ADR provenance"
             )
+        if review.disposition in {"Accepted", "Revised", "Withdrawn"} and not outcome_adr_numbers:
+            fail(
+                f"{path}: checked review queue row at line {line_number} "
+                "must contain at least one exact [ADR NNNN] outcome link"
+            )
         if review.key in seen_keys:
             fail(
                 f"{path}: ambiguous duplicate checked review source "
@@ -219,8 +246,8 @@ def checked_reviews(path: Path) -> dict[int, list[Review]]:
             )
         seen_keys.add(review.key)
 
-        # Exact [ADR NNNN] labels carry provenance for every disposition,
-        # including superseded rows. Replacement links use other labels.
+        # Exact labels identify a reviewed ADR. A superseded scan alias may
+        # instead point only to its replacement decisions.
         for number in outcome_adr_numbers:
             existing = reviews.setdefault(number, [])
             if existing and any(
@@ -285,7 +312,7 @@ def validate(root: Path = ROOT) -> None:
         fail(f"ADR directory missing: {adr_dir.relative_to(root)}")
     if not queue.is_file():
         fail(f"ADR review queue missing: {queue.relative_to(root)}")
-    reviews = checked_reviews(queue)
+    reviews = checked_reviews(queue, adr_dir)
     seen_numbers: set[int] = set()
 
     for path in sorted(adr_dir.glob("adr-*.md")):

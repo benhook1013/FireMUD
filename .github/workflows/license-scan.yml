@@ -206,17 +206,40 @@ jobs:
           fi
 
   license-gate:
-    name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (License Gate)' || 'License Gate' }}
+    name: License Gate
     needs: [changes, ort-gradle, ort-npm]
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) }}
+    if: ${{ always() }}
     runs-on: ubuntu-latest
+    permissions:
+      checks: read
+      contents: read
     steps:
+      - name: Preserve successful required gate on metadata-only edit
+        if: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REQUIRED_GATE_NAME: License Gate
+        run: |
+          prior_conclusion=$(gh api --method GET \
+            "/repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs" \
+            -f check_name="${REQUIRED_GATE_NAME}" \
+            -f filter=all \
+            -f per_page=100 \
+            --jq '[.check_runs[] | select(.status == "completed" and .app.slug == "github-actions")] | sort_by(.completed_at) | last | .conclusion // ""')
+          if [ "${prior_conclusion}" != "success" ]; then
+            echo "Latest completed ${REQUIRED_GATE_NAME} for unchanged head ${HEAD_SHA} was not successful." >&2
+            exit 1
+          fi
+
       - name: Harden runner
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
         with:
           egress-policy: audit
 
       - name: Verify ORT results
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
         env:
           EVENT_NAME: ${{ github.event_name }}
           CHANGES_RESULT: ${{ needs.changes.result }}

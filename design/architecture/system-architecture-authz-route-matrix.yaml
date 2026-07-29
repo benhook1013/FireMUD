@@ -200,6 +200,16 @@ classifications:
   - internal_workload
   - pending_deletion_scoped
 route_class_branch_table:
+  - classification: account_scoped
+    branch: platformAdmin_global
+    scope: account
+    role: platformAdmin
+    generations:
+      issuer: required
+      account: required
+      tenant: omitted
+      membership: omitted
+    privileged_control: required
   - classification: tenant_regular
     branch: tenant_role
     scope: tenant
@@ -486,7 +496,7 @@ routes:
     membership_authority_generation_applies: true
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
-    required_live_checks: [membership, public_production_admission, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
+    required_live_checks: [membership, membership_generation, public_production_admission, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
     canonical_errors:
       any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE]
     canonical_target:
@@ -1586,7 +1596,7 @@ routes:
     accepted_token_profiles: [control-ui]
     role_assurance: privileged_control_when_global_role
     subject_binding: authenticated_operator
-    required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation, runtime_ownership]
+    required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation, runtime_ownership, recovery_resume_gate]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
