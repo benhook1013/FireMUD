@@ -37,11 +37,11 @@ def has_forbidden_maintenance_lock_token_syntax(text):
     for line in text.splitlines(keepends=True):
         fence = fence_start.match(line)
         if fence:
-            marker = fence.group(1)[0]
+            marker = fence.group(1)
             if not in_fenced_example:
                 in_fenced_example = True
                 fence_marker = marker
-            elif marker == fence_marker:
+            elif marker[0] == fence_marker[0] and len(marker) >= len(fence_marker):
                 in_fenced_example = False
                 fence_marker = None
         if in_fenced_example:
@@ -93,7 +93,7 @@ for path in (root / "design").rglob("*.md"):
         raise SystemExit(f"{path}: uses obsolete caller-supplied recovery scope")
     if has_forbidden_maintenance_lock_token_syntax(text):
         raise SystemExit(
-            f"{path.relative_to(root)}: recovery command examples must not expose "
+            f"{path}: recovery command examples must not expose "
             "`--maintenance-lock-token` command-line syntax; explicit prose "
             "prohibitions are allowed"
         )

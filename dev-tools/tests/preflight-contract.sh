@@ -1152,6 +1152,30 @@ if (
         + wide_overlay_message
     )
 
+unordered_overlay = copy.deepcopy(valid_baseline["erasureOverlayReconciliation"])
+unordered_artifact_high_water = {"stream": "erasures", "sequence": 12}
+unordered_initial_catchup_high_water = {"stream": "erasures", "sequence": 10}
+unordered_restore_high_water = {"stream": "erasures", "sequence": 12}
+unordered_overlay["artifactErasureHighWater"] = unordered_artifact_high_water
+unordered_overlay["initialCatchupHighWater"] = unordered_initial_catchup_high_water
+unordered_overlay["restoreHighWater"] = unordered_restore_high_water
+unordered_status, unordered_message = module.validate_erasure_overlay_reconciliation(
+    unordered_overlay,
+    unordered_artifact_high_water,
+    unordered_initial_catchup_high_water,
+    unordered_restore_high_water,
+    "erasures",
+)
+if (
+    unordered_status != "fail"
+    or unordered_message
+    != (
+        "Recovery compatibility baseline erasureOverlayReconciliation "
+        "canonical erasure high-water sequences must be ordered"
+    )
+):
+    raise SystemExit(f"unordered canonical overlay boundaries did not fail at the ordering guard: {unordered_message}")
+
 pre_snapshot_after_artifact = copy.deepcopy(valid_baseline)
 pre_snapshot_after_artifact["backupArtifactLineage"]["preSnapshotJournalHighWater"] = {
     "stream": "erasures",
@@ -1214,6 +1238,9 @@ invalid_baseline_cases = {
             **valid_baseline["coordinationRecoveryEvidence"],
             "replayConsumeEvidenceRef": "",
         }
+    },
+    "canonical-high-water-non-int-sequence": {
+        "artifactErasureHighWater": {"stream": "erasures", "sequence": "10"},
     },
     "overlay-restore-boundary-equality-mismatch": {
         "erasureOverlayReconciliation": {
@@ -1526,6 +1553,7 @@ expected_invalid_baseline_messages = {
     "participant": "unsafe or missing disposition: gameplay",
     "coordination-account-projections": "coordination recovery must prove",
     "coordination-replay-evidence": "coordination recovery must prove",
+    "canonical-high-water-non-int-sequence": "erasure high-water sequences must be ordered non-boolean integers",
     "overlay-restore-boundary-equality-mismatch": "restoreHighWater must match the canonical bound exactly",
     "overlay-artifact-boundary-equality-mismatch": "artifactErasureHighWater must match the canonical bound exactly",
     "overlay-initial-catchup-boundary-equality-mismatch": "initialCatchupHighWater must match the canonical bound exactly",
