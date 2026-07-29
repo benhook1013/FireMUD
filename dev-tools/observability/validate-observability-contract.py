@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -54,7 +53,7 @@ PARTICIPANT_COVERAGE_EXPR = _compact_promql(
       unless on (environment, participant)
       (
         count by (environment, participant) (
-          recovery_participant_convergence_state
+          recovery_participant_convergence_coverage
         ) > 0
       )
     )
@@ -1291,7 +1290,7 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
                 path=path,
                 message=(
                     "participant coverage recording must compare authoritative required-participant inventory "
-                    "with current participant-state coverage while preserving environment scope"
+                    "with the current participant coverage projection while preserving environment scope"
                 ),
             )
         )

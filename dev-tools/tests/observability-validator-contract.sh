@@ -568,7 +568,7 @@ coverage_record = """        - record: recovery_participant_convergence_coverage
               unless on (environment, participant)
               (
                 count by (environment, participant) (
-                  recovery_participant_convergence_state
+                  recovery_participant_convergence_coverage
                 ) > 0
               )
             )
@@ -629,7 +629,17 @@ invalid_coverage = valid_text.replace(
 )
 require_message(
     findings_for(invalid_coverage, validator._validate_reference_prometheus_recordings),
-    "participant coverage recording must compare authoritative required-participant inventory with current participant-state coverage while preserving environment scope",
+    "participant coverage recording must compare authoritative required-participant inventory with the current participant coverage projection while preserving environment scope",
+)
+
+state_backed_coverage = valid_text.replace(
+    "recovery_participant_convergence_coverage\n                ) > 0",
+    "recovery_participant_convergence_state\n                ) > 0",
+    1,
+)
+require_message(
+    findings_for(state_backed_coverage, validator._validate_reference_prometheus_recordings),
+    "participant coverage recording must compare authoritative required-participant inventory with the current participant coverage projection while preserving environment scope",
 )
 
 extra_coverage_branch = valid_text.replace(
@@ -639,7 +649,7 @@ extra_coverage_branch = valid_text.replace(
 )
 require_message(
     findings_for(extra_coverage_branch, validator._validate_reference_prometheus_recordings),
-    "participant coverage recording must compare authoritative required-participant inventory with current participant-state coverage while preserving environment scope",
+    "participant coverage recording must compare authoritative required-participant inventory with the current participant coverage projection while preserving environment scope",
 )
 
 invalid_source_missing = valid_text.replace(

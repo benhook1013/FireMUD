@@ -115,8 +115,8 @@ The drill evidence may be reused within the configured freshness window only whi
 5. **Apply Kubernetes Manifests**
    - From a secure operator environment, apply the overlay (for example `kubectl apply -k k8s/overlays/prod`).
    - Each environment boundary (staging vs production) uses its own cluster credentials and secret sources; `firemud` is the default namespace name within each boundary. When using a non-default namespace for drills or temporary restores, treat that namespace as an explicit override tied to the selected overlay or restore script inputs.
-   - Treat the apply as an operational action that enacts the already-reviewed overlay change before the durable recovery/deployment controller is `finalized`; keep player-facing traffic quarantined while rollout, recovery, and release gates are evaluated.
-   - Applying manifests, reaching readiness, or completing smoke checks does not authorize player-facing exposure. Only the finalized controller state, with quarantine-release postconditions observed, permits exposure.
+   - For a `first-live` or `reopen` event, treat the apply as an operational action that enacts the already-reviewed overlay change before the durable recovery/deployment controller is `finalized`; keep player-facing traffic quarantined while rollout, recovery, and release gates are evaluated. Routine steady-state rollouts that do not change traffic-open status follow the ordinary deployment preflight and rollout policy instead.
+   - For `first-live` and `reopen`, applying manifests, reaching readiness, or completing restore-safe smoke checks does not authorize player-facing exposure. Only the finalized controller state, with quarantine-release postconditions observed, permits exposure. Routine steady-state rollout traffic remains governed by its existing deployment state and ordinary preflight policy rather than requiring an unrelated recovery finalization.
    - Record which overlay commit was applied so “what is deployed?” is answerable even when cluster state drifts:
      - Capture the Git commit SHA and timestamp in the deployment notes/runbook record for the environment.
      - Stamp the SHA into the cluster so it is retrievable during incidents:
@@ -132,7 +132,7 @@ The drill evidence may be reused within the configured freshness window only whi
      - referenced secret/config resource versions required by the release,
      - smoke-test evidence references.
    - Store this verification in the deployment record so promotion evidence reflects what is actually running, not only what was intended.
-   - Mark `deployStatus=pass` only after the live-state verification and smoke checks both succeed; this status does not itself expose player-facing traffic, which remains gated by the durable controller reaching `finalized`.
+   - Mark `deployStatus=pass` only after the live-state verification and applicable smoke checks both succeed. For `first-live` and `reopen`, this status does not itself expose player-facing traffic, which remains gated by the durable controller reaching `finalized`; for routine steady-state rollouts it records deployment success without creating a recovery-controller prerequisite.
 7. **Monitor Rollout**
    - Watch deployment rollout status for each updated service.
    - Verify pod readiness and liveness probes are passing.

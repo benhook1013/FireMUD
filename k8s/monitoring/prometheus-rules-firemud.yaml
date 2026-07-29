@@ -67,7 +67,7 @@ spec:
               unless on (environment, participant)
               (
                 count by (environment, participant) (
-                  recovery_participant_convergence_state
+                  recovery_participant_convergence_coverage
                 ) > 0
               )
             )

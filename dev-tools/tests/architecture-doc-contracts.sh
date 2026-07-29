@@ -219,8 +219,15 @@ require_contains(
 require_contains(
     "design/architecture/system-architecture-redis.md",
     [
-        "matches the session's exact `jti`, `tokenGeneration`",
-        "verified JWT's required `nbf` also valid",
+        "The Account-issued envelope binds the exact token hash, signed `jti` and `nbf`",
+        "Account-validated envelope is authoritative for the original signed `nbf`",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-reset-and-recovery.md",
+    [
+        "Every cluster-scoped reset requires explicit `--invalidate-sessions`",
+        "Cluster scope rejects `--preserve-sessions`",
     ],
 )
 require_contains(
