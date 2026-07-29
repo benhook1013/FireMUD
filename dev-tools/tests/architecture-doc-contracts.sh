@@ -247,19 +247,70 @@ require_contains(
 )
 
 operations_text = (root / "design/architecture/system-architecture-redis-operations.md").read_text(encoding="utf-8")
-canonical_reset_matches = list(
-    re.finditer(
-        r"(?ms)^## Canonical Coordination Reset Sequence[ \t]*\n"
-        r"(?P<section>.*?)(?=^## |\Z)",
-        operations_text,
-    )
+
+
+def extract_unique_markdown_section(text, heading):
+    heading_pattern = re.compile(rf"^## {re.escape(heading)}[ \t]*(?:\r?\n)?$")
+    level_two_heading = re.compile(r"^## ")
+    sections = []
+    current_section = None
+    in_fenced_block = False
+    fence_marker = None
+
+    for line in text.splitlines(keepends=True):
+        is_heading = not in_fenced_block and level_two_heading.match(line)
+        if is_heading:
+            if current_section is not None:
+                sections.append("".join(current_section))
+                current_section = None
+            if heading_pattern.match(line):
+                current_section = []
+        elif current_section is not None:
+            current_section.append(line)
+
+        fence = fence_start.match(line)
+        if fence:
+            marker = fence.group(1)
+            if not in_fenced_block:
+                in_fenced_block = True
+                fence_marker = marker
+            elif (
+                marker[0] == fence_marker[0]
+                and len(marker) >= len(fence_marker)
+                and line[fence.end(1) :].strip(" \t\r\n") == ""
+            ):
+                in_fenced_block = False
+                fence_marker = None
+
+    if current_section is not None:
+        sections.append("".join(current_section))
+    if len(sections) != 1:
+        raise SystemExit(
+            "design/architecture/system-architecture-redis-operations.md: expected exactly one canonical reset section, "
+            f"found {len(sections)}"
+        )
+    return sections[0]
+
+
+fenced_heading_fixture = (
+    "## Canonical Coordination Reset Sequence\n"
+    "before\n"
+    "```text\n"
+    "## Not a real section heading\n"
+    "inside the example\n"
+    "```\n"
+    "after\n"
+    "## Following section\n"
 )
-if len(canonical_reset_matches) != 1:
-    raise SystemExit(
-        "design/architecture/system-architecture-redis-operations.md: expected exactly one canonical reset section, "
-        f"found {len(canonical_reset_matches)}"
-    )
-canonical_reset_text = canonical_reset_matches[0].group("section")
+fenced_heading_section = extract_unique_markdown_section(
+    fenced_heading_fixture, "Canonical Coordination Reset Sequence"
+)
+if "## Not a real section heading" not in fenced_heading_section or "after\n" not in fenced_heading_section:
+    raise SystemExit("fenced heading fixture was incorrectly treated as a section boundary")
+
+canonical_reset_text = extract_unique_markdown_section(
+    operations_text, "Canonical Coordination Reset Sequence"
+)
 required_reset_contract = [
     "Canonical public operation:",
     "`coordination-maintenance recover --mode reset --scope ... <session-policy-option>`",
