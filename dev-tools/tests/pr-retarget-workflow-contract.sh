@@ -263,15 +263,15 @@ for path in "$ci_path" "$smoke_path"; do
 done
 
 require_contains "$ci_path" 'PR Metadata Edit (Validation Summary)'
-require_contains "$ci_path" '    name: Validation Gate'
-require_contains "$ci_path" 'uses: ./.github/actions/preserve-required-gate'
-require_contains "$ci_path" 'gate-name: Validation Gate'
-require_contains "$ci_path" 'Preserve successful required gate on metadata-only edit'
+assert_job_contains ci.yml validation-gate 'name: Validation Gate'
+assert_job_contains ci.yml validation-gate 'uses: ./.github/actions/preserve-required-gate'
+assert_job_contains ci.yml validation-gate 'gate-name: Validation Gate'
+assert_job_contains ci.yml validation-gate 'Preserve successful required gate on metadata-only edit'
 require_contains "$smoke_path" 'PR Metadata Edit (Smoke Summary)'
-require_contains "$smoke_path" '    name: Smoke Gate'
-require_contains "$smoke_path" 'uses: ./.github/actions/preserve-required-gate'
-require_contains "$smoke_path" 'gate-name: Smoke Gate'
-require_contains "$smoke_path" 'Preserve successful required gate on metadata-only edit'
+assert_job_contains smoke.yml smoke-gate 'name: Smoke Gate'
+assert_job_contains smoke.yml smoke-gate 'uses: ./.github/actions/preserve-required-gate'
+assert_job_contains smoke.yml smoke-gate 'gate-name: Smoke Gate'
+assert_job_contains smoke.yml smoke-gate 'Preserve successful required gate on metadata-only edit'
 if grep -Eq '^  smoke-lite:' "$smoke_path"; then
   echo "smoke.yml must not restore the redundant smoke-lite job" >&2
   exit 1
@@ -645,7 +645,6 @@ if distinct_job_name_literals != {"PR Full-Stack Smoke"}:
         "smoke.yml must use exactly one distinct full-stack PR smoke job name literal: "
         + repr(job_name_literals)
     )
-job_name_literal = next(iter(distinct_job_name_literals))
 
 try:
     runtime_workflow = yaml.load(runtime_images, Loader=yaml.BaseLoader)
@@ -654,10 +653,10 @@ except (KeyError, TypeError, yaml.YAMLError) as exc:
     raise SystemExit(
         "runtime-images.yml must define the pr-local-smoke job name used by Smoke Gate"
     ) from exc
-if runtime_job_name != job_name_literal:
+if runtime_job_name != "PR Full-Stack Smoke":
     raise SystemExit(
         "smoke.yml full-stack PR job lookup does not match runtime-images.yml: "
-        f"smoke={job_name_literal!r}, runtime={runtime_job_name!r}"
+        f"smoke={'PR Full-Stack Smoke'!r}, runtime={runtime_job_name!r}"
     )
 
 runtime_paths = pull_request_paths(runtime_images, "runtime-images.yml")

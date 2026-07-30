@@ -30,12 +30,13 @@ if ! grep -Fq '.app.slug == \"github-actions\"' "$ACTION" ||
   ! grep -Fq -- '--paginate' "$ACTION" ||
   ! grep -Fq -- '--slurp' "$ACTION" ||
   ! grep -Fq '.[].check_runs[]?' "$ACTION" ||
-  ! grep -Fq 'map(select(.status == \"completed\"))' "$ACTION" ||
+  ! grep -Fq 'if .status == \"completed\" then' "$ACTION" ||
+  ! grep -Fq 'elif .status == \"queued\" or .status == \"in_progress\" then' "$ACTION" ||
   ! grep -Fq '[\"pending\"' "$ACTION" ||
   ! grep -Fq '[\"none\", \"\"]' "$ACTION" ||
   ! grep -Fq 'sort_by(.started_at // .created_at) | last' "$ACTION" ||
   ! grep -Fq 'prior_status' "$ACTION"; then
-  echo "required-gate action must prefer the latest completed prior GitHub Actions check run" >&2
+  echo "required-gate action must use the chronologically latest prior GitHub Actions check run" >&2
   exit 1
 fi
 # shellcheck disable=SC2016 # Assert literal workflow shell syntax.
@@ -60,10 +61,6 @@ grep -Fq 'Permanent GitHub API/configuration failure' "$ACTION" || {
   echo "required-gate action must fail immediately for permanent gh api failures" >&2
   exit 1
 }
-grep -Fq 'continue' "$ACTION" || {
-  echo "required-gate action must continue polling after transient gh api failures" >&2
-  exit 1
-}
 grep -Fq 'GITHUB_EVENT_NAME:-' "$ACTION" || {
   echo "required-gate action must validate pull request context before polling" >&2
   exit 1
@@ -73,26 +70,40 @@ grep -Fq 'nonempty pull request head SHA' "$ACTION" || {
   exit 1
 }
 
-while IFS='|' read -r workflow gate; do
+while IFS='|' read -r workflow gate_job_id gate; do
   [[ -n "$workflow" ]] || continue
   path="$ROOT_DIR/.github/workflows/$workflow"
-  if ! grep -Fq "    name: $gate" "$path"; then
+  gate_block="$(awk -v expected_job_id="$gate_job_id" '
+    /^  [A-Za-z0-9_-]+:$/ {
+      if (capture) {
+        exit
+      }
+      capture = ($0 == "  " expected_job_id ":")
+    }
+    capture {
+      print
+    }
+  ' "$path")"
+  [[ -n "$gate_block" ]] || {
+    echo "$workflow must contain required gate job ID $gate_job_id" >&2
+    exit 1
+  }
+  if ! grep -Fq "    name: $gate" <<<"$gate_block"; then
     echo "$workflow must always emit the required $gate context" >&2
     exit 1
   fi
-  if ! grep -Fq "Preserve successful required gate on metadata-only edit" "$path"; then
+  if ! grep -Fq "Preserve successful required gate on metadata-only edit" <<<"$gate_block"; then
     echo "$workflow must preserve the required $gate context on metadata-only edits" >&2
     exit 1
   fi
-  grep -Fq 'uses: ./.github/actions/preserve-required-gate' "$path" || {
+  grep -Fq 'uses: ./.github/actions/preserve-required-gate' <<<"$gate_block" || {
     echo "$workflow must call the shared required-gate action" >&2
     exit 1
   }
-  grep -Fq "gate-name: $gate" "$path" || {
+  grep -Fq "gate-name: $gate" <<<"$gate_block" || {
     echo "$workflow must pass its required gate name to the shared action" >&2
     exit 1
   }
-  gate_block="$(awk '/^  [A-Za-z0-9_-]+:/{in_gate=0} /    name: '"$gate"'$/{in_gate=1} in_gate{print}' "$path")"
   # shellcheck disable=SC2016 # Assert literal polling syntax is absent from gate callers.
   if grep -Fq 'gh api' <<<"$gate_block" || grep -Fq 'for attempt in $(seq 1 80)' <<<"$gate_block"; then
     echo "$workflow must delegate required-gate polling to the shared action" >&2
@@ -142,11 +153,11 @@ while IFS='|' read -r workflow gate; do
     exit 1
   fi
 done <<'EOF'
-ci.yml|Validation Gate
-security.yml|Security Gate
-license-scan.yml|License Gate
-smoke.yml|Smoke Gate
-codeql.yml|CodeQL Gate
+ci.yml|validation-gate|Validation Gate
+security.yml|security-gate|Security Gate
+license-scan.yml|license-gate|License Gate
+smoke.yml|smoke-gate|Smoke Gate
+codeql.yml|codeql-gate|CodeQL Gate
 EOF
 
 grep -Fq 'needs.changes.result' "$ROOT_DIR/.github/workflows/ci.yml" || {
@@ -200,6 +211,22 @@ if [[ "$*" != *"--paginate"* || "$*" != *"--slurp"* ]]; then
   echo "simulated gh api call omitted pagination/slurp" >&2
   exit 90
 fi
+jq_filter=""
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --jq)
+      jq_filter="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+[[ -n "$jq_filter" ]] || {
+  echo "simulated gh api call omitted jq filter" >&2
+  exit 90
+}
 count=0
 if [[ -f "$count_file" ]]; then
   count="$(<"$count_file")"
@@ -207,18 +234,30 @@ fi
 count=$((count + 1))
 printf '%s' "$count" >"$count_file"
 case "${GH_SCENARIO:-failure-retry}" in
-  completed-preferred)
-    printf 'completed\tsuccess\n'
+  latest-pending-preferred)
+    if [[ "$count" -eq 1 ]]; then
+      cat <<'JSON'
+[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"success","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"},{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/101","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
+JSON
+    else
+      cat <<'JSON'
+[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"success","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"},{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/101","status":"completed","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
+JSON
+    fi
     ;;
   pending-predecessor)
     if [[ "$count" -eq 1 ]]; then
-      printf 'pending\tin_progress\n'
+      cat <<'JSON'
+[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
+JSON
     else
-      printf 'completed\tsuccess\n'
+      cat <<'JSON'
+[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
+JSON
     fi
     ;;
   no-prior)
-    printf 'none\t\n'
+    printf '[{"check_runs":[]}]\n'
     ;;
   failure-retry)
     case "${GH_FAILURE_MODE:-transient}" in
@@ -247,13 +286,13 @@ case "${GH_SCENARIO:-failure-retry}" in
         exit 91
         ;;
     esac
-    printf 'completed\tsuccess\n'
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   *)
     echo "unknown simulated gh scenario" >&2
     exit 91
     ;;
-esac
+esac | jq -r "$jq_filter"
 EOF
 cat >"$tmp_dir/sleep" <<'EOF'
 #!/usr/bin/env bash
@@ -261,7 +300,33 @@ exit 0
 EOF
 chmod +x "$tmp_dir/gh" "$tmp_dir/sleep"
 
-action_script="$(awk '/^      run: \|$/{capture=1; next} capture {if ($0 != "" && $0 !~ /^        /) exit; sub(/^        /, ""); print}' "$ACTION")"
+action_script="$(awk '
+  /^      run: \|$/ {
+    if (found) {
+      ambiguous = 1
+    }
+    found = 1
+    capture = 1
+    next
+  }
+  capture {
+    if ($0 != "" && $0 !~ /^        /) {
+      capture = 0
+      next
+    }
+    line = $0
+    sub(/^        /, "", line)
+    print line
+  }
+  END {
+    if (!found || ambiguous) {
+      exit 1
+    }
+  }
+' "$ACTION")" || {
+  echo "required-gate action must contain exactly one composite run script" >&2
+  exit 1
+}
 run_action() {
   local count_file="$1"
   local failure_mode="$2"
@@ -306,10 +371,10 @@ grep -Fq 'Permanent GitHub API/configuration failure' "$permanent_output" || {
   exit 1
 }
 
-completed_count="$tmp_dir/count-completed-preferred"
-run_action "$completed_count" none completed-preferred
-[[ "$(<"$completed_count")" == "1" ]] || {
-  echo "required-gate action did not prefer the completed prior run over a concurrent run" >&2
+latest_pending_count="$tmp_dir/count-latest-pending-preferred"
+run_action "$latest_pending_count" none latest-pending-preferred
+[[ "$(<"$latest_pending_count")" == "2" ]] || {
+  echo "required-gate action did not honor the chronologically latest prior run state" >&2
   exit 1
 }
 
