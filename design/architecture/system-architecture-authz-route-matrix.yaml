@@ -551,15 +551,27 @@ routes:
     route: LOGIN
     scope: public
     classification: public
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
   - service: game-session-service
     route: LOGON
     scope: public
     classification: public
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
   - service: game-session-service
     route: WORLDS_PUBLIC
     transport_command: WORLDS
     scope: public
     classification: public
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
     applicability:
       all_of:
         - authentication_state: unauthenticated
@@ -1071,6 +1083,10 @@ routes:
     route: AuthLogin
     scope: public
     classification: public
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
     issued_token_profile: control-ui
     issued_token_audience: control-ui
     implementation_status:
@@ -1081,6 +1097,10 @@ routes:
     route: PlayerBootstrapLogin
     scope: public
     classification: public
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
     issued_token_profile: player-bootstrap
     issued_token_audience: player-bootstrap
     implementation_status:
@@ -1459,6 +1479,10 @@ routes:
     scope: public
     classification: public
     route_status: target_not_currently_routable
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
     recovery_contract: dedicated_pending_deletion_recovery_challenge_without_account_state_disclosure
     account_state_disclosure: prohibited
     response_profile: uniform_regardless_of_account_or_deletion_state
@@ -1470,6 +1494,10 @@ routes:
     scope: public
     classification: public
     route_status: target_not_currently_routable
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
     recovery_contract: consume_dedicated_challenge_and_issue_pending_deletion_access
     issued_credential: pending-deletion-access
     required_live_checks: [pending_deletion_state]

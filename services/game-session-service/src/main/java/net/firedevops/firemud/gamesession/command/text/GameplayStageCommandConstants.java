@@ -22,8 +22,8 @@ public final class GameplayStageCommandConstants {
   public static final String TENANT_BILLING_BLOCKED_CODE = "TENANT_BILLING_BLOCKED";
   public static final String TENANT_BILLING_BLOCKED_MESSAGE =
       "That world is temporarily unavailable for gameplay.";
-  public static final String MEMBERSHIP_AUTH_UNAVAILABLE_CODE = "MEMBERSHIP_AUTH_UNAVAILABLE";
-  public static final String MEMBERSHIP_AUTH_UNAVAILABLE_MESSAGE =
+  public static final String AUTH_UNAVAILABLE_CODE = "AUTH_UNAVAILABLE";
+  public static final String AUTH_UNAVAILABLE_MESSAGE =
       "Membership authority is temporarily unavailable. Retry PLAY shortly.";
   public static final String ENTITLEMENT_UNAVAILABLE_CODE = "ENTITLEMENT_UNAVAILABLE";
   public static final String ENTITLEMENT_UNAVAILABLE_MESSAGE =

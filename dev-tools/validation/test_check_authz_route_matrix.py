@@ -1287,6 +1287,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     transport_command: WORLDS
     scope: public
     classification: public
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
     applicability:
       all_of:
         - authentication_state: unauthenticated
@@ -1297,6 +1301,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     transport_command: WORLDS
     scope: public
     classification: public
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
     applicability:
       all_of:
         - authentication_state: unauthenticated
@@ -1397,6 +1405,29 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             any(
                 error.startswith("matrix.routes[")
                 and "token_type/token_issuer/token_audience as none" in error
+                for error in errors
+            )
+        )
+
+    def test_named_no_jwt_routes_use_explicit_none_metadata(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for service, route_name in self.validator.EXPLICIT_NO_JWT_ROUTES:
+            route = route_for(document, service, route_name)
+            with self.subTest(service=service, route=route_name):
+                self.assertEqual([], route["accepted_token_profiles"])
+                self.assertEqual("none", route["token_type"])
+                self.assertEqual("none", route["token_issuer"])
+                self.assertEqual("none", route["token_audience"])
+
+    def test_named_no_jwt_routes_reject_omitted_metadata(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "game-session-service", "LOGIN")
+        route.pop("accepted_token_profiles")
+        route.pop("token_type")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "game-session-service LOGIN must explicitly declare " in error
                 for error in errors
             )
         )
@@ -2374,7 +2405,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             text = replace_or_fail(
                 MATRIX.read_text(encoding="utf-8"),
                 "classifications:\n  - public",
-                "classifications: null\nignored_classifications:\n  - public",
+                "classifications: null",
             )
             path.write_text(text, encoding="utf-8")
             errors = self.validator.validate(path)
@@ -2386,6 +2417,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_route_classification_lists_and_mappings_are_reported(self):
         old = """    classification: public
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
     applicability:
       all_of:
         - authentication_state: unauthenticated"""
@@ -2397,6 +2432,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                         MATRIX.read_text(encoding="utf-8"),
                         old,
                         f"""    classification: {malformed}
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
     applicability:
       all_of:
         - authentication_state: unauthenticated""",
@@ -2466,6 +2505,56 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 for error in errors
             )
         )
+
+    def test_duplicate_route_reports_successful_duplicates_when_another_variant_fails(self):
+        valid_route = {
+            "service": "duplicate-service",
+            "route": "GET /duplicate",
+            "classification": "public",
+            "applicability": {"all_of": [{"effective_date": "2026-07-31"}]},
+        }
+        invalid_route = {
+            **valid_route,
+            "applicability": {
+                "all_of": [{"effective_date": datetime.date(2026, 7, 31)}]
+            },
+        }
+        errors = []
+        self.validator.validate_route_variants(
+            [valid_route, copy.deepcopy(valid_route), invalid_route],
+            {"public"},
+            errors,
+        )
+        self.assertTrue(any("duplicate route applicability" in error for error in errors))
+        self.assertTrue(
+            any("duplicate route applicability must be JSON-serializable" in error for error in errors)
+        )
+
+    def test_route_identity_components_are_trimmed_before_comparison(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        requirement = document["role_assurance"][
+            "privileged_control_when_global_role"
+        ]["requirements"]["platformAdmin"]
+        requirement["applies_to"]["route_identities"] = [
+            f" {identity.replace('/', ' / ', 1)} "
+            for identity in requirement["applies_to"]["route_identities"]
+        ]
+        errors = []
+        self.validator.validate_role_assurance(document, errors)
+        self.assertFalse(
+            any("platformAdmin.applies_to.route_identities must equal" in error for error in errors)
+        )
+        self.assertEqual(
+            "service|GET /route",
+            self.validator.route_key(
+                {"service": " service ", "route": " GET /route "}
+            ),
+        )
+        self.assertEqual(
+            "service/GET /route",
+            self.validator.route_identity(" service / GET /route ", "identity", errors),
+        )
+        self.assertEqual([], errors)
 
     def test_join_routes_require_admission_pointer_error(self):
         with tempfile.TemporaryDirectory() as directory:

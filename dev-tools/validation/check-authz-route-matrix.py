@@ -75,6 +75,15 @@ REQUIRED_MEMBERSHIP_WRITER_CHECKS = {
     "pending_deletion_state",
 }
 GAMEPLAY_CONNECT_ISSUED_TOKEN_STATE = "none_bounded_single_use_replay_exception"
+EXPLICIT_NO_JWT_ROUTES = {
+    ("game-session-service", "LOGIN"),
+    ("game-session-service", "LOGON"),
+    ("game-session-service", "WORLDS_PUBLIC"),
+    ("account-service", "AuthLogin"),
+    ("account-service", "PlayerBootstrapLogin"),
+    ("account-service", "POST /auth/pending-deletion/recovery/challenge"),
+    ("account-service", "POST /auth/pending-deletion/recovery"),
+}
 REQUIRED_FIELD_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 ROUTE_STATUS_VALUES = {
     "current_openapi_operator_surface",
@@ -391,16 +400,30 @@ LiveChecksCache = dict[tuple[int, str], tuple[object, set[str]]]
 RequiredFieldsCache = dict[tuple[int, str], tuple[object, list[str] | None]]
 
 
-def route_key(route: dict[str, Any]) -> str | None:
-    service = route.get("service")
-    name = route.get("route")
+def canonical_route_components(service: Any, route: Any) -> tuple[str, str] | None:
     if (
         not isinstance(service, str)
         or not service.strip()
-        or not isinstance(name, str)
-        or not name.strip()
+        or not isinstance(route, str)
+        or not route.strip()
     ):
         return None
+    return service.strip(), route.strip()
+
+
+def route_identity_from_route(route: dict[str, Any]) -> str | None:
+    components = canonical_route_components(route.get("service"), route.get("route"))
+    if components is None:
+        return None
+    service, route_name = components
+    return f"{service}/{route_name}"
+
+
+def route_key(route: dict[str, Any]) -> str | None:
+    components = canonical_route_components(route.get("service"), route.get("route"))
+    if components is None:
+        return None
+    service, name = components
     return f"{service}|{name}"
 
 
@@ -658,14 +681,36 @@ def validate_role_assurance(document: dict[str, Any], errors: list[str]) -> set[
                 f"the classification vocabulary: {unknown_classifications}"
             )
         route_identities = applies_to.get("route_identities")
+        canonical_route_identities: list[str] | None = None
         if route_identities is not None and (
             not isinstance(route_identities, list)
-            or any(not isinstance(item, str) or not item.strip() for item in route_identities)
+            or any(
+                not isinstance(item, str) or not item.strip()
+                for item in route_identities
+            )
         ):
             errors.append(f"{label}.applies_to.route_identities must be a list of strings")
             continue
+        if route_identities is not None:
+            canonical_route_identities = []
+            for index, identity in enumerate(route_identities):
+                service, separator, route_name = identity.partition("/")
+                components = (
+                    canonical_route_components(service, route_name)
+                    if separator
+                    else None
+                )
+                if components is None:
+                    errors.append(
+                        f"{label}.applies_to.route_identities[{index}] must be a "
+                        "non-empty service/route identity"
+                    )
+                    continue
+                canonical_route_identities.append("/".join(components))
         if role == "platformAdmin":
-            if route_identities != sorted(PLATFORM_ADMIN_ROLE_ASSURANCE_ROUTE_IDENTITIES):
+            if canonical_route_identities != sorted(
+                PLATFORM_ADMIN_ROLE_ASSURANCE_ROUTE_IDENTITIES
+            ):
                 errors.append(
                     f"{label}.applies_to.route_identities must equal "
                     f"{sorted(PLATFORM_ADMIN_ROLE_ASSURANCE_ROUTE_IDENTITIES)}"
@@ -1646,6 +1691,21 @@ def validate_receiver_predicates(
         )
 
 
+def validate_explicit_no_jwt_routes(routes: list[Any], errors: list[str]) -> None:
+    for route in routes:
+        if not isinstance(route, dict):
+            continue
+        key = (route.get("service"), route.get("route"))
+        if key not in EXPLICIT_NO_JWT_ROUTES:
+            continue
+        label = f"{route.get('service')} {route.get('route')}"
+        if route.get("accepted_token_profiles") != []:
+            errors.append(f"{label} must explicitly declare accepted_token_profiles=[]")
+        for field in ("token_type", "token_issuer", "token_audience"):
+            if route.get(field) != "none":
+                errors.append(f"{label} must explicitly declare {field}=none")
+
+
 def validate_tenant_generation_allowlist(
     policy: dict[str, Any], errors: list[str]
 ) -> None:
@@ -2253,10 +2313,13 @@ def route_identity(value: Any, field: str, errors: list[str]) -> str | None:
         errors.append(f"{field} must be a non-empty service/route identity")
         return None
     service, separator, route = value.partition("/")
-    if not separator or not service.strip() or not route.strip():
+    components = (
+        canonical_route_components(service, route) if separator else None
+    )
+    if components is None:
         errors.append(f"{field} must be a non-empty service/route identity")
         return None
-    return f"{service}/{route}"
+    return "/".join(components)
 
 
 def validate_operator_mutation_support_gate(
@@ -2268,11 +2331,11 @@ def validate_operator_mutation_support_gate(
         return
 
     route_identities = {
-        f"{route.get('service')}/{route.get('route')}"
+        identity
         for route in routes
         if isinstance(route, dict)
-        and isinstance(route.get("service"), str)
-        and isinstance(route.get("route"), str)
+        for identity in (route_identity_from_route(route),)
+        if identity is not None
     }
     gate_identities: list[str] = []
     applies_to_identities: list[str] = []
@@ -2833,9 +2896,7 @@ def validate_route_variants(
                     f"routes[{index}] duplicate route applicability must be "
                     f"JSON-serializable: {exc}"
                 )
-        if len(serialized) == len(variants) and len(serialized) != len(
-            set(serialized)
-        ):
+        if len(serialized) != len(set(serialized)):
             errors.append(f"duplicate route applicability: {key}")
 
     return set(route_variants)
@@ -2895,6 +2956,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
         required_fields_cache,
     )
     validate_receiver_predicates(routes, token_profiles, errors)
+    validate_explicit_no_jwt_routes(routes, errors)
     validate_role_assurance_references(routes, role_assurance_predicates, errors)
     validate_role_assurance_route_identities(routes, errors)
     validate_tenant_generation_policy(document, routes, errors, live_checks_cache)

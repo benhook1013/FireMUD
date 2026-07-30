@@ -1059,6 +1059,7 @@ class AdrReviewStatusTests(unittest.TestCase):
         with fixture_root() as fixture:
             root = Path(fixture)
             queue = queue_path(root)
+            expected_queue_path = queue.resolve()
             queue.write_text(
                 queue.read_text(encoding="utf-8") + "\n```text\n",
                 encoding="utf-8",
@@ -1066,7 +1067,7 @@ class AdrReviewStatusTests(unittest.TestCase):
             with self.assertRaises(self.validator.ValidationError) as raised:
                 self.validator.validate(root)
             message = str(raised.exception)
-            self.assertIn(str(queue), message)
+            self.assertIn(str(expected_queue_path), message)
             self.assertRegex(message, r"unterminated code fence opened at line [0-9]+")
 
     def test_unterminated_adr_fence_is_rejected_before_decision_record_detection(

@@ -343,7 +343,7 @@ The Game Session Service translates Account application errors into the text-pro
 
 Canonical non-login authorization/entitlement errors:
 
-- `MEMBERSHIP_AUTH_UNAVAILABLE` - authoritative membership/role lookup is unavailable for a billing-safe mutation; callers must fail closed.
+- `AUTH_UNAVAILABLE` - required live authentication, membership, or role authority is unavailable; callers retain authentication state, fail the operation closed, and may retry.
 - `ENTITLEMENT_UNAVAILABLE` - authoritative entitlement snapshot could not be produced at required freshness/sequence guarantees.
 - `ACCOUNT_DELETE_ACTIVE_BILLING_OWNER` - billing authority cannot yet prove that the account has no owned nonterminal subscription, transfer responsibility, or unresolved provider/durable work; callers must finish transfer or cancellation and allow all related work to reconcile before retrying deletion.
 

@@ -156,18 +156,41 @@ if cleanup_success_start is None:
     raise AssertionError(
         "dev-demo bootstrap temp directory cleanup success branch is missing"
     )
-cleanup_success_end = next(
-    (
-        index
-        for index in range(cleanup_success_start + 1, len(cleanup_function_lines))
-        if cleanup_function_lines[index] == "fi"
-    ),
-    None,
+shell_if_start_re = re.compile(r"^if\b.*\bthen$")
+
+
+def closing_fi_index(lines, if_index):
+    nested_if_depth = 0
+    for index in range(if_index + 1, len(lines)):
+        line = lines[index]
+        if shell_if_start_re.fullmatch(line):
+            nested_if_depth += 1
+        elif line == "fi":
+            if nested_if_depth == 0:
+                return index
+            nested_if_depth -= 1
+    return None
+
+
+cleanup_success_end = closing_fi_index(
+    cleanup_function_lines,
+    cleanup_success_start,
 )
 if cleanup_success_end is None:
     raise AssertionError(
         "dev-demo bootstrap temp directory cleanup success branch has no closing fi"
     )
+
+nested_if_fixture = [
+    'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then',
+    "if [[ -n \"${BOOTSTRAP_SECRET_DIR}\" ]]; then",
+    "true",
+    "fi",
+    "return 0",
+    "fi",
+]
+if closing_fi_index(nested_if_fixture, 0) != 5:
+    raise AssertionError("cleanup success branch must match its outer closing fi")
 cleanup_success_return = next(
     (
         index
@@ -296,7 +319,7 @@ forbidden_summary_reference = re.compile(
     r"\$\{?BOOTSTRAP_SECRET_DIR\}?/password|"
     r"\$\{\{\s*secrets[.]|"
     r"steps[.][A-Za-z0-9_-]+[.]outputs[.]password|"
-    r"(?<![;&|\n])[^;&|\n]*\b(?:secrets?|secs?|credentials?|creds?)\b"
+    r"(?<![;&|\n])[^;&|\n]*(?<![A-Za-z])(?:secrets?|secs?|credentials?|creds?)(?![A-Za-z])"
     r"[^;&|\n]*(?:\|[^;&|\n]*)*\|\s*base64\s+(?:-d|--decode)\b",
     re.IGNORECASE,
 )
@@ -304,6 +327,8 @@ for secret_pipeline in (
     "kubectl get secret demo -o json | base64 -d",
     "kubectl get SECRETS demo -o json | jq -r .data.password | base64 --decode",
     "kubectl get sec demo -o json | tr -d '\\n' | base64 -d",
+    "echo API_SECRET_TOKEN | base64 -d",
+    "echo DB_CREDS | base64 -d",
 ):
     if not forbidden_summary_reference.search(secret_pipeline):
         raise AssertionError(

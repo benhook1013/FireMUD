@@ -21,6 +21,8 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
+import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
@@ -207,6 +209,25 @@ class AccountClientTest {
   void runtimeMembershipReturnsCanonicalUnavailableWhenStubIsMissing() throws Exception {
     GetTenantMembershipForRuntimeResponse response =
         newClient(null).getTenantMembershipForRuntime("42", "7", "request-1");
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
+  }
+
+  @Test
+  void realmAccessGrantReturnsCanonicalUnavailableWhenStubIsMissing() throws Exception {
+    GetRealmAccessGrantForRuntimeResponse response =
+        newClient(null).getRealmAccessGrantForRuntime("42", "7", "world", "realm", "request-1");
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getMessage()).isEqualTo("Realm grant authority unavailable");
+  }
+
+  @Test
+  void publicMembershipEnsureReturnsCanonicalUnavailableWhenStubIsMissing() throws Exception {
+    EnsurePublicProductionPlayerMembershipResponse response =
+        newClient(null)
+            .ensurePublicProductionPlayerMembership("42", "7", "world", "realm", "request-1");
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");

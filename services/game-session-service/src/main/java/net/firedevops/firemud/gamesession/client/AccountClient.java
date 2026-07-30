@@ -261,7 +261,7 @@ public final class AccountClient
       return GetRealmAccessGrantForRuntimeResponse.newBuilder()
           .setError(
               ErrorDetail.newBuilder()
-                  .setCode("MEMBERSHIP_AUTH_UNAVAILABLE")
+                  .setCode("AUTH_UNAVAILABLE")
                   .setMessage("Realm grant authority unavailable"))
           .build();
     }
@@ -297,7 +297,7 @@ public final class AccountClient
     return GetRealmAccessGrantForRuntimeResponse.newBuilder()
         .setError(
             ErrorDetail.newBuilder()
-                .setCode("MEMBERSHIP_AUTH_UNAVAILABLE")
+                .setCode("AUTH_UNAVAILABLE")
                 .setMessage("Realm grant authority unavailable"))
         .build();
   }
@@ -308,7 +308,7 @@ public final class AccountClient
       return EnsurePublicProductionPlayerMembershipResponse.newBuilder()
           .setError(
               ErrorDetail.newBuilder()
-                  .setCode("MEMBERSHIP_AUTH_UNAVAILABLE")
+                  .setCode("AUTH_UNAVAILABLE")
                   .setMessage("Membership authority unavailable"))
           .build();
     }
@@ -344,7 +344,7 @@ public final class AccountClient
     return EnsurePublicProductionPlayerMembershipResponse.newBuilder()
         .setError(
             ErrorDetail.newBuilder()
-                .setCode("MEMBERSHIP_AUTH_UNAVAILABLE")
+                .setCode("AUTH_UNAVAILABLE")
                 .setMessage("Membership authority unavailable"))
         .build();
   }

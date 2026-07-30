@@ -997,7 +997,7 @@ class PlayCommandHandlerTest {
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
     assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("MEMBERSHIP_AUTH_UNAVAILABLE");
+    assertThat(result.commandResult().errorCode()).isEqualTo("AUTH_UNAVAILABLE");
     assertThat(
             meterRegistry
                 .counter("gamesession.session.resume_denied", "reason", "authority_unavailable")
