@@ -479,7 +479,7 @@ coverage_drift:
         route_status: target_not_currently_routable
         accepted_token_profiles: [control-ui]
         subject_binding: current_billing_owner_account_id
-        required_live_checks: [recent_account_authentication, subscription_binding_integrity]
+        required_live_checks: [recent_account_authentication, account_owned_wallet_customer_mapping, explicit_per_subscription_binding, safe_instrument_detachment, billing_ownership_transfer]
         mutation_contract: billing_owner_authorized_per_subscription_binding_replacement_before_detach_and_audited_ownership_transfer
       - route: PaymentInstrumentWalletCrossTenant
         scope: cross_tenant
@@ -1066,10 +1066,20 @@ routes:
       any_of: [logging-admin-service]
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
-    required_live_checks: [current_account_generation, current_token_generation, current_operator_roles, role_appropriate_assurance, tenant_generation, target_tenant_generation]
+    required_live_checks: [current_account_generation, current_token_generation]
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
+    role_assurance: privileged_control_when_global_role
+    operator_authorization_branches:
+      - branch: tenant_role
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles]
+      - branch: platformAdmin_global
+        required_live_checks: [current_global_role, role_appropriate_assurance, target_tenant_generation]
+    global_platform_admin_membership_required: false
+    global_platform_admin_reference_generation_binding: target_tenant_generation
     required_fields: [tenant_scope, action_family, control_plane_request_id, mutation_digest]
-    tenant_role_reference_generation_binding: current_tenant_generation
-    global_tenant_operation_binding: current_target_tenant_generation_without_membership
     mutation_contract: create_bounded_human_operator_authorization_reference
   - service: account-service
     route: IssueAutomationOperatorAuthorizationReference

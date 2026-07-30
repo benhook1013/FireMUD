@@ -53,7 +53,9 @@ The `Decision Record` section of a reviewed ADR is machine-readable. A completed
 - `Human review status: Completed`
 - `Human review date: YYYY-MM-DD`
 - `Human review disposition: Accepted`, `Revised`, `Superseded`, or `Withdrawn` for an ADR provenance record
-- `Review source:` followed by one or more backtick-delimited checked-queue decision keys separated by commas, or exactly `AI-AUTHORED-PENDING` for an AI-authored pending record
+- `Review source:` followed by one or more backtick-delimited checked-queue decision keys separated by commas
+
+`AI-AUTHORED-PENDING` is metadata reserved exclusively for an ADR whose status is `Proposed - Pending Human Review` and whose review metadata has the exact pending shape below. It is not a completed review source and is invalid for `Accepted`, `Superseded`, or `Withdrawn` records; every completed record must cite checked queue decision provenance.
 
 The authoritative provenance is the checked review queue in the [consequential decision inventory](../../project-management/design-alignment/consequential-decision-inventory.md), not the ADR metadata alone. A checked queue row has this exact shape:
 

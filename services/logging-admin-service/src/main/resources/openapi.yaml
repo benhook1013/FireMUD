@@ -1,7 +1,12 @@
 openapi: 3.0.3
 info:
   title: Logging & Admin Service API
-  description: Operator-facing moderation and runtime-control APIs; admission cutover remains target-state and is not currently exposed
+  description: >-
+    Operator-facing moderation and runtime-control APIs. Public /reports is intentionally
+    absent; internal report RPC/types are not public ingress. Admission-pointer reads, audit,
+    and prepared-proof reads are live. The existing admission-pointer write, prepared-cutover,
+    and version-upgrade preparation paths remain unsupported implementation drift and must stay
+    externally gated until the canonical operator-mutation contract is complete.
   version: 1.0.0
   license:
     name: MIT
@@ -1819,7 +1824,8 @@ paths:
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
     post:
-      summary: Update a gameplay admission pointer
+      summary: Update a gameplay admission pointer (unsupported implementation drift)
+      description: "This implementation path is not a supported operator capability and must remain externally gated until its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption are complete."
       operationId: setAdmissionPointer
       requestBody:
         required: true
@@ -1829,7 +1835,7 @@ paths:
               $ref: '#/components/schemas/SetAdmissionPointerRequest'
       responses:
         '200':
-          description: Updated admission pointer
+          description: Updated admission pointer when the canonical mutation gate is implemented
           content:
             application/json:
               schema:
@@ -1911,7 +1917,8 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
   /admission-pointers/cutover:
     post:
-      summary: Execute a prepared version cutover
+      summary: Execute a prepared version cutover (unsupported implementation drift)
+      description: "This implementation path is not a supported operator capability and must remain externally gated until its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption are complete."
       operationId: executePreparedVersionCutover
       requestBody:
         required: true
@@ -1921,7 +1928,7 @@ paths:
               $ref: '#/components/schemas/ExecutePreparedVersionCutoverRequest'
       responses:
         '200':
-          description: Updated admission pointer after cutover
+          description: Updated admission pointer after cutover when the canonical mutation gate is implemented
           content:
             application/json:
               schema:

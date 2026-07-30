@@ -61,6 +61,18 @@ except KeyError as exc:
 if not isinstance(bootstrap_manifest, str):
     raise AssertionError("dev-demo bootstrap step run must be a string")
 
+bootstrap_lines = [line.strip() for line in bootstrap_manifest.splitlines()]
+
+
+def assert_ordered_bootstrap_lines(expected_lines, message):
+    next_index = 0
+    for expected_line in expected_lines:
+        try:
+            next_index = bootstrap_lines.index(expected_line, next_index) + 1
+        except ValueError as exc:
+            raise AssertionError(message) from exc
+
+
 for expected in (
     'create secret generic dev-demo-bootstrap-env',
     '--from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email"',
@@ -80,21 +92,21 @@ for expected in (
         raise AssertionError(
             f"dev-demo bootstrap step contract missing: {expected}"
         )
-if (
-    'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then\n'
-    '    BOOTSTRAP_SECRET_DIR=\n'
-    '    return 0'
-) not in bootstrap_manifest:
-    raise AssertionError(
-        "dev-demo bootstrap temp directory must clear its variable only after rm succeeds"
-    )
-if (
-    'echo "::error::Failed to remove dev-demo bootstrap credential files" >&2\n'
-    '  return 1'
-) not in bootstrap_manifest:
-    raise AssertionError(
-        "dev-demo bootstrap temp directory removal failure must return failure"
-    )
+assert_ordered_bootstrap_lines(
+    (
+        'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then',
+        "BOOTSTRAP_SECRET_DIR=",
+        "return 0",
+    ),
+    "dev-demo bootstrap temp directory must clear its variable only after rm succeeds",
+)
+assert_ordered_bootstrap_lines(
+    (
+        'echo "::error::Failed to remove dev-demo bootstrap credential files" >&2',
+        "return 1",
+    ),
+    "dev-demo bootstrap temp directory removal failure must return failure",
+)
 
 try:
     manifest_start = bootstrap_manifest.index(

@@ -35,6 +35,13 @@ def replace_or_fail(text: str, old: str, new: str) -> str:
     return text.replace(old, new, 1)
 
 
+class RouteCardinalityError(AssertionError):
+    def __init__(self, service: str, route_name: str, match_count: int):
+        super().__init__(
+            f"expected exactly one {service} {route_name} route, found {match_count}"
+        )
+
+
 def grouped_routes(document, service):
     routes = defaultdict(list)
     for route in document["routes"]:
@@ -50,9 +57,7 @@ def route_for(document, service, route_name):
         if route.get("service") == service and route.get("route") == route_name
     ]
     if len(matches) != 1:
-        raise AssertionError(
-            f"expected exactly one {service} {route_name} route, found {len(matches)}"
-        )
+        raise RouteCardinalityError(service, route_name, len(matches))
     return matches[0]
 
 
