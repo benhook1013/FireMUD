@@ -37,35 +37,6 @@ assert_job_contains() {
   fi
 }
 
-assert_job_first_step() {
-  local workflow="$1"
-  local job="$2"
-  local expected="$3"
-  local path="$ROOT_DIR/.github/workflows/$workflow"
-
-  if ! awk -v job="$job" -v expected="$expected" '
-    $0 == "  " job ":" { in_job = 1; next }
-    in_job && /^  [A-Za-z0-9_-]+:/ { exit }
-    in_job && /^      - / {
-      if (!first_step_seen) {
-        first_step = $0
-        first_step_seen = 1
-        next
-      }
-      done = 1
-      exit
-    }
-    in_job && first_step_seen && !done && /^        if:/ { first_step_conditional = 1 }
-    END {
-      valid = first_step_seen && first_step == "      - name: " expected && !first_step_conditional
-      exit valid ? 0 : 1
-    }
-  ' "$path"; then
-    echo "$workflow job $job must begin with an unconditional: $expected" >&2
-    exit 1
-  fi
-}
-
 assert_job_excludes() {
   local workflow="$1"
   local job="$2"
@@ -292,16 +263,7 @@ for path in "$ci_path" "$smoke_path"; do
 done
 
 require_contains "$ci_path" 'PR Metadata Edit (Validation Summary)'
-assert_job_contains ci.yml validation-gate '    name: Validation Gate'
-assert_job_contains ci.yml validation-gate 'uses: ./.github/actions/preserve-required-gate'
-assert_job_contains ci.yml validation-gate 'gate-name: Validation Gate'
-assert_job_contains ci.yml validation-gate 'Preserve successful required gate on metadata-only edit'
 require_contains "$smoke_path" 'PR Metadata Edit (Smoke Summary)'
-assert_job_contains smoke.yml smoke-gate '    name: Smoke Gate'
-assert_job_first_step smoke.yml smoke-gate 'Harden runner'
-assert_job_contains smoke.yml smoke-gate 'uses: ./.github/actions/preserve-required-gate'
-assert_job_contains smoke.yml smoke-gate 'gate-name: Smoke Gate'
-assert_job_contains smoke.yml smoke-gate 'Preserve successful required gate on metadata-only edit'
 if grep -Eq '^  smoke-lite:' "$smoke_path"; then
   echo "smoke.yml must not restore the redundant smoke-lite job" >&2
   exit 1

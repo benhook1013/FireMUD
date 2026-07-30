@@ -121,6 +121,8 @@ for expected in (
     'echo "::error::Failed to remove dev-demo bootstrap credential files"',
     'if ! cleanup_bootstrap_temp_dir; then',
     'cleanup_bootstrap_secret',
+    'cleanup_bootstrap_resources() {',
+    'trap cleanup_bootstrap_resources EXIT',
 ):
     if normalize_script(expected) not in normalized_bootstrap_manifest:
         raise AssertionError(
@@ -204,6 +206,24 @@ for job_name, job in jobs.items():
             summary_runs.append((job_name, step.get("name", step_index), run))
 if not summary_runs:
     raise AssertionError("dev-demo workflow must define summary-writing steps")
+summary_helper_pattern = re.compile(
+    r"(?:bash\s+)?(?:[.]/)?(dev-tools/[A-Za-z0-9_./-]+[.]sh)"
+)
+pending_summary_helpers = list(summary_runs)
+seen_summary_helpers = set()
+while pending_summary_helpers:
+    job_name, step_name, source = pending_summary_helpers.pop()
+    for helper in summary_helper_pattern.findall(source):
+        if helper in seen_summary_helpers:
+            continue
+        seen_summary_helpers.add(helper)
+        helper_path = root / helper
+        if not helper_path.is_file():
+            raise AssertionError(f"summary helper does not exist: {helper}")
+        helper_source = helper_path.read_text(encoding="utf-8")
+        helper_entry = (job_name, f"{step_name}:{helper}", helper_source)
+        summary_runs.append(helper_entry)
+        pending_summary_helpers.append(helper_entry)
 forbidden_summary_reference = re.compile(
     r"DEMO_SMOKE_PASSWORD|"
     r"\$\{BOOTSTRAP_SECRET_DIR\}/password|"

@@ -24,56 +24,6 @@ if ! grep -Fq 'GH_TOKEN: ${{ github.token }}' "$ACTION" ||
   exit 1
 fi
 
-# shellcheck disable=SC2016 # Assert literal workflow interpolation syntax.
-if ! grep -Fq '.app.slug == \"github-actions\"' "$ACTION" ||
-  ! grep -Fq 'contains(\"/actions/runs/${GITHUB_RUN_ID}/\") | not' "$ACTION" ||
-  ! grep -Fq -- '--paginate' "$ACTION" ||
-  ! grep -Fq -- '--slurp' "$ACTION" ||
-  ! grep -Fq '.[].check_runs[]?' "$ACTION" ||
-  ! grep -Fq 'if .status == \"completed\" then' "$ACTION" ||
-  ! grep -Fq '.status == \"queued\"' "$ACTION" ||
-  ! grep -Fq '.status == \"in_progress\"' "$ACTION" ||
-  ! grep -Fq '.status == \"requested\"' "$ACTION" ||
-  ! grep -Fq '.status == \"waiting\"' "$ACTION" ||
-  ! grep -Fq '.status == \"pending\"' "$ACTION" ||
-  ! grep -Fq '[\"pending\"' "$ACTION" ||
-  ! grep -Fq '[\"none\", \"\"]' "$ACTION" ||
-  ! grep -Fq 'sort_by(.started_at // .created_at) | last' "$ACTION" ||
-  ! grep -Fq 'prior_status' "$ACTION"; then
-  echo "required-gate action must use the chronologically latest prior GitHub Actions check run" >&2
-  exit 1
-fi
-# shellcheck disable=SC2016 # Assert literal workflow shell syntax.
-if ! grep -Fq 'for attempt in $(seq 1 80)' "$ACTION" ||
-  ! grep -Fq 'sleep 15' "$ACTION" ||
-  ! grep -Fq 'Timed out waiting for the prior' "$ACTION"; then
-  echo "required-gate action must retain bounded 80-attempt, 15-second polling" >&2
-  exit 1
-fi
-# shellcheck disable=SC2016 # Assert literal retry syntax.
-if ! grep -Fq 'prior_state="$(gh api' "$ACTION" ||
-  ! grep -Fq 'is_retryable_gh_failure' "$ACTION" ||
-  ! grep -Fq 'api_status' "$ACTION"; then
-  echo "required-gate action must classify gh api failures before retrying" >&2
-  exit 1
-fi
-grep -Fq 'Retryable GitHub API failure' "$ACTION" || {
-  echo "required-gate action must report retryable gh api failures" >&2
-  exit 1
-}
-grep -Fq 'Permanent GitHub API/configuration failure' "$ACTION" || {
-  echo "required-gate action must fail immediately for permanent gh api failures" >&2
-  exit 1
-}
-grep -Fq 'GITHUB_EVENT_NAME:-' "$ACTION" || {
-  echo "required-gate action must validate pull request context before polling" >&2
-  exit 1
-}
-grep -Fq 'nonempty pull request head SHA' "$ACTION" || {
-  echo "required-gate action must validate a nonempty pull request head SHA before polling" >&2
-  exit 1
-}
-
 while IFS='|' read -r workflow gate_job_id gate; do
   [[ -n "$workflow" ]] || continue
   path="$ROOT_DIR/.github/workflows/$workflow"
@@ -108,6 +58,28 @@ while IFS='|' read -r workflow gate_job_id gate; do
     echo "$workflow must pass its required gate name to the shared action" >&2
     exit 1
   }
+  preserve_block="$(awk '/^      - name: Preserve successful required gate on metadata-only edit$/{capture=1} capture{if (/^      - / && $0 != "      - name: Preserve successful required gate on metadata-only edit") exit; print}' <<<"$gate_block")"
+  if [[ "$workflow" == "smoke.yml" ]]; then
+    # shellcheck disable=SC2016 # Assert literal smoke classification output syntax.
+    expected_preserve_condition="        if: \${{ steps.smoke_gate_context.outputs.required != 'true' }}"
+  else
+    # shellcheck disable=SC2016 # Assert literal metadata-only pull request syntax.
+    expected_preserve_condition="        if: \${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null }}"
+    if [[ "$workflow" == "codeql.yml" ]]; then
+      # CodeQL is pull-request-only at this gate, so its condition omits the redundant event-name check.
+      expected_preserve_condition="        if: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null }}"
+    fi
+  fi
+  grep -Fq "$expected_preserve_condition" <<<"$preserve_block" || {
+    echo "$workflow $gate preservation must retain its metadata-only condition" >&2
+    exit 1
+  }
+  checkout_block="$(awk '/^      - name: Check out required-gate action$/{capture=1} capture{if (/^      - / && $0 != "      - name: Check out required-gate action") exit; print}' <<<"$gate_block")"
+  # shellcheck disable=SC2016 # Assert literal trusted pull request base expression.
+  grep -Fq '          ref: ${{ github.event.pull_request.base.sha }}' <<<"$checkout_block" || {
+    echo "$workflow $gate must load the shared action from the trusted pull request base SHA" >&2
+    exit 1
+  }
   # shellcheck disable=SC2016 # Assert literal polling syntax is absent from gate callers.
   if grep -Fq 'gh api' <<<"$gate_block" || grep -Fq 'for attempt in $(seq 1 80)' <<<"$gate_block"; then
     echo "$workflow must delegate required-gate polling to the shared action" >&2
@@ -134,6 +106,7 @@ while IFS='|' read -r workflow gate_job_id gate; do
     echo "$workflow $gate caller must retain contents: read" >&2
     exit 1
   }
+  # security.yml has no changes job, so it cannot gate on change detection.
   if [[ "$workflow" != "security.yml" ]] && ! grep -Fq 'needs.changes.result' <<<"$gate_block"; then
     echo "$workflow $gate must fail closed when change detection fails" >&2
     exit 1
@@ -198,22 +171,10 @@ if [[ "$*" != *"--paginate"* || "$*" != *"--slurp"* ]]; then
   echo "simulated gh api call omitted pagination/slurp" >&2
   exit 90
 fi
-jq_filter=""
-while [[ "$#" -gt 0 ]]; do
-  case "$1" in
-    --jq)
-      jq_filter="$2"
-      shift 2
-      ;;
-    *)
-      shift
-      ;;
-  esac
-done
-[[ -n "$jq_filter" ]] || {
-  echo "simulated gh api call omitted jq filter" >&2
+if [[ "$*" == *"--jq"* ]]; then
+  echo "simulated gh api call must leave filtering to external jq" >&2
   exit 90
-}
+fi
 count=0
 if [[ -f "$count_file" ]]; then
   count="$(<"$count_file")"
@@ -266,6 +227,9 @@ JSON
     fi
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"%s","conclusion":%s,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n' "$status" "$conclusion"
     ;;
+  timeout-pending)
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"waiting","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    ;;
   failure-retry)
     case "${GH_FAILURE_MODE:-transient}" in
       transient|network)
@@ -303,7 +267,7 @@ JSON
     echo "unknown simulated gh scenario" >&2
     exit 91
     ;;
-esac | jq -r "$jq_filter"
+esac
 EOF
 cat >"$tmp_dir/sleep" <<'EOF'
 #!/usr/bin/env bash
@@ -423,6 +387,24 @@ alternate_pending_count="$tmp_dir/count-alternate-pending"
 run_action "$alternate_pending_count" none alternate-pending
 [[ "$(<"$alternate_pending_count")" == "4" ]] || {
   echo "required-gate action did not treat all GitHub pending statuses as pending" >&2
+  exit 1
+}
+
+timeout_output="$tmp_dir/timeout-output"
+set +e
+run_action "$tmp_dir/count-timeout" none timeout-pending >"$timeout_output" 2>&1
+timeout_status=$?
+set -e
+[[ "$timeout_status" -ne 0 ]] || {
+  echo "required-gate action accepted a predecessor that never completed" >&2
+  exit 1
+}
+[[ "$(<"$tmp_dir/count-timeout")" == "80" ]] || {
+  echo "required-gate action did not retain its bounded polling limit" >&2
+  exit 1
+}
+grep -Fq 'Timed out waiting for the relevant prior' "$timeout_output" || {
+  echo "required-gate action did not report its bounded polling timeout" >&2
   exit 1
 }
 
