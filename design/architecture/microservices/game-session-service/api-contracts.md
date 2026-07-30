@@ -77,33 +77,25 @@ The current proto and admission-pointer mutation flow remain incomplete against 
 
 Service definitions reside in [../../../../protos/game-session/v1](../../../../protos/game-session/v1). Run `./gradlew generateProto` after modifying these files to regenerate stubs. The generated classes appear under `net.firedevops.firemud.gamesession.v1` in `build/generated/sources/proto/main/{grpc,java}` and are wired into `services/game-session-service/src/main/java/net/firedevops/firemud/service/impl/GameSessionGrpcService.java`.
 
-### REST endpoints
+### External Operator Lifecycle Contract
+
+**Target state:** External operator mutations enter through the Logging & Admin Service via Gateway. Logging & Admin authenticates the `control-ui` session, records the durable intent and audit context, and calls Account's canonical [`IssueHumanOperatorAuthorizationReference`](../account-service/api-contracts.md#operator-authorization-references) contract; the separately typed automation path is restricted as that Account contract defines. Logging & Admin then forwards the bounded reference and the structured non-authoritative reason, request identity, and target-scope fields to the Game Session owner RPC over its exact mTLS workload identity. If generation or predicate fields are forwarded unchanged, they are audit-only context: Game Session must exclude those forwarded copies from authorization decisions and the mutation digest, or omit them entirely. It may forward the end-user `control-ui` JWT to Account only for human reference issuance; it must never forward an end-user JWT or caller-asserted actor identity to Game Session. Game Session recomputes the mutation digest and calls Account's `RedeemOperatorAuthorization` contract with the exact owner, action, scope, request identity, and digest. Account's returned bounded actor or automation-policy authorization projection is the sole authorization source; Game Session uses that Account-derived projection for audit while independently validating target-domain ownership, runtime fences, and owner-side idempotency. This target path is not currently routable and has no fallback external mutation route.
+
+**Current implementation status:** The current OpenAPI surface exposes an owner-local `/sessions*` HTTP family. It uses the service-local control-plane auth boundary, direct edge exposure is denied, and no Logging & Admin external `/sessions*` family is currently available. These owner-local routes are not the canonical external operator ingress or player-admission contract.
+
+### Service-Local HTTP Surface
+
+Game Session owns the `/api/session/**` Gateway family, but the public gateway inventory exposes only `GET /api/session/ping`. The service-local endpoint inventory is:
 
 - `GET /ping` – basic health check returning `"pong"`.
-- `POST /sessions` – operator/bootstrap convenience for creating a new game instance from a template-driven launch attempt. This is not the canonical player gameplay-admission seam and does apply the same launch-descriptor preflight seam as the gRPC `StartSession` path.
-- `POST /sessions/{id}/stop` – stop a running session.
-- `POST /sessions/{id}/restart` – restart a stopped session.
-- `POST /sessions/{id}/refresh-roles` – refresh the player's roles for an active session.
+- `POST /sessions` – creates a game instance from a template-driven launch attempt; it is not the player gameplay-admission seam and uses the same launch-descriptor preflight as gRPC `StartSession`.
+- `POST /sessions/{id}/stop` – stops a running session.
+- `POST /sessions/{id}/restart` – restarts a stopped session.
+- `POST /sessions/{id}/refresh-roles` – refreshes the roles for an active session.
 
 Use `/sessions/{id}/refresh-roles` after updating an account's privileges so the session reflects the latest role assignments.
 
-#### External HTTP route classification
-
-Game Session owns the `/api/session/**` Gateway family, but that family is not a blanket public-write contract. The current public gateway inventory exposes only `GET /api/session/ping`; the mutating `/sessions*` routes are legacy service-local REST hooks retained by the current OpenAPI surface, protected by privileged HTTP auth on the service itself, and not part of the public gateway allowlist. They are not the canonical external operator ingress or player-admission contract.
-
-| Service-local route | External classification | Notes |
-| --- | --- | --- |
-| `GET /ping` | Infra/local health only | Not part of the external admin/product contract. |
-| `POST /sessions` | `legacy_service_local_operator_hook`; exact `control-ui` profile plus `privileged_control_when_global_role` assurance at the current service-local boundary | Current OpenAPI hook only. Direct edge exposure is denied; the canonical external operator ingress is Logging & Admin, not this REST route, and this is not a player admission route. |
-| `POST /sessions/{id}/stop` | `legacy_service_local_operator_hook`; exact `control-ui` profile plus `privileged_control_when_global_role` assurance at the current service-local boundary | Current OpenAPI hook only. Direct edge exposure is denied; the canonical external operator ingress is Logging & Admin. |
-| `POST /sessions/{id}/restart` | `legacy_service_local_operator_hook`; exact `control-ui` profile plus `privileged_control_when_global_role` assurance at the current service-local boundary | Current OpenAPI hook only. Direct edge exposure is denied; the canonical external operator ingress is Logging & Admin. |
-| `POST /sessions/{id}/refresh-roles` | `legacy_service_local_maintenance_hook`; exact `control-ui` profile at the current service-local boundary | Current OpenAPI maintenance hook only. Direct edge exposure is denied; it is not a canonical player or external operator route. |
-
-If a future change wants any of the mutating `/sessions*` routes to be callable directly from external operator tools, the owning contract must explicitly mark that exact route as bypass-safe and explain its auth class, audit behavior, and lease-owner forwarding rules in the same change.
-
-#### Target canonical external operator path
-
-The canonical external operator flow below is target-state and is not currently routable. Current behavior remains the privileged service-local `/sessions*` hooks above with direct edge exposure denied; there is no fallback external Logging & Admin mutation route. Once enabled, external operator mutations enter through the Logging & Admin Service via Gateway. Logging & Admin authenticates the `control-ui` session, records the durable intent and audit context, and calls Account's canonical [`IssueHumanOperatorAuthorizationReference`](../account-service/api-contracts.md#operator-authorization-references) contract; the separately typed automation path is restricted as that Account contract defines. Logging & Admin then forwards the bounded reference and the structured non-authoritative reason, request identity, and target-scope fields to the Game Session owner RPC over its exact mTLS workload identity. If generation or predicate fields are forwarded unchanged, they are audit-only context: Game Session must exclude those forwarded copies from authorization decisions and the mutation digest, or omit them entirely. It may forward the end-user `control-ui` JWT to Account only for human reference issuance; it must never forward an end-user JWT or caller-asserted actor identity to Game Session. Game Session recomputes the mutation digest and calls Account's `RedeemOperatorAuthorization` contract with the exact owner, action, scope, request identity, and digest. Account's returned bounded actor or automation-policy authorization projection is the sole authorization source; Game Session uses that Account-derived projection for audit while independently validating target-domain ownership, runtime fences, and owner-side idempotency.
+Direct external operator exposure of a mutating `/sessions*` route is forbidden unless the owning contract explicitly marks that exact route as bypass-safe and defines its auth class, audit behavior, and lease-owner forwarding rules in the same change.
 
 #### Owner-side operator RPC classification
 
@@ -117,7 +109,7 @@ curl http://localhost:8086/ping
 curl http://localhost:8080/api/session/ping
 ```
 
-The following direct REST example exercises the current legacy service-local hook for local development only; it is not the canonical external operator path:
+The following direct REST example exercises the owner-local implementation for local development only; it is not the canonical external operator path:
 
 To start a session via REST:
 

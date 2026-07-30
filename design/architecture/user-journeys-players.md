@@ -39,7 +39,7 @@ Accounts span multiple hosted games. The [Multi-Tenancy](./system-architecture-m
 
 ## Implementation Status
 
-The target journey below requires an explicit `JOIN` / `Join & Play`, then realm-scoped `CHARS`, before character creation, connect-token issuance, or `PLAY` for first-time public-production entry; `PLAY` never creates membership. Returning members and grant-backed non-public players preserve their existing membership/grant-backed discovery flow and skip only the public-production join action. Current implementation still allows the connect-token issuance and text `PLAY` paths to invoke `EnsurePublicProductionPlayerMembership` implicitly, and current text clients can enter through direct `LOGIN` plus `PLAY` without the target discovery/`CHARS` sequence. The explicit join boundary, realm-scoped character gate, and `JOIN_REQUIRED` behavior are not yet implemented across all clients. That is tracked implementation drift, not target behavior.
+The target journey below requires an explicit `JOIN` / `Join & Play`, then realm-scoped `CHARS`, before character creation, connect-token issuance, or `PLAY` for first-time public-production entry; `PLAY` never creates membership. Returning members and grant-backed non-public players preserve their existing membership/grant-backed discovery flow and skip only the public-production join action. Current implementation still allows the connect-token issuance and text `PLAY` paths to invoke `EnsurePublicProductionPlayerMembership` implicitly, and current text clients can enter through direct `LOGIN` plus `PLAY` without the target discovery/`CHARS` sequence. The explicit join boundary, realm-scoped character gate, and `JOIN_REQUIRED` behavior are not yet implemented across all clients. That is tracked implementation drift, not target behavior. Account export is likewise only a partial current implementation: `GET /accounts/{accountId}/export` returns Account/profile-local data, not the target cross-service export.
 
 Realm-aware character discovery and the current creation-policy decision are implemented at the backend boundary, but the richer character-creation descriptor remains a gap. The current flow does not yet provide first-party clients with the published-version-specific template, race, class, and option descriptor needed to render the complete creation choices.
 
@@ -55,7 +55,7 @@ Realm-aware character discovery and the current creation-policy decision are imp
 - [Purchases and Subscriptions](#6-purchases-and-subscriptions) – Manage subscriptions and in-game purchases.
 - [Password Resets & Account Recovery](#7-password-resets--account-recovery) – Recover access when credentials are lost.
 - [Switch Games or Manage Multiple Games](#8-switch-games-or-manage-multiple-games) – Move between games under one account.
-- [Account Data Export](#9-account-data-export) – Request and retrieve a durable asynchronous account export.
+- [Account Data Export](#9-account-data-export) – Target: durable asynchronous export; current implementation: partial Account/profile-only export.
 - [Account Deletion](#10-account-deletion) – Request separate account erasure after billing obligations are resolved.
 
 Creator-focused design flows are described in the [Creator Journeys](./user-journeys-creators.md). Operational and moderation flows are described in the [Operator Journeys](./user-journeys-operators.md), including how outages and recoveries surface to players.

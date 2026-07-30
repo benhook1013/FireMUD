@@ -129,10 +129,10 @@ def section_value(text: str, heading: str) -> str:
     value_line_number = heading_line.number + 2
     if (
         heading_line.number >= len(lines)
-        or lines[heading_line.number] != ""
+        or lines[heading_line.number].strip() != ""
         or value_line_number > len(lines)
         or value_line_number not in {line.number for line in visible_lines}
-        or lines[value_line_number - 1] == ""
+        or lines[value_line_number - 1].strip() == ""
     ):
         fail(f"missing or malformed {heading!r} section")
     return lines[value_line_number - 1].strip()
@@ -663,7 +663,10 @@ def parse_review_source(
             f"{context}: review source must contain one or more "
             "backtick-delimited queue keys separated by ', '"
         )
-    return tuple(re.findall(r"`([^`]+)`", value))
+    keys = tuple(re.findall(r"`([^`]+)`", value))
+    if len(keys) != len(set(keys)):
+        fail(f"{context}: review source must not contain duplicate queue keys")
+    return keys
 
 
 def validate_pending_review(context: Path, fields: dict[str, str]) -> None:

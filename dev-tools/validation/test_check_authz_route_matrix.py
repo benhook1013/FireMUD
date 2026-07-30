@@ -1510,6 +1510,57 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             any("required_fields must use snake_case" in error for error in errors)
         )
 
+    def test_operator_reference_issuance_requires_schema_pair_fields(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        expected_fields = {
+            "action_family_schema_id",
+            "action_family_schema_version",
+        }
+        for route_name in (
+            "IssueHumanOperatorAuthorizationReference",
+            "IssueAutomationOperatorAuthorizationReference",
+        ):
+            with self.subTest(route_name=route_name):
+                route = route_for(document, "account-service", route_name)
+                self.assertTrue(expected_fields.issubset(set(route["required_fields"])))
+
+        route = route_for(
+            document, "account-service", "IssueHumanOperatorAuthorizationReference"
+        )
+        route["required_fields"].remove("action_family_schema_id")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "IssueHumanOperatorAuthorizationReference required_fields must include "
+                "operator-reference fields" in error
+                and "action_family_schema_id" in error
+                for error in errors
+            )
+        )
+
+    def test_unavailable_authority_uses_one_canonical_error(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for route_name in (
+            "IssueConnectToken",
+            "CommitTenantCapacityAdmission",
+            "BillingArtifactsTenant",
+            "BillingArtifactsCrossTenant",
+        ):
+            with self.subTest(route_name=route_name):
+                route = route_for(document, "account-service", route_name)
+                self.assertIn("AUTH_UNAVAILABLE", route["canonical_errors"]["any_of"])
+
+        route = route_for(document, "account-service", "BillingArtifactsTenant")
+        route["canonical_errors"]["any_of"] = ["MEMBERSHIP_AUTH_UNAVAILABLE"]
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "must use AUTH_UNAVAILABLE instead of unavailable-authority aliases"
+                in error
+                for error in errors
+            )
+        )
+
     def test_privileged_control_entry_route_establishes_the_window(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = route_for(document, "account-service", "EnterPrivilegedControlWindow")
@@ -2532,6 +2583,43 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             any("support.applies_to must be a mapping" in error for error in errors)
         )
         self.assertTrue(any("one applies_to shape" in error for error in errors))
+
+    def test_platform_admin_assurance_has_exact_issuance_route_without_scope_widening(
+        self,
+    ):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        requirement = document["role_assurance"][
+            "privileged_control_when_global_role"
+        ]["requirements"]["platformAdmin"]
+        self.assertEqual(
+            ["account-service/IssueHumanOperatorAuthorizationReference"],
+            requirement["applies_to"]["route_identities"],
+        )
+        self.assertNotIn(
+            "internal_workload",
+            requirement["applies_to"]["route_classifications"],
+        )
+        self.assertNotIn(
+            "internal_workload",
+            document["role_assurance"]["privileged_control_when_global_role"][
+                "requirements"
+            ]["support"]["applies_to"]["route_classifications"],
+        )
+        self.assertNotIn(
+            "internal_workload",
+            document["role_assurance"]["privileged_control_when_global_role"][
+                "requirements"
+            ]["billingAdmin"]["applies_to"]["route_classifications"],
+        )
+
+        requirement["applies_to"].pop("route_identities")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "platformAdmin.applies_to.route_identities must equal" in error
+                for error in errors
+            )
+        )
 
     def test_role_assurance_scope_must_be_non_empty_and_declared(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

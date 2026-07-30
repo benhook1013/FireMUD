@@ -407,6 +407,8 @@ role_assurance:
         elevation_contract: privileged_control
         applies_to:
           route_classifications: [account_scoped, tenant_regular, cross_tenant_support_safe, cross_tenant_billing_safe, cross_tenant_data_bearing]
+          route_identities:
+            - account-service/IssueHumanOperatorAuthorizationReference
       billingAdmin:
         role_check: current_global_role
         elevation_contract: privileged_control
@@ -1133,7 +1135,7 @@ routes:
         required_live_checks: [current_global_role, role_appropriate_assurance, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
-    required_fields: [tenant_scope, action_family, control_plane_request_id, mutation_digest]
+    required_fields: [tenant_scope, action_family, action_family_schema_id, action_family_schema_version, control_plane_request_id, mutation_digest]
     mutation_contract: create_bounded_human_operator_authorization_reference
   - service: account-service
     route: IssueAutomationOperatorAuthorizationReference
@@ -1153,7 +1155,7 @@ routes:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
     end_user_token_required: false
     required_live_checks: [current_automation_policy, workload_action_scope, tenant_generation]
-    required_fields: [automation_policy_id, automation_policy_version, tenant_scope, action_family, control_plane_request_id, mutation_digest]
+    required_fields: [automation_policy_id, automation_policy_version, tenant_scope, action_family, action_family_schema_id, action_family_schema_version, control_plane_request_id, mutation_digest]
     automation_tenant_generation_binding: current_tenant_generation
     automation_privileged_control: prohibited
     mutation_contract: create_bounded_workload_operator_authorization_reference
@@ -1495,7 +1497,7 @@ routes:
     realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, membership_generation, public_production_admission, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match, replay_protection_available, replay_admission_fence_match]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, CONNECT_REPLAY_PROTECTION_UNAVAILABLE, ENTITLEMENT_UNAVAILABLE]
+      any_of: [JOIN_REQUIRED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, CONNECT_REPLAY_PROTECTION_UNAVAILABLE, AUTH_UNAVAILABLE]
     subject_binding: caller_account_id
     canonical_target:
       membership: existing_caller_bound_membership_required
@@ -1667,7 +1669,7 @@ routes:
     required_live_checks: [tenant_generation, runtime_entitlements, capacity_admission_fence, idempotency]
     mutation_contract: account_owned_fenced_capacity_reservation_create_or_replay
     canonical_errors:
-      any_of: [CAPACITY_ADMISSION_STALE, CAPACITY_QUOTA_EXCEEDED, IDEMPOTENCY_CONFLICT, ENTITLEMENT_UNAVAILABLE]
+      any_of: [CAPACITY_ADMISSION_STALE, CAPACITY_QUOTA_EXCEEDED, IDEMPOTENCY_CONFLICT, AUTH_UNAVAILABLE]
   - service: account-service
     route: GetTenantEntitlementsTenant
     scope: tenant
@@ -1833,7 +1835,7 @@ routes:
     membership_authority_generation_applies: true
     required_live_checks: [issuer_generation, account_generation, membership_generation, membership]
     canonical_errors:
-      any_of: [MEMBERSHIP_AUTH_UNAVAILABLE]
+      any_of: [AUTH_UNAVAILABLE]
     roles:
       any_of: [tenantAdmin]
   - service: account-service
@@ -1849,6 +1851,8 @@ routes:
     token_audience: control-ui
     role_assurance: privileged_control_when_global_role
     required_live_checks: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
+    canonical_errors:
+      any_of: [AUTH_UNAVAILABLE]
     roles:
       any_of: [billingAdmin, platformAdmin]
   - service: logging-admin-service

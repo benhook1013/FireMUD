@@ -108,15 +108,11 @@ if secret_command_lines != expected_secret_command_lines:
 
 
 for expected in (
-    'cleanup_bootstrap_temp_dir() {',
-    'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then',
-    'echo "::error::Failed to remove dev-demo bootstrap credential files"',
     'if ! cleanup_bootstrap_temp_dir; then',
     'kubectl -n "${PREVIEW_NAMESPACE}" delete secret dev-demo-bootstrap-env --ignore-not-found',
     'cleanup_bootstrap_resources() {',
     'trap cleanup_bootstrap_resources EXIT',
     'if ! cleanup_bootstrap_secret; then',
-    'cleanup_bootstrap_secret',
 ):
     if not any(expected in line for line in bootstrap_lines):
         raise AssertionError(
@@ -170,10 +166,13 @@ if cleanup_success_return is None:
     )
 clear_directory_lines = [
     index
-    for index in range(cleanup_success_start + 1, cleanup_success_return)
+    for index in range(len(cleanup_function_lines))
     if cleanup_function_lines[index] == "BOOTSTRAP_SECRET_DIR="
 ]
-if len(clear_directory_lines) != 1:
+if (
+    len(clear_directory_lines) != 1
+    or not cleanup_success_start < clear_directory_lines[0] < cleanup_success_return
+):
     raise AssertionError(
         "dev-demo bootstrap temp directory must clear its variable only in the "
         "successful rm branch before return 0"

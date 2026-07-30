@@ -43,6 +43,14 @@ class FriendServiceImplTest {
     accountRepository = Mockito.mock(AccountFriendLinkRepository.class);
     gameSessionClient = Mockito.mock(GameSessionClient.class);
     accountClient = Mockito.mock(AccountClient.class);
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(
+            anyLong(), anyLong(), Mockito.anyString()))
+        .thenAnswer(
+            invocation ->
+                accountRepository.findByTenantIdAndAccountIdAndStatus(
+                    invocation.getArgument(0),
+                    invocation.getArgument(1),
+                    invocation.getArgument(2)));
     when(accountClient.getPresenceVisibilityPolicies(anyLong(), anyCollection()))
         .thenAnswer(
             invocation -> {
@@ -803,7 +811,7 @@ class FriendServiceImplTest {
     link.setStatus("active");
     when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(link));
-    when(accountClient.getPresenceVisibilityPolicies(11L, List.of(3L))).thenReturn(Map.of());
+    when(accountClient.getPresenceVisibilityPolicies(11L, List.of(3L))).thenReturn(null);
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()

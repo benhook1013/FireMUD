@@ -248,6 +248,40 @@ NO_TARGET_TENANT_CLASSES_WITHOUT_ROUTE_SPECIFIC_TARGET_AUTHORITY = {
 PRIVILEGED_OPERATOR_ROLE_ASSURANCE = "privileged_control_when_global_role"
 PRIVILEGED_CONTROL_VALUES = {"required", "not_required", "establishes_window"}
 AUTHORITY_GENERATION_VALUES = {"required", "omitted", "target_tenant_generation"}
+PLATFORM_ADMIN_ROLE_ASSURANCE_ROUTE_IDENTITIES = {
+    "account-service/IssueHumanOperatorAuthorizationReference",
+}
+OPERATOR_REFERENCE_ISSUANCE_REQUIRED_FIELDS = {
+    ("account-service", "IssueHumanOperatorAuthorizationReference"): {
+        "tenant_scope",
+        "action_family",
+        "action_family_schema_id",
+        "action_family_schema_version",
+        "control_plane_request_id",
+        "mutation_digest",
+    },
+    ("account-service", "IssueAutomationOperatorAuthorizationReference"): {
+        "automation_policy_id",
+        "automation_policy_version",
+        "tenant_scope",
+        "action_family",
+        "action_family_schema_id",
+        "action_family_schema_version",
+        "control_plane_request_id",
+        "mutation_digest",
+    },
+}
+AUTH_UNAVAILABLE = "AUTH_UNAVAILABLE"
+UNAVAILABLE_AUTHORITY_ERROR_ALIASES = {
+    "ENTITLEMENT_UNAVAILABLE",
+    "MEMBERSHIP_AUTH_UNAVAILABLE",
+}
+AUTH_UNAVAILABLE_REQUIRED_ROUTES = {
+    ("account-service", "IssueConnectToken"),
+    ("account-service", "CommitTenantCapacityAdmission"),
+    ("account-service", "BillingArtifactsTenant"),
+    ("account-service", "BillingArtifactsCrossTenant"),
+}
 EXPECTED_ROUTE_CLASS_BRANCHES = {
     ("account_scoped", "platformAdmin_global"): {
         "scope": "account",
@@ -626,6 +660,22 @@ def validate_role_assurance(document: dict[str, Any], errors: list[str]) -> set[
                 f"{label}.applies_to.route_classifications contains values outside "
                 f"the classification vocabulary: {unknown_classifications}"
             )
+        route_identities = applies_to.get("route_identities")
+        if role == "platformAdmin":
+            if route_identities != sorted(PLATFORM_ADMIN_ROLE_ASSURANCE_ROUTE_IDENTITIES):
+                errors.append(
+                    f"{label}.applies_to.route_identities must equal "
+                    f"{sorted(PLATFORM_ADMIN_ROLE_ASSURANCE_ROUTE_IDENTITIES)}"
+                )
+        elif route_identities is not None:
+            errors.append(
+                f"{label}.applies_to.route_identities is only allowed for platformAdmin"
+            )
+        if route_identities is not None and (
+            not isinstance(route_identities, list)
+            or any(not isinstance(item, str) or not item.strip() for item in route_identities)
+        ):
+            errors.append(f"{label}.applies_to.route_identities must be a list of strings")
     return predicates
 
 
@@ -1892,6 +1942,122 @@ def validate_role_assurance_references(
             )
 
 
+def validate_role_assurance_route_identities(
+    routes: list[Any], errors: list[str]
+) -> None:
+    expected_identity = next(iter(PLATFORM_ADMIN_ROLE_ASSURANCE_ROUTE_IDENTITIES))
+    matches = [
+        route
+        for route in routes
+        if isinstance(route, dict)
+        and f"{route.get('service')}/{route.get('route')}" == expected_identity
+    ]
+    if len(matches) != 1:
+        errors.append(
+            "role_assurance platformAdmin exact route identity must match exactly "
+            f"one route: {expected_identity}"
+        )
+        return
+    route = matches[0]
+    if route.get("classification") != "internal_workload":
+        errors.append(
+            "role_assurance platformAdmin exact route identity must classify "
+            f"{expected_identity} as internal_workload"
+        )
+    if route.get("role_assurance") != PRIVILEGED_OPERATOR_ROLE_ASSURANCE:
+        errors.append(
+            "role_assurance platformAdmin exact route identity must declare "
+            f"{expected_identity} with {PRIVILEGED_OPERATOR_ROLE_ASSURANCE}"
+        )
+
+
+def validate_operator_reference_issuance(
+    routes: list[Any],
+    errors: list[str],
+    required_fields_cache: RequiredFieldsCache | None = None,
+    cardinality_errors: set[str] | None = None,
+) -> None:
+    for (service, route_name), required_fields in (
+        OPERATOR_REFERENCE_ISSUANCE_REQUIRED_FIELDS.items()
+    ):
+        route = resolve_unique_route(
+            routes,
+            service,
+            route_name,
+            errors,
+            cardinality_errors,
+        )
+        if route is None:
+            continue
+        label = f"{service} {route_name}"
+        fields = set(
+            cached_required_fields(
+                route,
+                route.get("required_fields"),
+                f"{label} required_fields",
+                errors,
+                required_fields_cache,
+                "required_fields",
+            )
+        )
+        missing_fields = sorted(required_fields - fields)
+        if missing_fields:
+            errors.append(
+                f"{label} required_fields must include operator-reference fields: "
+                f"{missing_fields}"
+            )
+
+
+def validate_authority_unavailable_outcomes(
+    routes: list[Any],
+    errors: list[str],
+    cardinality_errors: set[str] | None = None,
+) -> None:
+    for index, route in enumerate(routes):
+        if not isinstance(route, dict):
+            continue
+        canonical_errors = route.get("canonical_errors")
+        outcomes = (
+            canonical_errors.get("any_of")
+            if isinstance(canonical_errors, dict)
+            else None
+        )
+        if not isinstance(outcomes, list) or any(
+            not isinstance(outcome, str) for outcome in outcomes
+        ):
+            continue
+        aliases = sorted(
+            set(outcomes) & UNAVAILABLE_AUTHORITY_ERROR_ALIASES
+        )
+        if aliases:
+            errors.append(
+                f"routes[{index}] canonical_errors must use {AUTH_UNAVAILABLE} "
+                f"instead of unavailable-authority aliases: {aliases}"
+            )
+
+    for service, route_name in sorted(AUTH_UNAVAILABLE_REQUIRED_ROUTES):
+        route = resolve_unique_route(
+            routes,
+            service,
+            route_name,
+            errors,
+            cardinality_errors,
+        )
+        if route is None:
+            continue
+        canonical_errors = route.get("canonical_errors")
+        outcomes = (
+            canonical_errors.get("any_of")
+            if isinstance(canonical_errors, dict)
+            else None
+        )
+        if not isinstance(outcomes, list) or AUTH_UNAVAILABLE not in outcomes:
+            errors.append(
+                f"{service} {route_name} must declare {AUTH_UNAVAILABLE} "
+                "for unavailable authority"
+            )
+
+
 def validate_generation_applicability(
     routes: list[Any],
     errors: list[str],
@@ -2704,6 +2870,13 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     validate_route_statuses(routes, allowed_route_statuses, errors)
     validate_required_fields(routes, errors, required_fields_cache)
     cardinality_errors: set[str] = set()
+    validate_authority_unavailable_outcomes(routes, errors, cardinality_errors)
+    validate_operator_reference_issuance(
+        routes,
+        errors,
+        required_fields_cache,
+        cardinality_errors,
+    )
     validate_generation_applicability(routes, errors, live_checks_cache)
     validate_profile_authority_routes(
         routes, errors, live_checks_cache, cardinality_errors
@@ -2717,6 +2890,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     )
     validate_receiver_predicates(routes, token_profiles, errors)
     validate_role_assurance_references(routes, role_assurance_predicates, errors)
+    validate_role_assurance_route_identities(routes, errors)
     validate_tenant_generation_policy(document, routes, errors, live_checks_cache)
     validate_membership_policy(document, errors)
     validate_elevation_bootstrap(document, routes, errors, cardinality_errors)

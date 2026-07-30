@@ -248,6 +248,18 @@ class AdrReviewStatusTests(unittest.TestCase):
                     "Accepted", self.validator.section_value(text, "Status")
                 )
 
+    def test_section_value_treats_whitespace_separator_as_blank(self) -> None:
+        text = "## Status\n \t \nAccepted\n"
+        self.assertEqual("Accepted", self.validator.section_value(text, "Status"))
+
+    def test_section_value_rejects_whitespace_only_value(self) -> None:
+        text = "## Status\n\n \t \n"
+        expect_failure(
+            self,
+            lambda: self.validator.section_value(text, "Status"),
+            "missing or malformed 'Status' section",
+        )
+
     def test_section_value_ignores_fenced_status_examples(self) -> None:
         text = (
             "## Status\n\nAccepted\n\n"
@@ -1195,6 +1207,13 @@ class AdrReviewStatusTests(unittest.TestCase):
                     lambda source=source: self.validator.parse_review_source(source),
                     "review source must contain",
                 )
+
+    def test_review_source_parser_rejects_duplicate_keys(self) -> None:
+        expect_failure(
+            self,
+            lambda: self.validator.parse_review_source("`TEST-01`, `TEST-01`"),
+            "review source must not contain duplicate queue keys",
+        )
 
     def test_completed_metadata_requires_checked_queue_entry(self) -> None:
         with fixture_root() as fixture:

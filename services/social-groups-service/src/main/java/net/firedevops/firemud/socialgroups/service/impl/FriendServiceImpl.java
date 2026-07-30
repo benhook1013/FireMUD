@@ -150,7 +150,7 @@ public class FriendServiceImpl implements FriendService {
       long tenantId, long accountId, FriendRosterFilter filter) {
     FriendRosterFilter effectiveFilter = normalizeRosterFilter(filter);
     List<AccountFriendLink> links =
-        accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(
+        accountFriendLinkRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(
             tenantId, accountId, "active");
     if (links.isEmpty()) {
       return new FriendRosterSnapshot(
