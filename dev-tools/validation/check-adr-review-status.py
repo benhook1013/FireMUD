@@ -66,6 +66,7 @@ CHECKED_ROW_PREFIX_RE = re.compile(r"^[-*+] \[[xX]\]")
 FENCE_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})")
 FENCE_CLOSER_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})[ \t]*$")
 LEVEL_TWO_HEADING_RE = re.compile(r"^## [^\r\n]*$")
+SECTION_BOUNDARY_HEADING_RE = re.compile(r"^#{1,2} [^\r\n]*$")
 REVIEW_QUEUE_HEADING_RE = re.compile(r"^## Adversarial Review Queue[ \t]*$")
 SUPERSEDED_SCAN_ALIAS_KEY_RE = re.compile(r"^MS-[A-Z0-9]+(?:-[A-Z0-9]+)+$")
 SUPERSEDED_SCAN_ALIAS_SUFFIX = "; retained as a historical service-scan alias."
@@ -156,7 +157,7 @@ def markdown_section(text: str, heading: str) -> str:
             line
             for line in visible_lines
             if line.number > heading_line.number
-            and LEVEL_TWO_HEADING_RE.fullmatch(line.text)
+            and SECTION_BOUNDARY_HEADING_RE.fullmatch(line.text)
         ),
         None,
     )
@@ -480,7 +481,7 @@ def validate_supersession(
             line
             for line in visible_lines
             if line.number > heading.number
-            and LEVEL_TWO_HEADING_RE.fullmatch(line.text)
+            and SECTION_BOUNDARY_HEADING_RE.fullmatch(line.text)
         ),
         None,
     )
@@ -533,7 +534,7 @@ def scan_review_queue(lines: list[str], queue_start: int) -> MarkdownSection:
         )
         if is_fence or open_fence is not None:
             continue
-        if LEVEL_TWO_HEADING_RE.fullmatch(line):
+        if SECTION_BOUNDARY_HEADING_RE.fullmatch(line):
             return MarkdownSection(index, tuple(visible_lines), None)
         visible_lines.append(MarkdownLine(index + 1, line))
     return MarkdownSection(len(lines), tuple(visible_lines), open_fence)
@@ -573,7 +574,7 @@ def supersession_index_rows(
             for line in visible_lines
             if line.number > heading.number
             and (
-                LEVEL_TWO_HEADING_RE.fullmatch(line.text)
+                SECTION_BOUNDARY_HEADING_RE.fullmatch(line.text)
                 or re.fullmatch(r"^### [^\r\n]*$", line.text)
             )
         ),

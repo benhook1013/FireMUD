@@ -337,6 +337,25 @@ class AdrReviewStatusTests(unittest.TestCase):
             "missing or malformed 'Status' section",
         )
 
+    def test_markdown_section_stops_at_visible_level_one_and_two_headings(self) -> None:
+        for terminator in ("# Next Section", "## Next Section"):
+            with self.subTest(terminator=terminator):
+                text = (
+                    "## Decision Record\n\n"
+                    "- Human review status: Completed\n\n"
+                    "```text\n"
+                    "# Fenced heading\n"
+                    "## Fenced heading\n"
+                    "not visible\n"
+                    "```\n\n"
+                    f"{terminator}\n\n"
+                    "not part of the section\n"
+                )
+                section = self.validator.markdown_section(text, "Decision Record")
+                self.assertIn("- Human review status: Completed", section)
+                self.assertNotIn("Fenced heading", section)
+                self.assertNotIn("not part of the section", section)
+
     def test_review_queue_requires_exactly_one_queue_heading(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
@@ -659,6 +678,32 @@ class AdrReviewStatusTests(unittest.TestCase):
             root = Path(fixture)
             add_formal_superseded_adr(root)
             self.validator.validate(root)
+
+    def test_supersession_index_rejects_missing_readme_row(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            add_formal_superseded_adr(root)
+            path = root / "design/architecture/decisions/README.md"
+            row = "| [ADR 0014](./adr-0014-superseded.md) | Superseded | [ADR 0012](./adr-0012-reviewed.md) |\n"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(row, "", 1),
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "Supersession Index is missing ADR entries with replacement sections: ['0014']",
+            )
+
+    def test_supersession_index_rejects_unexpected_readme_row(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_supersession_index_row(root, 12, "Superseded", 13)
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "Supersession Index contains ADRs without a validated replacement section: ['0012']",
+            )
 
     def test_supersession_index_rejects_status_drift(self) -> None:
         with fixture_root() as fixture:

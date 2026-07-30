@@ -904,15 +904,18 @@ def shell_group_tokens(line):
     tokens = []
     quote = None
     escaped = False
+    word_started = False
     index = 0
     while index < len(line):
         character = line[index]
         if escaped:
             escaped = False
+            word_started = True
             index += 1
             continue
         if character == "\\":
             escaped = True
+            word_started = True
             index += 1
             continue
         if quote is not None:
@@ -922,12 +925,14 @@ def shell_group_tokens(line):
             continue
         if character in "'\"":
             quote = character
+            word_started = True
             index += 1
             continue
         if character == "$" and index + 1 < len(line) and line[index + 1] in "{(":
             opener = line[index + 1]
             closer = "}" if opener == "{" else ")"
             depth = 1
+            word_started = True
             index += 2
             while index < len(line) and depth:
                 if line[index] == opener:
@@ -936,10 +941,30 @@ def shell_group_tokens(line):
                     depth -= 1
                 index += 1
             continue
+        if character == "#" and not word_started:
+            break
         if character in "{}()":
             tokens.append(character)
+        if character.isspace() or character in ";|&<>()":
+            word_started = False
+        else:
+            word_started = True
         index += 1
     return tokens
+
+
+for fixture, expected in (
+    ('{ echo safe # comment with } and )', ["{"]),
+    ('{ echo safe#not-a-comment }', ["{", "}"]),
+    ('{ echo "# not a comment }" }', ["{", "}"]),
+    (r"{ echo \#not-a-comment }", ["{", "}"]),
+    ('{ echo ${value#pattern} }', ["{", "}"]),
+    ('{ echo $(printf "# not a comment }") }', ["{", "}"]),
+):
+    if shell_group_tokens(fixture) != expected:
+        raise AssertionError(
+            f"shell group token comment fixture parsed incorrectly: {fixture}"
+        )
 
 
 def grouped_command_start(lines, index, target_match):
