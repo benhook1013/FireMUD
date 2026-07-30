@@ -169,6 +169,14 @@ def set_review_status(
     if supersession is not None:
         text += "\n## Supersession\n\n"
         text += f"{supersession}\n"
+    elif disposition == "Withdrawn":
+        text = replace_once(
+            text,
+            "- Review source: `TEST-01`",
+            "- Review source: `TEST-01`\n"
+            "- Withdrawal rationale: Withdrawn because the target was not "
+            "accepted.",
+        )
     path.write_text(text, encoding="utf-8")
 
 
@@ -572,6 +580,42 @@ class AdrReviewStatusTests(unittest.TestCase):
             root = Path(fixture)
             set_review_status(root, "Withdrawn", "Withdrawn")
             self.validator.validate(root)
+
+    def test_formal_withdrawn_record_requires_non_empty_rationale_without_supersession(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            set_review_status(root, "Withdrawn", "Withdrawn")
+            path = root / "design/architecture/decisions/adr-0012-reviewed.md"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "- Withdrawal rationale: Withdrawn because the target was not accepted.",
+                    "- Withdrawal rationale:   \t",
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "requires a non-empty normalized 'Withdrawal rationale'",
+            )
+
+    def test_formal_withdrawn_record_normalizes_rationale_whitespace(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            set_review_status(root, "Withdrawn", "Withdrawn")
+            path = root / "design/architecture/decisions/adr-0012-reviewed.md"
+            text = path.read_text(encoding="utf-8").replace(
+                "- Withdrawal rationale: Withdrawn because the target was not accepted.",
+                "- Withdrawal rationale:  Withdrawn   because the target was not accepted.  ",
+            )
+            path.write_text(text, encoding="utf-8")
+            self.validator.validate(root)
+            self.assertEqual(
+                "Withdrawn because the target was not accepted.",
+                self.validator.review_fields(text)["Withdrawal rationale"],
+            )
 
     def test_formal_withdrawn_record_accepts_valid_supersession_entry(self) -> None:
         with fixture_root() as fixture:

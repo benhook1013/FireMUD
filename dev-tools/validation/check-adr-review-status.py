@@ -56,7 +56,8 @@ REVIEW_SOURCE_RE = re.compile(
 )
 REVIEW_FIELD_RE = re.compile(
     r"^- (?P<name>Human review status|Human review date|"
-    r"Human review disposition|Review source): (?P<value>.+)$"
+    r"Human review disposition|Review source|Withdrawal rationale): "
+    r"(?P<value>.+)$"
 )
 CHECKED_ROW_PREFIX_RE = re.compile(r"^[-*+] \[[xX]\]")
 FENCE_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})")
@@ -175,7 +176,12 @@ def review_fields(text: str) -> dict[str, str]:
         name = match.group("name")
         if name in fields:
             fail(f"duplicate ADR review field {name!r}")
-        fields[name] = match.group("value").strip()
+        value = match.group("value").strip()
+        fields[name] = (
+            " ".join(value.split())
+            if name == "Withdrawal rationale"
+            else value
+        )
     return fields
 
 
@@ -675,6 +681,29 @@ def validate_pending_review(context: Path, fields: dict[str, str]) -> None:
             fail(f"{context}: pending proposal requires exact '{name}: {expected}'")
 
 
+def validate_withdrawal_rationale(
+    context: Path,
+    number: int,
+    status: str,
+    fields: dict[str, str],
+    text: str,
+) -> None:
+    if status != "Withdrawn" or number in PRE_FORMAL_REVIEW_RECORDS:
+        return
+    has_supersession = any(
+        re.fullmatch(r"## Supersession[ \t]*", line.text)
+        for line in visible_markdown_lines(text)
+    )
+    if has_supersession:
+        return
+    rationale = fields.get("Withdrawal rationale", "")
+    if not rationale:
+        fail(
+            f"{context}: Withdrawn ADR without Supersession requires a "
+            "non-empty normalized 'Withdrawal rationale'"
+        )
+
+
 def validate(root: Path = ROOT) -> None:
     root = root.resolve()
     adr_dir = root / ADR_DIR
@@ -739,6 +768,14 @@ def validate(root: Path = ROOT) -> None:
                 f"{context}: terminal ADR status lacks a checked "
                 "human-review queue entry"
             )
+
+        validate_withdrawal_rationale(
+            context,
+            number,
+            normalized_status,
+            fields,
+            text,
+        )
 
         validate_supersession(
             context,

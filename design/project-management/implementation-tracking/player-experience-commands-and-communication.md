@@ -73,7 +73,10 @@ This section records implementation and proof status only. The target command, p
 
 ### Validation and Proof
 
-Recorded evidence covers parser/interpreter and registry behavior, capability gates, HELP/HISTORY, WebSocket/Telnet parity, LOOK, prompts, localization, transcript/reconnect, social/presence/privacy, communication, moderation, and frontend baseline behavior. The recorded checks include `spotlessApply`, `linkCheck`, `lintMarkdown`, focused service checks, and locked full checks for touched services. A repository-wide `check` limitation caused by the local native Docker CLI remains a validation limitation, not a product behavior claim.
+- **Confirmed:** Recorded focused evidence covers parser/interpreter and registry behavior, capability gates, HELP/HISTORY, WebSocket/Telnet parity, LOOK, prompts, localization, transcript/reconnect, social/presence/privacy, communication, moderation, and frontend baseline behavior. Recorded successful checks include `spotlessApply`, `linkCheck`, `lintMarkdown`, focused service checks, and locked full checks for touched services.
+- **Partial:** Capability rows marked `drift-found` or naming remaining proof gaps retain only the bounded evidence stated in those rows; that evidence does not prove the unresolved boundary.
+- **Unrun:** No additional repository-wide validation result is recorded beyond the checks above.
+- **Unavailable:** A repository-wide `check` was blocked by the local native Docker CLI. This is a validation limitation, not a product behavior claim.
 
 ## Active Gaps
 

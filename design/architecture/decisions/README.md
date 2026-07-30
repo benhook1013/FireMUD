@@ -55,6 +55,8 @@ The `Decision Record` section of a reviewed ADR is machine-readable. A completed
 - `Human review disposition: Accepted`, `Revised`, `Superseded`, or `Withdrawn` for an ADR provenance record
 - `Review source:` followed by one or more backtick-delimited checked-queue decision keys separated by commas
 
+For a formal `Withdrawn` ADR that omits `## Supersession`, the same `Decision Record` section must also contain exactly one non-empty `Withdrawal rationale:` field. Its value is normalized as single-spaced text by validation and must explain why the proposal was withdrawn.
+
 Completed review metadata is distinct from the pending proposal shape: for `Accepted`, `Superseded`, or `Withdrawn` records, `Review source` contains only one or more checked-queue decision keys and must never be `AI-AUTHORED-PENDING`. `AI-AUTHORED-PENDING` is metadata reserved exclusively for an ADR whose status is `Proposed - Pending Human Review` and whose review metadata has the exact pending shape below. It is not a completed review source, checked provenance, or human review evidence.
 
 The authoritative provenance is the checked review queue in the [consequential decision inventory](../../project-management/design-alignment/consequential-decision-inventory.md), not the ADR metadata alone. A checked queue row has this exact shape:
@@ -147,7 +149,7 @@ Validation precedence is fixed: first parse every checked queue row and validate
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../product-capability-taxonomy.md).
 
-### Supersession Registry
+### Supersession Index
 
 This is a hand-maintained index, not an independent authority, validator output, or independently machine-checked registry. For formal ADRs, each row must remain consistent with the validated machine-readable `## Supersession` section in the corresponding ADR; that section is the normative replacement source. If this registry disagrees with a formal ADR section, the registry is stale and must be corrected. The pre-formal ADRs `0001` through `0011` retain hand-maintained legacy entries permitted only by their historical replacement prose and remain validation-only exceptions.
 

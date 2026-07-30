@@ -123,7 +123,7 @@ tenant_generation_policy:
   exception_allowlist:
     billing_safe_tenant:
       target_tenant_generation: false
-      required_authority: [issuer_generation, account_generation, membership_generation, membership]
+      required_authority: [issuer_generation, account_generation, membership_generation, membership, current_operator_roles]
     cross_tenant_support_safe:
       target_tenant_generation: false
       required_authority: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
@@ -961,9 +961,9 @@ routes:
     required_live_checks: [current_operator_authorization, runtime_entitlements]
     operator_authorization_branches:
       - branch: tenant_role
-        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles]
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
       - branch: platformAdmin_global
-        required_live_checks: [current_global_role, role_appropriate_assurance, target_tenant_generation]
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
@@ -997,9 +997,9 @@ routes:
     required_live_checks: [current_operator_authorization, runtime_ownership]
     operator_authorization_branches:
       - branch: tenant_role
-        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles]
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
       - branch: platformAdmin_global
-        required_live_checks: [current_global_role, role_appropriate_assurance, target_tenant_generation]
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
@@ -1032,9 +1032,9 @@ routes:
     required_live_checks: [current_operator_authorization, runtime_entitlements, runtime_ownership]
     operator_authorization_branches:
       - branch: tenant_role
-        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles]
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
       - branch: platformAdmin_global
-        required_live_checks: [current_global_role, role_appropriate_assurance, target_tenant_generation]
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
@@ -1067,9 +1067,9 @@ routes:
     required_live_checks: [current_operator_authorization, current_account_roles, current_session]
     operator_authorization_branches:
       - branch: tenant_role
-        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles]
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
       - branch: platformAdmin_global
-        required_live_checks: [current_global_role, role_appropriate_assurance, target_tenant_generation]
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
     operator_authorization_reference: account_issued_bounded_reference
     required_fields: [control_plane_request_id, actor_from_session, reason, session_id, mutation_digest]
     global_platform_admin_membership_required: false
@@ -1150,9 +1150,9 @@ routes:
     role_assurance: privileged_control_when_global_role
     operator_authorization_branches:
       - branch: tenant_role
-        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles]
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
       - branch: platformAdmin_global
-        required_live_checks: [current_global_role, role_appropriate_assurance, target_tenant_generation]
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     required_fields: [tenant_scope, action_family, action_family_schema_id, action_family_schema_version, control_plane_request_id, mutation_digest]
@@ -1717,7 +1717,7 @@ routes:
     token_audience: control-ui
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [issuer_generation, account_generation, membership_generation, membership]
+    required_live_checks: [issuer_generation, account_generation, membership_generation, membership, current_operator_roles]
     response_profile: high_level_only
     roles:
       any_of: [tenantAdmin]
@@ -1746,7 +1746,7 @@ routes:
     token_audience: control-ui
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [issuer_generation, account_generation, membership_generation, membership]
+    required_live_checks: [issuer_generation, account_generation, membership_generation, membership, current_operator_roles]
     response_profile: high_level_only
     roles:
       any_of: [tenantAdmin]
@@ -1763,7 +1763,7 @@ routes:
     token_audience: control-ui
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [issuer_generation, account_generation, membership_generation, membership]
+    required_live_checks: [issuer_generation, account_generation, membership_generation, membership, current_operator_roles]
     response_profile: tenant_wide_tenant_owned_export
     response_contract: tenant_owned_records_with_minimum_stable_subject_references_only
     implementation_status:
@@ -1796,7 +1796,7 @@ routes:
     token_audience: control-ui
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [issuer_generation, account_generation, membership_generation, membership]
+    required_live_checks: [issuer_generation, account_generation, membership_generation, membership, current_operator_roles]
     response_profile: high_level_only
     roles:
       any_of: [tenantAdmin]
@@ -1840,7 +1840,7 @@ routes:
     token_audience: control-ui
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [issuer_generation, account_generation, membership_generation, membership]
+    required_live_checks: [issuer_generation, account_generation, membership_generation, membership, current_operator_roles]
     response_profile: membership_self_only
     roles:
       any_of: [tenantAdmin]
@@ -1870,7 +1870,7 @@ routes:
     token_audience: control-ui
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [issuer_generation, account_generation, membership_generation, membership]
+    required_live_checks: [issuer_generation, account_generation, membership_generation, membership, current_operator_roles]
     canonical_errors:
       any_of: [AUTH_UNAVAILABLE]
     roles:
@@ -1930,9 +1930,9 @@ routes:
     required_live_checks: [current_operator_authorization, runtime_entitlements]
     operator_authorization_branches:
       - branch: tenant_role
-        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles]
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
       - branch: platformAdmin_global
-        required_live_checks: [current_global_role, role_appropriate_assurance, target_tenant_generation]
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
@@ -1961,9 +1961,9 @@ routes:
     required_live_checks: [current_operator_authorization]
     operator_authorization_branches:
       - branch: tenant_role
-        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles]
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
       - branch: platformAdmin_global
-        required_live_checks: [current_global_role, role_appropriate_assurance, target_tenant_generation]
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_moderation_record_idempotency
@@ -1992,9 +1992,9 @@ routes:
     required_live_checks: [current_operator_authorization, runtime_ownership]
     operator_authorization_branches:
       - branch: tenant_role
-        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles]
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
       - branch: platformAdmin_global
-        required_live_checks: [current_global_role, role_appropriate_assurance, target_tenant_generation]
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
@@ -2023,9 +2023,9 @@ routes:
     required_live_checks: [current_operator_authorization, runtime_ownership, recovery_resume_gate]
     operator_authorization_branches:
       - branch: tenant_role
-        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles]
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
       - branch: platformAdmin_global
-        required_live_checks: [current_global_role, role_appropriate_assurance, target_tenant_generation]
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
@@ -2054,9 +2054,9 @@ routes:
     required_live_checks: [current_operator_authorization, expected_pointer_version]
     operator_authorization_branches:
       - branch: tenant_role
-        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles]
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
       - branch: platformAdmin_global
-        required_live_checks: [current_global_role, role_appropriate_assurance, target_tenant_generation]
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_owner_idempotent_compare_and_set
@@ -2085,9 +2085,9 @@ routes:
     required_live_checks: [current_operator_authorization, expected_pointer_version, prepared_version_upgrade]
     operator_authorization_branches:
       - branch: tenant_role
-        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles]
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
       - branch: platformAdmin_global
-        required_live_checks: [current_global_role, role_appropriate_assurance, target_tenant_generation]
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_owner_idempotent_compare_and_set
@@ -2116,9 +2116,9 @@ routes:
     required_live_checks: [current_operator_authorization]
     operator_authorization_branches:
       - branch: tenant_role
-        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation, current_operator_roles]
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
       - branch: platformAdmin_global
-        required_live_checks: [current_global_role, role_appropriate_assurance, target_tenant_generation]
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_owner_idempotent_preparation

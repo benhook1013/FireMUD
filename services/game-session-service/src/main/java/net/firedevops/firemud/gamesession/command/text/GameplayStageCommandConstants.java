@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import net.firedevops.firemud.account.AuthenticationErrorCodes;
+
 /** Stage-aware text command error codes/messages for login and gameplay admission. */
 public final class GameplayStageCommandConstants {
   public static final String LOGIN_REQUIRED_CODE = "LOGIN_REQUIRED";
@@ -22,9 +24,9 @@ public final class GameplayStageCommandConstants {
   public static final String TENANT_BILLING_BLOCKED_CODE = "TENANT_BILLING_BLOCKED";
   public static final String TENANT_BILLING_BLOCKED_MESSAGE =
       "That world is temporarily unavailable for gameplay.";
-  public static final String AUTH_UNAVAILABLE_CODE = "AUTH_UNAVAILABLE";
+  public static final String AUTH_UNAVAILABLE_CODE = AuthenticationErrorCodes.UNAVAILABLE;
   public static final String AUTH_UNAVAILABLE_MESSAGE =
-      "Membership authority is temporarily unavailable. Retry PLAY shortly.";
+      "Account authority is temporarily unavailable. Retry PLAY shortly.";
   public static final String ENTITLEMENT_UNAVAILABLE_CODE = "ENTITLEMENT_UNAVAILABLE";
   public static final String ENTITLEMENT_UNAVAILABLE_MESSAGE =
       "Entitlement state is temporarily unavailable. Retry PLAY shortly.";

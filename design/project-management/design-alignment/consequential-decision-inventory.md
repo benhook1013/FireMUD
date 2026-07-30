@@ -60,7 +60,7 @@ The source-scoped ledgers preserve the established 183-key decision universe wit
 | Microservice architecture | 76 sources | 22 active new; 1 superseded historical alias among 23 source rows; stronger evidence for 40 existing keys | Prioritized in the source ledger | Complete and independently audited |
 | Specialized runtime architecture | 39 sources | 54 new; stronger evidence for 20 existing keys | Prioritized in the source ledger | Complete and independently audited |
 | Product and operations architecture | 35 sources | 38 new; stronger evidence for 11 existing keys | Prioritized in the source ledger | Complete and independently audited |
-| **Total decision-key universe** | **All 223 architecture artifacts classified; 172 decision-scan sources plus 51 decision-registry artifacts** | **183 distinct keys: 182 active canonical decisions plus 1 superseded historical alias** | **Prioritized by source ledger** | **Initial inventory complete; accepted records allocated through ADR 0050** |
+| **Total classified artifacts / decision-key universe** | **All 223 architecture artifacts classified; 172 decision-scan sources plus 51 decision-registry artifacts** | **183 distinct keys: 182 active canonical decisions plus 1 superseded historical alias** | **Prioritized by source ledger** | **Initial inventory complete; accepted records allocated through ADR 0050** |
 
 ## Decision Ledger
 
@@ -170,7 +170,7 @@ Packet 2 checklist dispositions record the human review outcome, not an inventor
 - [x] `JWT-04` — `revised` on 2026-07-19; [ADR 0038](../../architecture/decisions/adr-0038-explicit-jwt-profiles-and-mtls-workload-identity.md)
 - [x] `REDIS-06` — `revised` on 2026-07-19; [ADR 0039](../../architecture/decisions/adr-0039-bounded-redis-operator-maintenance-surface.md)
 - [x] `MS-AA-CONTROL-LOGIN-SCOPE` — `revised` on 2026-07-19; [ADR 0040](../../architecture/decisions/adr-0040-account-global-control-login-and-explicit-tenant-selection.md)
-- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-19 by the human-approved [AUTH-03](./decision-inventory-cross-cutting.md#identity-admission-and-tenancy), [JWT-01](./decision-inventory-specialized-runtime.md#specialized-decision-ledger), [JWT-02](./decision-inventory-specialized-runtime.md#specialized-decision-ledger), [JWT-03](./decision-inventory-specialized-runtime.md#specialized-decision-ledger), and [JWT-04](./decision-inventory-specialized-runtime.md#specialized-decision-ledger) decisions; retained as a historical service-scan alias.
+- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-19 by the human-approved [AUTH-03](../../architecture/decisions/adr-0022-account-authority-and-gameplay-session-ownership.md#decision-record), [JWT-01](../../architecture/decisions/adr-0035-single-record-issued-token-registry.md#decision-record), [JWT-02](../../architecture/decisions/adr-0036-monotonic-authority-generations-for-bulk-token-revocation.md#decision-record), [JWT-03](../../architecture/decisions/adr-0037-fail-closed-token-authority-outages-with-bounded-active-gameplay.md#decision-record), and [JWT-04](../../architecture/decisions/adr-0038-explicit-jwt-profiles-and-mtls-workload-identity.md#decision-record) decisions; retained as a historical service-scan alias.
 
 #### Packet 2 P1
 

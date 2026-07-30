@@ -258,12 +258,7 @@ public final class AccountClient
   public GetRealmAccessGrantForRuntimeResponse getRealmAccessGrantForRuntime(
       String accountId, String tenantId, String worldSlug, String realmSlug, String requestId) {
     if (stub() == null) {
-      return GetRealmAccessGrantForRuntimeResponse.newBuilder()
-          .setError(
-              ErrorDetail.newBuilder()
-                  .setCode("AUTH_UNAVAILABLE")
-                  .setMessage("Realm grant authority unavailable"))
-          .build();
+      return realmAccessGrantUnavailable();
     }
     GetRealmAccessGrantForRuntimeRequest request =
         GetRealmAccessGrantForRuntimeRequest.newBuilder()
@@ -294,23 +289,13 @@ public final class AccountClient
     } catch (Exception ex) {
       logger.warn("Failed to call Account Service realm access grant endpoint", ex);
     }
-    return GetRealmAccessGrantForRuntimeResponse.newBuilder()
-        .setError(
-            ErrorDetail.newBuilder()
-                .setCode("AUTH_UNAVAILABLE")
-                .setMessage("Realm grant authority unavailable"))
-        .build();
+    return realmAccessGrantUnavailable();
   }
 
   public EnsurePublicProductionPlayerMembershipResponse ensurePublicProductionPlayerMembership(
       String accountId, String tenantId, String worldSlug, String realmSlug, String requestId) {
     if (stub() == null) {
-      return EnsurePublicProductionPlayerMembershipResponse.newBuilder()
-          .setError(
-              ErrorDetail.newBuilder()
-                  .setCode("AUTH_UNAVAILABLE")
-                  .setMessage("Membership authority unavailable"))
-          .build();
+      return publicMembershipUnavailable();
     }
     EnsurePublicProductionPlayerMembershipRequest request =
         EnsurePublicProductionPlayerMembershipRequest.newBuilder()
@@ -341,10 +326,23 @@ public final class AccountClient
     } catch (Exception ex) {
       logger.warn("Failed to call Account Service public-production membership endpoint", ex);
     }
+    return publicMembershipUnavailable();
+  }
+
+  private GetRealmAccessGrantForRuntimeResponse realmAccessGrantUnavailable() {
+    return GetRealmAccessGrantForRuntimeResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode(AuthenticationErrorCodes.UNAVAILABLE)
+                .setMessage("Realm grant authority unavailable"))
+        .build();
+  }
+
+  private EnsurePublicProductionPlayerMembershipResponse publicMembershipUnavailable() {
     return EnsurePublicProductionPlayerMembershipResponse.newBuilder()
         .setError(
             ErrorDetail.newBuilder()
-                .setCode("AUTH_UNAVAILABLE")
+                .setCode(AuthenticationErrorCodes.UNAVAILABLE)
                 .setMessage("Membership authority unavailable"))
         .build();
   }

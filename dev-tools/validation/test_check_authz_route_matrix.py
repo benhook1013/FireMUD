@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from collections import defaultdict
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "dev-tools/validation/check-authz-route-matrix.py"
@@ -170,8 +171,16 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                         "membership_when_tenant_role",
                         "membership_generation",
                         "tenant_generation",
-                        "current_operator_roles",
                     }.issubset(tenant_branch["required_live_checks"])
+                )
+                platform_admin_branch = next(
+                    branch
+                    for branch in route["operator_authorization_branches"]
+                    if branch["branch"] == "platformAdmin_global"
+                )
+                self.assertIn(
+                    "current_operator_roles",
+                    platform_admin_branch["required_live_checks"],
                 )
 
     def test_operator_ingress_conditional_shape_is_validated(self):
@@ -253,9 +262,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "membership_when_tenant_role",
                 "membership_generation",
                 "tenant_generation",
-                "current_operator_roles",
             },
             "platformAdmin_global": {
+                "current_operator_roles",
                 "current_global_role",
                 "role_appropriate_assurance",
                 "target_tenant_generation",
@@ -911,6 +920,53 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertTrue(route["membership_authority_generation_applies"])
         self.assertIn("membership_generation", route["required_live_checks"])
         self.assertIn("membership", route["required_live_checks"])
+        self.assertIn("current_operator_roles", route["required_live_checks"])
+
+    def test_all_billing_safe_tenant_routes_require_current_tenant_admin_role(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        routes = [
+            route
+            for route in document["routes"]
+            if route.get("classification") == "billing_safe_tenant"
+        ]
+        self.assertEqual(6, len(routes))
+        for route in routes:
+            with self.subTest(route=route["route"]):
+                self.assertIn("current_operator_roles", route["required_live_checks"])
+                self.assertEqual(["tenantAdmin"], route["roles"]["any_of"])
+
+    def test_billing_safe_tenant_route_role_check_cannot_be_omitted(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route
+            for route in document["routes"]
+            if route.get("classification") == "billing_safe_tenant"
+        )
+        route["required_live_checks"].remove("current_operator_roles")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "is missing route-class authority checks: ['current_operator_roles']"
+                in error
+                for error in errors
+            )
+        )
+
+    def test_billing_safe_tenant_route_role_must_remain_tenant_admin(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route
+            for route in document["routes"]
+            if route.get("classification") == "billing_safe_tenant"
+        )
+        route["roles"]["any_of"] = ["support"]
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "billing_safe_tenant roles.any_of must be ['tenantAdmin']" in error
+                for error in errors
+            )
+        )
 
     def test_play_rechecks_membership_generation(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -1470,6 +1526,24 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 and "token_type/token_issuer/token_audience as none" in error
                 for error in errors
             )
+        )
+
+    def test_malformed_route_identities_do_not_report_equality_after_shape_error(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        requirement = document["role_assurance"][
+            "privileged_control_when_global_role"
+        ]["requirements"]["platformAdmin"]
+        requirement["applies_to"]["route_identities"] = [7]
+        errors = []
+        self.validator.validate_role_assurance(document, errors)
+        self.assertEqual(
+            [
+                (
+                    "role_assurance.privileged_control_when_global_role.requirements."
+                    "platformAdmin.applies_to.route_identities must be a list of strings"
+                )
+            ],
+            errors,
         )
 
     def test_multi_profile_route_with_audience_map_is_accepted(self):
@@ -2588,6 +2662,35 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             document["routes"], errors
         )
 
+        self.assertEqual([], errors)
+
+    def test_platform_admin_route_identities_compare_as_an_order_independent_set(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        requirement = document["role_assurance"][
+            "privileged_control_when_global_role"
+        ]["requirements"]["platformAdmin"]
+        existing_identity = next(
+            iter(self.validator.PLATFORM_ADMIN_ROLE_ASSURANCE_ROUTE_IDENTITIES)
+        )
+        expected_identities = {
+            existing_identity,
+            "test-service/GET /second-route",
+        }
+        requirement["applies_to"]["route_identities"] = sorted(
+            expected_identities, reverse=True
+        )
+
+        errors = []
+        with patch.object(
+            self.validator,
+            "PLATFORM_ADMIN_ROLE_ASSURANCE_ROUTE_IDENTITIES",
+            expected_identities,
+        ):
+            self.validator.validate_role_assurance(document, errors)
+
+        self.assertFalse(
+            any("platformAdmin.applies_to.route_identities must equal" in error for error in errors)
+        )
         self.assertEqual([], errors)
 
     def test_join_routes_require_admission_pointer_error(self):

@@ -128,17 +128,25 @@ if len(cleanup_function_starts) != 1:
         "dev-demo bootstrap must contain exactly one cleanup_bootstrap_temp_dir function"
     )
 cleanup_function_start = cleanup_function_starts[0]
-cleanup_function_depth = 0
-cleanup_function_end = None
-for index in range(cleanup_function_start, len(bootstrap_lines)):
-    line = bootstrap_lines[index]
-    if line.endswith("() {"):
-        cleanup_function_depth += 1
-    elif line == "}":
-        cleanup_function_depth -= 1
-        if cleanup_function_depth == 0:
-            cleanup_function_end = index + 1
-            break
+
+
+def cleanup_function_end_index(lines, function_start):
+    brace_depth = 0
+    for index in range(function_start, len(lines)):
+        line = lines[index]
+        if line.endswith("() {") or line == "{":
+            brace_depth += 1
+        elif line == "}":
+            brace_depth -= 1
+            if brace_depth == 0:
+                return index + 1
+    return None
+
+
+cleanup_function_end = cleanup_function_end_index(
+    bootstrap_lines,
+    cleanup_function_start,
+)
 if cleanup_function_end is None:
     raise AssertionError(
         "dev-demo bootstrap cleanup function has no same-nesting closing brace"
@@ -201,6 +209,19 @@ nested_if_fixture = [
 ]
 if closing_fi_index(nested_if_fixture, 0) != 5:
     raise AssertionError("cleanup success branch must match its outer closing fi")
+nested_group_fixture = [
+    "cleanup_bootstrap_temp_dir() {",
+    "{",
+    'if [[ -n "${BOOTSTRAP_SECRET_DIR}" ]]; then',
+    "true",
+    "fi",
+    "}",
+    "}",
+]
+if cleanup_function_end_index(nested_group_fixture, 0) != len(nested_group_fixture):
+    raise AssertionError(
+        "cleanup function brace depth must include standalone grouped-command braces"
+    )
 for unsupported_if_fixture in (
     ["if true", "then", "fi"],
     ["if true; then echo inline; fi"],
@@ -355,6 +376,11 @@ summary_target = re.compile(
 )
 
 
+def has_forbidden_summary_reference(text):
+    normalized_text = re.sub(r"[ \t]+", " ", text)
+    return forbidden_summary_reference.search(normalized_text) is not None
+
+
 def summary_write_regions(source):
     lines = source.splitlines()
     regions = []
@@ -403,10 +429,7 @@ for safe_source, unsafe in (
     ),
 ):
     fixture_regions = summary_write_regions(safe_source)
-    fixture_is_unsafe = any(
-        forbidden_summary_reference.search(region)
-        for region in fixture_regions
-    )
+    fixture_is_unsafe = any(has_forbidden_summary_reference(region) for region in fixture_regions)
     if fixture_is_unsafe != unsafe:
         raise AssertionError(
             "summary secret detector fixture produced the wrong result"
@@ -419,7 +442,7 @@ for secret_pipeline in (
     "echo API_SECRET_TOKEN | base64 -d",
     "echo DB_CREDS | base64 -d",
 ):
-    if not forbidden_summary_reference.search(secret_pipeline):
+    if not has_forbidden_summary_reference(secret_pipeline):
         raise AssertionError(
             "forbidden summary regex must detect secret material through intermediate "
             f"pipelines: {secret_pipeline}"
@@ -430,7 +453,7 @@ for safe_summary in (
     "kubectl get secret demo -o json; echo base64 -d",
     "kubectl get secret demo -o json\nbase64 -d",
 ):
-    if forbidden_summary_reference.search(safe_summary):
+    if has_forbidden_summary_reference(safe_summary):
         raise AssertionError(
             f"forbidden summary regex must not cross command separators: {safe_summary}"
         )
@@ -438,7 +461,7 @@ offending_writers = [
     (job_name, step_name)
     for job_name, step_name, source in summary_writers
     if any(
-        forbidden_summary_reference.search(re.sub(r"[ \t]+", " ", region))
+        has_forbidden_summary_reference(region)
         for region in summary_write_regions(source)
     )
 ]

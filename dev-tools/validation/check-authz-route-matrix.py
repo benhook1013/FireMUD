@@ -131,9 +131,9 @@ OPERATOR_AUTHORIZATION_BRANCHES = {
         "membership_when_tenant_role",
         "membership_generation",
         "tenant_generation",
-        "current_operator_roles",
     },
     "platformAdmin_global": {
+        "current_operator_roles",
         "current_global_role",
         "role_appropriate_assurance",
         "target_tenant_generation",
@@ -163,6 +163,7 @@ REQUIRED_TENANT_GENERATION_EXCEPTIONS = {
             "account_generation",
             "membership_generation",
             "membership",
+            "current_operator_roles",
         },
     },
     "cross_tenant_support_safe": {
@@ -712,12 +713,18 @@ def validate_role_assurance(document: dict[str, Any], errors: list[str]) -> set[
                     continue
                 canonical_route_identities.append("/".join(components))
         if role == "platformAdmin":
-            if canonical_route_identities != sorted(
+            expected_route_identities = set(
                 PLATFORM_ADMIN_ROLE_ASSURANCE_ROUTE_IDENTITIES
+            )
+            if (
+                canonical_route_identities is None
+                or len(canonical_route_identities)
+                != len(set(canonical_route_identities))
+                or set(canonical_route_identities) != expected_route_identities
             ):
                 errors.append(
                     f"{label}.applies_to.route_identities must equal "
-                    f"{sorted(PLATFORM_ADMIN_ROLE_ASSURANCE_ROUTE_IDENTITIES)}"
+                    f"{sorted(expected_route_identities)}"
                 )
         elif route_identities is not None:
             errors.append(
@@ -1879,6 +1886,12 @@ def validate_tenant_generation_exception_routes(
             if membership_generation is not True:
                 errors.append(
                     f"{label} must require membership generation for {classification}"
+                )
+            roles = route.get("roles")
+            role_values = roles.get("any_of") if isinstance(roles, dict) else None
+            if role_values != ["tenantAdmin"]:
+                errors.append(
+                    f"{label} billing_safe_tenant roles.any_of must be ['tenantAdmin']"
                 )
         elif membership_generation is not False:
             errors.append(
