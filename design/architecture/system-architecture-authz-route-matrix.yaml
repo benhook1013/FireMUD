@@ -114,8 +114,8 @@ route_authentication_rules:
 receiver_predicate_contract:
   token_profile: exact_registered_profile_or_none
   token_type: exact_registered_type_or_none
-  issuer: exact_account_issuer_or_none
-  audience: exact_registered_audience_or_none
+  token_issuer: exact_account_issuer_or_none
+  token_audience: exact_registered_audience_or_none
   mtls_caller: concrete_certificate_identity_for_internal_methods
   method_policy_rule: exact_declared_route_and_caller_policy
 tenant_generation_policy:
@@ -763,6 +763,9 @@ routes:
     membership_authority_generation_applies: false
     accepted_carriers: [first_party_cookie]
     cookie_absence_outcome: idempotent_success
+    account_prerequisite: exact_token_tombstone_and_issuance_token_identity_fence_committed
+    deny_marker: bounded_when_token_present
+    caller_readable_token_accepted: false
     edge_consumer: spring_cloud_gateway_http
     required_live_checks: [browser_origin, csrf]
     canonical_errors:
@@ -1156,6 +1159,8 @@ routes:
     global_platform_admin_reference_generation_binding: target_tenant_generation
     required_fields: [tenant_scope, action_family, action_family_schema_id, action_family_schema_version, control_plane_request_id, mutation_digest]
     mutation_contract: create_bounded_human_operator_authorization_reference
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
   - service: account-service
     route: IssueAutomationOperatorAuthorizationReference
     transport: grpc
@@ -1178,6 +1183,8 @@ routes:
     automation_tenant_generation_binding: current_tenant_generation
     automation_privileged_control: prohibited
     mutation_contract: create_bounded_workload_operator_authorization_reference
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
   - service: account-service
     route: POST /auth/bootstrap/join
     scope: tenant
@@ -1377,7 +1384,7 @@ routes:
     http_route: POST /accounts/{accountId}/external
     scope: account
     classification: account_scoped
-    route_status: target_not_currently_routable
+    route_status: current_openapi_operator_surface
     subject_binding: caller_account_id
     platform_admin_override: forbidden
     accepted_token_profiles: [control-ui]

@@ -15,6 +15,7 @@ ADR_DIR = Path("design/architecture/decisions")
 REVIEW_QUEUE = Path(
     "design/project-management/design-alignment/consequential-decision-inventory.md"
 )
+DECISION_README = Path("design/architecture/decisions/README.md")
 # These records predate the formal human-review queue. Later reviewed parcels
 # either affirm them directly or supersede them with queue-backed ADRs.
 PRE_FORMAL_REVIEW_RECORDS = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11})
@@ -50,6 +51,8 @@ REPLACEMENT_ADR_LABEL_RE = re.compile(r"^replacement ADR (?P<number>\d{4})$")
 REPLACEMENT_ADR_ENTRY_RE = re.compile(
     r"^- Replacement ADR: \[ADR (?P<number>\d{4})\]\((?P<target>[^)\r\n]+)\)$"
 )
+SUPERSESSION_INDEX_HEADING_RE = re.compile(r"^### Supersession Index[ \t]*$")
+TABLE_SEPARATOR_CELL_RE = re.compile(r"^:?-{3,}:?$")
 DECISION_KEY_LABEL_RE = re.compile(r"^[A-Z0-9][A-Z0-9-]*$")
 REVIEW_SOURCE_RE = re.compile(
     r"^`[A-Z0-9][A-Z0-9-]*`(?:, `[A-Z0-9][A-Z0-9-]*`)*$"
@@ -417,18 +420,49 @@ def validate_supersession(
     status: str,
     number: int,
     text: str,
-) -> None:
+    legacy_status: str | None = None,
+) -> int | None:
     visible_lines = visible_markdown_lines(text)
     heading_re = re.compile(r"^## Supersession[ \t]*$")
     headings = [line for line in visible_lines if heading_re.fullmatch(line.text)]
     allows_supersession = status in {"Superseded", "Withdrawn"}
     if not headings:
+        legacy_source = legacy_status if legacy_status is not None else status
+        if number in PRE_FORMAL_REVIEW_RECORDS and LEGACY_PRE_FORMAL_STATUS_RE.fullmatch(
+            legacy_source
+        ):
+            legacy_replacement = ADR_LINK_RE.search(legacy_source)
+            if legacy_replacement is None:
+                return None
+            replacement_number = int(legacy_replacement.group("number"))
+            if replacement_number == number:
+                fail(
+                    f"{context}: legacy replacement ADR must not self-reference "
+                    f"ADR {number:04d}"
+                )
+            status_line = next(
+                (
+                    line.number
+                    for line in visible_lines
+                    if line.text.strip() == legacy_source
+                ),
+                0,
+            )
+            validate_replacement_adr_target(
+                path,
+                adr_dir,
+                status_line,
+                replacement_number,
+                legacy_replacement.group("target"),
+                relationship="legacy replacement ADR",
+            )
+            return replacement_number
         if status == "Superseded" and number not in PRE_FORMAL_REVIEW_RECORDS:
             fail(
                 f"{context}: formal Superseded ADR requires exactly one "
                 "'Replacement ADR' entry in a 'Supersession' section"
             )
-        return
+        return None
     if not allows_supersession:
         fail(
             f"{context}: 'Supersession' section is only valid for an ADR with "
@@ -484,6 +518,7 @@ def validate_supersession(
         entry.group("target"),
         relationship="Supersession replacement ADR",
     )
+    return replacement_number
 
 
 def scan_review_queue(lines: list[str], queue_start: int) -> MarkdownSection:
@@ -504,8 +539,156 @@ def scan_review_queue(lines: list[str], queue_start: int) -> MarkdownSection:
     return MarkdownSection(len(lines), tuple(visible_lines), open_fence)
 
 
-def review_queue_end(lines: list[str], queue_start: int) -> int:
-    return scan_review_queue(lines, queue_start).end
+def markdown_table_cells(
+    context: Path,
+    line: MarkdownLine,
+) -> list[str]:
+    stripped = line.text.strip()
+    if not (stripped.startswith("|") and stripped.endswith("|")):
+        fail(f"{context}: malformed table row at line {line.number}")
+    return [cell.strip() for cell in stripped[1:-1].split("|")]
+
+
+def supersession_index_rows(
+    path: Path,
+    adr_dir: Path,
+) -> dict[int, tuple[str, int]]:
+    text = path.read_text(encoding="utf-8")
+    visible_lines = visible_markdown_lines(text, path)
+    headings = [
+        line
+        for line in visible_lines
+        if SUPERSESSION_INDEX_HEADING_RE.fullmatch(line.text)
+    ]
+    if len(headings) != 1:
+        fail(
+            f"{path}: expected exactly one 'Supersession Index' section, "
+            f"found {len(headings)}"
+        )
+
+    heading = headings[0]
+    following = next(
+        (
+            line
+            for line in visible_lines
+            if line.number > heading.number
+            and (
+                LEVEL_TWO_HEADING_RE.fullmatch(line.text)
+                or re.fullmatch(r"^### [^\r\n]*$", line.text)
+            )
+        ),
+        None,
+    )
+    end = following.number if following is not None else None
+    section_lines = [
+        line
+        for line in visible_lines
+        if line.number > heading.number
+        and (end is None or line.number < end)
+    ]
+    table_lines = [line for line in section_lines if line.text.strip().startswith("|")]
+    if len(table_lines) < 2:
+        fail(
+            f"{path}: Supersession Index must contain a header and separator row"
+        )
+
+    header = markdown_table_cells(path, table_lines[0])
+    if header != ["ADR", "Status", "Replacement ADR"]:
+        fail(
+            f"{path}: Supersession Index header must be exactly "
+            "'| ADR | Status | Replacement ADR |'"
+        )
+    separator = markdown_table_cells(path, table_lines[1])
+    if len(separator) != 3 or not all(
+        TABLE_SEPARATOR_CELL_RE.fullmatch(cell) for cell in separator
+    ):
+        fail(f"{path}: malformed Supersession Index separator row")
+
+    rows: dict[int, tuple[str, int]] = {}
+    for line in table_lines[2:]:
+        cells = markdown_table_cells(path, line)
+        if len(cells) != 3:
+            fail(
+                f"{path}: Supersession Index row at line {line.number} must have "
+                "exactly three cells"
+            )
+        source_match = ADR_LINK_RE.fullmatch(cells[0])
+        if source_match is None:
+            fail(
+                f"{path}: Supersession Index row at line {line.number} must use "
+                "an exact [ADR NNNN] source link"
+            )
+        source_number = provenance_adr_number(
+            path,
+            adr_dir,
+            line.number,
+            source_match,
+        )
+        replacement_match = ADR_LINK_RE.fullmatch(cells[2])
+        if replacement_match is None:
+            fail(
+                f"{path}: Supersession Index row at line {line.number} must use "
+                "an exact [ADR NNNN] replacement link"
+            )
+        replacement_number = int(replacement_match.group("number"))
+        validate_replacement_adr_target(
+            path,
+            adr_dir,
+            line.number,
+            replacement_number,
+            replacement_match.group("target"),
+            relationship="Supersession Index replacement ADR",
+        )
+        if cells[1] not in {"Superseded", "Withdrawn"}:
+            fail(
+                f"{path}: Supersession Index row at line {line.number} has invalid "
+                f"status {cells[1]!r}"
+            )
+        if source_number in rows:
+            fail(
+                f"{path}: duplicate Supersession Index entry for ADR "
+                f"{source_number:04d}"
+            )
+        rows[source_number] = (cells[1], replacement_number)
+    return rows
+
+
+def validate_supersession_index(
+    path: Path,
+    adr_dir: Path,
+    adr_states: dict[int, tuple[str, int | None]],
+) -> None:
+    actual = supersession_index_rows(path, adr_dir)
+    expected = {
+        number: (status, replacement_number)
+        for number, (status, replacement_number) in adr_states.items()
+        if replacement_number is not None
+    }
+    missing = sorted(set(expected) - set(actual))
+    if missing:
+        fail(
+            f"{path}: Supersession Index is missing ADR entries with replacement "
+            f"sections: {[f'{number:04d}' for number in missing]}"
+        )
+    unexpected = sorted(set(actual) - set(expected))
+    if unexpected:
+        fail(
+            f"{path}: Supersession Index contains ADRs without a validated "
+            f"replacement section: {[f'{number:04d}' for number in unexpected]}"
+        )
+    for number, (actual_status, actual_replacement) in actual.items():
+        expected_status, expected_replacement = expected[number]
+        if actual_status != expected_status:
+            fail(
+                f"{path}: Supersession Index status for ADR {number:04d} is "
+                f"{actual_status!r}, but the ADR status is {expected_status!r}"
+            )
+        if actual_replacement != expected_replacement:
+            fail(
+                f"{path}: Supersession Index replacement for ADR {number:04d} "
+                f"is ADR {actual_replacement:04d}, but the ADR Supersession "
+                f"section names ADR {expected_replacement:04d}"
+            )
 
 
 def checked_reviews(
@@ -708,12 +891,16 @@ def validate(root: Path = ROOT) -> None:
     root = root.resolve()
     adr_dir = root / ADR_DIR
     queue = root / REVIEW_QUEUE
+    decision_readme = root / DECISION_README
     if not adr_dir.is_dir():
         fail(f"ADR directory missing: {adr_dir.relative_to(root)}")
     if not queue.is_file():
         fail(f"ADR review queue missing: {queue.relative_to(root)}")
+    if not decision_readme.is_file():
+        fail(f"ADR decision README missing: {decision_readme.relative_to(root)}")
     reviews = checked_reviews(queue, root, adr_dir)
     seen_numbers: set[int] = set()
+    adr_states: dict[int, tuple[str, int | None]] = {}
 
     for path in sorted(adr_dir.glob("adr-*.md")):
         number = adr_number(path)
@@ -777,19 +964,23 @@ def validate(root: Path = ROOT) -> None:
             text,
         )
 
-        validate_supersession(
+        replacement_number = validate_supersession(
             context,
             path,
             adr_dir,
             normalized_status,
             number,
             text,
+            legacy_status=status,
         )
+        adr_states[number] = (normalized_status, replacement_number)
 
     missing_adrs = sorted(set(reviews) - seen_numbers)
     if missing_adrs:
         formatted_missing_adrs = [f"{number:04d}" for number in missing_adrs]
         fail(f"checked review queue references missing ADRs: {formatted_missing_adrs}")
+
+    validate_supersession_index(decision_readme, adr_dir, adr_states)
 
     print(
         "ADR review status validation passed: "

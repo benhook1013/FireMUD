@@ -29,7 +29,12 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @WebMvcTest
 @Import(GlobalExceptionHandler.class)
-@TestPropertySource(properties = "spring.web.resources.add-mappings=true")
+@TestPropertySource(
+    properties = {
+      "spring.mvc.throw-exception-if-no-handler-found=true",
+      "spring.mvc.static-path-pattern=/resources/**",
+      "spring.web.resources.add-mappings=true"
+    })
 class GlobalExceptionHandlerTest {
   @Autowired private MockMvc mockMvc;
 
@@ -170,7 +175,7 @@ class GlobalExceptionHandlerTest {
   @Test
   void missingStaticResourceUsesCanonicalNotFoundEnvelope() throws Exception {
     mockMvc
-        .perform(get("/missing-resource.txt"))
+        .perform(get("/resources/missing-resource.txt"))
         .andExpect(status().isNotFound())
         .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
         .andExpect(jsonPath("$.status").value("ERROR"))

@@ -151,12 +151,12 @@ Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](
 
 ### Supersession Index
 
-This is a hand-maintained index, not an independent authority, validator output, or independently machine-checked registry. For formal ADRs, each row must remain consistent with the validated machine-readable `## Supersession` section in the corresponding ADR; that section is the normative replacement source. If this registry disagrees with a formal ADR section, the registry is stale and must be corrected. The pre-formal ADRs `0001` through `0011` retain hand-maintained legacy entries permitted only by their historical replacement prose and remain validation-only exceptions.
+This is a hand-maintained index, not an independent authority. The ADR review-status validator checks that each row's status and replacement agree with the corresponding ADR's validated `## Status` and `## Supersession` sections; those ADR sections remain normative. The pre-formal ADRs `0001` through `0011` retain hand-maintained legacy entries permitted only by their historical replacement prose and remain validation-only exceptions.
 
-| ADR | Replacement ADR |
-| --- | --- |
-| [ADR 0004](./adr-0004-gameplay-reroute-vs-backend-unavailable.md) | [ADR 0007](./adr-0007-edge-sharding-and-close-taxonomy.md) |
-| [ADR 0006](./adr-0006-gameplay-shard-routing-key-transport.md) | [ADR 0007](./adr-0007-edge-sharding-and-close-taxonomy.md) |
+| ADR | Status | Replacement ADR |
+| --- | --- | --- |
+| [ADR 0004](./adr-0004-gameplay-reroute-vs-backend-unavailable.md) | Superseded | [ADR 0007](./adr-0007-edge-sharding-and-close-taxonomy.md) |
+| [ADR 0006](./adr-0006-gameplay-shard-routing-key-transport.md) | Withdrawn | [ADR 0007](./adr-0007-edge-sharding-and-close-taxonomy.md) |
 
 ## Record Shape For New Decisions
 

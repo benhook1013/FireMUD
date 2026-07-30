@@ -20,7 +20,6 @@ done
 
 python3 - <<'PY' "$ROOT_DIR"
 import json
-import re
 import sys
 import urllib.error
 from contextlib import redirect_stderr, redirect_stdout
@@ -253,65 +252,6 @@ if env_from != [{"secretRef": {"name": "dev-demo-bootstrap-env"}}]:
     raise AssertionError(
         "dev-demo bootstrap pod must import dev-demo-bootstrap-env"
     )
-
-workflow_run_sources = []
-for job_name, job in jobs.items():
-    if not isinstance(job, dict):
-        raise AssertionError(f"dev-demo workflow job {job_name!r} must be a mapping")
-    steps = job.get("steps")
-    if steps is None:
-        continue
-    if not isinstance(steps, list):
-        raise AssertionError(f"dev-demo workflow job {job_name!r} steps must be a list")
-    for step_index, step in enumerate(steps):
-        if not isinstance(step, dict):
-            raise AssertionError(
-                f"dev-demo workflow job {job_name!r} step {step_index} must be a mapping"
-            )
-        run = step.get("run")
-        if isinstance(run, str):
-            workflow_run_sources.append((job_name, step.get("name", step_index), run))
-summary_helper_pattern = re.compile(
-    r"(?:bash\s+)?(?:[.]/)?(dev-tools/[A-Za-z0-9_./-]+[.]sh)"
-)
-summary_sources = []
-for root_entry in workflow_run_sources:
-    source_closure = [root_entry]
-    pending_helpers = [root_entry]
-    seen_helpers = set()
-    while pending_helpers:
-        job_name, step_name, source = pending_helpers.pop()
-        for helper in summary_helper_pattern.findall(source):
-            if helper in seen_helpers:
-                continue
-            seen_helpers.add(helper)
-            helper_path = root / helper
-            if not helper_path.is_file():
-                raise AssertionError(f"workflow helper does not exist: {helper}")
-            helper_source = helper_path.read_text(encoding="utf-8")
-            helper_entry = (job_name, f"{step_name}:{helper}", helper_source)
-            source_closure.append(helper_entry)
-            pending_helpers.append(helper_entry)
-    if any("GITHUB_STEP_SUMMARY" in source for _, _, source in source_closure):
-        summary_sources.extend(source_closure)
-if not summary_sources:
-    raise AssertionError("dev-demo workflow must define summary-writing steps")
-forbidden_summary_reference = re.compile(
-    r"DEMO_SMOKE_PASSWORD|"
-    r"\$\{BOOTSTRAP_SECRET_DIR\}/password|"
-    r"\$\{\{\s*secrets[.]|"
-    r"steps[.][A-Za-z0-9_-]+[.]outputs[.]password",
-    re.IGNORECASE,
-)
-if any(forbidden_summary_reference.search(source) for _, _, source in summary_sources):
-    writers = ", ".join(
-        f"{job_name}/{step_name}" for job_name, step_name, _ in summary_sources
-    )
-    raise AssertionError(
-        "dev-demo summaries must not reference bootstrap credential material; "
-        f"summary writers: {writers}"
-    )
-
 
 class FakeHttpResponse:
     status = 200
@@ -558,4 +498,627 @@ with patch(
 require(non_retryable_urlopen.call_count == 1, "HTTP 400 must not be retried")
 
 print("dev-demo workflow contract checks passed")
+PY
+python3 - <<'PY' "$ROOT_DIR"
+import re
+import sys
+from pathlib import Path
+
+import yaml
+
+root = Path(sys.argv[1]).resolve()
+workflow_path = root / ".github" / "workflows" / "dev-demo.yml"
+if not workflow_path.is_file():
+    raise AssertionError(f"dev-demo workflow is missing: expected {workflow_path}")
+try:
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+except yaml.YAMLError as exc:
+    raise AssertionError(f"dev-demo workflow is not valid YAML: {exc}") from exc
+jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
+if not isinstance(jobs, dict):
+    raise AssertionError("dev-demo workflow must define jobs as a mapping")
+deploy_job = jobs.get("dev-demo-deploy")
+if not isinstance(deploy_job, dict) or not isinstance(deploy_job.get("steps"), list):
+    raise AssertionError(
+        "dev-demo-deploy job missing its required steps list"
+    )
+bootstrap_step = next(
+    (
+        step
+        for step in deploy_job["steps"]
+        if isinstance(step, dict)
+        and step.get("name") == "Create dev-demo smoke account"
+    ),
+    None,
+)
+if bootstrap_step is None:
+    raise AssertionError(
+        "dev-demo-deploy job missing required bootstrap step "
+        "'Create dev-demo smoke account'"
+    )
+try:
+    bootstrap_manifest = bootstrap_step["run"]
+except KeyError as exc:
+    raise AssertionError(
+        "dev-demo bootstrap step must expose its shell script as run"
+    ) from exc
+if not isinstance(bootstrap_manifest, str):
+    raise AssertionError("dev-demo bootstrap step run must be a string")
+bootstrap_lines = [line.strip() for line in bootstrap_manifest.splitlines()]
+
+
+def assert_ordered_lines(lines, expected_lines, message):
+    next_index = 0
+    for expected_line in expected_lines:
+        for index in range(next_index, len(lines)):
+            if expected_line in lines[index]:
+                next_index = index + 1
+                break
+        else:
+            raise AssertionError(message)
+
+
+cleanup_function_starts = [
+    index
+    for index, line in enumerate(bootstrap_lines)
+    if line == "cleanup_bootstrap_temp_dir() {"
+]
+if len(cleanup_function_starts) != 1:
+    raise AssertionError(
+        "dev-demo bootstrap must contain exactly one cleanup_bootstrap_temp_dir function"
+    )
+
+
+def cleanup_function_end_index(lines, function_start):
+    brace_depth = 0
+    for index in range(function_start, len(lines)):
+        line = lines[index]
+        if line.endswith("() {") or line == "{":
+            brace_depth += 1
+        elif line == "}":
+            brace_depth -= 1
+            if brace_depth == 0:
+                return index + 1
+    return None
+
+
+cleanup_function_start = cleanup_function_starts[0]
+cleanup_function_end = cleanup_function_end_index(
+    bootstrap_lines,
+    cleanup_function_start,
+)
+if cleanup_function_end is None:
+    raise AssertionError(
+        "dev-demo bootstrap cleanup function has no same-nesting closing brace"
+    )
+cleanup_function_lines = bootstrap_lines[cleanup_function_start:cleanup_function_end]
+cleanup_success_start = next(
+    (
+        index
+        for index, line in enumerate(cleanup_function_lines)
+        if 'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then' in line
+    ),
+    None,
+)
+if cleanup_success_start is None:
+    raise AssertionError(
+        "dev-demo bootstrap temp directory cleanup success branch is missing"
+    )
+shell_if_start_re = re.compile(r"^if\b.*;[ \t]*then$")
+
+
+def assert_supported_shell_if(line):
+    if re.match(r"^if(?:\s|$)", line) and not shell_if_start_re.fullmatch(line):
+        raise AssertionError(
+            "unsupported shell if form; expected a single-line 'if ...; then' opener: "
+            f"{line}"
+        )
+
+
+def closing_fi_index(lines, if_index):
+    assert_supported_shell_if(lines[if_index])
+    nested_if_depth = 0
+    for index in range(if_index + 1, len(lines)):
+        line = lines[index]
+        if re.match(r"^if(?:\s|$)", line):
+            assert_supported_shell_if(line)
+            nested_if_depth += 1
+        elif line == "fi":
+            if nested_if_depth == 0:
+                return index
+            nested_if_depth -= 1
+    return None
+
+
+cleanup_success_end = closing_fi_index(
+    cleanup_function_lines,
+    cleanup_success_start,
+)
+if cleanup_success_end is None:
+    raise AssertionError(
+        "dev-demo bootstrap temp directory cleanup success branch has no closing fi"
+    )
+nested_if_fixture = [
+    'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then',
+    'if [[ -n "${BOOTSTRAP_SECRET_DIR}" ]]; then',
+    "true",
+    "fi",
+    "return 0",
+    "fi",
+]
+if closing_fi_index(nested_if_fixture, 0) != 5:
+    raise AssertionError("cleanup success branch must match its outer closing fi")
+nested_group_fixture = [
+    "cleanup_bootstrap_temp_dir() {",
+    "{",
+    'if [[ -n "${BOOTSTRAP_SECRET_DIR}" ]]; then',
+    "true",
+    "fi",
+    "}",
+    "}",
+]
+if cleanup_function_end_index(nested_group_fixture, 0) != len(nested_group_fixture):
+    raise AssertionError(
+        "cleanup function brace depth must include standalone grouped-command braces"
+    )
+for unsupported_if_fixture in (
+    ["if true", "then", "fi"],
+    ["if true; then echo inline; fi"],
+):
+    try:
+        closing_fi_index(unsupported_if_fixture, 0)
+    except AssertionError as exc:
+        if "unsupported shell if form" not in str(exc):
+            raise
+    else:
+        raise AssertionError(
+            "unsupported shell if fixture unexpectedly passed contract parsing"
+        )
+cleanup_success_return = next(
+    (
+        index
+        for index in range(cleanup_success_start + 1, cleanup_success_end)
+        if "return 0" in cleanup_function_lines[index]
+    ),
+    None,
+)
+if cleanup_success_return is None:
+    raise AssertionError(
+        "dev-demo bootstrap temp directory cleanup success branch must return 0"
+    )
+clear_directory_lines = [
+    index
+    for index in range(len(cleanup_function_lines))
+    if cleanup_function_lines[index] == "BOOTSTRAP_SECRET_DIR="
+]
+if (
+    len(clear_directory_lines) != 1
+    or not cleanup_success_start
+    < clear_directory_lines[0]
+    < cleanup_success_return
+    < cleanup_success_end
+):
+    raise AssertionError(
+        "dev-demo bootstrap temp directory must clear its variable only in the "
+        "successful rm branch before return 0"
+    )
+assert_ordered_lines(
+    cleanup_function_lines,
+    (
+        'echo "::error::Failed to remove dev-demo bootstrap credential files" >&2',
+        "return 1",
+    ),
+    "dev-demo bootstrap temp directory removal failure must return failure",
+)
+
+manifest_opener = "cat <<'EOF' | kubectl -n \"${PREVIEW_NAMESPACE}\" apply -f -\n"
+if bootstrap_manifest.count(manifest_opener) != 1:
+    raise AssertionError(
+        "dev-demo bootstrap step must contain exactly one expected pod manifest heredoc opener"
+    )
+try:
+    manifest_start = bootstrap_manifest.index(manifest_opener)
+    manifest_start = bootstrap_manifest.index("\n", manifest_start) + 1
+    try:
+        manifest_end = bootstrap_manifest.index("\nEOF\n", manifest_start)
+    except ValueError:
+        if not bootstrap_manifest.endswith("\nEOF"):
+            raise
+        manifest_end = len(bootstrap_manifest) - len("\nEOF")
+except ValueError as exc:
+    raise AssertionError(
+        "dev-demo bootstrap step must contain the expected pod manifest heredoc"
+    ) from exc
+bootstrap_pod = yaml.safe_load(bootstrap_manifest[manifest_start:manifest_end])
+if not isinstance(bootstrap_pod, dict) or not isinstance(
+    bootstrap_pod.get("spec"), dict
+):
+    raise AssertionError("dev-demo bootstrap pod must define spec as a mapping")
+containers = bootstrap_pod["spec"].get("containers")
+if not isinstance(containers, list) or not containers:
+    raise AssertionError(
+        "dev-demo bootstrap pod spec.containers must be a non-empty list"
+    )
+if not isinstance(containers[0], dict):
+    raise AssertionError(
+        "dev-demo bootstrap pod spec.containers[0] must be a mapping"
+    )
+if containers[0].get("envFrom", []) != [
+    {"secretRef": {"name": "dev-demo-bootstrap-env"}}
+]:
+    raise AssertionError(
+        "dev-demo bootstrap pod must import dev-demo-bootstrap-env"
+    )
+
+workflow_run_sources = []
+for job_name, job in jobs.items():
+    if not isinstance(job, dict):
+        raise AssertionError(f"dev-demo workflow job {job_name!r} must be a mapping")
+    steps = job.get("steps")
+    if steps is None:
+        continue
+    if not isinstance(steps, list):
+        raise AssertionError(f"dev-demo workflow job {job_name!r} steps must be a list")
+    for step_index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            raise AssertionError(
+                f"dev-demo workflow job {job_name!r} step {step_index} must be a mapping"
+            )
+        run = step.get("run")
+        if isinstance(run, str):
+            workflow_run_sources.append((job_name, step.get("name", step_index), run))
+
+summary_helper_pattern = re.compile(
+    r"(?<![A-Za-z0-9_./$-])(?:bash[ \t]+)?"
+    r"(?P<invocation>(?:"
+    r"dev-tools/[A-Za-z0-9_./-]+[.]sh|"
+    r"[.]/dev-tools/[A-Za-z0-9_./-]+[.]sh|"
+    r"/[^\s;&|\"'`]+/dev-tools/[A-Za-z0-9_./-]+[.]sh|"
+    r"\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)/"
+    r"dev-tools/[A-Za-z0-9_./-]+[.]sh"
+    r"))(?![A-Za-z0-9_./-])"
+)
+root_dir = root.resolve()
+
+
+def normalize_summary_helper_path(invocation):
+    if invocation.startswith("/"):
+        return Path(invocation).resolve()
+    if invocation.startswith("$"):
+        return (root_dir / invocation.split("/", 1)[1]).resolve()
+    return (root_dir / invocation.removeprefix("./")).resolve()
+
+
+for fixture, expected in (
+    (
+        "dev-tools/tests/smoke-transport-contract.sh",
+        "dev-tools/tests/smoke-transport-contract.sh",
+    ),
+    (
+        "./dev-tools/tests/smoke-transport-contract.sh",
+        "dev-tools/tests/smoke-transport-contract.sh",
+    ),
+    (
+        "bash dev-tools/tests/smoke-transport-contract.sh",
+        "dev-tools/tests/smoke-transport-contract.sh",
+    ),
+    (
+        "bash ./dev-tools/tests/smoke-transport-contract.sh",
+        "dev-tools/tests/smoke-transport-contract.sh",
+    ),
+    (
+        f"bash {root_dir}/dev-tools/tests/smoke-transport-contract.sh",
+        "dev-tools/tests/smoke-transport-contract.sh",
+    ),
+    (
+        "$GITHUB_WORKSPACE/dev-tools/tests/smoke-transport-contract.sh",
+        "dev-tools/tests/smoke-transport-contract.sh",
+    ),
+    (
+        "${ROOT_DIR}/dev-tools/tests/smoke-transport-contract.sh",
+        "dev-tools/tests/smoke-transport-contract.sh",
+    ),
+):
+    matches = summary_helper_pattern.findall(fixture)
+    if (
+        len(matches) != 1
+        or normalize_summary_helper_path(matches[0]) != root_dir / expected
+    ):
+        raise AssertionError(
+            f"summary helper fixture was not normalized: {fixture}"
+        )
+
+outside_fixture = f"{root_dir.parent}/dev-tools/tests/smoke-transport-contract.sh"
+outside_matches = summary_helper_pattern.findall(outside_fixture)
+if len(outside_matches) != 1:
+    raise AssertionError("absolute summary helper containment fixture was not detected")
+try:
+    normalize_summary_helper_path(outside_matches[0]).relative_to(root_dir)
+except ValueError:
+    pass
+else:
+    raise AssertionError("summary helper discovery must keep helpers within repo root")
+
+
+summary_writers = []
+for root_entry in workflow_run_sources:
+    source_closure = [root_entry]
+    pending_helpers = [root_entry]
+    seen_helpers = set()
+    while pending_helpers:
+        job_name, step_name, source = pending_helpers.pop()
+        for helper_invocation in summary_helper_pattern.findall(source):
+            helper_path = normalize_summary_helper_path(helper_invocation)
+            try:
+                helper = helper_path.relative_to(root_dir).as_posix()
+            except ValueError:
+                continue
+            if helper in seen_helpers:
+                continue
+            seen_helpers.add(helper)
+            if not helper_path.is_file():
+                continue
+            helper_source = helper_path.read_text(encoding="utf-8")
+            helper_entry = (job_name, f"{step_name}:{helper}", helper_source)
+            source_closure.append(helper_entry)
+            pending_helpers.append(helper_entry)
+    summary_writers.extend(
+        entry for entry in source_closure if "GITHUB_STEP_SUMMARY" in entry[2]
+    )
+if not summary_writers:
+    raise AssertionError("dev-demo workflow must define summary-writing steps")
+
+forbidden_summary_reference = re.compile(
+    r"DEMO_SMOKE_PASSWORD|"
+    r"\$\{?BOOTSTRAP_SECRET_DIR\}?/password|"
+    r"\$\{\{\s*secrets[.]|"
+    r"steps[.][A-Za-z0-9_-]+[.]outputs[.]password|"
+    r"(?<![;&|\n])[^;&|\n]*(?<![A-Za-z])(?:secrets?|secs?|credentials?|creds?)(?![A-Za-z])"
+    r"[^;&|\n]*(?:\|[^;&|\n]*)*\|\s*base64\s+(?:-[A-Za-z]*d[A-Za-z]*|--decode)\b",
+    re.IGNORECASE,
+)
+
+
+def has_forbidden_summary_reference(text):
+    normalized_text = re.sub(r"[ 	]+", " ", text)
+    return forbidden_summary_reference.search(normalized_text) is not None
+
+
+summary_target = re.compile(
+    r"(?P<operator>>{1,2}|tee(?:[ \t]+(?:-a|--append))?)[ \t]*"
+    r"['\"]?\$\{?GITHUB_STEP_SUMMARY\}?['\"]?"
+)
+heredoc_open = re.compile(
+    r"<<(?P<strip_tabs>-)?[ \t]*(?P<quote>['\"]?)"
+    r"(?P<delimiter>[A-Za-z_][A-Za-z0-9_]*)"
+    r"(?P=quote)"
+)
+
+
+def shell_group_tokens(line):
+    tokens = []
+    quote = None
+    escaped = False
+    index = 0
+    while index < len(line):
+        character = line[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if character == "\\":
+            escaped = True
+            index += 1
+            continue
+        if quote is not None:
+            if character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in "'\"":
+            quote = character
+            index += 1
+            continue
+        if character == "$" and index + 1 < len(line) and line[index + 1] in "{(":
+            opener = line[index + 1]
+            closer = "}" if opener == "{" else ")"
+            depth = 1
+            index += 2
+            while index < len(line) and depth:
+                if line[index] == opener:
+                    depth += 1
+                elif line[index] == closer:
+                    depth -= 1
+                index += 1
+            continue
+        if character in "{}()":
+            tokens.append(character)
+        index += 1
+    return tokens
+
+
+def grouped_command_start(lines, index, target_match):
+    depth = 0
+    saw_closing_group = False
+    for candidate in range(index, -1, -1):
+        candidate_text = (
+            lines[candidate][: target_match.start()]
+            if candidate == index
+            else lines[candidate]
+        )
+        for token in reversed(shell_group_tokens(candidate_text)):
+            if token in "})":
+                depth += 1
+                saw_closing_group = True
+            elif saw_closing_group and token in "{(":
+                depth -= 1
+                if depth == 0:
+                    return candidate
+    return None
+
+
+def summary_heredoc(lines, start, index, target_match):
+    for opener_index in range(start, index + 1):
+        if opener_index < index and any(
+            not lines[candidate].rstrip().endswith("\\")
+            for candidate in range(opener_index, index)
+        ):
+            continue
+        command_lines = lines[opener_index:index]
+        command_lines.append(lines[index][: target_match.start()])
+        command_text = "\n".join(command_lines)
+        match = heredoc_open.search(command_text)
+        if match is None:
+            continue
+        if re.search(r"[;&|]", command_text[match.end() :]):
+            continue
+        return match
+    return None
+
+
+def summary_write_regions(source):
+    lines = source.splitlines()
+    regions = []
+    for index, line in enumerate(lines):
+        target_match = summary_target.search(line)
+        if target_match is None:
+            continue
+        start = grouped_command_start(lines, index, target_match)
+        if start is None:
+            start = index
+            while start > 0 and lines[start - 1].rstrip().endswith("\\"):
+                start -= 1
+        end = index
+        heredoc_match = summary_heredoc(lines, start, index, target_match)
+        if heredoc_match is not None:
+            delimiter = heredoc_match.group("delimiter")
+            strip_tabs = heredoc_match.group("strip_tabs") is not None
+            for candidate in range(index + 1, len(lines)):
+                candidate_line = lines[candidate]
+                if strip_tabs:
+                    candidate_line = candidate_line.lstrip("\t")
+                if candidate_line == delimiter:
+                    end = candidate
+                    break
+            else:
+                end = len(lines) - 1
+        regions.append("\n".join(lines[start : end + 1]))
+    return regions
+
+
+if not any(
+    summary_write_regions(source)
+    for _job_name, _step_name, source in summary_writers
+):
+    raise AssertionError(
+        "dev-demo workflow must write summaries through a recognized shell target"
+    )
+
+
+for safe_source, unsafe in (
+    (
+        'printf "%s" "$DEMO_SMOKE_PASSWORD" >/tmp/password\n'
+        'echo "safe summary" >> "$GITHUB_STEP_SUMMARY"',
+        False,
+    ),
+    (
+        '{\n'
+        '  echo "unsafe: $DEMO_SMOKE_PASSWORD"\n'
+        '} >> "$GITHUB_STEP_SUMMARY"',
+        True,
+    ),
+    (
+        "cat <<'SUMMARY_EOF' >> \"$GITHUB_STEP_SUMMARY\"\n"
+        "unsafe: $DEMO_SMOKE_PASSWORD\n"
+        "SUMMARY_EOF",
+        True,
+    ),
+):
+    fixture_regions = summary_write_regions(safe_source)
+    fixture_is_unsafe = any(has_forbidden_summary_reference(region) for region in fixture_regions)
+    if fixture_is_unsafe != unsafe:
+        raise AssertionError(
+            "summary secret detector fixture produced the wrong result"
+        )
+
+for secret_pipeline in (
+    "kubectl get secret demo -o json | base64 -d",
+    "kubectl get SECRETS demo -o json | jq -r .data.password | base64 --decode",
+    "kubectl get sec demo -o json | tr -d '\\n' | base64 -d",
+    "echo API_SECRET_TOKEN | base64 -d",
+    "echo DB_CREDS | base64 -d",
+    "echo DB_CREDS | base64 -di",
+):
+    if not has_forbidden_summary_reference(secret_pipeline):
+        raise AssertionError(
+            "forbidden summary regex must detect secret material through intermediate "
+            f"pipelines: {secret_pipeline}"
+        )
+for safe_summary in (
+    "echo secret summary",
+    "kubectl get secret demo -o json | jq -r .metadata.name",
+    "kubectl get secret demo -o json; echo base64 -d",
+    "kubectl get secret demo -o json\nbase64 -d",
+):
+    if has_forbidden_summary_reference(safe_summary):
+        raise AssertionError(
+            f"forbidden summary regex must not cross command separators: {safe_summary}"
+        )
+offending_writers = [
+    (job_name, step_name)
+    for job_name, step_name, source in summary_writers
+    if any(
+        has_forbidden_summary_reference(region)
+        for region in summary_write_regions(source)
+    )
+]
+if offending_writers:
+    writers = ", ".join(
+        f"{job_name}/{step_name}" for job_name, step_name in offending_writers
+    )
+    raise AssertionError(
+        "dev-demo summaries must not reference bootstrap credential material; "
+        f"offending summary writers: {writers}"
+    )
+
+
+for fixture, expected in (
+    (
+        '{ echo "unsafe: $DEMO_SMOKE_PASSWORD"; } >> "$GITHUB_STEP_SUMMARY"',
+        True,
+    ),
+    (
+        "{\n"
+        '  echo "unsafe: $DEMO_SMOKE_PASSWORD"\n'
+        '} >> "$GITHUB_STEP_SUMMARY"',
+        True,
+    ),
+    (
+        '( echo "unsafe: $DEMO_SMOKE_PASSWORD" ) >> "$GITHUB_STEP_SUMMARY"',
+        True,
+    ),
+    (
+        "(\n"
+        '  echo "unsafe: $DEMO_SMOKE_PASSWORD"\n'
+        ') >> "$GITHUB_STEP_SUMMARY"',
+        True,
+    ),
+    (
+        "cat <<'UNRELATED'\n"
+        "unsafe: $DEMO_SMOKE_PASSWORD\n"
+        "UNRELATED\n"
+        'echo "safe summary" >> "$GITHUB_STEP_SUMMARY"',
+        False,
+    ),
+):
+    fixture_is_unsafe = any(
+        has_forbidden_summary_reference(region)
+        for region in summary_write_regions(fixture)
+    )
+    if fixture_is_unsafe != expected:
+        raise AssertionError(
+            "summary write-region fixture produced the wrong result"
+        )
+
+print("dev-demo summary contract checks passed")
 PY

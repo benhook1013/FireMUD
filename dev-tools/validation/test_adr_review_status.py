@@ -52,6 +52,17 @@ def fixture_root() -> tempfile.TemporaryDirectory[str]:
     fixture = tempfile.TemporaryDirectory()
     root = Path(fixture.name)
     write(
+        root / "design/architecture/decisions/README.md",
+        """
+        # Architecture Decision Records
+
+        ### Supersession Index
+
+        | ADR | Status | Replacement ADR |
+        | --- | --- | --- |
+        """,
+    )
+    write(
         root
         / "design/project-management/design-alignment/consequential-decision-inventory.md",
         """
@@ -137,6 +148,26 @@ def replace_once(text: str, old: str, new: str) -> str:
     return text.replace(old, new, 1)
 
 
+def append_supersession_index_row(
+    root: Path,
+    number: int,
+    status: str,
+    replacement_number: int,
+) -> None:
+    filenames = {
+        1: "adr-0001-legacy.md",
+        12: "adr-0012-reviewed.md",
+        13: "adr-0013-pending.md",
+        14: "adr-0014-superseded.md",
+    }
+    path = root / "design/architecture/decisions/README.md"
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(
+            f"| [ADR {number:04d}](./{filenames[number]}) | {status} | "
+            f"[ADR {replacement_number:04d}](./{filenames[replacement_number]}) |\n"
+        )
+
+
 def set_review_status(
     root: Path,
     status: str,
@@ -169,6 +200,14 @@ def set_review_status(
     if supersession is not None:
         text += "\n## Supersession\n\n"
         text += f"{supersession}\n"
+        replacements = re.findall(r"\[ADR (\d{4})\]", supersession)
+        if replacements:
+            append_supersession_index_row(
+                root,
+                12,
+                status,
+                int(replacements[-1]),
+            )
     elif disposition == "Withdrawn":
         text = replace_once(
             text,
@@ -206,6 +245,14 @@ def add_formal_superseded_adr(
     text = textwrap.dedent(text).lstrip()
     if supersession is not None:
         text += f"\n## Supersession\n\n{supersession}\n"
+        replacements = re.findall(r"\[ADR (\d{4})\]", supersession)
+        if replacements:
+            append_supersession_index_row(
+                root,
+                14,
+                "Superseded",
+                int(replacements[-1]),
+            )
     path = root / "design/architecture/decisions/adr-0014-superseded.md"
     write(path, text)
     return path
@@ -458,6 +505,14 @@ class AdrReviewStatusTests(unittest.TestCase):
                     path.read_text(encoding="utf-8").replace("Accepted", status),
                     encoding="utf-8",
                 )
+                legacy_replacement = re.search(r"\[ADR (\d{4})\]", status)
+                if legacy_replacement is not None:
+                    append_supersession_index_row(
+                        root,
+                        1,
+                        "Withdrawn" if status.startswith("Withdrawn") else "Superseded",
+                        int(legacy_replacement.group(1)),
+                    )
                 checked = checked_reviews(self.validator, root)
                 self.assertIn(12, checked)
                 self.assertNotIn(1, checked)
@@ -478,6 +533,12 @@ class AdrReviewStatusTests(unittest.TestCase):
                     + "\n## Supersession\n\n"
                     "- Replacement ADR: [ADR 0012](./adr-0012-reviewed.md)\n",
                     encoding="utf-8",
+                )
+                append_supersession_index_row(
+                    root,
+                    1,
+                    "Withdrawn" if status.startswith("Withdrawn") else "Superseded",
+                    12,
                 )
                 self.validator.validate(root)
 
@@ -591,6 +652,50 @@ class AdrReviewStatusTests(unittest.TestCase):
                 self,
                 lambda: self.validator.validate(root),
                 "must target the canonical ADR directory",
+            )
+
+    def test_supersession_index_matches_adr_status_and_replacement(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            add_formal_superseded_adr(root)
+            self.validator.validate(root)
+
+    def test_supersession_index_rejects_status_drift(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            add_formal_superseded_adr(root)
+            path = root / "design/architecture/decisions/README.md"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "| [ADR 0014](./adr-0014-superseded.md) | Superseded |",
+                    "| [ADR 0014](./adr-0014-superseded.md) | Withdrawn |",
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "Supersession Index status for ADR 0014 is 'Withdrawn', "
+                "but the ADR status is 'Superseded'",
+            )
+
+    def test_supersession_index_rejects_replacement_drift(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            add_formal_superseded_adr(root)
+            path = root / "design/architecture/decisions/README.md"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "[ADR 0012](./adr-0012-reviewed.md)",
+                    "[ADR 0013](./adr-0013-pending.md)",
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "Supersession Index replacement for ADR 0014 is ADR 0013, "
+                "but the ADR Supersession section names ADR 0012",
             )
 
     def test_formal_withdrawn_record_may_omit_supersession_entry(self) -> None:
@@ -1147,7 +1252,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 {review.key for review in reviews[12]},
             )
 
-    def test_review_queue_end_ignores_headings_inside_fences(self) -> None:
+    def test_scan_review_queue_ignores_headings_inside_fences(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
             append_queue_row(
@@ -1160,7 +1265,7 @@ class AdrReviewStatusTests(unittest.TestCase):
             notes_heading = lines.index("## Notes")
             self.assertEqual(
                 notes_heading,
-                self.validator.review_queue_end(lines, queue_start),
+                self.validator.scan_review_queue(lines, queue_start).end,
             )
 
     def test_unterminated_code_fence_fails_closed_with_path_and_opening_line(
