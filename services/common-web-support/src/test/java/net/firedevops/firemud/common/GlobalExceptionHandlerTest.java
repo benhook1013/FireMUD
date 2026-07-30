@@ -1,6 +1,7 @@
 package net.firedevops.firemud.common;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -28,7 +29,7 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 @Import(GlobalExceptionHandler.class)
 @TestPropertySource(
     properties = {
-      "spring.web.resources.add-mappings=false",
+      "spring.web.resources.add-mappings=true",
       "spring.mvc.throw-exception-if-no-handler-found=true"
     })
 class GlobalExceptionHandlerTest {
@@ -146,6 +147,17 @@ class GlobalExceptionHandlerTest {
   void unmappedPostUsesCanonicalNotFoundEnvelope() throws Exception {
     mockMvc
         .perform(post("/reports"))
+        .andExpect(status().isNotFound())
+        .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("NOT_FOUND"))
+        .andExpect(jsonPath("$.error.message").value("Resource not found"));
+  }
+
+  @Test
+  void missingStaticResourceUsesCanonicalNotFoundEnvelope() throws Exception {
+    mockMvc
+        .perform(get("/missing-resource.txt"))
         .andExpect(status().isNotFound())
         .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
         .andExpect(jsonPath("$.status").value("ERROR"))

@@ -20,7 +20,7 @@ Logging & Admin owns target-state moderation policy persistence, evaluation, and
 
 - Central log search for entries collected via Fluent Bit sidecars.
 - [Analytics dashboards](./analytics-dashboards.md) for operators, embedding Kibana and Grafana panels, including Telnet ingress views based on the TCP Proxy metrics described in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and the example Grafana snippets under `design/observability/grafana/`.
-- Tools for reviewing and recording account restrictions.
+- Tools for reviewing account-related evidence and target-state restriction workflows; Logging & Admin does not currently record or enforce account restrictions.
 - [Role-based admin UI](./admin-ui.md) for moderators.
 - [Moderation policies](./moderation-policies.md) including profanity filters.
 - Target-only UI for requesting runtime feature-flag overrides through owning domain control-plane APIs; `ToggleFeatureFlag` is not externally supported until the three-part mutation gate is complete.

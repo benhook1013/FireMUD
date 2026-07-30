@@ -382,9 +382,9 @@ EXPECTED_ROUTE_CLASS_BRANCHES = {
 }
 CANONICAL_OPERATOR_INGRESS = "logging-admin-service"
 DIRECT_OWNER_ROUTE_POLICY = "deny_at_edge_and_migrate_to_logging_admin"
-# Maps (id(route/parent mapping), field name) to the source object and parsed checks
-# for one document. Retaining the source object prevents id reuse from returning
-# stale entries.
+# Each semantic field must uniquely identify the parsed value within its source object;
+# reusing it for different values would suppress later parsing. Retaining the source
+# object prevents id reuse from returning stale entries.
 LiveChecksCache = dict[tuple[int, str], tuple[object, set[str]]]
 # Maps (id(route/parent mapping), field name) to the source object and parsed
 # required fields.

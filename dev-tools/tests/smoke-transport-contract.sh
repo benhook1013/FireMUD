@@ -156,10 +156,22 @@ if cleanup_success_start is None:
     raise AssertionError(
         "dev-demo bootstrap temp directory cleanup success branch is missing"
     )
-cleanup_success_return = next(
+cleanup_success_end = next(
     (
         index
         for index in range(cleanup_success_start + 1, len(cleanup_function_lines))
+        if cleanup_function_lines[index] == "fi"
+    ),
+    None,
+)
+if cleanup_success_end is None:
+    raise AssertionError(
+        "dev-demo bootstrap temp directory cleanup success branch has no closing fi"
+    )
+cleanup_success_return = next(
+    (
+        index
+        for index in range(cleanup_success_start + 1, cleanup_success_end)
         if "return 0" in cleanup_function_lines[index]
     ),
     None,
@@ -175,7 +187,10 @@ clear_directory_lines = [
 ]
 if (
     len(clear_directory_lines) != 1
-    or not cleanup_success_start < clear_directory_lines[0] < cleanup_success_return
+    or not cleanup_success_start
+    < clear_directory_lines[0]
+    < cleanup_success_return
+    < cleanup_success_end
 ):
     raise AssertionError(
         "dev-demo bootstrap temp directory must clear its variable only in the "
@@ -281,8 +296,8 @@ forbidden_summary_reference = re.compile(
     r"\$\{?BOOTSTRAP_SECRET_DIR\}?/password|"
     r"\$\{\{\s*secrets[.]|"
     r"steps[.][A-Za-z0-9_-]+[.]outputs[.]password|"
-    r"(?<![;&|])[^;&|]*\b(?:secrets?|secs?|credentials?|creds?)\b"
-    r"[^;&|]*(?:\|[^;&|]*)*\|\s*base64\s+(?:-d|--decode)\b",
+    r"(?<![;&|\n])[^;&|\n]*\b(?:secrets?|secs?|credentials?|creds?)\b"
+    r"[^;&|\n]*(?:\|[^;&|\n]*)*\|\s*base64\s+(?:-d|--decode)\b",
     re.IGNORECASE,
 )
 for secret_pipeline in (
@@ -299,6 +314,7 @@ for safe_summary in (
     "echo secret summary",
     "kubectl get secret demo -o json | jq -r .metadata.name",
     "kubectl get secret demo -o json; echo base64 -d",
+    "kubectl get secret demo -o json\nbase64 -d",
 ):
     if forbidden_summary_reference.search(safe_summary):
         raise AssertionError(
@@ -307,7 +323,7 @@ for safe_summary in (
 offending_writers = [
     (job_name, step_name)
     for job_name, step_name, source in summary_writers
-    if forbidden_summary_reference.search(" ".join(source.split()))
+    if forbidden_summary_reference.search(re.sub(r"[ \t]+", " ", source))
 ]
 if offending_writers:
     writers = ", ".join(

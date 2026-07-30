@@ -16,7 +16,6 @@ This document defines the Logging & Admin Service REST and gRPC surfaces, authen
 ## REST
 
 - `GET /ping` – basic health check returning `"pong"`.
-- `POST /reports` – unavailable. The public administrative controller and Gateway exposure are removed until the canonical administrative authorization and pre-persistence reference-validation checks exist. Do not treat the internal `CreateReport` gRPC contract as a public or player submission route.
 - `POST /feature-flags/toggle` – implemented but unavailable pending its action-family schema, shared `mutationDigest/v1` golden-vector conformance, and Account authorization-reference issuance/redemption.
 - `POST /logs/query` – search stored logs.
 - `POST /moderation/actions` – unavailable/gated until its action-family schema, shared cross-language `mutationDigest/v1` golden vectors, Account authorization-reference issuance, and Logging & Admin receiving-service validation/redemption exist. No current live operator mutation support is claimed. Runtime owners separately consume the synchronous `EvaluateModerationPolicy` result at `GAMEPLAY_ADMISSION` and `CHAT_SEND`; versioned propagation remains target work.

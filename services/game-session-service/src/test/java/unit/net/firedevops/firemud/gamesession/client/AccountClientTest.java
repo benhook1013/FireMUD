@@ -13,7 +13,6 @@ import static org.mockito.Mockito.when;
 import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
-import io.grpc.stub.AbstractStub;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.TimeUnit;
@@ -332,14 +331,9 @@ class AccountClientTest {
       AccountServiceGrpc.AccountServiceBlockingStub retryStub,
       GrpcChannelFactory channelFactory)
       throws Exception {
-    BlockingGrpcStubCustomizer customizer =
-        new BlockingGrpcStubCustomizer() {
-          @Override
-          @SuppressWarnings("unchecked")
-          public <T extends AbstractStub<T>> T customize(T candidate) {
-            return (T) retryStub;
-          }
-        };
+    BlockingGrpcStubCustomizer customizer = mock(BlockingGrpcStubCustomizer.class);
+    when(customizer.customize(any(AccountServiceGrpc.AccountServiceBlockingStub.class)))
+        .thenReturn(retryStub);
     AccountClient client =
         new AccountClient(
             new ServiceEndpointsProperties(),
