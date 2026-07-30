@@ -2199,14 +2199,16 @@ def applicability_value(
     applicability = route.get("applicability")
     if not isinstance(applicability, dict):
         return None
+    values = []
     if key in applicability:
-        return applicability[key]
+        values.append(applicability[key])
     clauses = applicability.get("all_of", [])
-    if not isinstance(clauses, list):
-        return None
-    values = [
-        clause[key] for clause in clauses if isinstance(clause, dict) and key in clause
-    ]
+    if isinstance(clauses, list):
+        values.extend(
+            clause[key]
+            for clause in clauses
+            if isinstance(clause, dict) and key in clause
+        )
     if not values:
         return None
     if any(value != values[0] for value in values[1:]):

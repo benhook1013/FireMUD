@@ -446,6 +446,22 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "formal Superseded ADR requires exactly one 'Replacement ADR' entry",
             )
 
+    def test_supersession_section_requires_formal_superseded_status(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = root / "design/architecture/decisions/adr-0012-reviewed.md"
+            path.write_text(
+                path.read_text(encoding="utf-8")
+                + "\n## Supersession\n\n"
+                "- Replacement ADR: [ADR 0013](./adr-0013-pending.md)\n",
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "'Supersession' section is only valid for an ADR with formal status 'Superseded'",
+            )
+
     def test_supersession_section_accepts_only_one_visible_valid_entry(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
@@ -1040,6 +1056,26 @@ class AdrReviewStatusTests(unittest.TestCase):
             message = str(raised.exception)
             self.assertIn(str(queue), message)
             self.assertRegex(message, r"unterminated code fence opened at line [0-9]+")
+
+    def test_unterminated_adr_fence_is_rejected_before_decision_record_detection(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = root / "design/architecture/decisions/adr-0013-pending.md"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "## Decision Record\n",
+                    "```text\n## Decision Record\n",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "unterminated code fence opened at line",
+            )
 
     def test_checked_review_target_must_be_in_canonical_adr_directory(self) -> None:
         with fixture_root() as fixture:

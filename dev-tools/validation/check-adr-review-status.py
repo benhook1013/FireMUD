@@ -378,7 +378,9 @@ def advance_markdown_fence(
     return open_fence, True
 
 
-def visible_markdown_lines(text: str) -> list[MarkdownLine]:
+def visible_markdown_lines(
+    text: str, context: Path | None = None
+) -> list[MarkdownLine]:
     open_fence: MarkdownFence | None = None
     visible_lines: list[MarkdownLine] = []
     for index, line in enumerate(text.splitlines()):
@@ -390,6 +392,12 @@ def visible_markdown_lines(text: str) -> list[MarkdownLine]:
         if is_fence or open_fence is not None:
             continue
         visible_lines.append(MarkdownLine(index + 1, line))
+    if open_fence is not None:
+        prefix = f"{context}: " if context is not None else ""
+        fail(
+            f"{prefix}unterminated code fence opened at line "
+            f"{open_fence.opening_line} with {open_fence.marker}"
+        )
     return visible_lines
 
 
@@ -404,9 +412,7 @@ def validate_supersession(
     visible_lines = visible_markdown_lines(text)
     heading_re = re.compile(r"^## Supersession[ \t]*$")
     headings = [line for line in visible_lines if heading_re.fullmatch(line.text)]
-    formal_superseded = (
-        status == "Superseded" and number not in PRE_FORMAL_REVIEW_RECORDS
-    )
+    formal_superseded = status == "Superseded"
     if not headings:
         if formal_superseded:
             fail(
@@ -414,6 +420,11 @@ def validate_supersession(
                 "'Replacement ADR' entry in a 'Supersession' section"
             )
         return
+    if not formal_superseded:
+        fail(
+            f"{context}: 'Supersession' section is only valid for an ADR with "
+            "formal status 'Superseded'"
+        )
     if len(headings) != 1:
         fail(
             f"{context}: expected exactly one section 'Supersession', "
@@ -499,7 +510,7 @@ def checked_reviews(
     lines = text.splitlines()
     queue_starts = [
         markdown_line.number - 1
-        for markdown_line in visible_markdown_lines(text)
+        for markdown_line in visible_markdown_lines(text, path)
         if REVIEW_QUEUE_HEADING_RE.fullmatch(markdown_line.text)
     ]
     if not queue_starts:
@@ -665,6 +676,7 @@ def validate(root: Path = ROOT) -> None:
         seen_numbers.add(number)
 
         text = path.read_text(encoding="utf-8")
+        visible_markdown_lines(text, path)
         linked_reviews = reviews.get(number, [])
         context = path.relative_to(root)
         try:
@@ -715,7 +727,7 @@ def validate(root: Path = ROOT) -> None:
             context,
             path,
             adr_dir,
-            normalized_status,
+            status,
             number,
             text,
         )

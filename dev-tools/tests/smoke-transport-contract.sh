@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 python3 - <<'PY' "$ROOT_DIR"
+import re
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -73,11 +74,38 @@ def assert_ordered_bootstrap_lines(expected_lines, message):
             raise AssertionError(message) from exc
 
 
-for expected in (
-    'create secret generic dev-demo-bootstrap-env',
-    '--from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email"',
-    '--from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password"',
+expected_secret_command_lines = [
+    'kubectl -n "${PREVIEW_NAMESPACE}" create secret generic dev-demo-bootstrap-env \\',
+    '--from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email" \\',
+    '--from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password" \\',
     '--from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username"',
+]
+secret_command_starts = [
+    index
+    for index, line in enumerate(bootstrap_lines)
+    if line == expected_secret_command_lines[0]
+]
+if len(secret_command_starts) != 1:
+    raise AssertionError(
+        "dev-demo bootstrap must contain exactly one direct credential secret command"
+    )
+secret_command_lines = []
+secret_command_index = secret_command_starts[0]
+while True:
+    secret_command_line = bootstrap_lines[secret_command_index]
+    secret_command_lines.append(secret_command_line)
+    if not secret_command_line.endswith("\\"):
+        break
+    secret_command_index += 1
+    if secret_command_index >= len(bootstrap_lines):
+        raise AssertionError("dev-demo bootstrap secret command is unterminated")
+if secret_command_lines != expected_secret_command_lines:
+    raise AssertionError(
+        "dev-demo bootstrap credential secret must use the complete direct create argument block"
+    )
+
+
+for expected in (
     'cleanup_bootstrap_temp_dir() {',
     'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then',
     'echo "::error::Failed to remove dev-demo bootstrap credential files"',
@@ -142,18 +170,69 @@ if env_from != [{"secretRef": {"name": "dev-demo-bootstrap-env"}}]:
     raise AssertionError(
         "dev-demo bootstrap pod must import dev-demo-bootstrap-env"
     )
-summary_runs = [
-    step["run"]
-    for step in deploy_job["steps"]
-    if isinstance(step, dict)
-    and isinstance(step.get("run"), str)
-    and "GITHUB_STEP_SUMMARY" in step["run"]
-]
-if not summary_runs:
+
+workflow_run_sources = []
+for job_name, job in jobs.items():
+    if not isinstance(job, dict):
+        raise AssertionError(f"dev-demo workflow job {job_name!r} must be a mapping")
+    steps = job.get("steps")
+    if steps is None:
+        continue
+    if not isinstance(steps, list):
+        raise AssertionError(f"dev-demo workflow job {job_name!r} steps must be a list")
+    for step_index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            raise AssertionError(
+                f"dev-demo workflow job {job_name!r} step {step_index} must be a mapping"
+            )
+        run = step.get("run")
+        if isinstance(run, str):
+            workflow_run_sources.append((job_name, step.get("name", step_index), run))
+
+summary_helper_pattern = re.compile(
+    r"(?:bash\s+)?(?:[.]/)?(dev-tools/[A-Za-z0-9_./-]+[.]sh)"
+)
+summary_sources = []
+for root_entry in workflow_run_sources:
+    source_closure = [root_entry]
+    pending_helpers = [root_entry]
+    seen_helpers = set()
+    while pending_helpers:
+        job_name, step_name, source = pending_helpers.pop()
+        for helper in summary_helper_pattern.findall(source):
+            if helper in seen_helpers:
+                continue
+            seen_helpers.add(helper)
+            helper_path = root / helper
+            if not helper_path.is_file():
+                raise AssertionError(f"workflow helper does not exist: {helper}")
+            helper_source = helper_path.read_text(encoding="utf-8")
+            helper_entry = (job_name, f"{step_name}:{helper}", helper_source)
+            source_closure.append(helper_entry)
+            pending_helpers.append(helper_entry)
+    if any("GITHUB_STEP_SUMMARY" in source for _, _, source in source_closure):
+        summary_sources.extend(source_closure)
+if not summary_sources:
     raise AssertionError("dev-demo workflow must define summary-writing steps")
-if any("DEMO_SMOKE_PASSWORD" in run for run in summary_runs):
+
+forbidden_summary_reference = re.compile(
+    r"DEMO_SMOKE_PASSWORD|"
+    r"\$\{?BOOTSTRAP_SECRET_DIR\}?/password|"
+    r"\$\{\{\s*secrets[.]|"
+    r"steps[.][A-Za-z0-9_-]+[.]outputs[.]password|"
+    r"kubectl\b[^;&|]*\bget\s+secret\b[^;&|]*\|\s*base64\s+(?:-d|--decode)\b",
+    re.IGNORECASE,
+)
+if any(
+    forbidden_summary_reference.search(" ".join(source.split()))
+    for _, _, source in summary_sources
+):
+    writers = ", ".join(
+        f"{job_name}/{step_name}" for job_name, step_name, _ in summary_sources
+    )
     raise AssertionError(
-        "dev-demo summaries must not reference DEMO_SMOKE_PASSWORD"
+        "dev-demo summaries must not reference bootstrap credential material; "
+        f"summary writers: {writers}"
     )
 
 

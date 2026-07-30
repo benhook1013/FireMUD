@@ -61,6 +61,13 @@ def route_for(document, service, route_name):
     return matches[0]
 
 
+def route_index(document, route):
+    for index, candidate in enumerate(document["routes"]):
+        if candidate is route:
+            return index
+    raise AssertionError("route is not present in document")
+
+
 def validate_document(validator, document):
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "matrix.yaml"
@@ -354,7 +361,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 drifted_route = route_for(
                     document, "game-session-service", "POST /sessions"
                 )
-                drifted_route_index = document["routes"].index(drifted_route)
+                drifted_route_index = route_index(document, drifted_route)
                 branch = next(
                     branch
                     for branch in drifted_route["operator_authorization_branches"]
@@ -460,13 +467,13 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     MATRIX.read_text(encoding="utf-8")
                 )
                 route = route_for(document, "game-session-service", route_name)
-                route_index = document["routes"].index(route)
+                route_position = route_index(document, route)
                 route["required_fields"] = [{"invalid": "field"}]
                 errors = validate_document(self.validator, document)
                 self.assertEqual(
                     1,
                     errors.count(
-                        f"routes[{route_index}] required_fields must be a list of strings"
+                        f"routes[{route_position}] required_fields must be a list of strings"
                     ),
                 )
                 self.assertTrue(
@@ -516,7 +523,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         route = route_for(
             document, "logging-admin-service", "POST /feature-flags/toggle"
         )
-        route_index = document["routes"].index(route)
+        route_position = route_index(document, route)
         platform_branch = next(
             branch
             for branch in route["operator_authorization_branches"]
@@ -526,7 +533,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         errors = []
         self.validator.validate_generation_applicability(document["routes"], errors)
         self.assertIn(
-            f"routes[{route_index}] logging-admin-service POST /feature-flags/toggle "
+            f"routes[{route_position}] logging-admin-service POST /feature-flags/toggle "
             "privileged operator route must require live check current_global_role",
             errors,
         )
@@ -536,13 +543,13 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         errors = []
         self.validator.validate_generation_applicability(document["routes"], errors)
         self.assertIn(
-            f"routes[{route_index}] logging-admin-service POST /feature-flags/toggle "
+            f"routes[{route_position}] logging-admin-service POST /feature-flags/toggle "
             "operator route must declare role_assurance privileged_control_when_global_role",
             errors,
         )
 
         owner_route = route_for(document, "game-session-service", "POST /sessions")
-        owner_route_index = document["routes"].index(owner_route)
+        owner_route_index = route_index(document, owner_route)
         owner_route.pop("canonical_external_ingress")
         errors = []
         self.validator.validate_generation_applicability(document["routes"], errors)
@@ -1342,13 +1349,13 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_malformed_route_profiles_are_reported_once(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = route_for(document, "game-session-service", "ToggleFeatureFlag")
-        route_index = document["routes"].index(route)
+        route_position = route_index(document, route)
         route["accepted_token_profiles"] = "control-ui"
         errors = validate_document(self.validator, document)
         self.assertEqual(
             1,
             errors.count(
-                f"matrix.routes[{route_index}] accepted_token_profiles must be a list of strings"
+                f"matrix.routes[{route_position}] accepted_token_profiles must be a list of strings"
             ),
         )
 
@@ -2012,6 +2019,55 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 in error
                 for error in errors
             )
+        )
+
+    def test_applicability_value_requires_direct_and_all_of_values_to_agree(self):
+        route = {
+            "applicability": {
+                "connection_mode": "trusted_tcp_proxy",
+                "all_of": [{"connection_mode": "trusted_tcp_proxy"}],
+            }
+        }
+        errors = []
+        self.assertEqual(
+            "trusted_tcp_proxy",
+            self.validator.applicability_value(
+                route, "connection_mode", "/ws/game/**", errors
+            ),
+        )
+        self.assertEqual([], errors)
+
+    def test_applicability_value_preserves_missing_value_behavior(self):
+        route = {"applicability": {"all_of": [{"other_key": "value"}]}}
+        errors = []
+        self.assertIsNone(
+            self.validator.applicability_value(
+                route, "connection_mode", "/ws/game/**", errors
+            )
+        )
+        self.assertEqual([], errors)
+
+    def test_applicability_value_rejects_direct_and_all_of_conflicts(self):
+        route = {
+            "applicability": {
+                "connection_mode": "trusted_tcp_proxy",
+                "all_of": [{"connection_mode": "first_party_web"}],
+            }
+        }
+        errors = []
+        self.assertIsNone(
+            self.validator.applicability_value(
+                route, "connection_mode", "/ws/game/**", errors
+            )
+        )
+        self.assertEqual(
+            [
+                (
+                    "/ws/game/** has conflicting applicability values for "
+                    "connection_mode: ['trusted_tcp_proxy', 'first_party_web']"
+                )
+            ],
+            errors,
         )
 
     def test_first_party_ws_and_revoke_operations_are_mutually_exclusive(self):

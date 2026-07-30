@@ -519,7 +519,7 @@ Public administrative `/reports` persistence is unavailable: the HTTP controller
 
 For gameplay/chat moderation specifically, the operator policy plane and enforcement plane must remain aligned under the canonical moderation propagation contract:
 
-- Logging & Admin evaluates and emits versioned moderation policy snapshots and monotonic invalidations per `{tenantId, policyScope}` using durable outbox delivery for business-significant changes. The versioned propagation path is target/missing work, not evidence that `POST /moderation/actions` directly enforces a decision.
+- In the target state, Logging & Admin will evaluate and emit versioned moderation policy snapshots and monotonic invalidations per `{tenantId, policyScope}` using durable outbox delivery for business-significant changes. This propagation path is not currently emitted and is not evidence that `POST /moderation/actions` directly enforces a decision.
 - Game Session consumes `GAMEPLAY_ADMISSION` and Social & Groups consumes `CHAT_SEND`; both maintain bounded-staleness caches keyed by `{tenantId, policyScope}` and must record the `policyVersion` used for each enforcement decision that reaches an audit trail.
 - When the bounded staleness window is exceeded and a fresh snapshot cannot be obtained, `gameplay_ban` and `chat_ban` decisions fail closed, while `chat_mute` may use the last valid snapshot only until the same window expires.
 

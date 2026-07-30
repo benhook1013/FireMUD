@@ -259,7 +259,7 @@ require_contains(
 require_contains(
     "design/project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md",
     [
-        "legacy gameplay-attestation helpers remain only as deprecated, non-authorizing implementation debt"
+        "no focused consumer-level proof establishes that these values cannot authorize delegated work"
     ],
 )
 require_contains(

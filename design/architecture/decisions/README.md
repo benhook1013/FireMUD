@@ -163,7 +163,7 @@ New ADRs should include:
 - status and decision dates;
 - primary and affected capabilities;
 - decision owner and consulted decision makers;
-- machine-readable human-review status, date, disposition, and review-source decision keys;
+- machine-readable review metadata: completed ADRs require human-review status, date, disposition, and checked-queue review-source decision keys, while `Proposed - Pending Human Review` records use the exact pending `AI-AUTHORED-PENDING` shape above and must not fabricate completed-review keys;
 - context, constraints, assumptions, and decision drivers;
 - the accepted decision stated without historical alternatives mixed into it;
 - strongest credible alternatives, including doing nothing where meaningful;
