@@ -122,10 +122,30 @@ for expected in (
         raise AssertionError(
             f"dev-demo bootstrap step contract missing: {expected}"
         )
-cleanup_success_start = bootstrap_lines.index(
-    'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then'
+cleanup_success_start = next(
+    (
+        index
+        for index, line in enumerate(bootstrap_lines)
+        if 'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then' in line
+    ),
+    None,
 )
-cleanup_success_return = bootstrap_lines.index("return 0", cleanup_success_start)
+if cleanup_success_start is None:
+    raise AssertionError(
+        "dev-demo bootstrap temp directory cleanup success branch is missing"
+    )
+cleanup_success_return = next(
+    (
+        index
+        for index in range(cleanup_success_start + 1, len(bootstrap_lines))
+        if "return 0" in bootstrap_lines[index]
+    ),
+    None,
+)
+if cleanup_success_return is None:
+    raise AssertionError(
+        "dev-demo bootstrap temp directory cleanup success branch must return 0"
+    )
 clear_directory_lines = [
     index
     for index in range(cleanup_success_start + 1, cleanup_success_return)

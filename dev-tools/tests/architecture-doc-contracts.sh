@@ -301,6 +301,18 @@ require_contains(
         "Account-validated handle is authoritative for the original signed `nbf`",
     ],
 )
+canonical_redis_text = (root / "design/architecture/system-architecture-redis.md").read_text(
+    encoding="utf-8"
+)
+obsolete_redis_rebind_envelope = re.compile(
+    r"\brebind(?:[-_\s]?handle)?[-_\s]?envelope\b",
+    re.IGNORECASE,
+)
+if obsolete_redis_rebind_envelope.search(canonical_redis_text):
+    raise SystemExit(
+        "design/architecture/system-architecture-redis.md: canonical Redis "
+        "contract must use the opaque rebindHandle, not rebind-envelope terminology"
+    )
 require_contains(
     "design/architecture/system-architecture-redis-reset-and-recovery.md",
     [
