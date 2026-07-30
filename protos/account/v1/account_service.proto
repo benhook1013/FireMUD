@@ -103,20 +103,6 @@ message GetTenantMembershipForRuntimeResponse {
   uint64 membership_version = 4;
   string evaluated_at = 5;
   shared.v1.ErrorDetail error = 6;
-  repeated string roles = 7;
-  optional uint64 membership_authority_generation = 8;
-  AuthorityTuple authority_tuple = 9;
-  repeated OutboxCheckpoint outbox_checkpoints = 10;
-}
-
-// The complete applicable Account authority tuple is opaque until its producer is live.
-message AuthorityTuple {
-  string canonical_json = 1;
-}
-
-message OutboxCheckpoint {
-  string outbox_stream_key = 1;
-  uint64 outbox_sequence = 2;
 }
 
 message GetRealmAccessGrantForRuntimeRequest {

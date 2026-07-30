@@ -2,6 +2,7 @@ package net.firedevops.firemud.socialgroups.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -23,7 +24,6 @@ import net.firedevops.firemud.socialgroups.dto.AddFriendRequest;
 import net.firedevops.firemud.socialgroups.dto.FriendLinkDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceVisibilityPolicyValue;
-import net.firedevops.firemud.socialgroups.dto.FriendRecentPresenceDisposition;
 import net.firedevops.firemud.socialgroups.dto.FriendRosterFilter;
 import net.firedevops.firemud.socialgroups.dto.FriendRosterSummaryDto;
 import net.firedevops.firemud.socialgroups.entity.AccountFriendLink;
@@ -454,6 +454,8 @@ class FriendServiceImplTest {
     link.setStatus("active");
     when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(link));
+    when(accountClient.getPresenceVisibilityPolicies(11L, List.of(3L)))
+        .thenReturn(Map.of(3L, FriendPresenceVisibilityPolicyValue.PUBLIC));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()
@@ -493,9 +495,7 @@ class FriendServiceImplTest {
     assertEquals(17L, result.presences().get(0).pointerVersion());
     assertEquals(FriendPresenceActivityState.AUTO_AFK, result.presences().get(0).activityState());
     assertEquals(Instant.parse("2026-04-11T06:15:30Z"), result.presences().get(0).lastSeenAt());
-    assertEquals(
-        FriendRecentPresenceDisposition.TRANSPORT_LOSS,
-        result.presences().get(0).recentDisposition());
+    assertNull(result.presences().get(0).recentDisposition());
   }
 
   @Test
@@ -550,6 +550,7 @@ class FriendServiceImplTest {
     assertEquals(true, result.friends().get(0).presence().online());
     assertEquals("SHARED", result.friends().get(0).presence().playableStateScope());
     assertEquals("Ben", result.friends().get(0).presence().characterName());
+    assertNull(result.friends().get(0).presence().recentDisposition());
   }
 
   @Test
@@ -721,6 +722,9 @@ class FriendServiceImplTest {
                         .setGameInstanceId("10")
                         .setCharacterId("100")
                         .setCharacterName("Admin")
+                        .setRecentDisposition(
+                            net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition
+                                .ACCOUNT_RECENT_PRESENCE_DISPOSITION_TAKEOVER)
                         .build())
                 .build());
 
@@ -741,7 +745,7 @@ class FriendServiceImplTest {
     assertEquals(null, result.presences().get(0).characterId());
     assertEquals(null, result.presences().get(0).activityState());
     assertEquals(null, result.presences().get(0).lastSeenAt());
-    assertEquals(null, result.presences().get(0).recentDisposition());
+    assertNull(result.presences().get(0).recentDisposition());
     assertEquals(false, result.presences().get(1).online());
     assertEquals("PRIVATE", result.presences().get(1).visibilityPolicy());
     assertEquals(null, result.presences().get(1).gameInstanceId());
@@ -755,7 +759,7 @@ class FriendServiceImplTest {
     assertEquals(null, result.presences().get(1).characterName());
     assertEquals(null, result.presences().get(1).activityState());
     assertEquals(null, result.presences().get(1).lastSeenAt());
-    assertEquals(null, result.presences().get(1).recentDisposition());
+    assertNull(result.presences().get(1).recentDisposition());
 
     var privateFiltered = service.listFriends(11L, 2L, FriendRosterFilter.PRIVATE);
     assertEquals(2, privateFiltered.totalCount());
@@ -844,6 +848,6 @@ class FriendServiceImplTest {
     assertEquals(null, result.presences().get(0).characterName());
     assertEquals(null, result.presences().get(0).activityState());
     assertEquals(null, result.presences().get(0).lastSeenAt());
-    assertEquals(null, result.presences().get(0).recentDisposition());
+    assertNull(result.presences().get(0).recentDisposition());
   }
 }

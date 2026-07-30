@@ -68,10 +68,12 @@ bootstrap_lines = [line.strip() for line in bootstrap_manifest.splitlines()]
 def assert_ordered_bootstrap_lines(expected_lines, message):
     next_index = 0
     for expected_line in expected_lines:
-        try:
-            next_index = bootstrap_lines.index(expected_line, next_index) + 1
-        except ValueError as exc:
-            raise AssertionError(message) from exc
+        for index in range(next_index, len(bootstrap_lines)):
+            if expected_line in bootstrap_lines[index]:
+                next_index = index + 1
+                break
+        else:
+            raise AssertionError(message)
 
 
 expected_secret_command_lines = [

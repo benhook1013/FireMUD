@@ -14,7 +14,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
-import net.firedevops.firemud.account.v1.AuthorityTuple;
 import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipRequest;
 import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.GetProfileRequest;
@@ -25,7 +24,6 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
-import net.firedevops.firemud.account.v1.OutboxCheckpoint;
 import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
@@ -143,24 +141,9 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         GetTenantMembershipForRuntimeResponse.newBuilder()
             .setAccountId(request.getAccountId())
             .setTenantId(request.getTenantId())
-            .addRoles("player")
             .setGameplayAdmissionAllowed(gameplayAdmissionAllowed.get())
             .setMembershipVersion(1L)
-            .setMembershipAuthorityGeneration(1L)
-            .setAuthorityTuple(
-                AuthorityTuple.newBuilder()
-                    .setCanonicalJson("{\"membershipAuthorityGeneration\":1}")
-                    .build())
             .setEvaluatedAt(EVALUATED_AT)
-            .addOutboxCheckpoints(
-                OutboxCheckpoint.newBuilder()
-                    .setOutboxStreamKey(
-                        "account:auth-authority:v1:membership/"
-                            + request.getAccountId()
-                            + "/"
-                            + request.getTenantId())
-                    .setOutboxSequence(1L)
-                    .build())
             .build());
     responseObserver.onCompleted();
   }

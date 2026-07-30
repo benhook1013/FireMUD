@@ -21,7 +21,6 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
-import net.firedevops.firemud.account.v1.AuthorityTuple;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
@@ -176,8 +175,7 @@ class AccountClientTest {
   }
 
   @Test
-  void runtimeMembershipCallerUsesCanonicalAccountTenantRequestAndPreservesEvidence()
-      throws Exception {
+  void runtimeMembershipCallerUsesCanonicalAccountTenantRequest() throws Exception {
     AccountServiceGrpc.AccountServiceBlockingStub stub =
         mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
@@ -185,13 +183,8 @@ class AccountClientTest {
         GetTenantMembershipForRuntimeResponse.newBuilder()
             .setAccountId("42")
             .setTenantId("7")
-            .addRoles("player")
             .setGameplayAdmissionAllowed(true)
             .setMembershipVersion(12L)
-            .setMembershipAuthorityGeneration(8L)
-            .setAuthorityTuple(
-                AuthorityTuple.newBuilder()
-                    .setCanonicalJson("{\"membershipAuthorityGeneration\":8}"))
             .setEvaluatedAt("2026-07-31T00:00:00Z")
             .build();
     when(stub.getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))

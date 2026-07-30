@@ -51,7 +51,7 @@ Realm-aware character discovery and the current creation-policy decision are imp
 - [Join a Game for the First Time](#2-join-a-game-for-the-first-time) – Discover a world, choose a realm, and reach the lobby.
 - [Character Creation & Selection](#3-character-creation--selection) – Create and choose characters for the selected game and realm target.
 - [Player Login and Gameplay](#4-player-login-and-gameplay) – Connect to running realms and play.
-- [Social Interaction & Safety](#5-social-interaction--safety) – Chat, groups, reports, and moderation outcomes.
+- [Social Interaction & Safety](#5-social-interaction--safety) – Chat, groups, and moderation outcomes.
 - [Purchases and Subscriptions](#6-purchases-and-subscriptions) – Manage subscriptions and in-game purchases.
 - [Password Resets & Account Recovery](#7-password-resets--account-recovery) – Recover access when credentials are lost.
 - [Switch Games or Manage Multiple Games](#8-switch-games-or-manage-multiple-games) – Move between games under one account.

@@ -21,7 +21,6 @@ import net.firedevops.firemud.socialgroups.dto.FriendPresenceDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresencePolicyViewDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceViewDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceVisibilityPolicyValue;
-import net.firedevops.firemud.socialgroups.dto.FriendRecentPresenceDisposition;
 import net.firedevops.firemud.socialgroups.dto.FriendRosterEntryDto;
 import net.firedevops.firemud.socialgroups.dto.FriendRosterFilter;
 import net.firedevops.firemud.socialgroups.dto.FriendRosterSummaryDto;
@@ -342,7 +341,7 @@ public class FriendServiceImpl implements FriendService {
         visibilityPolicy.name(),
         visibleActivityState(entry, visibilityPolicy),
         visibleLastSeenAt(entry, visibilityPolicy),
-        visibleRecentDisposition(entry, visibilityPolicy));
+        null);
   }
 
   private FriendPresenceDto defaultPresence(
@@ -475,14 +474,6 @@ public class FriendServiceImpl implements FriendService {
     };
   }
 
-  private FriendRecentPresenceDisposition visibleRecentDisposition(
-      AccountPresenceEntry entry, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
-    return switch (visibilityPolicy) {
-      case PRIVATE, HIDDEN_STAFF -> null;
-      default -> mapRecentDisposition(entry.getRecentDisposition());
-    };
-  }
-
   private FriendPresenceVisibilityPolicyValue visibilityPolicyFor(
       long accountId, Map<Long, FriendPresenceVisibilityPolicyValue> visibilityPolicies) {
     if (visibilityPolicies == null) {
@@ -518,16 +509,5 @@ public class FriendServiceImpl implements FriendService {
       throw new IllegalStateException(
           "Malformed account presence " + fieldName + ": " + ex.getMessage(), ex);
     }
-  }
-
-  private FriendRecentPresenceDisposition mapRecentDisposition(
-      net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition disposition) {
-    return switch (disposition) {
-      case ACCOUNT_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS ->
-          FriendRecentPresenceDisposition.TRANSPORT_LOSS;
-      case ACCOUNT_RECENT_PRESENCE_DISPOSITION_LOGOUT -> FriendRecentPresenceDisposition.LOGOUT;
-      case ACCOUNT_RECENT_PRESENCE_DISPOSITION_TAKEOVER -> FriendRecentPresenceDisposition.TAKEOVER;
-      default -> null;
-    };
   }
 }

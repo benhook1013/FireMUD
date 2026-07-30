@@ -519,7 +519,8 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     )
 
     def test_privileged_operator_routes_require_live_global_role_and_assurance(self):
-        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        document = copy.deepcopy(baseline)
         route = route_for(
             document, "logging-admin-service", "POST /feature-flags/toggle"
         )
@@ -538,7 +539,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors,
         )
 
-        platform_branch["required_live_checks"].append("current_global_role")
+        document = copy.deepcopy(baseline)
+        route = route_for(
+            document, "logging-admin-service", "POST /feature-flags/toggle"
+        )
         route.pop("role_assurance")
         errors = []
         self.validator.validate_generation_applicability(document["routes"], errors)
@@ -548,6 +552,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors,
         )
 
+        document = copy.deepcopy(baseline)
         owner_route = route_for(document, "game-session-service", "POST /sessions")
         owner_route_index = route_index(document, owner_route)
         owner_route.pop("canonical_external_ingress")
@@ -1578,6 +1583,37 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
         )
 
+    def test_pending_deletion_routes_disable_issuer_authority_generation(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        pending_routes = [
+            route
+            for route in baseline["routes"]
+            if route.get("classification") == "pending_deletion_scoped"
+        ]
+        self.assertTrue(pending_routes)
+        self.assertTrue(
+            all(
+                route["issuer_authority_generation_applies"] is False
+                for route in pending_routes
+            )
+        )
+
+        document = copy.deepcopy(baseline)
+        route = next(
+            route
+            for route in document["routes"]
+            if route.get("classification") == "pending_deletion_scoped"
+        )
+        route["issuer_authority_generation_applies"] = True
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "pending_deletion_scoped routes must set "
+                "issuer_authority_generation_applies=false" in error
+                for error in errors
+            )
+        )
+
     def test_pending_deletion_generation_exception_has_bounded_negative_proof(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         self.assertNotIn(
@@ -1824,7 +1860,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         ]
         errors = []
         cardinality_errors = set()
-        self.validator.validate_membership_policy(document, errors)
+        self.validator.validate_join_routes(
+            routes, errors, cardinality_errors=cardinality_errors
+        )
         self.validator.validate_join_routes(
             routes, errors, cardinality_errors=cardinality_errors
         )
@@ -2293,7 +2331,14 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     )
                     path.write_text(text, encoding="utf-8")
                     errors = self.validator.validate(path)
-                self.assertTrue(
+                self.assertEqual(
+                    1,
+                    sum(
+                        error.endswith("classification must be a string")
+                        for error in errors
+                    ),
+                )
+                self.assertFalse(
                     any("uses unknown classification" in error for error in errors)
                 )
 

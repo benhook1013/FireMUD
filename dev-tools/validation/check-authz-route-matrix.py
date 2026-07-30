@@ -1050,6 +1050,11 @@ def validate_pending_deletion_generation(
             f"{label} pending_deletion_scoped routes must set "
             "account_authority_generation_applies=false"
         )
+    if route.get("issuer_authority_generation_applies") is not False:
+        errors.append(
+            f"{label} pending_deletion_scoped routes must set "
+            "issuer_authority_generation_applies=false"
+        )
     if route.get("tenant_billing_authority_generation_applies") is not False:
         errors.append(
             f"{label} pending_deletion_scoped routes must set "
@@ -2625,10 +2630,9 @@ def validate_route_variants(
                 (index, route.get("applicability"))
             )
         classification = route.get("classification")
-        if (
-            not isinstance(classification, str)
-            or classification not in allowed_classifications
-        ):
+        if not isinstance(classification, str):
+            errors.append(f"routes[{index}] classification must be a string")
+        elif classification not in allowed_classifications:
             errors.append(
                 f"routes[{index}] uses unknown classification: {classification!r}"
             )

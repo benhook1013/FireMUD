@@ -1737,7 +1737,7 @@ paths:
   /moderation/actions:
     post:
       summary: Submit moderation policy input and audit (externally gated)
-      description: "The moderation-action implementation path is unavailable/gated and does not currently persist or enforce moderation actions. It remains unavailable until all three are complete: its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption. Once enabled, it may persist policy input and audit; EvaluateModerationPolicy remains the separate live evaluation contract consumed by enforcement owners."
+      description: "The moderation-action implementation path is unavailable/gated and does not currently persist or enforce moderation actions. It remains unavailable until all three are complete: its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-owned authorization-capability issuance plus Logging & Admin receiving-boundary validation/redemption. This path does not require or perform domain-owner capability redemption or enforcement. Once enabled, it may persist policy input and audit; EvaluateModerationPolicy remains the separate live evaluation contract consumed by enforcement owners."
       operationId: applyModerationAction
       requestBody:
         required: true
