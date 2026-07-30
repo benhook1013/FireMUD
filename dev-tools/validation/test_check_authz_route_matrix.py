@@ -2573,6 +2573,23 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
         self.assertEqual([], errors)
 
+    def test_role_assurance_route_identity_trims_route_components(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        expected_identity = next(
+            iter(self.validator.PLATFORM_ADMIN_ROLE_ASSURANCE_ROUTE_IDENTITIES)
+        )
+        service, route_name = expected_identity.split("/", 1)
+        route = route_for(document, service, route_name)
+        route["service"] = f" {service} "
+        route["route"] = f" {route_name} "
+
+        errors = []
+        self.validator.validate_role_assurance_route_identities(
+            document["routes"], errors
+        )
+
+        self.assertEqual([], errors)
+
     def test_join_routes_require_admission_pointer_error(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix.yaml"

@@ -47,20 +47,20 @@ Routine implementation mechanics that do not affect the target-state contract ar
 The inventory is split into this control ledger and exhaustive source-scoped ledgers:
 
 - [Cross-cutting architecture decisions](./decision-inventory-cross-cutting.md) contains 68 decisions from the ADR set and 22 high-authority system documents.
-- [Microservice decisions](./decision-inventory-microservices.md) contains 23 service-only decisions and stronger evidence for 40 cross-cutting decisions from all 76 microservice architecture files.
+- [Microservice decisions](./decision-inventory-microservices.md) contains 22 active service-only decisions plus one superseded historical service-scan alias among 23 service-source rows, and stronger evidence for 40 cross-cutting decisions from all 76 microservice architecture files.
 - [Specialized runtime decisions](./decision-inventory-specialized-runtime.md) contains 54 decisions and stronger evidence for 20 cross-cutting decisions from 39 Redis, scripting, tick, identity, token, migration, shared-library, spatial, authorization, and tracing documents.
 - [Product and operations decisions](./decision-inventory-product-operations.md) contains 38 decisions and stronger evidence for 11 existing keys from the remaining 35 product, frontend, authoring, protocol, infrastructure, deployment, recovery, observability, and generated-settings sources.
 
-The source-scoped ledgers contain 183 unique canonical decision keys with no duplicate canonical keys across ledgers. Service/source ledgers may intentionally repeat evidence references to existing cross-cutting keys; those repeated references do not add canonical keys or change the 183 total. The nine ADR-backed aliases retained below are navigation entries and do not add to that count. Collectively, the inventories reference all 79 leaf capabilities in the taxonomy.
+The source-scoped ledgers preserve the established 183-key decision universe with no duplicate active canonical keys across ledgers: 182 active canonical decision keys plus the superseded historical service-scan alias `MS-AA-TOKEN-REVOCATION`. Service/source ledgers may intentionally repeat evidence references to existing keys; those repeated references do not add canonical keys. The nine ADR-backed crosswalk aliases retained below are navigation entries and do not add to the 183-key universe. Collectively, the inventories reference all 79 leaf capabilities in the taxonomy.
 
 | Capability | Sources reviewed | Decisions inventoried | Human-review candidates | Coverage state |
 | --- | ---: | ---: | ---: | --- |
 | Existing ADR set | 50 records plus linked canonical sources | 9 original aliases within the 68 cross-cutting decisions; later accepted records are allocated directly | Reviewed through ADR 0050 | Complete and allocated |
 | Cross-cutting system architecture | 22 canonical sources plus ADRs | 68 | Prioritized in the source ledger | Complete and independently audited |
-| Microservice architecture | 76 sources | 23 new; stronger evidence for 40 existing keys | Prioritized in the source ledger | Complete and independently audited |
+| Microservice architecture | 76 sources | 22 active new; 1 superseded historical alias among 23 source rows; stronger evidence for 40 existing keys | Prioritized in the source ledger | Complete and independently audited |
 | Specialized runtime architecture | 39 sources | 54 new; stronger evidence for 20 existing keys | Prioritized in the source ledger | Complete and independently audited |
 | Product and operations architecture | 35 sources | 38 new; stronger evidence for 11 existing keys | Prioritized in the source ledger | Complete and independently audited |
-| **Total unique decision keys** | **All 223 architecture artifacts classified; 172 decision-scan sources plus 51 decision-registry artifacts** | **183** | **Prioritized by source ledger** | **Initial inventory complete; accepted records allocated through ADR 0050** |
+| **Total decision-key universe** | **All 223 architecture artifacts classified; 172 decision-scan sources plus 51 decision-registry artifacts** | **183 distinct keys: 182 active canonical decisions plus 1 superseded historical alias** | **Prioritized by source ledger** | **Initial inventory complete; accepted records allocated through ADR 0050** |
 
 ## Decision Ledger
 

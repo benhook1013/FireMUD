@@ -149,7 +149,7 @@ Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](
 
 ### Supersession Registry
 
-This is a derived index, not an independent authority. For formal ADRs, each row is validator-derived from the validated machine-readable `## Supersession` section in the corresponding ADR; that section is the normative replacement source. If this registry disagrees with a formal ADR section, the registry is stale and must be corrected. The pre-formal ADRs `0001` through `0011` are not validator-derived: any mappings for them are hand-maintained legacy entries permitted only by their historical replacement prose and remain validation-only exceptions.
+This is a hand-maintained index, not an independent authority, validator output, or independently machine-checked registry. For formal ADRs, each row must remain consistent with the validated machine-readable `## Supersession` section in the corresponding ADR; that section is the normative replacement source. If this registry disagrees with a formal ADR section, the registry is stale and must be corrected. The pre-formal ADRs `0001` through `0011` retain hand-maintained legacy entries permitted only by their historical replacement prose and remain validation-only exceptions.
 
 | ADR | Replacement ADR |
 | --- | --- |

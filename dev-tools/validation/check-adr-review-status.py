@@ -415,18 +415,18 @@ def validate_supersession(
     visible_lines = visible_markdown_lines(text)
     heading_re = re.compile(r"^## Supersession[ \t]*$")
     headings = [line for line in visible_lines if heading_re.fullmatch(line.text)]
-    formal_superseded = status == "Superseded"
+    allows_supersession = status in {"Superseded", "Withdrawn"}
     if not headings:
-        if formal_superseded:
+        if status == "Superseded":
             fail(
                 f"{context}: formal Superseded ADR requires exactly one "
                 "'Replacement ADR' entry in a 'Supersession' section"
             )
         return
-    if not formal_superseded:
+    if not allows_supersession:
         fail(
             f"{context}: 'Supersession' section is only valid for an ADR with "
-            "formal status 'Superseded'"
+            "formal status 'Superseded' or 'Withdrawn'"
         )
     if len(headings) != 1:
         fail(

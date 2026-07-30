@@ -2012,7 +2012,7 @@ def validate_role_assurance_route_identities(
         route
         for route in routes
         if isinstance(route, dict)
-        and f"{route.get('service')}/{route.get('route')}" == expected_identity
+        and route_identity_from_route(route) == expected_identity
     ]
     if len(matches) != 1:
         errors.append(

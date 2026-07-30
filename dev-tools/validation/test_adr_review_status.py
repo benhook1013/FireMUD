@@ -137,7 +137,12 @@ def replace_once(text: str, old: str, new: str) -> str:
     return text.replace(old, new, 1)
 
 
-def set_review_status(root: Path, status: str, disposition: str) -> None:
+def set_review_status(
+    root: Path,
+    status: str,
+    disposition: str,
+    supersession: str | None = None,
+) -> None:
     queue = queue_path(root)
     queue.write_text(
         replace_once(
@@ -159,9 +164,11 @@ def set_review_status(root: Path, status: str, disposition: str) -> None:
         "Human review disposition: Revised",
         f"Human review disposition: {disposition}",
     )
-    if status == "Superseded":
+    if status == "Superseded" and supersession is None:
+        supersession = "- Replacement ADR: [ADR 0013](./adr-0013-pending.md)"
+    if supersession is not None:
         text += "\n## Supersession\n\n"
-        text += "- Replacement ADR: [ADR 0013](./adr-0013-pending.md)\n"
+        text += f"{supersession}\n"
     path.write_text(text, encoding="utf-8")
 
 
@@ -458,7 +465,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "formal Superseded ADR requires exactly one 'Replacement ADR' entry",
             )
 
-    def test_supersession_section_requires_formal_superseded_status(self) -> None:
+    def test_supersession_section_requires_formal_terminal_status(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
             path = root / "design/architecture/decisions/adr-0012-reviewed.md"
@@ -471,7 +478,8 @@ class AdrReviewStatusTests(unittest.TestCase):
             expect_failure(
                 self,
                 lambda: self.validator.validate(root),
-                "'Supersession' section is only valid for an ADR with formal status 'Superseded'",
+                "'Supersession' section is only valid for an ADR with formal status "
+                "'Superseded' or 'Withdrawn'",
             )
 
     def test_supersession_section_accepts_only_one_visible_valid_entry(self) -> None:
@@ -563,6 +571,17 @@ class AdrReviewStatusTests(unittest.TestCase):
         with fixture_root() as fixture:
             root = Path(fixture)
             set_review_status(root, "Withdrawn", "Withdrawn")
+            self.validator.validate(root)
+
+    def test_formal_withdrawn_record_accepts_valid_supersession_entry(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            set_review_status(
+                root,
+                "Withdrawn",
+                "Withdrawn",
+                "- Replacement ADR: [ADR 0013](./adr-0013-pending.md)",
+            )
             self.validator.validate(root)
 
     def test_unrecognized_and_nonterminal_statuses_are_rejected(self) -> None:

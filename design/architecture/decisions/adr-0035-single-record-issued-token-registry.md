@@ -137,6 +137,19 @@ The same classification applies to every registry, lease, binding, fence, and Ac
 - The 30-second gameplay connect token uses its dedicated Gateway-owned atomic single-use/replay contract from ADR 0029 and does not also receive an issued-token registry record.
 - Gateway-to-Game-Session signed connect context is a separate short-lived workload assertion, not an Account JWT session, and does not use this registry.
 
+Every registry-backed profile declares mandatory finite issuance limits in the versioned Account token-profile catalog: `maxTenantAuthorityEntries`, `maxMembershipAuthorityEntries`, `maxMembershipVersionEntries`, `maxTenantBillingCutoffEntries`, `maxPrivateRealmGrantEntries`, `maxAuthorityTupleBytes`, `maxCompactJwtBytes`, and `maxRegistryRecordBytes`. Account startup rejects a profile whose limits are missing, non-positive where entries are permitted, inconsistent with the profile shape, or above the deployment's validated transport and Coordination Redis ceilings. Issuance and refresh canonicalize the complete claim/record candidate once and reject any over-cardinality or over-byte input deterministically before JWT signing, durable issuance commit, or registry registration; retries preserve that rejection and cannot create a partial token record.
+
+The profile cardinality contract is:
+
+| Profile | Tenant authority | Membership authority/version | Tenant billing cutoff | Private-realm grants |
+| --- | --- | --- | --- | --- |
+| `control-ui` | At most the profile's configured `maxControlUiTenantScopes`; keys exactly equal non-empty `scopedRoles` keys | Same exact cap and key set as tenant authority | At most the same configured tenant-scope cap and only for applicable scoped tenants | `0` |
+| `player-bootstrap` | `0` | `0` | `0` | `0` |
+| Tenant-bound `game-session-account-delegation` | Exactly `1` | Exactly `1` with the same tenant key | `0` or `1` for that tenant | `0` for public production or exactly `1` for the selected private realm |
+| Explicitly non-tenant private delegation | `0` | `0` | `0` | `0` |
+
+`accountSecurityCutoff` is absent or one object for every registry-backed profile. `maxControlUiTenantScopes` and every byte ceiling are explicit bounded platform security settings, not values inferred from current account membership count, proxy defaults, or Redis acceptance. They are configured once for the environment through the canonical platform settings authority and constrained by deployment validation; a tenant/game cannot raise them. Focused implementation proof must cover every profile at each exact count boundary, one-entry overflow, each encoded-byte boundary, total compact-JWT and registry-record overflow, and rejection before signing or registration.
+
 ### Token Generation Semantics
 
 `tokenGeneration` is a positive integer only for the registry-backed JWT profiles and is distinct from issuer, account, tenant, membership, and private-realm authority generations:

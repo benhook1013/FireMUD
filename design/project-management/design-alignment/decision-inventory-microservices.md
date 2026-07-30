@@ -6,14 +6,14 @@ This inventory is the service-documentation companion to [decision-inventory-cro
 
 The completed scan considered all 76 Markdown paths under `design/architecture/microservices/`: 73 service-directory documents and the three root documents. The exact per-service path set is recorded in [the coverage ledger](#exact-microservice-path-set-coverage). No path was omitted. Routine configuration, deployment values, implementation mechanics, and ordinary endpoint details are not decision rows unless they establish authority, lifecycle, externally observable behavior, security or durability semantics, creator/player/operator policy, or an expensive-to-reverse constraint.
 
-The current ledger contains 40 cross-cutting evidence rows and 23 service-only rows, for 63 service/source rows total. The 40 evidence rows intentionally reference existing cross-cutting keys and therefore do not add 40 canonical decisions. Across the source-scoped ledgers, there are 183 unique canonical decision keys.
+The current ledger contains 40 cross-cutting evidence rows and 23 service-source rows, for 63 service/source rows total. Of the 23 service-source rows, 22 are active service-only canonical decisions and `MS-AA-TOKEN-REVOCATION` is one superseded historical service-scan alias retained only for traceability. The established source-key universe remains 183 distinct keys: 182 active canonical decision keys plus that one historical alias. The 40 evidence rows intentionally reference existing keys and do not add canonical decisions.
 
 The taxonomy IDs below are the exact child IDs from [product-capability-taxonomy.md](../../architecture/product-capability-taxonomy.md). A parent capability is not used as a scope. Existing keys in the cross-cutting ledger are referenced rather than reissued; their complete question/current choice, status, importance/reversibility, strongest alternative, ADR recommendation, and consultation gap remain in that ledger. This file adds the stronger service-local evidence, exact service headings, and any distinct service decision not already represented by an existing key.
 
 ## Implementation Status
 
 - **Scan completeness:** The microservice documentation scan is complete for all 76 paths and its 63 service/source rows; no source path was omitted.
-- **Canonical key count:** This ledger contributes 23 service-only canonical keys. Its 40 cross-cutting rows are repeated evidence references, not additional canonical keys; the source-scoped ledgers contain 183 unique canonical decision keys in total.
+- **Canonical key count:** This ledger contributes 22 active service-only canonical keys. Its 40 cross-cutting rows are repeated evidence references, and its one superseded alias is historical traceability rather than an active canonical decision. Across the source-scoped ledgers, the established 183-key universe therefore comprises 182 active canonical decision keys plus one historical alias.
 - **Implementation and approval state:** The `Complete` status above describes scan coverage and fidelity only. It does not mean that every service capability is implemented or every decision is approved; row-level status and consultation notation remain authoritative.
 
 ## Status And Review Notation
