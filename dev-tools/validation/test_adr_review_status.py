@@ -1174,6 +1174,28 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "review source keys",
             )
 
+    def test_review_source_parser_accepts_exact_comma_space_separators(self) -> None:
+        self.assertEqual(
+            ("TEST-01", "TEST-02"),
+            self.validator.parse_review_source("`TEST-01`, `TEST-02`"),
+        )
+
+    def test_review_source_parser_rejects_non_exact_separators(self) -> None:
+        invalid_sources = (
+            "`TEST-01`,`TEST-02`",
+            "`TEST-01`,  `TEST-02`",
+            "`TEST-01` , `TEST-02`",
+            "`TEST-01` `TEST-02`",
+            "`TEST-01`,",
+        )
+        for source in invalid_sources:
+            with self.subTest(source=source):
+                expect_failure(
+                    self,
+                    lambda source=source: self.validator.parse_review_source(source),
+                    "review source must contain",
+                )
+
     def test_completed_metadata_requires_checked_queue_entry(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)

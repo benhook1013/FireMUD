@@ -51,6 +51,9 @@ REPLACEMENT_ADR_ENTRY_RE = re.compile(
     r"^- Replacement ADR: \[ADR (?P<number>\d{4})\]\((?P<target>[^)\r\n]+)\)$"
 )
 DECISION_KEY_LABEL_RE = re.compile(r"^[A-Z0-9][A-Z0-9-]*$")
+REVIEW_SOURCE_RE = re.compile(
+    r"^`[A-Z0-9][A-Z0-9-]*`(?:, `[A-Z0-9][A-Z0-9-]*`)*$"
+)
 REVIEW_FIELD_RE = re.compile(
     r"^- (?P<name>Human review status|Human review date|"
     r"Human review disposition|Review source): (?P<value>.+)$"
@@ -623,7 +626,6 @@ def validate_completed_review(
     expected_dates = {review.date for review in reviews}
     expected_dispositions = {review.disposition for review in reviews}
     expected_keys = {review.key for review in reviews}
-    actual_keys = set(re.findall(r"`([^`]+)`", fields.get("Review source", "")))
 
     if fields.get("Human review status") != "Completed":
         fail(
@@ -645,11 +647,23 @@ def validate_completed_review(
             f"{context}: human review disposition must match checked queue "
             f"{sorted(expected_dispositions)}"
         )
+    actual_keys = set(parse_review_source(fields.get("Review source", ""), context))
     if actual_keys != expected_keys:
         fail(
             f"{context}: review source keys {sorted(actual_keys)} do not match "
             f"checked queue keys {sorted(expected_keys)}"
         )
+
+
+def parse_review_source(
+    value: str, context: Path | str = "review metadata"
+) -> tuple[str, ...]:
+    if REVIEW_SOURCE_RE.fullmatch(value) is None:
+        fail(
+            f"{context}: review source must contain one or more "
+            "backtick-delimited queue keys separated by ', '"
+        )
+    return tuple(re.findall(r"`([^`]+)`", value))
 
 
 def validate_pending_review(context: Path, fields: dict[str, str]) -> None:

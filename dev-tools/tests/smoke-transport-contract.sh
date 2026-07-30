@@ -65,11 +65,11 @@ if not isinstance(bootstrap_manifest, str):
 bootstrap_lines = [line.strip() for line in bootstrap_manifest.splitlines()]
 
 
-def assert_ordered_bootstrap_lines(expected_lines, message):
+def assert_ordered_lines(lines, expected_lines, message):
     next_index = 0
     for expected_line in expected_lines:
-        for index in range(next_index, len(bootstrap_lines)):
-            if expected_line in bootstrap_lines[index]:
+        for index in range(next_index, len(lines)):
+            if expected_line in lines[index]:
                 next_index = index + 1
                 break
         else:
@@ -122,10 +122,32 @@ for expected in (
         raise AssertionError(
             f"dev-demo bootstrap step contract missing: {expected}"
         )
+cleanup_function_starts = [
+    index
+    for index, line in enumerate(bootstrap_lines)
+    if line == 'cleanup_bootstrap_temp_dir() {'
+]
+if len(cleanup_function_starts) != 1:
+    raise AssertionError(
+        "dev-demo bootstrap must contain exactly one cleanup_bootstrap_temp_dir function"
+    )
+cleanup_function_start = cleanup_function_starts[0]
+cleanup_function_end = next(
+    (
+        index for index in range(cleanup_function_start + 1, len(bootstrap_lines))
+        if bootstrap_lines[index].endswith("() {")
+    ),
+    None,
+)
+if cleanup_function_end is None:
+    raise AssertionError(
+        "dev-demo bootstrap cleanup function body is unterminated"
+    )
+cleanup_function_lines = bootstrap_lines[cleanup_function_start:cleanup_function_end]
 cleanup_success_start = next(
     (
         index
-        for index, line in enumerate(bootstrap_lines)
+        for index, line in enumerate(cleanup_function_lines)
         if 'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then' in line
     ),
     None,
@@ -137,8 +159,8 @@ if cleanup_success_start is None:
 cleanup_success_return = next(
     (
         index
-        for index in range(cleanup_success_start + 1, len(bootstrap_lines))
-        if "return 0" in bootstrap_lines[index]
+        for index in range(cleanup_success_start + 1, len(cleanup_function_lines))
+        if "return 0" in cleanup_function_lines[index]
     ),
     None,
 )
@@ -149,14 +171,15 @@ if cleanup_success_return is None:
 clear_directory_lines = [
     index
     for index in range(cleanup_success_start + 1, cleanup_success_return)
-    if bootstrap_lines[index] == "BOOTSTRAP_SECRET_DIR="
+    if cleanup_function_lines[index] == "BOOTSTRAP_SECRET_DIR="
 ]
 if len(clear_directory_lines) != 1:
     raise AssertionError(
         "dev-demo bootstrap temp directory must clear its variable only in the "
         "successful rm branch before return 0"
     )
-assert_ordered_bootstrap_lines(
+assert_ordered_lines(
+    cleanup_function_lines,
     (
         'echo "::error::Failed to remove dev-demo bootstrap credential files" >&2',
         "return 1",

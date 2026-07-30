@@ -179,6 +179,12 @@ REQUIRED_TENANT_GENERATION_EXCEPTIONS = {
     },
 }
 REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS = {
+    "public": {
+        "target_tenant_generation": False,
+        "generation_behavior": "no_tenant_authority",
+        "required_live_checks": set(),
+        "target_tenant_generation_advance_behavior": "remains_valid",
+    },
     "account_scoped": {
         "target_tenant_generation": False,
         "generation_behavior": "issuer_and_account_authority_only",
@@ -232,6 +238,7 @@ REQUIRED_TENANT_AUTHORITY_CLASSIFICATIONS = {
     "cross_tenant_data_bearing",
 }
 NO_TARGET_TENANT_CLASSES_WITHOUT_ROUTE_SPECIFIC_TARGET_AUTHORITY = {
+    "public",
     "account_scoped",
     "caller_membership_scoped",
     "player_bootstrap_tenant",

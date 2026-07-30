@@ -264,6 +264,7 @@ class FriendServiceImplTest {
     assertEquals(1, result.totalCount());
     assertEquals(false, result.friends().getFirst().presence().online());
     assertEquals(null, result.friends().getFirst().presence().characterName());
+    assertNull(result.friends().getFirst().presence().visibilityPolicy());
   }
 
   @Test
@@ -733,7 +734,7 @@ class FriendServiceImplTest {
     assertEquals(2, result.totalCount());
     assertEquals(2, result.matchCount());
     assertEquals(false, result.presences().get(0).online());
-    assertEquals("PRIVATE", result.presences().get(0).visibilityPolicy());
+    assertNull(result.presences().get(0).visibilityPolicy());
     assertEquals(null, result.presences().get(0).characterName());
     assertEquals(null, result.presences().get(0).gameInstanceId());
     assertEquals(null, result.presences().get(0).playableStateScope());
@@ -747,7 +748,7 @@ class FriendServiceImplTest {
     assertEquals(null, result.presences().get(0).lastSeenAt());
     assertNull(result.presences().get(0).recentDisposition());
     assertEquals(false, result.presences().get(1).online());
-    assertEquals("PRIVATE", result.presences().get(1).visibilityPolicy());
+    assertNull(result.presences().get(1).visibilityPolicy());
     assertEquals(null, result.presences().get(1).gameInstanceId());
     assertEquals(null, result.presences().get(1).playableStateScope());
     assertEquals(null, result.presences().get(1).worldSlug());
@@ -766,10 +767,10 @@ class FriendServiceImplTest {
     assertEquals(2, privateFiltered.matchCount());
     assertEquals(1, privateFiltered.friends().getFirst().ordinal());
     assertEquals(3L, privateFiltered.friends().getFirst().friendAccountId());
-    assertEquals("PRIVATE", privateFiltered.friends().getFirst().presence().visibilityPolicy());
+    assertNull(privateFiltered.friends().getFirst().presence().visibilityPolicy());
     assertEquals(2, privateFiltered.friends().get(1).ordinal());
     assertEquals(4L, privateFiltered.friends().get(1).friendAccountId());
-    assertEquals("PRIVATE", privateFiltered.friends().get(1).presence().visibilityPolicy());
+    assertNull(privateFiltered.friends().get(1).presence().visibilityPolicy());
 
     var hiddenStaffFiltered = service.listFriends(11L, 2L, FriendRosterFilter.HIDDEN_STAFF);
     assertEquals(FriendRosterFilter.PRIVATE, hiddenStaffFiltered.filter());
@@ -778,7 +779,7 @@ class FriendServiceImplTest {
     assertEquals(2, hiddenStaffFiltered.friends().size());
     assertTrue(
         hiddenStaffFiltered.friends().stream()
-            .allMatch(entry -> "PRIVATE".equals(entry.presence().visibilityPolicy())));
+            .allMatch(entry -> entry.presence().visibilityPolicy() == null));
 
     var summary = service.getFriendRosterSummary(11L, 2L);
     assertEquals(2, summary.totalCount());
@@ -835,7 +836,7 @@ class FriendServiceImplTest {
     assertEquals(1, result.totalCount());
     assertEquals(1, result.matchCount());
     assertEquals(3L, result.presences().get(0).friendAccountId());
-    assertEquals("PRIVATE", result.presences().get(0).visibilityPolicy());
+    assertNull(result.presences().get(0).visibilityPolicy());
     assertEquals(false, result.presences().get(0).online());
     assertEquals(null, result.presences().get(0).gameInstanceId());
     assertEquals(null, result.presences().get(0).playableStateScope());
@@ -849,5 +850,14 @@ class FriendServiceImplTest {
     assertEquals(null, result.presences().get(0).activityState());
     assertEquals(null, result.presences().get(0).lastSeenAt());
     assertNull(result.presences().get(0).recentDisposition());
+
+    var privateFiltered = service.listFriends(11L, 2L, FriendRosterFilter.PRIVATE);
+    assertEquals(1, privateFiltered.matchCount());
+    assertEquals(3L, privateFiltered.friends().getFirst().friendAccountId());
+    assertNull(privateFiltered.friends().getFirst().presence().visibilityPolicy());
+
+    var summary = service.getFriendRosterSummary(11L, 2L);
+    assertEquals(1, summary.privateCount());
+    assertEquals(0, summary.unspecifiedVisibilityCount());
   }
 }

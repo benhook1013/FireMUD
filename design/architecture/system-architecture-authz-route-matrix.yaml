@@ -133,6 +133,12 @@ tenant_generation_policy:
       required_authority: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
       role_assurance_policy: privileged_control_when_global_role
   no_target_tenant_classifications:
+    public:
+      target_tenant_generation: false
+      generation_behavior: no_tenant_authority
+      required_authority: []
+      contract_justification: Public routes do not authorize a target tenant; unauthenticated routes accept no JWT, and token-issuing routes issue only the exact registered profile declared by the route.
+      target_tenant_generation_advance_behavior: remains_valid
     account_scoped:
       target_tenant_generation: false
       generation_behavior: issuer_and_account_authority_only
