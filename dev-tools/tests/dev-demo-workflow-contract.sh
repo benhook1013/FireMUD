@@ -187,7 +187,7 @@ if env_from != [{"secretRef": {"name": "dev-demo-bootstrap-env"}}]:
         "dev-demo bootstrap pod must import dev-demo-bootstrap-env"
     )
 
-summary_runs = []
+workflow_run_sources = []
 for job_name, job in jobs.items():
     if not isinstance(job, dict):
         raise AssertionError(f"dev-demo workflow job {job_name!r} must be a mapping")
@@ -202,28 +202,33 @@ for job_name, job in jobs.items():
                 f"dev-demo workflow job {job_name!r} step {step_index} must be a mapping"
             )
         run = step.get("run")
-        if isinstance(run, str) and "GITHUB_STEP_SUMMARY" in run:
-            summary_runs.append((job_name, step.get("name", step_index), run))
-if not summary_runs:
-    raise AssertionError("dev-demo workflow must define summary-writing steps")
+        if isinstance(run, str):
+            workflow_run_sources.append((job_name, step.get("name", step_index), run))
 summary_helper_pattern = re.compile(
     r"(?:bash\s+)?(?:[.]/)?(dev-tools/[A-Za-z0-9_./-]+[.]sh)"
 )
-pending_summary_helpers = list(summary_runs)
-seen_summary_helpers = set()
-while pending_summary_helpers:
-    job_name, step_name, source = pending_summary_helpers.pop()
-    for helper in summary_helper_pattern.findall(source):
-        if helper in seen_summary_helpers:
-            continue
-        seen_summary_helpers.add(helper)
-        helper_path = root / helper
-        if not helper_path.is_file():
-            raise AssertionError(f"summary helper does not exist: {helper}")
-        helper_source = helper_path.read_text(encoding="utf-8")
-        helper_entry = (job_name, f"{step_name}:{helper}", helper_source)
-        summary_runs.append(helper_entry)
-        pending_summary_helpers.append(helper_entry)
+summary_sources = []
+for root_entry in workflow_run_sources:
+    source_closure = [root_entry]
+    pending_helpers = [root_entry]
+    seen_helpers = set()
+    while pending_helpers:
+        job_name, step_name, source = pending_helpers.pop()
+        for helper in summary_helper_pattern.findall(source):
+            if helper in seen_helpers:
+                continue
+            seen_helpers.add(helper)
+            helper_path = root / helper
+            if not helper_path.is_file():
+                raise AssertionError(f"workflow helper does not exist: {helper}")
+            helper_source = helper_path.read_text(encoding="utf-8")
+            helper_entry = (job_name, f"{step_name}:{helper}", helper_source)
+            source_closure.append(helper_entry)
+            pending_helpers.append(helper_entry)
+    if any("GITHUB_STEP_SUMMARY" in source for _, _, source in source_closure):
+        summary_sources.extend(source_closure)
+if not summary_sources:
+    raise AssertionError("dev-demo workflow must define summary-writing steps")
 forbidden_summary_reference = re.compile(
     r"DEMO_SMOKE_PASSWORD|"
     r"\$\{BOOTSTRAP_SECRET_DIR\}/password|"
@@ -231,8 +236,10 @@ forbidden_summary_reference = re.compile(
     r"steps[.][A-Za-z0-9_-]+[.]outputs[.]password",
     re.IGNORECASE,
 )
-if any(forbidden_summary_reference.search(run) for _, _, run in summary_runs):
-    writers = ", ".join(f"{job_name}/{step_name}" for job_name, step_name, _ in summary_runs)
+if any(forbidden_summary_reference.search(source) for _, _, source in summary_sources):
+    writers = ", ".join(
+        f"{job_name}/{step_name}" for job_name, step_name, _ in summary_sources
+    )
     raise AssertionError(
         "dev-demo summaries must not reference bootstrap credential material; "
         f"summary writers: {writers}"

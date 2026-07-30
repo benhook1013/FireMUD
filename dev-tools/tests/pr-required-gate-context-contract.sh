@@ -81,7 +81,8 @@ while IFS='|' read -r workflow gate_job_id gate; do
     exit 1
   }
   # shellcheck disable=SC2016 # Assert literal polling syntax is absent from gate callers.
-  if grep -Fq 'gh api' <<<"$gate_block" || grep -Fq 'for attempt in $(seq 1 80)' <<<"$gate_block"; then
+  if grep -Fq 'gh api' <<<"$gate_block" ||
+    grep -Eq 'for[[:space:]]+(attempt|poll_attempt|retry_attempt)[[:space:]]+in|while[[:space:]]+.*(attempt|poll|retry)' <<<"$gate_block"; then
     echo "$workflow must delegate required-gate polling to the shared action" >&2
     exit 1
   fi
