@@ -27,11 +27,119 @@ from io import BytesIO, StringIO
 from pathlib import Path
 from unittest.mock import patch
 
+import yaml
+
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root / "dev-tools" / "smoke"))
 
 import smoke_common
 from smoke_common import run_telnet_smoke_session, run_transport_session, run_websocket_smoke_session
+
+dev_demo_workflow_path = root / ".github" / "workflows" / "dev-demo.yml"
+if not dev_demo_workflow_path.is_file():
+    raise AssertionError(
+        f"dev-demo workflow is missing: expected {dev_demo_workflow_path}"
+    )
+dev_demo_workflow = dev_demo_workflow_path.read_text(encoding="utf-8")
+try:
+    workflow = yaml.safe_load(dev_demo_workflow)
+except yaml.YAMLError as exc:
+    raise AssertionError(f"dev-demo workflow is not valid YAML: {exc}") from exc
+
+jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
+if not isinstance(jobs, dict) or "dev-demo-deploy" not in jobs:
+    raise AssertionError(
+        "dev-demo workflow missing required 'dev-demo-deploy' job"
+    )
+deploy_job = jobs["dev-demo-deploy"]
+if not isinstance(deploy_job, dict) or not isinstance(deploy_job.get("steps"), list):
+    raise AssertionError(
+        "dev-demo-deploy job missing its required steps list"
+    )
+bootstrap_step = next(
+    (
+        step
+        for step in deploy_job["steps"]
+        if isinstance(step, dict)
+        and step.get("name") == "Create dev-demo smoke account"
+    ),
+    None,
+)
+if bootstrap_step is None:
+    raise AssertionError(
+        "dev-demo-deploy job missing required bootstrap step "
+        "'Create dev-demo smoke account'"
+    )
+
+try:
+    bootstrap_manifest = bootstrap_step["run"]
+except KeyError as exc:
+    raise AssertionError(
+        "dev-demo bootstrap step must expose its shell script as run"
+    ) from exc
+if not isinstance(bootstrap_manifest, str):
+    raise AssertionError("dev-demo bootstrap step run must be a string")
+
+for expected in (
+    'create secret generic dev-demo-bootstrap-env',
+    '--from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email"',
+    '--from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password"',
+    '--from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username"',
+    'cleanup_bootstrap_temp_dir() {',
+    'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then',
+    'echo "::error::Failed to remove dev-demo bootstrap credential files"',
+    'if ! cleanup_bootstrap_temp_dir; then',
+    'cleanup_bootstrap_secret',
+):
+    if expected not in bootstrap_manifest:
+        raise AssertionError(
+            f"dev-demo bootstrap step contract missing: {expected}"
+        )
+if (
+    'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then\n'
+    '    BOOTSTRAP_SECRET_DIR=\n'
+    '    return 0'
+) not in bootstrap_manifest:
+    raise AssertionError(
+        "dev-demo bootstrap temp directory must clear its variable only after rm succeeds"
+    )
+if (
+    'echo "::error::Failed to remove dev-demo bootstrap credential files" >&2\n'
+    '  return 1'
+) not in bootstrap_manifest:
+    raise AssertionError(
+        "dev-demo bootstrap temp directory removal failure must return failure"
+    )
+
+try:
+    manifest_start = bootstrap_manifest.index(
+        "cat <<'EOF' | kubectl -n \"${PREVIEW_NAMESPACE}\" apply -f -\n"
+    )
+    manifest_start = bootstrap_manifest.index("\n", manifest_start) + 1
+    manifest_end = bootstrap_manifest.index("\nEOF\n", manifest_start)
+except ValueError as exc:
+    raise AssertionError(
+        "dev-demo bootstrap step must contain the expected pod manifest heredoc"
+    ) from exc
+bootstrap_pod = yaml.safe_load(bootstrap_manifest[manifest_start:manifest_end])
+env_from = bootstrap_pod["spec"]["containers"][0].get("envFrom", [])
+if env_from != [{"secretRef": {"name": "dev-demo-bootstrap-env"}}]:
+    raise AssertionError(
+        "dev-demo bootstrap pod must import dev-demo-bootstrap-env"
+    )
+summary_runs = [
+    step["run"]
+    for step in deploy_job["steps"]
+    if isinstance(step, dict)
+    and isinstance(step.get("run"), str)
+    and "GITHUB_STEP_SUMMARY" in step["run"]
+]
+if not summary_runs:
+    raise AssertionError("dev-demo workflow must define summary-writing steps")
+if any("DEMO_SMOKE_PASSWORD" in run for run in summary_runs):
+    raise AssertionError(
+        "dev-demo summaries must not reference DEMO_SMOKE_PASSWORD"
+    )
 
 
 class FakeHttpResponse:
