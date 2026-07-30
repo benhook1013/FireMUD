@@ -302,19 +302,25 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 )
 
     def test_admission_pointer_mutation_requires_expected_version_check(self):
-        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        route = route_for(document, "logging-admin-service", "POST /admission-pointers")
-        self.assertIn("expected_pointer_version", route["required_live_checks"])
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for route_name in (
+            "POST /admission-pointers",
+            "POST /admission-pointers/cutover",
+        ):
+            with self.subTest(route=route_name):
+                document = copy.deepcopy(baseline)
+                route = route_for(document, "logging-admin-service", route_name)
+                self.assertIn("expected_pointer_version", route["required_live_checks"])
 
-        route["required_live_checks"].remove("expected_pointer_version")
-        errors = validate_document(self.validator, document)
-        self.assertTrue(
-            any(
-                "admission-pointer mutation must require live check "
-                "expected_pointer_version" in error
-                for error in errors
-            )
-        )
+                route["required_live_checks"].remove("expected_pointer_version")
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(
+                        "admission-pointer mutation must require live check "
+                        "expected_pointer_version" in error
+                        for error in errors
+                    )
+                )
 
     def test_game_session_operator_routes_match_ingress_authority_shape(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -912,6 +918,20 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         route = route_for(document, "game-session-service", "PLAY")
         self.assertTrue(route["membership_authority_generation_applies"])
         self.assertIn("membership_generation", route["required_live_checks"])
+
+    def test_true_membership_generation_requires_live_check(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "account-service", "GetProfile")
+        route["required_live_checks"].remove("membership_generation")
+        errors = []
+        self.validator.validate_generation_applicability(document["routes"], errors)
+        self.assertTrue(
+            any(
+                "account-service GetProfile membership_authority_generation_applies=true "
+                "requires live check membership_generation" in error
+                for error in errors
+            )
+        )
 
     def test_resume_ingress_and_owner_require_recovery_gate(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -2619,6 +2639,24 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "platformAdmin.applies_to.route_identities must equal" in error
                 for error in errors
             )
+        )
+
+    def test_route_identity_shape_is_validated_before_platform_admin_equality(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        requirement = document["role_assurance"][
+            "privileged_control_when_global_role"
+        ]["requirements"]["platformAdmin"]
+        requirement["applies_to"]["route_identities"] = "not-a-list"
+        errors = []
+        self.validator.validate_role_assurance(document, errors)
+        self.assertIn(
+            "role_assurance.privileged_control_when_global_role.requirements."
+            "platformAdmin.applies_to.route_identities must be a list of strings",
+            errors,
+        )
+        self.assertNotIn(
+            "platformAdmin.applies_to.route_identities must equal",
+            "\n".join(errors),
         )
 
     def test_role_assurance_scope_must_be_non_empty_and_declared(self):

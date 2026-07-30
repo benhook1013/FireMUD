@@ -43,14 +43,6 @@ class FriendServiceImplTest {
     accountRepository = Mockito.mock(AccountFriendLinkRepository.class);
     gameSessionClient = Mockito.mock(GameSessionClient.class);
     accountClient = Mockito.mock(AccountClient.class);
-    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(
-            anyLong(), anyLong(), Mockito.anyString()))
-        .thenAnswer(
-            invocation ->
-                accountRepository.findByTenantIdAndAccountIdAndStatus(
-                    invocation.getArgument(0),
-                    invocation.getArgument(1),
-                    invocation.getArgument(2)));
     when(accountClient.getPresenceVisibilityPolicies(anyLong(), anyCollection()))
         .thenAnswer(
             invocation -> {
@@ -154,6 +146,35 @@ class FriendServiceImplTest {
   }
 
   @Test
+  void listFriendsUsesOnlyMutuallyAcceptedLinks() {
+    AccountFriendLink oneSided = new AccountFriendLink();
+    oneSided.setTenantId(11L);
+    oneSided.setAccountId(2L);
+    oneSided.setFriendAccountId(3L);
+    oneSided.setStatus("active");
+    AccountFriendLink mutual = new AccountFriendLink();
+    mutual.setTenantId(11L);
+    mutual.setAccountId(2L);
+    mutual.setFriendAccountId(4L);
+    mutual.setStatus("active");
+    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+        .thenReturn(List.of(oneSided));
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+        .thenReturn(List.of(mutual));
+    when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(4L)))
+        .thenReturn(QueryAccountPresenceResponse.newBuilder().build());
+
+    var result = service.listFriends(11L, 2L, FriendRosterFilter.ALL);
+
+    assertEquals(1, result.totalCount());
+    assertEquals(4L, result.friends().getFirst().friendAccountId());
+    Mockito.verify(accountRepository)
+        .findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active");
+    Mockito.verify(accountRepository, Mockito.never())
+        .findByTenantIdAndAccountIdAndStatus(11L, 2L, "active");
+  }
+
+  @Test
   void getFriendRosterSummaryReturnsCanonicalCounts() {
     AccountFriendLink sora = new AccountFriendLink();
     sora.setId(7L);
@@ -169,7 +190,7 @@ class FriendServiceImplTest {
     nyx.setFriendAccountId(4L);
     nyx.setStatus("active");
     nyx.setCreatedAt(Instant.parse("2026-04-10T01:02:04Z"));
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(sora, nyx));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L, 4L)))
         .thenReturn(
@@ -209,7 +230,7 @@ class FriendServiceImplTest {
     sora.setFriendAccountId(3L);
     sora.setStatus("active");
     sora.setCreatedAt(Instant.parse("2026-04-10T01:02:03Z"));
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(sora));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
         .thenReturn(
@@ -239,7 +260,7 @@ class FriendServiceImplTest {
     sora.setFriendAccountId(3L);
     sora.setStatus("active");
     sora.setCreatedAt(Instant.parse("2026-04-10T01:02:03Z"));
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(sora));
     when(accountRepository.findFirstByTenantIdAndAccountIdAndFriendAccountIdAndStatus(
             11L, 2L, 3L, "active"))
@@ -263,7 +284,7 @@ class FriendServiceImplTest {
     sora.setFriendAccountId(3L);
     sora.setStatus("active");
     sora.setCreatedAt(Instant.parse("2026-04-10T01:02:03Z"));
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(sora));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L))).thenReturn(null);
 
@@ -284,7 +305,7 @@ class FriendServiceImplTest {
     sora.setFriendAccountId(3L);
     sora.setStatus("active");
     sora.setCreatedAt(Instant.parse("2026-04-10T01:02:03Z"));
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(sora));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
         .thenReturn(
@@ -311,7 +332,7 @@ class FriendServiceImplTest {
     sora.setFriendAccountId(3L);
     sora.setStatus("active");
     sora.setCreatedAt(Instant.parse("2026-04-10T01:02:03Z"));
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(sora));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
         .thenReturn(
@@ -347,7 +368,7 @@ class FriendServiceImplTest {
     sora.setFriendAccountId(3L);
     sora.setStatus("active");
     sora.setCreatedAt(Instant.parse("2026-04-10T01:02:03Z"));
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(sora));
 
     var result = service.listFriendPresence(11L, 2L, FriendRosterFilter.ALL);
@@ -422,7 +443,7 @@ class FriendServiceImplTest {
     link.setFriendAccountId(3L);
     link.setStatus("active");
     link.setCreatedAt(Instant.parse("2026-04-10T01:02:03Z"));
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(link));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
         .thenReturn(
@@ -461,7 +482,7 @@ class FriendServiceImplTest {
     link.setAccountId(2L);
     link.setFriendAccountId(3L);
     link.setStatus("active");
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(link));
     when(accountClient.getPresenceVisibilityPolicies(11L, List.of(3L)))
         .thenReturn(Map.of(3L, FriendPresenceVisibilityPolicyValue.PUBLIC));
@@ -516,7 +537,7 @@ class FriendServiceImplTest {
     link.setFriendAccountId(3L);
     link.setStatus("active");
     link.setCreatedAt(Instant.parse("2026-04-10T01:02:03Z"));
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(link));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
         .thenReturn(
@@ -576,7 +597,7 @@ class FriendServiceImplTest {
     offlineLink.setAccountId(2L);
     offlineLink.setFriendAccountId(4L);
     offlineLink.setStatus("active");
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(onlineLink, offlineLink));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L, 4L)))
         .thenReturn(
@@ -611,7 +632,7 @@ class FriendServiceImplTest {
     privateLink.setAccountId(2L);
     privateLink.setFriendAccountId(4L);
     privateLink.setStatus("active");
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(friendsOnlyLink, privateLink));
     when(accountClient.getPresenceVisibilityPolicies(11L, List.of(3L, 4L)))
         .thenReturn(
@@ -652,7 +673,7 @@ class FriendServiceImplTest {
     isolatedLink.setAccountId(2L);
     isolatedLink.setFriendAccountId(4L);
     isolatedLink.setStatus("active");
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(sharedLink, isolatedLink));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L, 4L)))
         .thenReturn(
@@ -698,7 +719,7 @@ class FriendServiceImplTest {
     hiddenLink.setAccountId(2L);
     hiddenLink.setFriendAccountId(4L);
     hiddenLink.setStatus("active");
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(privateLink, hiddenLink));
     when(accountClient.getPresenceVisibilityPolicies(11L, List.of(3L, 4L)))
         .thenReturn(
@@ -809,7 +830,7 @@ class FriendServiceImplTest {
     link.setAccountId(2L);
     link.setFriendAccountId(3L);
     link.setStatus("active");
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(link));
     when(accountClient.getPresenceVisibilityPolicies(11L, List.of(3L))).thenReturn(null);
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))

@@ -74,12 +74,6 @@ REQUIRED_MEMBERSHIP_WRITER_CHECKS = {
     "account_state_bootstrap_eligible",
     "pending_deletion_state",
 }
-REQUIRED_SESSION_LIFECYCLE_GATE_ROUTES = {
-    "game-session-service/POST /sessions",
-    "game-session-service/POST /sessions/{sessionId}/stop",
-    "game-session-service/POST /sessions/{sessionId}/restart",
-    "game-session-service/POST /sessions/{sessionId}/refresh-roles",
-}
 GAMEPLAY_CONNECT_ISSUED_TOKEN_STATE = "none_bounded_single_use_replay_exception"
 REQUIRED_FIELD_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 ROUTE_STATUS_VALUES = {
@@ -105,15 +99,18 @@ OPERATOR_INGRESS_ROUTES = {
     ("logging-admin-service", "POST /admission-pointers/cutover"),
     ("logging-admin-service", "POST /admission-pointers/version-upgrades"),
 }
-ADMISSION_POINTER_MUTATION_ROUTE = (
-    "logging-admin-service",
-    "POST /admission-pointers",
-)
+ADMISSION_POINTER_MUTATION_ROUTES = {
+    ("logging-admin-service", "POST /admission-pointers"),
+    ("logging-admin-service", "POST /admission-pointers/cutover"),
+}
 GAME_SESSION_OPERATOR_ROUTES = {
     ("game-session-service", "POST /sessions"),
     ("game-session-service", "POST /sessions/{sessionId}/stop"),
     ("game-session-service", "POST /sessions/{sessionId}/restart"),
     ("game-session-service", "POST /sessions/{sessionId}/refresh-roles"),
+}
+REQUIRED_SESSION_LIFECYCLE_GATE_ROUTES = {
+    f"{service}/{route}" for service, route in GAME_SESSION_OPERATOR_ROUTES
 }
 CONDITIONAL_OPERATOR_ROUTES = OPERATOR_INGRESS_ROUTES | GAME_SESSION_OPERATOR_ROUTES
 ACCOUNT_SUBJECT_BOUND_ROUTES = {
@@ -661,6 +658,12 @@ def validate_role_assurance(document: dict[str, Any], errors: list[str]) -> set[
                 f"the classification vocabulary: {unknown_classifications}"
             )
         route_identities = applies_to.get("route_identities")
+        if route_identities is not None and (
+            not isinstance(route_identities, list)
+            or any(not isinstance(item, str) or not item.strip() for item in route_identities)
+        ):
+            errors.append(f"{label}.applies_to.route_identities must be a list of strings")
+            continue
         if role == "platformAdmin":
             if route_identities != sorted(PLATFORM_ADMIN_ROLE_ASSURANCE_ROUTE_IDENTITIES):
                 errors.append(
@@ -671,11 +674,6 @@ def validate_role_assurance(document: dict[str, Any], errors: list[str]) -> set[
             errors.append(
                 f"{label}.applies_to.route_identities is only allowed for platformAdmin"
             )
-        if route_identities is not None and (
-            not isinstance(route_identities, list)
-            or any(not isinstance(item, str) or not item.strip() for item in route_identities)
-        ):
-            errors.append(f"{label}.applies_to.route_identities must be a list of strings")
     return predicates
 
 
@@ -1292,7 +1290,7 @@ def validate_conditional_operator_route(
             "current_operator_authorization"
         )
     if (
-        route_key_value == ADMISSION_POINTER_MUTATION_ROUTE
+        route_key_value in ADMISSION_POINTER_MUTATION_ROUTES
         and "expected_pointer_version" not in checks
     ):
         errors.append(
@@ -2089,6 +2087,14 @@ def validate_generation_applicability(
             route, label, account_generation, errors, checks, live_checks_cache
         )
         value = validate_membership_generation(route, label, errors)
+        if value is True:
+            if checks is None:
+                checks = route_live_checks(route, label, errors, live_checks_cache)
+            if "membership_generation" not in checks:
+                errors.append(
+                    f"{label} membership_authority_generation_applies=true requires "
+                    "live check membership_generation"
+                )
         validate_conditional_operator_route(
             route, label, value, errors, checks, live_checks_cache
         )

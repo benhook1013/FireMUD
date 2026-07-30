@@ -128,16 +128,20 @@ if len(cleanup_function_starts) != 1:
         "dev-demo bootstrap must contain exactly one cleanup_bootstrap_temp_dir function"
     )
 cleanup_function_start = cleanup_function_starts[0]
-cleanup_function_end = next(
-    (
-        index for index in range(cleanup_function_start + 1, len(bootstrap_lines))
-        if bootstrap_lines[index].endswith("() {")
-    ),
-    None,
-)
+cleanup_function_depth = 0
+cleanup_function_end = None
+for index in range(cleanup_function_start, len(bootstrap_lines)):
+    line = bootstrap_lines[index]
+    if line.endswith("() {"):
+        cleanup_function_depth += 1
+    elif line == "}":
+        cleanup_function_depth -= 1
+        if cleanup_function_depth == 0:
+            cleanup_function_end = index + 1
+            break
 if cleanup_function_end is None:
     raise AssertionError(
-        "dev-demo bootstrap cleanup function body is unterminated"
+        "dev-demo bootstrap cleanup function has no same-nesting closing brace"
     )
 cleanup_function_lines = bootstrap_lines[cleanup_function_start:cleanup_function_end]
 cleanup_success_start = next(
@@ -277,9 +281,29 @@ forbidden_summary_reference = re.compile(
     r"\$\{?BOOTSTRAP_SECRET_DIR\}?/password|"
     r"\$\{\{\s*secrets[.]|"
     r"steps[.][A-Za-z0-9_-]+[.]outputs[.]password|"
-    r"kubectl\b[^;&|]*\bget\s+secret\b[^;&|]*\|\s*base64\s+(?:-d|--decode)\b",
+    r"(?<![;&|])[^;&|]*\b(?:secrets?|secs?|credentials?|creds?)\b"
+    r"[^;&|]*(?:\|[^;&|]*)*\|\s*base64\s+(?:-d|--decode)\b",
     re.IGNORECASE,
 )
+for secret_pipeline in (
+    "kubectl get secret demo -o json | base64 -d",
+    "kubectl get SECRETS demo -o json | jq -r .data.password | base64 --decode",
+    "kubectl get sec demo -o json | tr -d '\\n' | base64 -d",
+):
+    if not forbidden_summary_reference.search(secret_pipeline):
+        raise AssertionError(
+            "forbidden summary regex must detect secret material through intermediate "
+            f"pipelines: {secret_pipeline}"
+        )
+for safe_summary in (
+    "echo secret summary",
+    "kubectl get secret demo -o json | jq -r .metadata.name",
+    "kubectl get secret demo -o json; echo base64 -d",
+):
+    if forbidden_summary_reference.search(safe_summary):
+        raise AssertionError(
+            f"forbidden summary regex must not cross command separators: {safe_summary}"
+        )
 offending_writers = [
     (job_name, step_name)
     for job_name, step_name, source in summary_writers

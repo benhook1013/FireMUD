@@ -8,7 +8,7 @@ For details on moderation tooling see the [Logging & Admin Service overview](./R
 
 - `POST /moderation/actions` and the internal `ApplyModerationAction` gRPC ingress are unavailable/gated and currently do not persist `moderation_actions` policy-input/audit records or mutate Account, Game Session, or Social & Groups enforcement state.
 - `EvaluateModerationPolicy` is a live read consumed by Game Session and Social & Groups at their authoritative enforcement boundaries.
-- The target owner-side enforcement mutation, action-family schema, shared cross-language `mutationDigest/v1` vectors, Account authorization-reference issuance/redemption, versioned policy propagation, and complete appeal workflow remain gated or unimplemented. This document does not claim current tests prove those target obligations.
+- The target owner-side enforcement mutation, action-family schema, shared cross-language `mutationDigest/v1` vectors, Account authorization-reference issuance, Logging & Admin receiving-boundary validation/redemption, versioned policy propagation, and complete appeal workflow remain gated or unimplemented. This document does not claim current tests prove those target obligations.
 
 ## Core Policies
 
@@ -26,7 +26,7 @@ Tenant-configurable word lists, normalization, masking, and bypass detection bel
 
 1. Offending logs or reports are flagged in the Logging & Admin Service dashboards. These dashboards are described in [Analytics Dashboards](./analytics-dashboards.md).
 2. Moderators review the context and determine the severity.
-3. The unavailable/gated `POST /moderation/actions` and `ApplyModerationAction` contracts (see [`logging_admin_service.proto`](../../../../protos/logging-admin/v1/logging_admin_service.proto)) do not currently persist policy input or audit evidence. They remain unavailable until the action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account authorization-reference issuance/redemption flow exist. The separate live `EvaluateModerationPolicy` contract evaluates policy for enforcement owners; it does not itself delete accounts, terminate sessions, or make the target mutation workflow complete.
+3. The unavailable/gated `POST /moderation/actions` and `ApplyModerationAction` contracts (see [`logging_admin_service.proto`](../../../../protos/logging-admin/v1/logging_admin_service.proto)) do not currently persist policy input or audit evidence. They remain unavailable until the action-family schema, shared cross-language `mutationDigest/v1` golden vectors, Account-issued authorization-reference issuance and Logging & Admin receiving-boundary validation/redemption flow exist. Logging & Admin redeems the reference at its receiving boundary; no owner-side authorization-reference redemption is required for this persistence path. The separate live `EvaluateModerationPolicy` contract evaluates policy for enforcement owners; it does not itself delete accounts, terminate sessions, or make the target mutation workflow complete.
 4. The owning runtime enforces the applicable policy at its authoritative boundary: Game Session enforces gameplay admission, Social & Groups enforces chat-send policy, and Account owns account security-state transitions and player notification. A broader cross-service suspension, recovery, appeal, and notification workflow remains separate Account-owned product work.
 
 ## Appeals

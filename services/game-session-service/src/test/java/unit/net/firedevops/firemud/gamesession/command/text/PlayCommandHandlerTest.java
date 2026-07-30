@@ -989,7 +989,7 @@ class PlayCommandHandlerTest {
             GetTenantMembershipForRuntimeResponse.newBuilder()
                 .setError(
                     net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                        .setCode("MEMBERSHIP_AUTH_UNAVAILABLE")
+                        .setCode("AUTH_UNAVAILABLE")
                         .setMessage("Membership authority unavailable"))
                 .build());
 

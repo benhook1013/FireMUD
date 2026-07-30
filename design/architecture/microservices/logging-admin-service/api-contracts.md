@@ -97,7 +97,7 @@ curl http://localhost:8080/ping
   ```
 
   Game Session calls it with `GAMEPLAY_ADMISSION`; Social & Groups calls it with `CHAT_SEND`. It is an `internal_workload` RPC available only to the exact allowlisted Game Session and Social & Groups workload identities over internal mTLS; it accepts no end-user JWT, `control-ui` token, or operator authorization reference. The read remains live independently of observability backends, and applicable high-risk enforcement fails closed when the result is unavailable or not fresh.
-- `CreateReport(CreateReportRequest) returns (CreateReportResponse)` – internal report persistence behind the existing mTLS/workload boundary. Caller-supplied tenant, reporter, and optional target identities are data references only; they do not authorize a caller. This gRPC contract is not public HTTP or player submission ingress.
+- `logging_admin.v1.ReportService/CreateReport` – internal report persistence behind the existing mTLS/workload boundary. Its `CreateReportRequest` and `CreateReportResponse` messages carry caller-supplied tenant, reporter, and optional target identities as data references only; they do not authorize a caller. This gRPC contract is not public HTTP or player submission ingress.
 - `ToggleFeatureFlag(ToggleFeatureFlagRequest) returns (ToggleFeatureFlagResponse)` – target owner-forwarding contract, unavailable until the action-family schema, shared cross-language `mutationDigest/v1` vectors, and Account authorization-reference issuance/redemption flow exist.
 - Tick-remediation is not a Logging & Admin-owned state-mutation gRPC surface; this service audits and forwards those operator actions to Game Session control-plane APIs instead of defining a competing remediation RPC.
 

@@ -26,7 +26,11 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @WebMvcTest
 @Import(GlobalExceptionHandler.class)
-@TestPropertySource(properties = "spring.web.resources.add-mappings=false")
+@TestPropertySource(
+    properties = {
+      "spring.web.resources.add-mappings=false",
+      "spring.mvc.throw-exception-if-no-handler-found=true"
+    })
 class GlobalExceptionHandlerTest {
   @Autowired private MockMvc mockMvc;
 

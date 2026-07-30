@@ -173,12 +173,7 @@ public final class AccountClient
   public GetTenantMembershipForRuntimeResponse getTenantMembershipForRuntime(
       String accountId, String tenantId, String requestId) {
     if (stub() == null) {
-      return GetTenantMembershipForRuntimeResponse.newBuilder()
-          .setError(
-              ErrorDetail.newBuilder()
-                  .setCode("MEMBERSHIP_AUTH_UNAVAILABLE")
-                  .setMessage("Membership authority unavailable"))
-          .build();
+      return membershipAuthorityUnavailable();
     }
     GetTenantMembershipForRuntimeRequest request =
         GetTenantMembershipForRuntimeRequest.newBuilder()
@@ -205,10 +200,14 @@ public final class AccountClient
     } catch (Exception ex) {
       logger.warn("Failed to call Account Service runtime membership endpoint", ex);
     }
+    return membershipAuthorityUnavailable();
+  }
+
+  private GetTenantMembershipForRuntimeResponse membershipAuthorityUnavailable() {
     return GetTenantMembershipForRuntimeResponse.newBuilder()
         .setError(
             ErrorDetail.newBuilder()
-                .setCode("MEMBERSHIP_AUTH_UNAVAILABLE")
+                .setCode(AuthenticationErrorCodes.UNAVAILABLE)
                 .setMessage("Membership authority unavailable"))
         .build();
   }

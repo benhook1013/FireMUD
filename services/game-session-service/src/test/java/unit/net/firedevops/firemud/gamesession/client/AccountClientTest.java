@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import io.grpc.stub.AbstractStub;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.TimeUnit;
@@ -192,15 +193,88 @@ class AccountClientTest {
     AccountClient client = newClient(stub);
 
     GetTenantMembershipForRuntimeResponse actual =
-        client.getTenantMembershipForRuntime("42", "7", "membership-request-1");
+        client.getTenantMembershipForRuntime("42", "7", null);
 
     ArgumentCaptor<GetTenantMembershipForRuntimeRequest> captor =
         ArgumentCaptor.forClass(GetTenantMembershipForRuntimeRequest.class);
     verify(stub).getTenantMembershipForRuntime(captor.capture());
     assertThat(captor.getValue().getAccountId()).isEqualTo("42");
     assertThat(captor.getValue().getTenantId()).isEqualTo("7");
-    assertThat(captor.getValue().getRequestId()).isEqualTo("membership-request-1");
+    assertThat(captor.getValue().getRequestId()).isEmpty();
     assertThat(actual).isEqualTo(expected);
+  }
+
+  @Test
+  void runtimeMembershipReturnsCanonicalUnavailableWhenStubIsMissing() throws Exception {
+    GetTenantMembershipForRuntimeResponse response =
+        newClient(null).getTenantMembershipForRuntime("42", "7", "request-1");
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
+  }
+
+  @Test
+  void runtimeMembershipRetriesOnceAfterUnavailableAndPreservesSuccess() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub initialStub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    AccountServiceGrpc.AccountServiceBlockingStub retryStub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(initialStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(initialStub);
+    when(retryStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(retryStub);
+    when(initialStub.getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+    GetTenantMembershipForRuntimeResponse expected =
+        GetTenantMembershipForRuntimeResponse.newBuilder()
+            .setAccountId("42")
+            .setTenantId("7")
+            .setGameplayAdmissionAllowed(true)
+            .setMembershipVersion(12L)
+            .build();
+    when(retryStub.getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
+        .thenReturn(expected);
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    when(channelFactory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
+        .thenReturn(mock(ManagedChannel.class));
+    AccountClient client = newClientWithRetryStub(initialStub, retryStub, channelFactory);
+
+    GetTenantMembershipForRuntimeResponse actual =
+        client.getTenantMembershipForRuntime("42", "7", "request-1");
+
+    assertThat(actual).isEqualTo(expected);
+    verify(initialStub)
+        .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
+    verify(retryStub)
+        .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
+    verify(channelFactory).buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @Test
+  void runtimeMembershipNormalizesExhaustedUnavailableToCanonicalUnavailable() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub initialStub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    AccountServiceGrpc.AccountServiceBlockingStub retryStub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(initialStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(initialStub);
+    when(retryStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(retryStub);
+    when(initialStub.getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+    when(retryStub.getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    when(channelFactory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
+        .thenReturn(mock(ManagedChannel.class));
+    AccountClient client = newClientWithRetryStub(initialStub, retryStub, channelFactory);
+
+    GetTenantMembershipForRuntimeResponse response =
+        client.getTenantMembershipForRuntime("42", "7", "request-1");
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
+    verify(initialStub)
+        .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
+    verify(retryStub)
+        .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
+    verify(channelFactory).buildChannel(anyString(), anyInt(), any(), anyBoolean());
   }
 
   @Test
@@ -249,11 +323,39 @@ class AccountClientTest {
             new CommonGrpcClientProperties(),
             channelFactory,
             BlockingGrpcStubCustomizer.noop());
+    setStub(client, stub);
+    return client;
+  }
+
+  private static AccountClient newClientWithRetryStub(
+      AccountServiceGrpc.AccountServiceBlockingStub initialStub,
+      AccountServiceGrpc.AccountServiceBlockingStub retryStub,
+      GrpcChannelFactory channelFactory)
+      throws Exception {
+    BlockingGrpcStubCustomizer customizer =
+        new BlockingGrpcStubCustomizer() {
+          @Override
+          @SuppressWarnings("unchecked")
+          public <T extends AbstractStub<T>> T customize(T candidate) {
+            return (T) retryStub;
+          }
+        };
+    AccountClient client =
+        new AccountClient(
+            new ServiceEndpointsProperties(),
+            new CommonGrpcClientProperties(),
+            channelFactory,
+            customizer);
+    setStub(client, initialStub);
+    return client;
+  }
+
+  private static void setStub(
+      AccountClient client, AccountServiceGrpc.AccountServiceBlockingStub stub) throws Exception {
     Field field =
         net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient.class.getDeclaredField(
             "stub");
     field.setAccessible(true);
     field.set(client, stub);
-    return client;
   }
 }
