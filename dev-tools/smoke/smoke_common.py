@@ -56,7 +56,9 @@ def verify_smoke_account(account_api_base, username, password, timeout_seconds):
             if attempt < 3:
                 time.sleep(1)
                 continue
-            raise RuntimeError(f"Smoke account validation failed: {exc}") from exc
+            raise RuntimeError(
+                "Smoke account validation failed due to a transport error"
+            ) from exc
 
 
 def http_request_json(url, timeout_seconds, method="GET", payload=None, headers=None):

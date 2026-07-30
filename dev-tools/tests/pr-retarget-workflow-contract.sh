@@ -263,17 +263,7 @@ for path in "$ci_path" "$smoke_path"; do
 done
 
 require_contains "$ci_path" 'PR Metadata Edit (Validation Summary)'
-require_contains "$ci_path" 'PR Metadata Edit (Validation Gate)'
-if grep -Fq '    name: Validation Gate' "$ci_path"; then
-  echo "metadata-only CI runs must not emit the branch-protected Validation Gate name" >&2
-  exit 1
-fi
 require_contains "$smoke_path" 'PR Metadata Edit (Smoke Summary)'
-require_contains "$smoke_path" 'PR Metadata Edit (Smoke Gate)'
-if grep -Fq '    name: Smoke Gate' "$smoke_path"; then
-  echo "metadata-only smoke runs must not emit the branch-protected Smoke Gate name" >&2
-  exit 1
-fi
 if grep -Eq '^  smoke-lite:' "$smoke_path"; then
   echo "smoke.yml must not restore the redundant smoke-lite job" >&2
   exit 1
@@ -296,12 +286,11 @@ for job in \
   docs-check \
   frontend-checks \
   build-and-test \
-  validation-summary \
-  validation-gate; do
+  validation-summary; do
   assert_job_condition ci.yml "$job" "$required_condition"
 done
 
-for job in changes smoke-summary smoke-gate; do
+for job in changes smoke-summary; do
   assert_job_condition smoke.yml "$job" "$required_condition"
 done
 assert_job_contains smoke.yml smoke-gate 'pull-requests: read'
@@ -309,7 +298,6 @@ assert_job_contains smoke.yml smoke-gate 'github.rest.pulls.get'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.state !== "open"'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.head.sha !== headSha'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.base.ref !== baseRef'
-assert_job_contains smoke.yml smoke-gate 'pullRequest.base.sha !== baseSha'
 
 require_contains "$runtime_images_path" 'types: [opened, synchronize, reopened, edited]'
 require_contains "$runtime_images_path" "&& 'metadata' || 'required' }}"
@@ -400,6 +388,8 @@ import tempfile
 import textwrap
 from pathlib import Path
 
+if len(sys.argv) != 2:
+    raise SystemExit("trusted PR image publisher contract requires one workflow path")
 workflow_text = Path(sys.argv[1]).read_text(encoding="utf-8")
 match = re.search(r"python3 - <<'PY'\n(?P<script>.*?)\n          PY", workflow_text, re.DOTALL)
 if match is None:
@@ -425,9 +415,12 @@ with tempfile.NamedTemporaryFile(mode="r+", encoding="utf-8") as summary_file:
     summary_file.seek(0)
     summary = summary_file.read()
 
-assert "<code>build `title` &lt;script&gt;&amp; next</code>" in summary
-assert "<code>feature/`branch` &lt;b&gt;&amp;</code>" in summary
-assert "<script>" not in summary
+if "<code>build `title` &lt;script&gt;&amp; next</code>" not in summary:
+    raise SystemExit("trusted PR image publisher did not escape the run title")
+if "<code>feature/`branch` &lt;b&gt;&amp;</code>" not in summary:
+    raise SystemExit("trusted PR image publisher did not escape the head branch")
+if "<script>" in summary:
+    raise SystemExit("trusted PR image publisher emitted unescaped HTML")
 PY
 
 require_contains "$image_wait_path" 'publish-pr-runtime-images.yml/runs?event=workflow_run'
@@ -531,16 +524,35 @@ require_contains "$smoke_path" 'const mergeSha = context.sha;'
 require_contains "$smoke_path" 'github.rest.pulls.get({'
 require_contains "$smoke_path" 'pullRequest.state !== "open" ||'
 require_contains "$smoke_path" 'pullRequest.head.sha !== headSha ||'
-require_contains "$smoke_path" 'pullRequest.base.ref !== baseRef ||'
-require_contains "$smoke_path" 'pullRequest.base.sha !== baseSha'
+require_contains "$smoke_path" 'pullRequest.base.ref !== baseRef'
+require_contains "$smoke_path" 'const matchingRuns = runs.filter((run) => {'
+require_contains "$smoke_path" 'const matching = matchingRuns.reduce((newest, candidate) => {'
+require_contains "$smoke_path" 'let fullSmokeJob = null;'
+require_contains "$smoke_path" 'async function failNonTerminalSnapshot(reason) {'
+# shellcheck disable=SC2016 # Assert literal JavaScript template syntax.
+require_contains "$smoke_path" '`${reason}: ` +'
+require_contains "$smoke_path" 'const maxCompletedJobSnapshotRetries = 8;'
+require_contains "$smoke_path" 'const remainingBeforeJobLookupMs = timeoutMs - (Date.now() - started);'
+require_contains "$smoke_path" 'if (remainingBeforeJobLookupMs <= 0) {'
+require_contains "$smoke_path" 'completedJobSnapshotAttempt <= maxCompletedJobSnapshotRetries'
+require_contains "$smoke_path" 'run_id: matching.id'
+require_contains "$smoke_path" 'completedJobSnapshotAttempt < maxCompletedJobSnapshotRetries'
+require_contains "$smoke_path" 'const remainingBeforeSnapshotSleepMs = timeoutMs - (Date.now() - started);'
+require_contains "$smoke_path" 'if (remainingBeforeSnapshotSleepMs <= 0) {'
+require_contains "$smoke_path" 'Math.min(sleepMs, remainingBeforeSnapshotSleepMs)'
+require_contains "$smoke_path" 'did not expose a terminal PR Full-Stack Smoke job '
+require_contains "$smoke_path" "Runtime images run \${matching.id} succeeded, but PR Full-Stack Smoke job did not complete successfully:"
+require_contains "$smoke_path" 'Stopping obsolete failed full-smoke gate for'
 require_contains "$smoke_path" 'pollIteration % pullRequestCheckInterval === 0'
 require_contains "$smoke_path" 'Stopping obsolete smoke gate for'
 require_ordered_sequence \
   "$smoke_path" \
-  'if (isObsoletePullRequest(currentPullRequest)) {' \
+  'if (await isCurrentPullRequestObsolete("Stopping obsolete smoke gate for")) {' \
   'return;' \
   'github.rest.actions.listWorkflowRuns,'
-require_branch_return "$smoke_path" 'if (isObsoletePullRequest(currentPullRequest)) {'
+require_branch_return \
+  "$smoke_path" \
+  'if (await isCurrentPullRequestObsolete("Stopping obsolete smoke gate for")) {'
 require_contains "$smoke_path" 'head_sha: headSha,'
 require_contains "$smoke_path" 'mode-required'
 require_contains "$smoke_path" 'Build Runtime Images secure-pr-artifact pr-'
@@ -550,18 +562,58 @@ require_contains "$smoke_path" 'pullRequests.length === 0 || pullRequests.some'
 require_contains "$smoke_path" 'pullRequest.base?.sha === baseSha'
 require_contains "$smoke_path" 'pullRequest.head?.sha === headSha'
 require_contains "$smoke_path" 'github.rest.actions.listJobsForWorkflowRun'
-require_contains "$smoke_path" 'job.name === "Smoke Tests (Full Stack) / Smoke Tests (Full Stack)"'
-require_contains "$smoke_path" 'fullSmokeJob.status !== "completed"'
-require_contains "$smoke_path" 'fullSmokeJob.conclusion !== "success"'
-require_contains "$smoke_path" 'const { data: completedPullRequest } = await withTransientGitHubRetry('
-require_contains "$smoke_path" 'if (isObsoletePullRequest(completedPullRequest)) {'
+require_contains "$smoke_path" 'job.name === "PR Full-Stack Smoke"'
+require_contains "$smoke_path" 'fullSmokeJob?.status === "completed"'
+require_contains "$smoke_path" 'fullSmokeJob?.conclusion !== "success"'
+require_ordered_sequence \
+  "$smoke_path" \
+  'if (fullSmokeJob?.status === "completed") {' \
+  'if (fullSmokeJob?.conclusion !== "success") {' \
+  'PR Full-Stack Smoke job did not complete successfully:'
+# shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
+require_contains "$smoke_path" 'SMOKE_GATE_REQUIRED: ${{ github.event.action != '\''edited'\'' || github.event.changes.base.ref != null }}'
+# shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
+require_contains "$smoke_path" 'CHANGES_RESULT: ${{ needs.changes.result }}'
+# shellcheck disable=SC2016 # Assert literal shell source.
+require_contains "$smoke_path" 'echo "required=$SMOKE_GATE_REQUIRED" >> "$GITHUB_OUTPUT"'
+# shellcheck disable=SC2016 # Assert literal shell source.
+require_contains "$smoke_path" 'if [ "$SMOKE_GATE_REQUIRED" = "true" ] && [ "$CHANGES_RESULT" = "success" ]; then'
+# shellcheck disable=SC2016 # Assert literal shell source.
+require_contains "$smoke_path" 'echo "execute=true" >> "$GITHUB_OUTPUT"'
+# shellcheck disable=SC2016 # Assert literal shell source.
+require_contains "$smoke_path" 'echo "execute=false" >> "$GITHUB_OUTPUT"'
+# shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
+require_contains "$smoke_path" 'if: ${{ steps.smoke_gate_context.outputs.required == '\''true'\'' && steps.smoke_gate_context.outputs.execute != '\''true'\'' }}'
+# shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
+if grep -Fq 'echo "required=${{' "$smoke_path" || grep -Fq 'echo "execute=${{' "$smoke_path"; then
+  echo "smoke_gate_context must pass expressions through step env" >&2
+  exit 1
+fi
 require_contains "$smoke_path" 'Stopping obsolete completed smoke gate for'
+require_contains "$smoke_path" 'Stopping obsolete stale-snapshot smoke gate for'
 require_ordered_sequence \
   "$smoke_path" \
   'github.rest.actions.listJobsForWorkflowRun,' \
-  '"completed pull request lookup",' \
-  'if (isObsoletePullRequest(completedPullRequest)) {'
-require_branch_return "$smoke_path" 'if (isObsoletePullRequest(completedPullRequest)) {'
+  'if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {'
+require_branch_return "$smoke_path" 'if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {'
+require_ordered_sequence \
+  "$smoke_path" \
+  'async function failNonTerminalSnapshot(reason) {' \
+  'if (await isCurrentPullRequestObsolete("Stopping obsolete stale-snapshot smoke gate for")) {' \
+  'core.setFailed('
+require_branch_return "$smoke_path" 'if (await isCurrentPullRequestObsolete("Stopping obsolete stale-snapshot smoke gate for")) {'
+require_ordered_sequence \
+  "$smoke_path" \
+  'if (remainingBeforeJobLookupMs <= 0) {' \
+  'await failNonTerminalSnapshot("before the workflow deadline");'
+require_ordered_sequence \
+  "$smoke_path" \
+  'if (remainingBeforeSnapshotSleepMs <= 0) {' \
+  'await failNonTerminalSnapshot("before the workflow deadline");'
+require_ordered_sequence \
+  "$smoke_path" \
+  'const snapshotRetrySummary = maxCompletedJobSnapshotRetries === 0' \
+  'await failNonTerminalSnapshot(snapshotRetrySummary);'
 if grep -Fq 'const matching = runs.find((run) => run.head_sha === headSha);' "$smoke_path"; then
   echo "Smoke Gate must not accept a runtime-images run by head SHA alone" >&2
   exit 1
@@ -574,6 +626,8 @@ from pathlib import Path
 
 import yaml
 
+if len(sys.argv) != 3:
+    raise SystemExit("smoke/runtime-images parity contract requires two workflow paths")
 smoke_path, runtime_images_path = map(Path, sys.argv[1:])
 smoke = smoke_path.read_text(encoding="utf-8")
 runtime_images = runtime_images_path.read_text(encoding="utf-8")
@@ -614,6 +668,38 @@ full_files = quoted_entries(
     "const fullRelevantFiles = new Set([",
     "]);",
 )
+
+lookup_start_marker = "fullSmokeJob = jobs.find("
+lookup_end_marker = ") ?? null;"
+try:
+    lookup_start = smoke.index(lookup_start_marker)
+    lookup_end = smoke.index(lookup_end_marker, lookup_start) + len(lookup_end_marker)
+except ValueError as exc:
+    raise SystemExit("smoke.yml must define the fullSmokeJob lookup block") from exc
+
+job_name_literals = re.findall(
+    r'job[.]name\s*===\s*["\']([^"\']+)["\']',
+    smoke[lookup_start:lookup_end],
+)
+if job_name_literals != ["PR Full-Stack Smoke"]:
+    raise SystemExit(
+        "smoke.yml fullSmokeJob lookup must use exactly one PR Full-Stack Smoke literal: "
+        + repr(job_name_literals)
+    )
+
+try:
+    runtime_workflow = yaml.load(runtime_images, Loader=yaml.BaseLoader)
+    runtime_job_name = runtime_workflow["jobs"]["pr-local-smoke"]["name"]
+except (KeyError, TypeError, yaml.YAMLError) as exc:
+    raise SystemExit(
+        "runtime-images.yml must define the pr-local-smoke job name used by Smoke Gate"
+    ) from exc
+if runtime_job_name != "PR Full-Stack Smoke":
+    raise SystemExit(
+        "smoke.yml full-stack PR job lookup does not match runtime-images.yml: "
+        f"smoke={'PR Full-Stack Smoke'!r}, runtime={runtime_job_name!r}"
+    )
+
 runtime_paths = pull_request_paths(runtime_images, "runtime-images.yml")
 
 runtime_images_fixture = """on:
@@ -624,10 +710,12 @@ runtime_images_fixture = """on:
   push:
     branches: [main]
 """
-assert pull_request_paths(runtime_images_fixture, "runtime fixture") == {
+expected_runtime_fixture_paths = {
     "services/example/**",
     "literal  push: value",
 }
+if pull_request_paths(runtime_images_fixture, "runtime fixture") != expected_runtime_fixture_paths:
+    raise SystemExit("runtime fixture paths were parsed incorrectly")
 
 for invalid_source, expected_message in (
     ("on:\n  push:\n    branches: [main]\n", "must define on.pull_request"),
@@ -636,9 +724,12 @@ for invalid_source, expected_message in (
     try:
         pull_request_paths(invalid_source, "invalid runtime fixture")
     except AssertionError as exc:
-        assert expected_message in str(exc)
+        if expected_message not in str(exc):
+            raise SystemExit(
+                f"invalid runtime fixture raised the wrong message: {exc}"
+            ) from exc
     else:
-        raise AssertionError(f"invalid runtime fixture {expected_message}")
+        raise SystemExit(f"invalid runtime fixture was accepted: {expected_message}")
 
 
 def path_pattern_covers_prefix(pattern, prefix):
@@ -649,8 +740,10 @@ def path_pattern_covers_prefix(pattern, prefix):
     return pattern.endswith("**") and prefix.startswith(pattern.removesuffix("**"))
 
 
-assert path_pattern_covers_prefix("services/**", "services/common-library/")
-assert not path_pattern_covers_prefix("web-client/**", "services/common-library/")
+if not path_pattern_covers_prefix("services/**", "services/common-library/"):
+    raise SystemExit("services/** must cover services/common-library/")
+if path_pattern_covers_prefix("web-client/**", "services/common-library/"):
+    raise SystemExit("web-client/** must not cover services/common-library/")
 
 missing_prefixes = [
     prefix

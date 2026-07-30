@@ -206,17 +206,35 @@ jobs:
           fi
 
   license-gate:
-    name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (License Gate)' || 'License Gate' }}
+    name: License Gate
     needs: [changes, ort-gradle, ort-npm]
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) }}
+    if: ${{ always() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      checks: read # Preserve a prior successful required context on metadata-only edits.
+      contents: read # Check out the shared required-gate composite action.
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
         with:
           egress-policy: audit
 
+      - name: Check out required-gate action
+        if: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Preserve successful required gate on metadata-only edit
+        if: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null }}
+        uses: ./.github/actions/preserve-required-gate
+        with:
+          gate-name: License Gate
+
       - name: Verify ORT results
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
         env:
           EVENT_NAME: ${{ github.event_name }}
           CHANGES_RESULT: ${{ needs.changes.result }}

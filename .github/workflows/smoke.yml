@@ -163,7 +163,7 @@ jobs:
               headline,
               "",
               `- ${statusIcon(changesStatus)} Changes detection: \`${changesStatus}\``,
-              `- ${statusIcon(fullResult)} Smoke Tests (Full Stack): \`${fullResult}\``,
+              `- ${statusIcon(fullResult)} PR Full-Stack Smoke: \`${fullResult}\``,
             ].join("\n");
 
             const { data: comments } = await github.rest.issues.listComments({
@@ -200,36 +200,62 @@ jobs:
             }
 
   smoke-gate:
-    name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Gate)' || 'Smoke Gate' }}
+    name: Smoke Gate
     runs-on: ubuntu-latest
     permissions:
-      contents: read # Read repository metadata used by the workflow context.
+      checks: read # Preserve a prior successful required context on metadata-only edits.
+      contents: read # Check out the shared required-gate composite action.
       actions: read # Inspect matching runtime-image workflow and job results.
       pull-requests: read # Re-read the current PR head and base before accepting smoke.
     needs: [changes]
-    if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
+    if: ${{ always() && github.event_name == 'pull_request' }}
     timeout-minutes: 30
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: Classify smoke gate execution
+        id: smoke_gate_context
+        env:
+          SMOKE_GATE_REQUIRED: ${{ github.event.action != 'edited' || github.event.changes.base.ref != null }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+        run: |
+          echo "required=$SMOKE_GATE_REQUIRED" >> "$GITHUB_OUTPUT"
+          if [ "$SMOKE_GATE_REQUIRED" = "true" ] && [ "$CHANGES_RESULT" = "success" ]; then
+            echo "execute=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "execute=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out required-gate action
+        if: ${{ steps.smoke_gate_context.outputs.required != 'true' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Preserve successful required gate on metadata-only edit
+        if: ${{ steps.smoke_gate_context.outputs.required != 'true' }}
+        uses: ./.github/actions/preserve-required-gate
+        with:
+          gate-name: Smoke Gate
+
       - name: Fail when smoke dependencies did not succeed
-        if: ${{ needs.changes.result != 'success' }}
+        if: ${{ steps.smoke_gate_context.outputs.required == 'true' && steps.smoke_gate_context.outputs.execute != 'true' }}
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
         run: |
           echo "Smoke change detection did not succeed: changes=$CHANGES_RESULT" >&2
           exit 1
 
-      - name: Harden runner
-        if: ${{ needs.changes.result == 'success' }}
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
-        with:
-          egress-policy: audit
-
       - name: Record skipped runtime smoke
-        if: ${{ needs.changes.result == 'success' && needs.changes.outputs.run_smoke_full != 'true' }}
+        if: ${{ steps.smoke_gate_context.outputs.execute == 'true' && needs.changes.outputs.run_smoke_full != 'true' }}
         run: echo "No runtime-stack smoke proof is required for this change."
 
       - name: Track full-stack smoke result from Build Runtime Images
-        if: ${{ needs.changes.result == 'success' && needs.changes.outputs.run_smoke_full == 'true' }}
+        if: ${{ steps.smoke_gate_context.outputs.execute == 'true' && needs.changes.outputs.run_smoke_full == 'true' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
@@ -274,8 +300,7 @@ jobs:
               return (
                 pullRequest.state !== "open" ||
                 pullRequest.head.sha !== headSha ||
-                pullRequest.base.ref !== baseRef ||
-                pullRequest.base.sha !== baseSha
+                pullRequest.base.ref !== baseRef
               );
             }
 
@@ -285,18 +310,25 @@ jobs:
               );
             }
 
+            async function isCurrentPullRequestObsolete(label) {
+              const { data: currentPullRequest } = await withTransientGitHubRetry(
+                "current pull request lookup",
+                () => github.rest.pulls.get({
+                  owner,
+                  repo,
+                  pull_number: Number(prNumber),
+                })
+              );
+              if (!isObsoletePullRequest(currentPullRequest)) {
+                return false;
+              }
+              logObsoletePullRequest(label, currentPullRequest);
+              return true;
+            }
+
             while (Date.now() - started < timeoutMs) {
               if (pollIteration % pullRequestCheckInterval === 0) {
-                const { data: currentPullRequest } = await withTransientGitHubRetry(
-                  "current pull request lookup",
-                  () => github.rest.pulls.get({
-                    owner,
-                    repo,
-                    pull_number: Number(prNumber),
-                  })
-                );
-                if (isObsoletePullRequest(currentPullRequest)) {
-                  logObsoletePullRequest("Stopping obsolete smoke gate for", currentPullRequest);
+                if (await isCurrentPullRequestObsolete("Stopping obsolete smoke gate for")) {
                   return;
                 }
               }
@@ -317,7 +349,7 @@ jobs:
                 )
               );
 
-              const matching = runs.find((run) => {
+              const matchingRuns = runs.filter((run) => {
                 if (
                   run.event !== "pull_request" ||
                   run.head_sha !== headSha ||
@@ -332,51 +364,114 @@ jobs:
                   pullRequest.head?.sha === headSha
                 );
               });
+              const matching = matchingRuns.reduce((newest, candidate) => {
+                if (!newest) {
+                  return candidate;
+                }
+                const parsedNewestCreatedAt = Date.parse(newest.created_at ?? "");
+                const parsedCandidateCreatedAt = Date.parse(candidate.created_at ?? "");
+                const newestCreatedAt = Number.isNaN(parsedNewestCreatedAt) ? 0 : parsedNewestCreatedAt;
+                const candidateCreatedAt = Number.isNaN(parsedCandidateCreatedAt) ? 0 : parsedCandidateCreatedAt;
+                if (candidateCreatedAt !== newestCreatedAt) {
+                  return candidateCreatedAt > newestCreatedAt ? candidate : newest;
+                }
+                const newestRunNumber = Number(newest.run_number ?? 0);
+                const candidateRunNumber = Number(candidate.run_number ?? 0);
+                if (candidateRunNumber !== newestRunNumber) {
+                  return candidateRunNumber > newestRunNumber ? candidate : newest;
+                }
+                return Number(candidate.id) > Number(newest.id) ? candidate : newest;
+              }, null);
               if (matching) {
                 core.info(`Found runtime-images run ${matching.id} with status=${matching.status} conclusion=${matching.conclusion}`);
                 if (matching.status !== "completed") {
                   await new Promise((resolve) => setTimeout(resolve, sleepMs));
                   continue;
                 }
-
-                const jobs = await withTransientGitHubRetry(
-                  "runtime-images job lookup",
-                  () => github.paginate(
-                    github.rest.actions.listJobsForWorkflowRun,
-                    {
-                      owner,
-                      repo,
-                      run_id: matching.id,
-                      per_page: 100,
-                    }
-                  )
-                );
-                const { data: completedPullRequest } = await withTransientGitHubRetry(
-                  "completed pull request lookup",
-                  () => github.rest.pulls.get({
-                    owner,
-                    repo,
-                    pull_number: Number(prNumber),
-                  })
-                );
-                if (isObsoletePullRequest(completedPullRequest)) {
-                  logObsoletePullRequest(
-                    "Stopping obsolete completed smoke gate for",
-                    completedPullRequest
+                if (matching.conclusion !== "success") {
+                  if (await isCurrentPullRequestObsolete("Stopping obsolete failed smoke gate for")) {
+                    return;
+                  }
+                  core.setFailed(
+                    `Runtime images run ${matching.id} did not complete successfully: run=${matching.conclusion}`
                   );
                   return;
                 }
-                const fullSmokeJob = jobs.find(
-                  (job) => job.name === "Smoke Tests (Full Stack) / Smoke Tests (Full Stack)"
-                );
-                if (!fullSmokeJob) {
-                  core.setFailed(`Runtime images run ${matching.id} did not expose the required Smoke Tests (Full Stack) job`);
+
+                let fullSmokeJob = null;
+                async function failNonTerminalSnapshot(reason) {
+                  if (await isCurrentPullRequestObsolete("Stopping obsolete stale-snapshot smoke gate for")) {
+                    return;
+                  }
+                  core.setFailed(
+                    `Runtime images run ${matching.id} did not expose a terminal PR Full-Stack Smoke job ` +
+                    `${reason}: ` +
+                    `${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}`
+                  );
+                }
+                const maxCompletedJobSnapshotRetries = 8;
+                for (
+                  let completedJobSnapshotAttempt = 0;
+                  completedJobSnapshotAttempt <= maxCompletedJobSnapshotRetries;
+                  completedJobSnapshotAttempt += 1
+                ) {
+                  const remainingBeforeJobLookupMs = timeoutMs - (Date.now() - started);
+                  if (remainingBeforeJobLookupMs <= 0) {
+                    await failNonTerminalSnapshot("before the workflow deadline");
+                    return;
+                  }
+                  const jobs = await withTransientGitHubRetry(
+                    "runtime-images job lookup",
+                    () => github.paginate(
+                      github.rest.actions.listJobsForWorkflowRun,
+                      {
+                        owner,
+                        repo,
+                        run_id: matching.id,
+                        per_page: 100,
+                      }
+                    )
+                  );
+                  if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {
+                    return;
+                  }
+                  fullSmokeJob = jobs.find(
+                    (job) => job.name === "PR Full-Stack Smoke"
+                  ) ?? null;
+                  if (fullSmokeJob?.status === "completed") {
+                    break;
+                  }
+                  if (completedJobSnapshotAttempt < maxCompletedJobSnapshotRetries) {
+                    const remainingBeforeSnapshotSleepMs = timeoutMs - (Date.now() - started);
+                    if (remainingBeforeSnapshotSleepMs <= 0) {
+                      await failNonTerminalSnapshot("before the workflow deadline");
+                      return;
+                    }
+                    core.info(
+                      `Runtime images run ${matching.id} succeeded but its PR Full-Stack Smoke job snapshot is not terminal yet: ` +
+                      `${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}; ` +
+                      `retrying ${completedJobSnapshotAttempt + 1}/${maxCompletedJobSnapshotRetries}`
+                    );
+                    await new Promise((resolve) => setTimeout(
+                      resolve,
+                      Math.min(sleepMs, remainingBeforeSnapshotSleepMs)
+                    ));
+                    continue;
+                  }
+                  const snapshotRetrySummary = maxCompletedJobSnapshotRetries === 0
+                    ? "before the remaining workflow deadline allowed a retry"
+                    : `after ${maxCompletedJobSnapshotRetries} retries`;
+                  await failNonTerminalSnapshot(snapshotRetrySummary);
                   return;
                 }
 
-                if (matching.conclusion !== "success" || fullSmokeJob.status !== "completed" || fullSmokeJob.conclusion !== "success") {
+                if (fullSmokeJob?.conclusion !== "success") {
+                  if (await isCurrentPullRequestObsolete("Stopping obsolete failed full-smoke gate for")) {
+                    return;
+                  }
                   core.setFailed(
-                    `Runtime images/full smoke run ${matching.id} did not complete successfully: run=${matching.conclusion}, full-smoke=${fullSmokeJob.status}/${fullSmokeJob.conclusion}`
+                    `Runtime images run ${matching.id} succeeded, but PR Full-Stack Smoke job did not complete successfully: ` +
+                    `job=${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}`
                   );
                   return;
                 }
@@ -387,4 +482,7 @@ jobs:
               await new Promise((resolve) => setTimeout(resolve, sleepMs));
             }
 
+            if (await isCurrentPullRequestObsolete("Stopping obsolete timed-out smoke gate for")) {
+              return;
+            }
             core.setFailed(`Timed out waiting for runtime-images/full-smoke run for PR #${prNumber} base ${baseSha} head ${headSha} merge ${mergeSha}`);

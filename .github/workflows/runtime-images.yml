@@ -260,7 +260,7 @@ jobs:
             type=gha,mode=max
 
   pr-local-smoke:
-    name: Smoke Tests (Full Stack) / Smoke Tests (Full Stack)
+    name: PR Full-Stack Smoke
     needs: [image-meta]
     if: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     runs-on: ubuntu-latest
@@ -376,7 +376,7 @@ jobs:
             --remove-orphans
 
   smoke-full:
-    name: Smoke Tests (Full Stack)
+    name: Published Runtime Full-Stack Smoke
     needs: [image-meta, build-runtime-images]
     if: ${{ always() && github.event_name != 'pull_request' && needs.build-runtime-images.result == 'success' }}
     permissions:
