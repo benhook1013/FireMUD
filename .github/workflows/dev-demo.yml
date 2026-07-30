@@ -519,8 +519,13 @@ jobs:
           kubectl -n "${PREVIEW_NAMESPACE}" create configmap dev-demo-bootstrap-script \
             --from-file=bootstrap.py="${BOOTSTRAP_SCRIPT}" \
             --dry-run=client -o yaml | kubectl apply -f -
+          for credential in DEMO_SMOKE_EMAIL DEMO_SMOKE_PASSWORD DEMO_SMOKE_USERNAME; do
+            if [[ -z "${!credential:-}" ]]; then
+              echo "::error::${credential} is empty; refusing to create dev-demo bootstrap credentials" >&2
+              exit 1
+            fi
+          done
           BOOTSTRAP_SECRET_DIR="$(mktemp -d)"
-          chmod 700 "${BOOTSTRAP_SECRET_DIR}"
           (
             umask 077
             printf '%s' "${DEMO_SMOKE_EMAIL}" >"${BOOTSTRAP_SECRET_DIR}/email"

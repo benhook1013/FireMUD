@@ -200,6 +200,10 @@ if [[ "$*" != *"--paginate"* || "$*" != *"--slurp"* ]]; then
   echo "simulated gh api call omitted pagination/slurp" >&2
   exit 90
 fi
+if [[ "$*" != *"check_name=${REQUIRED_GATE_NAME}"* || "$*" != *"filter=all"* ]]; then
+  echo "simulated gh api call did not scope the query to the required gate name" >&2
+  exit 90
+fi
 if [[ "$*" == *"--jq"* ]]; then
   echo "simulated gh api call must leave filtering to external jq" >&2
   exit 90

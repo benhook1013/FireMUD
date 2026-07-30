@@ -131,6 +131,21 @@ for expected in (
         )
 
 normalized_bootstrap_lines = normalize_nonempty_lines(bootstrap_manifest)
+credential_validation_lines = normalize_nonempty_lines(
+    '''for credential in DEMO_SMOKE_EMAIL DEMO_SMOKE_PASSWORD DEMO_SMOKE_USERNAME; do
+  if [[ -z "${!credential:-}" ]]; then
+    echo "::error::${credential} is empty; refusing to create dev-demo bootstrap credentials" >&2
+    exit 1
+  fi
+done
+BOOTSTRAP_SECRET_DIR="$(mktemp -d)"'''
+)
+if credential_validation_lines not in normalized_bootstrap_lines:
+    raise AssertionError(
+        "dev-demo bootstrap must reject empty credentials before creating temporary files"
+    )
+if 'chmod 700 "${BOOTSTRAP_SECRET_DIR}"' in bootstrap_manifest:
+    raise AssertionError("dev-demo bootstrap must rely on mktemp directory permissions")
 secret_cleanup_and_create = normalize_nonempty_lines(
     '''if ! cleanup_bootstrap_secret; then
   exit 1
