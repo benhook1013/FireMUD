@@ -401,12 +401,10 @@ EXPECTED_ROUTE_CLASS_BRANCHES = {
 }
 CANONICAL_OPERATOR_INGRESS = "logging-admin-service"
 DIRECT_OWNER_ROUTE_POLICY = "deny_at_edge_and_migrate_to_logging_admin"
-# Each semantic field must uniquely identify the parsed value within its source object.
-# A cache hit deliberately suppresses repeated structural errors as well as repeated
-# parsing. Retaining the source object prevents id reuse from returning stale entries.
+# These caches are created afresh for one parsed matrix document in
+# validate_matrix_document. Do not reuse them across validation calls: their object
+# identity keys and cached structural errors are meaningful only within that document.
 LiveChecksCache = dict[tuple[int, str], tuple[object, set[str]]]
-# Maps (id(route/parent mapping), field name) to the source object and parsed
-# required fields; cache hits likewise suppress duplicate structural errors.
 RequiredFieldsCache = dict[tuple[int, str], tuple[object, list[str] | None]]
 
 
@@ -2989,6 +2987,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     token_profiles = validate_token_profiles(document, errors)
     role_assurance_predicates = validate_role_assurance(document, errors)
     validate_known_drift(document, "matrix", errors)
+    # Keep both caches local to this validation call and therefore to this document.
     live_checks_cache: LiveChecksCache = {}
     required_fields_cache: RequiredFieldsCache = {}
     validate_live_check_vocabulary(document, errors, live_checks_cache)

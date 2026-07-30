@@ -8,7 +8,7 @@ This ledger maps canonical design sources to the stable capabilities in the [Fir
 
 - Source-set allocation and the declared coverage summary are mechanically checked by [`check-design-capability-allocation.py`](../../../dev-tools/validation/check-design-capability-allocation.py); the complete gate contract is listed in the [design-alignment workstream](./README.md#automated-gates).
 - Focused validation run on 2026-07-30: `python3 dev-tools/validation/check-design-capability-allocation.py` returned `design capability allocation passed: 223 sources (220 allocated, 3 explicit exemptions)`.
-- Markdown/link validation on 2026-07-30: `linkCheck` checked 3,492 links with 0 errors; `lintMarkdown` checked 407 files with 0 issues.
+- Markdown/link validation on 2026-07-31: `linkCheck` checked 3,496 links with 0 errors; `lintMarkdown` checked 407 files with 0 issues.
 - Runtime proof is not applicable to this documentation-only allocation change.
 - Implementation and verification evidence do not belong in this allocation ledger. The canonical capability reconciliation and focused-proof anchors are maintained in [capability implementation reconciliation](./capability-implementation-reconciliation.md) and the permanent implementation trackers.
 

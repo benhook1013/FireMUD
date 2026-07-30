@@ -91,7 +91,7 @@ class LoggingAdminApplicationIntegrationTest {
     assertThat(
             requestMappingHandlerMapping.getHandlerMethods().keySet().stream()
                 .flatMap(mapping -> mapping.getPatternValues().stream()))
-        .doesNotContain("/reports");
+        .noneMatch(pattern -> pattern.equals("/reports") || pattern.startsWith("/reports/"));
   }
 
   @Test

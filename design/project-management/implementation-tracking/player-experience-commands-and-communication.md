@@ -73,7 +73,7 @@ This section records implementation and proof status only. The target command, p
 
 ### Validation and Proof
 
-- **Confirmed locally (2026-07-31):** `./gradlew linkCheck lintMarkdown` completed successfully: 3,495 total links, 0 errors; Markdown covered 407 files, 0 issues. Recorded focused evidence covers parser/interpreter and registry behavior, capability gates, HELP/HISTORY, WebSocket/Telnet parity, LOOK, prompts, localization, transcript/reconnect, social/presence/privacy, communication, moderation, and frontend baseline behavior. Prior recorded successful checks include `spotlessApply`, focused service checks, and locked full checks for touched services. No hosted artifact URL is claimed.
+- **Confirmed locally (2026-07-31):** `./gradlew linkCheck lintMarkdown` completed successfully: 3,496 total links, 0 errors; Markdown covered 407 files, 0 issues. Recorded focused evidence covers parser/interpreter and registry behavior, capability gates, HELP/HISTORY, WebSocket/Telnet parity, LOOK, prompts, localization, transcript/reconnect, social/presence/privacy, communication, moderation, and frontend baseline behavior. Prior recorded successful checks include `spotlessApply`, focused service checks, and locked full checks for touched services. No hosted artifact URL is claimed.
 - **Partial:** Capability rows marked `drift-found` or naming remaining proof gaps retain only the bounded evidence stated in those rows; that evidence does not prove the unresolved boundary.
 - **Unrun:** No additional repository-wide validation result is recorded beyond the checks above.
 - **Unavailable:** A repository-wide `check` was blocked by the local native Docker CLI. This is a validation limitation, not a product behavior claim.

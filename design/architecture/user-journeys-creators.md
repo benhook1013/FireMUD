@@ -56,7 +56,7 @@ Each new game maps to a tenant (`tenantId`) under the [Multi-Tenancy](./system-a
 For v1, the creator lifecycle is:
 
 1. **Create a Draft Tenant** – A creator can create and edit a tenant before paying for production gameplay. Draft tenants support authoring and internal setup but do not expose a public production realm.
-2. **Assign Roles** – `designer` authors content and publishes versions. `tenantAdmin` owns tenant runtime lifecycle for that tenant: launching the production realm, creating playtest forks, pinning script patches, initiating cutovers, and rolling back. `platformAdmin` can override these actions for platform incidents or support.
+2. **Assign Roles** – `designer` authors content and publishes versions. `tenantAdmin` owns tenant runtime lifecycle for that tenant: launching the production realm, creating playtest forks, pinning script patches, initiating cutovers, and rolling back. A `platformAdmin` emergency override is target/gated rather than current; once supported, it may override these actions only for platform incidents or support through the separately authorized operator path described below.
 3. **Resolve Billing and Go-Live Readiness** – Before the first public production realm is started, the tenant must satisfy plan/entitlement requirements and have at least one published version ready to launch. The Account Service owns the runtime entitlement source of truth consumed by launch and admission; the creator-facing UX must expose enough billing-safe controls for `tenantAdmin` users to choose or repair a hosting plan, view high-level entitlement status, and understand why launch is blocked without requiring operator intervention.
 
 ```plaintext

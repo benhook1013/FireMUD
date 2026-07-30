@@ -44,7 +44,7 @@ dev_demo_workflow = dev_demo_workflow_path.read_text(encoding="utf-8")
 try:
     workflow = yaml.safe_load(dev_demo_workflow)
 except yaml.YAMLError as exc:
-    raise AssertionError(f"dev-demo workflow is not valid YAML: {exc}") from exc
+    raise AssertionError("dev-demo workflow is not valid YAML") from exc
 
 jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
 if not isinstance(jobs, dict) or "dev-demo-deploy" not in jobs:
@@ -513,7 +513,7 @@ if not workflow_path.is_file():
 try:
     workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
 except yaml.YAMLError as exc:
-    raise AssertionError(f"dev-demo workflow is not valid YAML: {exc}") from exc
+    raise AssertionError("dev-demo workflow is not valid YAML") from exc
 jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
 if not isinstance(jobs, dict):
     raise AssertionError("dev-demo workflow must define jobs as a mapping")
@@ -729,7 +729,12 @@ except ValueError as exc:
     raise AssertionError(
         "dev-demo bootstrap step must contain the expected pod manifest heredoc"
     ) from exc
-bootstrap_pod = yaml.safe_load(bootstrap_manifest[manifest_start:manifest_end])
+try:
+    bootstrap_pod = yaml.safe_load(bootstrap_manifest[manifest_start:manifest_end])
+except yaml.YAMLError as exc:
+    raise AssertionError(
+        "dev-demo bootstrap pod manifest heredoc is not valid YAML"
+    ) from exc
 if not isinstance(bootstrap_pod, dict) or not isinstance(
     bootstrap_pod.get("spec"), dict
 ):
@@ -938,6 +943,9 @@ def shell_group_tokens(line):
 
 
 def grouped_command_start(lines, index, target_match):
+    attached_tokens = shell_group_tokens(lines[index][: target_match.start()])
+    if not attached_tokens or attached_tokens[-1] not in "})":
+        return None
     depth = 0
     saw_closing_group = False
     for candidate in range(index, -1, -1):
@@ -1056,6 +1064,8 @@ for secret_pipeline in (
         )
 for safe_summary in (
     "echo secret summary",
+    "kubectl get secret demo -o json; cat encoded.txt | base64 -d",
+    "kubectl get secret demo -o json\ncat encoded.txt | base64 -d",
     "kubectl get secret demo -o json | jq -r .metadata.name",
     "kubectl get secret demo -o json; echo base64 -d",
     "kubectl get secret demo -o json\nbase64 -d",
@@ -1107,6 +1117,13 @@ for fixture, expected in (
         "cat <<'UNRELATED'\n"
         "unsafe: $DEMO_SMOKE_PASSWORD\n"
         "UNRELATED\n"
+        'echo "safe summary" >> "$GITHUB_STEP_SUMMARY"',
+        False,
+    ),
+    (
+        "unrelated() {\n"
+        '  echo "unsafe: $DEMO_SMOKE_PASSWORD"\n'
+        "}\n"
         'echo "safe summary" >> "$GITHUB_STEP_SUMMARY"',
         False,
     ),
