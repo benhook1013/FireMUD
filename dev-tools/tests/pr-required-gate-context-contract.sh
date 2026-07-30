@@ -42,7 +42,7 @@ while IFS='|' read -r workflow gate_job_id gate; do
     echo "$workflow must contain required gate job ID $gate_job_id" >&2
     exit 1
   }
-  if ! grep -Fq "    name: $gate" <<<"$gate_block"; then
+  if ! grep -Fxq "    name: $gate" <<<"$gate_block"; then
     echo "$workflow must always emit the required $gate context" >&2
     exit 1
   fi
@@ -54,11 +54,21 @@ while IFS='|' read -r workflow gate_job_id gate; do
     echo "$workflow must call the shared required-gate action" >&2
     exit 1
   }
-  grep -Fq "gate-name: $gate" <<<"$gate_block" || {
+  grep -Fxq "          gate-name: $gate" <<<"$gate_block" || {
     echo "$workflow must pass its required gate name to the shared action" >&2
     exit 1
   }
-  preserve_block="$(awk '/^      - name: Preserve successful required gate on metadata-only edit$/{capture=1} capture{if (/^      - / && $0 != "      - name: Preserve successful required gate on metadata-only edit") exit; print}' <<<"$gate_block")"
+  preserve_block="$(awk '
+    /^      - name: Preserve successful required gate on metadata-only edit$/ {
+      if (found) exit
+      found=1
+      capture=1
+    }
+    capture {
+      if (/^      - / && $0 != "      - name: Preserve successful required gate on metadata-only edit") exit
+      print
+    }
+  ' <<<"$gate_block")"
   if [[ "$workflow" == "smoke.yml" ]]; then
     # shellcheck disable=SC2016 # Assert literal smoke classification output syntax.
     expected_preserve_condition="        if: \${{ steps.smoke_gate_context.outputs.required != 'true' }}"
@@ -74,7 +84,17 @@ while IFS='|' read -r workflow gate_job_id gate; do
     echo "$workflow $gate preservation must retain its metadata-only condition" >&2
     exit 1
   }
-  checkout_block="$(awk '/^      - name: Check out required-gate action$/{capture=1} capture{if (/^      - / && $0 != "      - name: Check out required-gate action") exit; print}' <<<"$gate_block")"
+  checkout_block="$(awk '
+    /^      - name: Check out required-gate action$/ {
+      if (found) exit
+      found=1
+      capture=1
+    }
+    capture {
+      if (/^      - / && $0 != "      - name: Check out required-gate action") exit
+      print
+    }
+  ' <<<"$gate_block")"
   # shellcheck disable=SC2016 # Assert literal trusted pull request base expression.
   grep -Fq '          ref: ${{ github.event.pull_request.base.sha }}' <<<"$checkout_block" || {
     echo "$workflow $gate must load the shared action from the trusted pull request base SHA" >&2
@@ -168,6 +188,10 @@ cat >"$tmp_dir/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 count_file="${GH_RETRY_COUNT_FILE:?}"
+if [[ "$*" != *"/repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs"* ]]; then
+  echo "simulated gh api call did not target the pull request head check-runs endpoint" >&2
+  exit 90
+fi
 if [[ "$*" != *"--paginate"* || "$*" != *"--slurp"* ]]; then
   echo "simulated gh api call omitted pagination/slurp" >&2
   exit 90

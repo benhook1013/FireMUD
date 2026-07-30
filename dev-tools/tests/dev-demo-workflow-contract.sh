@@ -259,6 +259,11 @@ class FakeHttpResponse:
         return b'{"status":"SUCCESS"}'
 
 
+def require(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+
 success_output = StringIO()
 with patch(
     "smoke_common.urllib.request.urlopen", return_value=FakeHttpResponse()
@@ -269,13 +274,17 @@ with patch(
         )
 
 login_request = urlopen.call_args.args[0]
-assert login_request.full_url == "http://account.test/auth/login"
-assert json.loads(login_request.data) == {
-    "username": "demo@example.com",
-    "password": "swordfish",
-}
-assert "SUCCESS" not in success_output.getvalue()
-assert "status 200" in success_output.getvalue()
+require(
+    login_request.full_url == "http://account.test/auth/login",
+    "smoke account verification must use the login endpoint",
+)
+require(
+    json.loads(login_request.data)
+    == {"username": "demo@example.com", "password": "swordfish"},
+    "smoke account verification must send the configured credentials",
+)
+require("SUCCESS" not in success_output.getvalue(), "response bodies must stay redacted")
+require("status 200" in success_output.getvalue(), "success status must be reported")
 
 failure_body = b'{"error":"sensitive upstream detail"}'
 http_error = urllib.error.HTTPError(
@@ -295,10 +304,19 @@ try:
                     "http://account.test", "demo@example.com", "swordfish", 5
                 )
 except RuntimeError as exc:
-    assert str(exc) == "Smoke account validation failed with status 401"
-    assert "sensitive upstream detail" not in str(exc)
-    assert "sensitive upstream detail" not in failure_stdout.getvalue()
-    assert "sensitive upstream detail" not in failure_stderr.getvalue()
+    require(
+        str(exc) == "Smoke account validation failed with status 401",
+        "HTTP failures must report only the response status",
+    )
+    require("sensitive upstream detail" not in str(exc), "failure text leaked response body")
+    require(
+        "sensitive upstream detail" not in failure_stdout.getvalue(),
+        "stdout leaked a failed response body",
+    )
+    require(
+        "sensitive upstream detail" not in failure_stderr.getvalue(),
+        "stderr leaked a failed response body",
+    )
 else:
     raise AssertionError("Expected account validation failure")
 
@@ -329,9 +347,12 @@ with patch(
             verify_smoke_account(
                 "http://account.test", "demo@example.com", "swordfish", 5
             )
-assert retry_urlopen.call_count == 3
-assert sleep.call_count == 2
-assert "sensitive retry detail" not in retry_output.getvalue()
+require(retry_urlopen.call_count == 3, "retryable failures must make three attempts")
+require(
+    [call.args for call in sleep.call_args_list] == [(1,), (1,)],
+    "smoke account retries must retain the bounded one-second delay",
+)
+require("sensitive retry detail" not in retry_output.getvalue(), "retry output leaked response body")
 
 
 non_retryable_error = urllib.error.HTTPError(
@@ -354,13 +375,25 @@ with patch(
                     "http://account.test", "demo@example.com", "swordfish", 5
                 )
     except RuntimeError as exc:
-        assert str(exc) == "Smoke account validation failed with status 400"
-        assert "sensitive non-retryable detail" not in str(exc)
-        assert "sensitive non-retryable detail" not in non_retryable_stdout.getvalue()
-        assert "sensitive non-retryable detail" not in non_retryable_stderr.getvalue()
+        require(
+            str(exc) == "Smoke account validation failed with status 400",
+            "non-retryable HTTP failures must report only the response status",
+        )
+        require(
+            "sensitive non-retryable detail" not in str(exc),
+            "non-retryable failure text leaked response body",
+        )
+        require(
+            "sensitive non-retryable detail" not in non_retryable_stdout.getvalue(),
+            "non-retryable stdout leaked response body",
+        )
+        require(
+            "sensitive non-retryable detail" not in non_retryable_stderr.getvalue(),
+            "non-retryable stderr leaked response body",
+        )
     else:
         raise AssertionError("Expected non-retryable account validation failure")
-assert non_retryable_urlopen.call_count == 1
+require(non_retryable_urlopen.call_count == 1, "HTTP 400 must not be retried")
 
 print("dev-demo workflow contract checks passed")
 PY

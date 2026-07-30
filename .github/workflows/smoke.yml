@@ -204,7 +204,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       checks: read # Preserve a prior successful required context on metadata-only edits.
-      contents: read # Read repository metadata used by the workflow context.
+      contents: read # Check out the shared required-gate composite action.
       actions: read # Inspect matching runtime-image workflow and job results.
       pull-requests: read # Re-read the current PR head and base before accepting smoke.
     needs: [changes]

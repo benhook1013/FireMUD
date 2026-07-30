@@ -559,6 +559,11 @@ require_contains "$smoke_path" 'github.rest.actions.listJobsForWorkflowRun'
 require_contains "$smoke_path" 'job.name === "PR Full-Stack Smoke"'
 require_contains "$smoke_path" 'fullSmokeJob?.status === "completed"'
 require_contains "$smoke_path" 'fullSmokeJob?.conclusion !== "success"'
+require_ordered_sequence \
+  "$smoke_path" \
+  'if (fullSmokeJob?.status === "completed") {' \
+  'if (fullSmokeJob?.conclusion !== "success") {' \
+  'PR Full-Stack Smoke job did not complete successfully:'
 # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
 require_contains "$smoke_path" 'SMOKE_GATE_REQUIRED: ${{ github.event.action != '\''edited'\'' || github.event.changes.base.ref != null }}'
 # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
