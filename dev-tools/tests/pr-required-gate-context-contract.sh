@@ -27,6 +27,10 @@ fi
 while IFS='|' read -r workflow gate_job_id gate; do
   [[ -n "$workflow" ]] || continue
   path="$ROOT_DIR/.github/workflows/$workflow"
+  [[ -f "$path" ]] || {
+    echo "required-gate caller workflow is missing: $path" >&2
+    exit 1
+  }
   gate_block="$(awk -v expected_job_id="$gate_job_id" '
     /^  [A-Za-z0-9_-]+:$/ {
       if (capture) {
@@ -394,10 +398,10 @@ for failure_mode in permanent permission; do
   }
 done
 
-latest_pending_count="$tmp_dir/count-latest-pending-preferred"
-run_action "$latest_pending_count" none latest-pending-preferred
-[[ "$(<"$latest_pending_count")" == "2" ]] || {
-  echo "required-gate action did not honor the chronologically latest prior run state" >&2
+successful_predecessor_count="$tmp_dir/count-successful-predecessor-preferred"
+run_action "$successful_predecessor_count" none latest-pending-preferred
+[[ "$(<"$successful_predecessor_count")" == "1" ]] || {
+  echo "required-gate action did not preserve an existing success while a concurrent run was pending" >&2
   exit 1
 }
 
@@ -415,6 +419,11 @@ run_action "$alternate_pending_count" none alternate-pending
   exit 1
 }
 
+max_attempts="$(sed -n 's/^max_attempts=\([1-9][0-9]*\)$/\1/p' <<<"$action_script")"
+[[ "$max_attempts" =~ ^[1-9][0-9]*$ ]] || {
+  echo "required-gate action must define one positive max_attempts polling bound" >&2
+  exit 1
+}
 timeout_output="$tmp_dir/timeout-output"
 set +e
 run_action "$tmp_dir/count-timeout" none timeout-pending >"$timeout_output" 2>&1
@@ -424,8 +433,8 @@ set -e
   echo "required-gate action accepted a predecessor that never completed" >&2
   exit 1
 }
-[[ "$(<"$tmp_dir/count-timeout")" == "80" ]] || {
-  echo "required-gate action did not retain its bounded polling limit" >&2
+[[ "$(<"$tmp_dir/count-timeout")" == "$max_attempts" ]] || {
+  echo "required-gate action did not retain its ${max_attempts}-attempt polling limit" >&2
   exit 1
 }
 grep -Fq 'Timed out waiting for the relevant prior' "$timeout_output" || {
