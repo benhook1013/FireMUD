@@ -450,11 +450,17 @@ def validate_supersession(
             f"{context}: 'Supersession' section must contain exactly one "
             "valid 'Replacement ADR' entry"
         )
+    replacement_number = int(entry.group("number"))
+    if replacement_number == number:
+        fail(
+            f"{context}: Supersession replacement ADR must not self-reference "
+            f"ADR {number:04d}"
+        )
     validate_replacement_adr_target(
         path,
         adr_dir,
         section_lines[0].number,
-        int(entry.group("number")),
+        replacement_number,
         entry.group("target"),
         relationship="Supersession replacement ADR",
     )
@@ -672,12 +678,10 @@ def validate(root: Path = ROOT) -> None:
             bool(linked_reviews),
         )
         has_decision_record = (
-            re.search(
-                r"^## Decision Record[ \t]*\r?$",
-                text,
-                flags=re.MULTILINE,
+            any(
+                re.fullmatch(r"## Decision Record[ \t]*", line.text)
+                for line in visible_markdown_lines(text)
             )
-            is not None
         )
         if number in PRE_FORMAL_REVIEW_RECORDS and not has_decision_record:
             fields = {}

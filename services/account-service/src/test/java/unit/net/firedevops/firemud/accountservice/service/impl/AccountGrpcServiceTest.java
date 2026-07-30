@@ -528,7 +528,17 @@ class AccountGrpcServiceTest {
     Mockito.when(accountService.getTenantMembershipForRuntime(2L, 1L, "req-1"))
         .thenReturn(
             new net.firedevops.firemud.accountservice.dto.RuntimeMembershipDto(
-                2L, 1L, true, 44L, "2026-03-30T00:00:00Z"));
+                2L,
+                1L,
+                List.of("player", "tenantAdmin"),
+                true,
+                44L,
+                8L,
+                "{\"membershipAuthorityGeneration\":8}",
+                "2026-03-30T00:00:00Z",
+                List.of(
+                    new net.firedevops.firemud.accountservice.dto.RuntimeOutboxCheckpointDto(
+                        "account:auth-authority:v1:membership/2/1", 12L))));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
     AtomicReference<GetTenantMembershipForRuntimeResponse> ref = new AtomicReference<>();
@@ -554,7 +564,13 @@ class AccountGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals("2", ref.get().getAccountId());
     assertTrue(ref.get().getGameplayAdmissionAllowed());
+    assertEquals(List.of("player", "tenantAdmin"), ref.get().getRolesList());
     assertEquals(44L, ref.get().getMembershipVersion());
+    assertEquals(8L, ref.get().getMembershipAuthorityGeneration());
+    assertEquals(
+        "{\"membershipAuthorityGeneration\":8}", ref.get().getAuthorityTuple().getCanonicalJson());
+    assertEquals(1, ref.get().getOutboxCheckpointsCount());
+    assertEquals(12L, ref.get().getOutboxCheckpoints(0).getOutboxSequence());
   }
 
   @Test

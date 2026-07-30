@@ -6,6 +6,8 @@ The authoritative REST schema source lives in [../../../../services/account-serv
 
 ## Implementation Status
 
+`CommitTenantCapacityAdmission` is target-only. Its canonical request contract requires the stable identity, expected authority tuple, capacity delta, and versioned `mutationDigest`, but no proto RPC, durable authority/usage ledger, caller integration, or reservation-finalization path is implemented. The target replay rule is exact identity-and-payload replay with changed delta, tuple, or digest producing an idempotency conflict; implementation and focused proof remain future capability work rather than a nonfunctional service seam.
+
 The account lifecycle API, export surfaces, and deletion-precondition contracts are defined at the current Account Service boundary, but lifecycle state-transition execution remains partial as recorded in [Runtime & Data](./runtime-and-data.md). Account is the authority and transaction boundary for the committed transition, authority-generation/version advance, and durable event/outbox evidence. Downstream revocation, projection, cleanup, and provider reconciliation are ordered transition execution; partial downstream completion must be reported separately and must not be mistaken for a rolled-back lifecycle state or completed enforcement outcome. The current `GET /accounts/{accountId}/export` and `ExportAccount` implementation is Account/profile-local; the canonical target portable-data export lifecycle is `POST /accounts/{accountId}/exports` followed by the stable status and content resources defined below. `ExportTenantData` targets the separate tenant-admin route `GET /tenant-admin/tenants/{tenantId}/export`, which is tenant-wide and selects no account subject; the current account-targeted gRPC and legacy tenant-export wiring remain implementation drift. Password reset, username reminder, and email-verification tokens are account-scoped rather than tenant-keyed. Profiles are tenant-scoped under ADR 0042, so the current account-only `/profiles/{accountId}` route/classification remains implementation drift pending direct convergence on tenant-qualified routes. Explicit `JOIN` / `Join & Play` is not implemented: current connect-token and `PLAY` paths may invoke `EnsurePublicProductionPlayerMembership` implicitly. That is recorded drift; the target contracts below require an explicit join and return `JOIN_REQUIRED` from later admission surfaces when membership is absent. `/auth/player-bootstrap` is account-first and factor-aware, and the browser connect-token body and OpenAPI response are metadata-only and carry the raw token only in the HttpOnly cookie. The registry-backed issuance, refresh, revocation, durable retry, and authority-generation behaviors below are target state, including the contracts for `Authenticate`, `RefreshGameplayServiceToken`, `/auth/player-bootstrap`, `/auth/logout`, and `/auth/logout-all`; `/auth/login` is currently routable but still lacks the complete registry-backed target behavior. Current Account sessions use the legacy `session:auth:account:<accountId>:<tokenHash>` key and, for tenant-scoped sessions, the companion `session:auth:tenant:<tenantId>:<tokenHash>` key rather than the canonical single `session:auth:token:<tokenHash>` registry record. Current REST DTOs/OpenAPI still retain numeric account and tenant IDs, so migration to ADR 0020 UUID wire identities remains incomplete. Scoped-role population and tenant-switching proof are also target-state work: current `authenticate` issuance provides `globalRoles` but does not yet populate or prove `scopedRoles[tenantId]` as authorization evidence.
 
 ### Current vs Target Export Lifecycle
@@ -28,7 +30,7 @@ The target lifecycle is the asynchronous `POST /accounts/{accountId}/exports` op
 - `UpdateProfile` – modifies the caller's profile relationship for one explicit tenant under the same tenant-scoped `tenant_regular` authorization and caller-subject binding; it requires one of `player`, `moderator`, `designer`, or `tenantAdmin` in `scopedRoles[tenantId]` and triggers notification emails. Account holders may select `PUBLIC`, `FRIENDS_ONLY`, or `PRIVATE` presence visibility; `HIDDEN_STAFF` remains reserved for the staff-visibility owner and cannot be set through ordinary profile writes. `platformAdmin` is not an override.
 - `ListPresenceVisibilityPolicies` – bounded internal bulk read of current tenant-scoped profile visibility policy for up to 100 account IDs. Social projections consume this authority at read time; unknown or unavailable entries are intentionally omitted so callers apply complete `PRIVATE` redaction.
 - `ExportAccount` – **target-state RPC** equivalent of `POST /accounts/{accountId}/exports`; starts or reads an asynchronous versioned portable-data export manifest within the defined account scope across all owning services. Complete, partial, omitted, redacted, unavailable, retryable, failed, and separately retained owner contributions remain explicit in the manifest; this is not a promise of every account-related record or secret. The current implementation behind this method remains the local legacy export described above.
-- `CommitTenantCapacityAdmission` – **target-state internal RPC** called only by Game Session or World Management after a fresh entitlement evaluation. Account compares the caller's exact tenant authority generation, billing sequence, entitlement version, bounded capacity delta, and stable idempotency identity in one transaction before creating or replaying the reservation; stale tuples, exhausted quota, unavailable authority, and changed retry digests fail closed.
+- `CommitTenantCapacityAdmission` – **target-state internal RPC** called only by Game Session or World Management after a fresh entitlement evaluation. The request carries `tenantId`, stable `requestId` and `admissionId`, the expected canonical authority tuple, a bounded capacity delta, and required versioned `mutationDigest`. Account compares the exact `(tenantId, requestId, admissionId)` identity and complete payload in one transaction before creating or replaying the reservation; the same identity plus identical tuple, delta, and digest replays, while a changed tuple, delta, or digest is an idempotency conflict. Stale tuples, exhausted quota, unavailable authority, malformed identity, and conflicting retries fail closed. No proto RPC, caller integration, durable usage ledger, or reservation lifecycle is implemented yet.
 - `ExportTenantData` – tenant-wide billing-safe export for one tenant, available to the caller's live `tenantAdmin` membership while gameplay is billing-blocked and limited to tenant-owned exportable records plus minimum stable subject references. The target request is tenant-only; the current account-targeted gRPC request is implementation drift.
 - `DeleteAccount` – begins or completes global account deletion according to the account lifecycle state machine; it is not a tenant-scoped membership deletion.
 - Pending-deletion access is a separate opaque Account credential, not a JWT or normal account session. The non-export deletion-specific routes are `GET /accounts/{accountId}/deletion`, `POST /accounts/{accountId}/deletion/cancel`, and `POST /accounts/{accountId}/deletion/billing-settlement`; each is classified `pending_deletion_scoped` for its exact action and bound to the Account-owned deletion workflow registry. The account export lifecycle is state-dependent but always uses the canonical asynchronous `POST /accounts/{accountId}/exports`, `GET /accounts/{accountId}/exports/{exportId}`, and `GET /accounts/{accountId}/exports/{exportId}/content` resources: active accounts use the ordinary authenticated account subject, while pending-deletion accounts use the pending-deletion credential and `pending_deletion_scoped` classification on that same lifecycle. These target routes are not currently routable.
@@ -157,9 +159,11 @@ Every tenant-targeted request identifies its tenant in the route or request cont
 
 `POST /auth/bootstrap/worlds/{world}/realms/{realm}/characters` is the canonical player-facing character-creation facade. Account derives the caller from the bootstrap token, resolves and authorizes the selected realm, then delegates the scoped write to Entity Management `CreateCharacter`; it does not persist character state itself.
 
-| Authenticated account control-plane APIs | Current legacy `/accounts/{accountId}/export`; target `/auth/logout`, `/auth/logout-all`, `/tenants/{tenantId}/profiles/{accountId}`, active-account `/accounts/{accountId}/exports/**`, `/accounts/{accountId}`, `/tenants/{tenantId}/memberships/me`, `/tenants/{tenantId}/memberships/{accountId}`, `/tenant-admin/tenants/{tenantId}/export` | Exact ordinary account subject through the declared `control-ui` JWT route class | This is the target authentication class only while the account remains eligible for ordinary authority. The current singular legacy export is classified here as an ordinary authenticated account-subject route; the target export lifecycle uses the authenticated account subject while active. The REST inventory identifies which routes are currently implemented and which remain target-only. |
+| Authenticated account control-plane APIs | Current legacy `/accounts/{accountId}/export`; target `/auth/logout`, `/auth/logout-all`, `/tenants/{tenantId}/profiles/{accountId}`, active-account `/accounts/{accountId}/exports/**`, `/accounts/{accountId}`, `/tenants/{tenantId}/memberships/me`, `/tenants/{tenantId}/memberships/{accountId}` | Exact ordinary account subject through the declared `control-ui` JWT route class | This is the target authentication class only while the account remains eligible for ordinary authority. The current singular legacy export is classified here as an ordinary authenticated account-subject route; the target export lifecycle uses the authenticated account subject while active. The REST inventory identifies which routes are currently implemented and which remain target-only. |
+| Tenant-admin billing-safe export | `/tenant-admin/tenants/{tenantId}/export` | Exact `control-ui` caller with live `tenantAdmin` membership bound to the `{tenantId}` route segment | `billing_safe_tenant` classification. The route has a tenant binding but no `accountId` subject selector, requires live membership and membership-generation evidence, and remains target-only/not currently routable. |
 | Pending-deletion access | `/accounts/{accountId}/deletion`, `/accounts/{accountId}/deletion/cancel`, `/accounts/{accountId}/exports/**`, `/accounts/{accountId}/deletion/billing-settlement` | Opaque `pending-deletion-access` credential through the Account-owned workflow registry | Target-only exact `pending_deletion_scoped` route classification for deletion-specific routes and the canonical asynchronous export lifecycle. Once the account enters pending deletion, this row takes precedence over ordinary control-plane classification: `control-ui` authority is revoked and cannot access export or any other pending-deletion route. |
-| Internal service gRPC | `Authenticate`, `GetCallerTenantMembership`, `GetTenantMembershipForAccount`, `GetTenantMembershipForRuntime`, `GetTenantEntitlementsForRuntime`, `CommitTenantCapacityAdmission`, `ListPresenceVisibilityPolicies`, payment and profile gRPC APIs | mTLS caller identity plus method-level auth policy | Internal service surfaces are not edge-exposed directly. |
+| Internal service gRPC | `Authenticate`, `GetCallerTenantMembership`, `GetTenantMembershipForAccount`, `GetTenantMembershipForRuntime`, `GetTenantEntitlementsForRuntime`, `ListPresenceVisibilityPolicies`, payment and profile gRPC APIs | mTLS caller identity plus method-level auth policy | Internal service surfaces are not edge-exposed directly. |
+| Target internal capacity RPC | `CommitTenantCapacityAdmission` | Exact Game Session or World Management mTLS identity plus method-level caller policy | Target-only and not present in the current proto or service implementation. |
 
 `/auth/login` and `/auth/player-bootstrap` may share the same underlying credential-verification and abuse-policy implementation, but they are separate authentication products. `/auth/login` establishes a `control-ui` control-plane session for admin/creator surfaces; `/auth/player-bootstrap` establishes only the short-lived `player-bootstrap` gameplay-discovery context. Neither endpoint may substitute one profile for the other.
 
@@ -182,7 +186,19 @@ The character-creation facade is included in the player-bootstrap authentication
 
 The internal runtime auth/admission methods must return deterministic response fields because gameplay admission, reconnect, and entitlement freshness rules depend on them.
 
-Illustrative `GetTenantMembershipForRuntime(accountId, tenantId)` response:
+Canonical `GetTenantMembershipForRuntime(accountId, tenantId, requestId)` request:
+
+```json
+{
+  "accountId": 42,
+  "tenantId": 7,
+  "requestId": "membership-read-7f3f"
+}
+```
+
+The request identity is the exact account/tenant scope plus the caller's stable request ID; it is not an account-subject route selector supplied by an end user. The response is authoritative only when all fields below are evaluated for that same request.
+
+Canonical `GetTenantMembershipForRuntime(accountId, tenantId, requestId)` response:
 
 ```json
 {
@@ -192,7 +208,14 @@ Illustrative `GetTenantMembershipForRuntime(accountId, tenantId)` response:
   "roles": ["player"],
   "membershipVersion": 42,
   "membershipAuthorityGeneration": 8,
-  "evaluatedAt": "2026-03-13T09:15:30Z"
+  "authorityTuple": { "canonicalJson": "<complete-applicable-authority-tuple>" },
+  "evaluatedAt": "2026-03-13T09:15:30Z",
+  "outboxCheckpoints": [
+    {
+      "outboxStreamKey": "account:auth-authority:v1:membership/42/7",
+      "outboxSequence": 12
+    }
+  ]
 }
 ```
 
@@ -201,7 +224,9 @@ Required semantics:
 - `gameplayAdmissionAllowed` is the authoritative boolean for gameplay admission.
 - `membershipVersion` advances monotonically for the `{accountId, tenantId}` membership scope whenever gameplay-relevant membership or role authority changes.
 - `membershipAuthorityGeneration` advances whenever membership or tenant-role authority issued to the caller must be invalidated; it is the authority fence for caller-bound tokens and control-plane admission, and is distinct from the membership content/version counter.
+- `authorityTuple` is the complete applicable Account authority tuple used for this snapshot; it is not reconstructed from membership version or a caller-provided value.
 - `evaluatedAt` timestamps the live membership decision used for admission or resume.
+- `outboxCheckpoints` includes the matching Account authority stream checkpoint for `account:auth-authority:v1:membership/<accountId>/<tenantId>`. The checkpoint, tuple, membership version, roles, and admission flag must come from one authoritative snapshot or transaction.
 - `GetTenantMembershipForRuntime` is an internal-only gameplay/runtime authority surface and must not be reused as a caller-facing tenant membership endpoint or as a substitute for `GetCallerTenantMembership`.
 
 Illustrative `GetRealmAccessGrant(accountId, tenantId, worldSlug, realmSlug)` response:

@@ -161,7 +161,7 @@ def set_review_status(root: Path, status: str, disposition: str) -> None:
     )
     if status == "Superseded":
         text += "\n## Supersession\n\n"
-        text += "- Replacement ADR: [ADR 0012](./adr-0012-reviewed.md)\n"
+        text += "- Replacement ADR: [ADR 0013](./adr-0013-pending.md)\n"
     path.write_text(text, encoding="utf-8")
 
 
@@ -497,6 +497,21 @@ class AdrReviewStatusTests(unittest.TestCase):
                 self,
                 lambda: self.validator.validate(root),
                 "replacement ADR 0013 does not match target",
+            )
+
+    def test_supersession_section_rejects_self_reference_before_target_validation(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            add_formal_superseded_adr(
+                root,
+                "- Replacement ADR: [ADR 0014](./missing-replacement.md)",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "Supersession replacement ADR must not self-reference ADR 0014",
             )
 
     def test_supersession_section_requires_canonical_target_directory(self) -> None:
@@ -929,6 +944,22 @@ class AdrReviewStatusTests(unittest.TestCase):
             self.assertEqual(
                 "Completed",
                 self.validator.review_fields(text)["Human review status"],
+            )
+            self.validator.validate(root)
+
+    def test_fenced_decision_record_heading_does_not_select_review_fields(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = root / "design/architecture/decisions/adr-0001-legacy.md"
+            path.write_text(
+                "# ADR 0001\n\n"
+                "## Status\n\n"
+                "Accepted\n\n"
+                "```text\n"
+                "## Decision Record\n\n"
+                "- Human review status: Completed\n"
+                "```\n",
+                encoding="utf-8",
             )
             self.validator.validate(root)
 

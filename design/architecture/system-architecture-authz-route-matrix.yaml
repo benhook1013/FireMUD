@@ -737,6 +737,9 @@ routes:
     token_type: gameplay_handshake
     token_issuer: firemud-account-service
     token_audience: gameplay-connect
+    issued_token_state: none_bounded_single_use_replay_exception
+    issuer_authority_generation_applies: false
+    account_authority_generation_applies: false
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
     accepted_carriers: [first_party_cookie]
@@ -1654,7 +1657,7 @@ routes:
     delegated_subject: instance_lifecycle_context
     end_user_token_required: false
     required_fields:
-      [tenant_id, request_id, mutation_digest, expected_tenant_authority_generation, expected_tenant_billing_sequence, expected_entitlement_version, capacity_delta]
+      [tenant_id, request_id, admission_id, expected_authority_tuple, capacity_delta, mutation_digest]
     required_live_checks: [tenant_generation, runtime_entitlements, capacity_admission_fence, idempotency]
     mutation_contract: account_owned_fenced_capacity_reservation_create_or_replay
     canonical_errors:
@@ -1706,16 +1709,16 @@ routes:
     route: ExportTenantData
     http_route: GET /tenant-admin/tenants/{tenantId}/export
     scope: tenant
-    classification: tenant_regular
+    classification: billing_safe_tenant
     route_status: target_not_currently_routable
     subject_binding: tenant_path_only_no_account_subject
     accepted_token_profiles: [control-ui]
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
-    tenant_billing_authority_generation_applies: true
+    tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [issuer_generation, account_generation, tenant_generation, membership_generation, membership]
+    required_live_checks: [issuer_generation, account_generation, membership_generation, membership]
     response_profile: tenant_wide_tenant_owned_export
     response_contract: tenant_owned_records_with_minimum_stable_subject_references_only
     implementation_status:

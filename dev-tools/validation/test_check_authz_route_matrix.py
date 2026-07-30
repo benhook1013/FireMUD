@@ -884,12 +884,15 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
         )
 
-    def test_export_tenant_data_is_tenant_generation_bound(self):
+    def test_export_tenant_data_is_billing_safe_and_membership_bound(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = route_for(document, "account-service", "ExportTenantData")
-        self.assertEqual("tenant_regular", route["classification"])
-        self.assertTrue(route["tenant_billing_authority_generation_applies"])
-        self.assertIn("tenant_generation", route["required_live_checks"])
+        self.assertEqual("billing_safe_tenant", route["classification"])
+        self.assertFalse(route["tenant_billing_authority_generation_applies"])
+        self.assertNotIn("tenant_generation", route["required_live_checks"])
+        self.assertTrue(route["membership_authority_generation_applies"])
+        self.assertIn("membership_generation", route["required_live_checks"])
+        self.assertIn("membership", route["required_live_checks"])
 
     def test_play_rechecks_membership_generation(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -2077,6 +2080,15 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         route = route_for(
             document, "spring-cloud-gateway", "POST /ws/game/connect-token/revoke"
         )
+        self.assertEqual(
+            self.validator.GAMEPLAY_CONNECT_ISSUED_TOKEN_STATE,
+            route["issued_token_state"],
+        )
+        for field in (
+            "issuer_authority_generation_applies",
+            "account_authority_generation_applies",
+        ):
+            self.assertFalse(route[field])
         for field in self.validator.REQUIRED_REVOKE_GENERATION_APPLICABILITY:
             self.assertFalse(route[field])
 

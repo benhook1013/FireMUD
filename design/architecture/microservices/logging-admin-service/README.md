@@ -6,13 +6,13 @@ Centralized logging and administration tools for the platform. The service colle
 
 ## Implementation Status
 
-Logging & Admin owns moderation policy persistence, evaluation, and audit. `GAMEPLAY_ADMISSION` is the gameplay enforcement decision boundary consumed by Game Session, and `CHAT_SEND` is the chat enforcement decision boundary consumed by Social & Groups; applicable high-risk decisions fail closed when a fresh policy result is unavailable. Versioned snapshot/event propagation and broader owner-side enforcement remain missing. `/moderation/actions` and `ApplyModerationAction` are live authenticated implementation paths for persistence and audit only: they persist accepted moderation policy input and audit records but do not perform owner-side enforcement. They remain unavailable as supported owner-side enforcement mutations until their action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account authorization-reference issuance/redemption flow all exist. The separate `EvaluateModerationPolicy` read remains live for the two enforcement boundaries. Per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` forwarding is implemented, but it is unavailable under the same three-part gate. `ToggleFeatureFlag` is unavailable under that gate as well. Regional reset and general remediation are not live capabilities.
+Logging & Admin owns target-state moderation policy persistence, evaluation, and audit. `GAMEPLAY_ADMISSION` is the gameplay enforcement decision boundary consumed by Game Session, and `CHAT_SEND` is the chat enforcement decision boundary consumed by Social & Groups; applicable high-risk decisions fail closed when a fresh policy result is unavailable. Versioned snapshot/event propagation and broader owner-side enforcement remain missing. `/moderation/actions` and `ApplyModerationAction` are gated/unavailable and currently persist neither the `moderation_actions` record nor audit evidence, and do not perform owner-side enforcement. They remain unavailable pending their action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account authorization-reference issuance/redemption flow. The separate `EvaluateModerationPolicy` read remains live at the Game Session and Social & Groups owner boundaries. Per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` forwarding is implemented, but it is unavailable under the same three-part gate. `ToggleFeatureFlag` is unavailable under that gate as well. Regional reset and general remediation are not live capabilities.
 
 ## Responsibilities
 
 - Aggregate logs from every microservice via Fluent Bit sidecars and expose search APIs.
 - Offer dashboards and search for operators and moderators by embedding Kibana and Grafana views.
-- Define moderation policy, record moderation actions, and keep auditable moderation records.
+- Define moderation policy and, in the target state, persist moderation actions and keep auditable moderation records.
 - Record audit trails for feature flag changes and account events.
 - Monitor coordination and tick health across tenant and region scopes. Automated per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` forwarding exists but remains unavailable pending the action schema, shared digest vectors, and Account authorization-reference issuance/redemption; regional pause/resume, regional reset, and broader/general remediation remain target-only.
 
@@ -24,7 +24,7 @@ Logging & Admin owns moderation policy persistence, evaluation, and audit. `GAME
 - [Role-based admin UI](./admin-ui.md) for moderators.
 - [Moderation policies](./moderation-policies.md) including profanity filters.
 - Target-only UI for requesting runtime feature-flag overrides through owning domain control-plane APIs; `ToggleFeatureFlag` is not externally supported until the three-part mutation gate is complete.
-- Audit trail for account actions, world changes, and moderation actions.
+- Audit trail for account actions and world changes; target-state audit trail for moderation actions.
 - Transaction logs for purchases and subscription events.
 - Operator review of failed login attempts and suspicious activity reported by Game Session.
 - Automated alerts for suspicious activity via Alertmanager.

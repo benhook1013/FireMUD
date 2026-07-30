@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -1162,6 +1163,10 @@ class AccountServiceImplTest {
     assertEquals(7L, dto.tenantId());
     assertTrue(dto.gameplayAdmissionAllowed());
     assertEquals(711L, dto.membershipVersion());
+    assertTrue(dto.roles().isEmpty());
+    assertNull(dto.membershipAuthorityGeneration());
+    assertNull(dto.authorityTupleJson());
+    assertTrue(dto.outboxCheckpoints().isEmpty());
     assertNotNull(dto.evaluatedAt());
   }
 

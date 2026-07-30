@@ -8,6 +8,7 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.AuthorityTuple;
 import net.firedevops.firemud.account.v1.CreateAccountRequest;
 import net.firedevops.firemud.account.v1.CreateAccountResponse;
 import net.firedevops.firemud.account.v1.DeleteAccountRequest;
@@ -26,6 +27,7 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.account.v1.OutboxCheckpoint;
 import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpRequest;
@@ -221,10 +223,28 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           GetTenantMembershipForRuntimeResponse.newBuilder()
               .setAccountId(String.valueOf(dto.accountId()))
               .setTenantId(String.valueOf(dto.tenantId()))
+              .addAllRoles(dto.roles())
               .setGameplayAdmissionAllowed(dto.gameplayAdmissionAllowed())
               .setMembershipVersion(dto.membershipVersion())
               .setEvaluatedAt(dto.evaluatedAt())
               .build();
+      GetTenantMembershipForRuntimeResponse.Builder responseBuilder = response.toBuilder();
+      if (dto.membershipAuthorityGeneration() != null) {
+        responseBuilder.setMembershipAuthorityGeneration(dto.membershipAuthorityGeneration());
+      }
+      if (dto.authorityTupleJson() != null && !dto.authorityTupleJson().isBlank()) {
+        responseBuilder.setAuthorityTuple(
+            AuthorityTuple.newBuilder().setCanonicalJson(dto.authorityTupleJson()).build());
+      }
+      dto.outboxCheckpoints()
+          .forEach(
+              checkpoint ->
+                  responseBuilder.addOutboxCheckpoints(
+                      OutboxCheckpoint.newBuilder()
+                          .setOutboxStreamKey(checkpoint.outboxStreamKey())
+                          .setOutboxSequence(checkpoint.outboxSequence())
+                          .build()));
+      response = responseBuilder.build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {

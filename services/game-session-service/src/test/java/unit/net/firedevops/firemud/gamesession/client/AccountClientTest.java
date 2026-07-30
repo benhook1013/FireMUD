@@ -21,6 +21,9 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.AuthorityTuple;
+import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
+import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
@@ -30,6 +33,7 @@ import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 
 class AccountClientTest {
 
@@ -169,6 +173,41 @@ class AccountClientTest {
 
     assertThat(response).isEqualTo(expected);
     verify(stub).authenticate(any(AuthenticateRequest.class));
+  }
+
+  @Test
+  void runtimeMembershipCallerUsesCanonicalAccountTenantRequestAndPreservesEvidence()
+      throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    GetTenantMembershipForRuntimeResponse expected =
+        GetTenantMembershipForRuntimeResponse.newBuilder()
+            .setAccountId("42")
+            .setTenantId("7")
+            .addRoles("player")
+            .setGameplayAdmissionAllowed(true)
+            .setMembershipVersion(12L)
+            .setMembershipAuthorityGeneration(8L)
+            .setAuthorityTuple(
+                AuthorityTuple.newBuilder()
+                    .setCanonicalJson("{\"membershipAuthorityGeneration\":8}"))
+            .setEvaluatedAt("2026-07-31T00:00:00Z")
+            .build();
+    when(stub.getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
+        .thenReturn(expected);
+    AccountClient client = newClient(stub);
+
+    GetTenantMembershipForRuntimeResponse actual =
+        client.getTenantMembershipForRuntime("42", "7", "membership-request-1");
+
+    ArgumentCaptor<GetTenantMembershipForRuntimeRequest> captor =
+        ArgumentCaptor.forClass(GetTenantMembershipForRuntimeRequest.class);
+    verify(stub).getTenantMembershipForRuntime(captor.capture());
+    assertThat(captor.getValue().getAccountId()).isEqualTo("42");
+    assertThat(captor.getValue().getTenantId()).isEqualTo("7");
+    assertThat(captor.getValue().getRequestId()).isEqualTo("membership-request-1");
+    assertThat(actual).isEqualTo(expected);
   }
 
   @Test
