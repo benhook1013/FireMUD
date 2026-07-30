@@ -423,7 +423,7 @@ def validate_supersession(
     headings = [line for line in visible_lines if heading_re.fullmatch(line.text)]
     allows_supersession = status in {"Superseded", "Withdrawn"}
     if not headings:
-        if status == "Superseded":
+        if status == "Superseded" and number not in PRE_FORMAL_REVIEW_RECORDS:
             fail(
                 f"{context}: formal Superseded ADR requires exactly one "
                 "'Replacement ADR' entry in a 'Supersession' section"
@@ -781,7 +781,7 @@ def validate(root: Path = ROOT) -> None:
             context,
             path,
             adr_dir,
-            status,
+            normalized_status,
             number,
             text,
         )

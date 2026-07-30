@@ -2,14 +2,11 @@ package net.firedevops.firemud.loggingadmin;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.loggingadmin.client.AccountClient;
@@ -18,6 +15,7 @@ import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -25,6 +23,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -46,7 +45,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class LoggingAdminApplicationIntegrationTest {
   private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
   private static final Duration HTTP_REQUEST_TIMEOUT = Duration.ofSeconds(10);
-  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
   private static final JwtUtil JWT_UTIL =
       new JwtUtil("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 3600000L);
 
@@ -65,6 +63,8 @@ class LoggingAdminApplicationIntegrationTest {
   }
 
   @LocalServerPort private int port;
+
+  @Autowired private RequestMappingHandlerMapping requestMappingHandlerMapping;
 
   @MockitoBean private AccountClient accountClient;
   @MockitoBean private GameSessionClient gameSessionClient;
@@ -87,28 +87,11 @@ class LoggingAdminApplicationIntegrationTest {
   }
 
   @Test
-  void publicReportPersistenceEndpointIsUnavailable() throws Exception {
-    String token =
-        JWT_UTIL.generateToken(
-            "logging-admin-test", Map.of("globalRoles", java.util.List.of("platformAdmin")));
-    HttpRequest request =
-        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/reports"))
-            .timeout(HTTP_REQUEST_TIMEOUT)
-            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
-            .header(HttpHeaders.CONTENT_TYPE, "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString("{}"))
-            .build();
-
-    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
-    JsonNode responseBody = OBJECT_MAPPER.readTree(response.body());
-
+  void publicReportPersistenceControllerMappingIsAbsent() {
     assertThat(
-            List.of(
-                response.statusCode(),
-                responseBody.path("status").asText(),
-                responseBody.path("error").path("code").asText(),
-                responseBody.path("error").path("message").asText()))
-        .containsExactly(404, "ERROR", "NOT_FOUND", "Resource not found");
+            requestMappingHandlerMapping.getHandlerMethods().keySet().stream()
+                .flatMap(mapping -> mapping.getPatternValues().stream()))
+        .doesNotContain("/reports");
   }
 
   @Test

@@ -1534,6 +1534,30 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     route_set,
                 )
 
+    def test_route_resolution_trims_padded_route_metadata(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "game-session-service", "LOGIN")
+        route["service"] = " game-session-service "
+        route["route"] = " LOGIN "
+
+        errors = []
+        self.assertEqual(
+            [route],
+            self.validator.matching_routes(
+                document["routes"], "game-session-service", "LOGIN"
+            ),
+        )
+        self.assertIs(
+            route,
+            self.validator.resolve_unique_route(
+                document["routes"],
+                "game-session-service",
+                "LOGIN",
+                errors,
+            ),
+        )
+        self.assertEqual([], errors)
+
     def test_malformed_token_profiles_skip_predicate_validation_after_shape_error(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = route_for(document, "game-session-service", "PLAY")

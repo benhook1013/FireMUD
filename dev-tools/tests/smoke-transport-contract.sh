@@ -329,26 +329,93 @@ for job_name, job in jobs.items():
             workflow_run_sources.append((job_name, step.get("name", step_index), run))
 
 summary_helper_pattern = re.compile(
-    r"(?<![A-Za-z0-9_./$-])(?:bash\s+)?(?:[.]/)?"
-    r"(dev-tools/[A-Za-z0-9_./-]+[.]sh)(?![A-Za-z0-9_./-])"
+    r"(?<![A-Za-z0-9_./$-])(?:bash[ \t]+)?"
+    r"(?P<invocation>(?:"
+    r"dev-tools/[A-Za-z0-9_./-]+[.]sh|"
+    r"[.]/dev-tools/[A-Za-z0-9_./-]+[.]sh|"
+    r"/[^\s;&|\"'`]+/dev-tools/[A-Za-z0-9_./-]+[.]sh|"
+    r"\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)/"
+    r"dev-tools/[A-Za-z0-9_./-]+[.]sh"
+    r"))(?![A-Za-z0-9_./-])"
 )
-summary_writers = []
 root_dir = root.resolve()
+
+
+def normalize_summary_helper_path(invocation):
+    if invocation.startswith("/"):
+        return Path(invocation).resolve()
+    if invocation.startswith("$"):
+        return (root_dir / invocation.split("/", 1)[1]).resolve()
+    return (root_dir / invocation.removeprefix("./")).resolve()
+
+
+for fixture, expected in (
+    (
+        "dev-tools/tests/smoke-transport-contract.sh",
+        "dev-tools/tests/smoke-transport-contract.sh",
+    ),
+    (
+        "./dev-tools/tests/smoke-transport-contract.sh",
+        "dev-tools/tests/smoke-transport-contract.sh",
+    ),
+    (
+        "bash dev-tools/tests/smoke-transport-contract.sh",
+        "dev-tools/tests/smoke-transport-contract.sh",
+    ),
+    (
+        "bash ./dev-tools/tests/smoke-transport-contract.sh",
+        "dev-tools/tests/smoke-transport-contract.sh",
+    ),
+    (
+        f"bash {root_dir}/dev-tools/tests/smoke-transport-contract.sh",
+        "dev-tools/tests/smoke-transport-contract.sh",
+    ),
+    (
+        "$GITHUB_WORKSPACE/dev-tools/tests/smoke-transport-contract.sh",
+        "dev-tools/tests/smoke-transport-contract.sh",
+    ),
+    (
+        "${ROOT_DIR}/dev-tools/tests/smoke-transport-contract.sh",
+        "dev-tools/tests/smoke-transport-contract.sh",
+    ),
+):
+    matches = summary_helper_pattern.findall(fixture)
+    if (
+        len(matches) != 1
+        or normalize_summary_helper_path(matches[0]) != root_dir / expected
+    ):
+        raise AssertionError(
+            f"summary helper fixture was not normalized: {fixture}"
+        )
+
+outside_fixture = f"{root_dir.parent}/dev-tools/tests/smoke-transport-contract.sh"
+outside_matches = summary_helper_pattern.findall(outside_fixture)
+if len(outside_matches) != 1:
+    raise AssertionError("absolute summary helper containment fixture was not detected")
+try:
+    normalize_summary_helper_path(outside_matches[0]).relative_to(root_dir)
+except ValueError:
+    pass
+else:
+    raise AssertionError("summary helper discovery must keep helpers within repo root")
+
+
+summary_writers = []
 for root_entry in workflow_run_sources:
     source_closure = [root_entry]
     pending_helpers = [root_entry]
     seen_helpers = set()
     while pending_helpers:
         job_name, step_name, source = pending_helpers.pop()
-        for helper in summary_helper_pattern.findall(source):
+        for helper_invocation in summary_helper_pattern.findall(source):
+            helper_path = normalize_summary_helper_path(helper_invocation)
+            try:
+                helper = helper_path.relative_to(root_dir).as_posix()
+            except ValueError:
+                continue
             if helper in seen_helpers:
                 continue
             seen_helpers.add(helper)
-            helper_path = (root / helper).resolve()
-            try:
-                helper_path.relative_to(root_dir)
-            except ValueError:
-                continue
             if not helper_path.is_file():
                 continue
             helper_source = helper_path.read_text(encoding="utf-8")

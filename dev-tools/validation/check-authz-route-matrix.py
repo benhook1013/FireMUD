@@ -2477,12 +2477,14 @@ def matching_routes(
     service: str,
     route_name: str,
 ) -> list[dict[str, Any]]:
+    components = canonical_route_components(service, route_name)
+    if components is None:
+        return []
     return [
         route
         for route in routes
         if isinstance(route, dict)
-        and route.get("service") == service
-        and route.get("route") == route_name
+        and route_set_key(route) == components
     ]
 
 
@@ -2495,10 +2497,15 @@ def resolve_unique_route(
 ) -> dict[str, Any] | None:
     matches = matching_routes(routes, service, route_name)
     if len(matches) != 1:
-        key = f"{service}|{route_name}"
+        components = canonical_route_components(service, route_name)
+        key = (
+            f"{components[0]}|{components[1]}"
+            if components is not None
+            else f"{service}|{route_name}"
+        )
         if cardinality_errors is None or key not in cardinality_errors:
             errors.append(
-                f"matrix must contain exactly one {service} {route_name} route"
+                f"matrix must contain exactly one {key.replace('|', ' ')} route"
             )
             if cardinality_errors is not None:
                 cardinality_errors.add(key)

@@ -463,6 +463,24 @@ class AdrReviewStatusTests(unittest.TestCase):
                 self.assertNotIn(1, checked)
                 self.validator.validate(root)
 
+    def test_legacy_composite_terminal_statuses_use_normalized_supersession_kind(
+        self,
+    ) -> None:
+        for status in (
+            "Superseded by [ADR 0012](./adr-0012-reviewed.md)",
+            "Withdrawn (superseded by [ADR 0012](./adr-0012-reviewed.md))",
+        ):
+            with self.subTest(status=status), fixture_root() as fixture:
+                root = Path(fixture)
+                path = root / "design/architecture/decisions/adr-0001-legacy.md"
+                path.write_text(
+                    path.read_text(encoding="utf-8").replace("Accepted", status)
+                    + "\n## Supersession\n\n"
+                    "- Replacement ADR: [ADR 0012](./adr-0012-reviewed.md)\n",
+                    encoding="utf-8",
+                )
+                self.validator.validate(root)
+
     def test_formal_superseded_record_requires_supersession_entry(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)

@@ -103,6 +103,16 @@ class GatewayRoutesConfigurationProdTest {
   }
 
   @Test
+  void publicReportsRouteIsNotConfigured() {
+    assertThat(
+            gatewayProperties.getRoutes().stream()
+                .flatMap(route -> route.getPredicates().stream())
+                .filter(predicate -> "Path".equalsIgnoreCase(predicate.getName()))
+                .flatMap(predicate -> predicate.getArgs().values().stream()))
+        .doesNotContain("/api/admin/reports/**");
+  }
+
+  @Test
   void restEdgeRoutesStripExternalServicePrefixBeforeForwarding() {
     assertThat(route("admin-ping").getPredicates().get(0).getArgs().values())
         .containsExactly("/api/admin/ping");

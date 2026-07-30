@@ -94,6 +94,16 @@ class GatewayRoutesConfigurationTest {
   }
 
   @Test
+  void publicReportsRouteIsNotConfigured() {
+    assertThat(
+            gatewayProperties.getRoutes().stream()
+                .flatMap(route -> route.getPredicates().stream())
+                .filter(predicate -> "Path".equalsIgnoreCase(predicate.getName()))
+                .flatMap(predicate -> predicate.getArgs().values().stream()))
+        .doesNotContain("/api/admin/reports/**");
+  }
+
+  @Test
   void restEdgeRoutesStripExternalServicePrefixBeforeForwarding() {
     assertHasPath(route("session-ping"), "/api/session/ping");
     assertHasPath(route("admin-ping"), "/api/admin/ping");
