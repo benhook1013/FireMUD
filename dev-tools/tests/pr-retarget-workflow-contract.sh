@@ -46,7 +46,7 @@ assert_job_first_step() {
   if ! awk -v job="$job" -v expected="$expected" '
     $0 == "  " job ":" { in_job = 1; next }
     in_job && /^  [A-Za-z0-9_-]+:/ { exit }
-    in_job && /^      - name:/ {
+    in_job && /^      - / {
       if (!first_step_seen) {
         first_step = $0
         first_step_seen = 1
@@ -292,12 +292,12 @@ for path in "$ci_path" "$smoke_path"; do
 done
 
 require_contains "$ci_path" 'PR Metadata Edit (Validation Summary)'
-assert_job_contains ci.yml validation-gate 'name: Validation Gate'
+assert_job_contains ci.yml validation-gate '    name: Validation Gate'
 assert_job_contains ci.yml validation-gate 'uses: ./.github/actions/preserve-required-gate'
 assert_job_contains ci.yml validation-gate 'gate-name: Validation Gate'
 assert_job_contains ci.yml validation-gate 'Preserve successful required gate on metadata-only edit'
 require_contains "$smoke_path" 'PR Metadata Edit (Smoke Summary)'
-assert_job_contains smoke.yml smoke-gate 'name: Smoke Gate'
+assert_job_contains smoke.yml smoke-gate '    name: Smoke Gate'
 assert_job_first_step smoke.yml smoke-gate 'Harden runner'
 assert_job_contains smoke.yml smoke-gate 'uses: ./.github/actions/preserve-required-gate'
 assert_job_contains smoke.yml smoke-gate 'gate-name: Smoke Gate'
@@ -600,11 +600,17 @@ require_contains "$smoke_path" 'fullSmokeJob?.conclusion !== "success"'
 # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
 require_contains "$smoke_path" 'SMOKE_GATE_REQUIRED: ${{ github.event.action != '\''edited'\'' || github.event.changes.base.ref != null }}'
 # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
-require_contains "$smoke_path" 'SMOKE_GATE_EXECUTE: ${{ (github.event.action != '\''edited'\'' || github.event.changes.base.ref != null) && needs.changes.result == '\''success'\'' }}'
+require_contains "$smoke_path" 'CHANGES_RESULT: ${{ needs.changes.result }}'
 # shellcheck disable=SC2016 # Assert literal shell source.
 require_contains "$smoke_path" 'echo "required=$SMOKE_GATE_REQUIRED" >> "$GITHUB_OUTPUT"'
 # shellcheck disable=SC2016 # Assert literal shell source.
-require_contains "$smoke_path" 'echo "execute=$SMOKE_GATE_EXECUTE" >> "$GITHUB_OUTPUT"'
+require_contains "$smoke_path" 'if [ "$SMOKE_GATE_REQUIRED" = "true" ] && [ "$CHANGES_RESULT" = "success" ]; then'
+# shellcheck disable=SC2016 # Assert literal shell source.
+require_contains "$smoke_path" 'echo "execute=true" >> "$GITHUB_OUTPUT"'
+# shellcheck disable=SC2016 # Assert literal shell source.
+require_contains "$smoke_path" 'echo "execute=false" >> "$GITHUB_OUTPUT"'
+# shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
+require_contains "$smoke_path" 'if: ${{ steps.smoke_gate_context.outputs.required == '\''true'\'' && steps.smoke_gate_context.outputs.execute != '\''true'\'' }}'
 # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
 if grep -Fq 'echo "required=${{' "$smoke_path" || grep -Fq 'echo "execute=${{' "$smoke_path"; then
   echo "smoke_gate_context must pass expressions through step env" >&2

@@ -216,26 +216,30 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Classify smoke gate execution
+        id: smoke_gate_context
+        env:
+          SMOKE_GATE_REQUIRED: ${{ github.event.action != 'edited' || github.event.changes.base.ref != null }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+        run: |
+          echo "required=$SMOKE_GATE_REQUIRED" >> "$GITHUB_OUTPUT"
+          if [ "$SMOKE_GATE_REQUIRED" = "true" ] && [ "$CHANGES_RESULT" = "success" ]; then
+            echo "execute=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "execute=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check out required-gate action
-        if: ${{ github.event.action == 'edited' && github.event.changes.base.ref == null }}
+        if: ${{ steps.smoke_gate_context.outputs.required != 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - name: Preserve successful required gate on metadata-only edit
-        if: ${{ github.event.action == 'edited' && github.event.changes.base.ref == null }}
+        if: ${{ steps.smoke_gate_context.outputs.required != 'true' }}
         uses: ./.github/actions/preserve-required-gate
         with:
           gate-name: Smoke Gate
-
-      - name: Classify smoke gate execution
-        id: smoke_gate_context
-        env:
-          SMOKE_GATE_REQUIRED: ${{ github.event.action != 'edited' || github.event.changes.base.ref != null }}
-          SMOKE_GATE_EXECUTE: ${{ (github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.result == 'success' }}
-        run: |
-          echo "required=$SMOKE_GATE_REQUIRED" >> "$GITHUB_OUTPUT"
-          echo "execute=$SMOKE_GATE_EXECUTE" >> "$GITHUB_OUTPUT"
 
       - name: Fail when smoke dependencies did not succeed
         if: ${{ steps.smoke_gate_context.outputs.required == 'true' && steps.smoke_gate_context.outputs.execute != 'true' }}

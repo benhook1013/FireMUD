@@ -20,6 +20,7 @@ done
 
 python3 - <<'PY' "$ROOT_DIR"
 import json
+import re
 import sys
 import urllib.error
 from contextlib import redirect_stderr, redirect_stdout
@@ -203,10 +204,17 @@ for job_name, job in jobs.items():
             summary_runs.append((job_name, step.get("name", step_index), run))
 if not summary_runs:
     raise AssertionError("dev-demo workflow must define summary-writing steps")
-if any("DEMO_SMOKE_PASSWORD" in run for _, _, run in summary_runs):
+forbidden_summary_reference = re.compile(
+    r"DEMO_SMOKE_PASSWORD|"
+    r"\$\{BOOTSTRAP_SECRET_DIR\}/password|"
+    r"\$\{\{\s*secrets[.]|"
+    r"steps[.][A-Za-z0-9_-]+[.]outputs[.]password",
+    re.IGNORECASE,
+)
+if any(forbidden_summary_reference.search(run) for _, _, run in summary_runs):
     writers = ", ".join(f"{job_name}/{step_name}" for job_name, step_name, _ in summary_runs)
     raise AssertionError(
-        "dev-demo summaries must not reference DEMO_SMOKE_PASSWORD; "
+        "dev-demo summaries must not reference bootstrap credential material; "
         f"summary writers: {writers}"
     )
 
@@ -306,17 +314,23 @@ non_retryable_error = urllib.error.HTTPError(
     {},
     BytesIO(b'{"error":"sensitive non-retryable detail"}'),
 )
+non_retryable_stdout = StringIO()
+non_retryable_stderr = StringIO()
 with patch(
     "smoke_common.urllib.request.urlopen",
     side_effect=[non_retryable_error, FakeHttpResponse()],
 ) as non_retryable_urlopen:
     try:
-        verify_smoke_account(
-            "http://account.test", "demo@example.com", "swordfish", 5
-        )
+        with redirect_stdout(non_retryable_stdout):
+            with redirect_stderr(non_retryable_stderr):
+                verify_smoke_account(
+                    "http://account.test", "demo@example.com", "swordfish", 5
+                )
     except RuntimeError as exc:
         assert str(exc) == "Smoke account validation failed with status 400"
         assert "sensitive non-retryable detail" not in str(exc)
+        assert "sensitive non-retryable detail" not in non_retryable_stdout.getvalue()
+        assert "sensitive non-retryable detail" not in non_retryable_stderr.getvalue()
     else:
         raise AssertionError("Expected non-retryable account validation failure")
 assert non_retryable_urlopen.call_count == 1

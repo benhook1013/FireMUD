@@ -31,7 +31,11 @@ if ! grep -Fq '.app.slug == \"github-actions\"' "$ACTION" ||
   ! grep -Fq -- '--slurp' "$ACTION" ||
   ! grep -Fq '.[].check_runs[]?' "$ACTION" ||
   ! grep -Fq 'if .status == \"completed\" then' "$ACTION" ||
-  ! grep -Fq 'elif .status == \"queued\" or .status == \"in_progress\" then' "$ACTION" ||
+  ! grep -Fq '.status == \"queued\"' "$ACTION" ||
+  ! grep -Fq '.status == \"in_progress\"' "$ACTION" ||
+  ! grep -Fq '.status == \"requested\"' "$ACTION" ||
+  ! grep -Fq '.status == \"waiting\"' "$ACTION" ||
+  ! grep -Fq '.status == \"pending\"' "$ACTION" ||
   ! grep -Fq '[\"pending\"' "$ACTION" ||
   ! grep -Fq '[\"none\", \"\"]' "$ACTION" ||
   ! grep -Fq 'sort_by(.started_at // .created_at) | last' "$ACTION" ||
@@ -110,22 +114,18 @@ while IFS='|' read -r workflow gate_job_id gate; do
     exit 1
   fi
 
-  case "$workflow" in
-    ci.yml|security.yml|license-scan.yml|smoke.yml|codeql.yml)
-      first_step="$(awk '/^    steps:$/ {in_steps=1; next} in_steps && /^      - name:/ {print; exit}' <<<"$gate_block")"
-      [[ "$first_step" == '      - name: Harden runner' ]] || {
-        echo "$workflow $gate must harden the runner as its unconditional first step" >&2
-        exit 1
-      }
-      harden_block="$(awk '/^      - name: Harden runner$/{in_harden=1} in_harden{if (/^      - name:/ && $0 != "      - name: Harden runner") exit; print}' <<<"$gate_block")"
-      if grep -Fq '        if:' <<<"$harden_block" ||
-        ! grep -Eq '        uses: step-security/harden-runner@[0-9a-f]{40}$' <<<"$harden_block" ||
-        ! grep -Fq '          egress-policy: audit' <<<"$harden_block"; then
-        echo "$workflow $gate hardening must remain unconditional and retain its pinned audit configuration" >&2
-        exit 1
-      fi
-      ;;
-  esac
+  first_step="$(awk '/^    steps:$/ {in_steps=1; next} in_steps && /^      - / {print; exit}' <<<"$gate_block")"
+  [[ "$first_step" == '      - name: Harden runner' ]] || {
+    echo "$workflow $gate must harden the runner as its unconditional first step" >&2
+    exit 1
+  }
+  harden_block="$(awk '/^      - name: Harden runner$/{in_harden=1} in_harden{if (/^      - / && $0 != "      - name: Harden runner") exit; print}' <<<"$gate_block")"
+  if grep -Fq '        if:' <<<"$harden_block" ||
+    ! grep -Eq '        uses: step-security/harden-runner@[0-9a-f]{40}$' <<<"$harden_block" ||
+    ! grep -Fq '          egress-policy: audit' <<<"$harden_block"; then
+    echo "$workflow $gate hardening must remain unconditional and retain its pinned audit configuration" >&2
+    exit 1
+  fi
   grep -Fq '      checks: read' <<<"$gate_block" || {
     echo "$workflow $gate caller must retain checks: read" >&2
     exit 1
@@ -134,6 +134,10 @@ while IFS='|' read -r workflow gate_job_id gate; do
     echo "$workflow $gate caller must retain contents: read" >&2
     exit 1
   }
+  if [[ "$workflow" != "security.yml" ]] && ! grep -Fq 'needs.changes.result' <<<"$gate_block"; then
+    echo "$workflow $gate must fail closed when change detection fails" >&2
+    exit 1
+  fi
 
   group_line=$(grep -m1 '^  group:' "$path" || true)
   if [[ "$group_line" != *"&& 'metadata' || 'required' }}"* ]]; then
@@ -159,23 +163,6 @@ license-scan.yml|license-gate|License Gate
 smoke.yml|smoke-gate|Smoke Gate
 codeql.yml|codeql-gate|CodeQL Gate
 EOF
-
-grep -Fq 'needs.changes.result' "$ROOT_DIR/.github/workflows/ci.yml" || {
-  echo "Validation gate must fail closed when change detection fails" >&2
-  exit 1
-}
-grep -Fq 'needs.changes.result' "$ROOT_DIR/.github/workflows/codeql.yml" || {
-  echo "CodeQL gate must fail closed when change detection fails" >&2
-  exit 1
-}
-grep -Fq 'needs.changes.result' "$ROOT_DIR/.github/workflows/license-scan.yml" || {
-  echo "License gate must fail closed when change detection fails" >&2
-  exit 1
-}
-grep -Fq 'needs.changes.result' "$ROOT_DIR/.github/workflows/smoke.yml" || {
-  echo "Smoke gate must fail closed when change detection fails" >&2
-  exit 1
-}
 
 CODEQL_WORKFLOW="$ROOT_DIR/.github/workflows/codeql.yml"
 OVERLAY_WORKFLOW="$ROOT_DIR/.github/workflows/validate-kustomize-overlays.yml"
@@ -259,6 +246,26 @@ JSON
   no-prior)
     printf '[{"check_runs":[]}]\n'
     ;;
+  failed-predecessor)
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"failure","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    ;;
+  self-run-excluded)
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/999/job/1","status":"completed","conclusion":"failure","started_at":"2026-07-30T02:00:00Z","created_at":"2026-07-30T02:00:00Z"}]}]\n'
+    ;;
+  alternate-pending)
+    case "$count" in
+      1) status=requested ;;
+      2) status=waiting ;;
+      3) status=pending ;;
+      *) status=completed ;;
+    esac
+    if [[ "$status" == "completed" ]]; then
+      conclusion='"success"'
+    else
+      conclusion=null
+    fi
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"%s","conclusion":%s,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n' "$status" "$conclusion"
+    ;;
   failure-retry)
     case "${GH_FAILURE_MODE:-transient}" in
       transient|network)
@@ -331,6 +338,11 @@ action_script="$(awk '
   echo "required-gate action must contain exactly one composite run script" >&2
   exit 1
 }
+# shellcheck disable=SC2016 # Reject literal GitHub expression syntax in executable shell.
+if grep -Fq '${{' <<<"$action_script"; then
+  echo "required-gate action run script must receive workflow context through env" >&2
+  exit 1
+fi
 run_action() {
   local count_file="$1"
   local failure_mode="$2"
@@ -404,6 +416,38 @@ pending_count="$tmp_dir/count-pending-predecessor"
 run_action "$pending_count" none pending-predecessor
 [[ "$(<"$pending_count")" == "2" ]] || {
   echo "required-gate action did not poll the relevant prior run while it was finishing" >&2
+  exit 1
+}
+
+alternate_pending_count="$tmp_dir/count-alternate-pending"
+run_action "$alternate_pending_count" none alternate-pending
+[[ "$(<"$alternate_pending_count")" == "4" ]] || {
+  echo "required-gate action did not treat all GitHub pending statuses as pending" >&2
+  exit 1
+}
+
+self_run_count="$tmp_dir/count-self-run"
+run_action "$self_run_count" none self-run-excluded
+[[ "$(<"$self_run_count")" == "1" ]] || {
+  echo "required-gate action did not exclude its current workflow run" >&2
+  exit 1
+}
+
+failed_prior_output="$tmp_dir/failed-prior-output"
+set +e
+run_action "$tmp_dir/count-failed-prior" none failed-predecessor >"$failed_prior_output" 2>&1
+failed_prior_status=$?
+set -e
+[[ "$failed_prior_status" -ne 0 ]] || {
+  echo "required-gate action accepted a failed prior gate" >&2
+  exit 1
+}
+[[ "$(<"$tmp_dir/count-failed-prior")" == "1" ]] || {
+  echo "required-gate action retried a completed failed prior gate" >&2
+  exit 1
+}
+grep -Fq 'concluded failure' "$failed_prior_output" || {
+  echo "required-gate action did not report the failed prior conclusion" >&2
   exit 1
 }
 

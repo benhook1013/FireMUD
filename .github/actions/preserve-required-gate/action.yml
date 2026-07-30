@@ -61,7 +61,7 @@ runs:
             -f per_page=100 \
             --paginate \
             --slurp \
-            --jq "[.[].check_runs[]? | select(.app.slug == \"github-actions\" and (.details_url // \"\" | contains(\"/actions/runs/${GITHUB_RUN_ID}/\") | not))] | sort_by(.started_at // .created_at) | last // {} | if .status == \"completed\" then [\"completed\", (.conclusion // \"\")] elif .status == \"queued\" or .status == \"in_progress\" then [\"pending\", (.status // \"\")] else [\"none\", \"\"] end | @tsv" \
+            --jq "[.[].check_runs[]? | select(.app.slug == \"github-actions\" and (.details_url // \"\" | contains(\"/actions/runs/${GITHUB_RUN_ID}/\") | not))] | sort_by(.started_at // .created_at) | last // {} | if .status == \"completed\" then [\"completed\", (.conclusion // \"\")] elif .status == \"queued\" or .status == \"in_progress\" or .status == \"requested\" or .status == \"waiting\" or .status == \"pending\" then [\"pending\", (.status // \"\")] else [\"none\", \"\"] end | @tsv" \
             2>"${api_error_file}")"
           api_status=$?
           set -e
