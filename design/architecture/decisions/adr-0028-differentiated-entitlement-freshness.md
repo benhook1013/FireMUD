@@ -57,7 +57,7 @@ Known denial returns `TENANT_BILLING_BLOCKED`, not `ENTITLEMENT_UNAVAILABLE`.
 
 A fresh snapshot is necessary but not sufficient: its operation-specific flag must also allow the requested commitment. In particular, fresh `grace` state still denies the new commitments listed above.
 
-Every strict commitment captures `tenantAuthorityGeneration`, `tenantBillingSequence`, and the entitlement version from the fresh snapshot at its admission gate. The owning Account transaction or authoritative commit surface must conditionally commit only while that authority tuple remains unchanged; a generation or sequence advance between evaluation and commit causes a retry or fail-closed rejection rather than relying on cache invalidation alone.
+Every strict commitment captures the complete applicable Account `authorityTuple` from the fresh snapshot, including the exact tenant entry in `tenantAuthorityGeneration` and applicable `tenantBillingCutoff`, plus separate `entitlementVersion` and exact billing stream/checkpoint evidence. The owning Account transaction or authoritative commit surface must conditionally commit only while the tuple, entitlement version, billing sequence, and checkpoint remain unchanged; an authority, entitlement, sequence, or checkpoint advance between evaluation and commit causes a retry or fail-closed rejection rather than relying on cache invalidation alone.
 
 ### Bounded Continuity And Recovery
 

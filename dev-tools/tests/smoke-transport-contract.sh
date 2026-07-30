@@ -156,14 +156,24 @@ if cleanup_success_start is None:
     raise AssertionError(
         "dev-demo bootstrap temp directory cleanup success branch is missing"
     )
-shell_if_start_re = re.compile(r"^if\b.*\bthen$")
+shell_if_start_re = re.compile(r"^if\b.*;[ \t]*then$")
+
+
+def assert_supported_shell_if(line):
+    if re.match(r"^if(?:\s|$)", line) and not shell_if_start_re.fullmatch(line):
+        raise AssertionError(
+            "unsupported shell if form; expected a single-line 'if ...; then' opener: "
+            f"{line}"
+        )
 
 
 def closing_fi_index(lines, if_index):
+    assert_supported_shell_if(lines[if_index])
     nested_if_depth = 0
     for index in range(if_index + 1, len(lines)):
         line = lines[index]
-        if shell_if_start_re.fullmatch(line):
+        if re.match(r"^if(?:\s|$)", line):
+            assert_supported_shell_if(line)
             nested_if_depth += 1
         elif line == "fi":
             if nested_if_depth == 0:
@@ -191,6 +201,19 @@ nested_if_fixture = [
 ]
 if closing_fi_index(nested_if_fixture, 0) != 5:
     raise AssertionError("cleanup success branch must match its outer closing fi")
+for unsupported_if_fixture in (
+    ["if true", "then", "fi"],
+    ["if true; then echo inline; fi"],
+):
+    try:
+        closing_fi_index(unsupported_if_fixture, 0)
+    except AssertionError as exc:
+        if "unsupported shell if form" not in str(exc):
+            raise
+    else:
+        raise AssertionError(
+            "unsupported shell if fixture unexpectedly passed contract parsing"
+        )
 cleanup_success_return = next(
     (
         index
@@ -228,10 +251,13 @@ assert_ordered_lines(
     "dev-demo bootstrap temp directory removal failure must return failure",
 )
 
-try:
-    manifest_start = bootstrap_manifest.index(
-        "cat <<'EOF' | kubectl -n \"${PREVIEW_NAMESPACE}\" apply -f -\n"
+manifest_opener = "cat <<'EOF' | kubectl -n \"${PREVIEW_NAMESPACE}\" apply -f -\n"
+if bootstrap_manifest.count(manifest_opener) != 1:
+    raise AssertionError(
+        "dev-demo bootstrap step must contain exactly one expected pod manifest heredoc opener"
     )
+try:
+    manifest_start = bootstrap_manifest.index(manifest_opener)
     manifest_start = bootstrap_manifest.index("\n", manifest_start) + 1
     try:
         manifest_end = bootstrap_manifest.index("\nEOF\n", manifest_start)
@@ -323,6 +349,69 @@ forbidden_summary_reference = re.compile(
     r"[^;&|\n]*(?:\|[^;&|\n]*)*\|\s*base64\s+(?:-d|--decode)\b",
     re.IGNORECASE,
 )
+summary_target = re.compile(
+    r"(?:>>?|tee(?:[ \t]+(?:-a|--append))?)[ \t]*"
+    r"['\"]?\$\{?GITHUB_STEP_SUMMARY\}?['\"]?"
+)
+
+
+def summary_write_regions(source):
+    lines = source.splitlines()
+    regions = []
+    for index, line in enumerate(lines):
+        if not summary_target.search(line):
+            continue
+        start = index
+        if line.strip().startswith("}"):
+            brace_depth = 0
+            for candidate in range(index, -1, -1):
+                candidate_line = lines[candidate].strip()
+                if candidate_line.startswith("}"):
+                    brace_depth += 1
+                elif candidate_line == "{":
+                    brace_depth -= 1
+                    if brace_depth == 0:
+                        start = candidate
+                        break
+        else:
+            while start > 0 and lines[start - 1].rstrip().endswith("\\"):
+                start -= 1
+        regions.append("\n".join(lines[start : index + 1]))
+    return regions
+
+
+if not any(
+    summary_write_regions(source)
+    for _job_name, _step_name, source in summary_writers
+):
+    raise AssertionError(
+        "dev-demo workflow must write summaries through a recognized shell target"
+    )
+
+
+for safe_source, unsafe in (
+    (
+        'printf "%s" "$DEMO_SMOKE_PASSWORD" >/tmp/password\n'
+        'echo "safe summary" >> "$GITHUB_STEP_SUMMARY"',
+        False,
+    ),
+    (
+        '{\n'
+        '  echo "unsafe: $DEMO_SMOKE_PASSWORD"\n'
+        '} >> "$GITHUB_STEP_SUMMARY"',
+        True,
+    ),
+):
+    fixture_regions = summary_write_regions(safe_source)
+    fixture_is_unsafe = any(
+        forbidden_summary_reference.search(region)
+        for region in fixture_regions
+    )
+    if fixture_is_unsafe != unsafe:
+        raise AssertionError(
+            "summary secret detector fixture produced the wrong result"
+        )
+
 for secret_pipeline in (
     "kubectl get secret demo -o json | base64 -d",
     "kubectl get SECRETS demo -o json | jq -r .data.password | base64 --decode",
@@ -348,7 +437,10 @@ for safe_summary in (
 offending_writers = [
     (job_name, step_name)
     for job_name, step_name, source in summary_writers
-    if forbidden_summary_reference.search(re.sub(r"[ \t]+", " ", source))
+    if any(
+        forbidden_summary_reference.search(re.sub(r"[ \t]+", " ", region))
+        for region in summary_write_regions(source)
+    )
 ]
 if offending_writers:
     writers = ", ".join(

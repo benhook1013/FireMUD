@@ -21,7 +21,9 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipRequest;
 import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
+import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
@@ -294,6 +296,69 @@ class AccountClientTest {
         .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
     verify(retryStub)
         .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
+    verify(channelFactory).buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @Test
+  void realmAccessGrantNormalizesExhaustedUnavailableToCanonicalUnavailable() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub initialStub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    AccountServiceGrpc.AccountServiceBlockingStub retryStub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(initialStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(initialStub);
+    when(retryStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(retryStub);
+    when(initialStub.getRealmAccessGrantForRuntime(any(GetRealmAccessGrantForRuntimeRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+    when(retryStub.getRealmAccessGrantForRuntime(any(GetRealmAccessGrantForRuntimeRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    when(channelFactory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
+        .thenReturn(mock(ManagedChannel.class));
+    AccountClient client = newClientWithRetryStub(initialStub, retryStub, channelFactory);
+
+    GetRealmAccessGrantForRuntimeResponse response =
+        client.getRealmAccessGrantForRuntime("42", "7", "world", "realm", "request-1");
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getMessage()).isEqualTo("Realm grant authority unavailable");
+    verify(initialStub)
+        .getRealmAccessGrantForRuntime(any(GetRealmAccessGrantForRuntimeRequest.class));
+    verify(retryStub)
+        .getRealmAccessGrantForRuntime(any(GetRealmAccessGrantForRuntimeRequest.class));
+    verify(channelFactory).buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @Test
+  void publicMembershipEnsureNormalizesExhaustedUnavailableToCanonicalUnavailable()
+      throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub initialStub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    AccountServiceGrpc.AccountServiceBlockingStub retryStub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(initialStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(initialStub);
+    when(retryStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(retryStub);
+    when(initialStub.ensurePublicProductionPlayerMembership(
+            any(EnsurePublicProductionPlayerMembershipRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+    when(retryStub.ensurePublicProductionPlayerMembership(
+            any(EnsurePublicProductionPlayerMembershipRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    when(channelFactory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
+        .thenReturn(mock(ManagedChannel.class));
+    AccountClient client = newClientWithRetryStub(initialStub, retryStub, channelFactory);
+
+    EnsurePublicProductionPlayerMembershipResponse response =
+        client.ensurePublicProductionPlayerMembership("42", "7", "world", "realm", "request-1");
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
+    verify(initialStub)
+        .ensurePublicProductionPlayerMembership(
+            any(EnsurePublicProductionPlayerMembershipRequest.class));
+    verify(retryStub)
+        .ensurePublicProductionPlayerMembership(
+            any(EnsurePublicProductionPlayerMembershipRequest.class));
     verify(channelFactory).buildChannel(anyString(), anyInt(), any(), anyBoolean());
   }
 

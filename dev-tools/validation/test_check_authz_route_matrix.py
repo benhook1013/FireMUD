@@ -390,7 +390,6 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     f"operator route must require {missing_check}",
                     errors,
                 )
-                checks.append(missing_check)
 
     def test_profile_routes_require_generation_checks(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -1422,15 +1421,33 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_named_no_jwt_routes_reject_omitted_metadata(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = route_for(document, "game-session-service", "LOGIN")
+        route["service"] = " game-session-service "
+        route["route"] = " LOGIN "
         route.pop("accepted_token_profiles")
         route.pop("token_type")
         errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
-                "game-session-service LOGIN must explicitly declare " in error
+                "must explicitly declare accepted_token_profiles=[]" in error
                 for error in errors
             )
         )
+
+    def test_route_set_key_trims_components_for_policy_lookups(self):
+        for route_set in (
+            self.validator.CONDITIONAL_OPERATOR_ROUTES,
+            self.validator.ADMISSION_POINTER_MUTATION_ROUTES,
+            self.validator.GAME_SESSION_OPERATOR_ROUTES,
+            self.validator.ACCOUNT_SUBJECT_BOUND_ROUTES,
+        ):
+            service, route_name = next(iter(route_set))
+            with self.subTest(service=service, route=route_name):
+                self.assertIn(
+                    self.validator.route_set_key(
+                        {"service": f" {service} ", "route": f" {route_name} "}
+                    ),
+                    route_set,
+                )
 
     def test_malformed_token_profiles_skip_predicate_validation_after_shape_error(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

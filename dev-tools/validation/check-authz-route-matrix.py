@@ -391,12 +391,12 @@ EXPECTED_ROUTE_CLASS_BRANCHES = {
 }
 CANONICAL_OPERATOR_INGRESS = "logging-admin-service"
 DIRECT_OWNER_ROUTE_POLICY = "deny_at_edge_and_migrate_to_logging_admin"
-# Each semantic field must uniquely identify the parsed value within its source object;
-# reusing it for different values would suppress later parsing. Retaining the source
-# object prevents id reuse from returning stale entries.
+# Each semantic field must uniquely identify the parsed value within its source object.
+# A cache hit deliberately suppresses repeated structural errors as well as repeated
+# parsing. Retaining the source object prevents id reuse from returning stale entries.
 LiveChecksCache = dict[tuple[int, str], tuple[object, set[str]]]
 # Maps (id(route/parent mapping), field name) to the source object and parsed
-# required fields.
+# required fields; cache hits likewise suppress duplicate structural errors.
 RequiredFieldsCache = dict[tuple[int, str], tuple[object, list[str] | None]]
 
 
@@ -409,6 +409,10 @@ def canonical_route_components(service: Any, route: Any) -> tuple[str, str] | No
     ):
         return None
     return service.strip(), route.strip()
+
+
+def route_set_key(route: dict[str, Any]) -> tuple[str, str] | None:
+    return canonical_route_components(route.get("service"), route.get("route"))
 
 
 def route_identity_from_route(route: dict[str, Any]) -> str | None:
@@ -1273,7 +1277,7 @@ def validate_conditional_operator_route(
     checks: set[str] | None = None,
     live_checks_cache: LiveChecksCache | None = None,
 ) -> None:
-    route_key_value = (route.get("service"), route.get("route"))
+    route_key_value = route_set_key(route)
     if route_key_value not in CONDITIONAL_OPERATOR_ROUTES:
         return
     if value != "conditional_by_operator_role":
@@ -1425,7 +1429,7 @@ def validate_account_authorization_route(
     checks: set[str] | None = None,
     live_checks_cache: LiveChecksCache | None = None,
 ) -> None:
-    route_key_value = (route.get("service"), route.get("route"))
+    route_key_value = route_set_key(route)
     if route_key_value not in ACCOUNT_SUBJECT_BOUND_ROUTES:
         return
     if route.get("subject_binding") != "caller_account_id":
@@ -1695,7 +1699,7 @@ def validate_explicit_no_jwt_routes(routes: list[Any], errors: list[str]) -> Non
     for route in routes:
         if not isinstance(route, dict):
             continue
-        key = (route.get("service"), route.get("route"))
+        key = route_set_key(route)
         if key not in EXPLICIT_NO_JWT_ROUTES:
             continue
         label = f"{route.get('service')} {route.get('route')}"
@@ -2135,7 +2139,7 @@ def validate_generation_applicability(
             errors.append(
                 f"{label} account_authority_generation_applies must be boolean"
             )
-        route_key_value = (route.get("service"), route.get("route"))
+        route_key_value = route_set_key(route)
         checks = None
         if (
             route.get("classification") == "pending_deletion_scoped"
@@ -2559,16 +2563,16 @@ def validate_ws_game_routes(
         )
     else:
         for mode in ("first_party_web", "trusted_tcp_proxy"):
-            for route in by_mode[mode]:
-                label = f"/ws/game/** {mode}"
-                for field in (
-                    "tenant_billing_authority_generation_applies",
-                    "membership_authority_generation_applies",
-                ):
-                    if route.get(field) is not False:
-                        errors.append(
-                            f"{label} must explicitly set {field}=false for downstream admission"
-                        )
+            route = by_mode[mode][0]
+            label = f"/ws/game/** {mode}"
+            for field in (
+                "tenant_billing_authority_generation_applies",
+                "membership_authority_generation_applies",
+            ):
+                if route.get(field) is not False:
+                    errors.append(
+                        f"{label} must explicitly set {field}=false for downstream admission"
+                    )
 
         first_party = by_mode["first_party_web"][0]
         validate_applicability(

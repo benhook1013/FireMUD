@@ -1693,7 +1693,16 @@ routes:
     delegated_subject: instance_lifecycle_context
     end_user_token_required: false
     required_fields:
-      [tenant_id, request_id, admission_id, expected_authority_tuple, capacity_delta, mutation_digest]
+      [
+        tenant_id,
+        request_id,
+        admission_id,
+        expected_authority_tuple,
+        expected_entitlement_version,
+        expected_billing_evidence,
+        capacity_delta,
+        mutation_digest,
+      ]
     required_live_checks: [tenant_generation, runtime_entitlements, capacity_admission_fence, idempotency]
     mutation_contract: account_owned_fenced_capacity_reservation_create_or_replay
     canonical_errors:
