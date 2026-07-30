@@ -510,10 +510,12 @@ jobs:
             if ! cleanup_bootstrap_secret; then
               status=1
             fi
-            trap - EXIT
+            trap - EXIT INT TERM
             exit "${status}"
           }
           trap cleanup_bootstrap_resources EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
           kubectl -n "${PREVIEW_NAMESPACE}" create configmap dev-demo-bootstrap-script \
             --from-file=bootstrap.py="${BOOTSTRAP_SCRIPT}" \
             --dry-run=client -o yaml | kubectl apply -f -
@@ -525,11 +527,13 @@ jobs:
             printf '%s' "${DEMO_SMOKE_PASSWORD}" >"${BOOTSTRAP_SECRET_DIR}/password"
             printf '%s' "${DEMO_SMOKE_USERNAME}" >"${BOOTSTRAP_SECRET_DIR}/username"
           )
+          if ! cleanup_bootstrap_secret; then
+            exit 1
+          fi
           kubectl -n "${PREVIEW_NAMESPACE}" create secret generic dev-demo-bootstrap-env \
             --from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email" \
             --from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password" \
-            --from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username" \
-            --dry-run=client -o yaml | kubectl apply -f -
+            --from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username"
           if ! cleanup_bootstrap_temp_dir; then
             exit 1
           fi

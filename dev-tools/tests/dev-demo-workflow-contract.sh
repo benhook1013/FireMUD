@@ -120,9 +120,10 @@ for expected in (
     'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then',
     'echo "::error::Failed to remove dev-demo bootstrap credential files"',
     'if ! cleanup_bootstrap_temp_dir; then',
-    'cleanup_bootstrap_secret',
     'cleanup_bootstrap_resources() {',
     'trap cleanup_bootstrap_resources EXIT',
+    "trap 'exit 130' INT",
+    "trap 'exit 143' TERM",
 ):
     if normalize_script(expected) not in normalized_bootstrap_manifest:
         raise AssertionError(
@@ -130,6 +131,47 @@ for expected in (
         )
 
 normalized_bootstrap_lines = normalize_nonempty_lines(bootstrap_manifest)
+secret_cleanup_and_create = normalize_nonempty_lines(
+    '''if ! cleanup_bootstrap_secret; then
+  exit 1
+fi
+kubectl -n "${PREVIEW_NAMESPACE}" create secret generic dev-demo-bootstrap-env'''
+)
+if secret_cleanup_and_create not in normalized_bootstrap_lines:
+    raise AssertionError(
+        "dev-demo bootstrap must delete stale credentials before direct secret creation"
+    )
+bootstrap_source_lines = bootstrap_manifest.splitlines()
+try:
+    secret_command_start = next(
+        index
+        for index, line in enumerate(bootstrap_source_lines)
+        if "create secret generic dev-demo-bootstrap-env" in line
+    )
+except StopIteration as exc:
+    raise AssertionError(
+        "dev-demo bootstrap must create its credential secret directly"
+    ) from exc
+secret_command_lines = []
+secret_command_index = secret_command_start
+while True:
+    secret_command_line = bootstrap_source_lines[secret_command_index].strip()
+    secret_command_lines.append(secret_command_line)
+    if not secret_command_line.endswith("\\"):
+        break
+    secret_command_index += 1
+    if secret_command_index >= len(bootstrap_source_lines):
+        raise AssertionError("dev-demo bootstrap secret command is unterminated")
+expected_secret_command_lines = [
+    'kubectl -n "${PREVIEW_NAMESPACE}" create secret generic dev-demo-bootstrap-env \\',
+    '--from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email" \\',
+    '--from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password" \\',
+    '--from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username"',
+]
+if secret_command_lines != expected_secret_command_lines:
+    raise AssertionError(
+        "dev-demo bootstrap credential secret must use direct create without apply annotations"
+    )
 cleanup_success_lines = normalize_nonempty_lines(
     """if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then
     BOOTSTRAP_SECRET_DIR=
@@ -146,6 +188,16 @@ cleanup_failure_lines = normalize_nonempty_lines(
 if cleanup_failure_lines not in normalized_bootstrap_lines:
     raise AssertionError(
         "dev-demo bootstrap temp directory removal failure must return failure"
+    )
+post_log_cleanup_lines = normalize_nonempty_lines(
+    '''kubectl -n "${PREVIEW_NAMESPACE}" logs dev-demo-bootstrap | tee "${BOOTSTRAP_POD_LOG}"
+  kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true
+  kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true
+  cleanup_bootstrap_secret'''
+)
+if post_log_cleanup_lines not in normalized_bootstrap_lines:
+    raise AssertionError(
+        "dev-demo bootstrap must remove its credential secret after successful pod logging"
     )
 
 try:
@@ -353,6 +405,101 @@ require(
     "smoke account retries must retain the bounded one-second delay",
 )
 require("sensitive retry detail" not in retry_output.getvalue(), "retry output leaked response body")
+
+
+exhausted_retry_errors = [
+    urllib.error.HTTPError(
+        "http://account.test/auth/login",
+        503,
+        "Unavailable",
+        {},
+        BytesIO(b'{"error":"sensitive exhausted retry detail"}'),
+    )
+    for _ in range(3)
+]
+exhausted_retry_stdout = StringIO()
+exhausted_retry_stderr = StringIO()
+with patch(
+    "smoke_common.urllib.request.urlopen", side_effect=exhausted_retry_errors
+) as exhausted_retry_urlopen:
+    with patch("smoke_common.time.sleep") as exhausted_retry_sleep:
+        try:
+            with redirect_stdout(exhausted_retry_stdout):
+                with redirect_stderr(exhausted_retry_stderr):
+                    verify_smoke_account(
+                        "http://account.test", "demo@example.com", "swordfish", 5
+                    )
+        except RuntimeError as exc:
+            require(
+                str(exc) == "Smoke account validation failed with status 503",
+                "exhausted HTTP retries must report only the response status",
+            )
+            require(
+                "sensitive exhausted retry detail" not in str(exc),
+                "exhausted HTTP retry failure leaked response body",
+            )
+        else:
+            raise AssertionError("Expected exhausted retryable account validation failure")
+require(
+    exhausted_retry_urlopen.call_count == 3,
+    "exhausted retryable failures must stop after three attempts",
+)
+require(
+    [call.args for call in exhausted_retry_sleep.call_args_list] == [(1,), (1,)],
+    "exhausted retryable failures must sleep only between attempts",
+)
+require(
+    "sensitive exhausted retry detail" not in exhausted_retry_stdout.getvalue(),
+    "exhausted retry stdout leaked response body",
+)
+require(
+    "sensitive exhausted retry detail" not in exhausted_retry_stderr.getvalue(),
+    "exhausted retry stderr leaked response body",
+)
+
+
+transport_failure_text = "sensitive socket route detail"
+transport_errors = [OSError(transport_failure_text) for _ in range(3)]
+transport_stdout = StringIO()
+transport_stderr = StringIO()
+with patch(
+    "smoke_common.urllib.request.urlopen", side_effect=transport_errors
+) as transport_urlopen:
+    with patch("smoke_common.time.sleep") as transport_sleep:
+        try:
+            with redirect_stdout(transport_stdout):
+                with redirect_stderr(transport_stderr):
+                    verify_smoke_account(
+                        "http://account.test", "demo@example.com", "swordfish", 5
+                    )
+        except RuntimeError as exc:
+            require(
+                str(exc)
+                == "Smoke account validation failed due to a transport error",
+                "transport failure must use the redacted canonical message",
+            )
+            require(
+                transport_failure_text not in str(exc),
+                "transport failure leaked raw exception details",
+            )
+        else:
+            raise AssertionError("Expected exhausted transport account validation failure")
+require(
+    transport_urlopen.call_count == 3,
+    "transport failures must stop after three attempts",
+)
+require(
+    [call.args for call in transport_sleep.call_args_list] == [(1,), (1,)],
+    "transport failures must sleep only between attempts",
+)
+require(
+    transport_failure_text not in transport_stdout.getvalue(),
+    "transport failure stdout leaked raw exception details",
+)
+require(
+    transport_failure_text not in transport_stderr.getvalue(),
+    "transport failure stderr leaked raw exception details",
+)
 
 
 non_retryable_error = urllib.error.HTTPError(
