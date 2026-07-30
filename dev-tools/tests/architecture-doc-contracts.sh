@@ -172,6 +172,25 @@ obsolete_redis_rebind_envelope = re.compile(
     re.IGNORECASE,
 )
 
+for obsolete_rebind_term in (
+    "rebind-envelope",
+    "rebind_envelope",
+    "rebind envelope",
+    "rebindHandleEnvelope",
+    "rebind-handle-envelope",
+):
+    if obsolete_redis_rebind_envelope.search(obsolete_rebind_term) is None:
+        raise SystemExit(
+            "obsolete Redis rebind-envelope matcher missed "
+            f"{obsolete_rebind_term!r}"
+        )
+for canonical_rebind_term in ("rebindHandle", "rebind-handle", "rebind handle"):
+    if obsolete_redis_rebind_envelope.search(canonical_rebind_term):
+        raise SystemExit(
+            "obsolete Redis rebind-envelope matcher rejected canonical "
+            f"{canonical_rebind_term!r}"
+        )
+
 for path in (root / "design").rglob("*.md"):
     text = path.read_text(encoding="utf-8")
     if "<deployment-event-id>" in text:

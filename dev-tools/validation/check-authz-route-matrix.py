@@ -289,6 +289,15 @@ AUTH_UNAVAILABLE_REQUIRED_ROUTES = {
     ("account-service", "BillingArtifactsTenant"),
     ("account-service", "BillingArtifactsCrossTenant"),
 }
+LOGGING_ADMIN_IDEMPOTENT_OPERATOR_ROUTES = {
+    ("logging-admin-service", "POST /admission-pointers"),
+    ("logging-admin-service", "POST /admission-pointers/cutover"),
+    ("logging-admin-service", "POST /admission-pointers/version-upgrades"),
+    ("logging-admin-service", "POST /feature-flags/toggle"),
+    ("logging-admin-service", "POST /moderation/actions"),
+    ("logging-admin-service", "POST /tick-remediation/pause"),
+    ("logging-admin-service", "POST /tick-remediation/resume"),
+}
 EXPECTED_ROUTE_CLASS_BRANCHES = {
     ("account_scoped", "platformAdmin_global"): {
         "scope": "account",
@@ -2217,6 +2226,62 @@ def validate_profile_authority_routes(
                 errors.append(f"{label} must require live check {required_check}")
 
 
+def validate_idempotency_contract(
+    route: dict[str, Any],
+    label: str,
+    errors: list[str],
+    required_fields_cache: RequiredFieldsCache | None = None,
+) -> None:
+    required_fields = (
+        set(
+            cached_required_fields(
+                route,
+                route.get("required_fields"),
+                f"{label} required_fields",
+                errors,
+                required_fields_cache,
+                "required_fields",
+            )
+        )
+        if "required_fields" in route
+        else set()
+    )
+    if "mutation_digest" not in required_fields:
+        errors.append(f"{label} must require mutation_digest for idempotency")
+    canonical_errors = route.get("canonical_errors", {})
+    any_of = (
+        canonical_errors.get("any_of")
+        if isinstance(canonical_errors, dict)
+        else None
+    )
+    outcomes = string_list(any_of, f"{label} canonical_errors.any_of", errors)
+    if "IDEMPOTENCY_CONFLICT" not in outcomes:
+        errors.append(f"{label} must declare IDEMPOTENCY_CONFLICT")
+
+
+def validate_logging_admin_idempotency(
+    routes: list[Any],
+    errors: list[str],
+    cardinality_errors: set[str] | None = None,
+    required_fields_cache: RequiredFieldsCache | None = None,
+) -> None:
+    for service, route_name in sorted(LOGGING_ADMIN_IDEMPOTENT_OPERATOR_ROUTES):
+        route = resolve_unique_route(
+            routes,
+            service,
+            route_name,
+            errors,
+            cardinality_errors,
+        )
+        if route is not None:
+            validate_idempotency_contract(
+                route,
+                f"{service} {route_name}",
+                errors,
+                required_fields_cache,
+            )
+
+
 def validate_refresh_roles_routes(
     routes: list[Any],
     errors: list[str],
@@ -2224,32 +2289,6 @@ def validate_refresh_roles_routes(
     cardinality_errors: set[str] | None = None,
     required_fields_cache: RequiredFieldsCache | None = None,
 ) -> None:
-    def validate_idempotency(route: dict[str, Any], label: str) -> None:
-        required_fields = (
-            set(
-                cached_required_fields(
-                    route,
-                    route.get("required_fields"),
-                    f"{label} required_fields",
-                    errors,
-                    required_fields_cache,
-                    "required_fields",
-                )
-            )
-            if "required_fields" in route
-            else set()
-        )
-        if "mutation_digest" not in required_fields:
-            errors.append(f"{label} must require mutation_digest for idempotency")
-        canonical_errors = route.get("canonical_errors", {})
-        any_of = (
-            canonical_errors.get("any_of")
-            if isinstance(canonical_errors, dict)
-            else None
-        )
-        outcomes = string_list(any_of, f"{label} canonical_errors.any_of", errors)
-        if "IDEMPOTENCY_CONFLICT" not in outcomes:
-            errors.append(f"{label} must declare IDEMPOTENCY_CONFLICT")
 
     grpc_route = resolve_unique_route(
         routes,
@@ -2282,7 +2321,12 @@ def validate_refresh_roles_routes(
         ):
             if required_check not in checks:
                 errors.append(f"{label} must require live check {required_check}")
-        validate_idempotency(grpc_route, label)
+        validate_idempotency_contract(
+            grpc_route,
+            label,
+            errors,
+            required_fields_cache,
+        )
 
     http_route = resolve_unique_route(
         routes,
@@ -2298,7 +2342,12 @@ def validate_refresh_roles_routes(
             != "account_issued_bounded_reference"
         ):
             errors.append(f"{label} must require an Account-issued operator reference")
-        validate_idempotency(http_route, label)
+        validate_idempotency_contract(
+            http_route,
+            label,
+            errors,
+            required_fields_cache,
+        )
 
 
 def validate_known_drift(value: Any, field: str, errors: list[str]) -> None:
@@ -2969,6 +3018,12 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
         routes,
         errors,
         live_checks_cache,
+        cardinality_errors,
+        required_fields_cache,
+    )
+    validate_logging_admin_idempotency(
+        routes,
+        errors,
         cardinality_errors,
         required_fields_cache,
     )

@@ -281,7 +281,6 @@ required_live_check_vocabulary:
   - runtime_ownership
   - safe_instrument_detachment
   - settlement_scope
-  - subscription_binding_integrity
   - target_tenant_generation
   - tenant_generation
   - trusted_proxy_identity
@@ -1939,6 +1938,8 @@ routes:
     required_fields: [control_plane_request_id, actor_from_session, reason, flag_name, enabled, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
     owner_service: game-session-service
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: logging-admin-service
@@ -1970,6 +1971,8 @@ routes:
     required_fields: [control_plane_request_id, actor_from_session, reason, target_account_id, action, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
     owner_call_status: coverage_drift_no_current_enforcement_owner_rpc
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
     roles:
       any_of: [moderator, tenantAdmin, platformAdmin]
   - service: logging-admin-service
@@ -2001,6 +2004,8 @@ routes:
     required_fields: [control_plane_request_id, actor_from_session, reason, tenant_id, game_instance_id, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
     owner_service: game-session-service
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: logging-admin-service
@@ -2032,6 +2037,8 @@ routes:
     required_fields: [control_plane_request_id, actor_from_session, reason, tenant_id, game_instance_id, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
     owner_service: game-session-service
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: logging-admin-service
@@ -2063,6 +2070,8 @@ routes:
     required_fields: [control_plane_request_id, actor_from_session, reason, expected_pointer_version, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
     owner_service: game-session-service
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: logging-admin-service
@@ -2094,6 +2103,8 @@ routes:
     required_fields: [control_plane_request_id, actor_from_session, reason, expected_pointer_version, prepared_version_upgrade_id, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
     owner_service: game-session-service
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: logging-admin-service
@@ -2125,6 +2136,8 @@ routes:
     required_fields: [control_plane_request_id, actor_from_session, reason, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
     owner_service: game-session-service
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: game-session-service

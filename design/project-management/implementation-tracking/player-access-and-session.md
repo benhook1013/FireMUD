@@ -48,6 +48,8 @@ The current proto RPC `EnsurePublicProductionPlayerMembership(accountId, tenantI
 
 Account export, deletion, recovery, password reset, username reminder, email verification, and profile operations are account-scoped. The target `ExportTenantData` contract is the separate tenant-admin route for a tenant-wide export of tenant-owned records and minimum stable subject references; it has no account subject selector and does not redefine full account export or deletion. The current Account Service route remains account-targeted implementation drift until that contract is implemented. Account deletion observes active subscription/billing preconditions without collapsing global account ownership into tenant ownership.
 
+For an Account-authorized request forwarded to Game Session, Account issues the canonical bounded `authorization-reference` before forwarding. The receiving Game Session owner authenticates the forwarding workload, redeems that reference with Account, and only then validates and mutates state; it does not trust ingress assertions as authorization.
+
 Live Account authentication hashes and verifies passwords with `argon2-jvm` Argon2 using `iterations=2`, `memory=65536 KiB`, and `parallelism=1`, with character-array handling and post-use wiping. Profile, external-account linking, recovery and verification, notification, payment, subscription, and virtual-currency surfaces have live service and persistence foundations; the broader account lifecycle state machine, purchased-entitlement fulfillment, and complete billing/subscription follow-through remain partial.
 
 ### Text Protocol and Credential Policy

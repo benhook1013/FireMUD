@@ -533,6 +533,35 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                         errors,
                     )
 
+    def test_logging_admin_operator_mutations_require_idempotency_conflict(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for service, route_name in sorted(
+            self.validator.LOGGING_ADMIN_IDEMPOTENT_OPERATOR_ROUTES
+        ):
+            route = route_for(document, service, route_name)
+            self.assertIn("mutation_digest", route["required_fields"])
+            self.assertIn(
+                "IDEMPOTENCY_CONFLICT",
+                route["canonical_errors"]["any_of"],
+            )
+
+        route = route_for(
+            document,
+            "logging-admin-service",
+            "POST /feature-flags/toggle",
+        )
+        route["canonical_errors"]["any_of"] = []
+        errors = []
+        self.validator.validate_logging_admin_idempotency(
+            document["routes"],
+            errors,
+        )
+        self.assertIn(
+            "logging-admin-service POST /feature-flags/toggle must declare "
+            "IDEMPOTENCY_CONFLICT",
+            errors,
+        )
+
     def test_privileged_operator_routes_require_live_global_role_and_assurance(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         document = copy.deepcopy(baseline)

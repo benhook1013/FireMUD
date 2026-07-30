@@ -14,6 +14,7 @@ import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -23,6 +24,7 @@ import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @WebMvcTest
@@ -131,6 +133,21 @@ class GlobalExceptionHandlerTest {
     var responseEntity =
         handler.handleNoResourceFound(
             new NoResourceFoundException(HttpMethod.POST, "/reports", "reports"));
+    ApiResponse<ErrorDetail> response = responseEntity.getBody();
+
+    assertEquals(HttpStatus.NOT_FOUND, responseEntity.getStatusCode());
+    Assertions.assertNotNull(response);
+    assertEquals("NOT_FOUND", response.error().code());
+    assertEquals("Resource not found", response.error().message());
+  }
+
+  @Test
+  void handleNoHandlerFoundPreservesNotFoundEnvelope() {
+    GlobalExceptionHandler handler = new GlobalExceptionHandler();
+
+    var responseEntity =
+        handler.handleNoHandlerFound(
+            new NoHandlerFoundException("POST", "/reports", HttpHeaders.EMPTY));
     ApiResponse<ErrorDetail> response = responseEntity.getBody();
 
     assertEquals(HttpStatus.NOT_FOUND, responseEntity.getStatusCode());

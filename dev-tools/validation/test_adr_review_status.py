@@ -203,8 +203,8 @@ def add_formal_superseded_adr(
         - Human review disposition: Superseded
         - Review source: `TEST-SUPERSEDED`
     """
+    text = textwrap.dedent(text).lstrip()
     if supersession is not None:
-        text = textwrap.dedent(text).lstrip()
         text += f"\n## Supersession\n\n{supersession}\n"
     path = root / "design/architecture/decisions/adr-0014-superseded.md"
     write(path, text)
@@ -841,6 +841,20 @@ class AdrReviewStatusTests(unittest.TestCase):
             self.assertEqual({"TEST-01"}, {review.key for review in reviews[12]})
             self.assertNotIn(14, reviews)
 
+    def test_superseded_scan_alias_requires_replacement_links(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27; "
+                "retained as a historical service-scan alias.",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "must contain replacement-decision Markdown links",
+            )
+
     def test_superseded_scan_alias_rejects_replacement_adr_number_mismatch(
         self,
     ) -> None:
@@ -1082,6 +1096,21 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "````",
             )
             self.validator.validate(root)
+
+    def test_indented_fence_like_line_opens_a_fence(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_queue_row(
+                root,
+                "    ```text\n"
+                "- [x] `FAKE-INDENTED-FENCE` — `accepted` on 2026-07-27; "
+                "[ADR 0013](../../architecture/decisions/adr-0013-pending.md)",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "unterminated code fence opened at line",
+            )
 
     def test_fenced_level_two_heading_does_not_end_review_queue(self) -> None:
         with fixture_root() as fixture:

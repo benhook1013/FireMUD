@@ -721,10 +721,10 @@ def validate(root: Path = ROOT) -> None:
             fail(f"duplicate ADR number {number:04d}")
         seen_numbers.add(number)
 
-        text = path.read_text(encoding="utf-8")
-        visible_markdown_lines(text, path)
-        linked_reviews = reviews.get(number, [])
         context = path.relative_to(root)
+        text = path.read_text(encoding="utf-8")
+        visible_markdown_lines(text, context)
+        linked_reviews = reviews.get(number, [])
         try:
             status = section_value(text, "Status")
         except ValidationError as error:

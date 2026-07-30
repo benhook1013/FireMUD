@@ -33,7 +33,7 @@ For `security_locked` accounts, Account's successful recovery authorization issu
 - `UpdateProfile` – modifies the caller's profile relationship for one explicit tenant under the same tenant-scoped `tenant_regular` authorization and caller-subject binding; it requires one of `player`, `moderator`, `designer`, or `tenantAdmin` in `scopedRoles[tenantId]` and triggers notification emails. Account holders may select `PUBLIC`, `FRIENDS_ONLY`, or `PRIVATE` presence visibility; `HIDDEN_STAFF` remains reserved for the staff-visibility owner and cannot be set through ordinary profile writes. `platformAdmin` is not an override.
 - `ListPresenceVisibilityPolicies` – bounded internal bulk read of current tenant-scoped profile visibility policy for up to 100 account IDs. Social projections consume this authority at read time; unknown or unavailable entries are intentionally omitted so callers apply complete `PRIVATE` redaction.
 - `ExportAccount` – **target-state RPC** equivalent of `POST /accounts/{accountId}/exports`; starts or reads the persisted export operation for the caller's `requestId` and matching versioned `requestDigest`, returning the same stable `exportId` on replay and an idempotency conflict on digest mismatch. It gathers every required owning-service contribution and exposes a versioned portable-data manifest with explicit complete, partial, omitted, redacted, unavailable, retryable, failed, and separately retained owner outcomes; this is not a promise of every account-related record or secret. The current implementation behind this method remains the local legacy export described above.
-- `CommitTenantCapacityAdmission` – **target-state internal RPC** called only by Game Session or World Management after a fresh entitlement evaluation. The request carries `tenantId`, stable `requestId` and `admissionId`, the expected complete applicable `authorityTuple` including the exact tenant generation and applicable `tenantBillingCutoff`, separate expected `entitlementVersion`, exact expected billing `{outboxStreamKey, outboxSequence, tenantBillingSequence}` evidence, a bounded capacity delta, and required versioned `mutationDigest` over that complete payload. Account compares the exact `(tenantId, requestId, admissionId)` identity and complete payload in one transaction before creating or replaying the reservation; the same identity plus identical tuple, entitlement, billing evidence, delta, and digest replays, while any changed field is an idempotency conflict. Stale evidence, exhausted quota, unavailable authority, malformed identity, and conflicting retries fail closed. No proto RPC, caller integration, durable usage ledger, or reservation lifecycle is implemented yet.
+- `CommitTenantCapacityAdmission` – **target-state internal RPC** called only by Game Session or World Management after a fresh entitlement evaluation. The request carries stable `(tenantId, requestId, admissionId)`, the exact complete Account-authenticated evidence bundle returned by `GetTenantEntitlementsForRuntime` including `bundleVersion`, `snapshotIdentity`, `evaluationIdentity`, all entitlement fields, the complete applicable `authorityTuple`, exact applicable `tenantBillingCutoff`, and complete `outboxCheckpoints[]`, bounded `capacityDelta`, and a required versioned `mutationDigest` over that identity and complete payload. Account compares the identity and complete payload in one transaction before creating or replaying the reservation; an exact retry replays, while any changed bundle field, cutoff/checkpoint, delta, or digest is an idempotency conflict before usage mutation. Stale evidence, exhausted quota, unavailable authority, malformed identity, and conflicting retries fail closed. No proto RPC, caller integration, durable usage ledger, or reservation lifecycle is implemented yet.
 - `ExportTenantData` – tenant-wide billing-safe export for one tenant, available to the caller's live `tenantAdmin` membership while gameplay is billing-blocked and limited to tenant-owned exportable records plus minimum stable subject references. The target request is tenant-only; the current account-targeted gRPC request is implementation drift.
 - `DeleteAccount` – begins or completes global account deletion according to the account lifecycle state machine; it is not a tenant-scoped membership deletion.
 - Pending-deletion access is a separate opaque Account credential, not a JWT or normal account session. The non-export deletion-specific routes are `GET /accounts/{accountId}/deletion`, `POST /accounts/{accountId}/deletion/cancel`, and `POST /accounts/{accountId}/deletion/billing-settlement`; each is classified `pending_deletion_scoped` for its exact action and bound to the Account-owned deletion workflow registry. The account export lifecycle is state-dependent but always uses the canonical asynchronous `POST /accounts/{accountId}/exports`, `GET /accounts/{accountId}/exports/{exportId}`, and `GET /accounts/{accountId}/exports/{exportId}/content` resources: active accounts use the ordinary authenticated account subject, while pending-deletion accounts use the pending-deletion credential and `pending_deletion_scoped` classification on that same lifecycle. These target routes are not currently routable.
@@ -276,7 +276,24 @@ Illustrative `GetTenantEntitlementsForRuntime(tenantId, requestId)` response:
   "entitlementVersion": 19,
   "tenantBillingSequence": 311,
   "tenantAuthorityGeneration": 12,
-  "evaluatedAt": "2026-03-13T09:15:32Z"
+  "evaluatedAt": "2026-03-13T09:15:32Z",
+  "bundleVersion": 1,
+  "snapshotIdentity": "tenant-entitlement-snapshot:7:19",
+  "evaluationIdentity": "tenant-entitlement-evaluation:01JNX...",
+  "authorityTuple": {
+    "canonicalJson": "<complete-applicable-authority-tuple>"
+  },
+  "tenantBillingCutoff": {
+    "tenantBillingSequence": 311,
+    "outboxStreamKey": "account:billing:v1:tenant/7",
+    "outboxSequence": 311
+  },
+  "outboxCheckpoints": [
+    {
+      "outboxStreamKey": "account:billing:v1:tenant/7",
+      "outboxSequence": 311
+    }
+  ]
 }
 ```
 
@@ -290,6 +307,8 @@ Required semantics:
 - `tenantBillingSequence` allows consumers to detect stale or gapped billing-event application before admitting gameplay.
 - `tenantAuthorityGeneration` is an opaque Account-owned tenant authority fence. Consumers compare it only for exact equality and must not infer ordering or use it as an event identity.
 - `evaluatedAt` records evaluation of authoritative committed input and is used with the differentiated freshness policy from the authentication and subscription-management designs; reading an old projection must not restamp it as fresh.
+- `bundleVersion`, `snapshotIdentity`, and `evaluationIdentity` authenticate the evidence schema, committed source snapshot, and this evaluation. The entitlement fields, identities, complete `authorityTuple`, applicable `tenantBillingCutoff`, and complete `outboxCheckpoints[]` are returned as one Account-authenticated bundle and are never reconstructed by callers.
+- The billing cutoff and matching checkpoint must name the same stream and sequence and carry the same `tenantBillingSequence`; missing, extra, contradictory, or separately sourced evidence is invalid.
 - Missing subscription state is not implicit availability. Free or trial hosting is returned as an explicit entitlement state.
 
 ## Subject-Binding Rules (Normative)

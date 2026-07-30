@@ -367,12 +367,17 @@ forbidden_summary_reference = re.compile(
     r"\$\{\{\s*secrets[.]|"
     r"steps[.][A-Za-z0-9_-]+[.]outputs[.]password|"
     r"(?<![;&|\n])[^;&|\n]*(?<![A-Za-z])(?:secrets?|secs?|credentials?|creds?)(?![A-Za-z])"
-    r"[^;&|\n]*(?:\|[^;&|\n]*)*\|\s*base64\s+(?:-d|--decode)\b",
+    r"[^;&|\n]*(?:\|[^;&|\n]*)*\|\s*base64\s+(?:-[A-Za-z]*d[A-Za-z]*|--decode)\b",
     re.IGNORECASE,
 )
 summary_target = re.compile(
     r"(?:>>?|tee(?:[ \t]+(?:-a|--append))?)[ \t]*"
     r"['\"]?\$\{?GITHUB_STEP_SUMMARY\}?['\"]?"
+)
+heredoc_open = re.compile(
+    r"<<(?P<strip_tabs>-)?[ \t]*(?P<quote>['\"]?)"
+    r"(?P<delimiter>[A-Za-z_][A-Za-z0-9_]*)"
+    r"(?P=quote)"
 )
 
 
@@ -402,7 +407,21 @@ def summary_write_regions(source):
         else:
             while start > 0 and lines[start - 1].rstrip().endswith("\\"):
                 start -= 1
-        regions.append("\n".join(lines[start : index + 1]))
+        end = index
+        heredoc_match = heredoc_open.search("\n".join(lines[start : index + 1]))
+        if heredoc_match is not None:
+            delimiter = heredoc_match.group("delimiter")
+            strip_tabs = heredoc_match.group("strip_tabs") is not None
+            for candidate in range(index + 1, len(lines)):
+                candidate_line = lines[candidate]
+                if strip_tabs:
+                    candidate_line = candidate_line.lstrip("\t")
+                if candidate_line == delimiter:
+                    end = candidate
+                    break
+            else:
+                end = len(lines) - 1
+        regions.append("\n".join(lines[start : end + 1]))
     return regions
 
 
@@ -427,6 +446,12 @@ for safe_source, unsafe in (
         '} >> "$GITHUB_STEP_SUMMARY"',
         True,
     ),
+    (
+        "cat <<'SUMMARY_EOF' >> \"$GITHUB_STEP_SUMMARY\"\n"
+        "unsafe: $DEMO_SMOKE_PASSWORD\n"
+        "SUMMARY_EOF",
+        True,
+    ),
 ):
     fixture_regions = summary_write_regions(safe_source)
     fixture_is_unsafe = any(has_forbidden_summary_reference(region) for region in fixture_regions)
@@ -441,6 +466,7 @@ for secret_pipeline in (
     "kubectl get sec demo -o json | tr -d '\\n' | base64 -d",
     "echo API_SECRET_TOKEN | base64 -d",
     "echo DB_CREDS | base64 -d",
+    "echo DB_CREDS | base64 -di",
 ):
     if not has_forbidden_summary_reference(secret_pipeline):
         raise AssertionError(
