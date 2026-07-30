@@ -4,6 +4,11 @@ Status: Complete and independently coverage-audited.
 
 This ledger maps canonical design sources to the stable capabilities in the [FireMUD Product Capability Taxonomy](../../architecture/product-capability-taxonomy.md). It is an allocation and coverage artifact, not an alternative design authority.
 
+## Validation And Proof References
+
+- Source-set allocation and the declared coverage summary are mechanically checked by [`check-design-capability-allocation.py`](../../../dev-tools/validation/check-design-capability-allocation.py); the complete gate contract is listed in the [design-alignment workstream](./README.md#automated-gates).
+- Implementation and verification evidence do not belong in this allocation ledger. The canonical capability reconciliation and focused-proof anchors are maintained in [capability implementation reconciliation](./capability-implementation-reconciliation.md) and the permanent implementation trackers.
+
 ## Allocation Rules
 
 - Every canonical Markdown source under `design/architecture/**` receives one primary allocation, normally at file scope. Mixed sources may instead allocate separately normative sections at heading scope; only documented governance, template, or registry/index artifacts are exempt.

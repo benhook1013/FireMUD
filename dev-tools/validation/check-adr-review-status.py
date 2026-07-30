@@ -43,12 +43,8 @@ REVIEW_ROW_RE = re.compile(
     r"on (?P<date>\d{4}-\d{2}-\d{2})(?P<outcome>(?:;| by) .+)$"
 )
 OUTCOME_LINK_RE = re.compile(r"\[[^\]\r\n]+\]\([^)\r\n]+\)")
-ADR_LINK_RE = re.compile(
-    r"\[ADR (?P<number>\d{4})\]\((?P<target>[^)\r\n]+)\)"
-)
-MARKDOWN_LINK_RE = re.compile(
-    r"\[(?P<label>[^\]\r\n]+)\]\((?P<target>[^)\r\n]+)\)"
-)
+ADR_LINK_RE = re.compile(r"\[ADR (?P<number>\d{4})\]\((?P<target>[^)\r\n]+)\)")
+MARKDOWN_LINK_RE = re.compile(r"\[(?P<label>[^\]\r\n]+)\]\((?P<target>[^)\r\n]+)\)")
 ADR_LABEL_RE = re.compile(r"^ADR (?P<number>\d{4})$")
 REPLACEMENT_ADR_LABEL_RE = re.compile(r"^replacement ADR (?P<number>\d{4})$")
 DECISION_KEY_LABEL_RE = re.compile(r"^[A-Z0-9][A-Z0-9-]*$")
@@ -115,6 +111,13 @@ def adr_number(path: Path) -> int:
 
 
 def section_value(text: str, heading: str) -> str:
+    heading_matches = re.findall(
+        rf"^## {re.escape(heading)}[ \t]*\r?$",
+        text,
+        flags=re.MULTILINE,
+    )
+    if len(heading_matches) != 1:
+        fail(f"missing or malformed {heading!r} section")
     match = re.search(
         rf"^## {re.escape(heading)}\r?\n\r?\n(?P<value>[^\r\n]+)(?:\r?\n|$)",
         text,
@@ -190,6 +193,17 @@ def validate_status_review_mapping(
         )
 
 
+def parse_adr_target(
+    path: Path, target: str
+) -> tuple[str, Path, Path, re.Match[str] | None]:
+    target_ref = re.split(r"[?#]", target, maxsplit=1)[0]
+    target_path = Path(target_ref)
+    resolved_target = (path.parent / target_path).resolve()
+    target_filename = target_ref.rsplit("/", 1)[-1]
+    target_match = ADR_PATH_RE.fullmatch(target_filename)
+    return target_ref, target_path, resolved_target, target_match
+
+
 def provenance_adr_number(
     path: Path,
     adr_dir: Path,
@@ -197,9 +211,10 @@ def provenance_adr_number(
     adr_match: re.Match[str],
 ) -> int:
     displayed_number = int(adr_match.group("number"))
-    target_ref = re.split(r"[?#]", adr_match.group("target"), maxsplit=1)[0]
-    target_filename = target_ref.rsplit("/", 1)[-1]
-    target_match = ADR_PATH_RE.fullmatch(target_filename)
+    target_ref, target_path, resolved_target, target_match = parse_adr_target(
+        path,
+        adr_match.group("target"),
+    )
     if target_match is None or int(target_match.group(1)) != displayed_number:
         fail(
             f"{path}: malformed ADR provenance at line {line_number}; "
@@ -207,8 +222,6 @@ def provenance_adr_number(
             f"{adr_match.group('target')!r}"
         )
 
-    target_path = Path(target_ref)
-    resolved_target = (path.parent / target_path).resolve()
     if (
         target_path.is_absolute()
         or resolved_target.parent != adr_dir.resolve()
@@ -228,9 +241,10 @@ def validate_replacement_adr_target(
     displayed_number: int,
     target: str,
 ) -> None:
-    target_ref = re.split(r"[?#]", target, maxsplit=1)[0]
-    target_filename = target_ref.rsplit("/", 1)[-1]
-    target_match = ADR_PATH_RE.fullmatch(target_filename)
+    _target_ref, target_path, resolved_target, target_match = parse_adr_target(
+        path,
+        target,
+    )
     if target_match is None or int(target_match.group(1)) != displayed_number:
         fail(
             f"{path}: malformed superseded scan-alias replacement at line "
@@ -238,8 +252,6 @@ def validate_replacement_adr_target(
             f"match target {target!r}"
         )
 
-    target_path = Path(target_ref)
-    resolved_target = (path.parent / target_path).resolve()
     if (
         target_path.is_absolute()
         or resolved_target.parent != adr_dir.resolve()
@@ -251,13 +263,23 @@ def validate_replacement_adr_target(
         )
 
 
-def validate_decision_key_target(path: Path, line_number: int, target: str) -> None:
-    target_ref = re.split(r"[?#]", target, maxsplit=1)[0]
-    target_path = Path(target_ref)
-    resolved_target = (path.parent / target_path).resolve()
+def validate_decision_key_target(
+    path: Path,
+    repository_root: Path,
+    line_number: int,
+    target: str,
+) -> None:
+    _target_ref, target_path, resolved_target, _ = parse_adr_target(path, target)
+    try:
+        resolved_target.relative_to(repository_root.resolve())
+    except ValueError:
+        resolved_inside_repository = False
+    else:
+        resolved_inside_repository = True
     if (
         target_path.is_absolute()
         or target_path.suffix.lower() != ".md"
+        or not resolved_inside_repository
         or not resolved_target.is_file()
     ):
         fail(
@@ -302,7 +324,12 @@ def validate_superseded_scan_alias_outcome(
                 f"{path}: superseded scan-alias row at line {line_number} "
                 f"has non-replacement link label {label!r}"
             )
-        validate_decision_key_target(path, line_number, target)
+        validate_decision_key_target(
+            path,
+            adr_dir.resolve().parents[2],
+            line_number,
+            target,
+        )
 
 
 def is_superseded_scan_alias(key: str, outcome: str, disposition: str) -> bool:
@@ -357,14 +384,19 @@ def checked_reviews(path: Path, adr_dir: Path) -> dict[int, list[Review]]:
     reviews: dict[int, list[Review]] = {}
     seen_keys: set[str] = set()
     lines = path.read_text(encoding="utf-8").splitlines()
-    try:
-        queue_start = next(
-            index
-            for index, line in enumerate(lines)
-            if REVIEW_QUEUE_HEADING_RE.fullmatch(line)
-        )
-    except StopIteration:
+    queue_starts = [
+        index
+        for index, line in enumerate(lines)
+        if REVIEW_QUEUE_HEADING_RE.fullmatch(line)
+    ]
+    if not queue_starts:
         fail(f"{path}: missing 'Adversarial Review Queue' section")
+    if len(queue_starts) != 1:
+        fail(
+            f"{path}: expected exactly one 'Adversarial Review Queue' section, "
+            f"found {len(queue_starts)}"
+        )
+    queue_start = queue_starts[0]
     section = scan_review_queue(lines, queue_start)
     if section.open_fence is not None:
         fail(
@@ -447,8 +479,7 @@ def checked_reviews(path: Path, adr_dir: Path) -> dict[int, list[Review]]:
         for number in review_adr_numbers:
             existing = reviews.setdefault(number, [])
             if existing and any(
-                (prior.date, prior.disposition)
-                != (review.date, review.disposition)
+                (prior.date, prior.disposition) != (review.date, review.disposition)
                 for prior in existing
             ):
                 fail(
@@ -470,8 +501,13 @@ def validate_completed_review(
     actual_keys = set(re.findall(r"`([^`]+)`", fields.get("Review source", "")))
 
     if fields.get("Human review status") != "Completed":
-        fail(f"{context}: checked human review requires 'Human review status: Completed'")
-    if fields.get("Human review date") not in expected_dates or len(expected_dates) != 1:
+        fail(
+            f"{context}: checked human review requires 'Human review status: Completed'"
+        )
+    if (
+        fields.get("Human review date") not in expected_dates
+        or len(expected_dates) != 1
+    ):
         fail(
             f"{context}: human review date must match checked queue date "
             f"{sorted(expected_dates)}"
@@ -494,10 +530,7 @@ def validate_completed_review(
 def validate_pending_review(context: Path, fields: dict[str, str]) -> None:
     for name, expected in PENDING_REVIEW_FIELDS.items():
         if fields.get(name) != expected:
-            fail(
-                f"{context}: pending proposal requires exact "
-                f"'{name}: {expected}'"
-            )
+            fail(f"{context}: pending proposal requires exact '{name}: {expected}'")
 
 
 def validate(root: Path = ROOT) -> None:
@@ -530,11 +563,14 @@ def validate(root: Path = ROOT) -> None:
             number,
             bool(linked_reviews),
         )
-        has_decision_record = re.search(
-            r"^## Decision Record[ \t]*\r?$",
-            text,
-            flags=re.MULTILINE,
-        ) is not None
+        has_decision_record = (
+            re.search(
+                r"^## Decision Record[ \t]*\r?$",
+                text,
+                flags=re.MULTILINE,
+            )
+            is not None
+        )
         if number in PRE_FORMAL_REVIEW_RECORDS and not has_decision_record:
             fields = {}
         else:

@@ -9,7 +9,7 @@ The goals of the subscription system include:
 - Respect tenant isolation while still enabling platform-wide reporting.
 - Coordinate with Stripe while keeping billing state consistent in FireMUD’s own database.
 
-## Implementation Notes
+## Implementation Status
 
 The plan-change timing, over-quota behavior, pending-plan metadata, and full quota-bearing runtime entitlement response described below are canonical target-state behavior. Current implementation has the first runtime availability surface, but quota fields, pending plan metadata, downgrade/cancellation enforcement, and the target separation between create and existing-subscription update APIs still need implementation follow-through. The current `CreateSubscriptionRequest` does not carry the target operation discriminator or immutable creation-operation identities and must not be treated as proof of that contract; expected row-version/CAS enforcement belongs only to `UpdateSubscription`.
 

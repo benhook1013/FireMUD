@@ -70,7 +70,11 @@ for expected in (
     'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then',
     'echo "::error::Failed to remove dev-demo bootstrap credential files"',
     'if ! cleanup_bootstrap_temp_dir; then',
-    'cleanup_bootstrap_secret',
+    'kubectl -n "${PREVIEW_NAMESPACE}" delete secret dev-demo-bootstrap-env --ignore-not-found',
+    'cleanup_bootstrap_resources() {',
+    'trap cleanup_bootstrap_resources EXIT',
+    'if ! cleanup_bootstrap_secret; then',
+    'cleanup_bootstrap_secret\n',
 ):
     if expected not in bootstrap_manifest:
         raise AssertionError(

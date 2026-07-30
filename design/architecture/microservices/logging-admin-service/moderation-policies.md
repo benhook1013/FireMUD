@@ -1,8 +1,14 @@
 # Moderation Policies
 
-This file defines the moderation-policy boundary and example policy categories for hosted FireMUD games. Operators may adapt policy definitions to community needs, but the operator action route and `ApplyModerationAction` are unavailable/gated until the action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account authorization-reference issuance/redemption flow exist. The separate `EvaluateModerationPolicy` read remains live and is not itself destructive enforcement.
+This file defines the moderation-policy boundary and example policy categories for hosted FireMUD games. Operators may adapt policy definitions to community needs. The target owner-side enforcement workflow is distinct from the current policy-input/audit persistence and `EvaluateModerationPolicy` read surfaces described below.
 
 For details on moderation tooling see the [Logging & Admin Service overview](./README.md), [API contracts](./api-contracts.md), and [runtime model](./runtime-and-data.md).
+
+## Implementation Status
+
+- `POST /moderation/actions` and the internal `ApplyModerationAction` gRPC ingress currently persist `moderation_actions` policy-input/audit records. They do not directly mutate Account, Game Session, or Social & Groups enforcement state.
+- `EvaluateModerationPolicy` is a live read consumed by Game Session and Social & Groups at their authoritative enforcement boundaries.
+- The target owner-side enforcement mutation, action-family schema, shared cross-language `mutationDigest/v1` vectors, Account authorization-reference issuance/redemption, versioned policy propagation, and complete appeal workflow remain gated or unimplemented. This document does not claim current tests prove those target obligations.
 
 ## Core Policies
 
@@ -20,7 +26,7 @@ Tenant-configurable word lists, normalization, masking, and bypass detection bel
 
 1. Offending logs or reports are flagged in the Logging & Admin Service dashboards. These dashboards are described in [Analytics Dashboards](./analytics-dashboards.md).
 2. Moderators review the context and determine the severity.
-3. `ApplyModerationAction` (see [`logging_admin_service.proto`](../../../../protos/logging-admin/v1/logging_admin_service.proto)) is an unavailable/gated implementation contract until the action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account authorization-reference issuance/redemption flow exist. It must not be treated as current supported operator mutation. The separate live `EvaluateModerationPolicy` contract evaluates policy for enforcement owners; it does not make the gated action available and does not delete accounts or terminate sessions.
+3. The current `POST /moderation/actions` and `ApplyModerationAction` contracts (see [`logging_admin_service.proto`](../../../../protos/logging-admin/v1/logging_admin_service.proto)) persist policy input and audit evidence only. The target owner-side enforcement mutation remains gated until the action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account authorization-reference issuance/redemption flow exist. The separate live `EvaluateModerationPolicy` contract evaluates policy for enforcement owners; it does not itself delete accounts, terminate sessions, or make the target mutation workflow complete.
 4. The owning runtime enforces the applicable policy at its authoritative boundary: Game Session enforces gameplay admission, Social & Groups enforces chat-send policy, and Account owns account security-state transitions and player notification. A broader cross-service suspension, recovery, appeal, and notification workflow remains separate Account-owned product work.
 
 ## Appeals

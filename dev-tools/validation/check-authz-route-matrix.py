@@ -12,7 +12,9 @@ from typing import Any
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_MATRIX = ROOT / "design/architecture/system-architecture-authz-route-matrix.yaml"
+DEFAULT_MATRIX = (
+    ROOT / "design/architecture/system-architecture-authz-route-matrix.yaml"
+)
 REQUIRED_WS_GAME_CHECKS = {
     "connect_token_single_use_consume",
     "replay_protection_available",
@@ -281,7 +283,12 @@ RequiredFieldsCache = dict[int, tuple[object, list[str] | None]]
 def route_key(route: dict[str, Any]) -> str | None:
     service = route.get("service")
     name = route.get("route")
-    if not isinstance(service, str) or not service.strip() or not isinstance(name, str) or not name.strip():
+    if (
+        not isinstance(service, str)
+        or not service.strip()
+        or not isinstance(name, str)
+        or not name.strip()
+    ):
         return None
     return f"{service}|{name}"
 
@@ -354,7 +361,9 @@ def collect_live_checks(
     elif isinstance(value, list):
         for index, child in enumerate(value):
             checks.extend(
-                collect_live_checks(child, f"{field}[{index}]", errors, live_checks_cache)
+                collect_live_checks(
+                    child, f"{field}[{index}]", errors, live_checks_cache
+                )
             )
     return checks
 
@@ -372,10 +381,14 @@ def collect_auth_paths(value: Any) -> list[Any]:
     return auth_paths
 
 
-def validate_auth_path_vocabulary(document: dict[str, Any], errors: list[str]) -> set[str]:
+def validate_auth_path_vocabulary(
+    document: dict[str, Any], errors: list[str]
+) -> set[str]:
     vocabulary = document.get("auth_path_vocabulary")
-    if not isinstance(vocabulary, list) or not vocabulary or any(
-        not isinstance(item, str) for item in vocabulary
+    if (
+        not isinstance(vocabulary, list)
+        or not vocabulary
+        or any(not isinstance(item, str) for item in vocabulary)
     ):
         errors.append("auth_path_vocabulary must be a non-empty list of strings")
         allowed_auth_paths: set[str] = set()
@@ -397,7 +410,9 @@ def validate_auth_path_vocabulary(document: dict[str, Any], errors: list[str]) -
     return allowed_auth_paths
 
 
-def validate_token_profiles(document: dict[str, Any], errors: list[str]) -> dict[str, dict[str, str]]:
+def validate_token_profiles(
+    document: dict[str, Any], errors: list[str]
+) -> dict[str, dict[str, str]]:
     raw_profiles = document.get("token_profiles")
     if not isinstance(raw_profiles, list):
         errors.append("token_profiles must be a list of mappings")
@@ -419,7 +434,9 @@ def validate_token_profiles(document: dict[str, Any], errors: list[str]) -> dict
         profile = values.get("profile")
         if profile:
             if profile in profiles:
-                errors.append(f"token_profiles must not contain duplicate profile {profile!r}")
+                errors.append(
+                    f"token_profiles must not contain duplicate profile {profile!r}"
+                )
             else:
                 profiles[profile] = values
         if values.get("issuer") and values["issuer"] != TOKEN_ISSUER:
@@ -475,16 +492,22 @@ def validate_role_assurance(document: dict[str, Any], errors: list[str]) -> set[
     raw_classifications = document.get("classifications")
     allowed_classifications = {
         item
-        for item in (raw_classifications if isinstance(raw_classifications, list) else [])
+        for item in (
+            raw_classifications if isinstance(raw_classifications, list) else []
+        )
         if isinstance(item, str)
     }
     for role in sorted(REQUIRED_ROLE_ASSURANCE_ROLES):
         requirement = requirements.get(role)
-        label = f"role_assurance.privileged_control_when_global_role.requirements.{role}"
+        label = (
+            f"role_assurance.privileged_control_when_global_role.requirements.{role}"
+        )
         if not isinstance(requirement, dict):
             errors.append(f"{label} must be a mapping")
             continue
-        legacy_keys = {"when", "when_scopes", "allowed_classifications"} & set(requirement)
+        legacy_keys = {"when", "when_scopes", "allowed_classifications"} & set(
+            requirement
+        )
         if legacy_keys:
             errors.append(
                 f"{label} must use one applies_to shape; legacy keys remain: {sorted(legacy_keys)}"
@@ -515,10 +538,14 @@ def validate_role_assurance(document: dict[str, Any], errors: list[str]) -> set[
     return predicates
 
 
-def validate_route_status_vocabulary(document: dict[str, Any], errors: list[str]) -> set[str]:
+def validate_route_status_vocabulary(
+    document: dict[str, Any], errors: list[str]
+) -> set[str]:
     vocabulary = document.get("route_status_vocabulary")
-    if not isinstance(vocabulary, list) or not vocabulary or any(
-        not isinstance(item, str) for item in vocabulary
+    if (
+        not isinstance(vocabulary, list)
+        or not vocabulary
+        or any(not isinstance(item, str) for item in vocabulary)
     ):
         errors.append("route_status_vocabulary must be a non-empty list of strings")
         allowed_statuses: set[str] = set()
@@ -546,7 +573,10 @@ def validate_route_statuses(
                 f"routes[{index}] route_status must be one of {sorted(allowed_statuses)}"
             )
         implementation_status = route.get("implementation_status")
-        if isinstance(implementation_status, dict) and "target_only" in implementation_status:
+        if (
+            isinstance(implementation_status, dict)
+            and "target_only" in implementation_status
+        ):
             errors.append(
                 f"routes[{index}] must use route_status instead of implementation_status.target_only"
             )
@@ -567,7 +597,9 @@ def validate_required_fields(
             errors,
             required_fields_cache,
         )
-        invalid_fields = [field for field in fields if not REQUIRED_FIELD_PATTERN.fullmatch(field)]
+        invalid_fields = [
+            field for field in fields if not REQUIRED_FIELD_PATTERN.fullmatch(field)
+        ]
         if invalid_fields:
             errors.append(
                 f"routes[{index}] required_fields must use snake_case: {invalid_fields}"
@@ -616,9 +648,7 @@ def validate_route_class_branch_table(
         label = f"route_class_branch_table {key[0]} {key[1]}"
         for field in ("scope", "role"):
             if entry.get(field) != expected[field]:
-                errors.append(
-                    f"{label} must declare {field}={expected[field]!r}"
-                )
+                errors.append(f"{label} must declare {field}={expected[field]!r}")
         privileged_control = entry.get("privileged_control")
         if privileged_control not in PRIVILEGED_CONTROL_VALUES:
             errors.append(
@@ -666,7 +696,9 @@ def validate_membership_policy(
         )
     exception = policy.get("public_production_join_exception")
     if not isinstance(exception, dict):
-        errors.append("tenant_membership_policy.public_production_join_exception must be a mapping")
+        errors.append(
+            "tenant_membership_policy.public_production_join_exception must be a mapping"
+        )
         return
     if exception.get("classification") != "public_production_onboarding":
         errors.append(
@@ -717,6 +749,7 @@ def validate_membership_policy(
             f"exactly {sorted(expected_routes)!r}"
         )
 
+
 def validate_authority_evidence_policy(
     document: dict[str, Any], errors: list[str]
 ) -> None:
@@ -726,7 +759,9 @@ def validate_authority_evidence_policy(
         return
     fresh = policy.get("fail_closed_fresh_evidence")
     if not isinstance(fresh, dict):
-        errors.append("authority_evidence_policy.fail_closed_fresh_evidence must be a mapping")
+        errors.append(
+            "authority_evidence_policy.fail_closed_fresh_evidence must be a mapping"
+        )
     else:
         applies_to = string_list(
             fresh.get("applies_to"),
@@ -745,13 +780,21 @@ def validate_authority_evidence_policy(
                 "authority_evidence_policy fresh evidence must cover admission, PLAY, "
                 "renewal, reconnect, resume, and protected control-plane mutations"
             )
-        if fresh.get("unavailable_or_ambiguous") != "AUTH_UNAVAILABLE":
+        if fresh.get("unreachable_or_timeout") != "AUTH_UNAVAILABLE":
             errors.append(
-                "authority_evidence_policy fresh evidence must fail closed with AUTH_UNAVAILABLE"
+                "authority_evidence_policy unreachable or timed-out evidence "
+                "must fail closed with AUTH_UNAVAILABLE"
+            )
+        if fresh.get("reachable_invalid_or_ambiguous") != "AUTH_SESSION_REVOKED":
+            errors.append(
+                "authority_evidence_policy reachable invalid or ambiguous evidence "
+                "must fail closed with AUTH_SESSION_REVOKED"
             )
     bound = policy.get("bound_ordinary_gameplay")
     if not isinstance(bound, dict):
-        errors.append("authority_evidence_policy.bound_ordinary_gameplay must be a mapping")
+        errors.append(
+            "authority_evidence_policy.bound_ordinary_gameplay must be a mapping"
+        )
     else:
         if bound.get("applies_to") != "already_bound_instance_runtime":
             errors.append(
@@ -779,18 +822,30 @@ def validate_elevation_bootstrap(
     cardinality_errors: set[str] | None = None,
 ) -> None:
     contracts = document.get("elevation_contracts")
-    privileged = contracts.get("privileged_control") if isinstance(contracts, dict) else None
-    bootstrap = privileged.get("bootstrap_exemption") if isinstance(privileged, dict) else None
+    privileged = (
+        contracts.get("privileged_control") if isinstance(contracts, dict) else None
+    )
+    bootstrap = (
+        privileged.get("bootstrap_exemption") if isinstance(privileged, dict) else None
+    )
     expected_route = "account-service/EnterPrivilegedControlWindow"
     if not isinstance(bootstrap, dict):
-        errors.append("elevation_contracts.privileged_control.bootstrap_exemption must be a mapping")
+        errors.append(
+            "elevation_contracts.privileged_control.bootstrap_exemption must be a mapping"
+        )
     else:
         if bootstrap.get("route") != expected_route:
-            errors.append("privileged_control bootstrap exemption must name EnterPrivilegedControlWindow")
+            errors.append(
+                "privileged_control bootstrap exemption must name EnterPrivilegedControlWindow"
+            )
         if bootstrap.get("privileged_control") != "establishes_window":
-            errors.append("privileged_control bootstrap exemption must establish the window")
+            errors.append(
+                "privileged_control bootstrap exemption must establish the window"
+            )
         if bootstrap.get("requires_existing_window") is not False:
-            errors.append("privileged_control bootstrap exemption must not require an existing window")
+            errors.append(
+                "privileged_control bootstrap exemption must not require an existing window"
+            )
 
     route = resolve_unique_route(
         routes,
@@ -922,11 +977,16 @@ def validate_pending_deletion_generation(
         )
     if checks is None:
         checks = route_live_checks(route, label, errors, live_checks_cache)
-    missing = REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS["pending_deletion_scoped"][
-        "required_live_checks"
-    ] - checks
+    missing = (
+        REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS["pending_deletion_scoped"][
+            "required_live_checks"
+        ]
+        - checks
+    )
     if missing:
-        errors.append(f"{label} is missing no-target authority checks: {sorted(missing)}")
+        errors.append(
+            f"{label} is missing no-target authority checks: {sorted(missing)}"
+        )
     forbidden_checks = checks & {"tenant_generation", "target_tenant_generation"}
     if forbidden_checks:
         errors.append(
@@ -1035,7 +1095,7 @@ def validate_conditional_operator_route(
             f"{label} must set global_platform_admin_membership_required=false"
         )
     if checks is None:
-        checks = route_live_checks(route, label, errors)
+        checks = route_live_checks(route, label, errors, live_checks_cache)
     branch_checks = operator_authorization_branch_checks(
         route, label, errors, live_checks_cache
     )
@@ -1055,16 +1115,15 @@ def validate_conditional_operator_route(
             f"{label} tenant-role branch must require membership_when_tenant_role"
         )
     if "membership_generation" not in tenant_branch_checks:
-        errors.append(
-            f"{label} tenant-role branch must require membership_generation"
-        )
+        errors.append(f"{label} tenant-role branch must require membership_generation")
     if "tenant_generation" not in tenant_branch_checks:
         errors.append(f"{label} operator route must require tenant_generation")
     if "target_tenant_generation" not in platform_admin_branch_checks:
-        errors.append(
-            f"{label} operator route must require target_tenant_generation"
-        )
-    if route.get("global_platform_admin_reference_generation_binding") != "target_tenant_generation":
+        errors.append(f"{label} operator route must require target_tenant_generation")
+    if (
+        route.get("global_platform_admin_reference_generation_binding")
+        != "target_tenant_generation"
+    ):
         errors.append(
             f"{label} must bind global platformAdmin operations to target_tenant_generation"
         )
@@ -1247,11 +1306,16 @@ def validate_token_fields(
                 errors,
             )
             return
-        errors.append(f"{label} must declare exactly one token profile per receiver policy")
+        errors.append(
+            f"{label} must declare exactly one token profile per receiver policy"
+        )
         return
     profile = token_profiles.get(profiles[0])
     if profile is None:
-        if reported_unknown_profiles is None or profiles[0] not in reported_unknown_profiles:
+        if (
+            reported_unknown_profiles is None
+            or profiles[0] not in reported_unknown_profiles
+        ):
             errors.append(f"{label} uses unknown token profiles: {[profiles[0]]}")
         return
     expected = (profile.get("type"), profile.get("issuer"), profile.get("audience"))
@@ -1271,9 +1335,7 @@ def validate_route_profile_declaration(
     if profiles_value is None:
         return (None, [], [])
     label = f"matrix.routes[{index}]"
-    profiles = string_list(
-        profiles_value, f"{label} accepted_token_profiles", errors
-    )
+    profiles = string_list(profiles_value, f"{label} accepted_token_profiles", errors)
     unknown_profiles = sorted(set(profiles) - set(token_profiles))
     if unknown_profiles:
         errors.append(f"{label} uses unknown token profiles: {unknown_profiles}")
@@ -1323,7 +1385,9 @@ def validate_caller_policies(
                 f"{policy_label}.mtls_identity must be a concrete spiffe:// identity"
             )
         if policy.get("method_policy") != "exact_declared_route":
-            errors.append(f"{policy_label} must declare method_policy exact_declared_route")
+            errors.append(
+                f"{policy_label} must declare method_policy exact_declared_route"
+            )
         policy_profiles_value = policy.get("accepted_token_profiles")
         policy_profiles = string_list(
             policy_profiles_value,
@@ -1354,17 +1418,20 @@ def validate_internal_route_callers(
         ("mtls_callers", mtls_callers),
     ):
         values = value.get("any_of") if isinstance(value, dict) else None
-        if not isinstance(values, list) or not values or any(
-            not isinstance(item, str) or not item.strip() for item in values
+        if (
+            not isinstance(values, list)
+            or not values
+            or any(not isinstance(item, str) or not item.strip() for item in values)
         ):
             errors.append(f"{label} {field}.any_of must be a non-empty list of strings")
     mtls_values = mtls_callers.get("any_of") if isinstance(mtls_callers, dict) else None
-    mtls_values_valid = isinstance(mtls_values, list) and bool(mtls_values) and all(
-        isinstance(item, str) and item.strip() for item in mtls_values
+    mtls_values_valid = (
+        isinstance(mtls_values, list)
+        and bool(mtls_values)
+        and all(isinstance(item, str) and item.strip() for item in mtls_values)
     )
     if mtls_values_valid and any(
-        not item.startswith("spiffe://") or "/sa/" not in item
-        for item in mtls_values
+        not item.startswith("spiffe://") or "/sa/" not in item for item in mtls_values
     ):
         errors.append(
             f"{label} mtls_callers.any_of must contain concrete spiffe:// identities"
@@ -1412,9 +1479,7 @@ def validate_receiver_predicates(
         label = f"{route.get('service')} {route.get('route')}"
         caller_policies = route.get("caller_policies")
         if caller_policies is not None:
-            validate_caller_policies(
-                caller_policies, label, token_profiles, errors
-            )
+            validate_caller_policies(caller_policies, label, token_profiles, errors)
             continue
         validate_internal_route_callers(
             route,
@@ -1447,7 +1512,10 @@ def validate_tenant_generation_allowlist(
                 f"{classification} must be a mapping"
             )
             continue
-        if entry.get("target_tenant_generation") is not expected["target_tenant_generation"]:
+        if (
+            entry.get("target_tenant_generation")
+            is not expected["target_tenant_generation"]
+        ):
             errors.append(
                 f"tenant_generation_policy exception {classification} "
                 "has the wrong target generation setting"
@@ -1465,10 +1533,14 @@ def validate_tenant_generation_allowlist(
                 f"tenant_generation_policy exception {classification} "
                 "has the wrong required authority checks"
             )
-        if classification in (
-            "cross_tenant_support_safe",
-            "cross_tenant_billing_safe",
-        ) and entry.get("role_assurance_policy") != PRIVILEGED_OPERATOR_ROLE_ASSURANCE:
+        if (
+            classification
+            in (
+                "cross_tenant_support_safe",
+                "cross_tenant_billing_safe",
+            )
+            and entry.get("role_assurance_policy") != PRIVILEGED_OPERATOR_ROLE_ASSURANCE
+        ):
             errors.append(
                 f"tenant_generation_policy exception {classification} "
                 f"must reference {PRIVILEGED_OPERATOR_ROLE_ASSURANCE}"
@@ -1498,10 +1570,15 @@ def validate_no_target_tenant_classifications(
         if not isinstance(entry, dict):
             errors.append(f"{label} must be a mapping")
             continue
-        if entry.get("target_tenant_generation") is not expected["target_tenant_generation"]:
+        if (
+            entry.get("target_tenant_generation")
+            is not expected["target_tenant_generation"]
+        ):
             errors.append(f"{label} must set target_tenant_generation=false")
         required_checks = set(
-            string_list(entry.get("required_authority"), f"{label}.required_authority", errors)
+            string_list(
+                entry.get("required_authority"), f"{label}.required_authority", errors
+            )
         )
         if required_checks != expected["required_live_checks"]:
             errors.append(f"{label} has the wrong required authority checks")
@@ -1510,12 +1587,12 @@ def validate_no_target_tenant_classifications(
             errors.append(f"{label} must declare a bounded contract_justification")
         proof_contract = entry.get("negative_proof")
         proof = (
-            proof_contract.get("required")
-            if isinstance(proof_contract, dict)
-            else None
+            proof_contract.get("required") if isinstance(proof_contract, dict) else None
         )
-        if not isinstance(proof, list) or not proof or any(
-            not isinstance(item, str) or not item.strip() for item in proof
+        if (
+            not isinstance(proof, list)
+            or not proof
+            or any(not isinstance(item, str) or not item.strip() for item in proof)
         ):
             errors.append(f"{label} must declare non-empty negative_proof.required")
 
@@ -1540,9 +1617,7 @@ def validate_tenant_generation_exception_routes(
                 f"{label} must explicitly disable tenant_billing_authority_generation_applies "
                 f"for {classification}"
             )
-        membership_generation = route.get(
-            "membership_authority_generation_applies"
-        )
+        membership_generation = route.get("membership_authority_generation_applies")
         if classification == "billing_safe_tenant":
             if membership_generation is not True:
                 errors.append(
@@ -1604,9 +1679,13 @@ def validate_entitlement_contract(
         if contract.get("binding") != "exact_tenant_id":
             errors.append("entitlement_contract.binding must be exact_tenant_id")
         if contract.get("cross_tenant_inheritance") != "forbidden":
-            errors.append("entitlement_contract.cross_tenant_inheritance must be forbidden")
+            errors.append(
+                "entitlement_contract.cross_tenant_inheritance must be forbidden"
+            )
         if contract.get("account_wide_fallback") != "forbidden":
-            errors.append("entitlement_contract.account_wide_fallback must be forbidden")
+            errors.append(
+                "entitlement_contract.account_wide_fallback must be forbidden"
+            )
     route = resolve_unique_route(
         routes,
         "account-service",
@@ -1617,9 +1696,13 @@ def validate_entitlement_contract(
     if route is None:
         return
     if route.get("entitlement_scope") != "account_owned_tenant_bound":
-        errors.append("GetTenantEntitlementsForRuntime must declare account_owned_tenant_bound entitlement_scope")
+        errors.append(
+            "GetTenantEntitlementsForRuntime must declare account_owned_tenant_bound entitlement_scope"
+        )
     if route.get("cross_tenant_inheritance") != "forbidden":
-        errors.append("GetTenantEntitlementsForRuntime must forbid cross-tenant inheritance")
+        errors.append(
+            "GetTenantEntitlementsForRuntime must forbid cross-tenant inheritance"
+        )
 
 
 def validate_role_assurance_references(
@@ -1651,7 +1734,9 @@ def validate_generation_applicability(
             )
         account_generation = route.get("account_authority_generation_applies")
         if account_generation is not None and not isinstance(account_generation, bool):
-            errors.append(f"{label} account_authority_generation_applies must be boolean")
+            errors.append(
+                f"{label} account_authority_generation_applies must be boolean"
+            )
         route_key_value = (route.get("service"), route.get("route"))
         checks = None
         if (
@@ -1696,13 +1781,15 @@ def validate_profile_authority_routes(
         if route.get("method_policy") != "exact_declared_route":
             errors.append(f"{label} must declare method_policy exact_declared_route")
         if route.get("tenant_billing_authority_generation_applies") is not True:
-            errors.append(
-                f"{label} must apply tenant billing authority generation"
-            )
+            errors.append(f"{label} must apply tenant billing authority generation")
         if route.get("membership_authority_generation_applies") is not True:
             errors.append(f"{label} must apply membership authority generation")
         checks = route_live_checks(route, label, errors, live_checks_cache)
-        for required_check in ("membership", "membership_generation", "tenant_generation"):
+        for required_check in (
+            "membership",
+            "membership_generation",
+            "tenant_generation",
+        ):
             if required_check not in checks:
                 errors.append(f"{label} must require live check {required_check}")
 
@@ -1727,7 +1814,11 @@ def validate_refresh_roles_routes(
         if "mutation_digest" not in required_fields:
             errors.append(f"{label} must require mutation_digest for idempotency")
         canonical_errors = route.get("canonical_errors", {})
-        any_of = canonical_errors.get("any_of") if isinstance(canonical_errors, dict) else None
+        any_of = (
+            canonical_errors.get("any_of")
+            if isinstance(canonical_errors, dict)
+            else None
+        )
         outcomes = string_list(any_of, f"{label} canonical_errors.any_of", errors)
         if "IDEMPOTENCY_CONFLICT" not in outcomes:
             errors.append(f"{label} must declare IDEMPOTENCY_CONFLICT")
@@ -1741,11 +1832,17 @@ def validate_refresh_roles_routes(
     )
     if grpc_route is not None:
         label = "game-session-service RefreshRoles"
-        if grpc_route.get("auth_path") != "exact_mtls_workload_plus_account_operator_authorization_reference":
+        if (
+            grpc_route.get("auth_path")
+            != "exact_mtls_workload_plus_account_operator_authorization_reference"
+        ):
             errors.append(
                 f"{label} must use Account-redeemed operator authorization auth_path"
             )
-        if grpc_route.get("operator_authorization_reference") != "required_and_redeemed_with_account":
+        if (
+            grpc_route.get("operator_authorization_reference")
+            != "required_and_redeemed_with_account"
+        ):
             errors.append(
                 f"{label} must require Account operator authorization redemption"
             )
@@ -1768,7 +1865,10 @@ def validate_refresh_roles_routes(
     )
     if http_route is not None:
         label = "game-session-service POST /sessions/{sessionId}/refresh-roles"
-        if http_route.get("operator_authorization_reference") != "account_issued_bounded_reference":
+        if (
+            http_route.get("operator_authorization_reference")
+            != "account_issued_bounded_reference"
+        ):
             errors.append(f"{label} must require an Account-issued operator reference")
         validate_idempotency(http_route, label)
 
@@ -1777,7 +1877,11 @@ def validate_known_drift(value: Any, field: str, errors: list[str]) -> None:
     if isinstance(value, dict):
         for key, child in value.items():
             child_field = f"{field}.{key}" if field else key
-            if key == "implementation_status" and isinstance(child, dict) and "known_drift" in child:
+            if (
+                key == "implementation_status"
+                and isinstance(child, dict)
+                and "known_drift" in child
+            ):
                 known_drift = child["known_drift"]
                 if (
                     not isinstance(known_drift, list)
@@ -1821,7 +1925,9 @@ def validate_operator_mutation_support_gate(
     }
     gate_identities: list[str] = []
     for field in ("applies_to", "live_exceptions"):
-        values = string_list(gate.get(field), f"operator_mutation_support_gate.{field}", errors)
+        values = string_list(
+            gate.get(field), f"operator_mutation_support_gate.{field}", errors
+        )
         for index, value in enumerate(values):
             identity = route_identity(
                 value,
@@ -1861,7 +1967,9 @@ def validate_operator_mutation_support_gate(
         errors.append(
             "operator_mutation_support_gate.coverage_drift must not duplicate identities"
         )
-    for identity in sorted(set(gate_identities) - route_identities - set(drift_identities)):
+    for identity in sorted(
+        set(gate_identities) - route_identities - set(drift_identities)
+    ):
         errors.append(
             "operator_mutation_support_gate identity is neither a route nor explicit "
             f"coverage drift: {identity}"
@@ -1898,7 +2006,9 @@ def resolve_unique_route(
     if len(matches) != 1:
         key = f"{service}|{route_name}"
         if cardinality_errors is None or key not in cardinality_errors:
-            errors.append(f"matrix must contain exactly one {service} {route_name} route")
+            errors.append(
+                f"matrix must contain exactly one {service} {route_name} route"
+            )
             if cardinality_errors is not None:
                 cardinality_errors.add(key)
         return None
@@ -1916,11 +2026,15 @@ def applicability_value(
     clauses = applicability.get("all_of", [])
     if not isinstance(clauses, list):
         return None
-    values = [clause[key] for clause in clauses if isinstance(clause, dict) and key in clause]
+    values = [
+        clause[key] for clause in clauses if isinstance(clause, dict) and key in clause
+    ]
     if not values:
         return None
     if any(value != values[0] for value in values[1:]):
-        errors.append(f"{label} has conflicting applicability values for {key}: {values!r}")
+        errors.append(
+            f"{label} has conflicting applicability values for {key}: {values!r}"
+        )
         return None
     return values[0]
 
@@ -1952,14 +2066,19 @@ def validate_applicability(
 
 
 def validate_downstream_admission_contract(
-    route: dict[str, Any], label: str, errors: list[str], live_checks_cache: LiveChecksCache | None = None
+    route: dict[str, Any],
+    label: str,
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
 ) -> None:
     contract = route.get("downstream_admission_contract")
     if not isinstance(contract, dict):
         errors.append(f"{label} must declare downstream_admission_contract")
         return
     if contract.get("owner") != "game-session-service":
-        errors.append(f"{label} downstream_admission_contract must be owned by game-session-service")
+        errors.append(
+            f"{label} downstream_admission_contract must be owned by game-session-service"
+        )
     if contract.get("tenant_billing_authority_generation_applies") is not False:
         errors.append(
             f"{label} downstream_admission_contract must disable tenant billing authority generation"
@@ -2002,7 +2121,8 @@ def validate_ws_game_routes(
             by_mode.setdefault(mode, []).append(route)
 
     if len(ws_routes) != 2 or any(
-        len(by_mode.get(mode, [])) != 1 for mode in ("first_party_web", "trusted_tcp_proxy")
+        len(by_mode.get(mode, [])) != 1
+        for mode in ("first_party_web", "trusted_tcp_proxy")
     ):
         errors.append(
             "matrix must contain exactly one first_party_web and one trusted_tcp_proxy "
@@ -2037,9 +2157,15 @@ def validate_ws_game_routes(
             )
         )
         if missing_first_party:
-            errors.append(f"/ws/game/** is missing required live checks: {missing_first_party}")
+            errors.append(
+                f"/ws/game/** is missing required live checks: {missing_first_party}"
+            )
         handshake_classes = first_party.get("handshake_error_classes", {})
-        outcomes = handshake_classes.get("any_of", []) if isinstance(handshake_classes, dict) else []
+        outcomes = (
+            handshake_classes.get("any_of", [])
+            if isinstance(handshake_classes, dict)
+            else []
+        )
         if "POLICY_PRESSURE" not in outcomes:
             errors.append("/ws/game/** handshake outcomes must include POLICY_PRESSURE")
         if first_party.get("issued_token_state") != GAMEPLAY_CONNECT_ISSUED_TOKEN_STATE:
@@ -2139,7 +2265,9 @@ def validate_issue_connect_token(
         )
     )
     if missing_checks:
-        errors.append(f"IssueConnectToken is missing required live checks: {missing_checks}")
+        errors.append(
+            f"IssueConnectToken is missing required live checks: {missing_checks}"
+        )
 
 
 def validate_join_routes(
@@ -2149,15 +2277,19 @@ def validate_join_routes(
     cardinality_errors: set[str] | None = None,
 ) -> None:
     for service, name in sorted(JOIN_ROUTES_REQUIRING_POINTER_ERROR):
-        route = resolve_unique_route(
-            routes, service, name, errors, cardinality_errors
-        )
+        route = resolve_unique_route(routes, service, name, errors, cardinality_errors)
         if route is None:
             continue
         canonical_errors = route.get("canonical_errors", {})
-        outcomes = canonical_errors.get("any_of", []) if isinstance(canonical_errors, dict) else []
+        outcomes = (
+            canonical_errors.get("any_of", [])
+            if isinstance(canonical_errors, dict)
+            else []
+        )
         if "ADMISSION_POINTER_UNAVAILABLE" not in outcomes:
-            errors.append(f"{service} {name} must declare ADMISSION_POINTER_UNAVAILABLE")
+            errors.append(
+                f"{service} {name} must declare ADMISSION_POINTER_UNAVAILABLE"
+            )
         checks = route_live_checks(
             route,
             f"{service} {name}",
@@ -2196,9 +2328,7 @@ def validate_delegated_entitlements(
         return
     caller_policies = entitlement_route.get("caller_policies")
     if not isinstance(caller_policies, list):
-        errors.append(
-            "GetTenantEntitlementsForRuntime caller_policies must be a list"
-        )
+        errors.append("GetTenantEntitlementsForRuntime caller_policies must be a list")
         return
     game_session_policies = [
         policy
@@ -2232,10 +2362,14 @@ def validate_live_check_vocabulary(
     live_checks_cache: LiveChecksCache | None = None,
 ) -> set[str]:
     vocabulary = document.get("required_live_check_vocabulary")
-    if not isinstance(vocabulary, list) or not vocabulary or any(
-        not isinstance(item, str) for item in vocabulary
+    if (
+        not isinstance(vocabulary, list)
+        or not vocabulary
+        or any(not isinstance(item, str) for item in vocabulary)
     ):
-        errors.append("required_live_check_vocabulary must be a non-empty list of strings")
+        errors.append(
+            "required_live_check_vocabulary must be a non-empty list of strings"
+        )
         allowed_checks: set[str] = set()
     else:
         allowed_checks = set(vocabulary)
@@ -2244,11 +2378,7 @@ def validate_live_check_vocabulary(
 
     live_checks = collect_live_checks(document, "matrix", errors, live_checks_cache)
     unknown_checks = sorted(
-        {
-            check
-            for check in live_checks
-            if check not in allowed_checks
-        }
+        {check for check in live_checks if check not in allowed_checks}
     )
     if unknown_checks:
         errors.append(
@@ -2269,9 +2399,14 @@ def validate_route_variants(
         if key is None:
             errors.append(f"routes[{index}] must declare string service and route")
         else:
-            route_variants.setdefault(key, []).append((index, route.get("applicability")))
+            route_variants.setdefault(key, []).append(
+                (index, route.get("applicability"))
+            )
         classification = route.get("classification")
-        if not isinstance(classification, str) or classification not in allowed_classifications:
+        if (
+            not isinstance(classification, str)
+            or classification not in allowed_classifications
+        ):
             errors.append(
                 f"routes[{index}] uses unknown classification: {classification!r}"
             )
@@ -2280,9 +2415,13 @@ def validate_route_variants(
         if len(variants) == 1:
             continue
         if any(applicability is None for _, applicability in variants):
-            errors.append(f"duplicate route entries require explicit applicability: {key}")
+            errors.append(
+                f"duplicate route entries require explicit applicability: {key}"
+            )
             continue
-        serialized = [json.dumps(applicability, sort_keys=True) for _, applicability in variants]
+        serialized = [
+            json.dumps(applicability, sort_keys=True) for _, applicability in variants
+        ]
         if len(serialized) != len(set(serialized)):
             errors.append(f"duplicate route applicability: {key}")
 
@@ -2315,7 +2454,9 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
 
     validate_operator_mutation_support_gate(document, routes, errors)
 
-    classifications = string_list(document.get("classifications"), "classifications", errors)
+    classifications = string_list(
+        document.get("classifications"), "classifications", errors
+    )
     validate_route_class_branch_table(document, errors)
     validate_authority_evidence_policy(document, errors)
     route_keys = validate_route_variants(routes, set(classifications), errors)
@@ -2337,9 +2478,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     validate_role_assurance_references(routes, role_assurance_predicates, errors)
     validate_tenant_generation_policy(document, routes, errors, live_checks_cache)
     validate_membership_policy(document, errors)
-    validate_elevation_bootstrap(
-        document, routes, errors, cardinality_errors
-    )
+    validate_elevation_bootstrap(document, routes, errors, cardinality_errors)
     validate_entitlement_contract(document, routes, errors, cardinality_errors)
 
     validate_ws_game_routes(routes, errors, live_checks_cache, cardinality_errors)

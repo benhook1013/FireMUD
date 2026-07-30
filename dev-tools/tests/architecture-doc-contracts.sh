@@ -297,8 +297,8 @@ require_contains(
 require_contains(
     "design/architecture/system-architecture-redis.md",
     [
-        "The Account-issued envelope binds the exact token hash, signed `jti` and `nbf`",
-        "Account-validated envelope is authoritative for the original signed `nbf`",
+        "The Account-issued handle binds the exact token hash, signed `jti` and `nbf`",
+        "Account-validated handle is authoritative for the original signed `nbf`",
     ],
 )
 require_contains(
