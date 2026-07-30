@@ -276,6 +276,7 @@ jobs:
           bash ./dev-tools/tests/pr-retarget-workflow-contract.sh
           bash ./dev-tools/tests/static-analysis-summary-contract.sh
           bash ./dev-tools/tests/pr-required-gate-context-contract.sh
+          bash ./dev-tools/tests/dev-demo-workflow-contract.sh
           bash ./dev-tools/tests/smoke-transport-contract.sh
           bash ./dev-tools/tests/reset-service-db-contract.sh
           bash ./dev-tools/tests/preview-eligibility-contract.sh

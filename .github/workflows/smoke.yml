@@ -211,6 +211,11 @@ jobs:
     if: ${{ always() && github.event_name == 'pull_request' }}
     timeout-minutes: 30
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
       - name: Check out required-gate action
         if: ${{ github.event.action == 'edited' && github.event.changes.base.ref == null }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -225,9 +230,12 @@ jobs:
 
       - name: Classify smoke gate execution
         id: smoke_gate_context
+        env:
+          SMOKE_GATE_REQUIRED: ${{ github.event.action != 'edited' || github.event.changes.base.ref != null }}
+          SMOKE_GATE_EXECUTE: ${{ (github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.result == 'success' }}
         run: |
-          echo "required=${{ github.event.action != 'edited' || github.event.changes.base.ref != null }}" >> "$GITHUB_OUTPUT"
-          echo "execute=${{ (github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.result == 'success' }}" >> "$GITHUB_OUTPUT"
+          echo "required=$SMOKE_GATE_REQUIRED" >> "$GITHUB_OUTPUT"
+          echo "execute=$SMOKE_GATE_EXECUTE" >> "$GITHUB_OUTPUT"
 
       - name: Fail when smoke dependencies did not succeed
         if: ${{ steps.smoke_gate_context.outputs.required == 'true' && steps.smoke_gate_context.outputs.execute != 'true' }}
@@ -236,12 +244,6 @@ jobs:
         run: |
           echo "Smoke change detection did not succeed: changes=$CHANGES_RESULT" >&2
           exit 1
-
-      - name: Harden runner
-        if: ${{ steps.smoke_gate_context.outputs.execute == 'true' }}
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
-        with:
-          egress-policy: audit
 
       - name: Record skipped runtime smoke
         if: ${{ steps.smoke_gate_context.outputs.execute == 'true' && needs.changes.outputs.run_smoke_full != 'true' }}

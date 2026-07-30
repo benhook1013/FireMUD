@@ -37,6 +37,35 @@ assert_job_contains() {
   fi
 }
 
+assert_job_first_step() {
+  local workflow="$1"
+  local job="$2"
+  local expected="$3"
+  local path="$ROOT_DIR/.github/workflows/$workflow"
+
+  if ! awk -v job="$job" -v expected="$expected" '
+    $0 == "  " job ":" { in_job = 1; next }
+    in_job && /^  [A-Za-z0-9_-]+:/ { exit }
+    in_job && /^      - name:/ {
+      if (!first_step_seen) {
+        first_step = $0
+        first_step_seen = 1
+        next
+      }
+      done = 1
+      exit
+    }
+    in_job && first_step_seen && !done && /^        if:/ { first_step_conditional = 1 }
+    END {
+      valid = first_step_seen && first_step == "      - name: " expected && !first_step_conditional
+      exit valid ? 0 : 1
+    }
+  ' "$path"; then
+    echo "$workflow job $job must begin with an unconditional: $expected" >&2
+    exit 1
+  fi
+}
+
 assert_job_excludes() {
   local workflow="$1"
   local job="$2"
@@ -269,6 +298,7 @@ assert_job_contains ci.yml validation-gate 'gate-name: Validation Gate'
 assert_job_contains ci.yml validation-gate 'Preserve successful required gate on metadata-only edit'
 require_contains "$smoke_path" 'PR Metadata Edit (Smoke Summary)'
 assert_job_contains smoke.yml smoke-gate 'name: Smoke Gate'
+assert_job_first_step smoke.yml smoke-gate 'Harden runner'
 assert_job_contains smoke.yml smoke-gate 'uses: ./.github/actions/preserve-required-gate'
 assert_job_contains smoke.yml smoke-gate 'gate-name: Smoke Gate'
 assert_job_contains smoke.yml smoke-gate 'Preserve successful required gate on metadata-only edit'
@@ -567,6 +597,19 @@ require_contains "$smoke_path" 'github.rest.actions.listJobsForWorkflowRun'
 require_contains "$smoke_path" 'job.name === "PR Full-Stack Smoke"'
 require_contains "$smoke_path" 'fullSmokeJob?.status === "completed"'
 require_contains "$smoke_path" 'fullSmokeJob?.conclusion !== "success"'
+# shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
+require_contains "$smoke_path" 'SMOKE_GATE_REQUIRED: ${{ github.event.action != '\''edited'\'' || github.event.changes.base.ref != null }}'
+# shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
+require_contains "$smoke_path" 'SMOKE_GATE_EXECUTE: ${{ (github.event.action != '\''edited'\'' || github.event.changes.base.ref != null) && needs.changes.result == '\''success'\'' }}'
+# shellcheck disable=SC2016 # Assert literal shell source.
+require_contains "$smoke_path" 'echo "required=$SMOKE_GATE_REQUIRED" >> "$GITHUB_OUTPUT"'
+# shellcheck disable=SC2016 # Assert literal shell source.
+require_contains "$smoke_path" 'echo "execute=$SMOKE_GATE_EXECUTE" >> "$GITHUB_OUTPUT"'
+# shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
+if grep -Fq 'echo "required=${{' "$smoke_path" || grep -Fq 'echo "execute=${{' "$smoke_path"; then
+  echo "smoke_gate_context must pass expressions through step env" >&2
+  exit 1
+fi
 require_contains "$smoke_path" 'Stopping obsolete completed smoke gate for'
 require_contains "$smoke_path" 'Stopping obsolete stale-snapshot smoke gate for'
 require_ordered_sequence \
@@ -635,14 +678,21 @@ full_files = quoted_entries(
     "]);",
 )
 
+lookup_start_marker = "fullSmokeJob = jobs.find("
+lookup_end_marker = ") ?? null;"
+try:
+    lookup_start = smoke.index(lookup_start_marker)
+    lookup_end = smoke.index(lookup_end_marker, lookup_start) + len(lookup_end_marker)
+except ValueError as exc:
+    raise SystemExit("smoke.yml must define the fullSmokeJob lookup block") from exc
+
 job_name_literals = re.findall(
     r'job[.]name\s*===\s*["\']([^"\']+)["\']',
-    smoke,
+    smoke[lookup_start:lookup_end],
 )
-distinct_job_name_literals = set(job_name_literals)
-if distinct_job_name_literals != {"PR Full-Stack Smoke"}:
+if job_name_literals != ["PR Full-Stack Smoke"]:
     raise SystemExit(
-        "smoke.yml must use exactly one distinct full-stack PR smoke job name literal: "
+        "smoke.yml fullSmokeJob lookup must use exactly one PR Full-Stack Smoke literal: "
         + repr(job_name_literals)
     )
 

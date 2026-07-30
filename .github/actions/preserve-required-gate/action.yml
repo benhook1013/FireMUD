@@ -106,3 +106,5 @@ runs:
           echo "Relevant prior ${REQUIRED_GATE_NAME} is still ${prior_conclusion:-finishing}; retrying attempt ${attempt}/80." >&2
           sleep 15
         done
+        echo "Required-gate preservation exhausted its polling loop unexpectedly; refusing to preserve." >&2
+        exit 1

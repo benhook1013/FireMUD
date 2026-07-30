@@ -111,7 +111,7 @@ while IFS='|' read -r workflow gate_job_id gate; do
   fi
 
   case "$workflow" in
-    ci.yml|security.yml|license-scan.yml|codeql.yml)
+    ci.yml|security.yml|license-scan.yml|smoke.yml|codeql.yml)
       first_step="$(awk '/^    steps:$/ {in_steps=1; next} in_steps && /^      - name:/ {print; exit}' <<<"$gate_block")"
       [[ "$first_step" == '      - name: Harden runner' ]] || {
         echo "$workflow $gate must harden the runner as its unconditional first step" >&2
@@ -281,6 +281,10 @@ JSON
         echo "gh: HTTP 422 Unprocessable Entity" >&2
         exit 1
         ;;
+      permission)
+        echo "gh: HTTP 403 Resource not accessible by integration; SSO authorization required" >&2
+        exit 1
+        ;;
       *)
         echo "unknown simulated gh failure mode" >&2
         exit 91
@@ -344,6 +348,22 @@ run_action() {
   bash -euo pipefail -c "$action_script"
 }
 
+run_guard_action() {
+  local output_file="$1"
+  local event_name="$2"
+  local head_sha="$3"
+  local count_file="$4"
+  GH_RETRY_COUNT_FILE="$count_file" \
+  PATH="$tmp_dir:$PATH" \
+  GITHUB_EVENT_NAME="$event_name" \
+  GITHUB_REPOSITORY=example/firemud \
+  GITHUB_RUN_ID=999 \
+  GH_TOKEN=test-token \
+  HEAD_SHA="$head_sha" \
+  REQUIRED_GATE_NAME='Validation Gate' \
+  bash -euo pipefail -c "$action_script" >"$output_file" 2>&1
+}
+
 for failure_mode in transient network rate-limit; do
   count_file="$tmp_dir/count-${failure_mode}"
   run_action "$count_file" "$failure_mode" failure-retry
@@ -353,23 +373,25 @@ for failure_mode in transient network rate-limit; do
   }
 done
 
-permanent_output="$tmp_dir/permanent-output"
-set +e
-run_action "$tmp_dir/count-permanent" permanent >"$permanent_output" 2>&1
-permanent_status=$?
-set -e
-[[ "$permanent_status" -ne 0 ]] || {
-  echo "required-gate action retried or accepted a permanent gh api failure" >&2
-  exit 1
-}
-[[ "$(<"$tmp_dir/count-permanent")" == "1" ]] || {
-  echo "required-gate action polled again after a permanent gh api failure" >&2
-  exit 1
-}
-grep -Fq 'Permanent GitHub API/configuration failure' "$permanent_output" || {
-  echo "required-gate action did not report the permanent gh api failure" >&2
-  exit 1
-}
+for failure_mode in permanent permission; do
+  permanent_output="$tmp_dir/${failure_mode}-output"
+  set +e
+  run_action "$tmp_dir/count-${failure_mode}" "$failure_mode" >"$permanent_output" 2>&1
+  permanent_status=$?
+  set -e
+  [[ "$permanent_status" -ne 0 ]] || {
+    echo "required-gate action retried or accepted a permanent ${failure_mode} gh api failure" >&2
+    exit 1
+  }
+  [[ "$(<"$tmp_dir/count-${failure_mode}")" == "1" ]] || {
+    echo "required-gate action polled again after a permanent ${failure_mode} gh api failure" >&2
+    exit 1
+  }
+  grep -Fq 'Permanent GitHub API/configuration failure' "$permanent_output" || {
+    echo "required-gate action did not report the permanent ${failure_mode} gh api failure" >&2
+    exit 1
+  }
+done
 
 latest_pending_count="$tmp_dir/count-latest-pending-preferred"
 run_action "$latest_pending_count" none latest-pending-preferred
@@ -405,15 +427,7 @@ grep -Fq 'No prior completed' "$no_prior_output" || {
 
 context_output="$tmp_dir/context-output"
 set +e
-GH_RETRY_COUNT_FILE="$tmp_dir/count-context" \
-PATH="$tmp_dir:$PATH" \
-GITHUB_EVENT_NAME=push \
-GITHUB_REPOSITORY=example/firemud \
-GITHUB_RUN_ID=999 \
-GH_TOKEN=test-token \
-HEAD_SHA=deadbeef \
-REQUIRED_GATE_NAME='Validation Gate' \
-bash -euo pipefail -c "$action_script" >"$context_output" 2>&1
+run_guard_action "$context_output" push deadbeef "$tmp_dir/count-context"
 context_status=$?
 set -e
 [[ "$context_status" -ne 0 ]] || {
@@ -424,18 +438,14 @@ set -e
   echo "required-gate action polled before rejecting a non-PR context" >&2
   exit 1
 }
+grep -Fxq 'Required-gate preservation requires pull_request context; refusing to poll.' "$context_output" || {
+  echo "required-gate action did not report the exact non-PR guard message" >&2
+  exit 1
+}
 
 head_output="$tmp_dir/head-output"
 set +e
-GH_RETRY_COUNT_FILE="$tmp_dir/count-empty-head" \
-PATH="$tmp_dir:$PATH" \
-GITHUB_EVENT_NAME=pull_request \
-GITHUB_REPOSITORY=example/firemud \
-GITHUB_RUN_ID=999 \
-GH_TOKEN=test-token \
-HEAD_SHA="" \
-REQUIRED_GATE_NAME='Validation Gate' \
-bash -euo pipefail -c "$action_script" >"$head_output" 2>&1
+run_guard_action "$head_output" pull_request "   " "$tmp_dir/count-empty-head"
 head_status=$?
 set -e
 [[ "$head_status" -ne 0 ]] || {
@@ -444,6 +454,10 @@ set -e
 }
 [[ ! -e "$tmp_dir/count-empty-head" ]] || {
   echo "required-gate action polled before rejecting an empty head SHA" >&2
+  exit 1
+}
+grep -Fxq 'Required-gate preservation requires a nonempty pull request head SHA; refusing to poll.' "$head_output" || {
+  echo "required-gate action did not report the exact empty-head guard message" >&2
   exit 1
 }
 
