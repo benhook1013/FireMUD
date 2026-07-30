@@ -113,13 +113,31 @@ try:
         "cat <<'EOF' | kubectl -n \"${PREVIEW_NAMESPACE}\" apply -f -\n"
     )
     manifest_start = bootstrap_manifest.index("\n", manifest_start) + 1
-    manifest_end = bootstrap_manifest.index("\nEOF\n", manifest_start)
+    try:
+        manifest_end = bootstrap_manifest.index("\nEOF\n", manifest_start)
+    except ValueError:
+        if not bootstrap_manifest.endswith("\nEOF"):
+            raise
+        manifest_end = len(bootstrap_manifest) - len("\nEOF")
 except ValueError as exc:
     raise AssertionError(
         "dev-demo bootstrap step must contain the expected pod manifest heredoc"
     ) from exc
 bootstrap_pod = yaml.safe_load(bootstrap_manifest[manifest_start:manifest_end])
-env_from = bootstrap_pod["spec"]["containers"][0].get("envFrom", [])
+if not isinstance(bootstrap_pod, dict) or not isinstance(
+    bootstrap_pod.get("spec"), dict
+):
+    raise AssertionError("dev-demo bootstrap pod must define spec as a mapping")
+containers = bootstrap_pod["spec"].get("containers")
+if not isinstance(containers, list) or not containers:
+    raise AssertionError(
+        "dev-demo bootstrap pod spec.containers must be a non-empty list"
+    )
+if not isinstance(containers[0], dict):
+    raise AssertionError(
+        "dev-demo bootstrap pod spec.containers[0] must be a mapping"
+    )
+env_from = containers[0].get("envFrom", [])
 if env_from != [{"secretRef": {"name": "dev-demo-bootstrap-env"}}]:
     raise AssertionError(
         "dev-demo bootstrap pod must import dev-demo-bootstrap-env"

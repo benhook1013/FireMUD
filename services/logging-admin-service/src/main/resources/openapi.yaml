@@ -4,9 +4,11 @@ info:
   description: >-
     Operator-facing moderation and runtime-control APIs. Public /reports is intentionally
     absent; internal report RPC/types are not public ingress. Admission-pointer reads, audit,
-    and prepared-proof reads are live. The existing admission-pointer write, prepared-cutover,
-    and version-upgrade preparation paths remain unsupported implementation drift and must stay
-    externally gated until the canonical operator-mutation contract is complete.
+    and prepared-proof reads are live. The existing admission-pointer write and prepared-cutover
+    paths remain unsupported implementation drift. Version-upgrade preparation has an
+    implementation path for operator participation but remains externally gated and unavailable
+    until its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and
+    Account-issued authorization-reference issuance plus owner-side redemption are complete.
   version: 1.0.0
   license:
     name: MIT
@@ -1734,8 +1736,8 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
   /moderation/actions:
     post:
-      summary: Persist moderation policy input and audit
-      description: "The current implementation path is limited to moderation policy input and audit persistence; externally, this mutation is gated and unavailable until all three are complete: its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption. Once enabled, it may persist policy input and audit; EvaluateModerationPolicy remains the separate evaluation contract consumed by enforcement owners."
+      summary: Submit moderation policy input and audit (externally gated)
+      description: "The moderation-action implementation path is unavailable/gated and does not currently persist or enforce moderation actions. It remains unavailable until all three are complete: its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption. Once enabled, it may persist policy input and audit; EvaluateModerationPolicy remains the separate live evaluation contract consumed by enforcement owners."
       operationId: applyModerationAction
       requestBody:
         required: true
@@ -1745,7 +1747,7 @@ paths:
               $ref: '#/components/schemas/ApplyModerationActionRequest'
       responses:
         '200':
-          description: Moderation policy input and audit result
+          description: Moderation policy input and audit result when enabled
           content:
             application/json:
               schema:

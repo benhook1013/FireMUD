@@ -55,7 +55,7 @@ The `Decision Record` section of a reviewed ADR is machine-readable. A completed
 - `Human review disposition: Accepted`, `Revised`, `Superseded`, or `Withdrawn` for an ADR provenance record
 - `Review source:` followed by one or more backtick-delimited checked-queue decision keys separated by commas
 
-`AI-AUTHORED-PENDING` is metadata reserved exclusively for an ADR whose status is `Proposed - Pending Human Review` and whose review metadata has the exact pending shape below. It is not a completed review source and is invalid for `Accepted`, `Superseded`, or `Withdrawn` records; every completed record must cite checked queue decision provenance.
+Completed review metadata is distinct from the pending proposal shape: for `Accepted`, `Superseded`, or `Withdrawn` records, `Review source` contains only one or more checked-queue decision keys and must never be `AI-AUTHORED-PENDING`. `AI-AUTHORED-PENDING` is metadata reserved exclusively for an ADR whose status is `Proposed - Pending Human Review` and whose review metadata has the exact pending shape below. It is not a completed review source, checked provenance, or human review evidence.
 
 The authoritative provenance is the checked review queue in the [consequential decision inventory](../../project-management/design-alignment/consequential-decision-inventory.md), not the ADR metadata alone. A checked queue row has this exact shape:
 
@@ -73,7 +73,7 @@ For any ADR linked by an exact `[ADR NNNN]` provenance label in a checked queue 
 - `Human review disposition: Accepted`, `Revised`, `Superseded`, or `Withdrawn` for an ADR provenance record
 - `Review source:` followed by one or more backtick-delimited queue keys, for example `` `DECISION-KEY` `` or `` `DECISION-KEY`, `OTHER-KEY` ``
 
-The pre-formal records `0001` through `0011` are the explicit exception only when no checked queue row links them; those historical records may omit review metadata. An AI-authored pending record is not review evidence and must use this exact shape instead:
+The pre-formal records `0001` through `0011` are the explicit exception only when no checked queue row links them; those historical records may omit review metadata. An AI-authored pending record is not completed review evidence and must use this exact shape instead; `AI-AUTHORED-PENDING` is valid only in this pending shape:
 
 ```text
 ## Status

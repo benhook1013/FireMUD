@@ -664,6 +664,23 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
         )
 
+    def test_non_internal_omitted_profiles_use_no_profile_predicates(self):
+        for field in ("token_type", "token_issuer", "token_audience"):
+            with self.subTest(field=field):
+                document = self.validator.yaml.safe_load(
+                    MATRIX.read_text(encoding="utf-8")
+                )
+                route = route_for(document, "game-session-service", "PLAY")
+                route.pop("accepted_token_profiles")
+                route[field] = "unexpected"
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(
+                        "token_type/token_issuer/token_audience as none" in error
+                        for error in errors
+                    )
+                )
+
     def test_non_internal_multi_profile_predicates_cannot_be_implicit(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = configure_multi_profile_route(document)

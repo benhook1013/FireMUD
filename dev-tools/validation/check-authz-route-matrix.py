@@ -1371,11 +1371,13 @@ def validate_token_fields(
     errors: list[str],
     reported_unknown_profiles: set[str] | None = None,
     allow_multi_profile: bool = False,
+    allow_omitted_no_profile_predicates: bool = False,
 ) -> None:
+    predicate_default = "none" if allow_omitted_no_profile_predicates else None
     token_predicates = (
-        entry.get("token_type"),
-        entry.get("token_issuer"),
-        entry.get("token_audience"),
+        entry.get("token_type", predicate_default),
+        entry.get("token_issuer", predicate_default),
+        entry.get("token_audience", predicate_default),
     )
     if not profiles:
         if token_predicates != ("none", "none", "none"):
@@ -1550,8 +1552,12 @@ def validate_receiver_predicates(
             route, index, token_profiles, errors
         )
         if route.get("classification") != "internal_workload":
-            if isinstance(profiles_value, list) and all(
-                isinstance(profile_name, str) for profile_name in profiles_value
+            if profiles_value is None or (
+                isinstance(profiles_value, list)
+                and all(
+                    isinstance(profile_name, str)
+                    for profile_name in profiles_value
+                )
             ):
                 validate_token_fields(
                     route,
@@ -1561,6 +1567,7 @@ def validate_receiver_predicates(
                     errors,
                     set(unknown_profiles),
                     allow_multi_profile=True,
+                    allow_omitted_no_profile_predicates=profiles_value is None,
                 )
             continue
         label = f"{route.get('service')} {route.get('route')}"
