@@ -116,20 +116,26 @@ for expected in (
     'cleanup_bootstrap_resources() {',
     'trap cleanup_bootstrap_resources EXIT',
     'if ! cleanup_bootstrap_secret; then',
-    'cleanup_bootstrap_secret\n',
+    'cleanup_bootstrap_secret',
 ):
-    if expected not in bootstrap_manifest:
+    if not any(expected in line for line in bootstrap_lines):
         raise AssertionError(
             f"dev-demo bootstrap step contract missing: {expected}"
         )
-assert_ordered_bootstrap_lines(
-    (
-        'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then',
-        "BOOTSTRAP_SECRET_DIR=",
-        "return 0",
-    ),
-    "dev-demo bootstrap temp directory must clear its variable only after rm succeeds",
+cleanup_success_start = bootstrap_lines.index(
+    'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then'
 )
+cleanup_success_return = bootstrap_lines.index("return 0", cleanup_success_start)
+clear_directory_lines = [
+    index
+    for index in range(cleanup_success_start + 1, cleanup_success_return)
+    if bootstrap_lines[index] == "BOOTSTRAP_SECRET_DIR="
+]
+if len(clear_directory_lines) != 1:
+    raise AssertionError(
+        "dev-demo bootstrap temp directory must clear its variable only in the "
+        "successful rm branch before return 0"
+    )
 assert_ordered_bootstrap_lines(
     (
         'echo "::error::Failed to remove dev-demo bootstrap credential files" >&2',
@@ -192,9 +198,11 @@ for job_name, job in jobs.items():
             workflow_run_sources.append((job_name, step.get("name", step_index), run))
 
 summary_helper_pattern = re.compile(
-    r"(?:bash\s+)?(?:[.]/)?(dev-tools/[A-Za-z0-9_./-]+[.]sh)"
+    r"(?<![A-Za-z0-9_./$-])(?:bash\s+)?(?:[.]/)?"
+    r"(dev-tools/[A-Za-z0-9_./-]+[.]sh)(?![A-Za-z0-9_./-])"
 )
-summary_sources = []
+summary_writers = []
+root_dir = root.resolve()
 for root_entry in workflow_run_sources:
     source_closure = [root_entry]
     pending_helpers = [root_entry]
@@ -205,16 +213,21 @@ for root_entry in workflow_run_sources:
             if helper in seen_helpers:
                 continue
             seen_helpers.add(helper)
-            helper_path = root / helper
+            helper_path = (root / helper).resolve()
+            try:
+                helper_path.relative_to(root_dir)
+            except ValueError:
+                continue
             if not helper_path.is_file():
-                raise AssertionError(f"workflow helper does not exist: {helper}")
+                continue
             helper_source = helper_path.read_text(encoding="utf-8")
             helper_entry = (job_name, f"{step_name}:{helper}", helper_source)
             source_closure.append(helper_entry)
             pending_helpers.append(helper_entry)
-    if any("GITHUB_STEP_SUMMARY" in source for _, _, source in source_closure):
-        summary_sources.extend(source_closure)
-if not summary_sources:
+    summary_writers.extend(
+        entry for entry in source_closure if "GITHUB_STEP_SUMMARY" in entry[2]
+    )
+if not summary_writers:
     raise AssertionError("dev-demo workflow must define summary-writing steps")
 
 forbidden_summary_reference = re.compile(
@@ -225,16 +238,18 @@ forbidden_summary_reference = re.compile(
     r"kubectl\b[^;&|]*\bget\s+secret\b[^;&|]*\|\s*base64\s+(?:-d|--decode)\b",
     re.IGNORECASE,
 )
-if any(
-    forbidden_summary_reference.search(" ".join(source.split()))
-    for _, _, source in summary_sources
-):
+offending_writers = [
+    (job_name, step_name)
+    for job_name, step_name, source in summary_writers
+    if forbidden_summary_reference.search(" ".join(source.split()))
+]
+if offending_writers:
     writers = ", ".join(
-        f"{job_name}/{step_name}" for job_name, step_name, _ in summary_sources
+        f"{job_name}/{step_name}" for job_name, step_name in offending_writers
     )
     raise AssertionError(
         "dev-demo summaries must not reference bootstrap credential material; "
-        f"summary writers: {writers}"
+        f"offending summary writers: {writers}"
     )
 
 

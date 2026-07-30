@@ -2645,10 +2645,18 @@ def validate_route_variants(
                 f"duplicate route entries require explicit applicability: {key}"
             )
             continue
-        serialized = [
-            json.dumps(applicability, sort_keys=True) for _, applicability in variants
-        ]
-        if len(serialized) != len(set(serialized)):
+        serialized = []
+        for index, applicability in variants:
+            try:
+                serialized.append(json.dumps(applicability, sort_keys=True))
+            except (TypeError, ValueError) as exc:
+                errors.append(
+                    f"routes[{index}] duplicate route applicability must be "
+                    f"JSON-serializable: {exc}"
+                )
+        if len(serialized) == len(variants) and len(serialized) != len(
+            set(serialized)
+        ):
             errors.append(f"duplicate route applicability: {key}")
 
     return set(route_variants)

@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The authority split and admission path are substantially present, but complete issued-token registry issuance/validation, immediate revocation, token rotation, Account-owned authority generations, and monotonic membership-version proof remain incomplete. Accepted ownership is target authority; an implementation gap does not transfer authority to the component holding convenient local state.
+The authority split and admission path are substantially present, but complete issued-token registry issuance/validation, bounded revocation propagation, token rotation, Account-owned authority generations, and monotonic membership-version proof remain incomplete. Accepted ownership is target authority; an implementation gap does not transfer authority to the component holding convenient local state.
 
 ## Decision Record
 
@@ -65,7 +65,7 @@ The issued-token registry is a credential-path check, not a universal gameplay m
 | Reconnect, resume, or rebind without a presented JWT | The exact existing gameplay binding and its resume/rebind proof | Exact binding identity and fence, current Account lifecycle/security/membership/revocation authority, and the applicable resume lease; no target or scope expansion | Not used; stale, missing, or conflicting binding evidence denies the operation |
 | Routine gameplay commands after admission | The validated bound Game Session context | Binding fences, admission/coordination leases, typed workload context, and domain authorization; bounded reconciliation consumes later authority changes | Not repeated per command; invalidation or conflicting reconciliation evidence terminates the binding |
 
-Fresh gameplay admission, in-band `PLAY`, reconnect, and resume therefore use their bound-session admission contracts and only the current-authority checks those contracts require. Account revocation and membership changes still invalidate registry-backed JWTs immediately and invalidate affected gameplay bindings through bounded indexes/events and authoritative reconciliation; routine gameplay continuity never turns registry absence into authority and never adds a fresh registry lookup to every command.
+Fresh gameplay admission, in-band `PLAY`, reconnect, and resume therefore use their bound-session admission contracts and only the current-authority checks those contracts require. Account authority changes become canonical at the Account commit; downstream registry projections and affected gameplay bindings enforce those changes through bounded indexes/events and authoritative reconciliation rather than an unqualified immediate-invalidity claim. Routine gameplay continuity never turns registry absence into authority and never adds a fresh registry lookup to every command.
 
 ### Gateway Boundary
 

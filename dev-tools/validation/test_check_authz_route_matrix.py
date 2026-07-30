@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import datetime
 import importlib.util
 import tempfile
 import unittest
@@ -2371,6 +2372,26 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertTrue(
             any(
                 "duplicate route entries require explicit applicability" in error
+                for error in errors
+            )
+        )
+
+    def test_duplicate_route_rejects_non_json_applicability(self):
+        non_json_value = datetime.date(2026, 7, 31)
+        route = {
+            "service": "duplicate-service",
+            "route": "GET /duplicate",
+            "classification": "public",
+            "applicability": {"all_of": [{"effective_date": non_json_value}]},
+        }
+        errors = []
+        self.validator.validate_route_variants(
+            [route, copy.deepcopy(route)], {"public"}, errors
+        )
+        self.assertTrue(
+            any(
+                "duplicate route applicability must be JSON-serializable" in error
+                and "date" in error
                 for error in errors
             )
         )
