@@ -399,6 +399,16 @@ jobs:
                 }
 
                 let fullSmokeJob = null;
+                async function failNonTerminalSnapshot(reason) {
+                  if (await isCurrentPullRequestObsolete("Stopping obsolete stale-snapshot smoke gate for")) {
+                    return;
+                  }
+                  core.setFailed(
+                    `Runtime images run ${matching.id} did not expose a terminal PR Full-Stack Smoke job ` +
+                    `${reason}: ` +
+                    `${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}`
+                  );
+                }
                 const maxCompletedJobSnapshotRetries = 8;
                 for (
                   let completedJobSnapshotAttempt = 0;
@@ -407,14 +417,7 @@ jobs:
                 ) {
                   const remainingBeforeJobLookupMs = timeoutMs - (Date.now() - started);
                   if (remainingBeforeJobLookupMs <= 0) {
-                    if (await isCurrentPullRequestObsolete("Stopping obsolete stale-snapshot smoke gate for")) {
-                      return;
-                    }
-                    core.setFailed(
-                      `Runtime images run ${matching.id} did not expose a terminal PR Full-Stack Smoke job ` +
-                      `before the workflow deadline: ` +
-                      `${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}`
-                    );
+                    await failNonTerminalSnapshot("before the workflow deadline");
                     return;
                   }
                   const jobs = await withTransientGitHubRetry(
@@ -441,14 +444,7 @@ jobs:
                   if (completedJobSnapshotAttempt < maxCompletedJobSnapshotRetries) {
                     const remainingBeforeSnapshotSleepMs = timeoutMs - (Date.now() - started);
                     if (remainingBeforeSnapshotSleepMs <= 0) {
-                      if (await isCurrentPullRequestObsolete("Stopping obsolete stale-snapshot smoke gate for")) {
-                        return;
-                      }
-                      core.setFailed(
-                        `Runtime images run ${matching.id} did not expose a terminal PR Full-Stack Smoke job ` +
-                        `before the workflow deadline: ` +
-                        `${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}`
-                      );
+                      await failNonTerminalSnapshot("before the workflow deadline");
                       return;
                     }
                     core.info(
@@ -462,17 +458,10 @@ jobs:
                     ));
                     continue;
                   }
-                  if (await isCurrentPullRequestObsolete("Stopping obsolete stale-snapshot smoke gate for")) {
-                    return;
-                  }
                   const snapshotRetrySummary = maxCompletedJobSnapshotRetries === 0
                     ? "before the remaining workflow deadline allowed a retry"
                     : `after ${maxCompletedJobSnapshotRetries} retries`;
-                  core.setFailed(
-                    `Runtime images run ${matching.id} did not expose a terminal PR Full-Stack Smoke job ` +
-                    `${snapshotRetrySummary}: ` +
-                    `${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}`
-                  );
+                  await failNonTerminalSnapshot(snapshotRetrySummary);
                   return;
                 }
 
@@ -482,7 +471,7 @@ jobs:
                   }
                   core.setFailed(
                     `Runtime images run ${matching.id} succeeded, but PR Full-Stack Smoke job did not complete successfully: ` +
-                    `job=${fullSmokeJob.status}/${fullSmokeJob.conclusion}`
+                    `job=${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}`
                   );
                   return;
                 }
