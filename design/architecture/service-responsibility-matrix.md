@@ -82,7 +82,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Admin panel UX and runtime feature-flag override workflow | | | | ✔ | | | | | ✔ | | |
 | Game moderation report review and internal `CreateReport` persistence tooling (public HTTP reports removed; internal RPC is not player ingress) | | | | | | | | | ✔ | | |
 | Gated/unavailable moderation policy-input persistence and audit (`POST /moderation/actions`; action-family schema, shared cross-language `mutationDigest/v1` golden vectors, Account authorization-reference issuance, and Logging & Admin receiving-service validation/redemption required; synchronous evaluation is a separate live read) | | | | | | | | | ✔ | | |
-| Gated/unavailable moderation enforcement mutation (`GAMEPLAY_ADMISSION` / `CHAT_SEND`) | | | | ✔ | | | | ✔ | ✔ | | |
+| Gated/unavailable moderation enforcement mutation (`GAMEPLAY_ADMISSION` / `CHAT_SEND`; owner-local enforcement) | | | | ✔ | | | | ✔ | | | |
 | Authoritative owner: subscription entitlements, plan-driven quota values, and effective quota override overlay (`GetTenantEntitlementsForRuntime(tenantId, requestId)`) | | | ✔ | | | | | | | | |
 | Operator quota override ingress, UX, and audit (Logging & Admin forwards to the Account-owned entitlement overlay) | | | ✔ | | | | | | ✔ | | |
 | Enforcement of gameplay bans at `GAMEPLAY_ADMISSION` (Game Session owns enforcement) | | | | ✔ | | | | | | | |

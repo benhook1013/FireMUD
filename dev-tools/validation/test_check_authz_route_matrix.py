@@ -2729,6 +2729,14 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             existing_identity,
             "test-service/GET /second-route",
         }
+        second_identity = next(iter(expected_identities - {existing_identity}))
+        second_route = copy.deepcopy(
+            route_for(document, *existing_identity.split("/", 1))
+        )
+        second_route["service"], second_route["route"] = second_identity.split(
+            "/", 1
+        )
+        document["routes"].append(second_route)
         requirement["applies_to"]["route_identities"] = sorted(
             expected_identities, reverse=True
         )
@@ -2740,6 +2748,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             expected_identities,
         ):
             self.validator.validate_role_assurance(document, errors)
+            self.validator.validate_role_assurance_route_identities(
+                document["routes"], errors
+            )
 
         self.assertFalse(
             any("platformAdmin.applies_to.route_identities must equal" in error for error in errors)

@@ -24,7 +24,27 @@ The ledger contains 68 decision rows: 59 retained rows and 9 distinct evidence-b
 
 ## Human Review Evidence
 
-`accepted-explicit` records a canonical choice, not human approval. A human-review claim is authoritative only when the linked ADR or consequential-decision record names the decision owner, review date, status, disposition, and exact checked queue provenance in the [Adversarial Review Queue](./consequential-decision-inventory.md#adversarial-review-queue), using the matching checked keys `TENANT-02`, `SEC-04`, or `ADMIN-01` as applicable. The completed records currently relevant to claims in this ledger are [ADR-0041](../../architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md) for `TENANT-02`, [ADR-0047](../../architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md) for `SEC-04`, and [ADR-0048](../../architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md) for `ADMIN-01`; each records completion on 2026-07-19 with a revised disposition and a validator-checked matching queue row. Coupled decisions without equivalent evidence remain pending; completed ADR records must not be regressed to pending merely because the broader inventory queue remains open.
+`accepted-explicit` records a canonical choice, not human approval. A human-review claim is authoritative only when the linked ADR or consequential-decision record names the decision owner, review date, status, disposition, and exact checked queue provenance in the [Adversarial Review Queue](./consequential-decision-inventory.md#adversarial-review-queue). Every ADR below names the FireMUD human product and architecture owner, records `Human review status: Completed`, and names the matching checked queue key as its review source:
+
+| Queue key | Completed ADR | Review date | Disposition |
+| --- | --- | --- | --- |
+| `AUTH-02` | [ADR 0021](../../architecture/decisions/adr-0021-staged-player-authentication-and-gameplay-binding.md) | 2026-07-18 | Revised |
+| `AUTH-03` | [ADR 0022](../../architecture/decisions/adr-0022-account-authority-and-gameplay-session-ownership.md) | 2026-07-18 | Accepted |
+| `AUTH-04` | [ADR 0023](../../architecture/decisions/adr-0023-central-route-authorization-governance.md) | 2026-07-18 | Revised |
+| `AUTH-05` | [ADR 0024](../../architecture/decisions/adr-0024-trusted-gameplay-workload-delegation.md) | 2026-07-19 | Revised |
+| `AUTH-06` | [ADR 0025](../../architecture/decisions/adr-0025-explicit-open-enrollment-membership.md) | 2026-07-19 | Revised |
+| `AUTH-07` | [ADR 0026](../../architecture/decisions/adr-0026-global-roles-do-not-grant-gameplay-authority.md) | 2026-07-19 | Revised |
+| `TENANT-01` | [ADR 0027](../../architecture/decisions/adr-0027-single-realm-admission-target.md) | 2026-07-19 | Revised |
+| `ADMIT-01` | [ADR 0028](../../architecture/decisions/adr-0028-differentiated-entitlement-freshness.md) | 2026-07-19 | Revised |
+| `EDGE-04` | [ADR 0029](../../architecture/decisions/adr-0029-single-use-gameplay-connect-token-carriage.md) | 2026-07-19 | Revised |
+| `SESSION-07` | [ADR 0030](../../architecture/decisions/adr-0030-risk-based-active-session-revocation.md) | 2026-07-19 | Revised |
+| `SESSION-09` | [ADR 0031](../../architecture/decisions/adr-0031-revocation-safe-session-token-rotation-and-logout.md) | 2026-07-19 | Revised |
+| `SEC-01` | [ADR 0032](../../architecture/decisions/adr-0032-kubernetes-native-secret-delivery-without-mandatory-vault.md) | 2026-07-19 | Revised |
+| `SEC-03` | [ADR 0033](../../architecture/decisions/adr-0033-public-player-facing-telnet-requires-tls.md) | 2026-07-19 | Revised |
+| `SEC-05` | [ADR 0034](../../architecture/decisions/adr-0034-layered-abuse-controls-without-attacker-triggered-account-locks.md) | 2026-07-19 | Revised |
+| `JWT-01` | [ADR 0035](../../architecture/decisions/adr-0035-single-record-issued-token-registry.md) | 2026-07-19 | Revised |
+
+The later completed records currently relevant to claims in this ledger are [ADR 0041](../../architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md) for `TENANT-02`, [ADR 0047](../../architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md) for `SEC-04`, and [ADR 0048](../../architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md) for `ADMIN-01`; each records completion on 2026-07-19 with a revised disposition and a validator-checked matching queue row. Coupled decisions without equivalent evidence remain pending; completed ADR records must not be regressed to pending merely because the broader inventory queue remains open.
 
 ## Source Index
 

@@ -998,7 +998,10 @@ def summary_heredoc(lines, start, index, target_match):
         ):
             continue
         command_lines = lines[opener_index:index]
-        command_lines.append(lines[index][: target_match.start()])
+        command_lines.append(
+            lines[index][: target_match.start()]
+            + lines[index][target_match.end() :]
+        )
         command_text = "\n".join(command_lines)
         match = heredoc_open.search(command_text)
         if match is None:
@@ -1048,7 +1051,7 @@ if not any(
     )
 
 
-for safe_source, unsafe in (
+for fixture, unsafe in (
     (
         'printf "%s" "$DEMO_SMOKE_PASSWORD" >/tmp/password\n'
         'echo "safe summary" >> "$GITHUB_STEP_SUMMARY"',
@@ -1066,8 +1069,14 @@ for safe_source, unsafe in (
         "SUMMARY_EOF",
         True,
     ),
+    (
+        "cat >> \"$GITHUB_STEP_SUMMARY\" <<'SUMMARY_EOF'\n"
+        "unsafe: $DEMO_SMOKE_PASSWORD\n"
+        "SUMMARY_EOF",
+        True,
+    ),
 ):
-    fixture_regions = summary_write_regions(safe_source)
+    fixture_regions = summary_write_regions(fixture)
     fixture_is_unsafe = any(has_forbidden_summary_reference(region) for region in fixture_regions)
     if fixture_is_unsafe != unsafe:
         raise AssertionError(

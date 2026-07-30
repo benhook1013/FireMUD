@@ -2027,30 +2027,30 @@ def validate_role_assurance_references(
 def validate_role_assurance_route_identities(
     routes: list[Any], errors: list[str]
 ) -> None:
-    expected_identity = next(iter(PLATFORM_ADMIN_ROLE_ASSURANCE_ROUTE_IDENTITIES))
-    matches = [
-        route
-        for route in routes
-        if isinstance(route, dict)
-        and route_identity_from_route(route) == expected_identity
-    ]
-    if len(matches) != 1:
-        errors.append(
-            "role_assurance platformAdmin exact route identity must match exactly "
-            f"one route: {expected_identity}"
-        )
-        return
-    route = matches[0]
-    if route.get("classification") != "internal_workload":
-        errors.append(
-            "role_assurance platformAdmin exact route identity must classify "
-            f"{expected_identity} as internal_workload"
-        )
-    if route.get("role_assurance") != PRIVILEGED_OPERATOR_ROLE_ASSURANCE:
-        errors.append(
-            "role_assurance platformAdmin exact route identity must declare "
-            f"{expected_identity} with {PRIVILEGED_OPERATOR_ROLE_ASSURANCE}"
-        )
+    for expected_identity in sorted(PLATFORM_ADMIN_ROLE_ASSURANCE_ROUTE_IDENTITIES):
+        matches = [
+            route
+            for route in routes
+            if isinstance(route, dict)
+            and route_identity_from_route(route) == expected_identity
+        ]
+        if len(matches) != 1:
+            errors.append(
+                "role_assurance platformAdmin exact route identity must match exactly "
+                f"one route: {expected_identity}"
+            )
+            continue
+        route = matches[0]
+        if route.get("classification") != "internal_workload":
+            errors.append(
+                "role_assurance platformAdmin exact route identity must classify "
+                f"{expected_identity} as internal_workload"
+            )
+        if route.get("role_assurance") != PRIVILEGED_OPERATOR_ROLE_ASSURANCE:
+            errors.append(
+                "role_assurance platformAdmin exact route identity must declare "
+                f"{expected_identity} with {PRIVILEGED_OPERATOR_ROLE_ASSURANCE}"
+            )
 
 
 def validate_operator_reference_issuance(

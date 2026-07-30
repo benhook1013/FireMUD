@@ -679,6 +679,131 @@ class AdrReviewStatusTests(unittest.TestCase):
             add_formal_superseded_adr(root)
             self.validator.validate(root)
 
+    def test_supersession_index_rows_requires_one_heading(self) -> None:
+        for mutation, expected in (
+            (
+                lambda text: text.replace("### Supersession Index\n", "", 1),
+                "expected exactly one 'Supersession Index' section, found 0",
+            ),
+            (
+                lambda text: text + "\n### Supersession Index\n",
+                "expected exactly one 'Supersession Index' section, found 2",
+            ),
+        ):
+            with self.subTest(expected=expected), fixture_root() as fixture:
+                root = Path(fixture)
+                path = root / "design/architecture/decisions/README.md"
+                path.write_text(
+                    mutation(path.read_text(encoding="utf-8")),
+                    encoding="utf-8",
+                )
+                expect_failure(
+                    self,
+                    lambda: self.validator.supersession_index_rows(
+                        path, path.parent
+                    ),
+                    expected,
+                )
+
+    def test_supersession_index_rows_requires_canonical_header(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = root / "design/architecture/decisions/README.md"
+            path.write_text(
+                replace_once(
+                    path.read_text(encoding="utf-8"),
+                    "| ADR | Status | Replacement ADR |",
+                    "| ADR | Status | Replacement |",
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.supersession_index_rows(path, path.parent),
+                "Supersession Index header must be exactly "
+                "'| ADR | Status | Replacement ADR |'",
+            )
+
+    def test_supersession_index_rows_requires_canonical_separator(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = root / "design/architecture/decisions/README.md"
+            path.write_text(
+                replace_once(
+                    path.read_text(encoding="utf-8"),
+                    "| --- | --- | --- |",
+                    "| -- | --- | --- |",
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.supersession_index_rows(path, path.parent),
+                "malformed Supersession Index separator row",
+            )
+
+    def test_supersession_index_rows_requires_three_cell_rows(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = root / "design/architecture/decisions/README.md"
+            path.write_text(
+                replace_once(
+                    path.read_text(encoding="utf-8"),
+                    "| --- | --- | --- |",
+                    "| --- | --- | --- |\n"
+                    "| [ADR 0012](./adr-0012-reviewed.md) | Superseded |",
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.supersession_index_rows(path, path.parent),
+                "Supersession Index row at line 7 must have exactly three cells",
+            )
+
+    def test_supersession_index_rows_requires_exact_source_link(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = root / "design/architecture/decisions/README.md"
+            path.write_text(
+                replace_once(
+                    path.read_text(encoding="utf-8"),
+                    "| --- | --- | --- |",
+                    "| --- | --- | --- |\n"
+                    "| Not an ADR link | Superseded | "
+                    "[ADR 0013](./adr-0013-pending.md) |",
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.supersession_index_rows(path, path.parent),
+                "Supersession Index row at line 7 must use an exact "
+                "[ADR NNNN] source link",
+            )
+
+    def test_supersession_index_rows_rejects_duplicate_source_rows(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = root / "design/architecture/decisions/README.md"
+            row = (
+                "| [ADR 0012](./adr-0012-reviewed.md) | Superseded | "
+                "[ADR 0013](./adr-0013-pending.md) |"
+            )
+            path.write_text(
+                replace_once(
+                    path.read_text(encoding="utf-8"),
+                    "| --- | --- | --- |",
+                    f"| --- | --- | --- |\n{row}\n{row}",
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.supersession_index_rows(path, path.parent),
+                "duplicate Supersession Index entry for ADR 0012",
+            )
+
     def test_supersession_index_rejects_missing_readme_row(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
