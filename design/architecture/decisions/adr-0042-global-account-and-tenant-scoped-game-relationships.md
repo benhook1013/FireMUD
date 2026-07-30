@@ -36,7 +36,7 @@ The current implementation still carries legacy `accounts.tenant_id` drift. That
 - Leaving one game removes or deactivates the applicable tenant relationship under its retention rules. It does not delete or deactivate the global account or unrelated tenant relationships.
 - Tenant operators may access only the minimum account identity and tenant-scoped data authorized for their tenant. Global security, recovery, external-identity, and unrelated-tenant data are not exposed through tenant authority.
 - FireMUD accepts the consequences of global identity: username and email uniqueness are platform-wide; account compromise, security lock, recovery, and deletion have platform-wide blast radius; and authorized internal platform systems can correlate one account across games. Such correlation must not become tenant-operator visibility.
-- Converge away from legacy `accounts.tenant_id` with a new forward migration; never edit an applied migration or preserve a compatibility field, and do not infer a default tenant from the global account row. The migration must land with entity, DTO, repository, authentication-flow, fixture, and test convergence.
+- Converge away from legacy `accounts.tenant_id` with a new forward migration; before dropping the column, audit and validate every legacy `(account_id, tenant_id)` pair and backfill every valid pair into exactly one canonical `account_tenant_membership` row. An existing matching membership is preserved and not duplicated; duplicate canonical rows must be reconciled deterministically under the membership retention and audit rules, while an invalid legacy reference or any conflicting relationship blocks the drop and remains quarantined for explicit remediation rather than being guessed, defaulted, or discarded. Never edit an applied migration or preserve a compatibility field, and do not infer a default tenant from the global account row. The migration must land with entity, DTO, repository, authentication-flow, fixture, and test convergence plus durable source-to-target preservation evidence.
 
 ## Consequences
 
@@ -63,14 +63,14 @@ Implicit membership reduces one onboarding action, but conflates identity creati
 
 ## Implementation and Proof Obligations
 
-- Add a new forward migration, without editing any applied migration, to remove `accounts.tenant_id`; converge the canonical schema, entities, DTOs, repositories, authentication flows, fixtures, and tests; and remove every fallback that derives tenant authority from the account row.
+- Add a new forward migration, without editing any applied migration, that first snapshots and validates every legacy `accounts.tenant_id` relationship, backfills every valid `(account_id, tenant_id)` pair into exactly one canonical membership row, and records row-level preservation evidence before removing `accounts.tenant_id`. Matching canonical rows must remain the sole relationship, duplicate canonical rows must be reconciled with deterministic retention and audit evidence, and invalid or conflicting source data must fail or quarantine the migration before the column can be dropped; no relationship may be silently omitted or assigned a default tenant. Then converge the canonical schema, entities, DTOs, repositories, authentication flows, fixtures, and tests, and remove every fallback that derives tenant authority from the account row.
 - Make registration persist only global account identity and security state. Prove it creates no tenant membership or gameplay authority.
 - Make `JOIN` the only open-enrollment creator of the durable tenant membership and prove it is explicit, idempotent, tenant-bound, and audited.
 - Store and validate `tenantId` on tenant roles, profiles, characters, tenant-bound purchases, subscriptions, entitlements, grants, and gameplay relationships, including all read, write, export, event, and deletion paths. Keep account-scoped purchases, grants, and donations account-owned with no fabricated `tenantId`, and create an explicit tenant binding or consumption record when they are used by tenant-scoped features.
 - Prove leaving one tenant preserves the global account and every unrelated tenant relationship.
 - Prove tenant operators cannot read global recovery/external-identity data or discover another tenant's memberships, roles, profiles, characters, purchases, subscriptions, entitlements, or gameplay state.
 - Prove platform-wide username/email uniqueness and global compromise, lock, recovery, revocation, portable-data export, and deletion behavior across multiple tenant relationships.
-- Prove the forward migration removes legacy tenant ownership without editing applied migrations or losing valid global accounts or tenant relationships.
+- Prove the forward migration removes legacy tenant ownership without editing applied migrations: every valid legacy `(account_id, tenant_id)` pair has exactly one preserved canonical membership row, duplicate/conflict handling has durable audit evidence, invalid source rows are explicitly reported and not discarded, and the preservation proof completes before the legacy column is dropped.
 
 ## Reversibility and Revisit Triggers
 

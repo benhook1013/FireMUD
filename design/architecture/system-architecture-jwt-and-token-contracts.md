@@ -146,6 +146,7 @@ Workload-only methods explicitly declare token profile, type, issuer, and audien
 | `authorityTuple.accountAuthorityGeneration` | Current account authority generation captured at issuance |
 | `authorityTuple.tenantAuthorityGeneration` | Bounded map keyed by exact tenant IDs; for a private delegation, keyed only by the exact delegated binding `tenantId` |
 | `authorityTuple.membershipAuthorityGeneration` | Bounded map with the same exact tenant keys; for a private delegation, the value denotes the Account-owned `{accountId, tenantId}` membership authority generation |
+| `membershipVersion` | Separate Account-owned membership projection/version map keyed by exact applicable tenant IDs; it is compared independently from `authorityTuple.membershipAuthorityGeneration` |
 | `authorityTuple.privateRealmGrantVersions` | Exact `{tenantId, worldSlug, realmSlug, grantVersion}` entries; empty for public production |
 | `authorityTuple.accountSecurityCutoff` | Applicable Account security cutoff checkpoint, when present |
 | `authorityTuple.tenantBillingCutoff` | Applicable exact tenant billing cutoff map, when present |
@@ -174,6 +175,7 @@ Workload-only methods explicitly declare token profile, type, issuer, and audien
   - `privateRealmGrantVersions`: `[]`
   - `accountSecurityCutoff`: `{ accountAuthorityGeneration: 12, outboxStreamKey: "account:auth-authority:v1:account/018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a", outboxSequence: 44 }`
 - `issuanceFence`: `27`
+- `membershipVersion`: `{ "018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f": 42, "018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a": 7 }`
 - `globalRoles`: `["billingAdmin"]`
 - `scopedRoles`:
   - `"018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f"` -> `["tenantAdmin", "designer"]`
@@ -248,6 +250,7 @@ Services must enforce this claim contract before role/tenant authorization:
 | `authorityTuple.accountAuthorityGeneration` | Required | Required | Absent | Required | Positive monotonic Account-owned account generation captured at issuance |
 | `authorityTuple.tenantAuthorityGeneration` | Required when `scopedRoles` is non-empty; otherwise Empty map | Empty map | Absent | Exactly one key for every tenant-bound delegation; Empty map for an explicitly non-tenant profile | Bounded positive-generation map keyed by exact tenant UUIDs; for `control-ui`, its keys must exactly equal the non-empty `scopedRoles` tenant keys, and a tenant-bound private delegation has one key for the exact delegated `tenantId`, never an account, grant, token, or wildcard scope |
 | `authorityTuple.membershipAuthorityGeneration` | Required when `scopedRoles` is non-empty; otherwise Empty map | Empty map | Absent | Exactly one key for every tenant-bound delegation; Empty map for an explicitly non-tenant profile | Same exact tenant keys as `authorityTuple.tenantAuthorityGeneration`; for `control-ui`, both maps must exactly equal the non-empty `scopedRoles` tenant keys, and the value is the Account-owned `{accountId, tenantId}` membership authority generation, not a tenant-wide or account-wide substitute |
+| `membershipVersion` | Required when `scopedRoles` is non-empty; otherwise Empty map | Empty map | Absent | Exactly one key for every tenant-bound delegation; Empty map for an explicitly non-tenant profile | Separate Account-owned membership projection/version map. Its applicable keys exactly match the membership-authority keys for the profile, and it is compared independently from `authorityTuple.membershipAuthorityGeneration`; neither field substitutes for the other |
 | `authorityTuple.privateRealmGrantVersions` | Empty list unless applicable | Empty list | Absent | Exact applicable entries or empty list | Each entry is exactly `{tenantId, worldSlug, realmSlug, grantVersion}` |
 | `authorityTuple.accountSecurityCutoff` | Present when applicable | Present when applicable | Absent | Present when applicable | Exact Account cutoff checkpoint; never a replacement authority |
 | `authorityTuple.tenantBillingCutoff` | Present when applicable | Present when applicable | Absent | Present when applicable | Exact tenant-ID map with billing checkpoint values |

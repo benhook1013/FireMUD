@@ -322,7 +322,7 @@ public class FriendServiceImpl implements FriendService {
       FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     if (visibilityPolicy != FriendPresenceVisibilityPolicyValue.PUBLIC
         && visibilityPolicy != FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY) {
-      return defaultPresence(friendAccountId, FriendPresenceVisibilityPolicyValue.PRIVATE);
+      return defaultPresence(friendAccountId, visibilityPolicy);
     }
     return new FriendPresenceDto(
         friendAccountId,
@@ -494,7 +494,7 @@ public class FriendServiceImpl implements FriendService {
       return FriendPresenceVisibilityPolicyValue.PRIVATE;
     }
     return switch (visibilityPolicy) {
-      case PUBLIC, FRIENDS_ONLY, PRIVATE -> visibilityPolicy;
+      case PUBLIC, FRIENDS_ONLY, PRIVATE, HIDDEN_STAFF -> visibilityPolicy;
       default -> FriendPresenceVisibilityPolicyValue.PRIVATE;
     };
   }

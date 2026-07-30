@@ -146,7 +146,7 @@ Canonical route-review examples:
 | External operator writes for moderation, quota overrides, runtime feature flags, admission control, and tick remediation | Logging & Admin APIs via Gateway | Direct domain bypass not allowed unless a future design update explicitly amends the operator write ingress policy |
 | Internal service-to-service control APIs | Internal-only service contracts | Not an edge contract; does not traverse Gateway unless the contract is explicitly defined as Gateway-managed infrastructure control traffic |
 
-See [Service Responsibility Matrix](./service-responsibility-matrix.md) for the matching `Admin/creator API participation (edge-routable domain APIs)`, `External operator read/preparation ingress`, and `External operator mutating ingress` responsibilities used when reviewing new route proposals.
+See [Service Responsibility Matrix](./service-responsibility-matrix.md) for the matching `Admin/creator API participation (edge-routable domain APIs)`, `External operator read/preparation ingress`, and `External operator write ingress` responsibilities used when reviewing new route proposals.
 
 #### Edge Exposure Policy (Canonical)
 

@@ -117,6 +117,7 @@ def queue_path(root: Path) -> Path:
 def checked_reviews(validator, root: Path):
     return validator.checked_reviews(
         queue_path(root),
+        root.resolve(),
         root / "design/architecture/decisions",
     )
 
@@ -212,6 +213,13 @@ class AdrReviewStatusTests(unittest.TestCase):
                 self.assertEqual(
                     "Accepted", self.validator.section_value(text, "Status")
                 )
+
+    def test_section_value_ignores_fenced_status_examples(self) -> None:
+        text = (
+            "## Status\n\nAccepted\n\n"
+            "```text\n## Status\n\nWithdrawn\n```\n"
+        )
+        self.assertEqual("Accepted", self.validator.section_value(text, "Status"))
 
     def test_section_value_requires_exactly_one_status_heading(self) -> None:
         text = "## Status\n\nAccepted\n\n## Status\n\nAccepted\n"
@@ -577,6 +585,50 @@ class AdrReviewStatusTests(unittest.TestCase):
             self.assertEqual({"TEST-01"}, {review.key for review in reviews[12]})
             self.assertNotIn(14, reviews)
 
+    def test_superseded_scan_alias_rejects_replacement_adr_number_mismatch(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(
+                root / "design/architecture/decisions/adr-0014-replacement.md",
+                "# ADR 0014\n",
+            )
+            append_queue_row(
+                root,
+                "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27 by "
+                "[replacement ADR 0015](../../architecture/decisions/"
+                "adr-0014-replacement.md); retained as a historical "
+                "service-scan alias.",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "replacement ADR 0015 does not match target",
+            )
+
+    def test_superseded_scan_alias_rejects_replacement_outside_adr_directory(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(
+                root / "design/architecture/adr-0014-outside.md",
+                "# ADR 0014\n",
+            )
+            append_queue_row(
+                root,
+                "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27 by "
+                "[replacement ADR 0014](../../architecture/"
+                "adr-0014-outside.md); retained as a historical "
+                "service-scan alias.",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "must target the canonical ADR directory",
+            )
+
     def test_superseded_scan_alias_accepts_decision_key_target(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
@@ -709,6 +761,39 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "```",
             )
             self.validator.validate(root)
+
+    def test_decision_record_parser_ignores_fenced_headings_and_fields(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = root / "design/architecture/decisions/adr-0012-reviewed.md"
+            text = path.read_text(encoding="utf-8").replace(
+                "## Decision Record\n",
+                "## Decision Record\n\n"
+                "```text\n"
+                "## Notes\n"
+                "- Human review status: Pending\n"
+                "```\n",
+                1,
+            )
+            path.write_text(text, encoding="utf-8")
+            self.assertEqual(
+                "Completed",
+                self.validator.review_fields(text)["Human review status"],
+            )
+            self.validator.validate(root)
+
+    def test_review_fields_ignores_fenced_metadata_examples(self) -> None:
+        text = (
+            "## Decision Record\n\n"
+            "```text\n"
+            "- Human review status: Pending\n"
+            "```\n\n"
+            "- Human review status: Completed\n"
+        )
+        self.assertEqual(
+            {"Human review status": "Completed"},
+            self.validator.review_fields(text),
+        )
 
     def test_nested_fence_with_info_string_does_not_expose_checked_row(self) -> None:
         with fixture_root() as fixture:
@@ -1178,6 +1263,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 self,
                 lambda: self.validator.checked_reviews(
                     path,
+                    root.resolve(),
                     root / "design/architecture/decisions",
                 ),
                 "indented checked review queue row",

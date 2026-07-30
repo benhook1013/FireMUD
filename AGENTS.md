@@ -46,5 +46,5 @@ The main `gpt-5.6-sol` thread owns planning, human design discussion, task decom
 
 - Use process proportional to the risk and size of the change. Do not create ledgers, audit suites, repeated review machinery, or speculative governance infrastructure for small edits unless a concrete correctness risk requires it.
 - Delegate bounded bulk reading, mechanical work, or focused investigation only with a disjoint scope and explicit success conditions.
-- Delegation prompts repeat the applicable complete boundaries from the authoritative workflow; that workflow remains the authority.
+- Every delegation prompt repeats the authoritative workflow's full prohibition text; omitting it grants no permission.
 - Preserve one authority direction: architecture defines target behavior; implementation tracking records status; workflow guidance selects process; the orchestrator evaluates evidence and makes the final decision.

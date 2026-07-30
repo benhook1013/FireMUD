@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+This ADR is partially implemented. Logging & Admin has current operator-facing read, investigation, admission-pointer read/audit, and prepared-upgrade proof-read surfaces, but no operator mutation family is currently supported as an executable external route until all three parts of the mutation gate exist: the action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption. `/moderation/actions` and `ApplyModerationAction` are live only for policy-input and audit persistence; they remain unavailable/gated as owner-side enforcement mutations. The live `EvaluateModerationPolicy` read remains available to its enforcement owners. The versioned policy-propagation and owner-enforcement path below remains target-state work.
+
 ## Decision Record
 
 - Decision date: 2026-07-19
@@ -16,10 +20,6 @@ Accepted
 - Human review date: 2026-07-19
 - Human review disposition: Revised
 - Review source: `SEC-04`
-
-## Implementation Status
-
-This ADR is partially implemented. Logging & Admin has current operator-facing read, investigation, admission-pointer read/audit, and prepared-upgrade proof-read surfaces, but no operator mutation family is currently supported as an executable external route until all three parts of the mutation gate exist: the action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption. In particular, `/moderation/actions` and `ApplyModerationAction` are unavailable/gated implementation paths, not current supported operator mutations. The live `EvaluateModerationPolicy` read remains available to its enforcement owners. The versioned policy-propagation and owner-enforcement path below remains target-state work.
 
 ## Context
 

@@ -111,37 +111,52 @@ def adr_number(path: Path) -> int:
 
 
 def section_value(text: str, heading: str) -> str:
-    heading_matches = re.findall(
-        rf"^## {re.escape(heading)}[ \t]*\r?$",
-        text,
-        flags=re.MULTILINE,
-    )
+    lines = text.splitlines()
+    visible_lines = visible_markdown_lines(text)
+    heading_re = re.compile(rf"^## {re.escape(heading)}[ \t]*$")
+    heading_matches = [
+        line for line in visible_lines if heading_re.fullmatch(line.text)
+    ]
     if len(heading_matches) != 1:
         fail(f"missing or malformed {heading!r} section")
-    match = re.search(
-        rf"^## {re.escape(heading)}\r?\n\r?\n(?P<value>[^\r\n]+)(?:\r?\n|$)",
-        text,
-        flags=re.MULTILINE,
-    )
-    if not match:
+    heading_line = heading_matches[0]
+    value_line_number = heading_line.number + 2
+    if (
+        heading_line.number >= len(lines)
+        or lines[heading_line.number] != ""
+        or value_line_number > len(lines)
+        or value_line_number not in {line.number for line in visible_lines}
+        or lines[value_line_number - 1] == ""
+    ):
         fail(f"missing or malformed {heading!r} section")
-    return match.group("value").strip()
+    return lines[value_line_number - 1].strip()
 
 
 def markdown_section(text: str, heading: str) -> str:
-    matches = list(
-        re.finditer(
-            rf"^## {re.escape(heading)}[ \t]*\r?$",
-            text,
-            flags=re.MULTILINE,
-        )
-    )
+    visible_lines = visible_markdown_lines(text)
+    heading_re = re.compile(rf"^## {re.escape(heading)}[ \t]*$")
+    matches = [
+        line for line in visible_lines if heading_re.fullmatch(line.text)
+    ]
     if len(matches) != 1:
         fail(f"expected exactly one section {heading!r}, found {len(matches)}")
-    match = matches[0]
-    following = re.search(r"^## ", text[match.end() :], re.MULTILINE)
-    end = match.end() + following.start() if following else len(text)
-    return text[match.end() : end]
+    heading_line = matches[0]
+    following = next(
+        (
+            line
+            for line in visible_lines
+            if line.number > heading_line.number
+            and LEVEL_TWO_HEADING_RE.fullmatch(line.text)
+        ),
+        None,
+    )
+    end = following.number if following is not None else None
+    return "\n".join(
+        line.text
+        for line in visible_lines
+        if line.number > heading_line.number
+        and (end is None or line.number < end)
+    )
 
 
 def review_fields(text: str) -> dict[str, str]:
@@ -290,6 +305,7 @@ def validate_decision_key_target(
 
 def validate_superseded_scan_alias_outcome(
     path: Path,
+    repository_root: Path,
     adr_dir: Path,
     line_number: int,
     outcome: str,
@@ -326,7 +342,7 @@ def validate_superseded_scan_alias_outcome(
             )
         validate_decision_key_target(
             path,
-            adr_dir.resolve().parents[2],
+            repository_root,
             line_number,
             target,
         )
@@ -358,6 +374,21 @@ def advance_markdown_fence(
     return open_fence, True
 
 
+def visible_markdown_lines(text: str) -> list[MarkdownLine]:
+    open_fence: MarkdownFence | None = None
+    visible_lines: list[MarkdownLine] = []
+    for index, line in enumerate(text.splitlines()):
+        open_fence, is_fence = advance_markdown_fence(
+            open_fence,
+            line,
+            index + 1,
+        )
+        if is_fence or open_fence is not None:
+            continue
+        visible_lines.append(MarkdownLine(index + 1, line))
+    return visible_lines
+
+
 def scan_review_queue(lines: list[str], queue_start: int) -> MarkdownSection:
     open_fence: MarkdownFence | None = None
     visible_lines: list[MarkdownLine] = []
@@ -380,7 +411,11 @@ def review_queue_end(lines: list[str], queue_start: int) -> int:
     return scan_review_queue(lines, queue_start).end
 
 
-def checked_reviews(path: Path, adr_dir: Path) -> dict[int, list[Review]]:
+def checked_reviews(
+    path: Path,
+    repository_root: Path,
+    adr_dir: Path,
+) -> dict[int, list[Review]]:
     reviews: dict[int, list[Review]] = {}
     seen_keys: set[str] = set()
     lines = path.read_text(encoding="utf-8").splitlines()
@@ -432,6 +467,7 @@ def checked_reviews(path: Path, adr_dir: Path) -> dict[int, list[Review]]:
         if is_scan_alias:
             validate_superseded_scan_alias_outcome(
                 path,
+                repository_root,
                 adr_dir,
                 line_number,
                 match.group("outcome"),
@@ -541,7 +577,7 @@ def validate(root: Path = ROOT) -> None:
         fail(f"ADR directory missing: {adr_dir.relative_to(root)}")
     if not queue.is_file():
         fail(f"ADR review queue missing: {queue.relative_to(root)}")
-    reviews = checked_reviews(queue, adr_dir)
+    reviews = checked_reviews(queue, root, adr_dir)
     seen_numbers: set[int] = set()
 
     for path in sorted(adr_dir.glob("adr-*.md")):

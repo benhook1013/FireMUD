@@ -62,6 +62,24 @@ REQUIRED_REVOKE_APPLICABILITY = {
     "connection_mode": "first_party_web",
     "operation": "connect_token_cookie_revoke",
 }
+REQUIRED_REVOKE_GENERATION_APPLICABILITY = {
+    "tenant_billing_authority_generation_applies": False,
+    "membership_authority_generation_applies": False,
+}
+MEMBERSHIP_WRITER_ROUTE = (
+    "account-service",
+    "EnsurePublicProductionPlayerMembership",
+)
+REQUIRED_MEMBERSHIP_WRITER_CHECKS = {
+    "account_state_bootstrap_eligible",
+    "pending_deletion_state",
+}
+REQUIRED_SESSION_LIFECYCLE_GATE_ROUTES = {
+    "game-session-service/POST /sessions",
+    "game-session-service/POST /sessions/{sessionId}/stop",
+    "game-session-service/POST /sessions/{sessionId}/restart",
+    "game-session-service/POST /sessions/{sessionId}/refresh-roles",
+}
 GAMEPLAY_CONNECT_ISSUED_TOKEN_STATE = "none_bounded_single_use_replay_exception"
 REQUIRED_FIELD_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 ROUTE_STATUS_VALUES = {
@@ -123,6 +141,8 @@ ACCOUNT_AUTHORIZATION_BRANCHES = {
     "platformAdmin_override": {
         "target_subject_binding": "explicit_target_account_id",
         "required_live_checks": {
+            "issuer_generation",
+            "account_generation",
             "current_global_role",
             "role_appropriate_assurance",
         },
@@ -273,11 +293,13 @@ EXPECTED_ROUTE_CLASS_BRANCHES = {
 }
 CANONICAL_OPERATOR_INGRESS = "logging-admin-service"
 DIRECT_OWNER_ROUTE_POLICY = "deny_at_edge_and_migrate_to_logging_admin"
-# Maps id(route/parent mapping) to the source object and parsed checks for one document.
-# Retaining the source object prevents id reuse from returning stale entries.
-LiveChecksCache = dict[int, tuple[object, set[str]]]
-# Maps id(route/parent mapping) to the source object and parsed required fields.
-RequiredFieldsCache = dict[int, tuple[object, list[str] | None]]
+# Maps (id(route/parent mapping), field name) to the source object and parsed checks
+# for one document. Retaining the source object prevents id reuse from returning
+# stale entries.
+LiveChecksCache = dict[tuple[int, str], tuple[object, set[str]]]
+# Maps (id(route/parent mapping), field name) to the source object and parsed
+# required fields.
+RequiredFieldsCache = dict[tuple[int, str], tuple[object, list[str] | None]]
 
 
 def route_key(route: dict[str, Any]) -> str | None:
@@ -306,14 +328,17 @@ def cached_live_checks(
     field: str,
     errors: list[str],
     live_checks_cache: LiveChecksCache | None = None,
+    cache_field: str | None = None,
 ) -> set[str]:
+    semantic_field = cache_field or field
     if live_checks_cache is not None:
-        cached = live_checks_cache.get(id(source))
+        cache_key = (id(source), semantic_field)
+        cached = live_checks_cache.get(cache_key)
         if cached is not None and cached[0] is source:
             return set(cached[1])
     parsed_checks = set(string_list(value, field, errors))
     if live_checks_cache is not None:
-        live_checks_cache[id(source)] = (source, set(parsed_checks))
+        live_checks_cache[(id(source), semantic_field)] = (source, set(parsed_checks))
     return set(parsed_checks)
 
 
@@ -323,9 +348,12 @@ def cached_required_fields(
     field: str,
     errors: list[str],
     required_fields_cache: RequiredFieldsCache | None = None,
+    cache_field: str | None = None,
 ) -> list[str]:
+    semantic_field = cache_field or field
     if required_fields_cache is not None:
-        cached = required_fields_cache.get(id(source))
+        cache_key = (id(source), semantic_field)
+        cached = required_fields_cache.get(cache_key)
         if cached is not None and cached[0] is source:
             return list(cached[1] or [])
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
@@ -334,7 +362,7 @@ def cached_required_fields(
     else:
         parsed_fields = list(value)
     if required_fields_cache is not None:
-        required_fields_cache[id(source)] = (source, parsed_fields)
+        required_fields_cache[(id(source), semantic_field)] = (source, parsed_fields)
     return list(parsed_fields or [])
 
 
@@ -351,7 +379,12 @@ def collect_live_checks(
             if key == "required_live_checks":
                 checks.extend(
                     cached_live_checks(
-                        value, child, child_field, errors, live_checks_cache
+                        value,
+                        child,
+                        child_field,
+                        errors,
+                        live_checks_cache,
+                        "required_live_checks",
                     )
                 )
             else:
@@ -596,6 +629,7 @@ def validate_required_fields(
             f"routes[{index}] required_fields",
             errors,
             required_fields_cache,
+            "required_fields",
         )
         invalid_fields = [
             field for field in fields if not REQUIRED_FIELD_PATTERN.fullmatch(field)
@@ -1056,6 +1090,7 @@ def operator_authorization_branch_checks(
             f"{branch_label}.required_live_checks",
             errors,
             live_checks_cache,
+            "required_live_checks",
         )
         expected_checks = OPERATOR_AUTHORIZATION_BRANCHES.get(branch)
         if expected_checks is not None and checks != expected_checks:
@@ -1209,6 +1244,7 @@ def account_authorization_branch_checks(
             f"{branch_label}.required_live_checks",
             errors,
             live_checks_cache,
+            "required_live_checks",
         )
         if expected is not None and checks != expected["required_live_checks"]:
             errors.append(
@@ -1802,14 +1838,19 @@ def validate_refresh_roles_routes(
     required_fields_cache: RequiredFieldsCache | None = None,
 ) -> None:
     def validate_idempotency(route: dict[str, Any], label: str) -> None:
-        required_fields = set(
-            cached_required_fields(
-                route,
-                route.get("required_fields"),
-                f"{label} required_fields",
-                errors,
-                required_fields_cache,
+        required_fields = (
+            set(
+                cached_required_fields(
+                    route,
+                    route.get("required_fields"),
+                    f"{label} required_fields",
+                    errors,
+                    required_fields_cache,
+                    "required_fields",
+                )
             )
+            if "required_fields" in route
+            else set()
         )
         if "mutation_digest" not in required_fields:
             errors.append(f"{label} must require mutation_digest for idempotency")
@@ -1924,6 +1965,7 @@ def validate_operator_mutation_support_gate(
         and isinstance(route.get("route"), str)
     }
     gate_identities: list[str] = []
+    applies_to_identities: list[str] = []
     for field in ("applies_to", "live_exceptions"):
         values = string_list(
             gate.get(field), f"operator_mutation_support_gate.{field}", errors
@@ -1936,6 +1978,8 @@ def validate_operator_mutation_support_gate(
             )
             if identity is not None:
                 gate_identities.append(identity)
+                if field == "applies_to":
+                    applies_to_identities.append(identity)
 
     coverage_drift = gate.get("coverage_drift")
     if not isinstance(coverage_drift, list) or not coverage_drift:
@@ -1966,6 +2010,14 @@ def validate_operator_mutation_support_gate(
     if len(set(drift_identities)) != len(drift_identities):
         errors.append(
             "operator_mutation_support_gate.coverage_drift must not duplicate identities"
+        )
+    missing_required_routes = sorted(
+        REQUIRED_SESSION_LIFECYCLE_GATE_ROUTES - set(applies_to_identities)
+    )
+    if missing_required_routes:
+        errors.append(
+            "operator_mutation_support_gate.applies_to is missing required current "
+            f"session lifecycle routes: {missing_required_routes}"
         )
     for identity in sorted(
         set(gate_identities) - route_identities - set(drift_identities)
@@ -2051,6 +2103,7 @@ def route_live_checks(
         f"{label} required_live_checks",
         errors,
         live_checks_cache,
+        "required_live_checks",
     )
 
 
@@ -2099,6 +2152,7 @@ def validate_downstream_admission_contract(
             f"{label} downstream_admission_contract.required_live_checks",
             errors,
             live_checks_cache,
+            "required_live_checks",
         )
     )
     if missing:
@@ -2129,16 +2183,17 @@ def validate_ws_game_routes(
             "spring-cloud-gateway /ws/game/** route"
         )
     else:
-        for route in ws_routes:
-            label = f"/ws/game/** {applicability_value(route, 'connection_mode', '/ws/game/**', errors)}"
-            for field in (
-                "tenant_billing_authority_generation_applies",
-                "membership_authority_generation_applies",
-            ):
-                if route.get(field) is not False:
-                    errors.append(
-                        f"{label} must explicitly set {field}=false for downstream admission"
-                    )
+        for mode in ("first_party_web", "trusted_tcp_proxy"):
+            for route in by_mode[mode]:
+                label = f"/ws/game/** {mode}"
+                for field in (
+                    "tenant_billing_authority_generation_applies",
+                    "membership_authority_generation_applies",
+                ):
+                    if route.get(field) is not False:
+                        errors.append(
+                            f"{label} must explicitly set {field}=false for downstream admission"
+                        )
 
         first_party = by_mode["first_party_web"][0]
         validate_applicability(
@@ -2268,6 +2323,45 @@ def validate_issue_connect_token(
         errors.append(
             f"IssueConnectToken is missing required live checks: {missing_checks}"
         )
+
+
+def validate_membership_writer_route(
+    routes: list[Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+    cardinality_errors: set[str] | None = None,
+) -> None:
+    service, name = MEMBERSHIP_WRITER_ROUTE
+    route = resolve_unique_route(routes, service, name, errors, cardinality_errors)
+    if route is None:
+        return
+    checks = route_live_checks(
+        route,
+        f"{service} {name}",
+        errors,
+        live_checks_cache,
+    )
+    missing_checks = sorted(REQUIRED_MEMBERSHIP_WRITER_CHECKS - checks)
+    if missing_checks:
+        errors.append(
+            f"{service} {name} is missing membership-writer checks: {missing_checks}"
+        )
+
+
+def validate_connect_token_revoke_generation_applicability(
+    routes: list[Any],
+    errors: list[str],
+    cardinality_errors: set[str] | None = None,
+) -> None:
+    service = "spring-cloud-gateway"
+    name = "POST /ws/game/connect-token/revoke"
+    route = resolve_unique_route(routes, service, name, errors, cardinality_errors)
+    if route is None:
+        return
+    label = f"{service} {name}"
+    for field, expected in REQUIRED_REVOKE_GENERATION_APPLICABILITY.items():
+        if route.get(field) is not expected:
+            errors.append(f"{label} must explicitly set {field}={expected}")
 
 
 def validate_join_routes(
@@ -2482,8 +2576,14 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     validate_entitlement_contract(document, routes, errors, cardinality_errors)
 
     validate_ws_game_routes(routes, errors, live_checks_cache, cardinality_errors)
+    validate_connect_token_revoke_generation_applicability(
+        routes, errors, cardinality_errors
+    )
     validate_issue_connect_token(routes, errors, live_checks_cache, cardinality_errors)
     validate_join_routes(routes, errors, live_checks_cache, cardinality_errors)
+    validate_membership_writer_route(
+        routes, errors, live_checks_cache, cardinality_errors
+    )
     validate_delegated_entitlements(
         routes, errors, live_checks_cache, cardinality_errors
     )

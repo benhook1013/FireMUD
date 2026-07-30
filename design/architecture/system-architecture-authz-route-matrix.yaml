@@ -31,6 +31,10 @@ operator_mutation_support_gate:
     - game-session-service/RestartSession
     - game-session-service/StopSession
     - game-session-service/RefreshRoles
+    - game-session-service/POST /sessions
+    - game-session-service/POST /sessions/{sessionId}/stop
+    - game-session-service/POST /sessions/{sessionId}/restart
+    - game-session-service/POST /sessions/{sessionId}/refresh-roles
   live_exceptions:
     - logging-admin-service/GET /admission-pointers
     - logging-admin-service/GET /admission-pointers/{tenantId}/{worldSlug}/{realmSlug}/audit
@@ -694,6 +698,8 @@ routes:
     token_type: gameplay_handshake
     token_issuer: firemud-account-service
     token_audience: gameplay-connect
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
     accepted_carriers: [first_party_cookie]
     cookie_absence_outcome: idempotent_success
     edge_consumer: spring_cloud_gateway_http
@@ -1141,7 +1147,7 @@ routes:
     delegated_subject: typed_player_execution_context
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
-    required_live_checks: [public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, idempotency]
+    required_live_checks: [account_state_bootstrap_eligible, pending_deletion_state, public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, idempotency]
     canonical_errors:
       any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, TENANT_BILLING_BLOCKED]
     mutation_contract: explicit_public_membership_atomic
@@ -1261,7 +1267,7 @@ routes:
         required_live_checks: [current_account_generation]
       - branch: platformAdmin_override
         target_subject_binding: explicit_target_account_id
-        required_live_checks: [current_global_role, role_appropriate_assurance]
+        required_live_checks: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
     response_profile: asynchronous_versioned_cross_owner_export_manifest
     response_contract: reports_owner_completion_retries_omissions_and_policy_retention
     implementation_status:
@@ -1288,7 +1294,7 @@ routes:
         required_live_checks: [current_account_generation]
       - branch: platformAdmin_override
         target_subject_binding: explicit_target_account_id
-        required_live_checks: [current_global_role, role_appropriate_assurance]
+        required_live_checks: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
     mutation_contract: pending_delete_advances_account_generation_then_runs_retryable_cross_owner_erasure
     completion_contract: terminal_only_after_all_owner_steps_complete_or_policy_retained
     canonical_errors:

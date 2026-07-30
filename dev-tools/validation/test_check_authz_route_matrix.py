@@ -190,6 +190,37 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
         self.assertEqual([], errors)
 
+    def test_http_session_mutations_are_gated_without_losing_current_route_status(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        expected = set(self.validator.REQUIRED_SESSION_LIFECYCLE_GATE_ROUTES)
+        self.assertTrue(
+            expected.issubset(
+                set(document["operator_mutation_support_gate"]["applies_to"])
+            )
+        )
+        self.assertEqual(
+            "target_not_currently_routable",
+            document["operator_mutation_support_gate"]["status"],
+        )
+        for identity in expected:
+            service, route_name = identity.split("/", 1)
+            route = route_for(document, service, route_name)
+            self.assertEqual("current_openapi_operator_surface", route["route_status"])
+
+        document["operator_mutation_support_gate"]["applies_to"].remove(
+            "game-session-service/POST /sessions"
+        )
+        errors = []
+        self.validator.validate_operator_mutation_support_gate(
+            document, document["routes"], errors
+        )
+        self.assertTrue(
+            any(
+                "missing required current session lifecycle routes" in error
+                for error in errors
+            )
+        )
+
     def test_operator_mutation_gate_rejects_unclassified_identity(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         document["operator_mutation_support_gate"]["coverage_drift"] = [
@@ -442,6 +473,21 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     any("must require mutation_digest" in error for error in errors)
                 )
 
+    def test_refresh_roles_missing_required_fields_has_one_canonical_error(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "game-session-service", "RefreshRoles")
+        route.pop("required_fields")
+
+        errors = validate_document(self.validator, document)
+
+        self.assertFalse(
+            any("required_fields must be a list of strings" in error for error in errors)
+        )
+        self.assertEqual(
+            1,
+            sum("must require mutation_digest" in error for error in errors),
+        )
+
     def test_refresh_roles_rejects_malformed_canonical_error_any_of(self):
         for route_name in ("RefreshRoles", "POST /sessions/{sessionId}/refresh-roles"):
             for malformed in ("not-a-list", ["IDEMPOTENCY_CONFLICT", 7]):
@@ -511,10 +557,63 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         cache = {}
         errors = []
 
-        cache[id(route)] = (object(), {"stale_check"})
+        cache[(id(route), "required_live_checks")] = (
+            object(),
+            {"stale_check"},
+        )
         checks = self.validator.route_live_checks(route, "route", errors, cache)
         self.assertEqual({"first_check"}, checks)
-        self.assertIs(cache[id(route)][0], route)
+        self.assertIs(cache[(id(route), "required_live_checks")][0], route)
+        self.assertEqual([], errors)
+
+    def test_live_checks_cache_is_scoped_to_source_identity_and_field_name(self):
+        source = {}
+        cache = {}
+        errors = []
+
+        first = self.validator.cached_live_checks(
+            source,
+            ["first_check"],
+            "first field",
+            errors,
+            cache,
+        )
+        second = self.validator.cached_live_checks(
+            source,
+            ["second_check"],
+            "second field",
+            errors,
+            cache,
+        )
+
+        self.assertEqual({"first_check"}, first)
+        self.assertEqual({"second_check"}, second)
+        self.assertEqual([], errors)
+
+    def test_required_fields_cache_rejects_stale_identity_and_scopes_field_name(self):
+        source = {}
+        cache = {}
+        errors = []
+
+        cache[(id(source), "stale field")] = (object(), ["stale_field"])
+        fields = self.validator.cached_required_fields(
+            source,
+            ["first_field"],
+            "stale field",
+            errors,
+            cache,
+        )
+        other_fields = self.validator.cached_required_fields(
+            source,
+            ["second_field"],
+            "other field",
+            errors,
+            cache,
+        )
+
+        self.assertEqual(["first_field"], fields)
+        self.assertEqual(["second_field"], other_fields)
+        self.assertIs(cache[(id(source), "stale field")][0], source)
         self.assertEqual([], errors)
 
     def test_multi_profile_unknown_name_is_not_resolved(self):
@@ -633,6 +732,8 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             "platformAdmin_override": {
                 "target_subject_binding": "explicit_target_account_id",
                 "required_live_checks": {
+                    "issuer_generation",
+                    "account_generation",
                     "current_global_role",
                     "role_appropriate_assurance",
                 },
@@ -672,6 +773,28 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
         self.assertEqual("control-ui", export["token_audience"])
         self.assertEqual("firemud-account-service", export["token_issuer"])
+
+    def test_account_subject_global_override_retains_generation_fences(self):
+        for route_name in ("ExportAccount", "DeleteAccount"):
+            with self.subTest(route=route_name):
+                document = self.validator.yaml.safe_load(
+                    MATRIX.read_text(encoding="utf-8")
+                )
+                route = route_for(document, "account-service", route_name)
+                branch = next(
+                    branch
+                    for branch in route["account_authorization_branches"]
+                    if branch["branch"] == "platformAdmin_override"
+                )
+                branch["required_live_checks"].remove("issuer_generation")
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(
+                        "platformAdmin_override" in error
+                        and "required_live_checks must equal" in error
+                        for error in errors
+                    )
+                )
 
     def test_account_subject_routes_reject_missing_or_mixed_branch_checks(self):
         for route_name in ("ExportAccount", "DeleteAccount"):
@@ -894,6 +1017,33 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             self.assertEqual(
                 "caller_bound_after_validation", route["membership_creation"]
             )
+
+    def test_membership_writer_requires_current_account_state_and_pending_deletion_gate(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            baseline, "account-service", "EnsurePublicProductionPlayerMembership"
+        )
+        self.assertTrue(
+            self.validator.REQUIRED_MEMBERSHIP_WRITER_CHECKS.issubset(
+                set(route["required_live_checks"])
+            )
+        )
+        for missing_check in self.validator.REQUIRED_MEMBERSHIP_WRITER_CHECKS:
+            with self.subTest(missing_check=missing_check):
+                document = copy.deepcopy(baseline)
+                route = route_for(
+                    document,
+                    "account-service",
+                    "EnsurePublicProductionPlayerMembership",
+                )
+                route["required_live_checks"].remove(missing_check)
+                errors = []
+                self.validator.validate_membership_writer_route(
+                    document["routes"], errors
+                )
+                self.assertTrue(
+                    any("missing membership-writer checks" in error for error in errors)
+                )
 
     def test_join_pre_membership_checks_are_validated(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -1821,6 +1971,25 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "POST /ws/game/connect-token/revoke is missing" in error
                 for error in errors
             )
+        )
+
+    def test_connect_token_revoke_declares_tenant_and_membership_generation_scope(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            document, "spring-cloud-gateway", "POST /ws/game/connect-token/revoke"
+        )
+        for field in self.validator.REQUIRED_REVOKE_GENERATION_APPLICABILITY:
+            self.assertFalse(route[field])
+
+        route["membership_authority_generation_applies"] = True
+        errors = []
+        self.validator.validate_connect_token_revoke_generation_applicability(
+            document["routes"], errors
+        )
+        self.assertIn(
+            "spring-cloud-gateway POST /ws/game/connect-token/revoke must explicitly set "
+            "membership_authority_generation_applies=False",
+            errors,
         )
 
     def test_gameplay_connect_bounded_registry_and_generation_exception_is_required(

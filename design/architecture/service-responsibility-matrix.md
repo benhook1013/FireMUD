@@ -79,7 +79,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Social network graph (friends/blocks/etc.) | | | | | | | | ✔ | | | |
 | Centralized observability dashboards and moderation analytics (logs/metrics/traces) | | | | | | | | | ✔ | | |
 | Admin panel UX and runtime feature-flag override workflow | | | | ✔ | | | | | ✔ | | |
-| Game moderation report review and player tooling | | | | | | | | | ✔ | | |
+| Game moderation report review and internal `CreateReport` persistence tooling (public HTTP reports removed; internal RPC is not player ingress) | | | | | | | | | ✔ | | |
 | Current moderation policy-input persistence and audit (`POST /moderation/actions`; synchronous evaluation is a separate read) | | | | | | | | | ✔ | | |
 | Gated moderation enforcement mutation (`GAMEPLAY_ADMISSION` / `CHAT_SEND`) | | | | ✔ | | | | ✔ | ✔ | | |
 | Authoritative owner: subscription entitlements, plan-driven quota values, and effective quota override overlay (`GetTenantEntitlementsForRuntime`) | | | ✔ | | | | | | | | |

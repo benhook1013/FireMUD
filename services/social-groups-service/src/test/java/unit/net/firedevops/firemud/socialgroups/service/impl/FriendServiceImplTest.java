@@ -667,7 +667,7 @@ class FriendServiceImplTest {
   }
 
   @Test
-  void listFriendPresenceSuppressesPrivateAndHiddenStaffDetails() {
+  void listFriendPresencePreservesPoliciesAndSuppressesPrivateAndHiddenStaffDetails() {
     AccountFriendLink privateLink = new AccountFriendLink();
     privateLink.setTenantId(11L);
     privateLink.setAccountId(2L);
@@ -719,17 +719,60 @@ class FriendServiceImplTest {
     assertEquals(2, result.totalCount());
     assertEquals(2, result.matchCount());
     assertEquals(false, result.presences().get(0).online());
+    assertEquals("PRIVATE", result.presences().get(0).visibilityPolicy());
     assertEquals(null, result.presences().get(0).characterName());
     assertEquals(null, result.presences().get(0).gameInstanceId());
+    assertEquals(null, result.presences().get(0).playableStateScope());
     assertEquals(null, result.presences().get(0).worldSlug());
     assertEquals(null, result.presences().get(0).worldDisplayName());
     assertEquals(null, result.presences().get(0).realmSlug());
     assertEquals(null, result.presences().get(0).realmDisplayName());
+    assertEquals(null, result.presences().get(0).pointerVersion());
+    assertEquals(null, result.presences().get(0).characterId());
+    assertEquals(null, result.presences().get(0).activityState());
     assertEquals(null, result.presences().get(0).lastSeenAt());
     assertEquals(null, result.presences().get(0).recentDisposition());
     assertEquals(false, result.presences().get(1).online());
+    assertEquals("HIDDEN_STAFF", result.presences().get(1).visibilityPolicy());
+    assertEquals(null, result.presences().get(1).gameInstanceId());
+    assertEquals(null, result.presences().get(1).playableStateScope());
+    assertEquals(null, result.presences().get(1).worldSlug());
+    assertEquals(null, result.presences().get(1).worldDisplayName());
+    assertEquals(null, result.presences().get(1).realmSlug());
+    assertEquals(null, result.presences().get(1).realmDisplayName());
+    assertEquals(null, result.presences().get(1).pointerVersion());
+    assertEquals(null, result.presences().get(1).characterId());
     assertEquals(null, result.presences().get(1).characterName());
+    assertEquals(null, result.presences().get(1).activityState());
     assertEquals(null, result.presences().get(1).lastSeenAt());
+    assertEquals(null, result.presences().get(1).recentDisposition());
+
+    var privateFiltered = service.listFriends(11L, 2L, FriendRosterFilter.PRIVATE);
+    assertEquals(2, privateFiltered.totalCount());
+    assertEquals(1, privateFiltered.matchCount());
+    assertEquals(1, privateFiltered.friends().getFirst().ordinal());
+    assertEquals(3L, privateFiltered.friends().getFirst().friendAccountId());
+    assertEquals("PRIVATE", privateFiltered.friends().getFirst().presence().visibilityPolicy());
+
+    var hiddenStaffFiltered = service.listFriends(11L, 2L, FriendRosterFilter.HIDDEN_STAFF);
+    assertEquals(2, hiddenStaffFiltered.totalCount());
+    assertEquals(1, hiddenStaffFiltered.matchCount());
+    assertEquals(2, hiddenStaffFiltered.friends().getFirst().ordinal());
+    assertEquals(4L, hiddenStaffFiltered.friends().getFirst().friendAccountId());
+    assertEquals(
+        "HIDDEN_STAFF", hiddenStaffFiltered.friends().getFirst().presence().visibilityPolicy());
+
+    var summary = service.getFriendRosterSummary(11L, 2L);
+    assertEquals(2, summary.totalCount());
+    assertEquals(0, summary.onlineCount());
+    assertEquals(2, summary.offlineCount());
+    assertEquals(0, summary.recentCount());
+    assertEquals(0, summary.publicCount());
+    assertEquals(0, summary.friendsOnlyCount());
+    assertEquals(1, summary.privateCount());
+    assertEquals(1, summary.hiddenStaffCount());
+    assertEquals(0, summary.unspecifiedVisibilityCount());
+    assertEquals(2, summary.unspecifiedScopeCount());
   }
 
   @Test
