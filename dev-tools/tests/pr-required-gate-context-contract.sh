@@ -239,6 +239,9 @@ JSON
   failed-predecessor)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"failure","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
+  newer-failure-over-success)
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:50:00Z","created_at":"2026-07-30T00:50:00Z"},{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/101","status":"completed","conclusion":"failure","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:50:00Z","created_at":"2026-07-30T01:50:00Z"}]}]\n'
+    ;;
   self-run-excluded)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/999/job/1","status":"completed","conclusion":"failure","started_at":"2026-07-30T02:00:00Z","created_at":"2026-07-30T02:00:00Z"}]}]\n'
     ;;
@@ -464,6 +467,24 @@ set -e
 }
 grep -Fq 'concluded failure' "$failed_prior_output" || {
   echo "required-gate action did not report the failed prior conclusion" >&2
+  exit 1
+}
+
+newer_failure_output="$tmp_dir/newer-failure-output"
+set +e
+run_action "$tmp_dir/count-newer-failure" none newer-failure-over-success >"$newer_failure_output" 2>&1
+newer_failure_status=$?
+set -e
+[[ "$newer_failure_status" -ne 0 ]] || {
+  echo "required-gate action allowed an older success to mask a newer completed failure" >&2
+  exit 1
+}
+[[ "$(<"$tmp_dir/count-newer-failure")" == "1" ]] || {
+  echo "required-gate action retried after selecting the newest authoritative failure" >&2
+  exit 1
+}
+grep -Fq 'concluded failure' "$newer_failure_output" || {
+  echo "required-gate action did not report the newest authoritative failure" >&2
   exit 1
 }
 

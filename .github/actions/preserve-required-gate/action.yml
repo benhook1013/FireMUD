@@ -70,7 +70,6 @@ runs:
                       and ((.details_url // "") | contains("/actions/runs/\($run_id)/") | not)
                     )
                 ] as $candidates
-                | ($candidates | map(select(.status == "completed" and .conclusion == "success"))) as $successful
                 | ($candidates
                     | map(select(
                         .status == "completed"
@@ -87,9 +86,7 @@ runs:
                         or .status == "waiting"
                         or .status == "pending"
                       ))) as $pending
-                | if ($successful | length) > 0 then
-                    ["completed", "success"]
-                  elif ($authoritative | length) > 0 then
+                | if ($authoritative | length) > 0 then
                     ($authoritative
                       | sort_by(.completed_at // .started_at // .created_at)
                       | last
