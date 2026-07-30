@@ -357,7 +357,7 @@ jobs:
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: '24.18.0'
+          node-version: '24.18.1'
 
       - name: ⚙️ Set Up Gradle
         uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
@@ -392,7 +392,7 @@ jobs:
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: '24.18.0'
+          node-version: '24.18.1'
 
       - name: ⚙️ Set Up Gradle
         uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
