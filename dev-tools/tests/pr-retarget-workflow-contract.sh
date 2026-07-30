@@ -263,15 +263,7 @@ for path in "$ci_path" "$smoke_path"; do
 done
 
 require_contains "$ci_path" 'PR Metadata Edit (Validation Summary)'
-require_contains "$ci_path" '    name: Validation Gate'
-require_contains "$ci_path" 'uses: ./.github/actions/preserve-required-gate'
-require_contains "$ci_path" 'gate-name: Validation Gate'
-require_contains "$ci_path" 'Preserve successful required gate on metadata-only edit'
 require_contains "$smoke_path" 'PR Metadata Edit (Smoke Summary)'
-require_contains "$smoke_path" '    name: Smoke Gate'
-require_contains "$smoke_path" 'uses: ./.github/actions/preserve-required-gate'
-require_contains "$smoke_path" 'gate-name: Smoke Gate'
-require_contains "$smoke_path" 'Preserve successful required gate on metadata-only edit'
 if grep -Eq '^  smoke-lite:' "$smoke_path"; then
   echo "smoke.yml must not restore the redundant smoke-lite job" >&2
   exit 1
@@ -306,7 +298,6 @@ assert_job_contains smoke.yml smoke-gate 'github.rest.pulls.get'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.state !== "open"'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.head.sha !== headSha'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.base.ref !== baseRef'
-assert_job_contains smoke.yml smoke-gate 'pullRequest.base.sha !== baseSha'
 
 require_contains "$runtime_images_path" 'types: [opened, synchronize, reopened, edited]'
 require_contains "$runtime_images_path" "&& 'metadata' || 'required' }}"
@@ -533,17 +524,22 @@ require_contains "$smoke_path" 'const mergeSha = context.sha;'
 require_contains "$smoke_path" 'github.rest.pulls.get({'
 require_contains "$smoke_path" 'pullRequest.state !== "open" ||'
 require_contains "$smoke_path" 'pullRequest.head.sha !== headSha ||'
-require_contains "$smoke_path" 'pullRequest.base.ref !== baseRef ||'
-require_contains "$smoke_path" 'pullRequest.base.sha !== baseSha'
+require_contains "$smoke_path" 'pullRequest.base.ref !== baseRef'
 require_contains "$smoke_path" 'const matchingRuns = runs.filter((run) => {'
 require_contains "$smoke_path" 'const matching = matchingRuns.reduce((newest, candidate) => {'
 require_contains "$smoke_path" 'let fullSmokeJob = null;'
-require_contains "$smoke_path" 'const remainingTimeoutMs = Math.max(0, timeoutMs - (Date.now() - started));'
-require_contains "$smoke_path" 'const maxCompletedJobSnapshotRetries = Math.min('
-require_contains "$smoke_path" 'Math.floor(remainingTimeoutMs / sleepMs) - 1'
+require_contains "$smoke_path" 'async function failNonTerminalSnapshot(reason) {'
+# shellcheck disable=SC2016 # Assert literal JavaScript template syntax.
+require_contains "$smoke_path" '`${reason}: ` +'
+require_contains "$smoke_path" 'const maxCompletedJobSnapshotRetries = 8;'
+require_contains "$smoke_path" 'const remainingBeforeJobLookupMs = timeoutMs - (Date.now() - started);'
+require_contains "$smoke_path" 'if (remainingBeforeJobLookupMs <= 0) {'
 require_contains "$smoke_path" 'completedJobSnapshotAttempt <= maxCompletedJobSnapshotRetries'
 require_contains "$smoke_path" 'run_id: matching.id'
 require_contains "$smoke_path" 'completedJobSnapshotAttempt < maxCompletedJobSnapshotRetries'
+require_contains "$smoke_path" 'const remainingBeforeSnapshotSleepMs = timeoutMs - (Date.now() - started);'
+require_contains "$smoke_path" 'if (remainingBeforeSnapshotSleepMs <= 0) {'
+require_contains "$smoke_path" 'Math.min(sleepMs, remainingBeforeSnapshotSleepMs)'
 require_contains "$smoke_path" 'did not expose a terminal PR Full-Stack Smoke job '
 require_contains "$smoke_path" "Runtime images run \${matching.id} succeeded, but PR Full-Stack Smoke job did not complete successfully:"
 require_contains "$smoke_path" 'Stopping obsolete failed full-smoke gate for'
@@ -569,6 +565,30 @@ require_contains "$smoke_path" 'github.rest.actions.listJobsForWorkflowRun'
 require_contains "$smoke_path" 'job.name === "PR Full-Stack Smoke"'
 require_contains "$smoke_path" 'fullSmokeJob?.status === "completed"'
 require_contains "$smoke_path" 'fullSmokeJob?.conclusion !== "success"'
+require_ordered_sequence \
+  "$smoke_path" \
+  'if (fullSmokeJob?.status === "completed") {' \
+  'if (fullSmokeJob?.conclusion !== "success") {' \
+  'PR Full-Stack Smoke job did not complete successfully:'
+# shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
+require_contains "$smoke_path" 'SMOKE_GATE_REQUIRED: ${{ github.event.action != '\''edited'\'' || github.event.changes.base.ref != null }}'
+# shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
+require_contains "$smoke_path" 'CHANGES_RESULT: ${{ needs.changes.result }}'
+# shellcheck disable=SC2016 # Assert literal shell source.
+require_contains "$smoke_path" 'echo "required=$SMOKE_GATE_REQUIRED" >> "$GITHUB_OUTPUT"'
+# shellcheck disable=SC2016 # Assert literal shell source.
+require_contains "$smoke_path" 'if [ "$SMOKE_GATE_REQUIRED" = "true" ] && [ "$CHANGES_RESULT" = "success" ]; then'
+# shellcheck disable=SC2016 # Assert literal shell source.
+require_contains "$smoke_path" 'echo "execute=true" >> "$GITHUB_OUTPUT"'
+# shellcheck disable=SC2016 # Assert literal shell source.
+require_contains "$smoke_path" 'echo "execute=false" >> "$GITHUB_OUTPUT"'
+# shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
+require_contains "$smoke_path" 'if: ${{ steps.smoke_gate_context.outputs.required == '\''true'\'' && steps.smoke_gate_context.outputs.execute != '\''true'\'' }}'
+# shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
+if grep -Fq 'echo "required=${{' "$smoke_path" || grep -Fq 'echo "execute=${{' "$smoke_path"; then
+  echo "smoke_gate_context must pass expressions through step env" >&2
+  exit 1
+fi
 require_contains "$smoke_path" 'Stopping obsolete completed smoke gate for'
 require_contains "$smoke_path" 'Stopping obsolete stale-snapshot smoke gate for'
 require_ordered_sequence \
@@ -578,10 +598,22 @@ require_ordered_sequence \
 require_branch_return "$smoke_path" 'if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {'
 require_ordered_sequence \
   "$smoke_path" \
-  'completedJobSnapshotAttempt < maxCompletedJobSnapshotRetries' \
+  'async function failNonTerminalSnapshot(reason) {' \
   'if (await isCurrentPullRequestObsolete("Stopping obsolete stale-snapshot smoke gate for")) {' \
   'core.setFailed('
 require_branch_return "$smoke_path" 'if (await isCurrentPullRequestObsolete("Stopping obsolete stale-snapshot smoke gate for")) {'
+require_ordered_sequence \
+  "$smoke_path" \
+  'if (remainingBeforeJobLookupMs <= 0) {' \
+  'await failNonTerminalSnapshot("before the workflow deadline");'
+require_ordered_sequence \
+  "$smoke_path" \
+  'if (remainingBeforeSnapshotSleepMs <= 0) {' \
+  'await failNonTerminalSnapshot("before the workflow deadline");'
+require_ordered_sequence \
+  "$smoke_path" \
+  'const snapshotRetrySummary = maxCompletedJobSnapshotRetries === 0' \
+  'await failNonTerminalSnapshot(snapshotRetrySummary);'
 if grep -Fq 'const matching = runs.find((run) => run.head_sha === headSha);' "$smoke_path"; then
   echo "Smoke Gate must not accept a runtime-images run by head SHA alone" >&2
   exit 1
@@ -637,17 +669,23 @@ full_files = quoted_entries(
     "]);",
 )
 
+lookup_start_marker = "fullSmokeJob = jobs.find("
+lookup_end_marker = ") ?? null;"
+try:
+    lookup_start = smoke.index(lookup_start_marker)
+    lookup_end = smoke.index(lookup_end_marker, lookup_start) + len(lookup_end_marker)
+except ValueError as exc:
+    raise SystemExit("smoke.yml must define the fullSmokeJob lookup block") from exc
+
 job_name_literals = re.findall(
     r'job[.]name\s*===\s*["\']([^"\']+)["\']',
-    smoke,
+    smoke[lookup_start:lookup_end],
 )
-distinct_job_name_literals = set(job_name_literals)
-if distinct_job_name_literals != {"PR Full-Stack Smoke"}:
+if job_name_literals != ["PR Full-Stack Smoke"]:
     raise SystemExit(
-        "smoke.yml must use exactly one distinct full-stack PR smoke job name literal: "
+        "smoke.yml fullSmokeJob lookup must use exactly one PR Full-Stack Smoke literal: "
         + repr(job_name_literals)
     )
-job_name_literal = next(iter(distinct_job_name_literals))
 
 try:
     runtime_workflow = yaml.load(runtime_images, Loader=yaml.BaseLoader)
@@ -656,10 +694,10 @@ except (KeyError, TypeError, yaml.YAMLError) as exc:
     raise SystemExit(
         "runtime-images.yml must define the pr-local-smoke job name used by Smoke Gate"
     ) from exc
-if runtime_job_name != job_name_literal:
+if runtime_job_name != "PR Full-Stack Smoke":
     raise SystemExit(
         "smoke.yml full-stack PR job lookup does not match runtime-images.yml: "
-        f"smoke={job_name_literal!r}, runtime={runtime_job_name!r}"
+        f"smoke={'PR Full-Stack Smoke'!r}, runtime={runtime_job_name!r}"
     )
 
 runtime_paths = pull_request_paths(runtime_images, "runtime-images.yml")

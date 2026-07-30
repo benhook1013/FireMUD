@@ -510,26 +510,35 @@ jobs:
             if ! cleanup_bootstrap_secret; then
               status=1
             fi
-            trap - EXIT
+            trap - EXIT INT TERM
             exit "${status}"
           }
           trap cleanup_bootstrap_resources EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
           kubectl -n "${PREVIEW_NAMESPACE}" create configmap dev-demo-bootstrap-script \
             --from-file=bootstrap.py="${BOOTSTRAP_SCRIPT}" \
             --dry-run=client -o yaml | kubectl apply -f -
+          for credential in DEMO_SMOKE_EMAIL DEMO_SMOKE_PASSWORD DEMO_SMOKE_USERNAME; do
+            if [[ -z "${!credential:-}" ]]; then
+              echo "::error::${credential} is empty; refusing to create dev-demo bootstrap credentials" >&2
+              exit 1
+            fi
+          done
           BOOTSTRAP_SECRET_DIR="$(mktemp -d)"
-          chmod 700 "${BOOTSTRAP_SECRET_DIR}"
           (
             umask 077
             printf '%s' "${DEMO_SMOKE_EMAIL}" >"${BOOTSTRAP_SECRET_DIR}/email"
             printf '%s' "${DEMO_SMOKE_PASSWORD}" >"${BOOTSTRAP_SECRET_DIR}/password"
             printf '%s' "${DEMO_SMOKE_USERNAME}" >"${BOOTSTRAP_SECRET_DIR}/username"
           )
+          if ! cleanup_bootstrap_secret; then
+            exit 1
+          fi
           kubectl -n "${PREVIEW_NAMESPACE}" create secret generic dev-demo-bootstrap-env \
             --from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email" \
             --from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password" \
-            --from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username" \
-            --dry-run=client -o yaml | kubectl apply -f -
+            --from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username"
           if ! cleanup_bootstrap_temp_dir; then
             exit 1
           fi
@@ -572,7 +581,7 @@ jobs:
           cleanup_bootstrap_secret
 
       - name: Smoke dev-demo over TCP
-        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
         env:
           PREVIEW_BASE_URL: https://${{ needs.dev-demo-plan.outputs.hostname }}
           SMOKE_TELNET_HOST: ${{ needs.dev-demo-plan.outputs.hostname }}

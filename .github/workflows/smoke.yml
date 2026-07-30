@@ -204,30 +204,43 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       checks: read # Preserve a prior successful required context on metadata-only edits.
-      contents: read # Read repository metadata used by the workflow context.
+      contents: read # Check out the shared required-gate composite action.
       actions: read # Inspect matching runtime-image workflow and job results.
       pull-requests: read # Re-read the current PR head and base before accepting smoke.
     needs: [changes]
     if: ${{ always() && github.event_name == 'pull_request' }}
     timeout-minutes: 30
     steps:
-      - name: Check out required-gate action
-        if: ${{ github.event.action == 'edited' && github.event.changes.base.ref == null }}
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
         with:
-          persist-credentials: false
-
-      - name: Preserve successful required gate on metadata-only edit
-        if: ${{ github.event.action == 'edited' && github.event.changes.base.ref == null }}
-        uses: ./.github/actions/preserve-required-gate
-        with:
-          gate-name: Smoke Gate
+          egress-policy: audit
 
       - name: Classify smoke gate execution
         id: smoke_gate_context
+        env:
+          SMOKE_GATE_REQUIRED: ${{ github.event.action != 'edited' || github.event.changes.base.ref != null }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
         run: |
-          echo "required=${{ github.event.action != 'edited' || github.event.changes.base.ref != null }}" >> "$GITHUB_OUTPUT"
-          echo "execute=${{ (github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.result == 'success' }}" >> "$GITHUB_OUTPUT"
+          echo "required=$SMOKE_GATE_REQUIRED" >> "$GITHUB_OUTPUT"
+          if [ "$SMOKE_GATE_REQUIRED" = "true" ] && [ "$CHANGES_RESULT" = "success" ]; then
+            echo "execute=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "execute=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out required-gate action
+        if: ${{ steps.smoke_gate_context.outputs.required != 'true' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Preserve successful required gate on metadata-only edit
+        if: ${{ steps.smoke_gate_context.outputs.required != 'true' }}
+        uses: ./.github/actions/preserve-required-gate
+        with:
+          gate-name: Smoke Gate
 
       - name: Fail when smoke dependencies did not succeed
         if: ${{ steps.smoke_gate_context.outputs.required == 'true' && steps.smoke_gate_context.outputs.execute != 'true' }}
@@ -236,12 +249,6 @@ jobs:
         run: |
           echo "Smoke change detection did not succeed: changes=$CHANGES_RESULT" >&2
           exit 1
-
-      - name: Harden runner
-        if: ${{ steps.smoke_gate_context.outputs.execute == 'true' }}
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
-        with:
-          egress-policy: audit
 
       - name: Record skipped runtime smoke
         if: ${{ steps.smoke_gate_context.outputs.execute == 'true' && needs.changes.outputs.run_smoke_full != 'true' }}
@@ -392,17 +399,27 @@ jobs:
                 }
 
                 let fullSmokeJob = null;
-                const remainingTimeoutMs = Math.max(0, timeoutMs - (Date.now() - started));
-                // Preserve the normal retry cap while reserving one sleep interval inside the outer deadline.
-                const maxCompletedJobSnapshotRetries = Math.min(
-                  8,
-                  Math.max(0, Math.floor(remainingTimeoutMs / sleepMs) - 1)
-                );
+                async function failNonTerminalSnapshot(reason) {
+                  if (await isCurrentPullRequestObsolete("Stopping obsolete stale-snapshot smoke gate for")) {
+                    return;
+                  }
+                  core.setFailed(
+                    `Runtime images run ${matching.id} did not expose a terminal PR Full-Stack Smoke job ` +
+                    `${reason}: ` +
+                    `${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}`
+                  );
+                }
+                const maxCompletedJobSnapshotRetries = 8;
                 for (
                   let completedJobSnapshotAttempt = 0;
                   completedJobSnapshotAttempt <= maxCompletedJobSnapshotRetries;
                   completedJobSnapshotAttempt += 1
                 ) {
+                  const remainingBeforeJobLookupMs = timeoutMs - (Date.now() - started);
+                  if (remainingBeforeJobLookupMs <= 0) {
+                    await failNonTerminalSnapshot("before the workflow deadline");
+                    return;
+                  }
                   const jobs = await withTransientGitHubRetry(
                     "runtime-images job lookup",
                     () => github.paginate(
@@ -425,25 +442,26 @@ jobs:
                     break;
                   }
                   if (completedJobSnapshotAttempt < maxCompletedJobSnapshotRetries) {
+                    const remainingBeforeSnapshotSleepMs = timeoutMs - (Date.now() - started);
+                    if (remainingBeforeSnapshotSleepMs <= 0) {
+                      await failNonTerminalSnapshot("before the workflow deadline");
+                      return;
+                    }
                     core.info(
                       `Runtime images run ${matching.id} succeeded but its PR Full-Stack Smoke job snapshot is not terminal yet: ` +
                       `${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}; ` +
                       `retrying ${completedJobSnapshotAttempt + 1}/${maxCompletedJobSnapshotRetries}`
                     );
-                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                    await new Promise((resolve) => setTimeout(
+                      resolve,
+                      Math.min(sleepMs, remainingBeforeSnapshotSleepMs)
+                    ));
                     continue;
-                  }
-                  if (await isCurrentPullRequestObsolete("Stopping obsolete stale-snapshot smoke gate for")) {
-                    return;
                   }
                   const snapshotRetrySummary = maxCompletedJobSnapshotRetries === 0
                     ? "before the remaining workflow deadline allowed a retry"
                     : `after ${maxCompletedJobSnapshotRetries} retries`;
-                  core.setFailed(
-                    `Runtime images run ${matching.id} did not expose a terminal PR Full-Stack Smoke job ` +
-                    `${snapshotRetrySummary}: ` +
-                    `${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}`
-                  );
+                  await failNonTerminalSnapshot(snapshotRetrySummary);
                   return;
                 }
 
@@ -453,7 +471,7 @@ jobs:
                   }
                   core.setFailed(
                     `Runtime images run ${matching.id} succeeded, but PR Full-Stack Smoke job did not complete successfully: ` +
-                    `job=${fullSmokeJob.status}/${fullSmokeJob.conclusion}`
+                    `job=${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}`
                   );
                   return;
                 }

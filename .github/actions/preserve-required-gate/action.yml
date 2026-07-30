@@ -50,7 +50,8 @@ runs:
 
         api_error_file="$(mktemp)"
         trap 'rm -f "$api_error_file"' EXIT
-        for attempt in $(seq 1 80); do
+        max_attempts=80
+        for attempt in $(seq 1 "${max_attempts}"); do
           prior_state=""
           : >"${api_error_file}"
           set +e
@@ -61,8 +62,45 @@ runs:
             -f per_page=100 \
             --paginate \
             --slurp \
-            --jq "[.[].check_runs[]? | select(.app.slug == \"github-actions\" and (.details_url // \"\" | contains(\"/actions/runs/${GITHUB_RUN_ID}/\") | not))] as \$prior_runs | (\$prior_runs | map(select(.status == \"completed\")) | sort_by(.started_at // .created_at) | last) as \$latest_completed | if \$latest_completed then [\"completed\", (\$latest_completed.conclusion // \"\")] else (\$prior_runs | map(select(.status == \"queued\" or .status == \"in_progress\")) | sort_by(.started_at // .created_at) | last) as \$relevant_predecessor | if \$relevant_predecessor then [\"pending\", (\$relevant_predecessor.status // \"\")] else [\"none\", \"\"] end end | @tsv" \
-            2>"${api_error_file}")"
+            2>"${api_error_file}" \
+            | jq -r --arg run_id "${GITHUB_RUN_ID}" '
+                [.[].check_runs[]?
+                  | select(
+                      .app.slug == "github-actions"
+                      and ((.details_url // "") | contains("/actions/runs/\($run_id)/") | not)
+                    )
+                ] as $candidates
+                | ($candidates
+                    | map(select(
+                        .status == "completed"
+                        and .conclusion != null
+                        and .conclusion != "cancelled"
+                        and .conclusion != "skipped"
+                        and .conclusion != "stale"
+                      ))) as $authoritative
+                | ($candidates
+                    | map(select(
+                        .status == "queued"
+                        or .status == "in_progress"
+                        or .status == "requested"
+                        or .status == "waiting"
+                        or .status == "pending"
+                      ))) as $pending
+                | if ($authoritative | length) > 0 then
+                    ($authoritative
+                      | sort_by(.completed_at // .started_at // .created_at)
+                      | last
+                      | ["completed", (.conclusion // "")])
+                  elif ($pending | length) > 0 then
+                    ($pending
+                      | sort_by(.started_at // .created_at)
+                      | last
+                      | ["pending", (.status // "")])
+                  else
+                    ["none", ""]
+                  end
+                | @tsv' \
+              2>>"${api_error_file}")"
           api_status=$?
           set -e
           if [[ "${api_status}" -ne 0 ]]; then
@@ -72,8 +110,8 @@ runs:
               [[ -z "${api_error}" ]] || printf '%s\n' "${api_error}" >&2
               exit 1
             fi
-            echo "Retryable GitHub API failure while checking the prior ${REQUIRED_GATE_NAME}; retrying attempt ${attempt}/80." >&2
-            if [ "${attempt}" -eq 80 ]; then
+            echo "Retryable GitHub API failure while checking the prior ${REQUIRED_GATE_NAME}; retrying attempt ${attempt}/${max_attempts}." >&2
+            if [ "${attempt}" -eq "${max_attempts}" ]; then
               echo "Timed out waiting for the prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA}." >&2
               exit 1
             fi
@@ -88,7 +126,7 @@ runs:
             if [ "${prior_conclusion}" = "success" ]; then
               exit 0
             fi
-            echo "Latest prior ${REQUIRED_GATE_NAME} for unchanged head ${HEAD_SHA} concluded ${prior_conclusion:-unknown}." >&2
+            echo "Prior ${REQUIRED_GATE_NAME} for unchanged head ${HEAD_SHA} concluded ${prior_conclusion:-unknown}." >&2
             exit 1
           fi
           if [ "${prior_status}" = "none" ]; then
@@ -99,10 +137,12 @@ runs:
             echo "Unexpected prior ${REQUIRED_GATE_NAME} selection state ${prior_status:-unknown}; refusing to preserve." >&2
             exit 1
           fi
-          if [ "${attempt}" -eq 80 ]; then
+          if [ "${attempt}" -eq "${max_attempts}" ]; then
             echo "Timed out waiting for the relevant prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA} to complete." >&2
             exit 1
           fi
-          echo "Relevant prior ${REQUIRED_GATE_NAME} is still ${prior_conclusion:-finishing}; retrying attempt ${attempt}/80." >&2
+          echo "Relevant prior ${REQUIRED_GATE_NAME} is still ${prior_conclusion:-finishing}; retrying attempt ${attempt}/${max_attempts}." >&2
           sleep 15
         done
+        echo "Required-gate preservation exhausted its polling loop unexpectedly; refusing to preserve." >&2
+        exit 1
