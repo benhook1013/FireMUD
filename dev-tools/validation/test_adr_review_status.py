@@ -159,7 +159,41 @@ def set_review_status(root: Path, status: str, disposition: str) -> None:
         "Human review disposition: Revised",
         f"Human review disposition: {disposition}",
     )
+    if status == "Superseded":
+        text += "\n## Supersession\n\n"
+        text += "- Replacement ADR: [ADR 0012](./adr-0012-reviewed.md)\n"
     path.write_text(text, encoding="utf-8")
+
+
+def add_formal_superseded_adr(
+    root: Path,
+    supersession: str | None = "- Replacement ADR: [ADR 0012](./adr-0012-reviewed.md)",
+) -> Path:
+    append_queue_row(
+        root,
+        "- [x] `TEST-SUPERSEDED` — `superseded` on 2026-07-27; "
+        "[ADR 0014](../../architecture/decisions/adr-0014-superseded.md)",
+    )
+    text = """
+        # ADR 0014
+
+        ## Status
+
+        Superseded
+
+        ## Decision Record
+
+        - Human review status: Completed
+        - Human review date: 2026-07-27
+        - Human review disposition: Superseded
+        - Review source: `TEST-SUPERSEDED`
+    """
+    if supersession is not None:
+        text = textwrap.dedent(text).lstrip()
+        text += f"\n## Supersession\n\n{supersession}\n"
+    path = root / "design/architecture/decisions/adr-0014-superseded.md"
+    write(path, text)
+    return path
 
 
 def expect_failure(test_case: unittest.TestCase, call, expected: str) -> None:
@@ -242,6 +276,33 @@ class AdrReviewStatusTests(unittest.TestCase):
                 lambda: checked_reviews(self.validator, root),
                 "expected exactly one 'Adversarial Review Queue' section, found 2",
             )
+
+    def test_review_queue_requires_a_visible_queue_heading(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = queue_path(root)
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "## Adversarial Review Queue\n", "", 1
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "missing 'Adversarial Review Queue' section",
+            )
+
+    def test_fenced_queue_heading_does_not_count_as_duplicate(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = queue_path(root)
+            path.write_text(
+                path.read_text(encoding="utf-8")
+                + "\n```text\n## Adversarial Review Queue\n```\n",
+                encoding="utf-8",
+            )
+            self.validator.validate(root)
 
     def test_pre_formal_record_requires_completed_metadata_when_checked(self) -> None:
         with fixture_root() as fixture:
@@ -359,6 +420,9 @@ class AdrReviewStatusTests(unittest.TestCase):
             "Withdrawn",
             "Withdrawn; superseded by ADR 0099",
             "Withdrawn (superseded by ADR 0099)",
+            "Superseded by [ADR 0012](./adr-0012-reviewed.md)",
+            "Withdrawn; superseded by [ADR 0012](./adr-0012-reviewed.md)",
+            "Withdrawn (superseded by [ADR 0012](./adr-0012-reviewed.md))",
         ):
             with self.subTest(status=status), fixture_root() as fixture:
                 root = Path(fixture)
@@ -371,6 +435,92 @@ class AdrReviewStatusTests(unittest.TestCase):
                 self.assertIn(12, checked)
                 self.assertNotIn(1, checked)
                 self.validator.validate(root)
+
+    def test_formal_superseded_record_requires_supersession_entry(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            add_formal_superseded_adr(root, supersession=None)
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "formal Superseded ADR requires exactly one 'Replacement ADR' entry",
+            )
+
+    def test_supersession_section_accepts_only_one_visible_valid_entry(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            entry = "- Replacement ADR: [ADR 0012](./adr-0012-reviewed.md)"
+            path = add_formal_superseded_adr(
+                root,
+                "```text\n"
+                "## Supersession\n\n"
+                "- Replacement ADR: [ADR 0013](./adr-0013-pending.md)\n"
+                "```\n"
+                f"{entry}",
+            )
+            self.validator.validate(root)
+
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    entry,
+                    f"{entry}\n{entry}",
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "'Supersession' section must contain exactly one valid 'Replacement ADR' entry",
+            )
+
+    def test_supersession_section_requires_exact_label(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            add_formal_superseded_adr(
+                root,
+                "- Replacement ADR: [replacement ADR 0012](./adr-0012-reviewed.md)",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "'Supersession' section must contain exactly one valid 'Replacement ADR' entry",
+            )
+
+    def test_supersession_section_requires_matching_target_number(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            add_formal_superseded_adr(
+                root,
+                "- Replacement ADR: [ADR 0013](./adr-0012-reviewed.md)",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "replacement ADR 0013 does not match target",
+            )
+
+    def test_supersession_section_requires_canonical_target_directory(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(
+                root / "design/architecture/adr-0012-outside.md",
+                "# Outside ADR\n",
+            )
+            add_formal_superseded_adr(
+                root,
+                "- Replacement ADR: [ADR 0012](../adr-0012-outside.md)",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "must target the canonical ADR directory",
+            )
+
+    def test_formal_withdrawn_record_may_omit_supersession_entry(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            set_review_status(root, "Withdrawn", "Withdrawn")
+            self.validator.validate(root)
 
     def test_unrecognized_and_nonterminal_statuses_are_rejected(self) -> None:
         for status in (

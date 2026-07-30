@@ -144,11 +144,12 @@ public class FriendServiceImpl implements FriendService {
   @Override
   @Timed(value = "friend.list")
   public FriendRosterViewDto listFriends(long tenantId, long accountId, FriendRosterFilter filter) {
+    FriendRosterFilter effectiveFilter = normalizeRosterFilter(filter);
     List<AccountFriendLink> links =
         accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(
             tenantId, accountId, "active");
     if (links.isEmpty()) {
-      return new FriendRosterViewDto(filter, 0, 0, List.of());
+      return new FriendRosterViewDto(effectiveFilter, 0, 0, List.of());
     }
 
     List<Long> friendAccountIds =
@@ -164,9 +165,9 @@ public class FriendServiceImpl implements FriendService {
                     toRosterEntry(index + 1, links.get(index), byAccountId, visibilityPolicies))
             .toList();
     List<FriendRosterEntryDto> filtered =
-        roster.stream().filter(entry -> matchesFilter(filter, entry)).toList();
+        roster.stream().filter(entry -> matchesFilter(effectiveFilter, entry)).toList();
 
-    return new FriendRosterViewDto(filter, roster.size(), filtered.size(), filtered);
+    return new FriendRosterViewDto(effectiveFilter, roster.size(), filtered.size(), filtered);
   }
 
   @Override
@@ -178,7 +179,6 @@ public class FriendServiceImpl implements FriendService {
     int publicCount = 0;
     int friendsOnlyCount = 0;
     int privateCount = 0;
-    int hiddenStaffCount = 0;
     int unspecifiedVisibilityCount = 0;
     int sharedCount = 0;
     int isolatedCount = 0;
@@ -194,7 +194,6 @@ public class FriendServiceImpl implements FriendService {
         case "PUBLIC" -> publicCount++;
         case "FRIENDS_ONLY" -> friendsOnlyCount++;
         case "PRIVATE" -> privateCount++;
-        case "HIDDEN_STAFF" -> hiddenStaffCount++;
         default -> unspecifiedVisibilityCount++;
       }
       String playableStateScope = entry.presence().playableStateScope();
@@ -212,7 +211,7 @@ public class FriendServiceImpl implements FriendService {
         publicCount,
         friendsOnlyCount,
         privateCount,
-        hiddenStaffCount,
+        0,
         unspecifiedVisibilityCount,
         sharedCount,
         isolatedCount,
@@ -239,7 +238,7 @@ public class FriendServiceImpl implements FriendService {
             .getPresenceVisibilityPolicy(tenantId, accountId)
             .orElseThrow(
                 () -> new IllegalStateException("Friend presence visibility policy unavailable"));
-    return new FriendPresencePolicyViewDto(visibilityPolicy);
+    return new FriendPresencePolicyViewDto(normalizeVisibilityPolicy(visibilityPolicy));
   }
 
   @Override
@@ -283,12 +282,16 @@ public class FriendServiceImpl implements FriendService {
       case PUBLIC -> "PUBLIC".equals(presence.visibilityPolicy());
       case FRIENDS_ONLY -> "FRIENDS_ONLY".equals(presence.visibilityPolicy());
       case PRIVATE -> "PRIVATE".equals(presence.visibilityPolicy());
-      case HIDDEN_STAFF -> "HIDDEN_STAFF".equals(presence.visibilityPolicy());
       case UNSPECIFIED_VISIBILITY -> !StringUtils.hasText(presence.visibilityPolicy());
       case SHARED -> "SHARED".equals(presence.playableStateScope());
       case ISOLATED -> "ISOLATED".equals(presence.playableStateScope());
       case UNSPECIFIED_SCOPE -> !StringUtils.hasText(presence.playableStateScope());
+      default -> false;
     };
+  }
+
+  private FriendRosterFilter normalizeRosterFilter(FriendRosterFilter filter) {
+    return filter == FriendRosterFilter.HIDDEN_STAFF ? FriendRosterFilter.PRIVATE : filter;
   }
 
   private Map<Long, FriendPresenceDto> loadFriendPresenceByAccountId(
@@ -494,7 +497,8 @@ public class FriendServiceImpl implements FriendService {
       return FriendPresenceVisibilityPolicyValue.PRIVATE;
     }
     return switch (visibilityPolicy) {
-      case PUBLIC, FRIENDS_ONLY, PRIVATE, HIDDEN_STAFF -> visibilityPolicy;
+      case PUBLIC, FRIENDS_ONLY, PRIVATE -> visibilityPolicy;
+      case HIDDEN_STAFF -> FriendPresenceVisibilityPolicyValue.PRIVATE;
       default -> FriendPresenceVisibilityPolicyValue.PRIVATE;
     };
   }

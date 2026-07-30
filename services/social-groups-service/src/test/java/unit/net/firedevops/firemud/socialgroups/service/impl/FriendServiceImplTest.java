@@ -360,6 +360,16 @@ class FriendServiceImplTest {
   }
 
   @Test
+  void getFriendPresencePolicyRedactsLegacyHiddenStaff() {
+    when(accountClient.getPresenceVisibilityPolicy(11L, 2L))
+        .thenReturn(Optional.of(FriendPresenceVisibilityPolicyValue.HIDDEN_STAFF));
+
+    var result = service.getFriendPresencePolicy(11L, 2L);
+
+    assertEquals(FriendPresenceVisibilityPolicyValue.PRIVATE, result.currentPolicy());
+  }
+
+  @Test
   void updateFriendPresencePolicyRejectsHiddenStaff() {
     IllegalArgumentException error =
         assertThrows(
@@ -667,7 +677,7 @@ class FriendServiceImplTest {
   }
 
   @Test
-  void listFriendPresencePreservesPoliciesAndSuppressesPrivateAndHiddenStaffDetails() {
+  void listFriendPresenceRedactsLegacyHiddenStaffAsPrivate() {
     AccountFriendLink privateLink = new AccountFriendLink();
     privateLink.setTenantId(11L);
     privateLink.setAccountId(2L);
@@ -733,7 +743,7 @@ class FriendServiceImplTest {
     assertEquals(null, result.presences().get(0).lastSeenAt());
     assertEquals(null, result.presences().get(0).recentDisposition());
     assertEquals(false, result.presences().get(1).online());
-    assertEquals("HIDDEN_STAFF", result.presences().get(1).visibilityPolicy());
+    assertEquals("PRIVATE", result.presences().get(1).visibilityPolicy());
     assertEquals(null, result.presences().get(1).gameInstanceId());
     assertEquals(null, result.presences().get(1).playableStateScope());
     assertEquals(null, result.presences().get(1).worldSlug());
@@ -749,18 +759,22 @@ class FriendServiceImplTest {
 
     var privateFiltered = service.listFriends(11L, 2L, FriendRosterFilter.PRIVATE);
     assertEquals(2, privateFiltered.totalCount());
-    assertEquals(1, privateFiltered.matchCount());
+    assertEquals(2, privateFiltered.matchCount());
     assertEquals(1, privateFiltered.friends().getFirst().ordinal());
     assertEquals(3L, privateFiltered.friends().getFirst().friendAccountId());
     assertEquals("PRIVATE", privateFiltered.friends().getFirst().presence().visibilityPolicy());
+    assertEquals(2, privateFiltered.friends().get(1).ordinal());
+    assertEquals(4L, privateFiltered.friends().get(1).friendAccountId());
+    assertEquals("PRIVATE", privateFiltered.friends().get(1).presence().visibilityPolicy());
 
     var hiddenStaffFiltered = service.listFriends(11L, 2L, FriendRosterFilter.HIDDEN_STAFF);
+    assertEquals(FriendRosterFilter.PRIVATE, hiddenStaffFiltered.filter());
     assertEquals(2, hiddenStaffFiltered.totalCount());
-    assertEquals(1, hiddenStaffFiltered.matchCount());
-    assertEquals(2, hiddenStaffFiltered.friends().getFirst().ordinal());
-    assertEquals(4L, hiddenStaffFiltered.friends().getFirst().friendAccountId());
-    assertEquals(
-        "HIDDEN_STAFF", hiddenStaffFiltered.friends().getFirst().presence().visibilityPolicy());
+    assertEquals(2, hiddenStaffFiltered.matchCount());
+    assertEquals(2, hiddenStaffFiltered.friends().size());
+    assertTrue(
+        hiddenStaffFiltered.friends().stream()
+            .allMatch(entry -> "PRIVATE".equals(entry.presence().visibilityPolicy())));
 
     var summary = service.getFriendRosterSummary(11L, 2L);
     assertEquals(2, summary.totalCount());
@@ -769,8 +783,8 @@ class FriendServiceImplTest {
     assertEquals(0, summary.recentCount());
     assertEquals(0, summary.publicCount());
     assertEquals(0, summary.friendsOnlyCount());
-    assertEquals(1, summary.privateCount());
-    assertEquals(1, summary.hiddenStaffCount());
+    assertEquals(2, summary.privateCount());
+    assertEquals(0, summary.hiddenStaffCount());
     assertEquals(0, summary.unspecifiedVisibilityCount());
     assertEquals(2, summary.unspecifiedScopeCount());
   }

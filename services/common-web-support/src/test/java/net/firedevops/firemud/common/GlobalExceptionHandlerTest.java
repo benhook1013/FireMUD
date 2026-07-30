@@ -12,7 +12,6 @@ import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.context.TestPropertySource;
@@ -21,28 +20,17 @@ import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.server.ResponseStatusException;
-import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @WebMvcTest
 @Import(GlobalExceptionHandler.class)
-@TestPropertySource(properties = "spring.mvc.throw-exception-if-no-handler-found=true")
+@TestPropertySource(properties = "spring.web.resources.add-mappings=false")
 class GlobalExceptionHandlerTest {
   @Autowired private MockMvc mockMvc;
 
   @SpringBootConfiguration
   @EnableAutoConfiguration
   static class WebSliceApplication {}
-
-  @Test
-  void unmappedPostUsesCanonicalNotFoundEnvelope() throws Exception {
-    mockMvc
-        .perform(post("/reports"))
-        .andExpect(status().isNotFound())
-        .andExpect(jsonPath("$.status").value("ERROR"))
-        .andExpect(jsonPath("$.error.code").value("NOT_FOUND"))
-        .andExpect(jsonPath("$.error.message").value("Resource not found"));
-  }
 
   @Test
   void handleExceptionDoesNotExposeRawMessage() {
@@ -149,17 +137,12 @@ class GlobalExceptionHandlerTest {
   }
 
   @Test
-  void handleNoHandlerFoundPreservesNotFoundEnvelope() {
-    GlobalExceptionHandler handler = new GlobalExceptionHandler();
-
-    var responseEntity =
-        handler.handleNoHandlerFound(
-            new NoHandlerFoundException("POST", "/reports", new HttpHeaders()));
-    ApiResponse<ErrorDetail> response = responseEntity.getBody();
-
-    assertEquals(HttpStatus.NOT_FOUND, responseEntity.getStatusCode());
-    Assertions.assertNotNull(response);
-    assertEquals("NOT_FOUND", response.error().code());
-    assertEquals("Resource not found", response.error().message());
+  void unmappedPostUsesCanonicalNotFoundEnvelope() throws Exception {
+    mockMvc
+        .perform(post("/reports"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("NOT_FOUND"))
+        .andExpect(jsonPath("$.error.message").value("Resource not found"));
   }
 }

@@ -6,7 +6,7 @@ This is a non-normative implementation tracker for platform operations and deliv
 
 ## Current Status
 
-The implementation record is consolidated by live capability. Runtime identity and logging, bounded metrics, player-experience smoke, hosted delivery, public-edge routing, deployment preflight, bounded component reset/recovery helpers, gameplay proof, and operator control surfaces exist at the bounded boundaries stated below. No public `coordination-maintenance recover` scope is currently implemented and proven; environment-wide player-facing recovery, immutable erasure high-water replay, and the durable recovery-controller continuation contract remain unimplemented. Remaining work also includes preview lifecycle/admission cleanup, the public Telnet TLS deployment boundary, richer live-environment proof, credential rotation, deferred observability context, and higher-scale gameplay evidence.
+The implementation record is consolidated by live capability. Runtime identity and logging, bounded metrics, player-experience smoke, hosted delivery, public-edge routing, deployment preflight, bounded component reset/recovery helpers, gameplay proof, and operator control surfaces exist at the bounded boundaries stated below. The `coordination-maintenance` CLI/control-plane, including public `recover` scope, is not currently implemented or proven; environment-wide player-facing recovery, immutable erasure high-water replay, and the durable recovery-controller continuation contract remain unimplemented. Remaining work also includes preview lifecycle/admission cleanup, the public Telnet TLS deployment boundary, richer live-environment proof, credential rotation, deferred observability context, and higher-scale gameplay evidence.
 
 ## Capability Status
 
@@ -116,7 +116,7 @@ The pre-v1 baseline reset has replaced the local migration chains for `entity-ma
 
 Heavy local Gradle proof uses `dev-tools/validation/run-locked-gradle.sh`, which acquires a service lock for service-scoped tasks and a repo-wide lock for unscoped/mixed tasks, recording lock-owner metadata under `.gradle/firemud-validation-locks/`. `inspect-test-results.sh <service>` is read-only diagnostics for fresh JUnit XML when a run goes quiet after test execution; it does not auto-kill or auto-pass Gradle.
 
-The [canonical Redis coordination reset/recovery sequence](../../architecture/system-architecture-redis-operations.md#canonical-coordination-reset-sequence) is the sole normative command sequence. Incident, reset/recovery, backup/restore, and related runbooks link to it and retain only scenario-specific scope, session-policy, evidence, and abort details. The documented `coordination-maintenance` CLI/control-plane surface itself is not implemented by this tooling slice.
+The [canonical Redis coordination reset/recovery sequence](../../architecture/system-architecture-redis-operations.md#canonical-coordination-reset-sequence) is the sole normative command sequence. Incident, reset/recovery, backup/restore, and related runbooks link to it and retain only scenario-specific scope, session-policy, evidence, and abort details. The documented `coordination-maintenance` CLI/control-plane surface is not currently implemented or proven; the sequence and runbook wording are not evidence that this operator surface exists.
 
 ### Gameplay Proof, Fixtures, and Operator Control
 

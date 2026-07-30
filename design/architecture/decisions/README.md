@@ -31,7 +31,7 @@ Status values do not contain replacement links, parentheticals, or other prose. 
 - Replacement ADR: [ADR NNNN](./adr-NNNN-example.md)
 ```
 
-The replacement link must use the exact `ADR NNNN` label and an `adr-NNNN-*.md` target whose number matches the label. A `Superseded` or `Withdrawn` status remains valid without this section. The pre-formal ADRs `0001` through `0011` retain their existing historical replacement prose as a validation-only legacy exception; that prose is not part of the grammar and is not permitted for reviewed ADRs.
+The replacement link must use the exact `ADR NNNN` label and an `adr-NNNN-*.md` target whose number matches the label in the canonical ADR directory. A formal `Superseded` ADR must contain exactly one valid replacement entry. A `Withdrawn` ADR may omit this section; when present, it uses the same exact one-entry grammar. The pre-formal ADRs `0001` through `0011` retain their existing historical replacement prose as a validation-only legacy exception; that prose is not part of the grammar and is not permitted for reviewed ADRs.
 
 ### Status-to-Review Mapping
 
@@ -149,7 +149,7 @@ Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](
 
 ### Supersession Registry
 
-Replacement details are maintained separately from the machine-readable status values:
+This is a derived index, not an independent authority. For formal ADRs, each row is derived from the validated machine-readable `## Supersession` section in the corresponding ADR; the section is the normative replacement source. If this registry disagrees with an ADR section, the registry is stale and must be corrected. The pre-formal ADRs `0001` through `0011` are the only exception and retain their explicitly permitted historical status prose.
 
 | ADR | Replacement ADR |
 | --- | --- |

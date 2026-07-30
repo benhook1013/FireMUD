@@ -179,13 +179,64 @@ REQUIRED_TENANT_GENERATION_EXCEPTIONS = {
     },
 }
 REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS = {
+    "account_scoped": {
+        "target_tenant_generation": False,
+        "generation_behavior": "issuer_and_account_authority_only",
+        "required_live_checks": {"issuer_generation", "account_generation"},
+        "target_tenant_generation_advance_behavior": "remains_valid",
+    },
+    "caller_membership_scoped": {
+        "target_tenant_generation": False,
+        "generation_behavior": "caller_membership_authority_only",
+        "required_live_checks": {"membership", "membership_generation"},
+        "target_tenant_generation_advance_behavior": "remains_valid",
+    },
+    "player_bootstrap_tenant": {
+        "target_tenant_generation": False,
+        "generation_behavior": "membership_authority_when_route_requires_existing_membership",
+        "required_live_checks": {"membership", "membership_generation"},
+        "target_tenant_generation_advance_behavior": "remains_valid",
+    },
+    "pre_tenant_discovery": {
+        "target_tenant_generation": False,
+        "generation_behavior": "no_tenant_or_membership_authority",
+        "required_live_checks": set(),
+        "target_tenant_generation_advance_behavior": "remains_valid",
+    },
+    "public_production_onboarding": {
+        "target_tenant_generation": False,
+        "generation_behavior": "membership_authority_after_membership_exists",
+        "required_live_checks": {"membership", "membership_generation"},
+        "target_tenant_generation_advance_behavior": "remains_valid",
+    },
+    "internal_workload": {
+        "target_tenant_generation": False,
+        "generation_behavior": "route_declared_caller_and_target_authority",
+        "required_live_checks": set(),
+        "target_tenant_generation_advance_behavior": "route_declared",
+    },
     "pending_deletion_scoped": {
         "target_tenant_generation": False,
+        "generation_behavior": "pending_deletion_credential_only",
         "required_live_checks": {
             "pending_deletion_state",
             "pending_deletion_credential_registry",
         },
+        "target_tenant_generation_advance_behavior": (
+            "denied_by_pending_deletion_credential_contract"
+        ),
     },
+}
+REQUIRED_TENANT_AUTHORITY_CLASSIFICATIONS = {
+    "tenant_regular",
+    "cross_tenant_data_bearing",
+}
+NO_TARGET_TENANT_CLASSES_WITHOUT_ROUTE_SPECIFIC_TARGET_AUTHORITY = {
+    "account_scoped",
+    "caller_membership_scoped",
+    "player_bootstrap_tenant",
+    "pre_tenant_discovery",
+    "public_production_onboarding",
 }
 PRIVILEGED_OPERATOR_ROLE_ASSURANCE = "privileged_control_when_global_role"
 PRIVILEGED_CONTROL_VALUES = {"required", "not_required", "establishes_window"}
@@ -1611,6 +1662,8 @@ def validate_no_target_tenant_classifications(
             is not expected["target_tenant_generation"]
         ):
             errors.append(f"{label} must set target_tenant_generation=false")
+        if entry.get("generation_behavior") != expected["generation_behavior"]:
+            errors.append(f"{label} has the wrong generation_behavior")
         required_checks = set(
             string_list(
                 entry.get("required_authority"), f"{label}.required_authority", errors
@@ -1621,16 +1674,53 @@ def validate_no_target_tenant_classifications(
         justification = entry.get("contract_justification")
         if not isinstance(justification, str) or not justification.strip():
             errors.append(f"{label} must declare a bounded contract_justification")
-        proof_contract = entry.get("negative_proof")
-        proof = (
-            proof_contract.get("required") if isinstance(proof_contract, dict) else None
-        )
         if (
-            not isinstance(proof, list)
-            or not proof
-            or any(not isinstance(item, str) or not item.strip() for item in proof)
+            entry.get("target_tenant_generation_advance_behavior")
+            != expected["target_tenant_generation_advance_behavior"]
         ):
-            errors.append(f"{label} must declare non-empty negative_proof.required")
+            errors.append(
+                f"{label} has the wrong target_tenant_generation_advance_behavior"
+            )
+        if classification == "pending_deletion_scoped":
+            proof_contract = entry.get("negative_proof")
+            proof = (
+                proof_contract.get("required")
+                if isinstance(proof_contract, dict)
+                else None
+            )
+            if (
+                not isinstance(proof, list)
+                or not proof
+                or any(not isinstance(item, str) or not item.strip() for item in proof)
+            ):
+                errors.append(f"{label} must declare non-empty negative_proof.required")
+
+
+def validate_tenant_generation_negative_proof(
+    policy: dict[str, Any], errors: list[str]
+) -> None:
+    proof = policy.get("negative_proof")
+    label = "tenant_generation_policy.negative_proof"
+    if not isinstance(proof, dict):
+        errors.append(f"{label} must be a mapping")
+        return
+    classifications = set(
+        string_list(
+            proof.get("tenant_authority_classifications"),
+            f"{label}.tenant_authority_classifications",
+            errors,
+        )
+    )
+    if classifications != REQUIRED_TENANT_AUTHORITY_CLASSIFICATIONS:
+        errors.append(
+            f"{label}.tenant_authority_classifications must be exactly "
+            "the closed tenant-authority classification set"
+        )
+    required = set(string_list(proof.get("required"), f"{label}.required", errors))
+    if "non_allowlisted_route_denied_after_target_tenant_generation_advance" not in required:
+        errors.append(
+            f"{label}.required must retain the tenant-authority generation-advance proof"
+        )
 
 
 def validate_tenant_generation_exception_routes(
@@ -1685,6 +1775,33 @@ def validate_tenant_generation_exception_routes(
                 )
 
 
+def validate_no_target_tenant_routes(
+    routes: list[Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> None:
+    for route in routes:
+        if not isinstance(route, dict):
+            continue
+        classification = route.get("classification")
+        if not isinstance(classification, str):
+            continue
+        if classification not in NO_TARGET_TENANT_CLASSES_WITHOUT_ROUTE_SPECIFIC_TARGET_AUTHORITY:
+            continue
+        label = f"{route.get('service')} {route.get('route')}"
+        checks = (
+            route_live_checks(route, label, errors, live_checks_cache)
+            if "required_live_checks" in route
+            else set()
+        )
+        forbidden_checks = checks & {"tenant_generation", "target_tenant_generation"}
+        if forbidden_checks:
+            errors.append(
+                f"{label} must not require tenant-generation checks for no-target "
+                f"classification {classification}: {sorted(forbidden_checks)}"
+            )
+
+
 def validate_tenant_generation_policy(
     document: dict[str, Any],
     routes: list[Any],
@@ -1697,7 +1814,9 @@ def validate_tenant_generation_policy(
     else:
         validate_tenant_generation_allowlist(policy, errors)
         validate_no_target_tenant_classifications(policy, errors)
+        validate_tenant_generation_negative_proof(policy, errors)
     validate_tenant_generation_exception_routes(routes, errors, live_checks_cache)
+    validate_no_target_tenant_routes(routes, errors, live_checks_cache)
 
 
 def validate_entitlement_contract(

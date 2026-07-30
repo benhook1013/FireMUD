@@ -133,18 +133,57 @@ tenant_generation_policy:
       required_authority: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
       role_assurance_policy: privileged_control_when_global_role
   no_target_tenant_classifications:
+    account_scoped:
+      target_tenant_generation: false
+      generation_behavior: issuer_and_account_authority_only
+      required_authority: [issuer_generation, account_generation]
+      contract_justification: Account-scoped routes bind authority to the caller account and never authorize a target tenant; target-tenant generation is therefore not an input to these account-owned operations.
+      target_tenant_generation_advance_behavior: remains_valid
+    caller_membership_scoped:
+      target_tenant_generation: false
+      generation_behavior: caller_membership_authority_only
+      required_authority: [membership, membership_generation]
+      contract_justification: Caller-membership routes authorize only the caller's existing account-to-tenant relationship; membership authority is live and target-tenant generation is not an authority input.
+      target_tenant_generation_advance_behavior: remains_valid
+    player_bootstrap_tenant:
+      target_tenant_generation: false
+      generation_behavior: membership_authority_when_route_requires_existing_membership
+      required_authority: [membership, membership_generation]
+      contract_justification: Player-bootstrap routes use caller-bound membership and gameplay admission evidence where required, but bootstrap authority does not become target-tenant authority or inherit a target-tenant generation fence.
+      target_tenant_generation_advance_behavior: remains_valid
+    pre_tenant_discovery:
+      target_tenant_generation: false
+      generation_behavior: no_tenant_or_membership_authority
+      required_authority: []
+      contract_justification: Pre-tenant discovery runs before a single tenant is selected and derives visibility from the authenticated account context and public or entitlement evidence, so no tenant authority generation applies.
+      target_tenant_generation_advance_behavior: remains_valid
+    public_production_onboarding:
+      target_tenant_generation: false
+      generation_behavior: membership_authority_after_membership_exists
+      required_authority: [membership, membership_generation]
+      contract_justification: Public-production onboarding may validate or create caller-bound membership before normal gameplay admission, but it never authorizes through target-tenant generation; post-join actions use their declared membership authority.
+      target_tenant_generation_advance_behavior: remains_valid
+    internal_workload:
+      target_tenant_generation: false
+      generation_behavior: route_declared_caller_and_target_authority
+      required_authority: []
+      contract_justification: Internal workload routes have no inherited tenant authority; each exact mTLS and delegated-authority route declares whether caller, tenant, membership, or target-tenant generations apply.
+      target_tenant_generation_advance_behavior: route_declared
     pending_deletion_scoped:
       target_tenant_generation: false
+      generation_behavior: pending_deletion_credential_only
       issuer_authority_generation_applies: false
       account_authority_generation_applies: false
       tenant_billing_authority_generation_applies: false
       membership_authority_generation_applies: false
       required_authority: [pending_deletion_state, pending_deletion_credential_registry]
       contract_justification: Dedicated Account-issued opaque pending-deletion credentials are bound to the account and deletion workflow; issuer, account, tenant, and membership generations are not authority inputs for these account-owned recovery actions.
+      target_tenant_generation_advance_behavior: denied_by_pending_deletion_credential_contract
       negative_proof:
         required:
           - pending_deletion_route_denied_after_target_tenant_generation_advance
   negative_proof:
+    tenant_authority_classifications: [tenant_regular, cross_tenant_data_bearing]
     required:
       - non_allowlisted_route_denied_after_target_tenant_generation_advance
       - billing_safe_tenant_denied_without_exact_membership_generation_and_live_tenant_admin

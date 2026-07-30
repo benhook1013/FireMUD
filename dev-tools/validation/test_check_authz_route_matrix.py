@@ -1561,8 +1561,15 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             "no_target_tenant_classifications"
         ]["pending_deletion_scoped"]
         self.assertFalse(exception["target_tenant_generation"])
+        self.assertEqual(
+            "pending_deletion_credential_only", exception["generation_behavior"]
+        )
         self.assertIn("pending_deletion_state", exception["required_authority"])
         self.assertTrue(exception["contract_justification"])
+        self.assertEqual(
+            "denied_by_pending_deletion_credential_contract",
+            exception["target_tenant_generation_advance_behavior"],
+        )
         self.assertIn(
             "pending_deletion_route_denied_after_target_tenant_generation_advance",
             exception["negative_proof"]["required"],
@@ -1574,6 +1581,81 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             "tenant_generation_policy.no_target_tenant_classifications."
             "pending_deletion_scoped must declare a bounded contract_justification",
             errors,
+        )
+
+    def test_no_target_tenant_classifications_are_closed_and_explicit(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        policy = document["tenant_generation_policy"]
+        classifications = policy["no_target_tenant_classifications"]
+        self.assertEqual(
+            set(self.validator.REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS),
+            set(classifications),
+        )
+        for classification, expected in self.validator.REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS.items():
+            with self.subTest(classification=classification):
+                entry = classifications[classification]
+                self.assertFalse(entry["target_tenant_generation"])
+                self.assertEqual(
+                    expected["generation_behavior"], entry["generation_behavior"]
+                )
+                self.assertTrue(entry["contract_justification"])
+                self.assertEqual(
+                    expected["target_tenant_generation_advance_behavior"],
+                    entry["target_tenant_generation_advance_behavior"],
+                )
+
+    def test_target_generation_denial_proof_is_scoped_to_tenant_authority(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        proof = document["tenant_generation_policy"]["negative_proof"]
+        self.assertEqual(
+            self.validator.REQUIRED_TENANT_AUTHORITY_CLASSIFICATIONS,
+            set(proof["tenant_authority_classifications"]),
+        )
+        self.assertIn(
+            "non_allowlisted_route_denied_after_target_tenant_generation_advance",
+            proof["required"],
+        )
+
+        proof["tenant_authority_classifications"].append("account_scoped")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "tenant_authority_classifications must be exactly" in error
+                for error in errors
+            )
+        )
+
+    def test_no_target_routes_do_not_require_target_generation_fence(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route_keys = (
+            ("account-service", "AuthLogout"),
+            ("account-service", "DELETE /tenants/{tenantId}/memberships/me"),
+            ("account-service", "IssueConnectToken"),
+        )
+        for service, route_name in route_keys:
+            with self.subTest(route=route_name):
+                route = route_for(document, service, route_name)
+                self.assertNotIn(
+                    "target_tenant_generation", route.get("required_live_checks", [])
+                )
+                self.assertEqual(
+                    "remains_valid",
+                    document["tenant_generation_policy"][
+                        "no_target_tenant_classifications"
+                    ][route["classification"]][
+                        "target_tenant_generation_advance_behavior"
+                    ],
+                )
+
+        issue_connect_token = route_for(
+            document, "account-service", "IssueConnectToken"
+        )
+        issue_connect_token["required_live_checks"].append(
+            "target_tenant_generation"
+        )
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any("must not require tenant-generation checks" in error for error in errors)
         )
 
     def test_cross_tenant_safe_route_rejects_target_generation_checks(self):

@@ -47,6 +47,9 @@ ADR_LINK_RE = re.compile(r"\[ADR (?P<number>\d{4})\]\((?P<target>[^)\r\n]+)\)")
 MARKDOWN_LINK_RE = re.compile(r"\[(?P<label>[^\]\r\n]+)\]\((?P<target>[^)\r\n]+)\)")
 ADR_LABEL_RE = re.compile(r"^ADR (?P<number>\d{4})$")
 REPLACEMENT_ADR_LABEL_RE = re.compile(r"^replacement ADR (?P<number>\d{4})$")
+REPLACEMENT_ADR_ENTRY_RE = re.compile(
+    r"^- Replacement ADR: \[ADR (?P<number>\d{4})\]\((?P<target>[^)\r\n]+)\)$"
+)
 DECISION_KEY_LABEL_RE = re.compile(r"^[A-Z0-9][A-Z0-9-]*$")
 REVIEW_FIELD_RE = re.compile(
     r"^- (?P<name>Human review status|Human review date|"
@@ -255,6 +258,7 @@ def validate_replacement_adr_target(
     line_number: int,
     displayed_number: int,
     target: str,
+    relationship: str = "superseded scan-alias replacement",
 ) -> None:
     _target_ref, target_path, resolved_target, target_match = parse_adr_target(
         path,
@@ -262,7 +266,7 @@ def validate_replacement_adr_target(
     )
     if target_match is None or int(target_match.group(1)) != displayed_number:
         fail(
-            f"{path}: malformed superseded scan-alias replacement at line "
+            f"{path}: malformed {relationship} at line "
             f"{line_number}; replacement ADR {displayed_number:04d} does not "
             f"match target {target!r}"
         )
@@ -273,7 +277,7 @@ def validate_replacement_adr_target(
         or not resolved_target.is_file()
     ):
         fail(
-            f"{path}: superseded scan-alias replacement at line {line_number} "
+            f"{path}: {relationship} at line {line_number} "
             f"must target the canonical ADR directory: {target!r}"
         )
 
@@ -389,6 +393,73 @@ def visible_markdown_lines(text: str) -> list[MarkdownLine]:
     return visible_lines
 
 
+def validate_supersession(
+    context: Path,
+    path: Path,
+    adr_dir: Path,
+    status: str,
+    number: int,
+    text: str,
+) -> None:
+    visible_lines = visible_markdown_lines(text)
+    heading_re = re.compile(r"^## Supersession[ \t]*$")
+    headings = [line for line in visible_lines if heading_re.fullmatch(line.text)]
+    formal_superseded = (
+        status == "Superseded" and number not in PRE_FORMAL_REVIEW_RECORDS
+    )
+    if not headings:
+        if formal_superseded:
+            fail(
+                f"{context}: formal Superseded ADR requires exactly one "
+                "'Replacement ADR' entry in a 'Supersession' section"
+            )
+        return
+    if len(headings) != 1:
+        fail(
+            f"{context}: expected exactly one section 'Supersession', "
+            f"found {len(headings)}"
+        )
+
+    heading = headings[0]
+    following = next(
+        (
+            line
+            for line in visible_lines
+            if line.number > heading.number
+            and LEVEL_TWO_HEADING_RE.fullmatch(line.text)
+        ),
+        None,
+    )
+    end = following.number if following is not None else None
+    section_lines = [
+        line
+        for line in visible_lines
+        if line.number > heading.number
+        and (end is None or line.number < end)
+        and line.text.strip()
+    ]
+    if len(section_lines) != 1:
+        fail(
+            f"{context}: 'Supersession' section must contain exactly one "
+            "valid 'Replacement ADR' entry"
+        )
+
+    entry = REPLACEMENT_ADR_ENTRY_RE.fullmatch(section_lines[0].text)
+    if entry is None:
+        fail(
+            f"{context}: 'Supersession' section must contain exactly one "
+            "valid 'Replacement ADR' entry"
+        )
+    validate_replacement_adr_target(
+        path,
+        adr_dir,
+        section_lines[0].number,
+        int(entry.group("number")),
+        entry.group("target"),
+        relationship="Supersession replacement ADR",
+    )
+
+
 def scan_review_queue(lines: list[str], queue_start: int) -> MarkdownSection:
     open_fence: MarkdownFence | None = None
     visible_lines: list[MarkdownLine] = []
@@ -418,11 +489,12 @@ def checked_reviews(
 ) -> dict[int, list[Review]]:
     reviews: dict[int, list[Review]] = {}
     seen_keys: set[str] = set()
-    lines = path.read_text(encoding="utf-8").splitlines()
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
     queue_starts = [
-        index
-        for index, line in enumerate(lines)
-        if REVIEW_QUEUE_HEADING_RE.fullmatch(line)
+        markdown_line.number - 1
+        for markdown_line in visible_markdown_lines(text)
+        if REVIEW_QUEUE_HEADING_RE.fullmatch(markdown_line.text)
     ]
     if not queue_starts:
         fail(f"{path}: missing 'Adversarial Review Queue' section")
@@ -634,6 +706,15 @@ def validate(root: Path = ROOT) -> None:
                 f"{context}: terminal ADR status lacks a checked "
                 "human-review queue entry"
             )
+
+        validate_supersession(
+            context,
+            path,
+            adr_dir,
+            normalized_status,
+            number,
+            text,
+        )
 
     missing_adrs = sorted(set(reviews) - seen_numbers)
     if missing_adrs:
