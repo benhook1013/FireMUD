@@ -14,6 +14,7 @@ sys.path.insert(0, str(root / "dev-tools" / "smoke"))
 import smoke_common
 from smoke_common import run_telnet_smoke_session, run_transport_session, run_websocket_smoke_session
 
+
 class FakeSession:
     def __init__(self, chunks=None):
         self.chunks = list(chunks or [])
