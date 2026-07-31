@@ -243,11 +243,35 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0035-single-record-issued-token-registry.md": adr_allocation(
         "SF-1", "Accepted", "AA-1", "AA-2", "SF-2"
     ),
+    "design/architecture/decisions/adr-0036-monotonic-authority-generations-for-bulk-token-revocation.md": adr_allocation(
+        "SF-1", "Accepted", "AA-1", "AA-2", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0037-fail-closed-token-authority-outages-with-bounded-active-gameplay.md": adr_allocation(
+        "SF-1", "Accepted", "AA-2", "AA-3", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0038-explicit-jwt-profiles-and-mtls-workload-identity.md": adr_allocation(
+        "SF-1", "Accepted", "AA-1", "AA-2", "PO-2"
+    ),
     "design/architecture/decisions/adr-0039-bounded-redis-operator-maintenance-surface.md": adr_allocation(
         "PO-1", "Accepted", "PO-4", "SF-1", "SF-2"
     ),
+    "design/architecture/decisions/adr-0040-account-global-control-login-and-explicit-tenant-selection.md": adr_allocation(
+        "AA-1", "Accepted", "EA-3", "PO-1", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md": adr_allocation(
+        "AA-1", "Accepted", "GR-1", "PO-3", "SF-2"
+    ),
     "design/architecture/decisions/adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md": adr_allocation(
         "AA-1", "Accepted", "PO-1", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0045-ordinary-login-factors-and-https-sensitive-action-step-up.md": adr_allocation(
+        "AA-1", "Accepted", "AA-2", "EA-3", "PO-1", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md": adr_allocation(
+        "PO-1", "Accepted", "AR-2", "AR-3", "GR-1", "PO-2"
+    ),
+    "design/architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md": adr_allocation(
+        "PO-1", "Accepted", "GR-1", "PO-4", "SF-2"
     ),
     "design/architecture/decisions/adr-0049-optional-provider-specific-external-identity-linking.md": adr_allocation(
         "AA-1", "Accepted", "EA-3", "SF-1"
