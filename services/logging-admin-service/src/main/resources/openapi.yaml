@@ -42,62 +42,6 @@ components:
           type: string
         error:
           $ref: '#/components/schemas/ErrorDetail'
-    ApplyModerationActionRequest:
-      type: object
-      properties:
-        tenantId:
-          type: integer
-        accountId:
-          type: integer
-        sessionId:
-          type: integer
-        action:
-          type: string
-        reason:
-          type: string
-      required: [tenantId, accountId, sessionId, action]
-    ModerationActionDto:
-      type: object
-      properties:
-        id:
-          type: integer
-        tenantId:
-          type: integer
-        accountId:
-          type: integer
-        action:
-          type: string
-        reason:
-          type: string
-        createdAt:
-          type: string
-          format: date-time
-        expiresAt:
-          type: string
-          format: date-time
-          nullable: true
-    ToggleFeatureFlagRequest:
-      type: object
-      properties:
-        tenantId:
-          type: integer
-        name:
-          type: string
-        enabled:
-          type: boolean
-      required: [tenantId, name, enabled]
-    FeatureFlagDto:
-      type: object
-      properties:
-        id:
-          type: integer
-          nullable: true
-        tenantId:
-          type: integer
-        name:
-          type: string
-        enabled:
-          type: boolean
     BuiltInCommandAliasValidationDto:
       type: object
       properties:
@@ -1311,74 +1255,6 @@ components:
           type: string
           format: date-time
           nullable: true
-    SetAdmissionPointerRequest:
-      type: object
-      properties:
-        worldSlug:
-          type: string
-        worldDisplayName:
-          type: string
-        realmSlug:
-          type: string
-        realmDisplayName:
-          type: string
-        tenantId:
-          type: integer
-        gameInstanceId:
-          type: integer
-        visible:
-          type: boolean
-        requiresCharacterSelection:
-          type: boolean
-        stateScope:
-          type: string
-        characterCreationPolicy:
-          type: string
-        reason:
-          type: string
-        controlPlaneRequestId:
-          type: string
-        expectedPointerVersion:
-          type: integer
-          nullable: true
-        preparedVersionUpgradeId:
-          type: string
-          nullable: true
-      required:
-        [worldSlug, worldDisplayName, realmSlug, realmDisplayName, tenantId, gameInstanceId, stateScope, characterCreationPolicy]
-    PrepareVersionUpgradeRequest:
-      type: object
-      properties:
-        tenantId:
-          type: integer
-        sourceGameInstanceId:
-          type: integer
-        targetVersionId:
-          type: integer
-        controlPlaneRequestId:
-          type: string
-      required: [tenantId, sourceGameInstanceId, targetVersionId, controlPlaneRequestId]
-    ExecutePreparedVersionCutoverRequest:
-      type: object
-      properties:
-        worldSlug:
-          type: string
-        realmSlug:
-          type: string
-        tenantId:
-          type: integer
-        targetGameInstanceId:
-          type: integer
-        preparedVersionUpgradeId:
-          type: string
-        reason:
-          type: string
-        controlPlaneRequestId:
-          type: string
-        expectedPointerVersion:
-          type: integer
-          nullable: true
-      required: [worldSlug, realmSlug, tenantId, targetGameInstanceId, preparedVersionUpgradeId]
     CutoverParticipantResultDto:
       type: object
       properties:
@@ -1582,36 +1458,6 @@ components:
           type: boolean
         publication:
           $ref: '#/components/schemas/ScriptPatchPublicationLinkDto'
-    TickRemediationRequest:
-      type: object
-      properties:
-        tenantId:
-          type: integer
-        gameInstanceId:
-          type: string
-          nullable: true
-        regionId:
-          type: string
-          nullable: true
-        reason:
-          type: string
-          nullable: true
-      required: [tenantId]
-    TickRemediationActionDto:
-      type: object
-      properties:
-        tenantId:
-          type: integer
-        scopeType:
-          type: string
-        scopeId:
-          type: string
-        action:
-          type: string
-        actorPrincipal:
-          type: string
-        reason:
-          type: string
     RuntimeOwnershipStatusDto:
       type: object
       properties:
@@ -1683,31 +1529,6 @@ paths:
                     $ref: '#/components/schemas/BuiltInCommandAliasValidationDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
-  /feature-flags/toggle:
-    post:
-      summary: Request a runtime feature-flag toggle (externally gated)
-      description: "The implementation path participates in the operator control plane, but this mutation is externally gated and unavailable for external enablement until all three are complete: its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption."
-      operationId: toggleFeatureFlag
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ToggleFeatureFlagRequest'
-      responses:
-        '200':
-          description: Feature-flag mutation result when supported; status may be SUCCESS or ERROR
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    $ref: '#/components/schemas/ResultStatus'
-                  data:
-                    $ref: '#/components/schemas/FeatureFlagDto'
-                  error:
-                    $ref: '#/components/schemas/ErrorDetail'
   /logs/query:
     post:
       summary: Query log events
@@ -1732,31 +1553,6 @@ paths:
                     type: array
                     items:
                       type: string
-                  error:
-                    $ref: '#/components/schemas/ErrorDetail'
-  /moderation/actions:
-    post:
-      summary: Submit moderation policy input and audit (externally gated)
-      description: "The moderation-action implementation path is unavailable/gated and does not currently persist or enforce moderation actions. It remains unavailable until all three are complete: its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus Logging & Admin receiving-boundary validation/redemption. This path does not require or perform domain-owner capability redemption or enforcement. Once enabled, it may persist policy input and audit; EvaluateModerationPolicy remains the separate live evaluation contract consumed by enforcement owners."
-      operationId: applyModerationAction
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ApplyModerationActionRequest'
-      responses:
-        '200':
-          description: Moderation policy input and audit result when enabled
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    $ref: '#/components/schemas/ResultStatus'
-                  data:
-                    $ref: '#/components/schemas/ModerationActionDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
   /sagas:
@@ -1825,30 +1621,6 @@ paths:
                       $ref: '#/components/schemas/AdmissionPointerDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
-    post:
-      summary: Update a gameplay admission pointer (unsupported implementation drift)
-      description: "This implementation path is not a supported operator capability and must remain externally gated until its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption are complete."
-      operationId: setAdmissionPointer
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SetAdmissionPointerRequest'
-      responses:
-        '200':
-          description: Updated admission pointer when the canonical mutation gate is implemented
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    $ref: '#/components/schemas/ResultStatus'
-                  data:
-                    $ref: '#/components/schemas/AdmissionPointerDto'
-                  error:
-                    $ref: '#/components/schemas/ErrorDetail'
   /admission-pointers/{tenantId}/{worldSlug}/{realmSlug}/audit:
     get:
       summary: Read admission-pointer audit history
@@ -1915,56 +1687,6 @@ paths:
                     $ref: '#/components/schemas/ResultStatus'
                   data:
                     $ref: '#/components/schemas/GameInstanceRuntimeStateDto'
-                  error:
-                    $ref: '#/components/schemas/ErrorDetail'
-  /admission-pointers/cutover:
-    post:
-      summary: Execute a prepared version cutover (unsupported implementation drift)
-      description: "This implementation path is not a supported operator capability and must remain externally gated until its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption are complete."
-      operationId: executePreparedVersionCutover
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ExecutePreparedVersionCutoverRequest'
-      responses:
-        '200':
-          description: Updated admission pointer after cutover when the canonical mutation gate is implemented
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    $ref: '#/components/schemas/ResultStatus'
-                  data:
-                    $ref: '#/components/schemas/AdmissionPointerDto'
-                  error:
-                    $ref: '#/components/schemas/ErrorDetail'
-  /admission-pointers/version-upgrades:
-    post:
-      summary: Prepare a version-upgrade compatibility proof (externally gated)
-      description: "This preparation mutation is implemented for operator participation but is externally gated and unavailable for external enablement until all three are complete: its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption. Prepared-proof reads remain live."
-      operationId: prepareVersionUpgrade
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PrepareVersionUpgradeRequest'
-      responses:
-        '200':
-          description: Version-upgrade preparation result when supported; status may be SUCCESS or ERROR
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    $ref: '#/components/schemas/ResultStatus'
-                  data:
-                    $ref: '#/components/schemas/PreparedVersionUpgradeDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
   /admission-pointers/version-upgrades/{tenantId}/{preparationId}:
@@ -2829,31 +2551,6 @@ paths:
                       $ref: '#/components/schemas/RemoteFollowupResultDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
-  /tick-remediation/pause:
-    post:
-      summary: Request per-instance tick pause (externally gated)
-      description: "The per-instance forwarding path participates in the control plane, but this mutation is externally gated and unavailable for external enablement until all three are complete: its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption."
-      operationId: pauseTicksForScope
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TickRemediationRequest'
-      responses:
-        '200':
-          description: Tick pause mutation result when supported; status may be SUCCESS or ERROR
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    $ref: '#/components/schemas/ResultStatus'
-                  data:
-                    $ref: '#/components/schemas/TickRemediationActionDto'
-                  error:
-                    $ref: '#/components/schemas/ErrorDetail'
   /tick-remediation/status/{tenantId}:
     get:
       summary: Read durable runtime ownership status
@@ -2887,30 +2584,5 @@ paths:
                     $ref: '#/components/schemas/ResultStatus'
                   data:
                     $ref: '#/components/schemas/RuntimeOwnershipStatusDto'
-                  error:
-                    $ref: '#/components/schemas/ErrorDetail'
-  /tick-remediation/resume:
-    post:
-      summary: Request per-instance tick resume (externally gated)
-      description: "The per-instance forwarding path participates in the control plane, but this mutation is externally gated and unavailable for external enablement until all three are complete: its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption."
-      operationId: resumeTicksForScope
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TickRemediationRequest'
-      responses:
-        '200':
-          description: Tick resume mutation result when supported; status may be SUCCESS or ERROR
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    $ref: '#/components/schemas/ResultStatus'
-                  data:
-                    $ref: '#/components/schemas/TickRemediationActionDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
