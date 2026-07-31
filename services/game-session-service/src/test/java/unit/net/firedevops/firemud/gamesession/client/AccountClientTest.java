@@ -25,6 +25,8 @@ import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipR
 import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
+import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
+import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
@@ -296,6 +298,47 @@ class AccountClientTest {
         .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
     verify(retryStub)
         .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
+    verify(channelFactory).buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @Test
+  void runtimeEntitlementsReturnsCanonicalUnavailableWhenStubIsMissing() throws Exception {
+    GetTenantEntitlementsForRuntimeResponse response =
+        newClient(null).getTenantEntitlementsForRuntime("7", "request-1");
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getMessage()).isEqualTo("Entitlement authority unavailable");
+  }
+
+  @Test
+  void runtimeEntitlementsNormalizesExhaustedUnavailableToCanonicalUnavailable()
+      throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub initialStub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    AccountServiceGrpc.AccountServiceBlockingStub retryStub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(initialStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(initialStub);
+    when(retryStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(retryStub);
+    when(initialStub.getTenantEntitlementsForRuntime(
+            any(GetTenantEntitlementsForRuntimeRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+    when(retryStub.getTenantEntitlementsForRuntime(
+            any(GetTenantEntitlementsForRuntimeRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    when(channelFactory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
+        .thenReturn(mock(ManagedChannel.class));
+    AccountClient client = newClientWithRetryStub(initialStub, retryStub, channelFactory);
+
+    GetTenantEntitlementsForRuntimeResponse response =
+        client.getTenantEntitlementsForRuntime("7", "request-1");
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getMessage()).isEqualTo("Entitlement authority unavailable");
+    verify(initialStub)
+        .getTenantEntitlementsForRuntime(any(GetTenantEntitlementsForRuntimeRequest.class));
+    verify(retryStub)
+        .getTenantEntitlementsForRuntime(any(GetTenantEntitlementsForRuntimeRequest.class));
     verify(channelFactory).buildChannel(anyString(), anyInt(), any(), anyBoolean());
   }
 

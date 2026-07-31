@@ -693,25 +693,9 @@ public class PlayCommandHandler {
               requestId);
       Optional<ErrorDetail> grantError = extractError(grantResponse.getError());
       if (grantError.isPresent() && isAuthorityUnavailable(grantError.get())) {
-        recordResumeDeniedIfApplicable(
-            context,
-            selectedWorld.slug(),
-            selectedRealm.slug(),
-            selectedRealm.pointerVersion(),
-            selectedRealm.gameInstanceId(),
-            requestedCharacterId,
-            tenantTag,
-            "authority_unavailable");
         return Optional.of(
-            failure(
-                GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE,
-                GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE,
-                "error.play.membership-unavailable",
-                Map.of(),
-                tenantTag,
-                Long.toString(selectedRealm.gameInstanceId()),
-                Long.toString(requestedCharacterId),
-                null));
+            authorityUnavailableFailure(
+                tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
       }
       if (grantError.isPresent() || !grantResponse.getGranted()) {
         recordResumeDeniedIfApplicable(
@@ -739,26 +723,10 @@ public class PlayCommandHandler {
     Optional<ErrorDetail> maybeError = extractError(response.getError());
     if (maybeError.isPresent()) {
       ErrorDetail error = maybeError.get();
-      if ("NOT_FOUND".equalsIgnoreCase(error.getCode())) {
-        recordResumeDeniedIfApplicable(
-            context,
-            selectedWorld.slug(),
-            selectedRealm.slug(),
-            selectedRealm.pointerVersion(),
-            selectedRealm.gameInstanceId(),
-            requestedCharacterId,
-            tenantTag,
-            "access_denied");
+      if (isAuthorityUnavailable(error)) {
         return Optional.of(
-            failure(
-                GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE,
-                GameplayStageCommandConstants.WORLD_ACCESS_DENIED_MESSAGE,
-                "error.play.world-access-denied",
-                Map.of(),
-                tenantTag,
-                Long.toString(selectedRealm.gameInstanceId()),
-                Long.toString(requestedCharacterId),
-                null));
+            authorityUnavailableFailure(
+                tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
       }
       recordResumeDeniedIfApplicable(
           context,
@@ -768,12 +736,12 @@ public class PlayCommandHandler {
           selectedRealm.gameInstanceId(),
           requestedCharacterId,
           tenantTag,
-          "authority_unavailable");
+          "access_denied");
       return Optional.of(
           failure(
-              GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE,
-              GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE,
-              "error.play.membership-unavailable",
+              GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE,
+              GameplayStageCommandConstants.WORLD_ACCESS_DENIED_MESSAGE,
+              "error.play.world-access-denied",
               Map.of(),
               tenantTag,
               Long.toString(selectedRealm.gameInstanceId()),
@@ -794,25 +762,9 @@ public class PlayCommandHandler {
           return Optional.empty();
         }
         if (ensureError.isPresent() && isAuthorityUnavailable(ensureError.get())) {
-          recordResumeDeniedIfApplicable(
-              context,
-              selectedWorld.slug(),
-              selectedRealm.slug(),
-              selectedRealm.pointerVersion(),
-              selectedRealm.gameInstanceId(),
-              requestedCharacterId,
-              tenantTag,
-              "authority_unavailable");
           return Optional.of(
-              failure(
-                  GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE,
-                  GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE,
-                  "error.play.membership-unavailable",
-                  Map.of(),
-                  tenantTag,
-                  Long.toString(selectedRealm.gameInstanceId()),
-                  Long.toString(requestedCharacterId),
-                  null));
+              authorityUnavailableFailure(
+                  tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
         }
       }
       recordResumeDeniedIfApplicable(
@@ -847,20 +799,16 @@ public class PlayCommandHandler {
       long requestedCharacterId) {
     Optional<ErrorDetail> maybeError = extractError(response.getError());
     if (maybeError.isPresent()) {
-      recordResumeDeniedIfApplicable(
-          context,
-          selectedWorld.slug(),
-          selectedRealm.slug(),
-          selectedRealm.pointerVersion(),
-          selectedRealm.gameInstanceId(),
-          requestedCharacterId,
-          tenantTag,
-          "authority_unavailable");
+      if (isAuthorityUnavailable(maybeError.get())) {
+        return Optional.of(
+            authorityUnavailableFailure(
+                tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
+      }
       return Optional.of(
           failure(
-              GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_CODE,
-              GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_MESSAGE,
-              "error.play.entitlement-unavailable",
+              GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_CODE,
+              GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_MESSAGE,
+              "error.play.billing-blocked",
               Map.of(),
               tenantTag,
               Long.toString(selectedRealm.gameInstanceId()),
@@ -889,6 +837,19 @@ public class PlayCommandHandler {
               null));
     }
     return Optional.empty();
+  }
+
+  private PlayCommandHandlingResult authorityUnavailableFailure(
+      String tenantTag, String gameInstanceTag, long requestedCharacterId) {
+    return failure(
+        GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE,
+        GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE,
+        "error.play.authority-unavailable",
+        Map.of(),
+        tenantTag,
+        gameInstanceTag,
+        Long.toString(requestedCharacterId),
+        null);
   }
 
   private Optional<ErrorDetail> extractError(ErrorDetail error) {
