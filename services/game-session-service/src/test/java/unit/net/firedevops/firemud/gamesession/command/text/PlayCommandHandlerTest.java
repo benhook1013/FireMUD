@@ -996,6 +996,30 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void playMapsNonAuthorityEntitlementFailureToBillingBlocked() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("TENANT_BILLING_BLOCKED")
+                        .setMessage("Tenant billing blocks gameplay"))
+                .build());
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_CODE);
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
+        .isEqualTo("error.play.billing-blocked");
+  }
+
+  @Test
   void playWhenMembershipAuthorityUnavailableFailsClosed() {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");

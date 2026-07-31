@@ -1175,6 +1175,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_play_admission_composes_common_checks_with_only_selected_branch(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = route_for(document, "game-session-service", "PLAY")
+        self.assertIn("TENANT_BILLING_BLOCKED", route["canonical_errors"]["any_of"])
         selection = route["admission_mode_selection"]
         common = set(selection["required_live_checks"])
         self.assertEqual(

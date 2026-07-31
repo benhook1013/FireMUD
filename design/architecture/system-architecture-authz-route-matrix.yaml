@@ -690,7 +690,7 @@ routes:
           required_live_checks: [membership, membership_generation, conditional_realm_access_grant]
           membership_creation: forbidden
     canonical_errors:
-      any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE]
+      any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE]
     canonical_target:
       membership: grant_backed_private_or_playtest_requires_existing_caller_bound_membership
       membership_creation: play_never_creates_membership
