@@ -1,7 +1,14 @@
 openapi: 3.0.3
 info:
   title: Logging & Admin Service API
-  description: Operator-facing moderation, reporting, cutover, and runtime-control APIs
+  description: >-
+    Operator-facing moderation and runtime-control APIs. Public /reports is intentionally
+    absent; internal report RPC/types are not public ingress. Admission-pointer reads, audit,
+    and prepared-proof reads are live. The existing admission-pointer write and prepared-cutover
+    paths remain unsupported implementation drift. Version-upgrade preparation has an
+    implementation path for operator participation but remains externally gated and unavailable
+    until its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and
+    Account-issued authorization-reference issuance plus owner-side redemption are complete.
   version: 1.0.0
   license:
     name: MIT
@@ -69,40 +76,6 @@ components:
           type: string
           format: date-time
           nullable: true
-    CreateReportRequest:
-      type: object
-      properties:
-        tenantId:
-          type: integer
-        reporterAccountId:
-          type: integer
-        targetAccountId:
-          type: integer
-          nullable: true
-        type:
-          type: string
-        description:
-          type: string
-      required: [tenantId, reporterAccountId, type, description]
-    ReportDto:
-      type: object
-      properties:
-        id:
-          type: integer
-        tenantId:
-          type: integer
-        reporterAccountId:
-          type: integer
-        targetAccountId:
-          type: integer
-          nullable: true
-        type:
-          type: string
-        description:
-          type: string
-        createdAt:
-          type: string
-          format: date-time
     ToggleFeatureFlagRequest:
       type: object
       properties:
@@ -1710,33 +1683,10 @@ paths:
                     $ref: '#/components/schemas/BuiltInCommandAliasValidationDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
-  /reports:
-    post:
-      summary: Create a player report
-      operationId: createReport
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateReportRequest'
-      responses:
-        '200':
-          description: Created report
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    $ref: '#/components/schemas/ResultStatus'
-                  data:
-                    $ref: '#/components/schemas/ReportDto'
-                  error:
-                    $ref: '#/components/schemas/ErrorDetail'
   /feature-flags/toggle:
     post:
-      summary: Toggle a runtime feature flag
+      summary: Request a runtime feature-flag toggle (externally gated)
+      description: "The implementation path participates in the operator control plane, but this mutation is externally gated and unavailable for external enablement until all three are complete: its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption."
       operationId: toggleFeatureFlag
       requestBody:
         required: true
@@ -1746,7 +1696,7 @@ paths:
               $ref: '#/components/schemas/ToggleFeatureFlagRequest'
       responses:
         '200':
-          description: Updated feature flag
+          description: Feature-flag mutation result when supported; status may be SUCCESS or ERROR
           content:
             application/json:
               schema:
@@ -1786,7 +1736,8 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
   /moderation/actions:
     post:
-      summary: Apply a moderation action
+      summary: Submit moderation policy input and audit (externally gated)
+      description: "The moderation-action implementation path is unavailable/gated and does not currently persist or enforce moderation actions. It remains unavailable until all three are complete: its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus Logging & Admin receiving-boundary validation/redemption. This path does not require or perform domain-owner capability redemption or enforcement. Once enabled, it may persist policy input and audit; EvaluateModerationPolicy remains the separate live evaluation contract consumed by enforcement owners."
       operationId: applyModerationAction
       requestBody:
         required: true
@@ -1796,7 +1747,7 @@ paths:
               $ref: '#/components/schemas/ApplyModerationActionRequest'
       responses:
         '200':
-          description: Applied moderation action
+          description: Moderation policy input and audit result when enabled
           content:
             application/json:
               schema:
@@ -1875,7 +1826,8 @@ paths:
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
     post:
-      summary: Update a gameplay admission pointer
+      summary: Update a gameplay admission pointer (unsupported implementation drift)
+      description: "This implementation path is not a supported operator capability and must remain externally gated until its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption are complete."
       operationId: setAdmissionPointer
       requestBody:
         required: true
@@ -1885,7 +1837,7 @@ paths:
               $ref: '#/components/schemas/SetAdmissionPointerRequest'
       responses:
         '200':
-          description: Updated admission pointer
+          description: Updated admission pointer when the canonical mutation gate is implemented
           content:
             application/json:
               schema:
@@ -1967,7 +1919,8 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
   /admission-pointers/cutover:
     post:
-      summary: Execute a prepared version cutover
+      summary: Execute a prepared version cutover (unsupported implementation drift)
+      description: "This implementation path is not a supported operator capability and must remain externally gated until its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption are complete."
       operationId: executePreparedVersionCutover
       requestBody:
         required: true
@@ -1977,7 +1930,7 @@ paths:
               $ref: '#/components/schemas/ExecutePreparedVersionCutoverRequest'
       responses:
         '200':
-          description: Updated admission pointer after cutover
+          description: Updated admission pointer after cutover when the canonical mutation gate is implemented
           content:
             application/json:
               schema:
@@ -1991,7 +1944,8 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
   /admission-pointers/version-upgrades:
     post:
-      summary: Prepare a version-upgrade compatibility proof
+      summary: Prepare a version-upgrade compatibility proof (externally gated)
+      description: "This preparation mutation is implemented for operator participation but is externally gated and unavailable for external enablement until all three are complete: its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption. Prepared-proof reads remain live."
       operationId: prepareVersionUpgrade
       requestBody:
         required: true
@@ -2001,7 +1955,7 @@ paths:
               $ref: '#/components/schemas/PrepareVersionUpgradeRequest'
       responses:
         '200':
-          description: Prepared version-upgrade proof
+          description: Version-upgrade preparation result when supported; status may be SUCCESS or ERROR
           content:
             application/json:
               schema:
@@ -2015,7 +1969,7 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
   /admission-pointers/version-upgrades/{tenantId}/{preparationId}:
     get:
-      summary: Read a prepared version-upgrade proof
+      summary: Read a prepared version-upgrade proof (live read)
       operationId: getPreparedVersionUpgrade
       parameters:
         - name: tenantId
@@ -2877,7 +2831,8 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
   /tick-remediation/pause:
     post:
-      summary: Pause ticks for one scoped runtime target
+      summary: Request per-instance tick pause (externally gated)
+      description: "The per-instance forwarding path participates in the control plane, but this mutation is externally gated and unavailable for external enablement until all three are complete: its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption."
       operationId: pauseTicksForScope
       requestBody:
         required: true
@@ -2887,7 +2842,7 @@ paths:
               $ref: '#/components/schemas/TickRemediationRequest'
       responses:
         '200':
-          description: Tick pause request accepted and forwarded
+          description: Tick pause mutation result when supported; status may be SUCCESS or ERROR
           content:
             application/json:
               schema:
@@ -2936,7 +2891,8 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
   /tick-remediation/resume:
     post:
-      summary: Resume ticks for one scoped runtime target
+      summary: Request per-instance tick resume (externally gated)
+      description: "The per-instance forwarding path participates in the control plane, but this mutation is externally gated and unavailable for external enablement until all three are complete: its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption."
       operationId: resumeTicksForScope
       requestBody:
         required: true
@@ -2946,7 +2902,7 @@ paths:
               $ref: '#/components/schemas/TickRemediationRequest'
       responses:
         '200':
-          description: Tick resume request accepted and forwarded
+          description: Tick resume mutation result when supported; status may be SUCCESS or ERROR
           content:
             application/json:
               schema:

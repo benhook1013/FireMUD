@@ -1,8 +1,61 @@
-version: 3
+version: 9
 updated_by: "platform-security+account-service"
 default_action: deny
 default_action_scope: declared_route_entries_only
 unlisted_route_status: drift
+route_status_vocabulary:
+  - current_openapi_operator_surface
+  - target_not_currently_routable
+operator_mutation_support_gate:
+  status: target_not_currently_routable
+  required_before_enablement:
+    - published_action_family_schema
+    - shared_cross_language_mutationDigest_v1_golden_vectors
+    - account_issued_authorization_reference_issuance_and_owner_redemption
+  applies_to:
+    - logging-admin-service/POST /feature-flags/toggle
+    - logging-admin-service/POST /moderation/actions
+    - logging-admin-service/ApplyModerationAction
+    - logging-admin-service/POST /tick-remediation/pause
+    - logging-admin-service/POST /tick-remediation/resume
+    - logging-admin-service/POST /admission-pointers
+    - logging-admin-service/POST /admission-pointers/cutover
+    - logging-admin-service/POST /admission-pointers/version-upgrades
+    - game-session-service/ToggleFeatureFlag
+    - game-session-service/PauseTicksForScope
+    - game-session-service/ResumeTicksForScope
+    - game-session-service/SetAdmissionPointer
+    - game-session-service/PrepareVersionUpgrade
+    - game-session-service/ExecutePreparedVersionCutover
+    - game-session-service/StartSession
+    - game-session-service/RestartSession
+    - game-session-service/StopSession
+    - game-session-service/RefreshRoles
+    - game-session-service/POST /sessions
+    - game-session-service/POST /sessions/{sessionId}/stop
+    - game-session-service/POST /sessions/{sessionId}/restart
+    - game-session-service/POST /sessions/{sessionId}/refresh-roles
+  live_exceptions:
+    - logging-admin-service/GET /admission-pointers
+    - logging-admin-service/GET /admission-pointers/{tenantId}/{worldSlug}/{realmSlug}/audit
+    - logging-admin-service/GET /admission-pointers/version-upgrades/{tenantId}/{preparationId}
+    - logging-admin-service/EvaluateModerationPolicy
+  coverage_drift:
+    - identity: logging-admin-service/ApplyModerationAction
+      status: drift-found
+      note: The gRPC action is documented but unavailable/gated and has no current route entry until its mutation schema and Account authorization-reference flow converge.
+    - identity: logging-admin-service/GET /admission-pointers
+      status: drift-found
+      note: This live read is documented and implemented, but its source-stable route inventory is not yet represented in the matrix.
+    - identity: logging-admin-service/GET /admission-pointers/{tenantId}/{worldSlug}/{realmSlug}/audit
+      status: drift-found
+      note: This live audit read is documented and implemented, but its source-stable route inventory is not yet represented in the matrix.
+    - identity: logging-admin-service/GET /admission-pointers/version-upgrades/{tenantId}/{preparationId}
+      status: drift-found
+      note: This live prepared-upgrade proof read is documented and implemented, but its source-stable route inventory is not yet represented in the matrix.
+    - identity: logging-admin-service/EvaluateModerationPolicy
+      status: drift-found
+      note: This live internal policy-evaluation read is documented and consumed by enforcement owners, but its source-stable route inventory is not yet represented in the matrix.
 default_deny_generation:
   enabled: false
   blocked_until: source_stable_openapi_protobuf_coverage_complete_and_validated
@@ -11,24 +64,35 @@ inheritance:
   rule: route_entries_do_not_inherit_authentication_or_authorization_fields
 token_profiles:
   - profile: control-ui
+    type: control_plane_user
+    issuer: firemud-account-service
     audience: control-ui
-    kind: control_plane_user
   - profile: player-bootstrap
+    type: gameplay_bootstrap_user
+    issuer: firemud-account-service
     audience: player-bootstrap
-    kind: gameplay_bootstrap_user
   - profile: gameplay-connect
+    type: gameplay_handshake
+    issuer: firemud-account-service
     audience: gameplay-connect
-    kind: gameplay_handshake
   - profile: game-session-account-delegation
+    type: private_player_delegation
+    issuer: firemud-account-service
     audience: account-service
-    kind: private_player_delegation
 auth_path_vocabulary:
+  - control_ui_plus_current_role_and_role_appropriate_assurance
+  - control_ui_plus_current_tenant_role
+  - control_ui_plus_recent_reauthentication_and_independent_totp
   - exact_mtls_workload
   - exact_mtls_workload_plus_caller_specific_context
   - exact_mtls_workload_plus_current_token_generation
+  - exact_mtls_workload_plus_forwarded_control_ui
+  - exact_mtls_workload_plus_account_operator_authorization_reference
+  - exact_mtls_workload_plus_versioned_automation_policy
   - game_session_authenticated_context
   - gameplay_connect
   - gameplay_connect_cookie_revoke
+  - pending_deletion_access
   - player_bootstrap
 internal_workload_rules:
   caller_constraints: all_declared_constraints_must_pass
@@ -43,30 +107,190 @@ route_authentication_rules:
   accepted_token_profile_audiences:
     multi_profile_routes: exact_profile_to_audience_map_required
     audience_source: token_profiles
+  differing_profile_predicates:
+    multi_profile_routes: exact_profile_to_type_and_issuer_maps_required
+    type_source: token_profiles
+    issuer_source: token_profiles
+receiver_predicate_contract:
+  token_profile: exact_registered_profile_or_none
+  token_type: exact_registered_type_or_none
+  token_issuer: exact_account_issuer_or_none
+  token_audience: exact_registered_audience_or_none
+  mtls_caller: concrete_certificate_identity_for_internal_methods
+  method_policy_rule: exact_declared_route_and_caller_policy
+tenant_generation_policy:
+  applies_by_default: true
+  exception_allowlist:
+    billing_safe_tenant:
+      target_tenant_generation: false
+      required_authority: [issuer_generation, account_generation, membership_generation, membership, current_operator_roles]
+    cross_tenant_support_safe:
+      target_tenant_generation: false
+      required_authority: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
+      role_assurance_policy: privileged_control_when_global_role
+    cross_tenant_billing_safe:
+      target_tenant_generation: false
+      required_authority: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
+      role_assurance_policy: privileged_control_when_global_role
+  no_target_tenant_classifications:
+    public:
+      target_tenant_generation: false
+      generation_behavior: no_tenant_authority
+      required_authority: []
+      contract_justification: Public routes do not authorize a target tenant; unauthenticated routes accept no JWT, and token-issuing routes issue only the exact registered profile declared by the route.
+      target_tenant_generation_advance_behavior: remains_valid
+    account_scoped:
+      target_tenant_generation: false
+      generation_behavior: issuer_and_account_authority_only
+      required_authority: [issuer_generation, account_generation]
+      contract_justification: Account-scoped routes bind authority to the caller account and never authorize a target tenant; target-tenant generation is therefore not an input to these account-owned operations.
+      target_tenant_generation_advance_behavior: remains_valid
+    caller_membership_scoped:
+      target_tenant_generation: false
+      generation_behavior: caller_membership_authority_only
+      required_authority: [membership, membership_generation]
+      contract_justification: Caller-membership routes authorize only the caller's existing account-to-tenant relationship; membership authority is live and target-tenant generation is not an authority input.
+      target_tenant_generation_advance_behavior: remains_valid
+    player_bootstrap_tenant:
+      target_tenant_generation: false
+      generation_behavior: membership_authority_when_route_requires_existing_membership
+      required_authority: [membership, membership_generation]
+      contract_justification: Player-bootstrap routes use caller-bound membership and gameplay admission evidence where required, but bootstrap authority does not become target-tenant authority or inherit a target-tenant generation fence.
+      target_tenant_generation_advance_behavior: remains_valid
+    pre_tenant_discovery:
+      target_tenant_generation: false
+      generation_behavior: no_tenant_or_membership_authority
+      required_authority: []
+      contract_justification: Pre-tenant discovery runs before a single tenant is selected and derives visibility from the authenticated account context and public or entitlement evidence, so no tenant authority generation applies.
+      target_tenant_generation_advance_behavior: remains_valid
+    public_production_onboarding:
+      target_tenant_generation: false
+      generation_behavior: membership_authority_after_membership_exists
+      required_authority: [membership, membership_generation]
+      contract_justification: Public-production onboarding may validate or create caller-bound membership before normal gameplay admission, but it never authorizes through target-tenant generation; post-join actions use their declared membership authority.
+      target_tenant_generation_advance_behavior: remains_valid
+    internal_workload:
+      target_tenant_generation: false
+      generation_behavior: route_declared_caller_and_target_authority
+      required_authority: []
+      contract_justification: Internal workload routes have no inherited tenant authority; each exact mTLS and delegated-authority route declares whether caller, tenant, membership, or target-tenant generations apply.
+      target_tenant_generation_advance_behavior: route_declared
+    pending_deletion_scoped:
+      target_tenant_generation: false
+      generation_behavior: pending_deletion_credential_only
+      issuer_authority_generation_applies: false
+      account_authority_generation_applies: false
+      tenant_billing_authority_generation_applies: false
+      membership_authority_generation_applies: false
+      required_authority: [pending_deletion_state, pending_deletion_credential_registry]
+      contract_justification: Dedicated Account-issued opaque pending-deletion credentials are bound to the account and deletion workflow; issuer, account, tenant, and membership generations are not authority inputs for these account-owned recovery actions.
+      target_tenant_generation_advance_behavior: denied_by_pending_deletion_credential_contract
+      negative_proof:
+        required:
+          - pending_deletion_route_denied_after_target_tenant_generation_advance
+  negative_proof:
+    tenant_authority_classifications: [tenant_regular, cross_tenant_data_bearing]
+    required:
+      - non_allowlisted_route_denied_after_target_tenant_generation_advance
+      - billing_safe_tenant_denied_without_exact_membership_generation_and_live_tenant_admin
+      - support_safe_denied_without_live_support_or_platform_admin_and_global_scope
+      - support_safe_denied_without_role_appropriate_assurance
+      - support_safe_support_branch_does_not_require_privileged_control
+      - support_safe_platform_admin_branch_denied_without_privileged_control
+      - billing_safe_denied_without_live_billing_admin_or_platform_admin_and_privileged_control
+      - new_route_class_does_not_inherit_exception
+tenant_membership_policy:
+  tenant_owned_writes_require_existing_membership: true
+  public_production_join_exception:
+    classification: public_production_onboarding
+    membership_creation: caller_bound_after_validation
+    required_pre_membership_checks:
+      [public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, idempotency]
+    routes:
+      - [game-session-service, JOIN]
+      - [account-service, POST /auth/bootstrap/join]
+      - [account-service, EnsurePublicProductionPlayerMembership]
+authority_evidence_policy:
+  fail_closed_fresh_evidence:
+    applies_to: [admission, play, renewal, reconnect, resume, protected_control_plane_mutation]
+    unreachable_or_timeout: AUTH_UNAVAILABLE
+    reachable_invalid_or_ambiguous: AUTH_SESSION_REVOKED
+  bound_ordinary_gameplay:
+    applies_to: already_bound_instance_runtime
+    strict_registry_middleware: false
+    authority_generation_reread: false
+    pointer_authority_reread: false
+    required_fences: [bound_game_instance, runtime_fence]
+    continuity: existing_validated_bounded_lease_only
+entitlement_contract:
+  owner: account-service
+  binding: exact_tenant_id
+  response_authority: tenant_bound_entitlement_version
+  cross_tenant_inheritance: forbidden
+  account_wide_fallback: forbidden
 required_live_check_vocabulary:
+  # Captured in a private delegation and compared by the receiving owner.
   - account_generation
+  - account_owned_wallet_customer_mapping
+  - account_state_bootstrap_eligible
+  - account_state_login_eligible
   - admission_pointer
   - browser_origin
+  - capacity_admission_fence
+  - cancellation_window
   - conditional_realm_access_grant
   - connect_scope_match
   - connect_token_single_use_consume
   - csrf
+  # Live Account-owned generation reread for control-plane authority.
+  - current_account_generation
+  - current_account_roles
+  - current_automation_policy
+  - current_global_role
+  - current_operator_authorization
+  - current_operator_roles
+  - current_session
   - current_token_generation
+  - billing_ownership_transfer
+  - expected_pointer_version
+  - explicit_deletion_confirmation
+  - export_availability
+  - explicit_per_subscription_binding
   - grant_version
+  - idempotency
+  - independent_totp
   - issuer_generation
   - membership
   - membership_generation
+  - membership_when_tenant_role
+  - moderation_report_policy
+  - billing_deletion_clearance
+  - pending_deletion_credential_registry
+  - pending_deletion_state
+  - prepared_version_upgrade
+  - prepared_version_upgrade_when_target_changes
   - public_production_admission
   - public_production_visibility
   - realm_visibility
+  - recent_account_authentication
+  - recovery_resume_gate
   - replay_admission_fence_match
   - replay_protection_available
+  - role_appropriate_assurance
   - runtime_entitlements
+  - runtime_ownership
+  - safe_instrument_detachment
+  - settlement_scope
+  - target_tenant_generation
   - tenant_generation
   - trusted_proxy_identity
+  - workload_action_scope
 implementation_status:
   known_drift:
-    - public_production_membership_may_be_created_implicitly_by_connect_token_or_play
+    - public_production_membership_is_created_implicitly_by_connect_token_or_play_in_current_runtime; this violates the explicit_join_security_contract and affected admission must fail closed in the target state
+    - privileged_control_is_target_only_and_unavailable_in_current_runtime; platformAdmin_and_cross_tenant_billingAdmin_branches_requiring_it_fail_closed_while_the_support_branch_does_not_require_it
+    - operator_mutation_rows_are_normative_target_contracts_not_current_availability; action_schema_mutationDigest_v1_vectors_and_account_issued_authorization_reference_flow_are_required_before_external_support
+    - game_session_sessions_routes_are_current_owner_local_hooks; target_external_lifecycle_ingress_is_logging_admin_forwarding_and_no_complete_external_family_exists
 classifications:
   - public
   - account_scoped
@@ -80,20 +304,273 @@ classifications:
   - cross_tenant_billing_safe
   - cross_tenant_data_bearing
   - internal_workload
+  - pending_deletion_scoped
+route_class_branch_table:
+  - classification: account_scoped
+    branch: platformAdmin_global
+    scope: account
+    role: platformAdmin
+    generations:
+      issuer: required
+      account: required
+      tenant: omitted
+      membership: omitted
+    privileged_control: required
+  - classification: tenant_regular
+    branch: tenant_role
+    scope: tenant
+    role: route_declared_tenant_role
+    generations:
+      issuer: required
+      account: required
+      tenant: required
+      membership: required
+    privileged_control: not_required
+  - classification: tenant_regular
+    branch: platformAdmin_global
+    scope: tenant
+    role: platformAdmin
+    generations:
+      issuer: required
+      account: required
+      tenant: target_tenant_generation
+      membership: omitted
+    privileged_control: required
+  - classification: cross_tenant_data_bearing
+    branch: platformAdmin_global
+    scope: cross_tenant
+    role: platformAdmin
+    generations:
+      issuer: required
+      account: required
+      tenant: target_tenant_generation
+      membership: omitted
+    privileged_control: required
+  - classification: billing_safe_tenant
+    branch: tenantAdmin
+    scope: tenant
+    role: tenantAdmin
+    generations:
+      issuer: required
+      account: required
+      tenant: omitted
+      membership: required
+    privileged_control: not_required
+  - classification: cross_tenant_support_safe
+    branch: support_global
+    scope: cross_tenant
+    role: support
+    generations:
+      issuer: required
+      account: required
+      tenant: omitted
+      membership: omitted
+    privileged_control: not_required
+  - classification: cross_tenant_support_safe
+    branch: platformAdmin_global
+    scope: cross_tenant
+    role: platformAdmin
+    generations:
+      issuer: required
+      account: required
+      tenant: omitted
+      membership: omitted
+    privileged_control: required
+  - classification: cross_tenant_billing_safe
+    branch: billingAdmin_global
+    scope: cross_tenant
+    role: billingAdmin
+    generations:
+      issuer: required
+      account: required
+      tenant: omitted
+      membership: omitted
+    privileged_control: required
+  - classification: cross_tenant_billing_safe
+    branch: platformAdmin_global
+    scope: cross_tenant
+    role: platformAdmin
+    generations:
+      issuer: required
+      account: required
+      tenant: omitted
+      membership: omitted
+    privileged_control: required
+role_assurance:
+  privileged_control_when_global_role:
+    resolution: role_specific_global_role_assurance
+    applies_when: caller_authorizes_via_global_role
+    requirements:
+      platformAdmin:
+        role_check: current_global_role
+        elevation_contract: privileged_control
+        applies_to:
+          route_classifications: [account_scoped, tenant_regular, cross_tenant_support_safe, cross_tenant_billing_safe, cross_tenant_data_bearing]
+          route_identities:
+            - account-service/IssueHumanOperatorAuthorizationReference
+      billingAdmin:
+        role_check: current_global_role
+        elevation_contract: privileged_control
+        applies_to:
+          route_classifications: [cross_tenant_billing_safe]
+      support:
+        role_check: current_global_role
+        elevation_contract: none
+        applies_to:
+          route_classifications: [cross_tenant_support_safe]
+elevation_contracts:
+  privileged_control:
+    entry_route: account-service/EnterPrivilegedControlWindow
+    accepted_token_profile: control-ui
+    factor: independent_totp
+    state: server_side_role_scoped_window
+    required_bindings: [account_id, token_jti, account_generation, requested_global_role, issued_at, expires_at]
+    invalidated_by: [token_revocation, account_generation_change, role_loss, expiry]
+    bootstrap_exemption:
+      route: account-service/EnterPrivilegedControlWindow
+      privileged_control: establishes_window
+      requires_existing_window: false
+    implementation_status:
+      known_drift:
+        - EnterPrivilegedControlWindow is not currently routable or implemented; route branches requiring the window fail closed, and platformAdmin cannot currently obtain it.
+pending_deletion_contract:
+  validator: account_service_pending_deletion_credential_validator
+  credential: pending-deletion-access
+  registry: account-owned_server-side_pending_deletion_credential_registry
+  binding: [account_id, deletion_workflow_id, deletion_workflow_generation, action_family, issued_at, expires_at]
+  allowed_actions: [status, cancel, export, necessary_billing_settlement]
+  normal_authority: rejected
+  rejection:
+    invalid_expired_or_revoked: AUTH_SESSION_REVOKED
+    binding_mismatch_or_wrong_workflow_state: AUTH_SESSION_REVOKED
+    unavailable_credential_or_workflow_authority: AUTH_UNAVAILABLE
+    account_state_disclosure: prohibited
+unauthenticated_recovery_contract:
+  account_state_disclosure: prohibited
+  state_or_credential_rejection: uniform_response_without_auth_error
+  authority_unavailable: AUTH_UNAVAILABLE
+operator_delegation:
+  issuer_service: account-service
+  credential: opaque_bounded_operator_authorization_reference
+  registry: account-owned_server-side_operator_authorization_registry
+  issuance_paths:
+    human:
+      auth_path: exact_mtls_workload_plus_forwarded_control_ui
+      issued_token_state: current_exact_active_control_ui_registry_record
+      bindings:
+        [actor_account_id, control_ui_jti, account_generation, role, tenant_scope, action_family, action_family_schema_id, action_family_schema_version, mutation_digest, membership_version_when_applicable, issuance_fence, authority_evidence_bundle, control_plane_request_id, issued_at, expires_at]
+    unattended_automation:
+      auth_path: exact_mtls_workload_plus_versioned_automation_policy
+      bindings:
+        [workload_identity, automation_policy_id, automation_policy_version, tenant_scope, action_family, action_family_schema_id, action_family_schema_version, mutation_digest, membership_version_when_applicable, issuance_fence, authority_evidence_bundle, control_plane_request_id, issued_at, expires_at]
+      user_impersonation_forbidden: true
+  typed_mutation_contract:
+    schema_pair: [action_family_schema_id, action_family_schema_version]
+    digest: mutationDigest/v1
+    bounded_input_layers: [raw, normalized]
+    validation_before_issuance_or_forwarding:
+      - typed_scope_target_expected_version_mutation_and_audit_reason
+      - explicit_presence_or_absence
+      - published_schema_and_cross_language_golden_vectors
+      - raw_and_normalized_limits
+    authority_evidence_bundle:
+      issuer: account-service
+      contents: [authority_scope, applicable_generations, membership_version_when_applicable, issuance_fence, source_transaction_or_outbox_version, projection_status_and_freshness, issuance_operation_identity]
+      caller_assertions_are_not_authority: true
+  issuance_idempotency:
+    key: [control_plane_request_id, action_family_schema_id, action_family_schema_version, mutation_digest, exact_scope, authority_path_binding]
+    exact_retry: same_reference_or_same_terminal_outcome
+    changed_tuple: IDEMPOTENCY_CONFLICT
+    ambiguous_response: read_only_reconcile_same_request_without_replacement_reference
+    raw_reference_persistence: encrypted_bounded_response_only
+  forwarded_by: logging-admin-service
+  redeemed_by: owner_service_with_account_validation
+  assertions_alone_are_not_authority: true
+coverage_drift:
+  - family: quota-override
+    status: drift-found
+    current_routes: []
+    target_ingress: logging-admin-service
+    target_owner: account-service
+    note: No current OpenAPI or owner-side quota-override route exists; do not add an executable route entry until the Account contract exists.
+  - family: moderation-enforcement-owner-call
+    status: drift-found
+    current_routes: []
+    target_ingress: logging-admin-service
+    target_owner: account-service_or_gameplay_policy_owner
+    note: ApplyModerationAction has an implementation path for policy input, but POST /moderation/actions and the gRPC action are unavailable/gated pending the action schema, shared mutationDigest/v1 vectors, and Account authorization-reference issuance/redemption flow; no current owner-side enforcement RPC is exposed.
+  - family: game-session-session-lifecycle-external-ingress
+    status: drift-found
+    current_ingress: game-session-service_owner_local_only
+    current_routes:
+      - POST /sessions
+      - POST /sessions/{sessionId}/stop
+      - POST /sessions/{sessionId}/restart
+      - POST /sessions/{sessionId}/refresh-roles
+    target_ingress: logging-admin-service
+    target_owner: game-session-service
+    owner_routes:
+      - POST /sessions
+      - POST /sessions/{sessionId}/stop
+      - POST /sessions/{sessionId}/restart
+      - POST /sessions/{sessionId}/refresh-roles
+    note: The listed current routes are Game Session owner-local hooks, not the canonical external ingress. Logging and Admin has no complete current /sessions* external route family in its source-stable OpenAPI surface; the owner-local hooks remain explicitly edge-denied and migrate to Logging and Admin, so do not invent external routes or claim the family covered until that contract exists.
+  - family: commerce-payment-instrument
+    status: drift-found
+    current_routes: []
+    linked_decision: ADR-0044
+    target_owner: account-service
+    absent_contracts:
+      [account_owned_wallet_customer_mapping, explicit_per_subscription_binding, safe_instrument_detachment, billing_ownership_transfer]
+    target_routes:
+      - route: PaymentInstrumentWalletAccount
+        scope: account
+        classification: account_scoped
+        route_status: target_not_currently_routable
+        accepted_token_profiles: [control-ui]
+        subject_binding: current_billing_owner_account_id
+        required_live_checks: [recent_account_authentication, account_owned_wallet_customer_mapping, explicit_per_subscription_binding, safe_instrument_detachment, billing_ownership_transfer]
+        mutation_contract: billing_owner_authorized_per_subscription_binding_replacement_before_detach_and_audited_ownership_transfer
+      - route: PaymentInstrumentWalletCrossTenant
+        scope: cross_tenant
+        classification: cross_tenant_billing_safe
+        route_status: target_not_currently_routable
+        accepted_token_profiles: [control-ui]
+        role_assurance: privileged_control_when_global_role
+        roles: [billingAdmin, platformAdmin]
+        target_binding: explicit_target_account_and_affected_subscription_ids
+        required_fields: [control_plane_request_id, target_account_id, affected_subscription_ids, new_billing_owner_account_id, replacement_payment_instrument_bindings, expected_subscription_row_versions, effective_boundary, reason]
+        required_live_checks: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance, account_owned_wallet_customer_mapping, explicit_per_subscription_binding, safe_instrument_detachment, billing_ownership_transfer]
+        audit_contract: required_cross_tenant_actor_scope_reason_and_outcome
+        forbidden_authority: [tenant_membership, shared_instrument_acknowledgement]
+        mutation_contract: audited_cross_tenant_billing_owner_transfer_with_verified_provider_replacement_before_cutover
+    note: Payment/subscription foundations exist, but the ADR-0044 wallet and payment-instrument contract is not currently routable.
 routes:
   - service: game-session-service
     route: LOGIN
     scope: public
     classification: public
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
   - service: game-session-service
     route: LOGON
     scope: public
     classification: public
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
   - service: game-session-service
     route: WORLDS_PUBLIC
     transport_command: WORLDS
     scope: public
     classification: public
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
     applicability:
       all_of:
         - authentication_state: unauthenticated
@@ -109,6 +586,9 @@ routes:
         - authentication_state: authenticated
     auth_path: game_session_authenticated_context
     accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
     delegated_subject: authenticated_session_account
     visibility_contract: membership_or_public_production_visibility
     required_live_checks: [public_production_visibility, runtime_entitlements]
@@ -118,6 +598,9 @@ routes:
     classification: public_production_onboarding
     auth_path: game_session_authenticated_context
     accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
     delegated_subject: authenticated_session_account
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
@@ -131,39 +614,49 @@ routes:
     classification: public_production_onboarding
     auth_path: game_session_authenticated_context
     accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
     delegated_subject: authenticated_session_account
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
-    required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements]
+    required_live_checks: [membership, membership_generation, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED]
+      any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE]
   - service: game-session-service
     route: JOIN
     scope: tenant
     classification: public_production_onboarding
     auth_path: game_session_authenticated_context
     accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
     delegated_subject: authenticated_session_account
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
-    required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
+    required_live_checks: [public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, idempotency]
     canonical_errors:
       any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, TENANT_BILLING_BLOCKED]
     mutation_contract: explicit_public_membership_atomic
+    membership_creation: caller_bound_after_validation
   - service: game-session-service
     route: PLAY
     scope: tenant
     classification: public_production_onboarding
     auth_path: game_session_authenticated_context
     accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
     delegated_subject: authenticated_session_account
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
-    required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
+    required_live_checks: [membership, membership_generation, public_production_admission, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
     canonical_errors:
       any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE]
     canonical_target:
@@ -172,7 +665,7 @@ routes:
       missing_membership_error: JOIN_REQUIRED
     implementation_status:
       known_drift:
-        - connect_token_and_play_may_still_invoke_ensure_public_production_player_membership
+        - current_runtime_invokes_ensure_public_production_player_membership_from_connect_token_or_play; this is a live security_contract_violation and affected admission must fail closed until existing membership is required
   - service: spring-cloud-gateway
     route: /ws/game/**
     scope: tenant
@@ -186,10 +679,24 @@ routes:
     accepted_token_profiles: [gameplay-connect]
     accepted_token_profile_audiences:
       gameplay-connect: gameplay-connect
+    token_type: gameplay_handshake
+    token_issuer: firemud-account-service
+    token_audience: gameplay-connect
+    issued_token_state: none_bounded_single_use_replay_exception
+    issuer_authority_generation_applies: false
+    account_authority_generation_applies: false
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
     accepted_carriers: [first_party_cookie, classified_non_browser_header]
     edge_consumer: spring_cloud_gateway_public_non_proxy_websocket
     connect_context_output: signed_connect_context
     required_live_checks: [connect_token_single_use_consume, replay_protection_available, replay_admission_fence_match, connect_scope_match]
+    downstream_admission_contract:
+      owner: game-session-service
+      tenant_billing_authority_generation_applies: false
+      membership_authority_generation_applies: true
+      required_live_checks: [membership, membership_generation, public_production_admission, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
+      membership_creation: explicit_join_only
     handshake_error_classes:
       any_of:
         - CONNECT_TOKEN_MISSING
@@ -212,13 +719,26 @@ routes:
         - connection_mode: trusted_tcp_proxy
         - listener: internal_mtls
     auth_path: exact_mtls_workload
+    issued_token_state: none
     accepted_token_profiles: []
     accepted_carriers: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/tcp-proxy-service"]
+    end_user_token_required: false
     edge_consumer: spring_cloud_gateway_internal_mtls_websocket
     connect_context_output: trusted_tcp_proxy_mode
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
     required_live_checks: [trusted_proxy_identity]
+    downstream_admission_contract:
+      owner: game-session-service
+      tenant_billing_authority_generation_applies: false
+      membership_authority_generation_applies: true
+      required_live_checks: [membership, membership_generation, public_production_admission, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
+      membership_creation: explicit_join_only
     handshake_error_classes:
       any_of: [POLICY_DENY, BACKEND_UNAVAILABLE, PROTOCOL_MISMATCH, INTERNAL_ERROR]
   - service: spring-cloud-gateway
@@ -233,20 +753,33 @@ routes:
     accepted_token_profiles: [gameplay-connect]
     accepted_token_profile_audiences:
       gameplay-connect: gameplay-connect
+    token_type: gameplay_handshake
+    token_issuer: firemud-account-service
+    token_audience: gameplay-connect
+    issued_token_state: none_bounded_single_use_replay_exception
+    issuer_authority_generation_applies: false
+    account_authority_generation_applies: false
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
     accepted_carriers: [first_party_cookie]
     cookie_absence_outcome: idempotent_success
+    account_prerequisite: exact_token_tombstone_and_issuance_token_identity_fence_committed
+    deny_marker: bounded_when_token_present
+    caller_readable_token_accepted: false
     edge_consumer: spring_cloud_gateway_http
     required_live_checks: [browser_origin, csrf]
     canonical_errors:
       any_of: [CONNECT_TOKEN_REJECTED, POLICY_DENY, INTERNAL_ERROR]
-    implementation_status:
-      target_only: true
+    route_status: target_not_currently_routable
   - service: account-service
     route: GET /auth/bootstrap/worlds
     scope: account
     classification: pre_tenant_discovery
     auth_path: player_bootstrap
     accepted_token_profiles: [player-bootstrap]
+    token_type: gameplay_bootstrap_user
+    token_issuer: firemud-account-service
+    token_audience: player-bootstrap
     subject_binding: caller_account_id
     visibility_contract: membership_or_public_production_visibility
     required_live_checks: [public_production_visibility, runtime_entitlements]
@@ -256,6 +789,9 @@ routes:
     classification: public_production_onboarding
     auth_path: player_bootstrap
     accepted_token_profiles: [player-bootstrap]
+    token_type: gameplay_bootstrap_user
+    token_issuer: firemud-account-service
+    token_audience: player-bootstrap
     subject_binding: caller_account_id
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
@@ -269,13 +805,16 @@ routes:
     classification: public_production_onboarding
     auth_path: player_bootstrap
     accepted_token_profiles: [player-bootstrap]
+    token_type: gameplay_bootstrap_user
+    token_issuer: firemud-account-service
+    token_audience: player-bootstrap
     subject_binding: caller_account_id
     target_binding: opaque_server_issued_connect_scope_id_matches_route
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
-    required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match]
+    required_live_checks: [membership, membership_generation, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match]
     canonical_errors:
       any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH]
   - service: account-service
@@ -284,91 +823,387 @@ routes:
     classification: public_production_onboarding
     auth_path: player_bootstrap
     accepted_token_profiles: [player-bootstrap]
+    token_type: gameplay_bootstrap_user
+    token_issuer: firemud-account-service
+    token_audience: player-bootstrap
     subject_binding: caller_account_id
     target_binding: opaque_server_issued_connect_scope_id_matches_route
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
-    required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match]
+    required_live_checks: [membership, membership_generation, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match]
     canonical_errors:
       any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH]
     delegates_to: entity-management-service/CreateCharacter
   - service: game-session-service
     route: StartSession
+    transport: grpc
     scope: tenant
-    classification: tenant_regular
-    tenant_billing_authority_generation_applies: true
-    membership_authority_generation_applies: true
-    required_live_checks: [runtime_entitlements]
-    accepted_token_profiles: [control-ui]
-    roles:
-      any_of: [tenantAdmin, platformAdmin]
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [logging-admin-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
+    end_user_token_required: false
+    canonical_external_ingress: logging-admin-service
+    direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
+    delegated_subject: operator_authorization_reference
+    operator_authorization_reference: required_and_redeemed_with_account
+    required_live_checks: [current_operator_authorization, runtime_entitlements]
+    mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
+    required_fields: [control_plane_request_id, actor, reason, tenant_id, mutation_digest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
     route: RestartSession
+    transport: grpc
     scope: tenant
-    classification: tenant_regular
-    tenant_billing_authority_generation_applies: true
-    membership_authority_generation_applies: true
-    required_live_checks: [runtime_entitlements]
-    accepted_token_profiles: [control-ui]
-    roles:
-      any_of: [tenantAdmin, platformAdmin]
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [logging-admin-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
+    end_user_token_required: false
+    canonical_external_ingress: logging-admin-service
+    direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
+    delegated_subject: operator_authorization_reference
+    operator_authorization_reference: required_and_redeemed_with_account
+    required_live_checks: [current_operator_authorization, runtime_entitlements, runtime_ownership]
+    mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
+    required_fields: [control_plane_request_id, actor, reason, session_id, mutation_digest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
   - service: game-session-service
     route: StopSession
+    transport: grpc
+    scope: tenant
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [logging-admin-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
+    end_user_token_required: false
+    canonical_external_ingress: logging-admin-service
+    direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
+    delegated_subject: operator_authorization_reference
+    operator_authorization_reference: required_and_redeemed_with_account
+    required_live_checks: [current_operator_authorization, runtime_ownership]
+    mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
+    required_fields: [control_plane_request_id, actor, reason, session_id, mutation_digest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
+  - service: game-session-service
+    route: RefreshRoles
+    transport: grpc
+    scope: tenant
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [logging-admin-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
+    end_user_token_required: false
+    canonical_external_ingress: logging-admin-service
+    direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
+    delegated_subject: operator_authorization_reference
+    operator_authorization_reference: required_and_redeemed_with_account
+    required_live_checks: [current_operator_authorization, current_session, current_account_roles]
+    mutation_contract: owner_atomic_idempotent_role_refresh_with_durable_result
+    required_fields: [control_plane_request_id, actor, reason, session_id, mutation_digest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
+  - service: game-session-service
+    route: POST /sessions
+    transport: http
     scope: tenant
     classification: tenant_regular
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
+    route_status: current_openapi_operator_surface
     tenant_billing_authority_generation_applies: true
-    membership_authority_generation_applies: true
-    required_live_checks: [runtime_entitlements]
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
     accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    subject_binding: authenticated_operator
+    canonical_external_ingress: logging-admin-service
+    direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
+    required_live_checks: [current_operator_authorization, runtime_entitlements]
+    operator_authorization_branches:
+      - branch: tenant_role
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
+      - branch: platformAdmin_global
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
+    global_platform_admin_membership_required: false
+    global_platform_admin_reference_generation_binding: target_tenant_generation
+    mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
+    required_fields: [control_plane_request_id, actor_from_session, reason, tenant_id, mutation_digest]
+    operator_authorization_reference: account_issued_bounded_reference
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: game-session-service
-    route: RefreshRoles
+    route: POST /sessions/{sessionId}/stop
+    transport: http
     scope: tenant
     classification: tenant_regular
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
+    route_status: current_openapi_operator_surface
     tenant_billing_authority_generation_applies: true
-    membership_authority_generation_applies: true
-    # Refreshes security/role state only; it does not admit gameplay or expand runtime capacity.
-    required_live_checks: []
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
+    # Stops the targeted game instance after current runtime ownership validation.
     accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    subject_binding: authenticated_operator
+    canonical_external_ingress: logging-admin-service
+    direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
+    required_live_checks: [current_operator_authorization, runtime_ownership]
+    operator_authorization_branches:
+      - branch: tenant_role
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
+      - branch: platformAdmin_global
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
+    global_platform_admin_membership_required: false
+    global_platform_admin_reference_generation_binding: target_tenant_generation
+    mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
+    required_fields: [control_plane_request_id, actor_from_session, reason, session_id, mutation_digest]
+    operator_authorization_reference: account_issued_bounded_reference
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
+    roles:
+      any_of: [tenantAdmin, platformAdmin]
+  - service: game-session-service
+    route: POST /sessions/{sessionId}/restart
+    transport: http
+    scope: tenant
+    classification: tenant_regular
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
+    route_status: current_openapi_operator_surface
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    subject_binding: authenticated_operator
+    canonical_external_ingress: logging-admin-service
+    direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
+    required_live_checks: [current_operator_authorization, runtime_entitlements, runtime_ownership]
+    operator_authorization_branches:
+      - branch: tenant_role
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
+      - branch: platformAdmin_global
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
+    global_platform_admin_membership_required: false
+    global_platform_admin_reference_generation_binding: target_tenant_generation
+    mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
+    required_fields: [control_plane_request_id, actor_from_session, reason, session_id, mutation_digest]
+    operator_authorization_reference: account_issued_bounded_reference
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
+    roles:
+      any_of: [tenantAdmin, platformAdmin]
+  - service: game-session-service
+    route: POST /sessions/{sessionId}/refresh-roles
+    transport: http
+    scope: tenant
+    classification: tenant_regular
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
+    route_status: current_openapi_operator_surface
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    subject_binding: authenticated_operator
+    canonical_external_ingress: logging-admin-service
+    direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
+    required_live_checks: [current_operator_authorization, current_account_roles, current_session]
+    operator_authorization_branches:
+      - branch: tenant_role
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
+      - branch: platformAdmin_global
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
+    operator_authorization_reference: account_issued_bounded_reference
+    required_fields: [control_plane_request_id, actor_from_session, reason, session_id, mutation_digest]
+    global_platform_admin_membership_required: false
+    global_platform_admin_reference_generation_binding: target_tenant_generation
+    mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: account-service
     route: AuthLogin
     scope: public
     classification: public
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
     issued_token_profile: control-ui
     issued_token_audience: control-ui
     implementation_status:
       known_drift:
         - current_issuance_uses_legacy_scope_duplicated_session_keys_instead_of_single_token_registry
+    required_live_checks: [account_state_login_eligible]
   - service: account-service
     route: PlayerBootstrapLogin
     scope: public
     classification: public
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
     issued_token_profile: player-bootstrap
     issued_token_audience: player-bootstrap
     implementation_status:
       known_drift:
         - current_issuance_uses_legacy_scope_duplicated_session_keys_instead_of_single_token_registry
+    required_live_checks: [account_state_bootstrap_eligible]
+  - service: account-service
+    route: EnterPrivilegedControlWindow
+    scope: account
+    classification: account_scoped
+    route_status: target_not_currently_routable
+    auth_path: control_ui_plus_recent_reauthentication_and_independent_totp
+    subject_binding: caller_account_id
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    required_fields: [requested_global_role]
+    privileged_control: establishes_window
+    required_live_checks:
+      [recent_account_authentication, independent_totp, current_account_generation, current_global_role, current_token_generation]
+    mutation_contract: create_bounded_server_side_role_elevation_bound_to_current_token
+  - service: account-service
+    route: IssueHumanOperatorAuthorizationReference
+    transport: grpc
+    scope: tenant_or_global
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload_plus_forwarded_control_ui
+    accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    method_policy: exact_declared_route
+    end_user_token_required: true
+    delegated_subject: forwarded_human_operator_control_ui_token
+    allowed_callers:
+      any_of: [logging-admin-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
+    required_live_checks: [current_account_generation, current_token_generation]
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
+    role_assurance: privileged_control_when_global_role
+    operator_authorization_branches:
+      - branch: tenant_role
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
+      - branch: platformAdmin_global
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
+    global_platform_admin_membership_required: false
+    global_platform_admin_reference_generation_binding: target_tenant_generation
+    required_fields: [tenant_scope, action_family, action_family_schema_id, action_family_schema_version, control_plane_request_id, mutation_digest]
+    mutation_contract: create_bounded_human_operator_authorization_reference
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
+  - service: account-service
+    route: IssueAutomationOperatorAuthorizationReference
+    transport: grpc
+    scope: tenant_or_global
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload_plus_versioned_automation_policy
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [logging-admin-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
+    end_user_token_required: false
+    required_live_checks: [current_automation_policy, workload_action_scope, tenant_generation]
+    required_fields: [automation_policy_id, automation_policy_version, tenant_scope, action_family, action_family_schema_id, action_family_schema_version, control_plane_request_id, mutation_digest]
+    automation_tenant_generation_binding: current_tenant_generation
+    automation_privileged_control: prohibited
+    mutation_contract: create_bounded_workload_operator_authorization_reference
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
   - service: account-service
     route: POST /auth/bootstrap/join
     scope: tenant
     classification: public_production_onboarding
     auth_path: player_bootstrap
     accepted_token_profiles: [player-bootstrap]
+    token_type: gameplay_bootstrap_user
+    token_issuer: firemud-account-service
+    token_audience: player-bootstrap
     subject_binding: caller_account_id
     target_binding: opaque_server_issued_connect_scope_id_matches_route
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
-    required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer, connect_scope_match]
+    required_live_checks: [account_state_bootstrap_eligible, pending_deletion_state, public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, connect_scope_match, idempotency]
     canonical_errors:
       any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, TENANT_BILLING_BLOCKED]
     mutation_contract: explicit_public_membership_atomic
-    implementation_status:
-      target_only: true
+    membership_creation: caller_bound_after_validation
+    route_status: target_not_currently_routable
   - service: account-service
     route: EnsurePublicProductionPlayerMembership
     target_route: JoinPublicProductionMembership
@@ -377,7 +1212,10 @@ routes:
     auth_path: exact_mtls_workload
     issued_token_state: none
     accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
     token_audience: none
+    method_policy: exact_declared_route
     allowed_callers:
       any_of: [game-session-service]
     mtls_callers:
@@ -385,22 +1223,26 @@ routes:
     delegated_subject: typed_player_execution_context
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
-    required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
+    required_live_checks: [account_state_bootstrap_eligible, pending_deletion_state, public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, idempotency]
     canonical_errors:
       any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, TENANT_BILLING_BLOCKED]
     mutation_contract: explicit_public_membership_atomic
+    membership_creation: caller_bound_after_validation
     implementation_status:
       known_drift:
-        - current_membership_seam_may_be_invoked_implicitly_by_connect_token_or_play
+        - current_runtime_invokes_membership_seam_implicitly_from_connect_token_or_play; this is a live security_contract_violation and affected admission must fail closed until explicit JOIN is the only membership writer
   - service: account-service
     route: DELETE /tenants/{tenantId}/memberships/me
     scope: tenant
     classification: caller_membership_scoped
     subject_binding: caller_account_id
     accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [membership]
+    required_live_checks: [membership, membership_generation]
     mutation_contract: caller_bound_membership_delete_generation_advance
   - service: account-service
     route: AuthLogout
@@ -411,6 +1253,12 @@ routes:
     accepted_token_profile_audiences:
       control-ui: control-ui
       player-bootstrap: player-bootstrap
+    accepted_token_profile_types:
+      control-ui: control_plane_user
+      player-bootstrap: gameplay_bootstrap_user
+    accepted_token_profile_issuers:
+      control-ui: firemud-account-service
+      player-bootstrap: firemud-account-service
     idempotent_retry_contract: exact_token_noop_after_durable_committed_tombstone
     implementation_status:
       known_drift:
@@ -424,60 +1272,256 @@ routes:
     accepted_token_profile_audiences:
       control-ui: control-ui
       player-bootstrap: player-bootstrap
+    accepted_token_profile_types:
+      control-ui: control_plane_user
+      player-bootstrap: gameplay_bootstrap_user
+    accepted_token_profile_issuers:
+      control-ui: firemud-account-service
+      player-bootstrap: firemud-account-service
     idempotent_retry_contract: superseded_token_noop_after_durable_logout_all_proof
     implementation_status:
       known_drift:
         - legacy_session_key_runtime_lacks_durable_logout_all_retry_proof
   - service: account-service
     route: GetProfile
-    scope: account
-    classification: account_scoped
-    subject_binding: caller_account_id_or_platform_admin
+    http_route: GET /tenants/{tenantId}/profiles/{accountId}
+    scope: tenant
+    classification: tenant_regular
+    auth_path: control_ui_plus_current_tenant_role
+    method_policy: exact_declared_route
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
+    subject_binding: caller_account_id_for_self_only_roles
+    self_only_roles: [player, moderator, designer]
+    target_subject_binding: same_tenant_profile_for_tenantAdmin
+    platform_admin_override: forbidden
     accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    required_live_checks: [membership, membership_generation, tenant_generation]
+    required_fields: [tenant_id, account_id]
     roles:
-      any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
+      any_of: [player, moderator, designer, tenantAdmin]
   - service: account-service
     route: UpdateProfile
-    scope: account
-    classification: account_scoped
-    subject_binding: caller_account_id_or_platform_admin
+    http_route: PUT /tenants/{tenantId}/profiles/{accountId}
+    scope: tenant
+    classification: tenant_regular
+    auth_path: control_ui_plus_current_tenant_role
+    method_policy: exact_declared_route
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
+    subject_binding: caller_account_id_for_self_only_roles
+    self_only_roles: [player, moderator, designer]
+    target_subject_binding: same_tenant_profile_for_tenantAdmin
+    platform_admin_override: forbidden
     accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    required_live_checks: [membership, membership_generation, tenant_generation]
+    required_fields: [tenant_id, account_id]
     roles:
-      any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
+      any_of: [player, moderator, designer, tenantAdmin]
   - service: account-service
     route: ExportAccount
+    http_route: GET /accounts/{accountId}/export
     scope: account
     classification: account_scoped
-    subject_binding: caller_account_id_or_platform_admin
+    subject_binding: caller_account_id
+    platform_admin_override: platformAdmin_only
     accepted_token_profiles: [control-ui]
-    response_profile: full_account_export
-    roles:
-      any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    required_live_checks: [recent_account_authentication]
+    account_authorization_branches:
+      - branch: self_service
+        target_subject_binding: exact_caller_account_id
+        required_live_checks: [current_account_generation]
+      - branch: platformAdmin_override
+        target_subject_binding: explicit_target_account_id
+        required_live_checks: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
+    response_profile: asynchronous_versioned_cross_owner_export_manifest
+    response_contract: reports_owner_completion_retries_omissions_and_policy_retention
+    implementation_status:
+      known_drift:
+        - Current implementation returns synchronous Account/profile-local data rather than the versioned cross-owner manifest.
+        - Current helper permits a broad global privileged role; the target cross-account override is platformAdmin-only.
   - service: account-service
     route: DeleteAccount
+    http_route: DELETE /accounts/{accountId}
     scope: account
     classification: account_scoped
-    subject_binding: caller_account_id_or_platform_admin
+    subject_binding: caller_account_id
+    platform_admin_override: platformAdmin_only
     accepted_token_profiles: [control-ui]
-    mutation_contract: account_delete_requires_no_nonterminal_owned_subscriptions
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    required_live_checks:
+      [recent_account_authentication, explicit_deletion_confirmation, export_availability, billing_deletion_clearance]
+    account_authorization_branches:
+      - branch: self_service
+        target_subject_binding: exact_caller_account_id
+        required_live_checks: [current_account_generation]
+      - branch: platformAdmin_override
+        target_subject_binding: explicit_target_account_id
+        required_live_checks: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
+    mutation_contract: pending_delete_advances_account_generation_then_runs_retryable_cross_owner_erasure
+    completion_contract: terminal_only_after_all_owner_steps_complete_or_policy_retained
     canonical_errors:
       any_of: [ACCOUNT_DELETE_ACTIVE_BILLING_OWNER]
-    roles:
-      any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
+    implementation_status:
+      known_drift:
+        - Current helper permits a broad global privileged role; the target cross-account override is platformAdmin-only.
+        - Current deletion admission proves only nonterminal owned subscriptions, not transfer participation or unresolved provider and durable billing work.
   - service: account-service
     route: LinkExternalAccount
+    http_route: POST /accounts/{accountId}/external
     scope: account
     classification: account_scoped
-    subject_binding: caller_account_id_or_platform_admin
+    route_status: current_openapi_operator_surface
+    subject_binding: caller_account_id
+    platform_admin_override: forbidden
     accepted_token_profiles: [control-ui]
-    roles:
-      any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    required_live_checks: [recent_account_authentication]
+    mutation_contract: verified_provider_identity_link_with_recent_reauthentication
+    implementation_status:
+      known_drift:
+        - Current route accepts tenant-scoped caller-asserted provider identity without provider callback verification; the target route is global-account scoped and must not grant tenant-role or platformAdmin override access.
+  - service: account-service
+    route: GET /accounts/{accountId}/deletion
+    scope: account
+    classification: pending_deletion_scoped
+    route_status: target_not_currently_routable
+    auth_path: pending_deletion_access
+    accepted_token_profiles: []
+    accepted_credentials: [pending-deletion-access]
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    subject_binding: pending_deletion_credential_account_id
+    issuer_authority_generation_applies: false
+    account_authority_generation_applies: false
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
+    pending_deletion_workflow_binding: required
+    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry]
+    response_profile: deletion_status_only
+    canonical_errors:
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
+  - service: account-service
+    route: POST /accounts/{accountId}/deletion/cancel
+    scope: account
+    classification: pending_deletion_scoped
+    route_status: target_not_currently_routable
+    auth_path: pending_deletion_access
+    accepted_token_profiles: []
+    accepted_credentials: [pending-deletion-access]
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    subject_binding: pending_deletion_credential_account_id
+    issuer_authority_generation_applies: false
+    account_authority_generation_applies: false
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
+    pending_deletion_workflow_binding: required
+    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, cancellation_window]
+    mutation_contract: cancel_deletion_revoke_pending_access_then_restore_normal_generation
+    canonical_errors:
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
+  - service: account-service
+    route: GET /accounts/{accountId}/deletion/export
+    scope: account
+    classification: pending_deletion_scoped
+    route_status: target_not_currently_routable
+    auth_path: pending_deletion_access
+    accepted_token_profiles: []
+    accepted_credentials: [pending-deletion-access]
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    subject_binding: pending_deletion_credential_account_id
+    issuer_authority_generation_applies: false
+    account_authority_generation_applies: false
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
+    pending_deletion_workflow_binding: required
+    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry]
+    response_profile: asynchronous_versioned_cross_owner_export_manifest
+    canonical_errors:
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
+  - service: account-service
+    route: POST /accounts/{accountId}/deletion/billing-settlement
+    scope: account
+    classification: pending_deletion_scoped
+    route_status: target_not_currently_routable
+    auth_path: pending_deletion_access
+    accepted_token_profiles: []
+    accepted_credentials: [pending-deletion-access]
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    subject_binding: pending_deletion_credential_account_id
+    issuer_authority_generation_applies: false
+    account_authority_generation_applies: false
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
+    pending_deletion_workflow_binding: required
+    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, settlement_scope]
+    response_profile: necessary_billing_settlement_only
+    canonical_errors:
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
+  - service: account-service
+    route: POST /auth/pending-deletion/recovery/challenge
+    scope: public
+    classification: public
+    route_status: target_not_currently_routable
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    recovery_contract: dedicated_pending_deletion_recovery_challenge_without_account_state_disclosure
+    account_state_disclosure: prohibited
+    response_profile: uniform_regardless_of_account_or_deletion_state
+    uniform_rejection: state_or_credential_rejection_uses_same_response_profile
+    canonical_errors:
+      any_of: [AUTH_UNAVAILABLE]
+  - service: account-service
+    route: POST /auth/pending-deletion/recovery
+    scope: public
+    classification: public
+    route_status: target_not_currently_routable
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    recovery_contract: consume_dedicated_challenge_and_issue_pending_deletion_access
+    issued_credential: pending-deletion-access
+    required_live_checks: [pending_deletion_state]
+    normal_login_or_gameplay_authority: false
+    account_state_disclosure: prohibited
+    response_profile: uniform_regardless_of_account_or_deletion_state
+    uniform_rejection: state_or_credential_rejection_uses_same_response_profile
+    canonical_errors:
+      any_of: [AUTH_UNAVAILABLE]
   - service: account-service
     route: IssueConnectToken
     scope: tenant
     classification: player_bootstrap_tenant
     auth_path: player_bootstrap
     accepted_token_profiles: [player-bootstrap]
+    token_type: gameplay_bootstrap_user
+    token_issuer: firemud-account-service
+    token_audience: player-bootstrap
     issued_token_profile: gameplay-connect
     issued_token_audience: gameplay-connect
     tenant_billing_authority_generation_applies: false
@@ -485,16 +1529,16 @@ routes:
     target_binding: opaque_server_issued_connect_scope_id_matches_route
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
-    required_live_checks: [membership, membership_generation, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match, replay_protection_available, replay_admission_fence_match]
+    required_live_checks: [membership, membership_generation, public_production_admission, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match, replay_protection_available, replay_admission_fence_match]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, CONNECT_REPLAY_PROTECTION_UNAVAILABLE, ENTITLEMENT_UNAVAILABLE]
+      any_of: [JOIN_REQUIRED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, CONNECT_REPLAY_PROTECTION_UNAVAILABLE, AUTH_UNAVAILABLE]
     subject_binding: caller_account_id
     canonical_target:
       membership: existing_caller_bound_membership_required
       membership_creation: issue_connect_token_never_creates_membership
     implementation_status:
       known_drift:
-        - issue_connect_token_may_still_invoke_ensure_public_production_player_membership
+        - current_runtime_invokes_ensure_public_production_player_membership_from_issue_connect_token; this is a live security_contract_violation and issuance must fail closed until existing membership is required
         - issue_connect_token_does_not_reread_membership_authority_generation
   - service: account-service
     route: Authenticate
@@ -503,7 +1547,10 @@ routes:
     auth_path: exact_mtls_workload
     issued_token_state: none
     accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
     token_audience: none
+    method_policy: exact_declared_route
     issued_token_profile: game-session-account-delegation
     issued_token_audience: account-service
     allowed_callers:
@@ -525,7 +1572,10 @@ routes:
         auth_path: exact_mtls_workload_plus_caller_specific_context
         issued_token_state: current_exact_private_delegation_when_player_scoped
         accepted_token_profiles: [game-session-account-delegation]
+        token_type: private_player_delegation
+        token_issuer: firemud-account-service
         token_audience: account-service
+        method_policy: exact_declared_route
         mtls_identity: "spiffe://firemud/ns/{namespace}/sa/game-session-service"
         delegated_subject: gameplay_binding_subject
         tenant_billing_authority_generation_applies: true
@@ -533,6 +1583,8 @@ routes:
         required_live_checks: [issuer_generation, current_token_generation, account_generation, tenant_generation, membership_generation, membership, runtime_entitlements, conditional_realm_access_grant, grant_version]
         realm_grant_authority: conditional_account_owned
         realm_grant_version: required_when_grant_gated
+    mutation_contract: account_and_game_session_generation_compare_and_set
+    end_user_token_required: false
   - service: account-service
     route: GetTenantMembershipForRuntime
     scope: tenant
@@ -540,12 +1592,16 @@ routes:
     auth_path: exact_mtls_workload
     issued_token_state: none
     accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
     token_audience: none
+    method_policy: exact_declared_route
     allowed_callers:
       any_of: [game-session-service]
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
     delegated_subject: typed_player_execution_context
+    end_user_token_required: false
     required_live_checks: [membership]
   - service: account-service
     route: GetRealmAccessGrant
@@ -554,12 +1610,16 @@ routes:
     auth_path: exact_mtls_workload
     issued_token_state: none
     accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
     token_audience: none
+    method_policy: exact_declared_route
     allowed_callers:
       any_of: [game-session-service]
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
     delegated_subject: typed_player_execution_context
+    end_user_token_required: false
     required_live_checks: [conditional_realm_access_grant]
   - service: account-service
     route: ListRealmAccessGrantsForAccount
@@ -568,24 +1628,33 @@ routes:
     auth_path: exact_mtls_workload
     issued_token_state: none
     accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
     token_audience: none
+    method_policy: exact_declared_route
     allowed_callers:
       any_of: [game-session-service]
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
     delegated_subject: typed_player_execution_context
     required_live_checks: [membership]
+    end_user_token_required: false
   - service: account-service
     route: GetTenantEntitlementsForRuntime
     scope: tenant
     classification: internal_workload
     response_profile: runtime_admission
+    entitlement_scope: account_owned_tenant_bound
+    cross_tenant_inheritance: forbidden
     caller_policies:
       - caller: game-session-service
         auth_path: exact_mtls_workload_plus_current_token_generation
         issued_token_state: current_exact_private_delegation
         accepted_token_profiles: [game-session-account-delegation]
+        token_type: private_player_delegation
+        token_issuer: firemud-account-service
         token_audience: account-service
+        method_policy: exact_declared_route
         tenant_billing_authority_generation_applies: true
         membership_authority_generation_applies: true
         mtls_identity: "spiffe://firemud/ns/{namespace}/sa/game-session-service"
@@ -597,21 +1666,67 @@ routes:
         auth_path: exact_mtls_workload
         issued_token_state: none
         accepted_token_profiles: []
+        token_type: none
+        token_issuer: none
         token_audience: none
+        method_policy: exact_declared_route
         tenant_billing_authority_generation_applies: false
         membership_authority_generation_applies: false
         mtls_identity: "spiffe://firemud/ns/{namespace}/sa/world-management-service"
         caller_context: tenant_and_operation_bound_instance_lifecycle_context
         delegated_subject: instance_lifecycle_context
         required_live_checks: [runtime_entitlements]
+    end_user_token_required: false
+  - service: account-service
+    route: CommitTenantCapacityAdmission
+    scope: tenant
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload
+    issued_token_state: none
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [game-session-service, world-management-service]
+    mtls_callers:
+      any_of:
+        - "spiffe://firemud/ns/{namespace}/sa/game-session-service"
+        - "spiffe://firemud/ns/{namespace}/sa/world-management-service"
+    caller_context: tenant_and_capacity_admission_bound_context
+    delegated_subject: instance_lifecycle_context
+    end_user_token_required: false
+    required_fields:
+      [
+        tenant_id,
+        request_id,
+        admission_id,
+        expected_authority_tuple,
+        expected_bundle_version,
+        expected_snapshot_identity,
+        expected_evaluation_identity,
+        expected_entitlement_version,
+        expected_billing_evidence,
+        capacity_delta,
+        mutation_digest,
+      ]
+    required_live_checks: [tenant_generation, runtime_entitlements, capacity_admission_fence, idempotency]
+    mutation_contract: account_owned_fenced_capacity_reservation_create_or_replay
+    canonical_errors:
+      any_of: [CAPACITY_ADMISSION_STALE, CAPACITY_QUOTA_EXCEEDED, IDEMPOTENCY_CONFLICT, AUTH_UNAVAILABLE]
   - service: account-service
     route: GetTenantEntitlementsTenant
     scope: tenant
     classification: billing_safe_tenant
     accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [membership]
+    required_live_checks: [issuer_generation, account_generation, membership_generation, membership, current_operator_roles]
     response_profile: high_level_only
     roles:
       any_of: [tenantAdmin]
@@ -619,8 +1734,15 @@ routes:
     route: GetTenantEntitlementsCrossTenantSupportSafe
     scope: cross_tenant
     classification: cross_tenant_support_safe
-    accepted_token_profiles: [control-ui]
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
     response_profile: high_level_only
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    required_live_checks: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
     roles:
       any_of: [support, platformAdmin]
   - service: account-service
@@ -628,29 +1750,49 @@ routes:
     scope: tenant
     classification: billing_safe_tenant
     accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [membership]
+    required_live_checks: [issuer_generation, account_generation, membership_generation, membership, current_operator_roles]
     response_profile: high_level_only
     roles:
       any_of: [tenantAdmin]
   - service: account-service
     route: ExportTenantData
+    http_route: GET /tenant-admin/tenants/{tenantId}/export
     scope: tenant
     classification: billing_safe_tenant
+    route_status: target_not_currently_routable
+    subject_binding: tenant_path_only_no_account_subject
     accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [membership]
-    response_profile: tenant_export_only
+    required_live_checks: [issuer_generation, account_generation, membership_generation, membership, current_operator_roles]
+    response_profile: tenant_wide_tenant_owned_export
+    response_contract: tenant_owned_records_with_minimum_stable_subject_references_only
+    implementation_status:
+      known_drift:
+        - Current implementation and gRPC request still require an account target and return one subject's Account/profile rows; the target tenant-wide route has no compatibility alias.
     roles:
       any_of: [tenantAdmin]
   - service: account-service
     route: GetSubscriptionCrossTenantSupportSafe
     scope: cross_tenant
     classification: cross_tenant_support_safe
-    accepted_token_profiles: [control-ui]
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
     response_profile: high_level_only
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    required_live_checks: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
     roles:
       any_of: [support, platformAdmin]
   - service: account-service
@@ -658,9 +1800,12 @@ routes:
     scope: tenant
     classification: billing_safe_tenant
     accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [membership]
+    required_live_checks: [issuer_generation, account_generation, membership_generation, membership, current_operator_roles]
     response_profile: high_level_only
     roles:
       any_of: [tenantAdmin]
@@ -668,16 +1813,30 @@ routes:
     route: ListSubscriptionsCrossTenantSupportSafe
     scope: cross_tenant
     classification: cross_tenant_support_safe
-    accepted_token_profiles: [control-ui]
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
     response_profile: high_level_only
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    required_live_checks: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
     roles:
       any_of: [support, platformAdmin]
   - service: account-service
     route: ListSubscriptionsCrossTenantBillingSafeReports
     scope: cross_tenant
     classification: cross_tenant_billing_safe
-    accepted_token_profiles: [control-ui]
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
     response_profile: billing_reporting
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    required_live_checks: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
     roles:
       any_of: [billingAdmin, platformAdmin]
   - service: account-service
@@ -685,9 +1844,12 @@ routes:
     scope: tenant
     classification: billing_safe_tenant
     accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [membership]
+    required_live_checks: [issuer_generation, account_generation, membership_generation, membership, current_operator_roles]
     response_profile: membership_self_only
     roles:
       any_of: [tenantAdmin]
@@ -695,27 +1857,440 @@ routes:
     route: GetTenantMembershipForAccountCrossTenant
     scope: cross_tenant
     classification: cross_tenant_billing_safe
-    accepted_token_profiles: [control-ui]
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
     response_profile: membership_reporting
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    required_live_checks: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
     roles:
       any_of: [billingAdmin, platformAdmin]
   - service: account-service
     route: BillingArtifactsTenant
     scope: tenant
     classification: billing_safe_tenant
+    route_status: target_not_currently_routable
     accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [membership]
-    mutation_contract: shared_instrument_ack_required
+    required_live_checks: [issuer_generation, account_generation, membership_generation, membership, current_operator_roles]
     canonical_errors:
-      any_of: [BILLING_SHARED_INSTRUMENT_ACK_REQUIRED, MEMBERSHIP_AUTH_UNAVAILABLE]
+      any_of: [AUTH_UNAVAILABLE]
     roles:
       any_of: [tenantAdmin]
   - service: account-service
     route: BillingArtifactsCrossTenant
     scope: cross_tenant
     classification: cross_tenant_billing_safe
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
+    route_status: target_not_currently_routable
     accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    required_live_checks: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
+    canonical_errors:
+      any_of: [AUTH_UNAVAILABLE]
     roles:
       any_of: [billingAdmin, platformAdmin]
+  - service: logging-admin-service
+    route: POST /reports
+    scope: tenant
+    classification: player_bootstrap_tenant
+    route_status: target_not_currently_routable
+    auth_path: player_bootstrap
+    accepted_token_profiles: [player-bootstrap]
+    token_type: gameplay_bootstrap_user
+    token_issuer: firemud-account-service
+    token_audience: player-bootstrap
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: true
+    subject_binding: caller_account_id_as_reporter
+    required_live_checks: [membership, membership_generation, moderation_report_policy]
+    mutation_contract: caller_bound_durable_report_record
+    implementation_status:
+      known_drift:
+        - Public report submission is unavailable; the target player-bootstrap route must derive tenantId and reporterAccountId from the authenticated caller and live membership before it becomes routable.
+  - service: logging-admin-service
+    route: POST /feature-flags/toggle
+    scope: tenant
+    classification: tenant_regular
+    route_status: target_not_currently_routable
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    subject_binding: authenticated_operator
+    required_live_checks: [current_operator_authorization, runtime_entitlements]
+    operator_authorization_branches:
+      - branch: tenant_role
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
+      - branch: platformAdmin_global
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
+    global_platform_admin_membership_required: false
+    global_platform_admin_reference_generation_binding: target_tenant_generation
+    mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
+    required_fields: [control_plane_request_id, actor_from_session, reason, flag_name, enabled, mutation_digest]
+    operator_authorization_reference: account_issued_bounded_reference
+    owner_service: game-session-service
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
+    roles:
+      any_of: [tenantAdmin, platformAdmin]
+  - service: logging-admin-service
+    route: POST /moderation/actions
+    scope: tenant
+    classification: tenant_regular
+    route_status: target_not_currently_routable
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    subject_binding: authenticated_operator
+    required_live_checks: [current_operator_authorization]
+    operator_authorization_branches:
+      - branch: tenant_role
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
+      - branch: platformAdmin_global
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
+    global_platform_admin_membership_required: false
+    global_platform_admin_reference_generation_binding: target_tenant_generation
+    mutation_contract: durable_intent_then_moderation_record_idempotency
+    required_fields: [control_plane_request_id, actor_from_session, reason, target_account_id, action, mutation_digest]
+    operator_authorization_reference: account_issued_bounded_reference
+    owner_call_status: coverage_drift_no_current_enforcement_owner_rpc
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
+    roles:
+      any_of: [moderator, tenantAdmin, platformAdmin]
+  - service: logging-admin-service
+    route: POST /tick-remediation/pause
+    scope: tenant
+    classification: tenant_regular
+    route_status: target_not_currently_routable
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    subject_binding: authenticated_operator
+    required_live_checks: [current_operator_authorization, runtime_ownership]
+    operator_authorization_branches:
+      - branch: tenant_role
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
+      - branch: platformAdmin_global
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
+    global_platform_admin_membership_required: false
+    global_platform_admin_reference_generation_binding: target_tenant_generation
+    mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
+    required_fields: [control_plane_request_id, actor_from_session, reason, tenant_id, game_instance_id, mutation_digest]
+    operator_authorization_reference: account_issued_bounded_reference
+    owner_service: game-session-service
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
+    roles:
+      any_of: [tenantAdmin, platformAdmin]
+  - service: logging-admin-service
+    route: POST /tick-remediation/resume
+    scope: tenant
+    classification: tenant_regular
+    route_status: target_not_currently_routable
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    subject_binding: authenticated_operator
+    required_live_checks: [current_operator_authorization, runtime_ownership, recovery_resume_gate]
+    operator_authorization_branches:
+      - branch: tenant_role
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
+      - branch: platformAdmin_global
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
+    global_platform_admin_membership_required: false
+    global_platform_admin_reference_generation_binding: target_tenant_generation
+    mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
+    required_fields: [control_plane_request_id, actor_from_session, reason, tenant_id, game_instance_id, mutation_digest]
+    operator_authorization_reference: account_issued_bounded_reference
+    owner_service: game-session-service
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
+    roles:
+      any_of: [tenantAdmin, platformAdmin]
+  - service: logging-admin-service
+    route: POST /admission-pointers
+    scope: tenant
+    classification: tenant_regular
+    route_status: target_not_currently_routable
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    subject_binding: authenticated_operator
+    required_live_checks: [current_operator_authorization, expected_pointer_version]
+    operator_authorization_branches:
+      - branch: tenant_role
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
+      - branch: platformAdmin_global
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
+    global_platform_admin_membership_required: false
+    global_platform_admin_reference_generation_binding: target_tenant_generation
+    mutation_contract: durable_intent_then_owner_idempotent_compare_and_set
+    required_fields: [control_plane_request_id, actor_from_session, reason, expected_pointer_version, mutation_digest]
+    operator_authorization_reference: account_issued_bounded_reference
+    owner_service: game-session-service
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
+    roles:
+      any_of: [tenantAdmin, platformAdmin]
+  - service: logging-admin-service
+    route: POST /admission-pointers/cutover
+    scope: tenant
+    classification: tenant_regular
+    route_status: target_not_currently_routable
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    subject_binding: authenticated_operator
+    required_live_checks: [current_operator_authorization, expected_pointer_version, prepared_version_upgrade]
+    operator_authorization_branches:
+      - branch: tenant_role
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
+      - branch: platformAdmin_global
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
+    global_platform_admin_membership_required: false
+    global_platform_admin_reference_generation_binding: target_tenant_generation
+    mutation_contract: durable_intent_then_owner_idempotent_compare_and_set
+    required_fields: [control_plane_request_id, actor_from_session, reason, expected_pointer_version, prepared_version_upgrade_id, mutation_digest]
+    operator_authorization_reference: account_issued_bounded_reference
+    owner_service: game-session-service
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
+    roles:
+      any_of: [tenantAdmin, platformAdmin]
+  - service: logging-admin-service
+    route: POST /admission-pointers/version-upgrades
+    scope: tenant
+    classification: tenant_regular
+    route_status: target_not_currently_routable
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: conditional_by_operator_role
+    membership_authority_generation_condition:
+      tenant_role: true
+      platformAdmin_global: false
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    subject_binding: authenticated_operator
+    required_live_checks: [current_operator_authorization]
+    operator_authorization_branches:
+      - branch: tenant_role
+        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
+      - branch: platformAdmin_global
+        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
+    global_platform_admin_membership_required: false
+    global_platform_admin_reference_generation_binding: target_tenant_generation
+    mutation_contract: durable_intent_then_owner_idempotent_preparation
+    required_fields: [control_plane_request_id, actor_from_session, reason, mutation_digest]
+    operator_authorization_reference: account_issued_bounded_reference
+    owner_service: game-session-service
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
+    roles:
+      any_of: [tenantAdmin, platformAdmin]
+  - service: game-session-service
+    route: ToggleFeatureFlag
+    transport: grpc
+    scope: tenant
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [logging-admin-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
+    end_user_token_required: false
+    delegated_subject: operator_authorization_reference
+    operator_authorization_reference: required_and_redeemed_with_account
+    required_live_checks: [current_operator_authorization, runtime_entitlements]
+    mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
+    required_fields: [control_plane_request_id, actor, reason, tenant_id, flag_name, enabled, mutation_digest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
+  - service: game-session-service
+    route: PauseTicksForScope
+    transport: grpc
+    scope: tenant
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [logging-admin-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
+    end_user_token_required: false
+    delegated_subject: operator_authorization_reference
+    operator_authorization_reference: required_and_redeemed_with_account
+    required_live_checks: [current_operator_authorization, runtime_ownership]
+    mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
+    required_fields: [control_plane_request_id, actor, reason, tenant_id, game_instance_id, mutation_digest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
+  - service: game-session-service
+    route: ResumeTicksForScope
+    transport: grpc
+    scope: tenant
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [logging-admin-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
+    end_user_token_required: false
+    delegated_subject: operator_authorization_reference
+    operator_authorization_reference: required_and_redeemed_with_account
+    required_live_checks: [current_operator_authorization, runtime_ownership, recovery_resume_gate]
+    mutation_contract: owner_atomic_idempotent_mutation_with_durable_result
+    required_fields: [control_plane_request_id, actor, reason, tenant_id, game_instance_id, mutation_digest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
+  - service: game-session-service
+    route: SetAdmissionPointer
+    transport: grpc
+    scope: tenant
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [logging-admin-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
+    end_user_token_required: false
+    delegated_subject: operator_authorization_reference
+    operator_authorization_reference: required_and_redeemed_with_account
+    required_live_checks: [current_operator_authorization, expected_pointer_version, prepared_version_upgrade_when_target_changes]
+    mutation_contract: owner_atomic_idempotent_compare_and_set_with_durable_result
+    required_fields: [control_plane_request_id, actor, reason, expected_pointer_version, mutation_digest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
+  - service: game-session-service
+    route: ExecutePreparedVersionCutover
+    transport: grpc
+    scope: tenant
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [logging-admin-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
+    end_user_token_required: false
+    delegated_subject: operator_authorization_reference
+    operator_authorization_reference: required_and_redeemed_with_account
+    required_live_checks: [current_operator_authorization, expected_pointer_version, prepared_version_upgrade]
+    mutation_contract: owner_atomic_idempotent_compare_and_set_with_durable_result
+    required_fields: [control_plane_request_id, actor, reason, expected_pointer_version, prepared_version_upgrade_id, mutation_digest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
+  - service: game-session-service
+    route: PrepareVersionUpgrade
+    transport: grpc
+    scope: tenant
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [logging-admin-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
+    end_user_token_required: false
+    delegated_subject: operator_authorization_reference
+    operator_authorization_reference: required_and_redeemed_with_account
+    required_live_checks: [current_operator_authorization]
+    mutation_contract: owner_atomic_idempotent_preparation_with_durable_result
+    required_fields: [control_plane_request_id, actor, reason, mutation_digest]
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]

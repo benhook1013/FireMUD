@@ -704,8 +704,8 @@ public class PlayCommandHandler {
             "authority_unavailable");
         return Optional.of(
             failure(
-                GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_CODE,
-                GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_MESSAGE,
+                GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE,
+                GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE,
                 "error.play.membership-unavailable",
                 Map.of(),
                 tenantTag,
@@ -771,8 +771,8 @@ public class PlayCommandHandler {
           "authority_unavailable");
       return Optional.of(
           failure(
-              GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_CODE,
-              GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_MESSAGE,
+              GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE,
+              GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE,
               "error.play.membership-unavailable",
               Map.of(),
               tenantTag,
@@ -805,8 +805,8 @@ public class PlayCommandHandler {
               "authority_unavailable");
           return Optional.of(
               failure(
-                  GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_CODE,
-                  GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_MESSAGE,
+                  GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE,
+                  GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE,
                   "error.play.membership-unavailable",
                   Map.of(),
                   tenantTag,
@@ -916,7 +916,7 @@ public class PlayCommandHandler {
 
   private boolean isAuthorityUnavailable(ErrorDetail error) {
     String code = Optional.ofNullable(error.getCode()).orElse("");
-    return GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_CODE.equalsIgnoreCase(code);
+    return GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE.equalsIgnoreCase(code);
   }
 
   private boolean maybeRecordFreshEntryFallback(

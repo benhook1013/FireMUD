@@ -42,7 +42,6 @@ class GatewayRoutesConfigurationProdTest {
           "admin-feature-flags",
           "admin-logs",
           "admin-moderation",
-          "admin-reports",
           "admin-remote-followups",
           "admin-sagas",
           "admin-tick-remediation",
@@ -101,6 +100,16 @@ class GatewayRoutesConfigurationProdTest {
                 .flatMap(predicate -> predicate.getArgs().values().stream())
                 .collect(Collectors.toSet()))
         .noneMatch(coarsePaths::contains);
+  }
+
+  @Test
+  void publicReportsRouteIsNotConfigured() {
+    assertThat(
+            gatewayProperties.getRoutes().stream()
+                .flatMap(route -> route.getPredicates().stream())
+                .filter(predicate -> "Path".equalsIgnoreCase(predicate.getName()))
+                .flatMap(predicate -> predicate.getArgs().values().stream()))
+        .doesNotContain("/api/admin/reports/**");
   }
 
   @Test

@@ -157,23 +157,23 @@ Packet 2 checklist dispositions record the human review outcome, not an inventor
 - [x] `SEC-03` — `revised` on 2026-07-19; [ADR 0033](../../architecture/decisions/adr-0033-public-player-facing-telnet-requires-tls.md)
 - [x] `SEC-05` — `revised` on 2026-07-19; [ADR 0034](../../architecture/decisions/adr-0034-layered-abuse-controls-without-attacker-triggered-account-locks.md)
 - [x] `JWT-01` — `revised` on 2026-07-19; [ADR 0035](../../architecture/decisions/adr-0035-single-record-issued-token-registry.md)
-- [ ] `JWT-02`
-- [ ] `JWT-03`
-- [ ] `JWT-04`
+- [x] `JWT-02` — `revised` on 2026-07-19; [ADR 0036](../../architecture/decisions/adr-0036-monotonic-authority-generations-for-bulk-token-revocation.md)
+- [x] `JWT-03` — `revised` on 2026-07-19; [ADR 0037](../../architecture/decisions/adr-0037-fail-closed-token-authority-outages-with-bounded-active-gameplay.md)
+- [x] `JWT-04` — `revised` on 2026-07-19; [ADR 0038](../../architecture/decisions/adr-0038-explicit-jwt-profiles-and-mtls-workload-identity.md)
 - [x] `REDIS-06` — `revised` on 2026-07-19; [ADR 0039](../../architecture/decisions/adr-0039-bounded-redis-operator-maintenance-surface.md)
-- [ ] `MS-AA-CONTROL-LOGIN-SCOPE`
-- [ ] `MS-AA-TOKEN-REVOCATION`
+- [x] `MS-AA-CONTROL-LOGIN-SCOPE` — `revised` on 2026-07-19; [ADR 0040](../../architecture/decisions/adr-0040-account-global-control-login-and-explicit-tenant-selection.md)
+- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-19 by the human-approved [AUTH-03](../../architecture/decisions/adr-0022-account-authority-and-gameplay-session-ownership.md#decision-record), [JWT-01](../../architecture/decisions/adr-0035-single-record-issued-token-registry.md#decision-record), [JWT-02](../../architecture/decisions/adr-0036-monotonic-authority-generations-for-bulk-token-revocation.md#decision-record), [JWT-03](../../architecture/decisions/adr-0037-fail-closed-token-authority-outages-with-bounded-active-gameplay.md#decision-record), and [JWT-04](../../architecture/decisions/adr-0038-explicit-jwt-profiles-and-mtls-workload-identity.md#decision-record) decisions; retained as a historical service-scan alias.
 
 #### Packet 2 P1
 
-- [ ] `TENANT-02`
+- [x] `TENANT-02` — `revised` on 2026-07-19; [ADR 0041](../../architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md)
 - [ ] `MS-AA-GLOBAL-TENANT-BOUNDARY`
 - [ ] `MS-AA-LIFECYCLE-ERASURE`
 - [ ] `MS-AA-PAYMENT-INSTRUMENT`
-- [ ] `MS-AA-LOGIN-FACTORS`
+- [x] `MS-AA-LOGIN-FACTORS` — `revised` on 2026-07-19; [ADR 0045](../../architecture/decisions/adr-0045-ordinary-login-factors-and-https-sensitive-action-step-up.md)
 - [ ] `MS-SOCIAL-PRESENCE-PRIVACY`
-- [ ] `SEC-04`
-- [ ] `ADMIN-01`
+- [x] `SEC-04` — `revised` on 2026-07-19; [ADR 0047](../../architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md)
+- [x] `ADMIN-01` — `revised` on 2026-07-19; [ADR 0048](../../architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md)
 - [ ] `ACCOUNT-01`
 - [ ] `DATA-01`
 

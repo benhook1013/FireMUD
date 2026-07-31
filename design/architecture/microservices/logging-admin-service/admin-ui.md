@@ -1,43 +1,48 @@
 # Role-Based Admin UI
 
-This document outlines the administration interface delivered as a
-lightweight React application. The `web-client` module provides the main
-player-facing UI while the admin interface is served separately by the
-Logging & Admin Service. Moderators and administrators interact with the
-service through this interface, which exchanges credentials with the
-Account Service. JWTs for backend calls remain server-side as described in
-[Authentication & Authorization](../../system-architecture-authentication.md),
-and permissions are enforced using the `globalRoles` claim. The
-`scopedRoles` claim is supported.
+This document outlines the administration interface delivered as a lightweight React application. The `web-client` module provides the main player-facing UI while the admin interface is served separately by the Logging & Admin Service. Moderators and administrators interact with the service through this interface using the exact `control-ui` identity issued by Account. Every protected write must be authorized from the current server-side role and role-appropriate assurance plus the Account-issued authorization reference for that operation; JWT `globalRoles` or `scopedRoles` claims alone are insufficient. The short-lived JWT may be held in frontend memory, but authorization and authorization-reference validation remain server-side in the receiving service as described in [Authentication & Authorization](../../system-architecture-authentication.md).
+
+## Implementation Status
+
+- The admin UI is a lightweight operator surface. Its live scope is log search, saga inspection, and analytics. `/moderation/actions` is unavailable/gated until its action schema, shared cross-language `mutationDigest/v1` golden vectors, Account authorization-reference issuance, and Logging & Admin receiving-service validation/redemption exist; owner-side redemption is not a prerequisite for this Logging & Admin-owned policy-input/audit persistence path. Feature-flag toggles and per-instance tick-remediation pause/resume remain unavailable until each forwarded action family has its schema, shared cross-language `mutationDigest/v1` golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption. The separate backend `EvaluateModerationPolicy` contract is consumed by Game Session for `GAMEPLAY_ADMISSION` and Social & Groups for `CHAT_SEND`; it is not an admin UI capability. Versioned propagation and broader enforcement remain unavailable.
+- Player report review is target coverage. Public administrative `/reports` persistence is unavailable because its unsafe HTTP controller and Gateway route were removed pending canonical authorization and live reference-validation checks; this UI does not present it as player submission.
+- Admission-pointer reads, audit, and prepared-upgrade proof reads remain API-only to this UI. `POST /admission-pointers/version-upgrades` is an unavailable/gated preparation mutation pending its action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption; it is not a read surface. Same-target CAS open/close and prepared cutover mutations are target-only, as are session-lifecycle controls, broader remediation, versioned moderation propagation, and richer dashboards. Current runtime enforcement occurs in Game Session and Social & Groups from Logging & Admin policy evaluations; the target inventory below must not be read as proof that broader surfaces are live.
 
 ## Features
 
 - Search and filter logs with Kibana-like syntax.
-- Review player reports and apply moderation actions.
-- Toggle runtime feature flags for a specific tenant.
-- Issue tick-remediation pause and resume requests for operator-approved scopes.
+- Player report review is target coverage and is separate from the unavailable/gated moderation-action path. Public administrative `/reports` persistence remains unavailable until its canonical checks exist, and the target player route remains unavailable until player-bootstrap subject and tenant-membership binding exist. `POST /moderation/actions` is unavailable/gated until its action-family schema, shared `mutationDigest/v1` vectors, Account authorization-reference issuance, and Logging & Admin receiving-service validation/redemption exist; it is not current operator support, does not issue bans or warnings, and does not enforce owner-side moderation outcomes. `EvaluateModerationPolicy` is the separate evaluation contract consumed by enforcement owners.
+- Target/unavailable capability: toggle runtime feature flags for a specific tenant only after its action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption conformance gate passes.
+- Target/unavailable capability: issue per-instance tick-remediation pause and resume requests for a specific `<tenantId, gameInstanceId>` scope only after the three-part mutation gate passes: action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account authorization-reference issuance plus owner-side redemption.
 - Inspect saga workflows and view step details.
-- Reference [Moderation Policies](./moderation-policies.md) when issuing bans or warnings.
+- Reference [Moderation Policies](./moderation-policies.md) for the target policy-input and audit contract when the gated action route is enabled; current owner-side enforcement uses synchronous policy evaluation, while versioned propagation remains target coverage.
 - View analytics dashboards built with Grafana and Kibana.
 
-These capabilities map to REST endpoints exposed by the service. Routes include:
+These capabilities map to REST endpoints exposed by the service. The route set includes live read/observability surfaces and declared but unavailable/gated or target-only mutation routes. Target or unavailable mutation families are not presented as UI controls.
+
+Routes include:
 
 ```text
 POST /logs/query
-POST /reports
-POST /moderation/actions
-POST /feature-flags/toggle
-POST /quota-overrides
-DELETE /quota-overrides/{scopeType}/{scopeId}/{quotaKey}
-POST /tick-remediation/pause
-POST /tick-remediation/resume
-POST /tick-remediation/remediate
+POST /moderation/actions (unavailable/gated)
 GET  /sagas
 GET  /sagas/{id}/steps
 ```
 
-Current-state note: `POST /tick-remediation/pause` and `POST /tick-remediation/resume` are now backed by live Logging & Admin forwarding endpoints. `quota-overrides*` and `POST /tick-remediation/remediate` remain reserved target-state controls until their owner-side service contracts exist.
+Mutation inventory:
+
+- Unavailable/gated mutation: `POST /moderation/actions` requires its action-family schema, shared `mutationDigest/v1` vectors, Account authorization-reference issuance, and Logging & Admin receiving-service validation/redemption before it may persist policy input/audit; it does not require owner-side redemption, evaluate policy, call an enforcement owner, or mutate `GAMEPLAY_ADMISSION`/`CHAT_SEND` enforcement state. `EvaluateModerationPolicy` is the separate evaluation contract.
+- Unavailable/gated mutation: `POST /admission-pointers/version-upgrades` remains unavailable pending its action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption; `GET /admission-pointers/version-upgrades/{tenantId}/{preparationId}` is the read-only prepared-upgrade proof surface.
+- Gated implemented owner-forwarding paths not presented as usable UI controls: `POST /feature-flags/toggle`, `POST /tick-remediation/pause`, and `POST /tick-remediation/resume` remain unavailable pending their action-family schemas, shared cross-language `mutationDigest/v1` golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption.
+- Live backend reads not presented by this UI: admission-pointer reads, audit, and prepared-upgrade proof GET.
+- Target-only or unavailable capabilities not presented by this UI: admission-pointer same-target CAS open/close and prepared cutover, session-lifecycle controls, quota overrides, broader remediation, and versioned moderation propagation.
+
+The live admission-pointer reads, audit, and prepared-upgrade proof GET are intentionally excluded from this UI inventory: no corresponding React/admin surface is implemented in this module. Operators must use the documented `/admission-pointers*` API family for those live reads. The preparation POST is an unavailable/gated mutation pending its action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption; it is not an investigation read. Same-target CAS open/close and prepared cutover mutations are target-only and are not current operator controls.
+
+Current-state note: `POST /tick-remediation/pause` and `POST /tick-remediation/resume` have Logging & Admin forwarding implementations for a specific `<tenantId, gameInstanceId>` scope, but the admin APIs and UI remain target/unavailable pending their action-family schemas, shared cross-language `mutationDigest/v1` golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption. Game Session `/sessions*` lifecycle routes are current owner-local hooks, not current UI or Logging & Admin ingress. Quota override and broader remediation are coverage drift: no current routes or owner-side contracts exist, so the UI must not present placeholder controls.
+
+`POST /moderation/actions` is an unavailable/gated policy-input persistence/audit route for a selected target player, pending its action-family schema, shared cross-language `mutationDigest/v1` golden vectors, Account authorization-reference issuance, and Logging & Admin receiving-service validation/redemption. It is independent of unavailable public administrative `/reports` persistence and the unavailable target player-submission route and does not require owner-side redemption. The UI does not directly perform runtime enforcement or policy evaluation; Game Session and Social & Groups consume synchronous `EvaluateModerationPolicy` decisions, while versioned propagation remains unavailable. Log search, saga inspection, admission-pointer reads, audit, prepared-upgrade proof GET, and analytics dashboards remain read or investigation surfaces; the version-upgrade preparation POST remains an unavailable/gated mutation under the same explicit gate. This UI does not expose `/reports` as an investigation or player-submission surface.
 
 The UI is packaged as a separate web module served by the Logging & Admin Service. Styling relies on Material‑UI components, and all API calls are protected by the existing security interceptors described in the [API contracts](./api-contracts.md) and [runtime model](./runtime-and-data.md).
 
-Backend endpoints for these features are available as described in the [API contracts](./api-contracts.md), and the React interface consumes them directly.
+Backend endpoints for the live UI-listed features are available as described in the [API contracts](./api-contracts.md). The React interface consumes only those documented UI routes directly. Other live backend surfaces, including admission-pointer reads, audit, and prepared-upgrade proof reads, remain API-only until a UI is implemented; feature-flag, version-upgrade preparation, and tick-forwarding mutations remain unavailable pending their action-family schemas, shared cross-language `mutationDigest/v1` golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption, while public administrative report persistence, same-target CAS open/close, prepared cutover, and the target caller-bound player report route remain unavailable for their documented reasons.

@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The machine-readable matrix and substantial static Gateway route/blocking tests exist, but the route inventory is incomplete and the matrix is not consumed by generated completeness checks or shared runtime middleware. Current JWT middleware does not yet enforce all documented route-class, token-profile, authority-generation, and cross-tenant distinctions.
+The machine-readable matrix and substantial static Gateway route/blocking tests exist, but the route inventory is incomplete, several Gateway routes remain broad families, and the matrix is not consumed by generated completeness checks or shared runtime middleware. Current JWT middleware does not yet enforce the complete issued-token registry, route-class, token-profile, authority-generation, and cross-tenant distinctions documented here. Acceptance of this target does not imply complete runtime proof.
 
 ## Decision Record
 
@@ -15,12 +15,16 @@ The machine-readable matrix and substantial static Gateway route/blocking tests 
 - Affected capabilities: `AA-1.2`, `PO-1.1`, `PO-2.1`, `PO-4.4`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `AUTH-04`
+- Human review status: Completed
+- Human review date: 2026-07-18
+- Human review disposition: Revised
+- Review source: `AUTH-04`
 
 ## Context
 
 FireMUD exposes HTTP, gRPC, WebSocket, text-protocol, and operator surfaces across many services. Service-local role checks or broad edge routing can silently diverge on token profile, tenant scope, revocation, cross-tenant access, and redaction. A newly added endpoint must not become reachable merely because it matches a Gateway prefix or inherits an approximate role check.
 
-The repository needs one governance contract spanning broad route families and service-local checks. Acceptance of that target does not imply complete runtime proof.
+The repository needs one governance contract spanning broad route families and service-local checks. The current implementation boundary and proof status are recorded in the dedicated Implementation Status section above; the decision below defines the target contract without treating it as current runtime proof.
 
 ## Decision
 
@@ -45,10 +49,22 @@ Until source-stable OpenAPI/protobuf coverage is complete and the generated comp
 
 - CI will derive candidate route inventories from OpenAPI, protobuf, protocol-command, and explicitly registered operator surfaces and fail if a protected or externally reachable route is missing, stale, or inconsistently classified after the inventory gate passes.
 - Before complete inventory coverage is available, edge and service safeguards must deny or leave unreachable any unclassified protected or external route; this conservative guard is not generated policy from the incomplete YAML. After the inventory gate passes, runtime middleware rejects every unclassified protected route. It must not approximate the route as `tenant_regular` or another permissive class; current unlisted-route findings remain drift/gap until then.
-- Shared middleware enforces route-level token profile, allowlist/authority-generation, scope, and role rules. The owning service additionally enforces live domain facts such as resource ownership, current membership, entitlement, visibility, and mutation preconditions.
+- Shared middleware enforces route-level token profile, issued-token registry, allowlist/authority-generation, scope, and role rules. The owning service additionally enforces live domain facts such as resource ownership, current membership, entitlement, visibility, and mutation preconditions.
 - Cross-tenant support-safe, billing-safe, and data-bearing behavior uses separate classified APIs and response profiles rather than optional flags on one ambiguous endpoint.
 - Gateway routes only reviewed external surfaces. Prefix routing may be a transport convenience only when the exact reachable endpoint inventory is generated and unclassified/internal endpoints are denied; a broad wildcard is not itself an exposure policy.
 - Logging & Admin remains the external ingress for sensitive operator writes unless a separate owned surface is explicitly classified.
+
+### Credential-Path Partition
+
+The issued-token registry applies only when a protected control-plane, bootstrap, or admission operation presents a registry-backed JWT (`control-ui`, `player-bootstrap`, or a named private delegation). It is not universal gameplay middleware. The route matrix must preserve these separate partitions:
+
+- The one-use `gameplay-connect` token uses Gateway's replay fence, quarantine cutoff, deny marker, and exact-`jti` atomic consume contract; it does not create or consult an Account issued-token registry record.
+- Non-JWT `LOGIN` uses credentials and, for first-party WebSocket use, the verified connect context. Game Session performs the current Account checks and creates the authenticated session context; no registry lookup is invented.
+- Non-JWT `PLAY` and fresh gameplay admission use the exact bound Game Session context, current membership/entitlement/grant and routing authority, and the Account exact-binding admission lease/CAS; they do not use the issued-token registry.
+- Reconnect, resume, or rebind without a presented JWT use the exact existing gameplay binding and resume/rebind proof plus current Account authority. Stale, missing, or conflicting binding evidence denies the operation; no registry lookup is added.
+- Routine gameplay commands use the validated bound context, binding/coordination fences, typed workload context, and domain authorization. They do not repeat registry or Account generation lookups per command; bounded reconciliation consumes later authority changes.
+
+These partitions preserve ADR 0022's gameplay ownership and replay-fence boundary and ADR 0035's registry exception. A protected route must not acquire a registry check merely because it is gameplay-related, and a JWT-presenting control-plane/bootstrap/admission route must not bypass the registry by being treated as gameplay traffic.
 
 ### Change and Proof Policy
 
@@ -82,7 +98,8 @@ Enforcing everything at Gateway misses internal service calls and cannot safely 
 
 - Build source-stable candidate inventories from authoritative OpenAPI, protobuf, protocol, and operator registrations and compare them with the YAML matrix in CI before enabling generated default-deny/full-fail enforcement; until then, prove unclassified protected/external routes are denied or unreachable without deriving that safeguard from incomplete YAML.
 - Compile or validate shared HTTP/gRPC middleware metadata from the matrix and reject unknown route identities at runtime.
-- Enforce strict token profile/audience, allowlist, authority-generation, tenant, role, and cross-tenant response-profile rules.
+- Enforce strict token profile/audience, issued-token registry, allowlist, authority-generation, tenant, role, and cross-tenant response-profile rules.
+- Prove the registry is required only for JWT-presenting control-plane/bootstrap/admission operations and that gameplay-connect replay protection plus non-JWT `LOGIN`, `PLAY`, reconnect, and resume/rebind remain their separate ADR 0022/0035 partitions.
 - Replace or constrain broad Gateway wildcards so exact externally reachable endpoints are known and internal/unclassified additions remain unreachable.
 - Correct implementation trackers that currently describe route-matrix enforcement as proven before these checks exist.
 - Prove representative public, account-scoped, tenant, billing-safe, support-safe, cross-tenant data-bearing, internal-service, gameplay-admission, and operator-write routes, including negative wrong-profile/wrong-scope cases.

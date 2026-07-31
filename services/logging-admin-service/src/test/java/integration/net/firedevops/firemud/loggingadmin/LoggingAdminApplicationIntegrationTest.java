@@ -6,6 +6,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.Map;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.loggingadmin.client.AccountClient;
@@ -14,6 +15,7 @@ import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -21,6 +23,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -41,6 +44,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
     })
 class LoggingAdminApplicationIntegrationTest {
   private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
+  private static final Duration HTTP_REQUEST_TIMEOUT = Duration.ofSeconds(10);
   private static final JwtUtil JWT_UTIL =
       new JwtUtil("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 3600000L);
 
@@ -60,6 +64,8 @@ class LoggingAdminApplicationIntegrationTest {
 
   @LocalServerPort private int port;
 
+  @Autowired private RequestMappingHandlerMapping requestMappingHandlerMapping;
+
   @MockitoBean private AccountClient accountClient;
   @MockitoBean private GameSessionClient gameSessionClient;
   @MockitoBean private GameSessionControlPlaneClient gameSessionControlPlaneClient;
@@ -71,6 +77,7 @@ class LoggingAdminApplicationIntegrationTest {
             "logging-admin-test", Map.of("globalRoles", java.util.List.of("platformAdmin")));
     HttpRequest request =
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/ping"))
+            .timeout(HTTP_REQUEST_TIMEOUT)
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
             .GET()
             .build();
@@ -80,11 +87,37 @@ class LoggingAdminApplicationIntegrationTest {
   }
 
   @Test
+  void publicReportPersistenceControllerMappingIsAbsent() {
+    assertThat(
+            requestMappingHandlerMapping.getHandlerMethods().keySet().stream()
+                .flatMap(mapping -> mapping.getPatternValues().stream()))
+        .noneMatch(pattern -> pattern.equals("/reports") || pattern.startsWith("/reports/"));
+  }
+
+  @Test
+  void unmappedPostReportsUsesCanonicalNotFoundEnvelope() throws Exception {
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/reports"))
+            .timeout(HTTP_REQUEST_TIMEOUT)
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantAdminToken(1L))
+            .POST(HttpRequest.BodyPublishers.noBody())
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(404);
+    assertThat(response.body()).contains("\"status\":\"ERROR\"");
+    assertThat(response.body()).contains("\"code\":\"NOT_FOUND\"");
+    assertThat(response.body()).contains("\"message\":\"Resource not found\"");
+  }
+
+  @Test
   void remoteFollowupsRejectMalformedPointerVersionWithInvalidArgumentEnvelope() throws Exception {
     String token = tenantAdminToken(1L);
     HttpRequest request =
         HttpRequest.newBuilder(
                 URI.create("http://localhost:" + port + "/remote-followups/1?pointerVersion=abc"))
+            .timeout(HTTP_REQUEST_TIMEOUT)
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
             .GET()
             .build();
