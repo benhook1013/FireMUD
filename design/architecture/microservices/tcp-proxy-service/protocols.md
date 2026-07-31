@@ -2,7 +2,7 @@
 
 ## Implementation Status
 
-The explicit `JOIN` step is target behavior; current connect-token and `PLAY` implementations may still create public-production membership implicitly. The target flow below must not be read as proof that explicit join is complete across all clients.
+The explicit `JOIN` step is target behavior. Connect-token issuance may still create public-production membership implicitly, while text `PLAY` now returns `JOIN_REQUIRED` when that membership is absent. The target flow below must not be read as proof that explicit join is complete across all clients.
 The current Telnet credential form is `LOGIN <username> <secret>`; the one-argument challenge flow shown in the target examples is target-only and is not implemented.
 
 ## Cross-Path Connectivity Contract
@@ -15,7 +15,7 @@ The following are canonical contracts across Telnet and WebSocket paths:
 
 ## Recommended Telnet Client Flows
 
-These flows describe how Telnet traffic is forwarded into the shared login/session pipeline; `LOGIN` / `LOGON` semantics and multi-client takeover behavior remain canonical in the [Authentication & Authorization](../../system-architecture-authentication.md) document. The target first public-production flow is `LOGIN` -> conditional `JOIN` -> `PLAY`; returning members skip `JOIN`. Current connect-token and text `PLAY` implementations may still create membership implicitly, which is recorded implementation drift and must converge to `JOIN_REQUIRED`, not treated as an alternate target flow.
+These flows describe how Telnet traffic is forwarded into the shared login/session pipeline; `LOGIN` / `LOGON` semantics and multi-client takeover behavior remain canonical in the [Authentication & Authorization](../../system-architecture-authentication.md) document. The target first public-production flow is `LOGIN` -> conditional `JOIN` -> `PLAY`; returning members skip `JOIN`. Text `PLAY` now returns `JOIN_REQUIRED` when public-production membership is absent, but connect-token issuance may still create membership implicitly. That remaining implementation drift is not an alternate target flow.
 
 - **Target canonical player flow**
   - Connect to the TCP Proxy Service.

@@ -207,6 +207,54 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
         self.assertEqual([], errors)
 
+    def test_operator_mutation_gate_declares_route_status_precedence(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        self.assertEqual(
+            ["gate_wins_for_applies_to"],
+            baseline["route_status_override_vocabulary"],
+        )
+        self.assertEqual(
+            "gate_wins_for_applies_to",
+            baseline["operator_mutation_support_gate"]["route_status_override"],
+        )
+
+        mutations = (
+            (
+                "missing vocabulary",
+                lambda document: document.pop("route_status_override_vocabulary"),
+                "route_status_override_vocabulary must be a non-empty list of strings",
+            ),
+            (
+                "unknown vocabulary value",
+                lambda document: document.__setitem__(
+                    "route_status_override_vocabulary", ["route_wins"]
+                ),
+                (
+                    "route_status_override_vocabulary must contain exactly "
+                    "['gate_wins_for_applies_to']"
+                ),
+            ),
+            (
+                "missing gate override",
+                lambda document: document["operator_mutation_support_gate"].pop(
+                    "route_status_override"
+                ),
+                (
+                    "operator_mutation_support_gate.route_status_override must be one of "
+                    "['gate_wins_for_applies_to']"
+                ),
+            ),
+        )
+        for name, mutate, expected_error in mutations:
+            with self.subTest(name=name):
+                document = copy.deepcopy(baseline)
+                mutate(document)
+                errors = []
+                self.validator.validate_operator_mutation_support_gate(
+                    document, document["routes"], errors
+                )
+                self.assertIn(expected_error, errors)
+
     def test_http_session_mutations_are_gated_without_losing_current_route_status(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         expected = set(self.validator.REQUIRED_SESSION_LIFECYCLE_GATE_ROUTES)
@@ -314,9 +362,17 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 )
             )
 
-        for branch_name, missing_check in (
-            ("tenant_role", "tenant_generation"),
-            ("platformAdmin_global", "target_tenant_generation"),
+        for branch_name, missing_check, expected_diagnostic in (
+            (
+                "tenant_role",
+                "tenant_generation",
+                "operator route must require tenant_generation",
+            ),
+            (
+                "platformAdmin_global",
+                "target_tenant_generation",
+                "operator route must require target_tenant_generation",
+            ),
         ):
             with self.subTest(branch=branch_name, missing_check=missing_check):
                 document = copy.deepcopy(baseline)
@@ -333,15 +389,11 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 self.validator.validate_generation_applicability(
                     document["routes"], errors
                 )
-                self.assertTrue(
-                    any(
-                        missing_check in error
-                        and (
-                            "tenant-role branch must require" in error
-                            or "operator route must require" in error
-                        )
-                        for error in errors
-                    )
+                route_index_value = route_index(document, route)
+                self.assertIn(
+                    f"routes[{route_index_value}] logging-admin-service "
+                    f"POST /feature-flags/toggle {expected_diagnostic}",
+                    errors,
                 )
 
     def test_admission_pointer_mutation_requires_expected_version_check(self):
@@ -478,17 +530,16 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors,
         )
 
-    def test_refresh_roles_uses_redeemed_operator_authority_and_idempotency(self):
+    def test_refresh_roles_uses_owner_authority_and_independent_idempotency(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         routes = grouped_routes(document, "game-session-service")
         grpc = routes["RefreshRoles"][0]
+        self.assertEqual("exact_mtls_workload", grpc["auth_path"])
+        self.assertNotIn("operator_authorization_reference", grpc)
+        self.assertNotIn("delegated_subject", grpc)
         self.assertEqual(
-            "exact_mtls_workload_plus_account_operator_authorization_reference",
-            grpc["auth_path"],
-        )
-        self.assertEqual(
-            "required_and_redeemed_with_account",
-            grpc["operator_authorization_reference"],
+            {"current_session", "current_account_roles"},
+            set(grpc["required_live_checks"]),
         )
         self.assertIn("mutation_digest", grpc["required_fields"])
         self.assertIn("IDEMPOTENCY_CONFLICT", grpc["canonical_errors"]["any_of"])
@@ -499,11 +550,37 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertIn("mutation_digest", http["required_fields"])
         self.assertIn("IDEMPOTENCY_CONFLICT", http["canonical_errors"]["any_of"])
 
-        grpc.pop("operator_authorization_reference")
+        grpc["auth_path"] = (
+            "exact_mtls_workload_plus_account_operator_authorization_reference"
+        )
+        grpc["operator_authorization_reference"] = "required_and_redeemed_with_account"
+        grpc["delegated_subject"] = "operator_authorization_reference"
+        grpc["required_live_checks"].append("current_operator_authorization")
+        grpc["required_live_checks"].remove("current_account_roles")
         errors = []
         self.validator.validate_refresh_roles_routes(document["routes"], errors)
-        self.assertTrue(
-            any("operator authorization redemption" in error for error in errors)
+        self.assertIn(
+            "game-session-service RefreshRoles must use exact_mtls_workload auth_path",
+            errors,
+        )
+        self.assertIn(
+            "game-session-service RefreshRoles must not receive an operator "
+            "authorization reference",
+            errors,
+        )
+        self.assertIn(
+            "game-session-service RefreshRoles must not declare a delegated subject",
+            errors,
+        )
+        self.assertIn(
+            "game-session-service RefreshRoles must require live check "
+            "current_account_roles",
+            errors,
+        )
+        self.assertIn(
+            "game-session-service RefreshRoles must not depend on current operator "
+            "authorization",
+            errors,
         )
 
     def test_refresh_roles_rejects_malformed_required_fields(self):
@@ -1819,13 +1896,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
         route["required_fields"].remove("action_family_schema_id")
         errors = validate_document(self.validator, document)
-        self.assertTrue(
-            any(
-                "IssueHumanOperatorAuthorizationReference required_fields must include "
-                "operator-reference fields" in error
-                and "action_family_schema_id" in error
-                for error in errors
-            )
+        self.assertIn(
+            "account-service IssueHumanOperatorAuthorizationReference required_fields "
+            "must include operator-reference fields: ['action_family_schema_id']",
+            errors,
         )
 
     def test_unavailable_authority_uses_one_canonical_error(self):
@@ -3180,29 +3254,47 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertTrue(any("route_status must be one of" in error for error in errors))
 
     def test_private_receiver_requires_exact_token_and_method_predicates(self):
-        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        route = route_for(document, "account-service", "RefreshGameplayServiceToken")
-        policy = route["caller_policies"][0]
-        policy["token_audience"] = "internal"
-        policy["token_issuer"] = "untrusted-service"
-        policy["mtls_identity"] = "game-session-service"
-        policy["method_policy"] = "all_methods"
-        errors = validate_document(self.validator, document)
-        self.assertTrue(
-            any(
-                "token predicates must exactly match profile" in error
-                for error in errors
-            )
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            (
+                "token_audience",
+                "internal",
+                (
+                    "caller_policies[0] token predicates must exactly match profile "
+                    "'game-session-account-delegation'"
+                ),
+            ),
+            (
+                "token_issuer",
+                "untrusted-service",
+                (
+                    "caller_policies[0] token predicates must exactly match profile "
+                    "'game-session-account-delegation'"
+                ),
+            ),
+            (
+                "mtls_identity",
+                "game-session-service",
+                "caller_policies[0].mtls_identity must be a concrete spiffe:// identity",
+            ),
+            (
+                "method_policy",
+                "all_methods",
+                "caller_policies[0] must declare method_policy exact_declared_route",
+            ),
         )
-        self.assertTrue(
-            any("must be a concrete spiffe:// identity" in error for error in errors)
-        )
-        self.assertTrue(
-            any(
-                "must declare method_policy exact_declared_route" in error
-                for error in errors
-            )
-        )
+        for field, value, expected_suffix in mutations:
+            with self.subTest(field=field):
+                document = copy.deepcopy(baseline)
+                route = route_for(
+                    document, "account-service", "RefreshGameplayServiceToken"
+                )
+                route["caller_policies"][0][field] = value
+                errors = validate_document(self.validator, document)
+                self.assertIn(
+                    f"account-service RefreshGameplayServiceToken {expected_suffix}",
+                    errors,
+                )
 
     def test_tenant_generation_exception_requires_class_checks(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

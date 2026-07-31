@@ -21,6 +21,9 @@ public final class GameplayStageCommandConstants {
   public static final String WORLD_ACCESS_DENIED_CODE = "WORLD_ACCESS_DENIED";
   public static final String WORLD_ACCESS_DENIED_MESSAGE =
       "You are not allowed to enter that world.";
+  public static final String JOIN_REQUIRED_CODE = "JOIN_REQUIRED";
+  public static final String JOIN_REQUIRED_MESSAGE =
+      "You must JOIN <world> before PLAY, or use Join & Play.";
   public static final String TENANT_BILLING_BLOCKED_CODE = "TENANT_BILLING_BLOCKED";
   public static final String TENANT_BILLING_BLOCKED_MESSAGE =
       "That world is temporarily unavailable for gameplay.";

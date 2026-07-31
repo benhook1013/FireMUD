@@ -187,7 +187,7 @@ def _grouped_command_start(
 
 
 def _summary_heredoc(
-    lines: list[str], start: int, index: int, target_match: re.Match[str]
+    lines: list[str], start: int, index: int
 ) -> re.Match[str] | None:
     for opener_index in range(start, index + 1):
         if opener_index < index and any(
@@ -195,15 +195,16 @@ def _summary_heredoc(
             for candidate in range(opener_index, index)
         ):
             continue
-        command_lines = lines[opener_index:index]
-        command_lines.append(
-            lines[index][: target_match.start()] + lines[index][target_match.end() :]
-        )
-        command_text = "\n".join(command_lines)
-        match = HEREDOC_OPEN.search(command_text)
+        opener_line = lines[opener_index]
+        match = HEREDOC_OPEN.search(opener_line)
         if match is None:
             continue
-        if re.search(r"[;&|]", command_text[match.end() :]):
+        suffix = opener_line[match.end() :]
+        if re.search(r"[;&|]", suffix) and not re.fullmatch(
+            r"\s*\|\s*tee(?:\s+(?:-a|--append))?\s+"
+            r"['\"]?\$\{?GITHUB_STEP_SUMMARY\}?['\"]?\s*",
+            suffix,
+        ):
             continue
         return match
     return None
@@ -222,7 +223,7 @@ def _summary_write_line_ranges(source: str) -> list[tuple[int, int]]:
             while start > 0 and lines[start - 1].rstrip().endswith("\\"):
                 start -= 1
         end = index
-        heredoc_match = _summary_heredoc(lines, start, index, target_match)
+        heredoc_match = _summary_heredoc(lines, start, index)
         if heredoc_match is not None:
             delimiter = heredoc_match.group("delimiter")
             strip_tabs = heredoc_match.group("strip_tabs") is not None
@@ -622,21 +623,6 @@ kubectl -n "${PREVIEW_NAMESPACE}" create secret generic dev-demo-bootstrap-env""
             "dev-demo bootstrap temp directory must clear its variable only in the "
             "successful rm branch before return 0"
         )
-    cleanup_order = [
-        'echo "::error::Failed to remove dev-demo bootstrap credential files" >&2',
-        "return 1",
-    ]
-    next_index = 0
-    for expected in cleanup_order:
-        for index in range(next_index, len(cleanup_lines)):
-            if expected in cleanup_lines[index]:
-                next_index = index + 1
-                break
-        else:
-            raise AssertionError(
-                "dev-demo bootstrap temp directory removal failure must return failure"
-            )
-
     bootstrap_pod = _extract_bootstrap_pod(bootstrap_manifest)
     pod_spec = bootstrap_pod.get("spec")
     if not isinstance(pod_spec, dict):

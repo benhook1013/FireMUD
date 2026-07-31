@@ -115,6 +115,9 @@ ROUTE_STATUS_VALUES = {
     "current_openapi_operator_surface",
     "target_not_currently_routable",
 }
+ROUTE_STATUS_OVERRIDE_VALUES = {
+    "gate_wins_for_applies_to",
+}
 TOKEN_ISSUER = "firemud-account-service"
 MEMBERSHIP_GENERATION_APPLICABILITY_VALUES = {
     True,
@@ -2136,22 +2139,26 @@ def validate_operator_reference_issuance(
         if route is None:
             continue
         label = f"{service} {route_name}"
-        fields = set(
-            cached_required_fields(
-                route,
-                route.get("required_fields"),
-                f"{label} required_fields",
-                errors,
-                required_fields_cache,
-                "required_fields",
-            )
+        raw_fields = route.get("required_fields")
+        raw_field_set = (
+            {field for field in raw_fields if isinstance(field, str)}
+            if isinstance(raw_fields, list)
+            else set()
         )
-        missing_fields = sorted(required_fields - fields)
+        missing_fields = sorted(required_fields - raw_field_set)
         if missing_fields:
             errors.append(
                 f"{label} required_fields must include operator-reference fields: "
                 f"{missing_fields}"
             )
+        cached_required_fields(
+            route,
+            raw_fields,
+            f"{label} required_fields",
+            errors,
+            required_fields_cache,
+            "required_fields",
+        )
 
 
 def validate_authority_unavailable_outcomes(
@@ -2382,28 +2389,22 @@ def validate_refresh_roles_routes(
     )
     if grpc_route is not None:
         label = "game-session-service RefreshRoles"
-        if (
-            grpc_route.get("auth_path")
-            != "exact_mtls_workload_plus_account_operator_authorization_reference"
-        ):
+        if grpc_route.get("auth_path") != "exact_mtls_workload":
+            errors.append(f"{label} must use exact_mtls_workload auth_path")
+        if "operator_authorization_reference" in grpc_route:
             errors.append(
-                f"{label} must use Account-redeemed operator authorization auth_path"
+                f"{label} must not receive an operator authorization reference"
             )
-        if (
-            grpc_route.get("operator_authorization_reference")
-            != "required_and_redeemed_with_account"
-        ):
-            errors.append(
-                f"{label} must require Account operator authorization redemption"
-            )
+        if "delegated_subject" in grpc_route:
+            errors.append(f"{label} must not declare a delegated subject")
         checks = route_live_checks(grpc_route, label, errors, live_checks_cache)
-        for required_check in (
-            "current_operator_authorization",
-            "current_session",
-            "current_account_roles",
-        ):
+        for required_check in ("current_session", "current_account_roles"):
             if required_check not in checks:
                 errors.append(f"{label} must require live check {required_check}")
+        if "current_operator_authorization" in checks:
+            errors.append(
+                f"{label} must not depend on current operator authorization"
+            )
         validate_idempotency_contract(
             grpc_route,
             label,
@@ -2474,10 +2475,37 @@ def route_identity(value: Any, field: str, errors: list[str]) -> str | None:
 def validate_operator_mutation_support_gate(
     document: dict[str, Any], routes: list[Any], errors: list[str]
 ) -> None:
+    override_vocabulary = document.get("route_status_override_vocabulary")
+    if (
+        not isinstance(override_vocabulary, list)
+        or not override_vocabulary
+        or any(not isinstance(item, str) for item in override_vocabulary)
+    ):
+        errors.append(
+            "route_status_override_vocabulary must be a non-empty list of strings"
+        )
+        allowed_overrides: set[str] = set()
+    else:
+        allowed_overrides = set(override_vocabulary)
+        if len(allowed_overrides) != len(override_vocabulary):
+            errors.append("route_status_override_vocabulary must not contain duplicates")
+        if allowed_overrides != ROUTE_STATUS_OVERRIDE_VALUES:
+            errors.append(
+                "route_status_override_vocabulary must contain exactly "
+                f"{sorted(ROUTE_STATUS_OVERRIDE_VALUES)}"
+            )
+
     gate = document.get("operator_mutation_support_gate")
     if not isinstance(gate, dict):
         errors.append("operator_mutation_support_gate must be a mapping")
         return
+
+    route_status_override = gate.get("route_status_override")
+    if route_status_override not in allowed_overrides:
+        errors.append(
+            "operator_mutation_support_gate.route_status_override must be one of "
+            f"{sorted(allowed_overrides)}"
+        )
 
     route_identities = {
         identity

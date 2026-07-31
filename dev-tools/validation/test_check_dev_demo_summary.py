@@ -70,6 +70,16 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                 self.assertRaisesRegex(AssertionError, "unsupported shell if form"),
             ):
                 validator.closing_fi_index(fixture, 0)
+        self.assertIsNone(
+            validator.closing_fi_index(
+                ['if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then', "true"], 0
+            )
+        )
+        self.assertIsNone(
+            validator._cleanup_function_end_index(
+                ["cleanup_bootstrap_temp_dir() {", "true"], 0
+            )
+        )
 
     def test_summary_helper_paths_allow_only_workspace_root_variables(self):
         validator = self.validator
@@ -82,6 +92,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                 "bash dev-tools/tests/smoke-transport-contract.sh",
                 "bash ./dev-tools/tests/smoke-transport-contract.sh",
                 f"bash {root}/dev-tools/tests/smoke-transport-contract.sh",
+                "$FIREMUD_REPO_ROOT/dev-tools/tests/smoke-transport-contract.sh",
                 "$GITHUB_WORKSPACE/dev-tools/tests/smoke-transport-contract.sh",
                 "${ROOT_DIR}/dev-tools/tests/smoke-transport-contract.sh",
             )
@@ -118,6 +129,13 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
     def test_summary_write_regions_preserve_group_and_heredoc_boundaries(self):
         validator = self.validator
         fixtures = (
+            ('echo "safe summary" > "$GITHUB_STEP_SUMMARY"', False),
+            ('echo "safe summary" | tee "$GITHUB_STEP_SUMMARY"', False),
+            ('echo "safe summary" | tee -a "$GITHUB_STEP_SUMMARY"', False),
+            (
+                'echo "safe summary" | tee --append "$GITHUB_STEP_SUMMARY"',
+                False,
+            ),
             (
                 (
                     'printf "%s" "$DEMO_SMOKE_PASSWORD" >/tmp/password\n'
@@ -139,7 +157,23 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ),
             (
                 (
+                    "cat <<-'SUMMARY_EOF' >> \"$GITHUB_STEP_SUMMARY\"\n"
+                    "\tunsafe: $DEMO_SMOKE_PASSWORD\n"
+                    "SUMMARY_EOF"
+                ),
+                True,
+            ),
+            (
+                (
                     "cat >> \"$GITHUB_STEP_SUMMARY\" <<'SUMMARY_EOF'\n"
+                    "unsafe: $DEMO_SMOKE_PASSWORD\n"
+                    "SUMMARY_EOF"
+                ),
+                True,
+            ),
+            (
+                (
+                    "cat <<'SUMMARY_EOF' | tee \"$GITHUB_STEP_SUMMARY\"\n"
                     "unsafe: $DEMO_SMOKE_PASSWORD\n"
                     "SUMMARY_EOF"
                 ),
@@ -198,6 +232,14 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
         for fixture in secret_pipelines:
             with self.subTest(fixture=fixture):
                 self.assertTrue(validator.has_forbidden_summary_reference(fixture))
+        direct_references = (
+            'echo "${BOOTSTRAP_SECRET_DIR}/password"',
+            'echo "${{ secrets.DEMO_SMOKE_PASSWORD }}"',
+            'echo "${{ steps.create-account.outputs.password }}"',
+        )
+        for fixture in direct_references:
+            with self.subTest(fixture=fixture):
+                self.assertTrue(validator.has_forbidden_summary_reference(fixture))
         safe = (
             "echo secret summary",
             "kubectl get secret demo -o json; cat encoded.txt | base64 -d",
@@ -234,12 +276,18 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ]
             writers = validator.discover_summary_writers(sources, root)
             self.assertEqual(len(writers), 3)
-            self.assertTrue(writers[1].summary_reachable)
-            self.assertTrue(writers[2].summary_reachable)
+            reachable_helpers = [
+                writer
+                for writer in writers
+                if writer.resolved_helper_path
+                in {helper_one.resolve(), helper_two.resolve()}
+            ]
+            self.assertEqual(len(reachable_helpers), 2)
+            self.assertTrue(all(writer.summary_reachable for writer in reachable_helpers))
             self.assertTrue(
                 any(
                     validator.has_forbidden_summary_reference(writer.source)
-                    for writer in writers
+                    for writer in reachable_helpers
                     if writer.summary_reachable
                 )
             )

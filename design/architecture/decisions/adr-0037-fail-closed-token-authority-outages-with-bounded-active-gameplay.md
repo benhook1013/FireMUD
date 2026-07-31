@@ -30,13 +30,13 @@ The earlier design said control-plane and new admission fail closed but did not 
 
 ### Error And Client-State Boundary
 
-- A timeout, connection failure, or unavailable issued-token/auth-generation dependency returns the retryable infrastructure outcome `AUTH_UNAVAILABLE` with HTTP `503` or the protocol-equivalent unavailable status. Clients retain local authentication state and retry with bounded backoff; this outcome does not assert that the token was revoked.
-- Reachable authoritative state that is missing, expired, deleted, malformed, or mismatched returns `AUTH_SESSION_REVOKED` or the more specific canonical invalid-token outcome and requires fresh authentication.
+- `AUTH_UNAVAILABLE` is reserved for an issued-token/auth-generation dependency that is unreachable or times out, and maps to HTTP `503` or the protocol-equivalent unavailable status. Clients retain local authentication state and retry with bounded backoff; this outcome does not assert that the token was revoked.
+- A completed authority read or reconciliation that is reachable but returns missing, expired, deleted, malformed, or generation-mismatched registry evidence follows ADR 0035's canonical invalid-token or revoked result and requires fresh authentication. It must never be relabeled as `AUTH_UNAVAILABLE` merely because the evidence is unusable.
 - A completed Coordination Redis reset that removed issued-token records is reachable missing state, not an availability exception. Reauthentication/reissuance is required.
 
 ### Fail-Closed Operations
 
-- Account exposes no JWT unless its registry record and current generation state are established. Login issuance, bootstrap issuance, token refresh, and rotation therefore fail with `AUTH_UNAVAILABLE` when registration or authority cannot complete.
+- Account exposes no JWT unless its registry record and current generation state are established. Login issuance, bootstrap issuance, token refresh, and rotation therefore fail closed when registration or authority cannot complete: an unreachable or timed-out dependency is `AUTH_UNAVAILABLE`, while reachable malformed or mismatched authority evidence uses the applicable canonical invalid/revoked result and never produces a JWT.
 - Every protected control-plane request fails closed when its issued-token or applicable generation state cannot be read. Admin, support, billing, payment, and other sensitive operations receive no stale-authority exception.
 - New gameplay login, join, `PLAY`, reconnect/rebind, and other admission transitions fail closed whenever their required token, membership, generation, or gameplay-binding authority cannot be established.
 

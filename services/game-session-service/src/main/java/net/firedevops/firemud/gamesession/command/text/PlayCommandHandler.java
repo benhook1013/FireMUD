@@ -8,7 +8,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
@@ -750,22 +749,25 @@ public class PlayCommandHandler {
     }
     if (!response.getGameplayAdmissionAllowed()) {
       if (isPublicProductionRealm(selectedRealm)) {
-        EnsurePublicProductionPlayerMembershipResponse ensured =
-            accountClient.ensurePublicProductionPlayerMembership(
-                Long.toString(context.accountId()),
-                Long.toString(selectedRealm.tenantId()),
-                selectedWorld.slug(),
-                selectedRealm.slug(),
-                requestId);
-        Optional<ErrorDetail> ensureError = extractError(ensured.getError());
-        if (ensureError.isEmpty() && ensured.getGameplayAdmissionAllowed()) {
-          return Optional.empty();
-        }
-        if (ensureError.isPresent() && isAuthorityUnavailable(ensureError.get())) {
-          return Optional.of(
-              authorityUnavailableFailure(
-                  tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
-        }
+        recordResumeDeniedIfApplicable(
+            context,
+            selectedWorld.slug(),
+            selectedRealm.slug(),
+            selectedRealm.pointerVersion(),
+            selectedRealm.gameInstanceId(),
+            requestedCharacterId,
+            tenantTag,
+            "join_required");
+        return Optional.of(
+            failure(
+                GameplayStageCommandConstants.JOIN_REQUIRED_CODE,
+                GameplayStageCommandConstants.JOIN_REQUIRED_MESSAGE,
+                "error.play.join-required",
+                Map.of(),
+                tenantTag,
+                Long.toString(selectedRealm.gameInstanceId()),
+                Long.toString(requestedCharacterId),
+                null));
       }
       recordResumeDeniedIfApplicable(
           context,

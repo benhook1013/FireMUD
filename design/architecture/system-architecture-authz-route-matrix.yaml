@@ -6,8 +6,11 @@ unlisted_route_status: drift
 route_status_vocabulary:
   - current_openapi_operator_surface
   - target_not_currently_routable
+route_status_override_vocabulary:
+  - gate_wins_for_applies_to
 operator_mutation_support_gate:
   status: target_not_currently_routable
+  route_status_override: gate_wins_for_applies_to
   required_before_enablement:
     - published_action_family_schema
     - shared_cross_language_mutationDigest_v1_golden_vectors
@@ -30,7 +33,6 @@ operator_mutation_support_gate:
     - game-session-service/StartSession
     - game-session-service/RestartSession
     - game-session-service/StopSession
-    - game-session-service/RefreshRoles
     - game-session-service/POST /sessions
     - game-session-service/POST /sessions/{sessionId}/stop
     - game-session-service/POST /sessions/{sessionId}/restart
@@ -690,12 +692,12 @@ routes:
     canonical_errors:
       any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE]
     canonical_target:
-      membership: existing_caller_bound_membership_required
+      membership: selected_admission_mode_existing_membership_when_required
       membership_creation: play_never_creates_membership
-      missing_membership_error: JOIN_REQUIRED
+      missing_required_membership_error: JOIN_REQUIRED
     implementation_status:
       known_drift:
-        - current_runtime_invokes_ensure_public_production_player_membership_from_connect_token_or_play; this is a live security_contract_violation and affected admission must fail closed until existing membership is required
+        - current_connect_token_issuance_can_create_public_production_membership_before_play; this upstream security_contract_violation must be removed so public-production admission fails closed until explicit JOIN has created membership
   - service: spring-cloud-gateway
     route: /ws/game/**
     scope: tenant
@@ -950,7 +952,7 @@ routes:
     scope: tenant
     classification: internal_workload
     route_status: target_not_currently_routable
-    auth_path: exact_mtls_workload_plus_account_operator_authorization_reference
+    auth_path: exact_mtls_workload
     accepted_token_profiles: []
     token_type: none
     token_issuer: none
@@ -963,9 +965,7 @@ routes:
     end_user_token_required: false
     canonical_external_ingress: logging-admin-service
     direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
-    delegated_subject: operator_authorization_reference
-    operator_authorization_reference: required_and_redeemed_with_account
-    required_live_checks: [current_operator_authorization, current_session, current_account_roles]
+    required_live_checks: [current_session, current_account_roles]
     mutation_contract: owner_atomic_idempotent_role_refresh_with_durable_result
     required_fields: [control_plane_request_id, actor, reason, session_id, mutation_digest]
     canonical_errors:

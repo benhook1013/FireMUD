@@ -89,11 +89,11 @@ Game Session owns the `/api/session/**` Gateway family, but the public gateway i
 
 - `GET /ping` – basic health check returning `"pong"`.
 - `POST /sessions` – creates a game instance from a template-driven launch attempt; it is not the player gameplay-admission seam and uses the same launch-descriptor preflight as gRPC `StartSession`.
-- `POST /sessions/{id}/stop` – stops a running session.
-- `POST /sessions/{id}/restart` – restarts a stopped session.
-- `POST /sessions/{id}/refresh-roles` – refreshes the roles for an active session.
+- `POST /sessions/{sessionId}/stop` – stops a running session.
+- `POST /sessions/{sessionId}/restart` – restarts a stopped session.
+- `POST /sessions/{sessionId}/refresh-roles` – refreshes the roles for an active session.
 
-Use `/sessions/{id}/refresh-roles` after updating an account's privileges so the session reflects the latest role assignments.
+Use `/sessions/{sessionId}/refresh-roles` after updating an account's privileges so the session reflects the latest role assignments.
 
 Direct external operator exposure of a mutating `/sessions*` route is forbidden unless the owning contract explicitly marks that exact route as bypass-safe and defines its auth class, audit behavior, and lease-owner forwarding rules in the same change.
 

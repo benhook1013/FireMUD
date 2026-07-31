@@ -4,7 +4,7 @@ This document defines Game Session transport framing and service-level protocol 
 
 ## Implementation Status
 
-Unless explicitly described as current behavior, this document defines the target protocol. The target requires explicit `JOIN`/`Join & Play` for first public-production entry, while an existing durable membership permits direct `PLAY` and a grant-backed non-public path may proceed only when its required durable membership already exists. A grant never creates or substitutes membership. `JOIN` and first-party `Join & Play` are not yet implemented as explicit commands/actions: current connect-token and `PLAY` paths may call Account's `EnsurePublicProductionPlayerMembership` implicitly. That confirmed implementation drift must be removed before claiming the target `JOIN_REQUIRED` boundary.
+Unless explicitly described as current behavior, this document defines the target protocol. The target requires explicit `JOIN`/`Join & Play` for first public-production entry, while an existing durable membership permits direct `PLAY` and a grant-backed non-public path may proceed only when its required durable membership already exists. A grant never creates or substitutes membership. `JOIN` and first-party `Join & Play` are not yet implemented as explicit commands/actions. Text `PLAY` now returns `JOIN_REQUIRED` instead of invoking Account's membership writer, but connect-token issuance may still call that writer implicitly. The remaining drift must be removed before claiming the complete explicit-join boundary.
 
 ## Minimal Text Command Protocol
 

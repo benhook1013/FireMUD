@@ -104,12 +104,15 @@ class GatewayRoutesConfigurationProdTest {
 
   @Test
   void publicReportsRouteIsNotConfigured() {
-    assertThat(
-            gatewayProperties.getRoutes().stream()
-                .flatMap(route -> route.getPredicates().stream())
-                .filter(predicate -> "Path".equalsIgnoreCase(predicate.getName()))
-                .flatMap(predicate -> predicate.getArgs().values().stream()))
-        .noneMatch(path -> path.startsWith("/api/admin/reports"));
+    Set<String> configuredPaths =
+        gatewayProperties.getRoutes().stream()
+            .flatMap(route -> route.getPredicates().stream())
+            .filter(predicate -> "Path".equalsIgnoreCase(predicate.getName()))
+            .flatMap(predicate -> predicate.getArgs().values().stream())
+            .collect(Collectors.toSet());
+
+    assertThat(configuredPaths).isNotEmpty();
+    assertThat(configuredPaths).noneMatch(path -> path.startsWith("/api/admin/reports"));
   }
 
   @Test
