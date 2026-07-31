@@ -45,14 +45,15 @@ REQUIRED_DELEGATED_ENTITLEMENT_CHECKS = {
 }
 REQUIRED_TRUSTED_PROXY_CHECKS = {"trusted_proxy_identity"}
 REQUIRED_CONNECT_TOKEN_REVOKE_CHECKS = {"browser_origin", "csrf"}
-REQUIRED_DOWNSTREAM_ADMISSION_CHECKS = {
-    "membership",
-    "membership_generation",
-    "public_production_admission",
-    "realm_visibility",
-    "conditional_realm_access_grant",
-    "runtime_entitlements",
-    "admission_pointer",
+REQUIRED_GAMEPLAY_ADMISSION_MODES = {
+    "public_production_onboarding",
+    "returning_membership",
+    "grant_backed_private_or_playtest",
+}
+REQUIRED_GAMEPLAY_ADMISSION_SELECTOR_INPUTS = {
+    "current_membership",
+    "public_production_target",
+    "realm_access_grant",
 }
 REQUIRED_FIRST_PARTY_WS_APPLICABILITY = {
     "connection_mode": "first_party_web",
@@ -222,6 +223,12 @@ REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS = {
         "required_live_checks": {"membership", "membership_generation"},
         "target_tenant_generation_advance_behavior": "remains_valid",
     },
+    "gameplay_admission": {
+        "target_tenant_generation": False,
+        "generation_behavior": "mode_selected_membership_and_grant_authority",
+        "required_live_checks": set(),
+        "target_tenant_generation_advance_behavior": "route_declared",
+    },
     "internal_workload": {
         "target_tenant_generation": False,
         "generation_behavior": "route_declared_caller_and_target_authority",
@@ -251,6 +258,7 @@ NO_TARGET_TENANT_CLASSES_WITHOUT_ROUTE_SPECIFIC_TARGET_AUTHORITY = {
     "player_bootstrap_tenant",
     "pre_tenant_discovery",
     "public_production_onboarding",
+    "gameplay_admission",
 }
 PRIVILEGED_OPERATOR_ROLE_ASSURANCE = "privileged_control_when_global_role"
 PRIVILEGED_CONTROL_VALUES = {"required", "not_required", "establishes_window"}
@@ -2568,7 +2576,6 @@ def validate_downstream_admission_contract(
     route: dict[str, Any],
     label: str,
     errors: list[str],
-    live_checks_cache: LiveChecksCache | None = None,
 ) -> None:
     contract = route.get("downstream_admission_contract")
     if not isinstance(contract, dict):
@@ -2582,28 +2589,31 @@ def validate_downstream_admission_contract(
         errors.append(
             f"{label} downstream_admission_contract must disable tenant billing authority generation"
         )
-    if contract.get("membership_authority_generation_applies") is not True:
+    if contract.get("admission_mode_selection") != "required_fail_closed":
         errors.append(
-            f"{label} downstream_admission_contract must apply membership authority generation"
+            f"{label} downstream_admission_contract must require fail-closed admission mode selection"
         )
-    if contract.get("membership_creation") != "explicit_join_only":
-        errors.append(
-            f"{label} downstream_admission_contract must declare membership_creation explicit_join_only"
-        )
-    missing = sorted(
-        REQUIRED_DOWNSTREAM_ADMISSION_CHECKS
-        - cached_live_checks(
-            contract,
-            contract.get("required_live_checks"),
-            f"{label} downstream_admission_contract.required_live_checks",
+    selector_inputs = set(
+        string_list(
+            contract.get("selector_inputs"),
+            f"{label} downstream_admission_contract.selector_inputs",
             errors,
-            live_checks_cache,
-            "required_live_checks",
         )
     )
-    if missing:
+    if selector_inputs != REQUIRED_GAMEPLAY_ADMISSION_SELECTOR_INPUTS:
         errors.append(
-            f"{label} downstream_admission_contract is missing required live checks: {missing}"
+            f"{label} downstream_admission_contract must declare the exact admission selector inputs"
+        )
+    mode_branches = set(
+        string_list(
+            contract.get("required_mode_branches"),
+            f"{label} downstream_admission_contract.required_mode_branches",
+            errors,
+        )
+    )
+    if mode_branches != REQUIRED_GAMEPLAY_ADMISSION_MODES:
+        errors.append(
+            f"{label} downstream_admission_contract must declare the exact admission mode branches"
         )
 
 
@@ -2688,7 +2698,6 @@ def validate_ws_game_routes(
             first_party,
             "/ws/game/** first_party_web",
             errors,
-            live_checks_cache,
         )
 
         trusted_proxy = by_mode["trusted_tcp_proxy"][0]
@@ -2710,7 +2719,6 @@ def validate_ws_game_routes(
             trusted_proxy,
             "/ws/game/** trusted_tcp_proxy",
             errors,
-            live_checks_cache,
         )
 
     revoke_route = resolve_unique_route(

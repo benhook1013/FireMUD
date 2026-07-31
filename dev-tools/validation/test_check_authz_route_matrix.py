@@ -1320,9 +1320,17 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             self.assertFalse(route["membership_authority_generation_applies"])
             downstream = route["downstream_admission_contract"]
             self.assertFalse(downstream["tenant_billing_authority_generation_applies"])
-            self.assertTrue(downstream["membership_authority_generation_applies"])
-            self.assertIn("membership", downstream["required_live_checks"])
-            self.assertIn("membership_generation", downstream["required_live_checks"])
+            self.assertEqual(
+                "required_fail_closed", downstream["admission_mode_selection"]
+            )
+            self.assertEqual(
+                {
+                    "public_production_onboarding",
+                    "returning_membership",
+                    "grant_backed_private_or_playtest",
+                },
+                set(downstream["required_mode_branches"]),
+            )
 
     def test_ws_game_downstream_membership_contract_is_required(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -1334,13 +1342,13 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             and {"connection_mode": "trusted_tcp_proxy"}
             in route.get("applicability", {}).get("all_of", [])
         )
-        route["downstream_admission_contract"][
-            "membership_authority_generation_applies"
-        ] = False
+        route["downstream_admission_contract"]["admission_mode_selection"] = (
+            "public_production_onboarding"
+        )
         errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
-                "/ws/game/** trusted_tcp_proxy downstream_admission_contract must apply membership authority generation"
+                "/ws/game/** trusted_tcp_proxy downstream_admission_contract must require fail-closed admission mode selection"
                 in error
                 for error in errors
             )

@@ -169,6 +169,12 @@ tenant_generation_policy:
       required_authority: [membership, membership_generation]
       contract_justification: Public-production onboarding may validate or create caller-bound membership before normal gameplay admission, but it never authorizes through target-tenant generation; post-join actions use their declared membership authority.
       target_tenant_generation_advance_behavior: remains_valid
+    gameplay_admission:
+      target_tenant_generation: false
+      generation_behavior: mode_selected_membership_and_grant_authority
+      required_authority: []
+      contract_justification: Post-transport gameplay admission selects exactly one current Account-backed admission mode and then applies that mode's explicit membership, generation, grant, entitlement, routing, and binding checks; no mode inherits another mode's authority.
+      target_tenant_generation_advance_behavior: route_declared
     internal_workload:
       target_tenant_generation: false
       generation_behavior: route_declared_caller_and_target_authority
@@ -238,6 +244,8 @@ required_live_check_vocabulary:
   - browser_origin
   - capacity_admission_fence
   - cancellation_window
+  - conditional_membership
+  - conditional_membership_generation
   - conditional_realm_access_grant
   - connect_scope_match
   - connect_token_single_use_consume
@@ -298,6 +306,7 @@ classifications:
   - player_bootstrap_tenant
   - pre_tenant_discovery
   - public_production_onboarding
+  - gameplay_admission
   - tenant_regular
   - billing_safe_tenant
   - cross_tenant_support_safe
@@ -645,7 +654,7 @@ routes:
   - service: game-session-service
     route: PLAY
     scope: tenant
-    classification: public_production_onboarding
+    classification: gameplay_admission
     auth_path: game_session_authenticated_context
     accepted_token_profiles: []
     token_type: none
@@ -657,6 +666,20 @@ routes:
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, membership_generation, public_production_admission, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
+    admission_mode_selection:
+      owner: game-session-service
+      selector_inputs: [current_membership, public_production_target, realm_access_grant]
+      ambiguity_behavior: deny
+      branches:
+        public_production_onboarding:
+          required_live_checks: [membership, membership_generation, public_production_admission, realm_visibility, runtime_entitlements, admission_pointer]
+          membership_creation: explicit_join_only
+        returning_membership:
+          required_live_checks: [membership, membership_generation, realm_visibility, runtime_entitlements, admission_pointer]
+          membership_creation: forbidden
+        grant_backed_private_or_playtest:
+          required_live_checks: [conditional_membership, conditional_membership_generation, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
+          membership_creation: forbidden
     canonical_errors:
       any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE]
     canonical_target:
@@ -669,7 +692,7 @@ routes:
   - service: spring-cloud-gateway
     route: /ws/game/**
     scope: tenant
-    classification: public_production_onboarding
+    classification: gameplay_admission
     applicability:
       all_of:
         - connection_mode: first_party_web
@@ -694,9 +717,9 @@ routes:
     downstream_admission_contract:
       owner: game-session-service
       tenant_billing_authority_generation_applies: false
-      membership_authority_generation_applies: true
-      required_live_checks: [membership, membership_generation, public_production_admission, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
-      membership_creation: explicit_join_only
+      admission_mode_selection: required_fail_closed
+      selector_inputs: [current_membership, public_production_target, realm_access_grant]
+      required_mode_branches: [public_production_onboarding, returning_membership, grant_backed_private_or_playtest]
     handshake_error_classes:
       any_of:
         - CONNECT_TOKEN_MISSING
@@ -713,7 +736,7 @@ routes:
   - service: spring-cloud-gateway
     route: /ws/game/**
     scope: tenant
-    classification: public_production_onboarding
+    classification: gameplay_admission
     applicability:
       all_of:
         - connection_mode: trusted_tcp_proxy
@@ -736,9 +759,9 @@ routes:
     downstream_admission_contract:
       owner: game-session-service
       tenant_billing_authority_generation_applies: false
-      membership_authority_generation_applies: true
-      required_live_checks: [membership, membership_generation, public_production_admission, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
-      membership_creation: explicit_join_only
+      admission_mode_selection: required_fail_closed
+      selector_inputs: [current_membership, public_production_target, realm_access_grant]
+      required_mode_branches: [public_production_onboarding, returning_membership, grant_backed_private_or_playtest]
     handshake_error_classes:
       any_of: [POLICY_DENY, BACKEND_UNAVAILABLE, PROTOCOL_MISMATCH, INTERNAL_ERROR]
   - service: spring-cloud-gateway
