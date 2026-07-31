@@ -36,7 +36,6 @@ operator_mutation_support_gate:
     - game-session-service/POST /sessions
     - game-session-service/POST /sessions/{sessionId}/stop
     - game-session-service/POST /sessions/{sessionId}/restart
-    - game-session-service/POST /sessions/{sessionId}/refresh-roles
   live_exceptions:
     - logging-admin-service/GET /admission-pointers
     - logging-admin-service/GET /admission-pointers/{tenantId}/{worldSlug}/{realmSlug}/audit
@@ -532,7 +531,7 @@ coverage_drift:
   - family: commerce-payment-instrument
     status: drift-found
     current_routes: []
-    linked_decision: ADR-0044
+    decision_inventory_item: MS-AA-PAYMENT-INSTRUMENT
     target_owner: account-service
     absent_contracts:
       [account_owned_wallet_customer_mapping, explicit_per_subscription_binding, safe_instrument_detachment, billing_ownership_transfer]
@@ -558,7 +557,7 @@ coverage_drift:
         audit_contract: required_cross_tenant_actor_scope_reason_and_outcome
         forbidden_authority: [tenant_membership, shared_instrument_acknowledgement]
         mutation_contract: audited_cross_tenant_billing_owner_transfer_with_verified_provider_replacement_before_cutover
-    note: Payment/subscription foundations exist, but the ADR-0044 wallet and payment-instrument contract is not currently routable.
+    note: Payment/subscription foundations exist, but the unreviewed MS-AA-PAYMENT-INSTRUMENT wallet and payment-instrument contract is not currently routable and has no accepted ADR.
 routes:
   - service: game-session-service
     route: LOGIN
@@ -976,7 +975,7 @@ routes:
     scope: tenant
     classification: tenant_regular
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
-    route_status: current_openapi_operator_surface
+    route_status: target_not_currently_routable
     tenant_billing_authority_generation_applies: true
     membership_authority_generation_applies: conditional_by_operator_role
     membership_authority_generation_condition:
@@ -1003,6 +1002,9 @@ routes:
     operator_authorization_reference: account_issued_bounded_reference
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
+    implementation_status:
+      known_drift:
+        - a current owner-local OpenAPI route exists, but supported operator mutation remains disabled until the operator mutation support gate is satisfied
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: game-session-service
@@ -1011,7 +1013,7 @@ routes:
     scope: tenant
     classification: tenant_regular
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
-    route_status: current_openapi_operator_surface
+    route_status: target_not_currently_routable
     tenant_billing_authority_generation_applies: true
     membership_authority_generation_applies: conditional_by_operator_role
     membership_authority_generation_condition:
@@ -1039,6 +1041,9 @@ routes:
     operator_authorization_reference: account_issued_bounded_reference
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
+    implementation_status:
+      known_drift:
+        - a current owner-local OpenAPI route exists, but supported operator mutation remains disabled until the operator mutation support gate is satisfied
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: game-session-service
@@ -1047,7 +1052,7 @@ routes:
     scope: tenant
     classification: tenant_regular
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
-    route_status: current_openapi_operator_surface
+    route_status: target_not_currently_routable
     tenant_billing_authority_generation_applies: true
     membership_authority_generation_applies: conditional_by_operator_role
     membership_authority_generation_condition:
@@ -1074,6 +1079,9 @@ routes:
     operator_authorization_reference: account_issued_bounded_reference
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
+    implementation_status:
+      known_drift:
+        - a current owner-local OpenAPI route exists, but supported operator mutation remains disabled until the operator mutation support gate is satisfied
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: game-session-service
@@ -1100,6 +1108,9 @@ routes:
     mutation_contract: owner_atomic_idempotent_role_refresh_with_durable_result
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
+    implementation_status:
+      known_drift:
+        - this current owner-local workload route is not operator-reference-redeeming and remains outside the operator mutation support gate
   - service: account-service
     route: AuthLogin
     scope: public

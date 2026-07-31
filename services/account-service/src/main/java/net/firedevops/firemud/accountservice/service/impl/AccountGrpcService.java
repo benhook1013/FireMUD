@@ -221,6 +221,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           GetTenantMembershipForRuntimeResponse.newBuilder()
               .setAccountId(String.valueOf(dto.accountId()))
               .setTenantId(String.valueOf(dto.tenantId()))
+              .setMembershipExists(dto.membershipExists())
               .setGameplayAdmissionAllowed(dto.gameplayAdmissionAllowed())
               .setMembershipVersion(dto.membershipVersion())
               .setEvaluatedAt(dto.evaluatedAt())

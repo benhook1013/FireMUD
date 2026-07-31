@@ -31,7 +31,7 @@ The player-facing protocol is also stage-aware:
 The normal happy path for a human player should therefore be:
 
 ```text
-LOGIN <username> <secret>
+LOGIN <email> [secret]
 JOIN <world> (first public-production entry only)
 PLAY <world> [realm] [character]
 ```
@@ -40,8 +40,8 @@ PLAY <world> [realm] [character]
 
 | Command | Purpose | Example |
 | ------- | ------- | ------- |
-| `LOGIN <username> <secret>` | Authenticates a session and binds it to an account on credential-bearing transports. Account Service interprets the secret as an enabled password or verified-email login code. Public non-proxy `/ws/game/**` uses bare `LOGIN` after bootstrap/connect-token validation instead. | `LOGIN demo@example.com swordfish` |
-| `LOGON <username> <secret>` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
+| `LOGIN <email> [secret]` | With one argument, requests a verified-email login code without authenticating the session. With a password or active email code as the second argument, authenticates immediately. Public non-proxy `/ws/game/**` uses bare `LOGIN` after bootstrap/connect-token validation instead. | `LOGIN demo@example.com swordfish` |
+| `LOGON <email> [secret]` | Exact alias for `LOGIN`. | `LOGON demo@example.com swordfish` |
 | `LOGOUT` / `LOGOFF` / `QUIT` | Ends the current session and closes the transport. `LOGOFF` and `QUIT` are exact aliases for canonical `LOGOUT`. | `LOGOUT` |
 | `WORLDS` | Lists worlds visible to the caller. Before `LOGIN`, this is a public browse/discovery command intended to let players explore the platform before signing up or logging in. After `LOGIN`, it may also include caller-specific membership or entitlement context. | `WORLDS` |
 | `REALMS <world>` | Lists visible realms for a world, where `<world>` is the stable selector or menu index returned by `WORLDS`. The default public production realm may be visible before membership exists; additional realms require explicit grants. | `REALMS demo` |
@@ -63,11 +63,11 @@ Selector rules for `PLAY` match the lobby helpers. `WORLDS` returns both `tenant
 
 Telnet and WebSocket clients share the line-based syntax, but transport context determines which `LOGIN` form is valid:
 
-- For Telnet and other non-WebSocket text clients, bare `LOGIN` or `LOGON` is intended to start a prompt flow, while `LOGIN <username> <secret>` performs an immediate authentication attempt.
+- For Telnet and other non-WebSocket text clients, `LOGIN <email>` requests a verified-email code and `LOGIN <email> <secret>` performs an immediate password-or-code authentication attempt. Bare `LOGIN` does not start an interactive prompt.
 - For public non-proxy `/ws/game/**` sessions that already carry a validated Gateway connect context, bare `LOGIN` completes gameplay authentication from the pre-established bootstrap identity instead of prompting for credentials. First-party browser/mobile/server clients use the protected connect-token cookie; only explicitly classified non-first-party generic WebSocket clients use the dedicated connect-token handshake header. This bootstrap identity must not quietly reintroduce gameplay binding into `LOGIN`; `PLAY` remains the sole gameplay-admission and gameplay-scope binding step.
 - The same `OK <COMMAND>` and `ERROR <CODE> <message>` response format applies to all transports so clients can react consistently.
 
-Prompt-based exchanges are planned but not implemented in this slice for Telnet and non-bootstrap clients. On those transports, bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <secret>.` First-party `/ws/game/**` sessions with a validated connect context are the exception: bare `LOGIN` consumes the bootstrap-backed context and must not ask the browser to resend credentials.
+Multi-line prompt exchanges are planned but not implemented for Telnet and non-bootstrap clients. On those transports, bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <email> [secret].` First-party `/ws/game/**` sessions with a validated connect context are the exception: bare `LOGIN` consumes the bootstrap-backed context and must not ask the browser to resend credentials.
 
 After `LOGIN` succeeds, an existing member normally issues `PLAY <world> [realm] [character]`; a first-time public-production player must issue `JOIN <world>` once before `PLAY`. `REALMS` and `CHARS` remain available as lobby helper commands when the player's choice is ambiguous or when they want to browse. `PLAY` is the gameplay-admission and gameplay-binding step; it is not merely a continuation of authentication. This step binds the authenticated connection to a world-scoped gameplay session and enforces tenant authorization, realm routing, public-admission rules, and entitlements.
 
@@ -82,7 +82,7 @@ Canonical first-party `PLAY` scope errors on `/ws/game/**`:
 
 If a gameplay session already exists for the selected `{tenantId, gameInstanceId, characterId}` and is still resumable, meaning its TTL, current membership authority, and current revocation state are all valid, `PLAY` resumes it and rebinds the new socket to the existing session. On successful resume, Game Session also rebinds the session to a fresh backend token for subsequent internal calls rather than depending on the previous token to remain valid. If no resumable session exists, `PLAY` may fall back automatically to fresh gameplay only after live membership and every ordinary admission check succeed. A first-time public-production player without membership receives `JOIN_REQUIRED`; `PLAY` never creates that membership. Even after reconnect, the client must still send an explicit `PLAY` so the platform never guesses which tenant or character to resume.
 
-If a client attempts gameplay commands before `LOGIN` succeeds, the service should return a stage-aware response such as `ERROR LOGIN_REQUIRED Use LOGIN <username> <password>`. If a client is logged in but has not yet completed `PLAY`, the service should return a stage-aware response such as `ERROR PLAY_REQUIRED Use PLAY <world> [realm] [character]`. These are menu/progression mistakes, not gameplay-mechanics failures.
+If a client attempts gameplay commands before `LOGIN` succeeds, the service should return a stage-aware response such as `ERROR LOGIN_REQUIRED Use LOGIN <email> [secret]`. If a client is logged in but has not yet completed `PLAY`, the service should return a stage-aware response such as `ERROR PLAY_REQUIRED Use PLAY <world> [realm] [character]`. These are menu/progression mistakes, not gameplay-mechanics failures.
 
 ### Login and world-selection examples
 
@@ -127,7 +127,7 @@ Credential-bearing authentication is never replayed automatically after an ambig
 
 Additional Game Session-specific login failures cover parsing and session-state issues before the Account Service call:
 
-- `PROMPT_LOGIN_UNSUPPORTED` – prompt-based `LOGIN`/`LOGON` exchanges are planned but not implemented yet on non-bootstrap transports, so those clients must send `LOGIN <username> <password>`.
+- `PROMPT_LOGIN_UNSUPPORTED` – multi-line interactive `LOGIN`/`LOGON` exchanges are planned but not implemented yet on non-bootstrap transports, so those clients must send `LOGIN <email>` to request a code or `LOGIN <email> <secret>` to authenticate.
 - `INVALID_ACCOUNT` – Account Service returned an account identifier that could not be parsed into the expected format.
 - `ACCOUNT_MISMATCH` – bootstrap-backed `LOGIN` resolved to an account different from the validated connect-context subject, or the authenticated account is otherwise not permitted to attach to the requested game instance or tenant context.
 - `JOIN_REQUIRED` – the selected public-production target has no confirmed durable membership for the account, so the client must complete explicit `JOIN`/`Join & Play`; a grant or cached discovery result is not a substitute.
@@ -158,7 +158,7 @@ PLAY demo
 OK PLAY Entered world: Demo World / Live Realm
 ```
 
-The transcript above shows the intended prompt flow. In the current implementation the same exchange is represented by a single `LOGIN <username> <password>` call because the prompt-driven handler still returns `ERROR PROMPT_LOGIN_UNSUPPORTED ...`.
+The transcript above shows the intended multi-line prompt flow. In the current implementation, the client sends `LOGIN <email>` to request a code and then submits `LOGIN <email> <code>`, or sends `LOGIN <email> <password>` directly; bare non-bootstrap login returns `ERROR PROMPT_LOGIN_UNSUPPORTED ...`.
 
 Planned target Telnet first-join success transcript; explicit `JOIN` is not current behavior:
 

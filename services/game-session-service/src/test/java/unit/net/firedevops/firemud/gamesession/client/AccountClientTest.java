@@ -189,6 +189,7 @@ class AccountClientTest {
         GetTenantMembershipForRuntimeResponse.newBuilder()
             .setAccountId("42")
             .setTenantId("7")
+            .setMembershipExists(true)
             .setGameplayAdmissionAllowed(true)
             .setMembershipVersion(12L)
             .setEvaluatedAt("2026-07-31T00:00:00Z")
@@ -251,6 +252,7 @@ class AccountClientTest {
         GetTenantMembershipForRuntimeResponse.newBuilder()
             .setAccountId("42")
             .setTenantId("7")
+            .setMembershipExists(true)
             .setGameplayAdmissionAllowed(true)
             .setMembershipVersion(12L)
             .build();

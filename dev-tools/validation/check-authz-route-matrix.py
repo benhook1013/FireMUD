@@ -151,10 +151,7 @@ GAME_SESSION_OWNER_ROLE_REFRESH_ROUTES = {
     ("game-session-service", "POST /sessions/{sessionId}/refresh-roles"),
 }
 REQUIRED_SESSION_LIFECYCLE_GATE_ROUTES = {
-    f"{service}/{route}"
-    for service, route in (
-        GAME_SESSION_OPERATOR_ROUTES | GAME_SESSION_OWNER_ROLE_REFRESH_ROUTES
-    )
+    f"{service}/{route}" for service, route in GAME_SESSION_OPERATOR_ROUTES
 }
 CONDITIONAL_OPERATOR_ROUTES = OPERATOR_INGRESS_ROUTES | GAME_SESSION_OPERATOR_ROUTES
 ACCOUNT_SUBJECT_BOUND_ROUTES = {

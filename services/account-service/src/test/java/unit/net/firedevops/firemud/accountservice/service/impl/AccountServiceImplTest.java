@@ -1160,6 +1160,7 @@ class AccountServiceImplTest {
 
     assertEquals(11L, dto.accountId());
     assertEquals(7L, dto.tenantId());
+    assertTrue(dto.membershipExists());
     assertTrue(dto.gameplayAdmissionAllowed());
     assertEquals(711L, dto.membershipVersion());
     assertNotNull(dto.evaluatedAt());
@@ -1187,6 +1188,7 @@ class AccountServiceImplTest {
 
     assertEquals(11L, dto.accountId());
     assertEquals(7L, dto.tenantId());
+    assertTrue(!dto.membershipExists());
     assertTrue(!dto.gameplayAdmissionAllowed());
   }
 

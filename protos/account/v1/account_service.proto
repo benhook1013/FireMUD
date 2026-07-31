@@ -103,6 +103,7 @@ message GetTenantMembershipForRuntimeResponse {
   uint64 membership_version = 4;
   string evaluated_at = 5;
   shared.v1.ErrorDetail error = 6;
+  bool membership_exists = 7;
 }
 
 message GetRealmAccessGrantForRuntimeRequest {

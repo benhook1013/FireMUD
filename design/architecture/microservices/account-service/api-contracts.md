@@ -178,6 +178,7 @@ Illustrative `GetTenantMembershipForRuntime(accountId, tenantId)` response:
 {
   "accountId": 42,
   "tenantId": 7,
+  "membershipExists": true,
   "gameplayAdmissionAllowed": true,
   "roles": ["player"],
   "membershipVersion": 42,
@@ -188,7 +189,8 @@ Illustrative `GetTenantMembershipForRuntime(accountId, tenantId)` response:
 
 Required semantics:
 
-- `gameplayAdmissionAllowed` is the authoritative boolean for gameplay admission.
+- `membershipExists` is the authoritative presence signal. Callers must not infer absence from `gameplayAdmissionAllowed=false` or a sentinel membership version.
+- `gameplayAdmissionAllowed` is the authoritative boolean for gameplay admission when membership exists; `false` may represent either an absent membership or an existing denied/revoked membership and must be interpreted with `membershipExists`.
 - `membershipVersion` advances monotonically for the `{accountId, tenantId}` membership scope whenever gameplay-relevant membership or role authority changes.
 - `membershipAuthorityGeneration` advances whenever membership or tenant-role authority issued to the caller must be invalidated; it is the authority fence for caller-bound tokens and control-plane admission, and is distinct from the membership content/version counter.
 - `evaluatedAt` timestamps the live membership decision used for admission or resume.

@@ -81,7 +81,7 @@ Every other tenant-bearing classification, including a newly introduced classifi
 - The Redis projection is idempotent and set-if-greater. Delayed or replayed older events cannot regress a generation.
 - A cutoff workflow does not report enforcement complete until the new generation is projected and its downstream cutoff obligations have reached their declared bound.
 - Issuance and generation advancement must use Account-owned transactional ordering for the affected authority so a token cannot capture an old generation after the authority change has linearized.
-- Private-token replacement issuance and account-wide logout/security cutoff lock or compare the same durable account-auth generation and applicable `issuanceFence` in Account SQL. Logout advances those values in the same transaction as its audit/outbox state; replacement issuance commits only if the generation and fence validated at refresh authorization are still current, so a refresh cannot linearize across logout and resurrect authority.
+- Private-token replacement issuance and account-wide logout/security cutoff lock or compare the same durable account generation and applicable `issuanceFence` in Account SQL. Logout advances those values in the same transaction as its audit/outbox state; replacement issuance commits only if the generation and fence validated at refresh authorization are still current, so a refresh cannot linearize across logout and resurrect authority.
 - Per-token logout remains deletion of the one record from ADR 0035. Bulk revocation never depends on token-key scans or deletion.
 
 ### Gameplay Boundary

@@ -3,7 +3,7 @@
 ## Implementation Status
 
 The explicit `JOIN` step is target behavior. Connect-token issuance may still create public-production membership implicitly, while text `PLAY` now returns `JOIN_REQUIRED` when that membership is absent. The target flow below must not be read as proof that explicit join is complete across all clients.
-The current Telnet credential form is `LOGIN <username> <secret>`; the one-argument challenge flow shown in the target examples is target-only and is not implemented.
+The Telnet credential form is `LOGIN <email> [secret]`. `LOGIN <email>` starts the email challenge, while `LOGIN <email> <secret>` supplies the secret immediately.
 
 ## Cross-Path Connectivity Contract
 
@@ -20,7 +20,7 @@ These flows describe how Telnet traffic is forwarded into the shared login/sessi
 - **Target canonical player flow**
   - Connect to the TCP Proxy Service.
   - Optionally browse public worlds with `WORLDS`.
-  - Target login behavior allows `LOGIN <email-or-username>` to start the neutral email challenge, or `LOGIN <email-or-username> <secret>` to authenticate immediately. The one-argument challenge form is target-only and unimplemented; current Telnet clients use `LOGIN <username> <secret>`. When the target one-argument form starts a challenge, complete the applicable password or verified-email-code response before continuing; `JOIN` is accepted only after authentication succeeds.
+  - Use `LOGIN <email> [secret]`: `LOGIN <email>` starts the email challenge, while `LOGIN <email> <secret>` authenticates immediately. Complete the applicable secret or verified-email-code response before continuing; `JOIN` is accepted only after authentication succeeds.
   - For a first-time public-production account, send `JOIN <world>` to create the durable player membership. A returning member skips `JOIN`.
   - After membership, use `CHARS <world> [realm]` or the character-creation flow to select or create the required character, then enter gameplay with `PLAY <world> [realm] [character]`; use `REALMS <world>` when the target is ambiguous.
   - Send gameplay commands (`LOOK`, `SAY`, movement, and so on) as normal.

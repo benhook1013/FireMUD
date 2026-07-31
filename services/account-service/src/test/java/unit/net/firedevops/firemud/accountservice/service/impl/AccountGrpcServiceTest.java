@@ -528,7 +528,7 @@ class AccountGrpcServiceTest {
     Mockito.when(accountService.getTenantMembershipForRuntime(2L, 1L, "req-1"))
         .thenReturn(
             new net.firedevops.firemud.accountservice.dto.RuntimeMembershipDto(
-                2L, 1L, true, 44L, "2026-03-30T00:00:00Z"));
+                2L, 1L, true, true, 44L, "2026-03-30T00:00:00Z"));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
     AtomicReference<GetTenantMembershipForRuntimeResponse> ref = new AtomicReference<>();
@@ -553,6 +553,7 @@ class AccountGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals("2", ref.get().getAccountId());
+    assertTrue(ref.get().getMembershipExists());
     assertTrue(ref.get().getGameplayAdmissionAllowed());
     assertEquals(44L, ref.get().getMembershipVersion());
   }

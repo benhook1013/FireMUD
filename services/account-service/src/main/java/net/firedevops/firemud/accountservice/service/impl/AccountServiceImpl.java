@@ -753,6 +753,7 @@ public class AccountServiceImpl implements AccountService {
     return new RuntimeMembershipDto(
         accountId,
         tenantId,
+        membership.isPresent(),
         membership.map(AccountTenantMembership::isGameplayAdmissionAllowed).orElse(false),
         membership.map(AccountTenantMembership::getId).orElse(0L),
         Instant.now().toString());
@@ -1598,6 +1599,7 @@ public class AccountServiceImpl implements AccountService {
     return new RuntimeMembershipDto(
         result.accountId(),
         result.tenantId(),
+        true,
         true,
         result.membershipVersion(),
         result.evaluatedAt());

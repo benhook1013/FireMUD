@@ -255,7 +255,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 )
                 self.assertIn(expected_error, errors)
 
-    def test_http_session_mutations_are_gated_without_losing_current_route_status(self):
+    def test_http_operator_session_mutations_are_target_gated(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         expected = set(self.validator.REQUIRED_SESSION_LIFECYCLE_GATE_ROUTES)
         self.assertTrue(
@@ -270,7 +270,18 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         for identity in expected:
             service, route_name = identity.split("/", 1)
             route = route_for(document, service, route_name)
-            self.assertEqual("current_openapi_operator_surface", route["route_status"])
+            self.assertEqual("target_not_currently_routable", route["route_status"])
+
+        refresh_roles = "game-session-service/POST /sessions/{sessionId}/refresh-roles"
+        self.assertNotIn(
+            refresh_roles,
+            document["operator_mutation_support_gate"]["applies_to"],
+        )
+        service, route_name = refresh_roles.split("/", 1)
+        self.assertEqual(
+            "current_openapi_operator_surface",
+            route_for(document, service, route_name)["route_status"],
+        )
 
         document["operator_mutation_support_gate"]["applies_to"].remove(
             "game-session-service/POST /sessions"
@@ -2961,7 +2972,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             {"public"},
             errors,
         )
-        self.assertTrue(any("duplicate route applicability" in error for error in errors))
+        self.assertIn(
+            "duplicate route applicability: duplicate-service|GET /duplicate",
+            errors,
+        )
         self.assertTrue(
             any("duplicate route applicability must be JSON-serializable" in error for error in errors)
         )

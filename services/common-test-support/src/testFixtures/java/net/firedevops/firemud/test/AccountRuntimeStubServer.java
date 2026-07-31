@@ -45,6 +45,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
 
   private final Server server;
   private final List<AuthenticateRequest> authenticateRequests = new CopyOnWriteArrayList<>();
+  private final AtomicBoolean membershipExists = new AtomicBoolean(true);
   private final AtomicBoolean gameplayAdmissionAllowed = new AtomicBoolean(true);
   private final AtomicBoolean gameplayAvailable = new AtomicBoolean(true);
   private final AtomicBoolean realmAccessGranted = new AtomicBoolean(true);
@@ -88,11 +89,17 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     gameplayAdmissionAllowed.set(allowed);
   }
 
+  public void setMembershipExists(boolean exists) {
+    membershipExists.set(exists);
+  }
+
   public void allowGameplayAdmission() {
+    setMembershipExists(true);
     setGameplayAdmissionAllowed(true);
   }
 
   public void denyGameplayAdmission() {
+    setMembershipExists(true);
     setGameplayAdmissionAllowed(false);
   }
 
@@ -106,6 +113,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
 
   public void resetRuntimeState() {
     authenticateRequests.clear();
+    membershipExists.set(true);
     gameplayAdmissionAllowed.set(true);
     gameplayAvailable.set(true);
     realmAccessGranted.set(true);
@@ -141,6 +149,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         GetTenantMembershipForRuntimeResponse.newBuilder()
             .setAccountId(request.getAccountId())
             .setTenantId(request.getTenantId())
+            .setMembershipExists(membershipExists.get())
             .setGameplayAdmissionAllowed(gameplayAdmissionAllowed.get())
             .setMembershipVersion(1L)
             .setEvaluatedAt(EVALUATED_AT)

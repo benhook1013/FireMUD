@@ -102,6 +102,7 @@ class PlayCommandHandlerTest {
             GetTenantMembershipForRuntimeResponse.newBuilder()
                 .setAccountId("123")
                 .setTenantId("22")
+                .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
@@ -887,6 +888,7 @@ class PlayCommandHandlerTest {
             GetTenantMembershipForRuntimeResponse.newBuilder()
                 .setAccountId("123")
                 .setTenantId("22")
+                .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(2L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
@@ -902,6 +904,42 @@ class PlayCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("WORLD_ACCESS_DENIED");
+  }
+
+  @Test
+  void playNonPublicRealmRequiresExistingAdmissibleMembership() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("22")
+                .setMembershipExists(false)
+                .setGameplayAdmissionAllowed(true)
+                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .build());
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY,
+                List.of("sandbox", "preview", "Emberline"),
+                "PLAY sandbox preview Emberline"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+    Mockito.verify(accountClient, Mockito.never())
+        .getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
   }
 
   @ParameterizedTest
@@ -942,8 +980,9 @@ class PlayCommandHandlerTest {
             GetTenantMembershipForRuntimeResponse.newBuilder()
                 .setAccountId("123")
                 .setTenantId("22")
-                .setGameplayAdmissionAllowed(false)
-                .setMembershipVersion(2L)
+                .setMembershipExists(false)
+                .setGameplayAdmissionAllowed(true)
+                .setMembershipVersion(0L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
     PlayCommandHandlingResult result =

@@ -1,4 +1,4 @@
-# ADR-0045: Ordinary Login Factors and HTTPS Sensitive-Action Step-Up
+# ADR 0045: Ordinary Login Factors and HTTPS Sensitive-Action Step-Up
 
 ## Status
 
