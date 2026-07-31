@@ -945,8 +945,7 @@ class PlayCommandHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("WORLD_ACCESS_DENIED");
     assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
         .isEqualTo("error.play.world-access-denied");
-    Mockito.verify(gameplayPresenceLifecycleService)
-        .clearGameplayBinding(context, "access_denied");
+    Mockito.verify(gameplayPresenceLifecycleService).clearGameplayBinding(context, "access_denied");
   }
 
   @Test

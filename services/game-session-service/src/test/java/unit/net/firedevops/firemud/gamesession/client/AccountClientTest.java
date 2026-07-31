@@ -311,8 +311,7 @@ class AccountClientTest {
   }
 
   @Test
-  void runtimeEntitlementsNormalizesExhaustedUnavailableToCanonicalUnavailable()
-      throws Exception {
+  void runtimeEntitlementsNormalizesExhaustedUnavailableToCanonicalUnavailable() throws Exception {
     AccountServiceGrpc.AccountServiceBlockingStub initialStub =
         mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
     AccountServiceGrpc.AccountServiceBlockingStub retryStub =

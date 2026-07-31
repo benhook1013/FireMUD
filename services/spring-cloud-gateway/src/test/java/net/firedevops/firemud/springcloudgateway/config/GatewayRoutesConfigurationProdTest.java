@@ -109,7 +109,7 @@ class GatewayRoutesConfigurationProdTest {
                 .flatMap(route -> route.getPredicates().stream())
                 .filter(predicate -> "Path".equalsIgnoreCase(predicate.getName()))
                 .flatMap(predicate -> predicate.getArgs().values().stream()))
-        .doesNotContain("/api/admin/reports/**");
+        .noneMatch(path -> path.startsWith("/api/admin/reports"));
   }
 
   @Test

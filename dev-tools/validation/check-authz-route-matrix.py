@@ -64,6 +64,8 @@ REQUIRED_REVOKE_APPLICABILITY = {
     "operation": "connect_token_cookie_revoke",
 }
 REQUIRED_REVOKE_GENERATION_APPLICABILITY = {
+    "issuer_authority_generation_applies": False,
+    "account_authority_generation_applies": False,
     "tenant_billing_authority_generation_applies": False,
     "membership_authority_generation_applies": False,
 }
@@ -1298,6 +1300,7 @@ def validate_conditional_operator_route(
     errors: list[str],
     checks: set[str] | None = None,
     live_checks_cache: LiveChecksCache | None = None,
+    branch_checks: dict[str, list[set[str]]] | None = None,
 ) -> None:
     route_key_value = route_set_key(route)
     if route_key_value not in CONDITIONAL_OPERATOR_ROUTES:
@@ -1313,9 +1316,10 @@ def validate_conditional_operator_route(
         )
     if checks is None:
         checks = route_live_checks(route, label, errors, live_checks_cache)
-    branch_checks = operator_authorization_branch_checks(
-        route, label, errors, live_checks_cache
-    )
+    if branch_checks is None:
+        branch_checks = operator_authorization_branch_checks(
+            route, label, errors, live_checks_cache
+        )
     tenant_branch_checks = set().union(*branch_checks.get("tenant_role", []))
     platform_admin_branch_checks = set().union(
         *branch_checks.get("platformAdmin_global", [])
@@ -2175,6 +2179,11 @@ def validate_generation_applicability(
             or route_key_value in ACCOUNT_SUBJECT_BOUND_ROUTES
         ):
             checks = route_live_checks(route, label, errors, live_checks_cache)
+        branch_checks = None
+        if "operator_authorization_branches" in route:
+            branch_checks = operator_authorization_branch_checks(
+                route, label, errors, live_checks_cache
+            )
         validate_pending_deletion_generation(
             route, label, account_generation, errors, checks, live_checks_cache
         )
@@ -2188,7 +2197,7 @@ def validate_generation_applicability(
                     "live check membership_generation"
                 )
         validate_conditional_operator_route(
-            route, label, value, errors, checks, live_checks_cache
+            route, label, value, errors, checks, live_checks_cache, branch_checks
         )
         validate_account_authorization_route(
             route, label, errors, checks, live_checks_cache
@@ -2998,6 +3007,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     # Keep both caches local to this validation call and therefore to this document.
     live_checks_cache: LiveChecksCache = {}
     required_fields_cache: RequiredFieldsCache = {}
+    # Seed structural results before route validators reuse the cache.
     validate_live_check_vocabulary(document, errors, live_checks_cache)
     allowed_route_statuses = validate_route_status_vocabulary(document, errors)
 

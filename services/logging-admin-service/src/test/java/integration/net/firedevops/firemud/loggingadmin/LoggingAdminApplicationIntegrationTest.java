@@ -95,20 +95,23 @@ class LoggingAdminApplicationIntegrationTest {
   }
 
   @Test
-  void unmappedPostReportsUsesCanonicalNotFoundEnvelope() throws Exception {
-    HttpRequest request =
-        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/reports"))
-            .timeout(HTTP_REQUEST_TIMEOUT)
-            .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantAdminToken(1L))
-            .POST(HttpRequest.BodyPublishers.noBody())
-            .build();
+  void unmappedPostReportsFamilyUsesCanonicalNotFoundEnvelope() throws Exception {
+    for (String path : new String[] {"/reports", "/reports/123"}) {
+      HttpRequest request =
+          HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+              .timeout(HTTP_REQUEST_TIMEOUT)
+              .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantAdminToken(1L))
+              .POST(HttpRequest.BodyPublishers.noBody())
+              .build();
 
-    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+      HttpResponse<String> response =
+          HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
-    assertThat(response.statusCode()).isEqualTo(404);
-    assertThat(response.body()).contains("\"status\":\"ERROR\"");
-    assertThat(response.body()).contains("\"code\":\"NOT_FOUND\"");
-    assertThat(response.body()).contains("\"message\":\"Resource not found\"");
+      assertThat(response.statusCode()).isEqualTo(404);
+      assertThat(response.body()).contains("\"status\":\"ERROR\"");
+      assertThat(response.body()).contains("\"code\":\"NOT_FOUND\"");
+      assertThat(response.body()).contains("\"message\":\"Resource not found\"");
+    }
   }
 
   @Test

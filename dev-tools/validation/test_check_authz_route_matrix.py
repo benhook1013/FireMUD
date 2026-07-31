@@ -280,6 +280,40 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 }
                 self.assertEqual(expected, branches)
 
+        with self.subTest(route="IssueHumanOperatorAuthorizationReference"):
+            document = copy.deepcopy(baseline)
+            route = route_for(
+                document,
+                "account-service",
+                "IssueHumanOperatorAuthorizationReference",
+            )
+            branches = {
+                branch["branch"]: set(branch["required_live_checks"])
+                for branch in route["operator_authorization_branches"]
+            }
+            self.assertEqual(expected, branches)
+
+            platform_admin_branch = next(
+                branch
+                for branch in route["operator_authorization_branches"]
+                if branch["branch"] == "platformAdmin_global"
+            )
+            platform_admin_branch["required_live_checks"].remove(
+                "target_tenant_generation"
+            )
+            errors = []
+            self.validator.validate_generation_applicability(
+                document["routes"], errors
+            )
+            self.assertTrue(
+                any(
+                    "IssueHumanOperatorAuthorizationReference"
+                    in error
+                    and "required_live_checks must equal" in error
+                    for error in errors
+                )
+            )
+
         for branch_name, missing_check in (
             ("tenant_role", "tenant_generation"),
             ("platformAdmin_global", "target_tenant_generation"),
@@ -2433,12 +2467,17 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             self.validator.GAMEPLAY_CONNECT_ISSUED_TOKEN_STATE,
             route["issued_token_state"],
         )
-        for field in (
-            "issuer_authority_generation_applies",
-            "account_authority_generation_applies",
-        ):
-            self.assertFalse(route[field])
-        for field in self.validator.REQUIRED_REVOKE_GENERATION_APPLICABILITY:
+        expected = {
+            "issuer_authority_generation_applies": False,
+            "account_authority_generation_applies": False,
+            "tenant_billing_authority_generation_applies": False,
+            "membership_authority_generation_applies": False,
+        }
+        self.assertEqual(
+            expected,
+            self.validator.REQUIRED_REVOKE_GENERATION_APPLICABILITY,
+        )
+        for field in expected:
             self.assertFalse(route[field])
 
         route["membership_authority_generation_applies"] = True
