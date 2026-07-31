@@ -101,12 +101,19 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                 validator.normalize_summary_helper_path(match.group("invocation"), root)
 
             outside = root.parent / "dev-tools/tests/smoke-transport-contract.sh"
-            outside_match = next(validator._helper_matches(str(outside)))
-            outside_path = validator.normalize_summary_helper_path(
-                outside_match.group("invocation"), root
-            )
-            with self.assertRaises(ValueError):
-                outside_path.relative_to(root)
+            with self.assertRaisesRegex(
+                ValueError, "summary helper path escapes repository root"
+            ):
+                validator.discover_summary_writers(
+                    [
+                        validator.WorkflowRunSource(
+                            "job",
+                            "step",
+                            f'bash {outside} >> "$GITHUB_STEP_SUMMARY"',
+                        )
+                    ],
+                    root,
+                )
 
     def test_summary_write_regions_preserve_group_and_heredoc_boundaries(self):
         validator = self.validator

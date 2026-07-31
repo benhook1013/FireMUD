@@ -68,7 +68,7 @@ Operator-visible states must distinguish at least:
 - **pending or indeterminate, non-replayable** — dispatch may have reached the owner but no terminal result or durable effect evidence proves its outcome; reconciliation remains read-only and the mutation is never replayed;
 - **committed, response lost or outcome pending** — execution may have committed and the same identifier must be queried through the owner result-read contract rather than replaced; and
 - **failed** — the owner received or claimed the request and a terminal, durable owner result proves execution ended without a successful mutation. A terminal `NOT_EXECUTED` result is not `FAILED`; these outcomes are mutually exclusive.
-- **fence rejected** — the owner returned canonical `FENCE_REJECTED` because its owner lease or gameplay fence was stale, and durable no-commit evidence exists. This is distinct from `IDEMPOTENCY_CONFLICT`, which is reserved for a mismatch in the authority-bound idempotency tuple.
+- **fence rejected** — the owner returned the canonical `FENCE_REJECTED` wire/status outcome with reason `STALE_OWNER` or `STALE_FENCE` because its owner lease or gameplay fence was stale, and durable no-commit evidence exists. The reason is not an alternate outcome name. Audit records, contract tests, and metrics use `FENCE_REJECTED` as the outcome and the stale-owner or stale-fence value as its reason. This is distinct from `IDEMPOTENCY_CONFLICT`, which is reserved for a mismatch in the authority-bound idempotency tuple.
 
 Clients and operators must not create a fresh request identifier merely because a response timed out. Retention of idempotency results must cover the documented retry and reconciliation window for that action family.
 

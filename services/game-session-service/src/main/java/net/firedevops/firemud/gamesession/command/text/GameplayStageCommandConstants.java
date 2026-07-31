@@ -26,7 +26,7 @@ public final class GameplayStageCommandConstants {
       "That world is temporarily unavailable for gameplay.";
   public static final String AUTH_UNAVAILABLE_CODE = AuthenticationErrorCodes.UNAVAILABLE;
   public static final String AUTH_UNAVAILABLE_MESSAGE =
-      "Account authority is temporarily unavailable. Retry PLAY shortly.";
+      "Gameplay authority is temporarily unavailable. Retry PLAY shortly.";
   public static final String PLAY_IDENTITY_UNAVAILABLE_CODE = "PLAY_IDENTITY_UNAVAILABLE";
   public static final String PLAY_IDENTITY_UNAVAILABLE_MESSAGE =
       "Character identity is temporarily unavailable. Retry PLAY shortly.";

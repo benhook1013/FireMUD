@@ -22,6 +22,7 @@ REQUIRED_WS_GAME_CHECKS = {
     "connect_scope_match",
 }
 REQUIRED_ISSUE_CONNECT_TOKEN_CHECKS = {
+    "conditional_public_production_admission",
     "replay_protection_available",
     "replay_admission_fence_match",
 }
@@ -54,6 +55,28 @@ REQUIRED_GAMEPLAY_ADMISSION_SELECTOR_INPUTS = {
     "current_membership",
     "public_production_target",
     "realm_access_grant",
+}
+REQUIRED_GAMEPLAY_ADMISSION_COMMON_CHECKS = {
+    "runtime_entitlements",
+    "admission_pointer",
+}
+REQUIRED_GAMEPLAY_ADMISSION_BRANCH_CHECKS = {
+    "public_production_onboarding": {
+        "membership",
+        "membership_generation",
+        "public_production_admission",
+        "realm_visibility",
+    },
+    "returning_membership": {
+        "membership",
+        "membership_generation",
+        "realm_visibility",
+    },
+    "grant_backed_private_or_playtest": {
+        "conditional_membership",
+        "conditional_membership_generation",
+        "conditional_realm_access_grant",
+    },
 }
 REQUIRED_FIRST_PARTY_WS_APPLICABILITY = {
     "connection_mode": "first_party_web",
@@ -97,6 +120,7 @@ MEMBERSHIP_GENERATION_APPLICABILITY_VALUES = {
     True,
     False,
     "conditional_by_operator_role",
+    "conditional_by_admission_mode",
 }
 CONDITIONAL_OPERATOR_MEMBERSHIP_SHAPE = {
     "tenant_role": True,
@@ -192,55 +216,55 @@ REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS = {
     "public": {
         "target_tenant_generation": False,
         "generation_behavior": "no_tenant_authority",
-        "required_live_checks": set(),
+        "required_authority": set(),
         "target_tenant_generation_advance_behavior": "remains_valid",
     },
     "account_scoped": {
         "target_tenant_generation": False,
         "generation_behavior": "issuer_and_account_authority_only",
-        "required_live_checks": {"issuer_generation", "account_generation"},
+        "required_authority": {"issuer_generation", "account_generation"},
         "target_tenant_generation_advance_behavior": "remains_valid",
     },
     "caller_membership_scoped": {
         "target_tenant_generation": False,
         "generation_behavior": "caller_membership_authority_only",
-        "required_live_checks": {"membership", "membership_generation"},
+        "required_authority": {"membership", "membership_generation"},
         "target_tenant_generation_advance_behavior": "remains_valid",
     },
     "player_bootstrap_tenant": {
         "target_tenant_generation": False,
         "generation_behavior": "membership_authority_when_route_requires_existing_membership",
-        "required_live_checks": {"membership", "membership_generation"},
+        "required_authority": {"membership", "membership_generation"},
         "target_tenant_generation_advance_behavior": "remains_valid",
     },
     "pre_tenant_discovery": {
         "target_tenant_generation": False,
         "generation_behavior": "no_tenant_or_membership_authority",
-        "required_live_checks": set(),
+        "required_authority": set(),
         "target_tenant_generation_advance_behavior": "remains_valid",
     },
     "public_production_onboarding": {
         "target_tenant_generation": False,
         "generation_behavior": "membership_authority_after_membership_exists",
-        "required_live_checks": {"membership", "membership_generation"},
+        "required_authority": {"membership", "membership_generation"},
         "target_tenant_generation_advance_behavior": "remains_valid",
     },
     "gameplay_admission": {
         "target_tenant_generation": False,
         "generation_behavior": "mode_selected_membership_and_grant_authority",
-        "required_live_checks": set(),
+        "required_authority": set(),
         "target_tenant_generation_advance_behavior": "route_declared",
     },
     "internal_workload": {
         "target_tenant_generation": False,
         "generation_behavior": "route_declared_caller_and_target_authority",
-        "required_live_checks": set(),
+        "required_authority": set(),
         "target_tenant_generation_advance_behavior": "route_declared",
     },
     "pending_deletion_scoped": {
         "target_tenant_generation": False,
         "generation_behavior": "pending_deletion_credential_only",
-        "required_live_checks": {
+        "required_authority": {
             "pending_deletion_state",
             "pending_deletion_credential_registry",
         },
@@ -299,6 +323,9 @@ AUTH_UNAVAILABLE_REQUIRED_ROUTES = {
     ("account-service", "BillingArtifactsTenant"),
     ("account-service", "BillingArtifactsCrossTenant"),
 }
+REQUIRED_AUTHORITY_SEMANTICS = (
+    "class_metadata_for_conditional_route_or_token_authority"
+)
 LOGGING_ADMIN_IDEMPOTENT_OPERATOR_ROUTES = {
     ("logging-admin-service", "POST /admission-pointers"),
     ("logging-admin-service", "POST /admission-pointers/cutover"),
@@ -414,6 +441,8 @@ DIRECT_OWNER_ROUTE_POLICY = "deny_at_edge_and_migrate_to_logging_admin"
 # These caches are created afresh for one parsed matrix document in
 # validate_matrix_document. Do not reuse them across validation calls: their object
 # identity keys and cached structural errors are meaningful only within that document.
+# cached_required_fields must parse and cache the structural result before consumers
+# use it, matching cached_live_checks; cache hits must not re-emit structural errors.
 LiveChecksCache = dict[tuple[int, str], tuple[object, set[str]]]
 RequiredFieldsCache = dict[tuple[int, str], tuple[object, list[str] | None]]
 
@@ -1003,6 +1032,11 @@ def validate_authority_evidence_policy(
                 "authority_evidence_policy reachable invalid or ambiguous evidence "
                 "must fail closed with AUTH_SESSION_REVOKED"
             )
+        if fresh.get("route_specific_canonical_errors_precedence") is not True:
+            errors.append(
+                "authority_evidence_policy fresh evidence must give route-specific "
+                "canonical_errors precedence over the AUTH_SESSION_REVOKED fallback"
+            )
     bound = policy.get("bound_ordinary_gameplay")
     if not isinstance(bound, dict):
         errors.append(
@@ -1197,7 +1231,7 @@ def validate_pending_deletion_generation(
         checks = route_live_checks(route, label, errors, live_checks_cache)
     missing = (
         REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS["pending_deletion_scoped"][
-            "required_live_checks"
+            "required_authority"
         ]
         - checks
     )
@@ -1217,7 +1251,14 @@ def validate_membership_generation(
     route: dict[str, Any], label: str, errors: list[str]
 ) -> Any:
     value = route.get("membership_authority_generation_applies")
-    valid_scalar = isinstance(value, bool) or value == "conditional_by_operator_role"
+    valid_scalar = isinstance(value, bool) or (
+        isinstance(value, str)
+        and value
+        in {
+            "conditional_by_operator_role",
+            "conditional_by_admission_mode",
+        }
+    )
     if value is not None and not valid_scalar:
         errors.append(
             f"{label} membership_authority_generation_applies must be one of "
@@ -1230,10 +1271,16 @@ def validate_membership_generation(
                 f"{label} conditional membership generation requires "
                 "tenant_role=true and platformAdmin_global=false"
             )
+    elif value == "conditional_by_admission_mode":
+        if condition != {"source": "selected_admission_mode"}:
+            errors.append(
+                f"{label} conditional admission-mode membership generation requires "
+                "source=selected_admission_mode"
+            )
     elif condition is not None:
         errors.append(
             f"{label} declares membership_authority_generation_condition without "
-            "conditional_by_operator_role"
+            "a conditional membership-generation mode"
         )
     return value
 
@@ -1821,13 +1868,13 @@ def validate_no_target_tenant_classifications(
             errors.append(f"{label} must set target_tenant_generation=false")
         if entry.get("generation_behavior") != expected["generation_behavior"]:
             errors.append(f"{label} has the wrong generation_behavior")
-        required_checks = set(
+        required_authority = set(
             string_list(
                 entry.get("required_authority"), f"{label}.required_authority", errors
             )
         )
-        if required_checks != expected["required_live_checks"]:
-            errors.append(f"{label} has the wrong required authority checks")
+        if required_authority != expected["required_authority"]:
+            errors.append(f"{label} has the wrong required authority metadata")
         justification = entry.get("contract_justification")
         if not isinstance(justification, str) or not justification.strip():
             errors.append(f"{label} must declare a bounded contract_justification")
@@ -1975,6 +2022,11 @@ def validate_tenant_generation_policy(
     if not isinstance(policy, dict) or policy.get("applies_by_default") is not True:
         errors.append("tenant_generation_policy must enable applies_by_default")
     else:
+        if policy.get("required_authority_semantics") != REQUIRED_AUTHORITY_SEMANTICS:
+            errors.append(
+                "tenant_generation_policy.required_authority_semantics must declare "
+                f"{REQUIRED_AUTHORITY_SEMANTICS}"
+            )
         validate_tenant_generation_allowlist(policy, errors)
         validate_no_target_tenant_classifications(policy, errors)
         validate_tenant_generation_negative_proof(policy, errors)
@@ -2188,7 +2240,7 @@ def validate_generation_applicability(
             route, label, account_generation, errors, checks, live_checks_cache
         )
         value = validate_membership_generation(route, label, errors)
-        if value is True:
+        if value is True and "admission_mode_selection" not in route:
             if checks is None:
                 checks = route_live_checks(route, label, errors, live_checks_cache)
             if "membership_generation" not in checks:
@@ -2196,6 +2248,22 @@ def validate_generation_applicability(
                     f"{label} membership_authority_generation_applies=true requires "
                     "live check membership_generation"
                 )
+        has_admission_mode_selection = "admission_mode_selection" in route
+        if value == "conditional_by_admission_mode" and not has_admission_mode_selection:
+            errors.append(
+                f"{label} conditional admission-mode membership generation requires "
+                "admission_mode_selection"
+            )
+        if has_admission_mode_selection and value != "conditional_by_admission_mode":
+            errors.append(
+                f"{label} admission_mode_selection requires "
+                "membership_authority_generation_applies="
+                "conditional_by_admission_mode"
+            )
+        if has_admission_mode_selection:
+            validate_admission_mode_selection(
+                route, label, errors, live_checks_cache
+            )
         validate_conditional_operator_route(
             route, label, value, errors, checks, live_checks_cache, branch_checks
         )
@@ -2626,6 +2694,78 @@ def validate_downstream_admission_contract(
         )
 
 
+def validate_admission_mode_selection(
+    route: dict[str, Any],
+    label: str,
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> None:
+    selection = route.get("admission_mode_selection")
+    if not isinstance(selection, dict):
+        errors.append(f"{label} must declare admission_mode_selection")
+        return
+
+    route_checks = route_live_checks(route, label, errors, live_checks_cache)
+    common_checks = cached_live_checks(
+        selection,
+        selection.get("required_live_checks"),
+        f"{label} admission_mode_selection.required_live_checks",
+        errors,
+        live_checks_cache,
+        "required_live_checks",
+    )
+    if common_checks != REQUIRED_GAMEPLAY_ADMISSION_COMMON_CHECKS:
+        errors.append(
+            f"{label} admission_mode_selection.required_live_checks must equal "
+            f"{sorted(REQUIRED_GAMEPLAY_ADMISSION_COMMON_CHECKS)}"
+        )
+    if route_checks != common_checks:
+        errors.append(
+            f"{label} required_live_checks must contain only common admission checks: "
+            f"{sorted(common_checks)}"
+        )
+    if selection.get("required_live_checks_composition") != "common_plus_selected_branch":
+        errors.append(
+            f"{label} admission_mode_selection must declare "
+            "required_live_checks_composition=common_plus_selected_branch"
+        )
+
+    branches = selection.get("branches")
+    if not isinstance(branches, dict):
+        errors.append(f"{label} admission_mode_selection.branches must be a mapping")
+        return
+    if set(branches) != set(REQUIRED_GAMEPLAY_ADMISSION_BRANCH_CHECKS):
+        errors.append(
+            f"{label} admission_mode_selection.branches must contain exactly "
+            f"{sorted(REQUIRED_GAMEPLAY_ADMISSION_BRANCH_CHECKS)}"
+        )
+    for branch_name, expected_checks in REQUIRED_GAMEPLAY_ADMISSION_BRANCH_CHECKS.items():
+        branch = branches.get(branch_name)
+        branch_label = f"{label} admission_mode_selection.branches.{branch_name}"
+        if not isinstance(branch, dict):
+            errors.append(f"{branch_label} must be a mapping")
+            continue
+        checks = cached_live_checks(
+            branch,
+            branch.get("required_live_checks"),
+            f"{branch_label}.required_live_checks",
+            errors,
+            live_checks_cache,
+            "required_live_checks",
+        )
+        if checks != expected_checks:
+            errors.append(
+                f"{branch_label}.required_live_checks must equal "
+                f"{sorted(expected_checks)}"
+            )
+        duplicated = sorted(common_checks & checks)
+        if duplicated:
+            errors.append(
+                f"{branch_label}.required_live_checks must not duplicate common "
+                f"admission checks: {duplicated}"
+            )
+
+
 def validate_ws_game_routes(
     routes: list[Any],
     errors: list[str],
@@ -2776,11 +2916,17 @@ def validate_issue_connect_token(
     )
     if issue_connect_route is None:
         return
+    checks = route_live_checks(
+        issue_connect_route, "IssueConnectToken", errors, live_checks_cache
+    )
+    if "public_production_admission" in checks:
+        errors.append(
+            "IssueConnectToken must use conditional_public_production_admission "
+            "instead of unconditional public_production_admission"
+        )
     missing_checks = sorted(
         REQUIRED_ISSUE_CONNECT_TOKEN_CHECKS
-        - route_live_checks(
-            issue_connect_route, "IssueConnectToken", errors, live_checks_cache
-        )
+        - checks
     )
     if missing_checks:
         errors.append(

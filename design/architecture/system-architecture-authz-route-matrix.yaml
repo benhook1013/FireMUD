@@ -120,6 +120,7 @@ receiver_predicate_contract:
   method_policy_rule: exact_declared_route_and_caller_policy
 tenant_generation_policy:
   applies_by_default: true
+  required_authority_semantics: class_metadata_for_conditional_route_or_token_authority
   exception_allowlist:
     billing_safe_tenant:
       target_tenant_generation: false
@@ -221,6 +222,7 @@ authority_evidence_policy:
     applies_to: [admission, play, renewal, reconnect, resume, protected_control_plane_mutation]
     unreachable_or_timeout: AUTH_UNAVAILABLE
     reachable_invalid_or_ambiguous: AUTH_SESSION_REVOKED
+    route_specific_canonical_errors_precedence: true
   bound_ordinary_gameplay:
     applies_to: already_bound_instance_runtime
     strict_registry_middleware: false
@@ -246,6 +248,7 @@ required_live_check_vocabulary:
   - cancellation_window
   - conditional_membership
   - conditional_membership_generation
+  - conditional_public_production_admission
   - conditional_realm_access_grant
   - connect_scope_match
   - connect_token_single_use_consume
@@ -662,23 +665,27 @@ routes:
     token_audience: none
     delegated_subject: authenticated_session_account
     tenant_billing_authority_generation_applies: false
-    membership_authority_generation_applies: true
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
-    required_live_checks: [membership, membership_generation, public_production_admission, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
+    membership_authority_generation_applies: conditional_by_admission_mode
+    membership_authority_generation_condition:
+      source: selected_admission_mode
+    required_live_checks: [runtime_entitlements, admission_pointer]
     admission_mode_selection:
       owner: game-session-service
       selector_inputs: [current_membership, public_production_target, realm_access_grant]
       ambiguity_behavior: deny
+      required_live_checks: [runtime_entitlements, admission_pointer]
+      required_live_checks_composition: common_plus_selected_branch
       branches:
         public_production_onboarding:
-          required_live_checks: [membership, membership_generation, public_production_admission, realm_visibility, runtime_entitlements, admission_pointer]
+          required_live_checks: [membership, membership_generation, public_production_admission, realm_visibility]
           membership_creation: explicit_join_only
         returning_membership:
-          required_live_checks: [membership, membership_generation, realm_visibility, runtime_entitlements, admission_pointer]
+          required_live_checks: [membership, membership_generation, realm_visibility]
           membership_creation: forbidden
         grant_backed_private_or_playtest:
-          required_live_checks: [conditional_membership, conditional_membership_generation, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
+          required_live_checks: [conditional_membership, conditional_membership_generation, conditional_realm_access_grant]
           membership_creation: forbidden
     canonical_errors:
       any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE]
@@ -1552,7 +1559,7 @@ routes:
     target_binding: opaque_server_issued_connect_scope_id_matches_route
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
-    required_live_checks: [membership, membership_generation, public_production_admission, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match, replay_protection_available, replay_admission_fence_match]
+    required_live_checks: [membership, membership_generation, conditional_public_production_admission, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match, replay_protection_available, replay_admission_fence_match]
     canonical_errors:
       any_of: [JOIN_REQUIRED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, CONNECT_REPLAY_PROTECTION_UNAVAILABLE, AUTH_UNAVAILABLE]
     subject_binding: caller_account_id

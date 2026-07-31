@@ -1034,8 +1034,55 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_play_rechecks_membership_generation(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = route_for(document, "game-session-service", "PLAY")
-        self.assertTrue(route["membership_authority_generation_applies"])
-        self.assertIn("membership_generation", route["required_live_checks"])
+        self.assertEqual(
+            "conditional_by_admission_mode",
+            route["membership_authority_generation_applies"],
+        )
+        self.assertEqual(
+            {"source": "selected_admission_mode"},
+            route["membership_authority_generation_condition"],
+        )
+        self.assertNotIn("membership_generation", route["required_live_checks"])
+
+    def test_play_admission_composes_common_checks_with_only_selected_branch(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "game-session-service", "PLAY")
+        selection = route["admission_mode_selection"]
+        common = set(selection["required_live_checks"])
+        self.assertEqual(
+            common,
+            self.validator.REQUIRED_GAMEPLAY_ADMISSION_COMMON_CHECKS,
+        )
+        self.assertEqual(
+            common
+            | set(selection["branches"]["returning_membership"]["required_live_checks"]),
+            {
+                "runtime_entitlements",
+                "admission_pointer",
+                "membership",
+                "membership_generation",
+                "realm_visibility",
+            },
+        )
+        self.assertNotIn(
+            "public_production_admission",
+            selection["branches"]["returning_membership"]["required_live_checks"],
+        )
+        self.assertNotIn(
+            "membership",
+            selection["branches"]["grant_backed_private_or_playtest"][
+                "required_live_checks"
+            ],
+        )
+
+        route["required_live_checks"].append("membership")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "must contain only common admission checks" in error
+                for error in errors
+            )
+        )
 
     def test_true_membership_generation_requires_live_check(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -1282,6 +1329,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             "AUTH_SESSION_REVOKED",
             fresh["reachable_invalid_or_ambiguous"],
         )
+        self.assertTrue(fresh["route_specific_canonical_errors_precedence"])
         bound = document["authority_evidence_policy"]["bound_ordinary_gameplay"]
         self.assertFalse(bound["pointer_authority_reread"])
         self.assertEqual(
@@ -1299,6 +1347,11 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "reachable_invalid_or_ambiguous",
                 "AUTH_UNAVAILABLE",
                 "must fail closed with AUTH_SESSION_REVOKED",
+            ),
+            (
+                "route_specific_canonical_errors_precedence",
+                False,
+                "must give route-specific canonical_errors precedence",
             ),
         )
         for field, invalid_value, expected_error in cases:
@@ -1956,6 +2009,42 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     entry["target_tenant_generation_advance_behavior"],
                 )
 
+    def test_class_required_authority_is_metadata_not_universal_route_checks(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        classifications = document["tenant_generation_policy"][
+            "no_target_tenant_classifications"
+        ]
+        for classification, expected in self.validator.REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS.items():
+            self.assertEqual(
+                expected["required_authority"],
+                set(classifications[classification]["required_authority"]),
+            )
+        join = route_for(document, "game-session-service", "JOIN")
+        self.assertNotIn("membership", join["required_live_checks"])
+        self.assertNotIn("membership_generation", join["required_live_checks"])
+        account_route = route_for(document, "account-service", "ExportAccount")
+        self.assertNotEqual(
+            set(account_route["required_live_checks"]),
+            set(classifications["account_scoped"]["required_authority"]),
+        )
+        pending_route = route_for(document, "account-service", "GET /accounts/{accountId}/deletion")
+        self.assertEqual(
+            set(pending_route["required_live_checks"]),
+            set(classifications["pending_deletion_scoped"]["required_authority"]),
+        )
+        errors = validate_document(self.validator, document)
+        self.assertEqual([], errors)
+
+        document["tenant_generation_policy"]["no_target_tenant_classifications"][
+            "public"
+        ]["required_authority"].append("membership")
+        errors = validate_document(self.validator, document)
+        self.assertIn(
+            "tenant_generation_policy.no_target_tenant_classifications.public "
+            "has the wrong required authority metadata",
+            errors,
+        )
+
     def test_target_generation_denial_proof_is_scoped_to_tenant_authority(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         proof = document["tenant_generation_policy"]["negative_proof"]
@@ -2570,6 +2659,27 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertTrue(
             any(
                 "IssueConnectToken is missing required live checks" in error
+                for error in errors
+            )
+        )
+
+    def test_issue_connect_token_public_admission_check_is_conditional(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "account-service", "IssueConnectToken")
+        self.assertIn(
+            "conditional_public_production_admission",
+            route["required_live_checks"],
+        )
+        self.assertNotIn("public_production_admission", route["required_live_checks"])
+
+        route["required_live_checks"].remove(
+            "conditional_public_production_admission"
+        )
+        route["required_live_checks"].append("public_production_admission")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "must use conditional_public_production_admission" in error
                 for error in errors
             )
         )

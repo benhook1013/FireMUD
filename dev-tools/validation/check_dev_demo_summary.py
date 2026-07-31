@@ -35,7 +35,7 @@ SUMMARY_HELPER_PATTERN = re.compile(
     r"))(?![A-Za-z0-9_./-])"
 )
 
-forbidden_summary_reference = re.compile(
+FORBIDDEN_SUMMARY_REFERENCE = re.compile(
     r"DEMO_SMOKE_PASSWORD|"
     r"\$\{?BOOTSTRAP_SECRET_DIR\}?/password|"
     r"\$\{\{\s*secrets[.]|"
@@ -46,7 +46,6 @@ forbidden_summary_reference = re.compile(
     r"(?:-[A-Za-z]*d[A-Za-z]*|--decode)\b",
     re.IGNORECASE,
 )
-FORBIDDEN_SUMMARY_REFERENCE = forbidden_summary_reference
 
 SUMMARY_TARGET = re.compile(
     r"(?P<operator>>{1,2}|tee(?:[ \t]+(?:-a|--append))?)[ \t]*"
@@ -252,7 +251,7 @@ def summary_write_regions(source: str) -> list[str]:
 
 def has_forbidden_summary_reference(text: str) -> bool:
     normalized_text = re.sub(r"[ \t]+", " ", text)
-    return forbidden_summary_reference.search(normalized_text) is not None
+    return FORBIDDEN_SUMMARY_REFERENCE.search(normalized_text) is not None
 
 
 def _variable_name(variable: str) -> str:
