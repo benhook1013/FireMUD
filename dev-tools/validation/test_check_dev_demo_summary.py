@@ -237,6 +237,86 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                 )
             )
 
+    def test_helper_cycles_terminate_without_repeating_resolved_paths(self):
+        validator = self.validator
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            helper_one = root / "dev-tools/summary-one.sh"
+            helper_two = root / "dev-tools/summary-two.sh"
+            helper_one.parent.mkdir(parents=True)
+            helper_one.write_text(
+                "#!/usr/bin/env bash\nbash dev-tools/summary-two.sh\n",
+                encoding="utf-8",
+            )
+            helper_two.write_text(
+                "#!/usr/bin/env bash\nbash dev-tools/summary-one.sh\n",
+                encoding="utf-8",
+            )
+            sources = [
+                validator.WorkflowRunSource(
+                    "job",
+                    "step",
+                    'bash dev-tools/summary-one.sh >> "$GITHUB_STEP_SUMMARY"',
+                )
+            ]
+            writers = validator.discover_summary_writers(sources, root)
+            self.assertEqual(len(writers), 3)
+            self.assertEqual(
+                len({writer.resolved_helper_path for writer in writers}), 3
+            )
+            self.assertTrue(
+                all(
+                    writer.summary_reachable
+                    for writer in writers
+                    if writer.resolved_helper_path is not None
+                )
+            )
+
+    def test_helper_reprocesses_when_reachability_is_upgraded(self):
+        validator = self.validator
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            helper = root / "dev-tools/summary.sh"
+            helper.parent.mkdir(parents=True)
+            helper.write_text(
+                '#!/usr/bin/env bash\necho "unsafe: $DEMO_SMOKE_PASSWORD"\n',
+                encoding="utf-8",
+            )
+            sources = [
+                validator.WorkflowRunSource(
+                    "job",
+                    "summary-step",
+                    'bash dev-tools/summary.sh >> "$GITHUB_STEP_SUMMARY"',
+                ),
+                validator.WorkflowRunSource(
+                    "job", "non-summary-step", "bash dev-tools/summary.sh"
+                ),
+            ]
+            writers = validator.discover_summary_writers(sources, root)
+            reachable_helpers = [
+                writer
+                for writer in writers
+                if writer.resolved_helper_path == helper.resolve()
+            ]
+            self.assertEqual(len(reachable_helpers), 1)
+            self.assertTrue(reachable_helpers[0].summary_reachable)
+
+    def test_missing_helper_fails_closed_with_clear_assertion(self):
+        validator = self.validator
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = [
+                validator.WorkflowRunSource(
+                    "job",
+                    "step",
+                    'bash dev-tools/missing-summary.sh >> "$GITHUB_STEP_SUMMARY"',
+                )
+            ]
+            with self.assertRaisesRegex(
+                AssertionError, "summary helper file is missing"
+            ):
+                validator.discover_summary_writers(source, root)
+
     def test_discovery_fails_closed_for_unsupported_variable_helper(self):
         validator = self.validator
         with tempfile.TemporaryDirectory() as directory:

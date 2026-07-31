@@ -66,6 +66,7 @@ class WorkflowRunSource:
     step_name: str
     source: str
     summary_reachable: bool = False
+    resolved_helper_path: Path | None = None
 
 
 def normalize_script(script: str) -> str:
@@ -321,27 +322,38 @@ def discover_summary_writers(
     root_dir = root_dir.resolve()
     summary_writers: list[WorkflowRunSource] = []
     pending = list(workflow_run_sources)
-    seen: dict[tuple[str, str, str], bool] = {}
-    summary_writer_indexes: dict[tuple[str, str, str], int] = {}
+    seen_sources: dict[tuple[str, str, str], bool] = {}
+    seen_helpers: dict[tuple[str, Path], bool] = {}
+    summary_writer_indexes: dict[tuple[str, str, str] | tuple[str, Path], int] = {}
     while pending:
         current = pending.pop()
-        identity = (current.job_name, current.step_name, current.source)
-        previous_reachability = seen.get(identity)
+        if current.resolved_helper_path is None:
+            traversal_key: tuple[str, str, str] | tuple[str, Path] = (
+                current.job_name,
+                current.step_name,
+                current.source,
+            )
+            previous_reachability = seen_sources.get(traversal_key)
+        else:
+            traversal_key = (current.job_name, current.resolved_helper_path)
+            previous_reachability = seen_helpers.get(traversal_key)
         if previous_reachability is True or (
             previous_reachability is False and not current.summary_reachable
         ):
             continue
-        seen[identity] = current.summary_reachable
+        if current.resolved_helper_path is None:
+            seen_sources[traversal_key] = current.summary_reachable
+        else:
+            seen_helpers[traversal_key] = current.summary_reachable
         direct_ranges = _summary_write_line_ranges(current.source)
         if direct_ranges or current.summary_reachable:
-            existing_index = summary_writer_indexes.get(identity)
+            existing_index = summary_writer_indexes.get(traversal_key)
             if existing_index is None:
-                summary_writer_indexes[identity] = len(summary_writers)
+                summary_writer_indexes[traversal_key] = len(summary_writers)
                 summary_writers.append(current)
             else:
                 summary_writers[existing_index] = current
 
-        current.source.splitlines()
         for match in _helper_matches(current.source):
             helper_path = normalize_summary_helper_path(
                 match.group("invocation"), root_dir
@@ -353,7 +365,10 @@ def discover_summary_writers(
                     f"summary helper path escapes repository root: {match.group('invocation')}"
                 ) from exc
             if not helper_path.is_file():
-                continue
+                raise AssertionError(
+                    "summary helper file is missing: "
+                    f"{helper_path} (referenced as {match.group('invocation')})"
+                )
             line_index = current.source.count("\n", 0, match.start())
             redirected = current.summary_reachable or any(
                 start <= line_index <= end for start, end in direct_ranges
@@ -365,6 +380,7 @@ def discover_summary_writers(
                     f"{current.step_name}:{relative_helper.as_posix()}",
                     helper_source,
                     summary_reachable=redirected,
+                    resolved_helper_path=helper_path,
                 )
             )
     return summary_writers
