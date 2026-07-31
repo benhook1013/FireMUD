@@ -687,12 +687,12 @@ routes:
           required_live_checks: [membership, membership_generation, realm_visibility]
           membership_creation: forbidden
         grant_backed_private_or_playtest:
-          required_live_checks: [conditional_membership, conditional_membership_generation, conditional_realm_access_grant]
+          required_live_checks: [membership, membership_generation, conditional_realm_access_grant]
           membership_creation: forbidden
     canonical_errors:
       any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE]
     canonical_target:
-      membership: selected_admission_mode_existing_membership_when_required
+      membership: grant_backed_private_or_playtest_requires_existing_caller_bound_membership
       membership_creation: play_never_creates_membership
       missing_required_membership_error: JOIN_REQUIRED
     implementation_status:
@@ -1080,37 +1080,26 @@ routes:
     route: POST /sessions/{sessionId}/refresh-roles
     transport: http
     scope: tenant
-    classification: tenant_regular
-    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
+    classification: internal_workload
+    auth_path: exact_mtls_workload
     route_status: current_openapi_operator_surface
-    tenant_billing_authority_generation_applies: true
-    membership_authority_generation_applies: conditional_by_operator_role
-    membership_authority_generation_condition:
-      tenant_role: true
-      platformAdmin_global: false
-    accepted_token_profiles: [control-ui]
-    token_type: control_plane_user
-    token_issuer: firemud-account-service
-    token_audience: control-ui
-    role_assurance: privileged_control_when_global_role
-    subject_binding: authenticated_operator
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [logging-admin-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
+    end_user_token_required: false
     canonical_external_ingress: logging-admin-service
     direct_owner_route_policy: deny_at_edge_and_migrate_to_logging_admin
-    required_live_checks: [current_operator_authorization, current_account_roles, current_session]
-    operator_authorization_branches:
-      - branch: tenant_role
-        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
-      - branch: platformAdmin_global
-        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
-    operator_authorization_reference: account_issued_bounded_reference
+    required_live_checks: [current_session, current_account_roles]
     required_fields: [control_plane_request_id, actor_from_session, reason, session_id, mutation_digest]
-    global_platform_admin_membership_required: false
-    global_platform_admin_reference_generation_binding: target_tenant_generation
-    mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_mutation
+    mutation_contract: owner_atomic_idempotent_role_refresh_with_durable_result
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
-    roles:
-      any_of: [tenantAdmin, platformAdmin]
   - service: account-service
     route: AuthLogin
     scope: public

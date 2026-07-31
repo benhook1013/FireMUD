@@ -81,11 +81,9 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Centralized observability dashboards and moderation analytics (logs/metrics/traces) | | | | | | | | | ✔ | | |
 | Admin panel UX and runtime feature-flag override workflow | | | | ✔ | | | | | ✔ | | |
 | Game moderation report review and internal `CreateReport` persistence tooling (public HTTP reports removed; internal RPC is not player ingress) | | | | | | | | | ✔ | | |
-| Gated/unavailable moderation enforcement mutation (`GAMEPLAY_ADMISSION` / `CHAT_SEND`; owner-local enforcement) | | | | ✔ | | | | ✔ | | | |
+| Moderation enforcement authority and operator mutation ingress (Game Session owns gameplay bans at `GAMEPLAY_ADMISSION`; Social & Groups owns chat mutes/bans at `CHAT_SEND`; Logging & Admin owns the gated/unavailable mutation ingress) | | | | ✔ | | | | ✔ | | | |
 | Authoritative owner: subscription entitlements, plan-driven quota values, and effective quota override overlay (`GetTenantEntitlementsForRuntime(tenantId, requestId)`) | | | ✔ | | | | | | | | |
 | Operator quota override ingress, UX, and audit (Logging & Admin forwards to the Account-owned entitlement overlay) | | | ✔ | | | | | | ✔ | | |
-| Enforcement of gameplay bans at `GAMEPLAY_ADMISSION` (Game Session owns enforcement) | | | | ✔ | | | | | | | |
-| Enforcement of chat mutes/bans at `CHAT_SEND` (Social & Groups owns enforcement) | | | | | | | | ✔ | | | |
 | Movement/location write contract orchestration (effect identity, order, and replay safety) | | ✔ | | ✔ | ✔ | ✔ | | | | | |
 | Instance termination orchestration (`PREPARING/ACTIVE/TERMINATING/TERMINATED`) and cross-service cleanup | | ✔ | | ✔ | ✔ | | | | ✔ | | |
 | Automated tick/coordination remediation (per-instance pause/resume, guarded enumeration, regional mutation, and reset/remediate orchestration) | | | | ✔ | | | | | ✔ | | |

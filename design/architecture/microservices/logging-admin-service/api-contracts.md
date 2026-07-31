@@ -56,7 +56,7 @@ The implementation gap is fail-closed: the HTTP controller and Gateway route are
 
 For every forwarded owner mutation, the authoritative owner calls Account's `RedeemOperatorAuthorization` with the opaque reference and its independently derived request binding. Authorization predicates and generation authority come exclusively from that Account response. Logging & Admin never redeems a forwarded owner reference and never becomes a second authorization authority. Any predicate, generation, checkpoint, or assurance copies forwarded by Logging & Admin are unchanged audit/context evidence only; the owner must not authorize or mutate from those copies, and they are excluded from the canonical `mutationDigest/v1`, which covers the normalized action request rather than ingress assertions.
 
-### Target-State Canonical Admission State Operations
+### Implemented-but-Externally-Gated Canonical Admission State Operations
 
 The implemented-but-externally-gated `POST /admission-pointers` route represents exactly one of two same-target Game Session control-plane operations for `{tenantId, worldSlug, realmSlug}`. These CAS operations are not supported live capabilities until the shared mutation gate is complete; the currently supported boundary is limited to admission-pointer reads, audit, and prepared-upgrade proof reads. `POST /admission-pointers/version-upgrades` is a separate preparation mutation and remains gated pending its action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account-issued authorization-reference issuance plus owner-side redemption.
 

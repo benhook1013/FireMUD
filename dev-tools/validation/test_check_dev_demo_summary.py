@@ -25,7 +25,7 @@ def load_validator():
 
 class DevDemoSummaryValidatorTest(unittest.TestCase):
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         cls.validator = load_validator()
 
     def test_shell_group_tokens_ignore_comments_quotes_and_expansions(self):
@@ -316,8 +316,13 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ]
             writers = validator.discover_summary_writers(sources, root)
             self.assertEqual(len(writers), 3)
-            self.assertEqual(
-                len({writer.resolved_helper_path for writer in writers}), 3
+            resolved_helper_paths = [
+                writer.resolved_helper_path
+                for writer in writers
+                if writer.resolved_helper_path is not None
+            ]
+            self.assertCountEqual(
+                resolved_helper_paths, [helper_one.resolve(), helper_two.resolve()]
             )
             self.assertTrue(
                 all(

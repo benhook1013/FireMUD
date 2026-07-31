@@ -279,8 +279,7 @@ class LookWebSocketCrossServiceTest {
     List<String> reconnectResponses = runPlayAfterReconnect(sessionId);
     assertThat(reconnectResponses).hasSizeGreaterThanOrEqualTo(2);
     assertThat(reconnectResponses).anyMatch(response -> response.startsWith("OK LOGIN"));
-    assertThat(reconnectResponses)
-        .anyMatch(response -> response.startsWith("ERROR WORLD_ACCESS_DENIED"));
+    assertThat(reconnectResponses).anyMatch(response -> response.startsWith("ERROR JOIN_REQUIRED"));
   }
 
   @Test
@@ -459,7 +458,7 @@ class LookWebSocketCrossServiceTest {
                 client.awaitMatching(
                     response ->
                         response.startsWith("OK PLAY")
-                            || response.startsWith("ERROR WORLD_ACCESS_DENIED"),
+                            || response.startsWith("ERROR JOIN_REQUIRED"),
                     "play acceptance or admission denial"))) {
       return scenario.responses();
     }

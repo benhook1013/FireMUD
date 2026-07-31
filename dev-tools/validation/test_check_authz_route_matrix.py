@@ -544,8 +544,16 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertIn("mutation_digest", grpc["required_fields"])
         self.assertIn("IDEMPOTENCY_CONFLICT", grpc["canonical_errors"]["any_of"])
         http = routes["POST /sessions/{sessionId}/refresh-roles"][0]
+        self.assertEqual("exact_mtls_workload", http["auth_path"])
+        self.assertNotIn("operator_authorization_reference", http)
+        self.assertNotIn("delegated_subject", http)
         self.assertEqual(
-            "account_issued_bounded_reference", http["operator_authorization_reference"]
+            {"current_session", "current_account_roles"},
+            set(http["required_live_checks"]),
+        )
+        self.assertEqual(
+            "owner_atomic_idempotent_role_refresh_with_durable_result",
+            http["mutation_contract"],
         )
         self.assertIn("mutation_digest", http["required_fields"])
         self.assertIn("IDEMPOTENCY_CONFLICT", http["canonical_errors"]["any_of"])
@@ -570,6 +578,49 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
         self.assertIn(
             "game-session-service RefreshRoles must not declare a delegated subject",
+            errors,
+        )
+
+        http["auth_path"] = (
+            "control_ui_plus_current_role_and_role_appropriate_assurance"
+        )
+        http["operator_authorization_reference"] = "account_issued_bounded_reference"
+        http["delegated_subject"] = "authenticated_operator"
+        http["required_live_checks"].append("current_operator_authorization")
+        http["required_live_checks"].remove("current_account_roles")
+        http["mutation_contract"] = (
+            "durable_intent_then_account_redeemed_owner_idempotent_mutation"
+        )
+        errors = []
+        self.validator.validate_refresh_roles_routes(document["routes"], errors)
+        self.assertIn(
+            "game-session-service POST /sessions/{sessionId}/refresh-roles must use "
+            "exact_mtls_workload auth_path",
+            errors,
+        )
+        self.assertIn(
+            "game-session-service POST /sessions/{sessionId}/refresh-roles must not "
+            "receive an operator authorization reference",
+            errors,
+        )
+        self.assertIn(
+            "game-session-service POST /sessions/{sessionId}/refresh-roles must not "
+            "declare a delegated subject",
+            errors,
+        )
+        self.assertIn(
+            "game-session-service POST /sessions/{sessionId}/refresh-roles must "
+            "require live check current_account_roles",
+            errors,
+        )
+        self.assertIn(
+            "game-session-service POST /sessions/{sessionId}/refresh-roles must not "
+            "depend on current operator authorization",
+            errors,
+        )
+        self.assertIn(
+            "game-session-service POST /sessions/{sessionId}/refresh-roles must use "
+            "the owner role-refresh mutation contract",
             errors,
         )
         self.assertIn(
@@ -1145,11 +1196,20 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             "public_production_admission",
             selection["branches"]["returning_membership"]["required_live_checks"],
         )
-        self.assertNotIn(
-            "membership",
-            selection["branches"]["grant_backed_private_or_playtest"][
-                "required_live_checks"
-            ],
+        self.assertEqual(
+            common
+            | set(
+                selection["branches"]["grant_backed_private_or_playtest"][
+                    "required_live_checks"
+                ]
+            ),
+            {
+                "runtime_entitlements",
+                "admission_pointer",
+                "membership",
+                "membership_generation",
+                "conditional_realm_access_grant",
+            },
         )
 
         route["required_live_checks"].append("membership")

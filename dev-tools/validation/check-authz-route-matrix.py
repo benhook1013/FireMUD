@@ -73,8 +73,8 @@ REQUIRED_GAMEPLAY_ADMISSION_BRANCH_CHECKS = {
         "realm_visibility",
     },
     "grant_backed_private_or_playtest": {
-        "conditional_membership",
-        "conditional_membership_generation",
+        "membership",
+        "membership_generation",
         "conditional_realm_access_grant",
     },
 }
@@ -146,10 +146,15 @@ GAME_SESSION_OPERATOR_ROUTES = {
     ("game-session-service", "POST /sessions"),
     ("game-session-service", "POST /sessions/{sessionId}/stop"),
     ("game-session-service", "POST /sessions/{sessionId}/restart"),
+}
+GAME_SESSION_OWNER_ROLE_REFRESH_ROUTES = {
     ("game-session-service", "POST /sessions/{sessionId}/refresh-roles"),
 }
 REQUIRED_SESSION_LIFECYCLE_GATE_ROUTES = {
-    f"{service}/{route}" for service, route in GAME_SESSION_OPERATOR_ROUTES
+    f"{service}/{route}"
+    for service, route in (
+        GAME_SESSION_OPERATOR_ROUTES | GAME_SESSION_OWNER_ROLE_REFRESH_ROUTES
+    )
 }
 CONDITIONAL_OPERATOR_ROUTES = OPERATOR_INGRESS_ROUTES | GAME_SESSION_OPERATOR_ROUTES
 ACCOUNT_SUBJECT_BOUND_ROUTES = {
@@ -2421,11 +2426,27 @@ def validate_refresh_roles_routes(
     )
     if http_route is not None:
         label = "game-session-service POST /sessions/{sessionId}/refresh-roles"
+        if http_route.get("auth_path") != "exact_mtls_workload":
+            errors.append(f"{label} must use exact_mtls_workload auth_path")
+        if "operator_authorization_reference" in http_route:
+            errors.append(
+                f"{label} must not receive an operator authorization reference"
+            )
+        if "delegated_subject" in http_route:
+            errors.append(f"{label} must not declare a delegated subject")
+        checks = route_live_checks(http_route, label, errors, live_checks_cache)
+        for required_check in ("current_session", "current_account_roles"):
+            if required_check not in checks:
+                errors.append(f"{label} must require live check {required_check}")
+        if "current_operator_authorization" in checks:
+            errors.append(
+                f"{label} must not depend on current operator authorization"
+            )
         if (
-            http_route.get("operator_authorization_reference")
-            != "account_issued_bounded_reference"
+            http_route.get("mutation_contract")
+            != "owner_atomic_idempotent_role_refresh_with_durable_result"
         ):
-            errors.append(f"{label} must require an Account-issued operator reference")
+            errors.append(f"{label} must use the owner role-refresh mutation contract")
         validate_idempotency_contract(
             http_route,
             label,

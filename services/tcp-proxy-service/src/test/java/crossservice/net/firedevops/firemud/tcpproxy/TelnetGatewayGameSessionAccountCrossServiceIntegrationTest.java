@@ -173,12 +173,14 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             this::openTelnetClient,
             GameplayTelnetScenarios.demoAdmission(READY_LOOK_TEXT),
             client ->
-                assertThat(client.readLineContaining("ERROR WORLD_ACCESS_DENIED"))
-                    .contains("ERROR WORLD_ACCESS_DENIED")
-                    .contains("You are not allowed to enter that world."))) {
+                assertThat(client.readLineContaining("ERROR JOIN_REQUIRED"))
+                    .contains("ERROR JOIN_REQUIRED")
+                    .contains("You must JOIN <world> before PLAY, or use Join & Play."))) {
       assertThat(scenario.responses())
-          .anyMatch(response -> response.contains("ERROR WORLD_ACCESS_DENIED"))
-          .anyMatch(response -> response.contains("You are not allowed to enter that world."));
+          .anyMatch(response -> response.contains("ERROR JOIN_REQUIRED"))
+          .anyMatch(
+              response ->
+                  response.contains("You must JOIN <world> before PLAY, or use Join & Play."));
     }
   }
 
@@ -489,10 +491,10 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             this::openTelnetClient,
             READY_LOOK_TEXT,
             client ->
-                assertThat(client.readLineContaining("ERROR WORLD_ACCESS_DENIED"))
-                    .contains("ERROR WORLD_ACCESS_DENIED"))) {
+                assertThat(client.readLineContaining("ERROR JOIN_REQUIRED"))
+                    .contains("ERROR JOIN_REQUIRED"))) {
       assertThat(scenario.responses())
-          .anyMatch(response -> response.contains("ERROR WORLD_ACCESS_DENIED"));
+          .anyMatch(response -> response.contains("ERROR JOIN_REQUIRED"));
     }
   }
 
