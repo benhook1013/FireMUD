@@ -236,6 +236,7 @@ The canonical player-facing flow is intentionally simple:
 ```text
    WORLDS_PUBLIC
 LOGIN <email> [secret]
+[LOGIN <email> <code>]  # required after one-argument LOGIN requests a code
 [JOIN <world>]  # required only for a first-time public-production account
 PLAY <world> [realm] [character]
 ```
