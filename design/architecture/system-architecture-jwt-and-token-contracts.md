@@ -72,7 +72,7 @@ Account constructs each exact claim, tuple, compact JWT, and registry-record can
 
 ### ADR 0014 Readiness-Probe Exception
 
-The only exception to the normal registry-backed authorization path is the non-authorizing readiness-probe path defined by [ADR 0014](./decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md). Its exact probe registry entry is:
+For a route whose contract otherwise requires a registry-backed JWT, the only exception to that registry-backed authorization path is the non-authorizing readiness-probe path defined by [ADR 0014](./decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md). Its exact probe registry entry is:
 
 ```text
 readinessProbeRegistryEntry = {
@@ -97,7 +97,7 @@ An entry is exact and operation-scoped by `{rotationOperationId, validatorId, to
 
 The registry lifecycle is `PLANNED -> ISSUED -> VERIFIED -> RETIRED -> CLEANED` on promotion, and `PLANNED|ISSUED|VERIFIED -> EXPIRED|ABORTED -> CLEANED` for expiry, failed promotion, or cancellation. Every transition compares the same operation, target/active signer fences, and entry version; a stale or cross-operation transition is rejected.
 
-This predicate is harness-only and non-authorizing. A request that fails any predicate, including an ordinary caller presenting a probe-shaped token or a harness request with a missing, extra, mismatched, expired, terminal, or cross-operation entry, is denied before normal authentication context is created, authorization is evaluated, or application side effects occur. A matching probe may proceed only through the production signature, claim, audience, algorithm, key-use, and JWKS validation code and is then unconditionally denied before authorization and side effects. A readiness entry never satisfies `session:auth:token:<tokenHash>`, grants authentication context, or permits a normal registry-backed request to bypass its required record.
+This predicate is harness-only and non-authorizing. A request that fails any predicate, including an ordinary caller presenting a probe-shaped token or a harness request with a missing, extra, mismatched, expired, terminal, or cross-operation entry, is denied before normal authentication context is created, authorization is evaluated, or application side effects occur. A matching probe may proceed only through the production signature, claim, audience, algorithm, key-use, and JWKS validation code and is then unconditionally denied before authorization and side effects. A readiness entry never satisfies `session:auth:token:<tokenHash>`, grants authentication context, or permits a normal registry-backed request to bypass its required record. This readiness-probe exception does not apply to the separate `gameplay-connect` replay contract or to ordinary gameplay RPCs, which use concrete mTLS workload identity plus typed `PlayerExecutionContext` rather than a player JWT registry record.
 
 ## Implementation Status
 

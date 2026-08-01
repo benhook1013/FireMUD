@@ -237,7 +237,7 @@ The canonical player-facing flow is intentionally simple:
    WORLDS_PUBLIC
 LOGIN <email> [secret]
 [LOGIN <email> <code>]  # required after one-argument LOGIN requests a code
-[JOIN <world>]  # required only for a first-time public-production account
+[JOIN <world>]  # required only when selected public-production tenant membership is absent
 PLAY <world> [realm] [character]
 ```
 
@@ -261,7 +261,7 @@ These modes are complementary: public browse remains available before authentica
 Normative semantic split:
 
 - `LOGIN` proves or restores account identity.
-- For a first-time public-production account, `JOIN <world>` explicitly creates membership after `LOGIN`; a returning member omits `JOIN` and continues to `PLAY`. First-party browser/mobile clients use the equivalent Account bootstrap join endpoint.
+- When the selected public-production tenant has no caller-bound membership, `JOIN <world>` explicitly creates membership after `LOGIN`; a caller with existing membership for that tenant omits `JOIN` and continues to `PLAY`. First-party browser/mobile clients use the equivalent Account bootstrap join endpoint.
 - The direct `LOGIN` plus `PLAY` compatibility shortcut is limited to credential-bearing text clients with existing active membership and a selected character. First-party/browser clients always use authenticated bootstrap, discovery, and lobby gates, including for returning members.
 - `PLAY` binds the gameplay session to `{tenantId, gameInstanceId, characterId}`.
 
@@ -608,7 +608,7 @@ After `LOGIN` succeeds, the Game Session Service requires an explicit lobby sele
 - `CHARS <world> [realm]` – list characters for the selected world and optional realm.
 - `PLAY <world> [realm] [character]` – enter gameplay by selecting a world, an optional realm, and an optional character.
 
-`public_production_onboarding` is the lobby route class for discovery and first-join work in the default public production realm. Brand-new authenticated accounts may see that realm before membership exists, but must explicitly use `Join & Play` or `JOIN <world>` before character creation or connect-token issuance. The resulting membership is the intended durable account-to-game relationship used by later discovery and return flows. `PLAY` and the gameplay transport are classified as `gameplay_admission`.
+`public_production_onboarding` is the lobby route class for discovery and first-join work in the default public production realm. An authenticated caller may see that realm before membership exists for the selected tenant, but must explicitly use `Join & Play` or `JOIN <world>` before character creation or connect-token issuance. The resulting membership is the intended durable account-to-game relationship used by later discovery and return flows. `PLAY` and the gameplay transport are classified as `gameplay_admission`.
 
 Realm discovery and routing contract:
 
