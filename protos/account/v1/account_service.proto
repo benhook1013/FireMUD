@@ -64,8 +64,10 @@ message CreateAccountResponse {
 
 message AuthenticateRequest {
   string tenant_id = 1;
-  string email = 2;
+  reserved 2;
+  reserved "username";
   string password = 3;
+  string email = 4;
 }
 
 message AuthenticateResponse {

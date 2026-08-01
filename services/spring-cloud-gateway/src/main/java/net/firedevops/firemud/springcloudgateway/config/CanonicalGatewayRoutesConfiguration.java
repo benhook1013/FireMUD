@@ -42,7 +42,8 @@ public class CanonicalGatewayRoutesConfiguration {
                 environment.getProperty(
                     "FIREMUD_GATEWAY_ROUTE_ADMIN_URI", "http://logging-admin-service:8080"),
                 "/api/admin/admission-pointers/**",
-                2),
+                2,
+                "GET"),
             route(
                 "admin-feature-flags",
                 environment.getProperty(

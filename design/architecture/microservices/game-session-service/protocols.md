@@ -25,7 +25,7 @@ At the protocol level, commands are split into two groups:
 The player-facing protocol is also stage-aware:
 
 - **Connected, not logged in** – players can browse public worlds and get help, but they are not yet authenticated. The normal human flow is `WORLDS` then `LOGIN`.
-- **Logged in, not yet playing** – existing members with confirmed durable membership can issue `PLAY` directly. A first-time public-production player must issue `JOIN` first; if `PLAY` is attempted without the required membership, the target response is `JOIN_REQUIRED` rather than implicit membership creation. Either player may use lobby helper commands such as `REALMS` and `CHARS` to disambiguate selection.
+- **Logged in, not yet playing** – existing members with confirmed durable membership can issue `PLAY` directly. Target behavior requires a first-time public-production player to issue `JOIN` first. In the current runtime, `JOIN` is unavailable and `PLAY` without the required public-production membership returns `JOIN_REQUIRED` without creating membership; non-public missing membership returns `WORLD_ACCESS_DENIED`. Players may use lobby helper commands such as `REALMS` and `CHARS` to disambiguate selection.
 - **In-game** – gameplay commands such as `LOOK`, `SAY`, and movement are available.
 
 The normal happy path for a human player should therefore be:
@@ -45,7 +45,7 @@ PLAY <world> [realm] [character]
 | `LOGOUT` / `LOGOFF` / `QUIT` | Ends the current session and closes the transport. `LOGOFF` and `QUIT` are exact aliases for canonical `LOGOUT`. | `LOGOUT` |
 | `WORLDS` | Lists worlds visible to the caller. Before `LOGIN`, this is a public browse/discovery command intended to let players explore the platform before signing up or logging in. After `LOGIN`, it may also include caller-specific membership or entitlement context. | `WORLDS` |
 | `REALMS <world>` | Lists visible realms for a world, where `<world>` is the stable selector or menu index returned by `WORLDS`. The default public production realm may be visible before membership exists; additional realms require explicit grants. | `REALMS demo` |
-| `JOIN <world>` | Explicitly joins the selected world's public production realm through the Account-owned idempotent membership writer. The resulting membership is durable and powers later return discovery. | `JOIN demo` |
+| `JOIN <world>` | **Target-only; not currently implemented.** Explicitly joins the selected world's public production realm through the Account-owned idempotent membership writer. The resulting membership is durable and powers later return discovery. | `JOIN demo` |
 | `CHARS <world> [realm]` | Lists characters for a world and optional realm from the authoritative character store, filtered to `{accountId, tenantId, gameInstanceId}` ownership. | `CHARS demo production` |
 | `PLAY <world> [realm] [character]` | Binds the authenticated connection to a world, optional realm, and optional character after `LOGIN`, enforcing tenant authorization, realm routing, and entitlements. Players may omit `[realm]` or `[character]` when the resolved choice is unambiguous. A first-time public player must complete `JOIN <world>` first; a grant-backed non-public path may proceed only when its required durable membership already exists. `PLAY` returns `JOIN_REQUIRED` and never creates or substitutes membership implicitly. | `PLAY demo production Sora` |
 | `LOOK` | Requests the current room snapshot aggregated from Game Logic plus World and Entity services. | `LOOK` |
@@ -208,7 +208,7 @@ Failure examples:
 
 ```text
 LOGIN demo@example.com wrongpass
-ERROR INVALID_CREDENTIALS Invalid username or password
+ERROR INVALID_CREDENTIALS Invalid credentials
 ```
 
 ```text

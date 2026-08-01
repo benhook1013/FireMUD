@@ -74,6 +74,7 @@ import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
+import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
@@ -184,7 +185,7 @@ public class AccountServiceImpl implements AccountService {
     logger.info("Creating account {} for tenant {}", request.username(), request.tenantId());
     Account account = new Account();
     account.setUsername(request.username());
-    account.setEmail(normalizeEmail(request.email()));
+    account.setEmail(EmailCanonicalization.normalize(request.email()));
     account.setPasswordHash(hashPassword(request.password()));
     account.setRole("player");
     Profile profile = new Profile();
@@ -247,7 +248,9 @@ public class AccountServiceImpl implements AccountService {
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticateForGameplay(
       Long tenantId, String email, String password) {
     Account gameplayAccount =
-        accountRepository.findByEmail(normalizeEmail(email)).orElseThrow(this::invalidCredentials);
+        accountRepository
+            .findByEmail(EmailCanonicalization.normalize(email))
+            .orElseThrow(this::invalidCredentials);
     PrimaryAuthentication authentication =
         authenticateAccountIdentity(gameplayAccount, password, true);
     Account account = authentication.account();
@@ -267,7 +270,8 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.request_email_login_otp")
   public void requestEmailLoginOtp(Long tenantId, String email) {
-    Optional<Account> account = accountRepository.findByEmail(normalizeEmail(email));
+    Optional<Account> account =
+        accountRepository.findByEmail(EmailCanonicalization.normalize(email));
     if (account.isEmpty()
         || !account.orElseThrow().isEmailVerified()
         || !allowsEmailLoginOtp(account.orElseThrow())) {
@@ -306,7 +310,9 @@ public class AccountServiceImpl implements AccountService {
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult verifyEmailLoginOtp(
       Long tenantId, String email, String code) {
     Account account =
-        accountRepository.findByEmail(normalizeEmail(email)).orElseThrow(this::invalidCredentials);
+        accountRepository
+            .findByEmail(EmailCanonicalization.normalize(email))
+            .orElseThrow(this::invalidCredentials);
     if (!allowsEmailLoginOtp(account)) {
       throw invalidCredentials();
     }
@@ -1064,7 +1070,7 @@ public class AccountServiceImpl implements AccountService {
       return usernameMatch;
     }
 
-    return accountRepository.findByEmail(usernameOrEmail);
+    return accountRepository.findByEmail(EmailCanonicalization.normalize(usernameOrEmail));
   }
 
   private PrimaryAuthentication authenticateAccountIdentity(
@@ -1099,10 +1105,6 @@ public class AccountServiceImpl implements AccountService {
     }
     requireAuthenticationEligible(account);
     return new PrimaryAuthentication(account, Optional.empty());
-  }
-
-  private String normalizeEmail(String email) {
-    return email == null ? "" : email.trim().toLowerCase(java.util.Locale.ROOT);
   }
 
   private void requireAuthenticationEligible(Account account) {
@@ -1408,7 +1410,7 @@ public class AccountServiceImpl implements AccountService {
   public void requestPasswordReset(PasswordResetRequest request) {
     net.firedevops.firemud.accountservice.entity.Account account =
         accountRepository
-            .findByEmail(normalizeEmail(request.email()))
+            .findByEmail(EmailCanonicalization.normalize(request.email()))
             .orElseThrow(() -> new IllegalArgumentException("Account not found"));
     net.firedevops.firemud.accountservice.entity.PasswordResetToken token =
         new net.firedevops.firemud.accountservice.entity.PasswordResetToken();
@@ -1505,7 +1507,7 @@ public class AccountServiceImpl implements AccountService {
   public void sendUsernameReminder(UsernameRecoveryRequest request) {
     Account account =
         accountRepository
-            .findByEmail(normalizeEmail(request.email()))
+            .findByEmail(EmailCanonicalization.normalize(request.email()))
             .orElseThrow(() -> new IllegalArgumentException("Account not found"));
     runAfterCommit(
         () ->

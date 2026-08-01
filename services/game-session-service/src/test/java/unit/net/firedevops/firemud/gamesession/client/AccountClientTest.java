@@ -377,6 +377,25 @@ class AccountClientTest {
   }
 
   @Test
+  void runtimeMembershipNormalizesInitialInternalWithoutRetryOrChannelRebuild() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.INTERNAL));
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    AccountClient client = newClient(stub, channelFactory);
+
+    GetTenantMembershipForRuntimeResponse response =
+        client.getTenantMembershipForRuntime("42", "7", "request-1");
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
+    verify(stub).getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
+    verify(channelFactory, times(0)).buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @Test
   void publicMembershipEnsureNormalizesExhaustedUnavailableToCanonicalUnavailable()
       throws Exception {
     AccountServiceGrpc.AccountServiceBlockingStub initialStub =

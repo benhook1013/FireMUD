@@ -2020,6 +2020,33 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors,
         )
 
+    def test_operator_reference_issuance_missing_required_fields_has_one_diagnostic(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            document, "account-service", "IssueHumanOperatorAuthorizationReference"
+        )
+        route.pop("required_fields")
+
+        errors = validate_document(self.validator, document)
+
+        self.assertEqual(
+            1,
+            errors.count(
+                "account-service IssueHumanOperatorAuthorizationReference "
+                "required_fields must include operator-reference fields: "
+                "['action_family', 'action_family_schema_id', "
+                "'action_family_schema_version', 'control_plane_request_id', "
+                "'mutation_digest', 'tenant_scope']"
+            ),
+        )
+        self.assertFalse(
+            any(
+                "account-service IssueHumanOperatorAuthorizationReference "
+                "required_fields must be a list of strings" in error
+                for error in errors
+            )
+        )
+
     def test_unavailable_authority_uses_one_canonical_error(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         for route_name in (
@@ -3116,6 +3143,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 MATRIX.read_text(encoding="utf-8"),
                 """  - service: game-session-service
     route: JOIN
+    route_status: target_not_currently_routable
     scope: tenant
     classification: public_production_onboarding
     auth_path: game_session_authenticated_context
@@ -3133,6 +3161,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     membership_creation: caller_bound_after_validation""",
                 """  - service: game-session-service
     route: JOIN
+    route_status: target_not_currently_routable
     scope: tenant
     classification: public_production_onboarding
     auth_path: game_session_authenticated_context

@@ -2220,14 +2220,15 @@ def validate_operator_reference_issuance(
                 f"{label} required_fields must include operator-reference fields: "
                 f"{missing_fields}"
             )
-        cached_required_fields(
-            route,
-            raw_fields,
-            f"{label} required_fields",
-            errors,
-            required_fields_cache,
-            "required_fields",
-        )
+        if "required_fields" in route:
+            cached_required_fields(
+                route,
+                raw_fields,
+                f"{label} required_fields",
+                errors,
+                required_fields_cache,
+                "required_fields",
+            )
 
 
 def validate_authority_unavailable_outcomes(
@@ -2441,6 +2442,41 @@ def validate_logging_admin_idempotency(
             )
 
 
+def validate_refresh_roles_route(
+    route: dict[str, Any],
+    label: str,
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None,
+    required_fields_cache: RequiredFieldsCache | None,
+    expected_mutation_contract: str | None = None,
+) -> None:
+    if route.get("auth_path") != "exact_mtls_workload":
+        errors.append(f"{label} must use exact_mtls_workload auth_path")
+    if "operator_authorization_reference" in route:
+        errors.append(
+            f"{label} must not receive an operator authorization reference"
+        )
+    if "delegated_subject" in route:
+        errors.append(f"{label} must not declare a delegated subject")
+    checks = route_live_checks(route, label, errors, live_checks_cache)
+    for required_check in ("current_session", "current_account_roles"):
+        if required_check not in checks:
+            errors.append(f"{label} must require live check {required_check}")
+    if "current_operator_authorization" in checks:
+        errors.append(f"{label} must not depend on current operator authorization")
+    if (
+        expected_mutation_contract is not None
+        and route.get("mutation_contract") != expected_mutation_contract
+    ):
+        errors.append(f"{label} must use the owner role-refresh mutation contract")
+    validate_idempotency_contract(
+        route,
+        label,
+        errors,
+        required_fields_cache,
+    )
+
+
 def validate_refresh_roles_routes(
     routes: list[Any],
     errors: list[str],
@@ -2448,75 +2484,30 @@ def validate_refresh_roles_routes(
     cardinality_errors: set[str] | None = None,
     required_fields_cache: RequiredFieldsCache | None = None,
 ) -> None:
-
-    grpc_route = resolve_unique_route(
-        routes,
-        "game-session-service",
-        "RefreshRoles",
-        errors,
-        cardinality_errors,
+    route_specs = (
+        ("RefreshRoles", None),
+        (
+            "POST /sessions/{sessionId}/refresh-roles",
+            "owner_atomic_idempotent_role_refresh_with_durable_result",
+        ),
     )
-    if grpc_route is not None:
-        label = "game-session-service RefreshRoles"
-        if grpc_route.get("auth_path") != "exact_mtls_workload":
-            errors.append(f"{label} must use exact_mtls_workload auth_path")
-        if "operator_authorization_reference" in grpc_route:
-            errors.append(
-                f"{label} must not receive an operator authorization reference"
-            )
-        if "delegated_subject" in grpc_route:
-            errors.append(f"{label} must not declare a delegated subject")
-        checks = route_live_checks(grpc_route, label, errors, live_checks_cache)
-        for required_check in ("current_session", "current_account_roles"):
-            if required_check not in checks:
-                errors.append(f"{label} must require live check {required_check}")
-        if "current_operator_authorization" in checks:
-            errors.append(
-                f"{label} must not depend on current operator authorization"
-            )
-        validate_idempotency_contract(
-            grpc_route,
-            label,
+    for route_name, expected_mutation_contract in route_specs:
+        route = resolve_unique_route(
+            routes,
+            "game-session-service",
+            route_name,
             errors,
-            required_fields_cache,
+            cardinality_errors,
         )
-
-    http_route = resolve_unique_route(
-        routes,
-        "game-session-service",
-        "POST /sessions/{sessionId}/refresh-roles",
-        errors,
-        cardinality_errors,
-    )
-    if http_route is not None:
-        label = "game-session-service POST /sessions/{sessionId}/refresh-roles"
-        if http_route.get("auth_path") != "exact_mtls_workload":
-            errors.append(f"{label} must use exact_mtls_workload auth_path")
-        if "operator_authorization_reference" in http_route:
-            errors.append(
-                f"{label} must not receive an operator authorization reference"
+        if route is not None:
+            validate_refresh_roles_route(
+                route,
+                f"game-session-service {route_name}",
+                errors,
+                live_checks_cache,
+                required_fields_cache,
+                expected_mutation_contract,
             )
-        if "delegated_subject" in http_route:
-            errors.append(f"{label} must not declare a delegated subject")
-        checks = route_live_checks(http_route, label, errors, live_checks_cache)
-        for required_check in ("current_session", "current_account_roles"):
-            if required_check not in checks:
-                errors.append(f"{label} must require live check {required_check}")
-        if "current_operator_authorization" in checks:
-            errors.append(
-                f"{label} must not depend on current operator authorization"
-            )
-        if (
-            http_route.get("mutation_contract")
-            != "owner_atomic_idempotent_role_refresh_with_durable_result"
-        ):
-            errors.append(f"{label} must use the owner role-refresh mutation contract")
-        validate_idempotency_contract(
-            http_route,
-            label,
-            errors,
-            required_fields_cache,
-        )
 
 
 def validate_known_drift(value: Any, field: str, errors: list[str]) -> None:
@@ -2557,9 +2548,9 @@ def route_identity(value: Any, field: str, errors: list[str]) -> str | None:
     return "/".join(components)
 
 
-def validate_operator_mutation_support_gate(
-    document: dict[str, Any], routes: list[Any], errors: list[str]
-) -> None:
+def validate_operator_mutation_support_gate_override_vocabulary(
+    document: dict[str, Any], errors: list[str]
+) -> set[str]:
     override_vocabulary = document.get("route_status_override_vocabulary")
     if (
         not isinstance(override_vocabulary, list)
@@ -2579,39 +2570,17 @@ def validate_operator_mutation_support_gate(
                 "route_status_override_vocabulary must contain exactly "
                 f"{sorted(ROUTE_STATUS_OVERRIDE_VALUES)}"
             )
+    return allowed_overrides
 
-    gate = document.get("operator_mutation_support_gate")
-    if not isinstance(gate, dict):
-        errors.append("operator_mutation_support_gate must be a mapping")
-        return
 
-    route_status_override = gate.get("route_status_override")
-    if route_status_override not in allowed_overrides:
-        errors.append(
-            "operator_mutation_support_gate.route_status_override must be one of "
-            f"{sorted(allowed_overrides)}"
-        )
-    gate_status = gate.get("status")
-    if gate_status != OPERATOR_MUTATION_SUPPORT_GATE_STATUS:
-        errors.append(
-            "operator_mutation_support_gate.status must be "
-            f"{OPERATOR_MUTATION_SUPPORT_GATE_STATUS}"
-        )
-
-    routes_by_identity: dict[str, list[dict[str, Any]]] = {}
-    route_identities = {
-        identity
-        for route in routes
-        if isinstance(route, dict)
-        for identity in (route_identity_from_route(route),)
-        if identity is not None
-    }
-    for route in routes:
-        if not isinstance(route, dict):
-            continue
-        identity = route_identity_from_route(route)
-        if identity is not None:
-            routes_by_identity.setdefault(identity, []).append(route)
+def validate_operator_mutation_support_gate_coverage(
+    gate: dict[str, Any],
+    routes_by_identity: dict[str, list[dict[str, Any]]],
+    route_identities: set[str],
+    gate_status: Any,
+    route_status_override: Any,
+    errors: list[str],
+) -> None:
     gate_identities: list[str] = []
     applies_to_identities: list[str] = []
     for field in ("applies_to", "live_exceptions"):
@@ -2691,6 +2660,49 @@ def validate_operator_mutation_support_gate(
                         f"{identity} must declare route_status {gate_status} "
                         "when route_status_override is gate_wins_for_applies_to"
                     )
+
+
+def validate_operator_mutation_support_gate(
+    document: dict[str, Any], routes: list[Any], errors: list[str]
+) -> None:
+    allowed_overrides = validate_operator_mutation_support_gate_override_vocabulary(
+        document, errors
+    )
+
+    gate = document.get("operator_mutation_support_gate")
+    if not isinstance(gate, dict):
+        errors.append("operator_mutation_support_gate must be a mapping")
+        return
+
+    route_status_override = gate.get("route_status_override")
+    if route_status_override not in allowed_overrides:
+        errors.append(
+            "operator_mutation_support_gate.route_status_override must be one of "
+            f"{sorted(allowed_overrides)}"
+        )
+    gate_status = gate.get("status")
+    if gate_status != OPERATOR_MUTATION_SUPPORT_GATE_STATUS:
+        errors.append(
+            "operator_mutation_support_gate.status must be "
+            f"{OPERATOR_MUTATION_SUPPORT_GATE_STATUS}"
+        )
+
+    routes_by_identity: dict[str, list[dict[str, Any]]] = {}
+    for route in routes:
+        if not isinstance(route, dict):
+            continue
+        identity = route_identity_from_route(route)
+        if identity is not None:
+            routes_by_identity.setdefault(identity, []).append(route)
+    route_identities = set(routes_by_identity)
+    validate_operator_mutation_support_gate_coverage(
+        gate,
+        routes_by_identity,
+        route_identities,
+        gate_status,
+        route_status_override,
+        errors,
+    )
 
 
 def matching_routes(

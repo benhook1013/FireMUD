@@ -9,6 +9,7 @@ import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
+import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -130,7 +131,7 @@ public final class LoginCommandHandler {
     AuthenticateResponse authResponse =
         accountClient.authenticate(
             String.valueOf(instance.getTenantId()),
-            normalizeEmail(credentials.loginName()),
+            EmailCanonicalization.normalize(credentials.loginName()),
             credentials.password());
     var error = authResponse.getError();
     if (error != null
@@ -195,7 +196,8 @@ public final class LoginCommandHandler {
 
     RequestEmailLoginOtpResponse response =
         accountClient.requestEmailLoginOtp(
-            String.valueOf(instance.getTenantId()), normalizeEmail(challengeRequest.email()));
+            String.valueOf(instance.getTenantId()),
+            EmailCanonicalization.normalize(challengeRequest.email()));
     if (hasError(response.getError()) || !response.getAccepted()) {
       return failure(AUTHENTICATION_UNAVAILABLE_CODE, "Authentication service unavailable");
     }
@@ -488,10 +490,6 @@ public final class LoginCommandHandler {
     return error != null
         && (!Optional.ofNullable(error.getCode()).orElse("").isBlank()
             || !Optional.ofNullable(error.getMessage()).orElse("").isBlank());
-  }
-
-  private String normalizeEmail(String email) {
-    return email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
   }
 
   private SessionIdParsing.ParsedSessionId parseSessionId(String sessionIdText) {

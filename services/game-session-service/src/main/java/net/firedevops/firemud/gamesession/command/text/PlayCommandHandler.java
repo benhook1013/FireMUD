@@ -192,7 +192,8 @@ public class PlayCommandHandler {
       }
       Optional<GameplayWorldCatalog.RealmView> maybeRealm =
           selection.explicitRealmSelector() != null
-              ? gameplayWorldCatalog.resolveRealm(selectedWorld, selection.explicitRealmSelector())
+              ? gameplayWorldCatalog.resolveRealmForAdmission(
+                  selectedWorld, selection.explicitRealmSelector())
               : selectDefaultRealm(selectedWorld, connectContextResolution.connectContext());
       if (maybeRealm.isEmpty()) {
         return failure(
@@ -918,7 +919,7 @@ public class PlayCommandHandler {
         gameplayWorldCatalog.resolveWorld(worldSelector);
     if (maybeWorld.isPresent()
         && StringUtils.hasText(secondSelector)
-        && !gameplayWorldCatalog.hasVisibleRealm(maybeWorld.orElseThrow(), secondSelector)) {
+        && !gameplayWorldCatalog.hasRealmForAdmission(maybeWorld.orElseThrow(), secondSelector)) {
       return Optional.of(new ResolvedPlaySelection(worldSelector.trim(), null, secondSelector));
     }
     return Optional.of(new ResolvedPlaySelection(worldSelector.trim(), secondSelector, null));
@@ -930,7 +931,7 @@ public class PlayCommandHandler {
     if (connectContext.isPresent()
         && StringUtils.hasText(connectContext.orElseThrow().realmSlug())) {
       Optional<GameplayWorldCatalog.RealmView> hintedRealm =
-          gameplayWorldCatalog.resolveRealm(
+          gameplayWorldCatalog.resolveRealmForAdmission(
               selectedWorld, connectContext.orElseThrow().realmSlug());
       if (hintedRealm.isPresent()) {
         return hintedRealm;

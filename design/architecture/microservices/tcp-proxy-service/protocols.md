@@ -9,7 +9,7 @@ The Telnet credential form is `LOGIN <email> [secret]`. `LOGIN <email>` starts t
 
 The following are canonical contracts across Telnet and WebSocket paths:
 
-- Telnet login-first without typed attach hints is the canonical player flow (`LOGIN` -> `JOIN` -> `PLAY`): a first-time public-production account must join after login, while a returning member skips `JOIN`.
+- Target Telnet login-first without typed attach hints is `LOGIN` -> conditional `JOIN` -> `PLAY`: a first-time public-production account joins after login, while a returning member skips `JOIN`. In the current runtime, explicit `JOIN` is unavailable; missing public-production membership causes `PLAY` to return `JOIN_REQUIRED` without creating membership.
 - Proxy -> Gateway WebSocket hop is mTLS-authenticated in player-facing environments.
 - Proxy bridge-availability circuit breaker uses deterministic open/half-open/closed admission behavior during sustained upstream unreachability.
 

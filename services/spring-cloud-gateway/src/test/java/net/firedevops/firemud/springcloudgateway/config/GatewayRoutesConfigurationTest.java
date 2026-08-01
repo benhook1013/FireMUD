@@ -111,6 +111,7 @@ class GatewayRoutesConfigurationTest {
     assertHasPath(route("session-ping"), "/api/session/ping");
     assertHasPath(route("admin-ping"), "/api/admin/ping");
     assertHasPath(route("admin-admission-pointers"), "/api/admin/admission-pointers/**");
+    assertHasMethod(route("admin-admission-pointers"), "GET");
     assertHasPath(route("admin-feature-flags"), "/api/admin/feature-flags/**");
     assertHasPath(route("admin-logs"), "/api/admin/logs/**");
     assertHasPath(route("admin-moderation"), "/api/admin/moderation/**");

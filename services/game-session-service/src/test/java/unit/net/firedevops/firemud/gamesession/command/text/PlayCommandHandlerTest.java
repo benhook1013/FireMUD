@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
@@ -942,6 +943,107 @@ class PlayCommandHandlerTest {
             Mockito.anyString());
   }
 
+  @Test
+  void playInvisibleRealmWithGrantedAccessContinuesAdmission() {
+    markPreviewRealmInvisible();
+    SessionContext context = invisibleRealmContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString()))
+        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(true).build());
+
+    PlayCommandHandlingResult result = handler.handle("1", invisibleRealmPlayCommand());
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    Mockito.verify(accountClient)
+        .getRealmAccessGrantForRuntime(
+            Mockito.eq("123"),
+            Mockito.eq("22"),
+            Mockito.eq("sandbox"),
+            Mockito.eq("preview"),
+            Mockito.anyString());
+  }
+
+  @Test
+  void playInvisibleRealmWithDeniedGrantClearsBinding() {
+    markPreviewRealmInvisible();
+    SessionContext context = invisibleRealmContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString()))
+        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(false).build());
+
+    PlayCommandHandlingResult result = handler.handle("1", invisibleRealmPlayCommand());
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+    Mockito.verify(gameplayPresenceLifecycleService).clearGameplayBinding(context, "access_denied");
+  }
+
+  @Test
+  void playInvisibleRealmWithNonAuthorityGrantClearsBinding() {
+    markPreviewRealmInvisible();
+    SessionContext context = invisibleRealmContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString()))
+        .thenReturn(
+            GetRealmAccessGrantForRuntimeResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("PERMISSION_DENIED")
+                        .setMessage("grant denied")
+                        .build())
+                .build());
+
+    PlayCommandHandlingResult result = handler.handle("1", invisibleRealmPlayCommand());
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+    Mockito.verify(gameplayPresenceLifecycleService).clearGameplayBinding(context, "access_denied");
+  }
+
+  @Test
+  void playInvisibleRealmWithUnavailableGrantFailsClosed() {
+    markPreviewRealmInvisible();
+    SessionContext context = invisibleRealmContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString()))
+        .thenReturn(
+            GetRealmAccessGrantForRuntimeResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE)
+                        .setMessage(GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE)
+                        .build())
+                .build());
+
+    PlayCommandHandlingResult result = handler.handle("1", invisibleRealmPlayCommand());
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+    Mockito.verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
+    Mockito.verify(sessionContextService, never()).save(Mockito.any());
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"NOT_FOUND", "PERMISSION_DENIED"})
   void playNonAuthorityMembershipErrorReturnsAccessDeniedAndClearsBinding(String errorCode) {
@@ -1212,6 +1314,36 @@ class PlayCommandHandlerTest {
         .filter(text -> text != null && !text.isBlank())
         .reduce((left, right) -> left + "\n" + right)
         .orElse(null);
+  }
+
+  private void markPreviewRealmInvisible() {
+    gameplayCatalogProperties.getWorlds().get(1).getRealms().get(1).setVisible(false);
+  }
+
+  private SessionContext invisibleRealmContext() {
+    return new SessionContext(
+        1L,
+        22L,
+        123L,
+        "demo@example.com",
+        123L,
+        "Emberline",
+        41L,
+        "R-1",
+        "jwt-token",
+        null,
+        41L,
+        "sandbox",
+        "preview",
+        1L,
+        "SHARED");
+  }
+
+  private TextCommand invisibleRealmPlayCommand() {
+    return new TextCommand(
+        TextCommandType.PLAY,
+        List.of("sandbox", "preview", "Emberline"),
+        "PLAY sandbox preview Emberline");
   }
 
   private static GameplayCatalogProperties.World world(

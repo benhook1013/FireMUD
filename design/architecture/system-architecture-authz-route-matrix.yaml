@@ -640,6 +640,7 @@ routes:
       any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE]
   - service: game-session-service
     route: JOIN
+    route_status: target_not_currently_routable
     scope: tenant
     classification: public_production_onboarding
     auth_path: game_session_authenticated_context
@@ -694,9 +695,6 @@ routes:
       membership: grant_backed_private_or_playtest_requires_existing_caller_bound_membership
       membership_creation: play_never_creates_membership
       missing_required_membership_error: JOIN_REQUIRED
-    implementation_status:
-      known_drift:
-        - current_connect_token_issuance_can_create_public_production_membership_before_play; this upstream security_contract_violation must be removed so public-production admission fails closed until explicit JOIN has created membership
   - service: spring-cloud-gateway
     route: /ws/game/**
     scope: tenant

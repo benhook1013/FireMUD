@@ -643,6 +643,10 @@ def _validate_smoke_account_contract(root: Path) -> None:
         "verify_smoke_account(account_api_base, username, password, timeout_seconds)"
     )
     for smoke_script in smoke_script_paths:
+        if not smoke_script.is_file():
+            raise AssertionError(
+                f"Smoke account contract script is missing: {smoke_script}"
+            )
         if required_call not in smoke_script.read_text(encoding="utf-8"):
             raise AssertionError(
                 f"Smoke contract missing required account verification: {smoke_script}"

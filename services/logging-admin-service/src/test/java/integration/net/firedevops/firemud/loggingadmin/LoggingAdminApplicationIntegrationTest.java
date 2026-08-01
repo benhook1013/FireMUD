@@ -23,6 +23,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -97,6 +98,45 @@ class LoggingAdminApplicationIntegrationTest {
                     || pattern.startsWith("/reports/")
                     || pattern.equals("/admin/reports")
                     || pattern.startsWith("/admin/reports/"));
+  }
+
+  @Test
+  void publicAdmissionPointerWriteMappingsAreAbsent() {
+    assertThat(requestMappingHandlerMapping.getHandlerMethods().keySet())
+        .noneMatch(
+            mapping ->
+                mapping.getMethodsCondition().getMethods().contains(RequestMethod.POST)
+                    && mapping.getPatternValues().stream()
+                        .anyMatch(
+                            path ->
+                                path.equals("/admission-pointers")
+                                    || path.equals("/admission-pointers/cutover")
+                                    || path.equals("/admission-pointers/version-upgrades")));
+  }
+
+  @Test
+  void unmappedAdmissionPointerWriteFamiliesUseCanonicalNotFoundEnvelope() throws Exception {
+    for (String path :
+        new String[] {
+          "/admission-pointers",
+          "/admission-pointers/cutover",
+          "/admission-pointers/version-upgrades"
+        }) {
+      HttpRequest request =
+          HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+              .timeout(HTTP_REQUEST_TIMEOUT)
+              .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantAdminToken(1L))
+              .POST(HttpRequest.BodyPublishers.noBody())
+              .build();
+
+      HttpResponse<String> response =
+          HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+      assertThat(response.statusCode()).isEqualTo(404);
+      assertThat(response.body()).contains("\"status\":\"ERROR\"");
+      assertThat(response.body()).contains("\"code\":\"NOT_FOUND\"");
+      assertThat(response.body()).contains("\"message\":\"Resource not found\"");
+    }
   }
 
   @Test

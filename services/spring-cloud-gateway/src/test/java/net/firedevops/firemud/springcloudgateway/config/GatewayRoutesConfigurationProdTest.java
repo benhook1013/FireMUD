@@ -119,6 +119,14 @@ class GatewayRoutesConfigurationProdTest {
   void restEdgeRoutesStripExternalServicePrefixBeforeForwarding() {
     assertThat(route("admin-ping").getPredicates().get(0).getArgs().values())
         .containsExactly("/api/admin/ping");
+    assertThat(
+            route("admin-admission-pointers").getPredicates().stream()
+                .filter(predicate -> "Method".equalsIgnoreCase(predicate.getName()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Admission-pointer route must be GET-only"))
+                .getArgs()
+                .values())
+        .containsExactly("GET");
     assertThat(route("admin-remote-followups").getPredicates().get(0).getArgs().values())
         .containsExactly("/api/admin/remote-followups/**");
     assertThat(route("design").getPredicates().get(0).getArgs().values())

@@ -1518,6 +1518,20 @@ class AccountServiceImplTest {
                     new ConnectTokenRequest(connectScopeId, "req-join-2")));
 
     assertEquals("JOIN_REQUIRED", exception.getCode());
+    assertEquals(
+        "Join the selected world before requesting a connect token", exception.getMessage());
+    org.mockito.Mockito.verify(sessionService)
+        .storeConnectTokenReplay(
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq(11L),
+            org.mockito.ArgumentMatchers.eq(connectScopeId),
+            org.mockito.ArgumentMatchers.eq("req-join-2"),
+            org.mockito.ArgumentMatchers.argThat(
+                replay ->
+                    !replay.success()
+                        && "JOIN_REQUIRED".equals(replay.errorCode())
+                        && exception.getMessage().equals(replay.errorMessage())),
+            org.mockito.ArgumentMatchers.longThat(ttl -> ttl > 0L));
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
         .saveAndFlush(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
     org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
@@ -2207,6 +2221,20 @@ class AccountServiceImplTest {
                     new ConnectTokenRequest(connectScopeId, "req-preview-1")));
 
     assertEquals("JOIN_REQUIRED", exception.getCode());
+    assertEquals(
+        "Join the selected world before requesting a connect token", exception.getMessage());
+    org.mockito.Mockito.verify(sessionService)
+        .storeConnectTokenReplay(
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq(11L),
+            org.mockito.ArgumentMatchers.eq(connectScopeId),
+            org.mockito.ArgumentMatchers.eq("req-preview-1"),
+            org.mockito.ArgumentMatchers.argThat(
+                replay ->
+                    !replay.success()
+                        && "JOIN_REQUIRED".equals(replay.errorCode())
+                        && exception.getMessage().equals(replay.errorMessage())),
+            org.mockito.ArgumentMatchers.longThat(ttl -> ttl > 0L));
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
         .saveAndFlush(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
     org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
