@@ -53,7 +53,7 @@ Current phase: capability allocation, implementation/proof reconciliation, cross
 
 The design-allocation and decision-inventory phases were completed against these gates:
 
-- `python3 dev-tools/validation/check-design-capability-allocation.py` derives the architecture source sets, parses each allocation ledger, and reconciles the declared `184`-source coverage summary.
+- `python3 dev-tools/validation/check-design-capability-allocation.py` derives the architecture source sets, parses each allocation ledger, and reconciles the declared `221`-source coverage summary (`218` capability allocations and `3` explicit governance/registry exemptions).
 - all intended FireMUD user, creator, operator, runtime, authoring, automation, platform, and commercial concerns have a capability home;
 - every Markdown source under `design/architecture/**` is present in the allocation ledger or explicitly classified as non-allocatable generated/index material;
 - mixed canonical documents have heading-level allocations where file-level allocation would hide a real ownership split;
