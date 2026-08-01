@@ -51,16 +51,16 @@ The inventory is split into this control ledger and exhaustive source-scoped led
 - [Specialized runtime decisions](./decision-inventory-specialized-runtime.md) contains 54 decisions and stronger evidence for 20 cross-cutting decisions from 39 Redis, scripting, tick, identity, token, migration, shared-library, spatial, authorization, and tracing documents.
 - [Product and operations decisions](./decision-inventory-product-operations.md) contains 38 decisions and stronger evidence for 11 existing keys from the remaining 35 product, frontend, authoring, protocol, infrastructure, deployment, recovery, observability, and generated-settings sources.
 
-The source-scoped ledgers contain 183 unique authoritative decision keys with no duplicate keys across ledgers. The nine ADR-backed aliases retained below are navigation entries and do not add to that count. Collectively, the inventories reference all 79 leaf capabilities in the taxonomy.
+The source-scoped ledgers contain 182 distinct authoritative decisions with no duplicate decisions across ledgers. The adversarial queue has 183 navigation rows because `MS-AA-TOKEN-REVOCATION` is retained as one additional historical service-scan alias; the nine ADR-backed aliases retained below are separate navigation entries and do not add to either count. Collectively, the inventories reference all 79 leaf capabilities in the taxonomy.
 
 | Capability | Sources reviewed | Decisions inventoried | Human-review candidates | Coverage state |
 | --- | ---: | ---: | ---: | --- |
-| Existing ADR set | 35 records plus linked canonical sources | 9 original aliases within the 68 cross-cutting decisions; later accepted records are allocated directly | Prioritized in the source ledger | Reviewed through ADR 0035 |
+| Existing ADR set | 48 registry records (46 accepted; 2 historical/superseded) plus linked canonical sources | 9 original aliases within the 68 cross-cutting decisions; later accepted records are allocated directly | Prioritized in the source ledger | Accepted registry through ADR 0050; Packet 2 coverage is ADRs 0020-0041, 0045, 0047, and 0048 |
 | Cross-cutting system architecture | 22 canonical sources plus ADRs | 68 | Prioritized in the source ledger | Complete and independently audited |
 | Microservice architecture | 76 sources | 23 new; stronger evidence for 40 existing keys | Prioritized in the source ledger | Complete and independently audited |
 | Specialized runtime architecture | 39 sources | 54 new; stronger evidence for 20 existing keys | Prioritized in the source ledger | Complete and independently audited |
 | Product and operations architecture | 35 sources | 38 new; stronger evidence for 11 existing keys | Prioritized in the source ledger | Complete and independently audited |
-| **Total unique decision keys** | **All 208 architecture artifacts classified; 172 decision-scan sources plus 36 decision-registry artifacts** | **183** | **Prioritized by source ledger** | **Initial inventory complete; accepted records allocated through ADR 0035** |
+| **Total distinct decisions** | **All 208 architecture artifacts classified; 172 decision-scan sources plus 36 decision-registry artifacts** | **182** | **Prioritized by source ledger** | **Initial inventory complete; accepted records allocated through ADR 0050** |
 
 ## Decision Ledger
 
@@ -103,16 +103,18 @@ The review facilitator must preserve the current choice's strongest argument, co
 
 ### Progress Summary
 
-| Packet | Scope | Reviewed | Total | State |
+| Packet | Scope | Reviewed distinct decisions | Navigation rows | State |
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
-| 2 | Identity, authority, and security | 16 | 32 | `in-progress` |
+| 2 | Identity, authority, and security | 25 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 0 | 43 | `not-started` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **25** | **183** | `in-progress` |
+| **Total** | | **34** | **183** | `in-progress` |
+
+The progress total counts checklist/navigation rows. Packet 2 contains 31 distinct decision keys represented by 32 rows; its extra row is the checked historical alias below. Its 26 checked rows therefore represent 25 reviewed decisions plus one navigation-only alias.
 
 ### Priority Overrides
 
@@ -137,7 +139,11 @@ No implementation-blocking override is active. Record an override here with the 
 
 ### Packet 2: Identity, Authority, And Security
 
-Packet 2 checklist dispositions record the human review outcome, not an inventory status. For every checked Packet 2 entry, `accepted` maps to the canonical inventory status `accepted-explicit`; `revised` maps to the same status after the revised target was accepted. Unchecked entries have no Packet 2 disposition; their canonical inventory status remains whatever the inventory records and is not inferred from this checklist. The `AUTH-02` and `AUTH-06` targets retain explicit `JOIN`/`Join & Play`, but `POST /auth/bootstrap/join` is target-state and not implemented; current implicit membership creation remains implementation drift.
+Packet 2 checklist dispositions record the human review outcome, not an inventory status. For every checked Packet 2 entry, `accepted` maps to the canonical inventory status `accepted-explicit`; `revised` maps to the same status after the revised target was accepted. Unchecked entries have no Packet 2 disposition; their canonical inventory status remains whatever the inventory records and is not inferred from this checklist. The `AUTH-02` and `AUTH-06` targets retain explicit `JOIN`/`Join & Play`, but `POST /auth/bootstrap/join` is target-state and not implemented. Current connect-token issuance requires existing caller-bound membership for every realm, regardless of realm visibility or realm grant, and does not create membership; current `PLAY` returns `JOIN_REQUIRED` for missing public-production membership and `WORLD_ACCESS_DENIED` for missing non-public membership. A realm grant never substitutes for membership, and the connect-token membership-authority-generation reread remains a gap.
+
+Packet 2 count reconciliation: the 25 reviewed decisions are covered by accepted ADRs 0020-0041, 0045, 0047, and 0048. The 26 checked rows include those 25 decisions plus one navigation-only row.
+
+Packet 2 historical-alias rule: `MS-AA-TOKEN-REVOCATION` is a superseded service-scan alias, not an additional unresolved decision or an independent target. Its canonical mapping is the accepted/revised set `AUTH-03`, `JWT-01`, `JWT-02`, `JWT-03`, and `JWT-04`; new evidence or review outcomes must be recorded against those owning keys. The alias remains checked only to preserve navigation from historical scans and must not be counted as a separate Packet 2 decision or reopened as an alternative target.
 
 #### Packet 2 P0
 
@@ -157,23 +163,23 @@ Packet 2 checklist dispositions record the human review outcome, not an inventor
 - [x] `SEC-03` — `revised` on 2026-07-19; [ADR 0033](../../architecture/decisions/adr-0033-public-player-facing-telnet-requires-tls.md)
 - [x] `SEC-05` — `revised` on 2026-07-19; [ADR 0034](../../architecture/decisions/adr-0034-layered-abuse-controls-without-attacker-triggered-account-locks.md)
 - [x] `JWT-01` — `revised` on 2026-07-19; [ADR 0035](../../architecture/decisions/adr-0035-single-record-issued-token-registry.md)
-- [ ] `JWT-02`
-- [ ] `JWT-03`
-- [ ] `JWT-04`
+- [x] `JWT-02` — `revised` on 2026-07-19; [ADR 0036](../../architecture/decisions/adr-0036-monotonic-authority-generations-for-bulk-token-revocation.md)
+- [x] `JWT-03` — `revised` on 2026-07-19; [ADR 0037](../../architecture/decisions/adr-0037-fail-closed-token-authority-outages-with-bounded-active-gameplay.md)
+- [x] `JWT-04` — `revised` on 2026-07-19; [ADR 0038](../../architecture/decisions/adr-0038-explicit-jwt-profiles-and-mtls-workload-identity.md)
 - [x] `REDIS-06` — `revised` on 2026-07-19; [ADR 0039](../../architecture/decisions/adr-0039-bounded-redis-operator-maintenance-surface.md)
-- [ ] `MS-AA-CONTROL-LOGIN-SCOPE`
-- [ ] `MS-AA-TOKEN-REVOCATION`
+- [x] `MS-AA-CONTROL-LOGIN-SCOPE` — `revised` on 2026-07-19; [ADR 0040](../../architecture/decisions/adr-0040-account-global-control-login-and-explicit-tenant-selection.md)
+- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-19; canonical mapping: [AUTH-03](../../architecture/decisions/adr-0022-account-authority-and-gameplay-session-ownership.md#decision-record), [JWT-01](../../architecture/decisions/adr-0035-single-record-issued-token-registry.md#decision-record), [JWT-02](../../architecture/decisions/adr-0036-monotonic-authority-generations-for-bulk-token-revocation.md#decision-record), [JWT-03](../../architecture/decisions/adr-0037-fail-closed-token-authority-outages-with-bounded-active-gameplay.md#decision-record), and [JWT-04](../../architecture/decisions/adr-0038-explicit-jwt-profiles-and-mtls-workload-identity.md#decision-record); retained only as a historical service-scan alias and not counted as a separate Packet 2 decision.
 
 #### Packet 2 P1
 
-- [ ] `TENANT-02`
+- [x] `TENANT-02` — `revised` on 2026-07-19; [ADR 0041](../../architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md)
 - [ ] `MS-AA-GLOBAL-TENANT-BOUNDARY`
 - [ ] `MS-AA-LIFECYCLE-ERASURE`
 - [ ] `MS-AA-PAYMENT-INSTRUMENT`
-- [ ] `MS-AA-LOGIN-FACTORS`
+- [x] `MS-AA-LOGIN-FACTORS` — `revised` on 2026-07-19; [ADR 0045](../../architecture/decisions/adr-0045-ordinary-login-factors-and-https-sensitive-action-step-up.md)
 - [ ] `MS-SOCIAL-PRESENCE-PRIVACY`
-- [ ] `SEC-04`
-- [ ] `ADMIN-01`
+- [x] `SEC-04` — `revised` on 2026-07-19; [ADR 0047](../../architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md)
+- [x] `ADMIN-01` — `revised` on 2026-07-19; [ADR 0048](../../architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md)
 - [ ] `ACCOUNT-01`
 - [ ] `DATA-01`
 

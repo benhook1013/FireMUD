@@ -9,7 +9,6 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 ALIGNMENT_DIR = Path("design/project-management/design-alignment")
 ARCHITECTURE_DIR = Path("design/architecture")
@@ -243,11 +242,38 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0035-single-record-issued-token-registry.md": adr_allocation(
         "SF-1", "Accepted", "AA-1", "AA-2", "SF-2"
     ),
+    "design/architecture/decisions/adr-0036-monotonic-authority-generations-for-bulk-token-revocation.md": adr_allocation(
+        "SF-1", "Accepted", "AA-1", "AA-2", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0037-fail-closed-token-authority-outages-with-bounded-active-gameplay.md": adr_allocation(
+        "SF-1", "Accepted", "AA-2", "AA-3", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0038-explicit-jwt-profiles-and-mtls-workload-identity.md": adr_allocation(
+        "SF-1", "Accepted", "AA-1", "AA-2", "PO-2"
+    ),
     "design/architecture/decisions/adr-0039-bounded-redis-operator-maintenance-surface.md": adr_allocation(
         "PO-1", "Accepted", "PO-4", "SF-1", "SF-2"
     ),
+    "design/architecture/decisions/adr-0040-account-global-control-login-and-explicit-tenant-selection.md": adr_allocation(
+        "AA-1", "Accepted", "EA-3", "PO-1", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md": adr_allocation(
+        "AA-1", "Accepted", "GR-1", "PO-3", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0042-global-account-and-tenant-scoped-game-relationships.md": adr_allocation(
+        "AA-1", "Accepted", "AA-2", "AA-3", "SF-2", "PO-1"
+    ),
     "design/architecture/decisions/adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md": adr_allocation(
         "AA-1", "Accepted", "PO-1", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0045-ordinary-login-factors-and-https-sensitive-action-step-up.md": adr_allocation(
+        "AA-1", "Accepted", "AA-2", "EA-3", "PO-1", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md": adr_allocation(
+        "PO-1", "Accepted", "AR-2", "AR-3", "GR-1", "PO-2"
+    ),
+    "design/architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md": adr_allocation(
+        "PO-1", "Accepted", "GR-1", "PO-4", "SF-2"
     ),
     "design/architecture/decisions/adr-0049-optional-provider-specific-external-identity-linking.md": adr_allocation(
         "AA-1", "Accepted", "EA-3", "SF-1"
@@ -891,8 +917,11 @@ def expected_top_allocation_rows(
             "Per-record allocation",
         ),
         "design/project-management/design-alignment/design-capability-allocation-system.md": (
-            f"All {len(source_sets['Top-level architecture'])} direct architecture, "
-            f"{len(source_sets['Infrastructure'])} infrastructure, and {generated_count} generated {generated_label}",
+            (
+                f"All {len(source_sets['Top-level architecture'])} direct architecture, "
+                f"{len(source_sets['Infrastructure'])} infrastructure, and "
+                f"{generated_count} generated {generated_label}"
+            ),
             "Per-source allocation",
         ),
     }
@@ -1023,8 +1052,8 @@ def validate_top_summary(
     }
     if set(values) != set(source_sets) | {"Total"}:
         fail(f"{document.relative_to(root)}: top-level coverage summary rows drifted")
-    for name in source_sets:
-        expected_discovered = len(source_sets[name])
+    for name, source_paths in source_sets.items():
+        expected_discovered = len(source_paths)
         actual_discovered = declared_int(values[name][discovered_index], f"{document.relative_to(root)}:{name}: discovered")
         actual_allocated = declared_int(values[name][allocated_index], f"{document.relative_to(root)}:{name}: allocated")
         if actual_discovered != expected_discovered or actual_allocated != allocated_counts[name]:

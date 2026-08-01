@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The authority split and admission path are substantially present, but immediate revocation, token rotation, Account-owned authority generations, and monotonic membership-version proof remain incomplete. Accepted ownership is target authority; an implementation gap does not transfer authority to the component holding convenient local state.
+The authority split and admission path are substantially present, but complete issued-token registry issuance/validation, bounded revocation propagation, token rotation, Account-owned authority generations, and monotonic membership-version proof remain incomplete. Accepted ownership is target authority; an implementation gap does not transfer authority to the component holding convenient local state.
 
 ## Decision Record
 
@@ -15,6 +15,10 @@ The authority split and admission path are substantially present, but immediate 
 - Affected capabilities: `AA-1.2`, `AA-1.5`, `AA-2.3`, `SF-1.3`, `SF-2.2`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `AUTH-03`
+- Human review status: Completed
+- Human review date: 2026-07-18
+- Human review disposition: Accepted
+- Review source: `AUTH-03`
 
 ## Context
 
@@ -33,7 +37,7 @@ Account Service owns:
 - account-to-tenant membership, tenant roles, gameplay-admission eligibility, realm-access grants, and runtime entitlement truth; and
 - monotonic membership and entitlement versions used by consumers to reject stale authority.
 
-Account Service is the sole writer of issuer, account, tenant, and `{accountId, tenantId}` membership authority generations. Other services request authority changes through owned APIs or events and reconcile against Account Service rather than creating local competing authority.
+Account Service owns durable issuer/account/tenant and `{accountId, tenantId}` membership authority generations and is the sole writer of the canonical `session:auth:generation:*` authority projections. Other services request authority changes through owned APIs or events and reconcile against Account Service rather than creating local competing authority. [ADR 0036](./adr-0036-monotonic-authority-generations-for-bulk-token-revocation.md) replaces timestamp watermark ordering. A downstream projection is not canonical authority merely because it uses the same generation value.
 
 ### Game Session Authority
 
@@ -45,6 +49,23 @@ Game Session owns:
 - typed unsigned player execution context for downstream gameplay calls under the trusted workload contract in [ADR 0024](./adr-0024-trusted-gameplay-workload-delegation.md).
 
 Game Session consumes authoritative Account membership, entitlement, and revocation state. It stores only the token identity and freshness metadata needed to validate a binding, such as token hash, issued-at time, and `membershipVersion`; it must not make a persisted raw backend JWT the durable session authority.
+
+For issuer-generation consumption only, Game Session may maintain one derived consumer-local projection under its own namespace: `session:game:auth:issuer-generation:v1:<issuerId>`. Its schema is `game-session-auth-issuer-projection/v1` with `{schemaVersion, issuerId, issuerAuthGeneration, lastAppliedSourceOutboxSequence, sourceOutboxStreamKey, sourceEventId, sourceEventDigest, appliedAt}` plus bounded per-sequence applied-source evidence, or an explicit immutable Account source-checkpoint lookup, sufficient to verify older deliveries by sequence, event ID, digest, stream, and generation. The canonical issuer projection watermark is `lastAppliedSourceOutboxSequence`. For each exact `sourceOutboxStreamKey`, an incoming event is applicable only when its source sequence is exactly `lastAppliedSourceOutboxSequence + 1`; a higher sequence is a gap that must be quarantined and reconciled from Account before either the watermark or generation advances. An event at or below the watermark is an idempotent no-op only when the retained evidence or Account checkpoint proves that its sequence, event ID, digest, stream, and generation match the already applied source event. Missing evidence, including an event older than the bounded local evidence window that cannot be resolved from Account, and conflicting duplicate evidence are quarantined and reconciled rather than treated as no-ops. A next-sequence event whose `issuerAuthGeneration` is lower than the stored generation is contradictory Account evidence: Game Session quarantines the scope and reconciles before advancing either the watermark or generation. Matching equal-generation checkpoints remain idempotent, while a higher generation uses set-if-greater semantics. Missing, stale, regressed, or ambiguous source evidence fails closed and is reconciled rather than guessed. This local projection is a revocation-consumer cache, not an authority source, and Game Session must never write or mutate any canonical `session:auth:generation:*` key. Account's durable issuer generation and its canonical projection remain the only authority; Game Session owns only this derived consumer-local projection.
+
+### Operation Partition
+
+The issued-token registry is a credential-path check, not a universal gameplay middleware dependency. The canonical operation partition is:
+
+| Operation | Credential presented | Required authority and evidence | Issued-token registry behavior |
+| --- | --- | --- | --- |
+| Protected control-plane, bootstrap, and JWT-presenting admission operations | A registry-backed JWT (`control-ui`, `player-bootstrap`, or named private delegation) | Local signature/profile validation, one matching registry record, and one current Account evidence comparison for the route | Required; reachable invalid evidence denies, while an unreachable or timed-out dependency is `AUTH_UNAVAILABLE` |
+| Gameplay-connect WebSocket handshake | The one-use `gameplay-connect` token | Gateway replay fence, quarantine cutoff, deny marker, exact `jti` atomic consume, and signed connect-context validation | Explicitly not used; this is the dedicated replay-fence exception, not a registry-backed JWT path |
+| Non-JWT `LOGIN` | Credentials and, for first-party WebSocket use, the verified connect context | Current Account credential/lifecycle/security checks plus exact connection subject; Game Session creates the authenticated socket/session context and its initial binding fence | Not used; no JWT is presented and no registry lookup is invented |
+| Non-JWT `PLAY` and fresh gameplay admission | The authenticated Game Session context | Exact bound-session identity, current membership/entitlement/grant/routing/ownership authority, binding fence, and Account exact-binding admission lease/CAS | Not used; the bound-session contract is authoritative |
+| Reconnect, resume, or rebind without a presented JWT | The exact existing gameplay binding and its resume/rebind proof | Exact binding identity and fence, current Account lifecycle/security/membership/revocation authority, and the applicable resume lease; no target or scope expansion | Not used; stale, missing, or conflicting binding evidence denies the operation |
+| Routine gameplay commands after admission | The validated bound Game Session context | Binding fences, admission/coordination leases, typed workload context, and domain authorization; bounded reconciliation consumes later authority changes | Not repeated per command; invalidation or conflicting reconciliation evidence terminates the binding |
+
+Fresh gameplay admission, in-band `PLAY`, reconnect, and resume therefore use their bound-session admission contracts and only the current-authority checks those contracts require. Account authority changes become canonical at the Account commit; downstream registry projections and affected gameplay bindings enforce those changes through bounded indexes/events and authoritative reconciliation rather than an unqualified immediate-invalidity claim. Routine gameplay continuity never turns registry absence into authority and never adds a fresh registry lookup to every command.
 
 ### Gateway Boundary
 
@@ -58,9 +79,10 @@ These checks do not allow Gateway to issue account authority, infer membership, 
 
 ### Failure and Freshness Rules
 
-- Admission and sensitive mutations fail closed when authoritative membership, entitlement, token-profile, allowlist, or applicable authority-generation state cannot be established.
+- JWT-presenting protected control-plane, bootstrap, and admission operations fail closed when authoritative Account membership, entitlement, token-profile, issued-token registry, allowlist, or applicable authority-generation state cannot be established. Non-JWT `LOGIN` is the pre-binding exception: it validates credentials, account lifecycle/security state, and the exact verified transport/connection context, then creates the authenticated session and initial binding fence without requiring a pre-existing bound session. Non-JWT `PLAY` and fresh gameplay admission remain a separate bound-session path and do not inherit the registry-backed JWT requirement; they fail closed when their exact bound-session, binding-fence, or current-authority evidence cannot be established. Reconnect and resume without a presented JWT likewise use their exact binding and resume proof rather than a registry lookup.
+- The only entitlement-freshness exception is the exact-binding grace-resume path defined by [ADR 0028](./adr-0028-differentiated-entitlement-freshness.md) and [ADR 0030](./adr-0030-risk-based-active-session-revocation.md): reconnect/resume of the same still-resumable binding may use an eligible positive entitlement snapshot for bounded continuity when fresh entitlement evaluation is unavailable. Account must still be reachable to validate fresh current lifecycle, security, membership, applicable grant, billing, and revocation authority and to commit the exact-binding `resumeActivationLease`; the snapshot cannot substitute for that authority, and any missing, stale, mismatched, or ambiguous authority fails closed. This exception never authorizes a new binding, target, instance, scale-out, or quota-increasing commitment.
 - `membershipVersion` advances on every membership or role change that can alter gameplay or tenant authority; a database row identifier that does not advance is not a valid version.
-- Ongoing sessions must consume authority and membership changes through bounded indexes/events plus authoritative reconciliation; JWT expiry alone is insufficient for immediate revocation.
+- Ongoing sessions must consume authority, revocation, and membership changes through bounded indexes/events plus authoritative reconciliation; JWT expiry alone is insufficient for immediate revocation.
 - Design acceptance and implementation status remain separate. Missing authority-generation enforcement, raw-JWT persistence, or non-monotonic versions are recorded implementation gaps, not alternate authority.
 
 ## Consequences
@@ -75,7 +97,7 @@ These checks do not allow Gateway to issue account authority, infer membership, 
 
 ### Dedicated IAM and Token Service
 
-A dedicated IAM service could own signing, allowlists, authority generations, and validation policy while Account retained profile and billing state. This narrows Account's security surface but adds a critical service and consistency boundaries between credentials, membership, billing, and revocation. FireMUD will not introduce it before a demonstrated scaling, isolation, or security-ownership need.
+A dedicated IAM service could own signing, token registry, allowlists, authority generations, and validation policy while Account retained profile and billing state. This narrows Account's security surface but adds a critical service and consistency boundaries between credentials, membership, billing, and revocation. FireMUD will not introduce it before a demonstrated scaling, isolation, or security-ownership need.
 
 ### Gateway-Owned Identity and Authorization
 
@@ -83,15 +105,15 @@ Centralizing identity at Gateway simplifies edge routing but cannot safely autho
 
 ### TTL-Only Tokens
 
-Relying only on short token expiry removes allowlists and authority-generation propagation but cannot provide the required immediate account, tenant, or membership revocation behavior.
+Relying only on short token expiry removes the registry, allowlists, and authority-generation propagation but cannot provide the required immediate account, tenant, or membership revocation behavior.
 
 ## Implementation and Proof Obligations
 
-- Enforce strict token profile, audience, allowlist, and applicable authority-generation checks in shared middleware rather than signature-only parsing.
-- Implement all Account-owned authority-generation writers and prove logout-all, account, tenant, membership, and signing-key compromise revocation paths.
+- Enforce strict token profile, audience, issued-token registry, allowlist, and applicable authority-generation checks in shared middleware for protected control-plane, bootstrap, and JWT-presenting admission operations rather than signature-only parsing. For non-JWT `LOGIN`, enforce credential, lifecycle/security, and verified transport-context checks before creating the session and initial binding fence; do not require evidence that can exist only after that transition. Enforce the exact bound-session, binding-fence, and current-authority contracts for non-JWT `PLAY`, fresh admission, reconnect, and resume without inventing a registry lookup. Do not impose a fresh registry or authority-generation lookup on every routine command after a binding is admitted; use the validated bound context and bounded reconciliation instead.
+- Implement all Account-owned durable authority-generation writers/projections and prove logout-all, account, tenant, membership, and signing-key compromise revocation paths.
 - Replace persisted raw gameplay JWTs with token hash/issued-at identity and freshly rebound backend credentials.
 - Make `membershipVersion` and entitlement version/sequence monotonic state-change values rather than row identifiers.
-- Prove `PLAY`, reconnect/resume, role changes, membership removal, and billing cutoff consume current Account authority and fail closed when it is unavailable.
+- Prove `PLAY`, reconnect/resume, role changes, membership removal, and billing cutoff consume current Account authority and fail closed when it is unavailable, with only the ADR 0028/0030 exact-binding entitlement-snapshot exception for grace resume.
 - Prove Gateway cannot create account or gameplay authority and that untrusted identity/scope headers cannot reach internal services as trusted context.
 
 ## Required Documentation Alignment
