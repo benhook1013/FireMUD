@@ -180,6 +180,18 @@ for path in (root / "design").rglob("*.md"):
             "prohibitions are allowed"
         )
 
+obsolete_envelope_phrases = ("Account-issued envelope", "Account-validated envelope")
+decision_history_dir = root / "design/architecture/decisions"
+for path in (root / "design").rglob("*.md"):
+    if decision_history_dir in path.parents:
+        continue
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        for phrase in obsolete_envelope_phrases:
+            if phrase in line:
+                raise SystemExit(
+                    f"{path}:{line_number}: obsolete current-state phrase {phrase!r}"
+                )
+
 canonical_world_dynamic = "world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>"
 for path in [
     "design/architecture/system-architecture-redis-cache.md",

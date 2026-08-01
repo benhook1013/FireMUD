@@ -61,7 +61,7 @@ Rely only on tenant identifiers and horizontal scaling. This is operationally si
 
 ## Implementation and Proof Obligations
 
-- Remove obsolete tenant columns from deliberately global tables and document the global-table exception in schema and tenancy checks.
+- Remove obsolete tenant columns from deliberately global tables and document the global-table exception in schema and tenancy checks. For `accounts.tenant_id`, removal is specifically deferred to ADR 0042's complete preservation, reconciliation, canonical reader/writer convergence, release-versioned no-reader attestation, and separately gated forward-drop migration; the column is temporary migration evidence, never a runtime compatibility path or authority source, and must not be dropped until every ADR 0042 gate has passed.
 - Require tenant-qualified keys, constraints, repository methods, API contracts, authorization checks, audit fields, and object-storage paths for every tenant-owned resource.
 - Complete Account-owned, exact-`tenantId` entitlement and quota response fields, authoritative freshness/versioning, event invalidation, and owning-service enforcement for sessions, ticks, commands, automation, storage, and other bounded resources. Prove that cross-tenant reads, global roles, and missing target bindings cannot inherit or reuse another tenant's entitlement.
 - Keep account-scoped purchase grants and donations explicitly global and prove that no caller, default, or migration invents a tenant for them; any tenant use must carry an explicit binding or consumption record.

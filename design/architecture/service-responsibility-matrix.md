@@ -32,7 +32,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Chat mute/chat-ban policy definition and audit (`chat_mute`, `chat_ban`) | | | | | | | | | ✔ | | |
 | Authoritative owner: moderation policy input persistence and audit (gated target record) | | | | | | | | | ✔ | | |
 | External `POST /moderation/actions` policy-input/audit persistence ingress (gated/unavailable; Logging & Admin owns receiving-boundary validation/redemption; action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account authorization-reference issuance required; not owner enforcement) | | | | | | | | | ✔ | | |
-| Internal owner-boundary read: `EvaluateModerationPolicy` at `GAMEPLAY_ADMISSION` / `CHAT_SEND` | | | | ✔ | | | | ✔ | | | |
+| Authoritative owner: Logging & Admin; internal consumer read: `EvaluateModerationPolicy` at `GAMEPLAY_ADMISSION` / `CHAT_SEND` | | | | ✔ | | | | ✔ | ✔ | | |
 | Account security policy (password rules, lockout, MFA requirements) | | | ✔ | | | | | | | | |
 | Gameplay login command handling and session binding (Redis) | | | | ✔ | | | | | | | |
 | Login throttling, lockout, password reset, and email verification | | | ✔ | | | | | | | | |
