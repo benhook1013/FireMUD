@@ -184,17 +184,42 @@ obsolete_envelope_phrases = ("Account-issued envelope", "Account-validated envel
 decision_history_dir = root / "design/architecture/decisions"
 
 historical_adr_record_name = re.compile(r"adr-\d{4}-.+\.md")
-historical_adr_status = re.compile(
-    r"^## Status\s*\n\s*(?:Superseded|Withdrawn)\b",
-    re.MULTILINE,
-)
+status_heading = re.compile(r"^[ \t]*##[ \t]+Status[ \t]*$")
+historical_status_value = re.compile(r"^(?:Superseded|Withdrawn)\b")
+
+
+def first_top_level_status_value(text):
+    in_fenced_block = False
+    fence_marker = None
+    opening_line_number = None
+    status_heading_found = False
+    for line_number, line in enumerate(text.splitlines(keepends=True), start=1):
+        was_in_fenced_block = in_fenced_block
+        in_fenced_block, fence_marker, opening_line_number = advance_fenced_block_state(
+            line,
+            in_fenced_block,
+            fence_marker,
+            opening_line_number,
+            line_number,
+        )
+        if was_in_fenced_block or in_fenced_block:
+            continue
+        if not status_heading_found:
+            if status_heading.match(line.rstrip("\r\n")):
+                status_heading_found = True
+            continue
+        if line.strip():
+            return line.strip()
+    return None
 
 
 def is_historical_adr_record(path, text):
+    status_value = first_top_level_status_value(text)
     return (
         path.parent == decision_history_dir
         and historical_adr_record_name.fullmatch(path.name) is not None
-        and historical_adr_status.search(text) is not None
+        and status_value is not None
+        and historical_status_value.match(status_value) is not None
     )
 
 
@@ -212,7 +237,7 @@ def reject_obsolete_envelope_phrases(path, text):
 historical_adr_fixture = decision_history_dir / "adr-9999-history-fixture.md"
 historical_adr_fixture_text = "# ADR 9999: Historical Fixture\n\n## Status\n\nSuperseded by ADR 0001\n\nAccount-issued envelope\n"
 accepted_adr_fixture = decision_history_dir / "adr-9998-accepted-fixture.md"
-accepted_adr_fixture_text = "# ADR 9998: Accepted Fixture\n\n## Status\n\nAccepted\n\nAccount-issued envelope\n"
+accepted_adr_fixture_text = "# ADR 9998: Accepted Fixture\n\n```markdown\n## Status\n\nSuperseded by ADR 0001\n```\n\n## Status\n\nAccepted\n\nAccount-issued envelope\n"
 registry_index_fixture = decision_history_dir / "README.md"
 if not is_historical_adr_record(historical_adr_fixture, historical_adr_fixture_text):
     raise SystemExit("historical ADR fixture was not recognized as an exempt record")
