@@ -31,7 +31,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Gated gameplay-ban moderation policy-input/audit ingress and record (`gameplay_ban`; enforcement at `GAMEPLAY_ADMISSION`) | | | | | | | | | ✔ | | |
 | Gated chat mute/chat-ban moderation policy-input/audit ingress and record (`chat_mute`, `chat_ban`; enforcement at `CHAT_SEND`) | | | | | | | | | ✔ | | |
 | Authoritative owner: moderation policy input persistence and audit (gated target record) | | | | | | | | | ✔ | | |
-| External `POST /moderation/actions` policy-input/audit persistence ingress (gated/unavailable; Gateway owns external routing and Logging & Admin owns receiving-boundary validation/redemption; action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account authorization-reference issuance required; not owner enforcement) | | | | | | | | | ✔ | | ✔ |
+| External `POST /moderation/actions` policy-input/audit persistence ingress (gated/unavailable; Gateway owns external routing and Logging & Admin owns receiving-boundary validation/redemption; action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account authorization-reference issuance required; not owner enforcement) | | | ✔ | | | | | | ✔ | | ✔ |
 | Internal consumer read: `EvaluateModerationPolicy` at `GAMEPLAY_ADMISSION` / `CHAT_SEND` | | | ✔ | ✔ | | | | ✔ | | | |
 | Account security policy (password rules, lockout, MFA requirements) | | | ✔ | | | | | | | | |
 | Gameplay login command handling and session binding (Redis) | | | | ✔ | | | | | | | |
@@ -39,7 +39,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | WebSocket transport connection lifecycle (upgrade, routing, DMZ edges) | | | | | | | | | | ✔ | ✔ |
 | Gameplay session lifecycle (login, resume, takeover) | | | | ✔ | | | | | | | |
 | Owner-local Game Session session-lifecycle routes (`/sessions*`, current internal surface) | | | | ✔ | | | | | | | |
-| External session-lifecycle operator forwarding through Gateway and Logging & Admin (target-only/non-routable until owner contract, action schema, shared digest vectors, and Account authorization issuance/redemption exist; not current route) | | | | ✔ | | | | | ✔ | | ✔ |
+| External session-lifecycle operator forwarding through Gateway and Logging & Admin (target-only/non-routable until owner contract, action schema, shared digest vectors, and Account authorization issuance/redemption exist; not current route) | | | ✔ | ✔ | | | | | ✔ | | ✔ |
 | Reconnection handling (resume gameplay) | | | | ✔ | | | | | | | |
 | Command queuing and dispatch | | | | ✔ | | | | | | | |
 | Session state storage (volatile, Redis gameplay bindings) | | | | ✔ | | | | | | | |
@@ -55,7 +55,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Authoritative owner: `versionStateEpoch` CAS enforcement | ✔ | | | | | | | | | | |
 | Version-state CAS API invocation for activation/rollback (`versionStateEpoch`) | ✔ | | | ✔ | | | | | ✔ | | |
 | Authoritative owner: admission-pointer reads, prepared-upgrade proof reads, gated version-upgrade preparation mutation (action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account authorization-reference issuance/redemption required), implemented-but-externally-gated open/close/retarget `pointerVersion` CAS, and implemented-but-externally-gated cutover | | | | ✔ | | | | | | | |
-| Admission-pointer reads, prepared-upgrade proof reads, gated version-upgrade preparation mutation (action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account authorization-reference issuance/redemption required), implemented-but-externally-gated open/close/retarget CAS, and implemented-but-externally-gated cutover invocation | | | | ✔ | | | | | ✔ | | |
+| Admission-pointer reads, prepared-upgrade proof reads, gated version-upgrade preparation mutation (action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account authorization-reference issuance/redemption required), implemented-but-externally-gated open/close/retarget CAS, and implemented-but-externally-gated cutover invocation | | | ✔ | ✔ | | | | | ✔ | | |
 | Runtime feature-flag truth and override participation (Game Session owns runtime truth) | | | | ✔ | | | | | ✔ | | |
 | Tick & coordination health metrics (diagnostic scope: `<tenantId, gameInstanceId, regionId>`) | | | | ✔ | | | | | | | |
 | Canonical room-state read fence production and same-fence room-view composition | | ✔ | | | ✔ | ✔ | | | | | |
@@ -86,7 +86,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Operator quota override ingress, UX, and audit (hypothetical target-only/non-routable; Logging & Admin may forward to the Account-owned entitlement overlay only after the owner contract, action schema, shared digest vectors, and Account authorization flow exist) | | | ✔ | | | | | | ✔ | | |
 | Movement/location write contract orchestration (effect identity, order, and replay safety) | | ✔ | | ✔ | ✔ | ✔ | | | | | |
 | Instance termination orchestration (`PREPARING/ACTIVE/TERMINATING/TERMINATED`) and cross-service cleanup | | ✔ | | ✔ | ✔ | | | | ✔ | | |
-| Automated tick/coordination remediation (target-only/non-routable per-instance pause/resume, guarded enumeration, regional mutation, and reset/remediate orchestration until owner contracts, action schemas, shared digest vectors, and Account authorization flow exist) | | | | ✔ | | | | | ✔ | | |
+| Automated tick/coordination remediation (target-only/non-routable per-instance pause/resume, guarded enumeration, regional mutation, and reset/remediate orchestration until owner contracts, action schemas, shared digest vectors, and Account authorization flow exist) | | | ✔ | ✔ | | | | | ✔ | | |
 | Game asset publishing & object storage | ✔ | | | | | | | | | | |
 | Asset deletion eligibility oracle (`CanDeleteVersionAssets`) | ✔ | | | | | | | | ✔ | | |
 | Asset purge control-plane workflow (`BeginPurgeVersionAssets` / `FinalizePurgeVersionAssets`) | ✔ | | | | | | | | ✔ | | |
