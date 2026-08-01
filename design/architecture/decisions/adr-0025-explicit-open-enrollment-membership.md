@@ -81,7 +81,7 @@ This avoids durable rows for casual visits but creates a second class of gamepla
 
 - Add explicit browser/mobile join and text `JOIN` flows before first character creation/connect/`PLAY`.
 - Carry the verified `connectScopeId` through `JoinPublicProductionMembership`, bind it into the versioned request/target digest, and prove the digest and selector are rechecked at the membership commit gate.
-- Keep `EnsurePublicProductionPlayerMembership` behind the explicit join operation; `POST /auth/connect-token` and `PLAY` must require membership and must not write it.
+- Keep the current proto seam `EnsurePublicProductionPlayerMembership` as the compatibility adapter for the canonical `JoinPublicProductionMembership` operation; it is not a second join contract. `POST /auth/connect-token` and `PLAY` must require membership and must not write it.
 - Commit membership, its `membershipAuthorityGeneration`/`membershipVersion` changes, operation outcome, and durable audit/outbox atomically and make SQL membership/operation state authoritative for replay.
 - Gate every new membership commit on the immediately preceding fresh ADR 0028 entitlement evaluation. Prove that a failed refresh returns `ENTITLEMENT_UNAVAILABLE`, and that no membership, audit, or outbox record is committed after a failed, stale, future-dated, mismatched, or otherwise invalid evaluation, including evaluation/commit races.
 - Implement monotonic membership versioning and prove races/retries return one membership and one logical join event.

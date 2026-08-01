@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-Basic JWT/JWKS and account/tenant token-state foundations exist, but the accepted single-record contract is not implemented end to end. Current issuance still writes scope-duplicated account/tenant keys, downstream validators do not consistently enforce `session:auth:token:<tokenHash>`, and complete authority-generation checks, per-token `/auth/logout`, `/auth/logout-all`, durable operation evidence, retry classification, cleanup, and revocation proof remain incomplete.
+Basic JWT/JWKS and account/tenant token-state foundations exist, but the accepted single-record contract is not implemented end to end. Current issuance still writes scope-duplicated account/tenant keys, downstream validators do not consistently enforce `session:auth:token:<tokenHash>`, and complete authority-generation checks, token-profile count/encoded-byte/total-size bounds with pre-signing and pre-registration rejection proof, per-token `/auth/logout`, `/auth/logout-all`, durable operation evidence, retry classification, cleanup, and revocation proof remain incomplete.
 
 ## Decision Record
 
@@ -32,7 +32,7 @@ The current implementation writes account and tenant keys but does not consisten
 
 Within this ADR set, ADR 0035 owns the single normative registry/revocation `authorityTuple` schema and exact nested field names, aligned with the canonical runtime contract in [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md). Other ADRs reference this schema and may add only local lifecycle or proof requirements; they must not duplicate, rename, or reinterpret tuple members.
 
-Every JWT claim set, registry record, revocation event, Account lease, gameplay binding, refresh request, rebind proof, and installation acknowledgement uses the same logical `authorityTuple` and exact field names:
+Every registry-backed JWT claim set, registry record, revocation event, Account lease, gameplay binding, refresh request, rebind proof, and installation acknowledgement uses the same logical `authorityTuple` and exact field names. The separate `gameplay-connect` profile and its Gateway-signed connect context/replay records are outside this registry-backed schema: they deliberately omit `authorityTuple`, `tokenGeneration`, and `issuanceFence` and use ADR 0029's single-use replay contract instead.
 
 ```text
 authorityTuple: {
