@@ -2525,7 +2525,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 document = self.validator.yaml.safe_load(
                     MATRIX.read_text(encoding="utf-8")
                 )
-                route = route_for(document, "game-session-service", "PLAY")
+                route = route_for(document, "account-service", "IssueConnectToken")
                 route["implementation_status"]["known_drift"] = malformed
                 errors = validate_document(self.validator, document)
                 self.assertTrue(

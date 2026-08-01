@@ -11,6 +11,7 @@ import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -68,6 +69,16 @@ class AccountRepositoryIntegrationTest {
     Account loaded = repository.findById(saved.getId()).orElseThrow();
     assertThat(loaded.getUsername()).isEqualTo("updated");
     assertThat(loaded.getLifecycleState()).isEqualTo(lifecycleState);
+  }
+
+  @Test
+  void saveCanonicalizesEmail() {
+    Account saved =
+        repository.save(
+            account("canonical", "  Player@Example.COM ", AccountLifecycleState.ACTIVE));
+
+    assertThat(saved.getEmail()).isEqualTo("player@example.com");
+    assertThat(repository.findByEmail("player@example.com")).isPresent();
   }
 
   private Account account(String username, String email, AccountLifecycleState lifecycleState) {

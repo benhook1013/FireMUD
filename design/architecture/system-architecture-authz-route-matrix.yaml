@@ -299,7 +299,7 @@ required_live_check_vocabulary:
   - workload_action_scope
 implementation_status:
   known_drift:
-    - explicit_public_production_JOIN_is_not_implemented; connect_token_and_play_now_require_existing_membership_and_return_JOIN_REQUIRED_when_it_is_absent_while_connect_token_membership_authority_generation_reread_remains_unimplemented
+    - explicit_public_production_JOIN_is_not_implemented; current_PLAY_returns_JOIN_REQUIRED_for_missing_public_production_membership_and_WORLD_ACCESS_DENIED_for_missing_non_public_membership; connect_token_issuance_requires_existing_membership_and_never_creates_it; connect_token_membership_authority_generation_reread_remains_unimplemented
     - privileged_control_is_target_only_and_unavailable_in_current_runtime; platformAdmin_and_cross_tenant_billingAdmin_branches_requiring_it_fail_closed_while_the_support_branch_does_not_require_it
     - operator_mutation_rows_are_normative_target_contracts_not_current_availability; action_schema_mutationDigest_v1_vectors_and_account_issued_authorization_reference_flow_are_required_before_external_support
     - game_session_sessions_routes_are_current_owner_local_hooks; target_external_lifecycle_ingress_is_logging_admin_forwarding_and_no_complete_external_family_exists
@@ -692,9 +692,11 @@ routes:
     canonical_errors:
       any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE]
     canonical_target:
-      membership: grant_backed_private_or_playtest_requires_existing_caller_bound_membership
+      membership: all_admission_modes_require_existing_caller_bound_membership
       membership_creation: play_never_creates_membership
-      missing_required_membership_error: JOIN_REQUIRED
+      missing_membership_error_by_realm_visibility:
+        public_production: JOIN_REQUIRED
+        non_public: WORLD_ACCESS_DENIED
   - service: spring-cloud-gateway
     route: /ws/game/**
     scope: tenant
@@ -1562,11 +1564,10 @@ routes:
       any_of: [JOIN_REQUIRED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, CONNECT_REPLAY_PROTECTION_UNAVAILABLE, AUTH_UNAVAILABLE]
     subject_binding: caller_account_id
     canonical_target:
-      membership: existing_caller_bound_membership_required
+      membership: existing_caller_bound_membership_required_regardless_of_realm_visibility_or_grant
       membership_creation: issue_connect_token_never_creates_membership
     implementation_status:
       known_drift:
-        - current_runtime_invokes_ensure_public_production_player_membership_from_issue_connect_token; this is a live security_contract_violation and issuance must fail closed until existing membership is required
         - issue_connect_token_does_not_reread_membership_authority_generation
   - service: account-service
     route: Authenticate

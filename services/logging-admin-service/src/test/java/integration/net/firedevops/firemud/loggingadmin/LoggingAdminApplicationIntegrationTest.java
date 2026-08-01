@@ -105,7 +105,8 @@ class LoggingAdminApplicationIntegrationTest {
     assertThat(requestMappingHandlerMapping.getHandlerMethods().keySet())
         .noneMatch(
             mapping ->
-                mapping.getMethodsCondition().getMethods().contains(RequestMethod.POST)
+                (mapping.getMethodsCondition().getMethods().isEmpty()
+                        || mapping.getMethodsCondition().getMethods().contains(RequestMethod.POST))
                     && mapping.getPatternValues().stream()
                         .anyMatch(
                             path ->
@@ -132,10 +133,12 @@ class LoggingAdminApplicationIntegrationTest {
       HttpResponse<String> response =
           HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
-      assertThat(response.statusCode()).isEqualTo(404);
-      assertThat(response.body()).contains("\"status\":\"ERROR\"");
-      assertThat(response.body()).contains("\"code\":\"NOT_FOUND\"");
-      assertThat(response.body()).contains("\"message\":\"Resource not found\"");
+      assertThat(response.statusCode()).as("path %s", path).isEqualTo(404);
+      assertThat(response.body()).as("path %s", path).contains("\"status\":\"ERROR\"");
+      assertThat(response.body()).as("path %s", path).contains("\"code\":\"NOT_FOUND\"");
+      assertThat(response.body())
+          .as("path %s", path)
+          .contains("\"message\":\"Resource not found\"");
     }
   }
 
@@ -153,10 +156,12 @@ class LoggingAdminApplicationIntegrationTest {
       HttpResponse<String> response =
           HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
-      assertThat(response.statusCode()).isEqualTo(404);
-      assertThat(response.body()).contains("\"status\":\"ERROR\"");
-      assertThat(response.body()).contains("\"code\":\"NOT_FOUND\"");
-      assertThat(response.body()).contains("\"message\":\"Resource not found\"");
+      assertThat(response.statusCode()).as("path %s", path).isEqualTo(404);
+      assertThat(response.body()).as("path %s", path).contains("\"status\":\"ERROR\"");
+      assertThat(response.body()).as("path %s", path).contains("\"code\":\"NOT_FOUND\"");
+      assertThat(response.body())
+          .as("path %s", path)
+          .contains("\"message\":\"Resource not found\"");
     }
   }
 
