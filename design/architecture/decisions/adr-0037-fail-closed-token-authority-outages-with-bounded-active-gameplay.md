@@ -36,7 +36,7 @@ The earlier design said control-plane and new admission fail closed but did not 
 
 ### Fail-Closed Operations
 
-- Account exposes no JWT unless its registry record and current generation state are established. Login issuance, bootstrap issuance, token refresh, and rotation therefore fail closed when registration or authority cannot complete: an unreachable or timed-out dependency is `AUTH_UNAVAILABLE`, while reachable malformed or mismatched authority evidence uses the applicable canonical invalid/revoked result and never produces a JWT.
+- For registry-backed JWT profiles (`control-ui`, `player-bootstrap`, and receiver-specific private player-delegation), Account exposes no JWT unless the profile's registry record and current generation state are established. Login issuance, bootstrap issuance, token refresh, and rotation therefore fail closed when registration or authority cannot complete: an unreachable or timed-out dependency is `AUTH_UNAVAILABLE`, while reachable malformed or mismatched authority evidence uses the applicable canonical invalid/revoked result and never produces a JWT. The ADR 0029 `gameplay-connect` profile is the explicit exception: it is not registry-backed and is governed by its dedicated issuance/replay record and Gateway replay fence; it carries no `authorityTuple`, `tokenGeneration`, or `issuanceFence`.
 - Every protected control-plane request fails closed when its issued-token or applicable generation state cannot be read. Admin, support, billing, payment, and other sensitive operations receive no stale-authority exception.
 - New gameplay login, join, `PLAY`, reconnect/rebind, and other admission transitions fail closed whenever their required token, membership, generation, or gameplay-binding authority cannot be established.
 
@@ -82,7 +82,7 @@ This improves fault isolation but adds another security-critical datastore, rese
 
 - Define one stable `AUTH_UNAVAILABLE` mapping across HTTP, gRPC, text/bootstrap flows, shared clients, metrics, and audit-safe logs.
 - Prove unavailable registry/generation state preserves frontend auth state while missing/deleted/mismatched state causes hard reauthentication.
-- Prove Account never exposes a token whose registry/generation establishment failed.
+- Prove Account never exposes a registry-backed JWT whose registry/generation establishment failed, while preserving the ADR 0029 non-registry-backed `gameplay-connect` issuance/replay exception and its absence of `authorityTuple`, `tokenGeneration`, and `issuanceFence`.
 - Prove protected control-plane, sensitive mutations, admission, reconnect, and refresh fail closed without stale authority.
 - Prove registry-only outages add no per-command gameplay lookup, never renew or reset the authority lease from commands, socket activity, retries, reconnect attempts, or local heartbeats, and terminate unresolved bindings at the absolute deadline set by the last authoritative renewal and no later than 60 seconds.
 - Prove the positive `coordinationHealthLease` identifies the current coordination generation and required gameplay coordination health, is live-read or renewed at the classification decision, and cannot be reused from an unexpired stored snapshot after coordination failure. Missing, expired, conflicting, ambiguous, or non-renewable health evidence and explicit current coordination failure must fail closed rather than being classified as a token-authority-only outage.

@@ -184,14 +184,22 @@ obsolete_envelope_phrases = ("Account-issued envelope", "Account-validated envel
 decision_history_dir = root / "design/architecture/decisions"
 
 historical_adr_record_name = re.compile(r"adr-\d{4}-.+\.md")
+historical_adr_status = re.compile(
+    r"^## Status\s*\n\s*(?:Superseded|Withdrawn)\b",
+    re.MULTILINE,
+)
 
 
-def is_historical_adr_record(path):
-    return path.parent == decision_history_dir and historical_adr_record_name.fullmatch(path.name) is not None
+def is_historical_adr_record(path, text):
+    return (
+        path.parent == decision_history_dir
+        and historical_adr_record_name.fullmatch(path.name) is not None
+        and historical_adr_status.search(text) is not None
+    )
 
 
 def reject_obsolete_envelope_phrases(path, text):
-    if is_historical_adr_record(path):
+    if is_historical_adr_record(path, text):
         return
     for line_number, line in enumerate(text.splitlines(), start=1):
         for phrase in obsolete_envelope_phrases:
@@ -202,15 +210,28 @@ def reject_obsolete_envelope_phrases(path, text):
 
 
 historical_adr_fixture = decision_history_dir / "adr-9999-history-fixture.md"
+historical_adr_fixture_text = "# ADR 9999: Historical Fixture\n\n## Status\n\nSuperseded by ADR 0001\n\nAccount-issued envelope\n"
+accepted_adr_fixture = decision_history_dir / "adr-9998-accepted-fixture.md"
+accepted_adr_fixture_text = "# ADR 9998: Accepted Fixture\n\n## Status\n\nAccepted\n\nAccount-issued envelope\n"
 registry_index_fixture = decision_history_dir / "README.md"
-if not is_historical_adr_record(historical_adr_fixture):
+if not is_historical_adr_record(historical_adr_fixture, historical_adr_fixture_text):
     raise SystemExit("historical ADR fixture was not recognized as an exempt record")
-if is_historical_adr_record(registry_index_fixture):
+if is_historical_adr_record(registry_index_fixture, obsolete_envelope_phrases[0]):
     raise SystemExit("decision registry/index fixture was incorrectly exempted")
 reject_obsolete_envelope_phrases(
     historical_adr_fixture,
-    obsolete_envelope_phrases[0],
+    historical_adr_fixture_text,
 )
+try:
+    reject_obsolete_envelope_phrases(
+        accepted_adr_fixture,
+        accepted_adr_fixture_text,
+    )
+except SystemExit as error:
+    if "obsolete current-state phrase" not in str(error):
+        raise SystemExit(f"unexpected Accepted ADR fixture diagnostic: {error}")
+else:
+    raise SystemExit("Accepted ADR fixture was not checked")
 try:
     reject_obsolete_envelope_phrases(
         registry_index_fixture,
