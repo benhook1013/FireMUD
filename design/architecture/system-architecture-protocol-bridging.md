@@ -6,7 +6,7 @@ This design is the **canonical specification** for gameplay command flows throug
 
 ## Implementation Status
 
-The target flow and delivery contracts below remain normative. Explicit `JOIN`/`Join & Play` and the required `membershipAuthorityGeneration` reread at connect-token issuance are both unimplemented/proof gaps in the current runtime. Connect-token issuance and text `PLAY` now reject missing public-production membership with `JOIN_REQUIRED`; affected first-party admission remains fail-closed and unavailable until both gaps are implemented and proven. This implementation drift does not relax the at-most-once delivery, authentication, admission, reconnect, or close-taxonomy requirements.
+The target flow and delivery contracts below remain normative. Explicit `JOIN`/`Join & Play` and the required `membershipAuthorityGeneration` reread at connect-token issuance are both unimplemented/proof gaps in the current runtime. Connect-token issuance and text `PLAY` now reject missing public-production membership with `JOIN_REQUIRED`; first public-production entry remains fail-closed and unavailable until both gaps are implemented and proven. Returning active members and grant-backed private/playtest flows are not disabled by the missing public join action, but remain available only when their own current membership, grant, entitlement, routing, and membership-generation/version checks pass. This implementation drift does not relax the at-most-once delivery, authentication, admission, reconnect, or close-taxonomy requirements.
 
 ---
 
@@ -70,7 +70,7 @@ Precedence is deterministic: classify an incomplete or unavailable pointer as `A
 
 ### Telnet `JOIN` Resolution Contract
 
-`JOIN <world>` is a Telnet selector, not an authority-bearing tenant or route input. The Game Session text-protocol adapter resolves it server-side against the current public-production catalog to the exact `{worldSlug, realmSlug, connectScopeId, requestId}` join context, with the latter two values Account-bound to the authenticated operation. It passes only that resolved public-production target and the Account-bound `{connectScopeId, requestId}` to `JoinPublicProductionMembership` (with the trusted authenticated caller context); it never passes client-supplied `tenantId`, route, `gameInstanceId`, realm authority, or other client route authority. Account revalidates the resolved target and routing pointer at the membership commit gate. Private/playtest realms do not use this operation and require existing membership plus their current grant.
+`JOIN <world>` is a Telnet selector, not an authority-bearing tenant or route input. The Game Session text-protocol adapter keeps the client world/realm selectors local, resolves the public-production choice server-side, and obtains the Account-bound `{connectScopeId, requestId}` for the authenticated operation. It passes only `{connectScopeId, requestId}` plus the trusted authenticated caller context to `JoinPublicProductionMembership`; it never passes client-supplied or adapter-resolved `tenantId`, world, realm, route, `gameInstanceId`, or other route authority as operation inputs. Account resolves the target from `connectScopeId` and revalidates the public-production target and routing pointer at the membership commit gate. Private/playtest realms do not use this operation and require existing membership plus their current grant.
 
 ### Public Telnet TLS Modes
 

@@ -6,7 +6,10 @@ Accepted
 
 ## Implementation Status
 
-The machine-readable matrix and substantial static Gateway route/blocking tests exist, but the route inventory is incomplete, several Gateway routes remain broad families, and the matrix is not consumed by generated completeness checks or shared runtime middleware. Current JWT middleware does not yet enforce the complete issued-token registry, route-class, token-profile, authority-generation, and cross-tenant distinctions documented here. Acceptance of this target does not imply complete runtime proof.
+The machine-readable matrix and substantial static Gateway route/blocking tests exist, but the route inventory is incomplete, several Gateway routes remain broad families, and the matrix is not consumed by generated completeness checks or shared runtime middleware.
+
+- **Partial; focused static safeguard present, execution unrun here:** Production and test-profile Gateway configuration exposes only the curated route set and rejects coarse public catchall paths. Focused proof is recorded by [`GatewayRoutesConfigurationProdTest`](../../../services/spring-cloud-gateway/src/test/java/net/firedevops/firemud/springcloudgateway/config/GatewayRoutesConfigurationProdTest.java) (`publicRouteAllowlistExposesOnlyCuratedEdgeRoutes`, `prodProfileHasNoCoarsePublicCatchallRouteFallbacks`) and [`GatewayRoutesConfigurationTestProfileTest`](../../../services/spring-cloud-gateway/src/test/java/net/firedevops/firemud/springcloudgateway/config/GatewayRoutesConfigurationTestProfileTest.java) (`testProfileUsesCanonicalCuratedPublicRouteIds`, `testProfileHasNoCoarsePublicCatchallRouteFallbacks`).
+- **Unavailable/unproven complete safeguard:** Generated inventory comparison, shared route middleware, strict profile/audience enforcement, active issued-token registry enforcement, and universal runtime denial of unclassified protected routes are not currently proven. Current JWT middleware does not yet enforce the complete issued-token registry, route-class, token-profile, authority-generation, and cross-tenant distinctions documented here. Acceptance of this target makes no completion claim.
 
 ## Decision Record
 
@@ -56,7 +59,7 @@ Until source-stable OpenAPI/protobuf coverage is complete and the generated comp
 
 ### Credential-Path Partition
 
-The issued-token registry applies only when a protected control-plane, bootstrap, or admission operation presents a registry-backed JWT (`control-ui`, `player-bootstrap`, or a named private delegation). It is not universal gameplay middleware. The route matrix must preserve these separate partitions:
+The route class is selected from the exact route identity before credential evaluation. An unknown, unclassified, multiply classified, or otherwise invalid protected control-plane, bootstrap, or admission route is denied and is never approximated as `tenant_regular` or another permissive class. For a route class that accepts a registry-backed JWT (`control-ui`, `player-bootstrap`, or a named private delegation), the consumer then validates the declared token profile and exact audience, verifies the required claims and time bounds, and requires one matching **active** issued-token record plus the complete applicable Account generation/evidence bundle. The record and evidence must match the token hash, `jti`, profile, audience, token generation, authority tuple, issuance fence, applicable membership version, current issuer/account/tenant/membership generations, and source-version/checkpoint/freshness evidence. A missing, non-active, stale, malformed, or mismatched record or generation/evidence bundle denies; dependency unavailability is `AUTH_UNAVAILABLE`. This registry contract is not universal gameplay middleware. The route matrix must preserve these separate partitions:
 
 - The one-use `gameplay-connect` token uses Gateway's replay fence, quarantine cutoff, deny marker, and exact-`jti` atomic consume contract; it does not create or consult an Account issued-token registry record.
 - Non-JWT `LOGIN` uses credentials and, for first-party WebSocket use, the verified connect context. Game Session performs the current Account checks and creates the authenticated session context; no registry lookup is invented.
@@ -64,7 +67,7 @@ The issued-token registry applies only when a protected control-plane, bootstrap
 - Reconnect, resume, or rebind without a presented JWT use the exact existing gameplay binding and resume/rebind proof plus current Account authority. Stale, missing, or conflicting binding evidence denies the operation; no registry lookup is added.
 - Routine gameplay commands use the validated bound context, binding/coordination fences, typed workload context, and domain authorization. They do not repeat registry or Account generation lookups per command; bounded reconciliation consumes later authority changes.
 
-These partitions preserve ADR 0022's gameplay ownership and replay-fence boundary and ADR 0035's registry exception. A protected route must not acquire a registry check merely because it is gameplay-related, and a JWT-presenting control-plane/bootstrap/admission route must not bypass the registry by being treated as gameplay traffic.
+These partitions preserve ADR 0022's gameplay ownership and replay-fence boundary and ADR 0035's registry exception. A protected route must not acquire a registry check merely because it is gameplay-related, and a JWT-presenting control-plane/bootstrap/admission route must not bypass route classification, exact profile/audience validation, the active registry record, or applicable generation/evidence checks by being treated as gameplay traffic.
 
 ### Change and Proof Policy
 
@@ -98,8 +101,8 @@ Enforcing everything at Gateway misses internal service calls and cannot safely 
 
 - Build source-stable candidate inventories from authoritative OpenAPI, protobuf, protocol, and operator registrations and compare them with the YAML matrix in CI before enabling generated default-deny/full-fail enforcement; until then, prove unclassified protected/external routes are denied or unreachable without deriving that safeguard from incomplete YAML.
 - Compile or validate shared HTTP/gRPC middleware metadata from the matrix and reject unknown route identities at runtime.
-- Enforce strict token profile/audience, issued-token registry, allowlist, authority-generation, tenant, role, and cross-tenant response-profile rules.
-- Prove the registry is required only for JWT-presenting control-plane/bootstrap/admission operations and that gameplay-connect replay protection plus non-JWT `LOGIN`, `PLAY`, reconnect, and resume/rebind remain their separate ADR 0022/0035 partitions.
+- Enforce strict route-class-first evaluation followed by token profile/audience, active issued-token registry, allowlist, authority-generation, tenant, role, and cross-tenant response-profile rules.
+- Add negative proof that a protected control-plane/bootstrap/admission route with an unknown or wrong route class, wrong token profile or audience, missing/non-active/mismatched issued-token record, or missing/stale/mismatched generation/evidence bundle is denied before domain authorization; also prove that `gameplay-connect` replay protection and non-JWT `LOGIN`, `PLAY`, reconnect, and resume/rebind do not consult that registry and remain their separate ADR 0022/0035 partitions.
 - Replace or constrain broad Gateway wildcards so exact externally reachable endpoints are known and internal/unclassified additions remain unreachable.
 - Correct implementation trackers that currently describe route-matrix enforcement as proven before these checks exist.
 - Prove representative public, account-scoped, tenant, billing-safe, support-safe, cross-tenant data-bearing, internal-service, gameplay-admission, and operator-write routes, including negative wrong-profile/wrong-scope cases.
