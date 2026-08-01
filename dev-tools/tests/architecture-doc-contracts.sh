@@ -182,15 +182,48 @@ for path in (root / "design").rglob("*.md"):
 
 obsolete_envelope_phrases = ("Account-issued envelope", "Account-validated envelope")
 decision_history_dir = root / "design/architecture/decisions"
-for path in (root / "design").rglob("*.md"):
-    if decision_history_dir in path.parents:
-        continue
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+
+historical_adr_record_name = re.compile(r"adr-\d{4}-.+\.md")
+
+
+def is_historical_adr_record(path):
+    return path.parent == decision_history_dir and historical_adr_record_name.fullmatch(path.name) is not None
+
+
+def reject_obsolete_envelope_phrases(path, text):
+    if is_historical_adr_record(path):
+        return
+    for line_number, line in enumerate(text.splitlines(), start=1):
         for phrase in obsolete_envelope_phrases:
             if phrase in line:
                 raise SystemExit(
                     f"{path}:{line_number}: obsolete current-state phrase {phrase!r}"
                 )
+
+
+historical_adr_fixture = decision_history_dir / "adr-9999-history-fixture.md"
+registry_index_fixture = decision_history_dir / "README.md"
+if not is_historical_adr_record(historical_adr_fixture):
+    raise SystemExit("historical ADR fixture was not recognized as an exempt record")
+if is_historical_adr_record(registry_index_fixture):
+    raise SystemExit("decision registry/index fixture was incorrectly exempted")
+reject_obsolete_envelope_phrases(
+    historical_adr_fixture,
+    obsolete_envelope_phrases[0],
+)
+try:
+    reject_obsolete_envelope_phrases(
+        registry_index_fixture,
+        obsolete_envelope_phrases[0],
+    )
+except SystemExit as error:
+    if "obsolete current-state phrase" not in str(error):
+        raise SystemExit(f"unexpected registry/index fixture diagnostic: {error}")
+else:
+    raise SystemExit("decision registry/index fixture was not checked")
+
+for path in (root / "design").rglob("*.md"):
+    reject_obsolete_envelope_phrases(path, path.read_text(encoding="utf-8"))
 
 canonical_world_dynamic = "world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>"
 for path in [
