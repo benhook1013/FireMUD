@@ -130,7 +130,7 @@ public final class LoginCommandHandler {
     AuthenticateResponse authResponse =
         accountClient.authenticate(
             String.valueOf(instance.getTenantId()),
-            credentials.loginName(),
+            normalizeEmail(credentials.loginName()),
             credentials.password());
     var error = authResponse.getError();
     if (error != null
@@ -195,7 +195,7 @@ public final class LoginCommandHandler {
 
     RequestEmailLoginOtpResponse response =
         accountClient.requestEmailLoginOtp(
-            String.valueOf(instance.getTenantId()), challengeRequest.email());
+            String.valueOf(instance.getTenantId()), normalizeEmail(challengeRequest.email()));
     if (hasError(response.getError()) || !response.getAccepted()) {
       return failure(AUTHENTICATION_UNAVAILABLE_CODE, "Authentication service unavailable");
     }
@@ -488,6 +488,10 @@ public final class LoginCommandHandler {
     return error != null
         && (!Optional.ofNullable(error.getCode()).orElse("").isBlank()
             || !Optional.ofNullable(error.getMessage()).orElse("").isBlank());
+  }
+
+  private String normalizeEmail(String email) {
+    return email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
   }
 
   private SessionIdParsing.ParsedSessionId parseSessionId(String sessionIdText) {

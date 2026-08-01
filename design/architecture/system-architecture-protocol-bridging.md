@@ -6,7 +6,7 @@ This design is the **canonical specification** for gameplay command flows throug
 
 ## Implementation Status
 
-The target flow and delivery contracts below remain normative. Explicit `JOIN`/`Join & Play` is not implemented in the current runtime. Connect-token issuance may still create public-production membership implicitly, while text `PLAY` now rejects missing public-production membership with `JOIN_REQUIRED`. The remaining implicit writer is implementation drift, not an alternate flow; it does not relax the at-most-once delivery, authentication, admission, reconnect, or close-taxonomy requirements.
+The target flow and delivery contracts below remain normative. Explicit `JOIN`/`Join & Play` is not implemented in the current runtime. Connect-token issuance and text `PLAY` now reject missing public-production membership with `JOIN_REQUIRED`; the absent explicit first-join action remains implementation drift and does not relax the at-most-once delivery, authentication, admission, reconnect, or close-taxonomy requirements.
 
 ---
 

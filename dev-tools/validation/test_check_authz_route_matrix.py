@@ -255,6 +255,52 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 )
                 self.assertIn(expected_error, errors)
 
+    def test_operator_mutation_gate_status_precedence_has_positive_and_negative_proof(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        gate = baseline["operator_mutation_support_gate"]
+        errors = []
+        self.validator.validate_operator_mutation_support_gate(
+            baseline, baseline["routes"], errors
+        )
+        self.assertEqual([], errors)
+        self.assertEqual(
+            "target_not_currently_routable",
+            gate["status"],
+        )
+
+        document = copy.deepcopy(baseline)
+        document["operator_mutation_support_gate"]["status"] = (
+            "current_openapi_operator_surface"
+        )
+        errors = []
+        self.validator.validate_operator_mutation_support_gate(
+            document, document["routes"], errors
+        )
+        self.assertIn(
+            "operator_mutation_support_gate.status must be "
+            "target_not_currently_routable",
+            errors,
+        )
+
+        document = copy.deepcopy(baseline)
+        route = route_for(
+            document, "logging-admin-service", "POST /feature-flags/toggle"
+        )
+        route["route_status"] = "current_openapi_operator_surface"
+        errors = []
+        self.validator.validate_operator_mutation_support_gate(
+            document, document["routes"], errors
+        )
+        self.assertIn(
+            "operator_mutation_support_gate.applies_to route "
+            "logging-admin-service/POST /feature-flags/toggle must declare "
+            "route_status target_not_currently_routable when "
+            "route_status_override is gate_wins_for_applies_to",
+            errors,
+        )
+
     def test_http_operator_session_mutations_are_target_gated(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         expected = set(self.validator.REQUIRED_SESSION_LIFECYCLE_GATE_ROUTES)

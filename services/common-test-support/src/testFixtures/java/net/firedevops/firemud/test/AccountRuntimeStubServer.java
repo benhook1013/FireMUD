@@ -50,7 +50,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   private final AtomicBoolean gameplayAvailable = new AtomicBoolean(true);
   private final AtomicBoolean realmAccessGranted = new AtomicBoolean(true);
   private final AtomicLong defaultAccountId = new AtomicLong(1L);
-  private final Map<String, Long> accountIdsByUsername = new ConcurrentHashMap<>();
+  private final Map<String, Long> accountIdsByEmail = new ConcurrentHashMap<>();
   private final Map<Long, StubProfile> profilesByAccountId = new ConcurrentHashMap<>();
 
   public AccountRuntimeStubServer(int port) throws IOException {
@@ -73,8 +73,8 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     defaultAccountId.set(accountId);
   }
 
-  public void mapAccountId(String username, long accountId) {
-    accountIdsByUsername.put(username, accountId);
+  public void mapAccountId(String email, long accountId) {
+    accountIdsByEmail.put(email, accountId);
   }
 
   public void setPresenceVisibilityPolicy(long accountId, String visibilityPolicy) {
@@ -130,8 +130,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   public void authenticate(
       AuthenticateRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
     authenticateRequests.add(request);
-    long accountId =
-        accountIdsByUsername.getOrDefault(request.getUsername(), defaultAccountId.get());
+    long accountId = accountIdsByEmail.getOrDefault(request.getEmail(), defaultAccountId.get());
     profilesByAccountId.computeIfAbsent(accountId, StubProfile::defaultFor);
     responseObserver.onNext(
         AuthenticateResponse.newBuilder()
@@ -179,6 +178,9 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       EnsurePublicProductionPlayerMembershipRequest request,
       StreamObserver<EnsurePublicProductionPlayerMembershipResponse> responseObserver) {
     boolean allowed = gameplayAdmissionAllowed.get();
+    if (allowed) {
+      membershipExists.set(true);
+    }
     responseObserver.onNext(
         EnsurePublicProductionPlayerMembershipResponse.newBuilder()
             .setAccountId(request.getAccountId())

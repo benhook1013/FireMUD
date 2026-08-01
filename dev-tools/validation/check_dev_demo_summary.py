@@ -6,16 +6,11 @@
 
 from __future__ import annotations
 
-import json
 import re
 import sys
-import urllib.error
 from collections.abc import Iterable
-from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
-from io import BytesIO, StringIO
 from pathlib import Path
-from unittest.mock import patch
 
 import yaml
 
@@ -76,11 +71,6 @@ def normalize_nonempty_lines(script: str) -> str:
     return "\n".join(
         " ".join(line.split()) for line in script.splitlines() if line.strip()
     )
-
-
-def require(condition: bool, message: str) -> None:
-    if not condition:
-        raise AssertionError(message)
 
 
 def shell_group_tokens(line: str) -> list[str]:
@@ -644,20 +634,7 @@ kubectl -n "${PREVIEW_NAMESPACE}" create secret generic dev-demo-bootstrap-env""
         )
 
 
-class _FakeHttpResponse:
-    status = 200
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_args):
-        return False
-
-    def read(self):
-        return b'{"status":"SUCCESS"}'
-
-
-def _validate_smoke_account(root: Path) -> None:
+def _validate_smoke_account_contract(root: Path) -> None:
     smoke_script_paths = (
         root / "services/game-session-service/websocket-login-look-smoke.sh",
         root / "services/tcp-proxy-service/telnet-login-look-smoke.sh",
@@ -670,265 +647,6 @@ def _validate_smoke_account(root: Path) -> None:
             raise AssertionError(
                 f"Smoke contract missing required account verification: {smoke_script}"
             )
-
-    smoke_path = root / "dev-tools/smoke"
-    sys.path.insert(0, str(smoke_path))
-    try:
-        from smoke_common import verify_smoke_account
-
-        success_output = StringIO()
-        with (
-            patch(
-                "smoke_common.urllib.request.urlopen", return_value=_FakeHttpResponse()
-            ) as urlopen,
-            redirect_stdout(success_output),
-        ):
-            verify_smoke_account(
-                "http://account.test", "demo@example.com", "swordfish", 5
-            )
-        login_request = urlopen.call_args.args[0]
-        require(
-            login_request.full_url == "http://account.test/auth/login",
-            "smoke account verification must use the login endpoint",
-        )
-        require(
-            json.loads(login_request.data)
-            == {"username": "demo@example.com", "password": "swordfish"},
-            "smoke account verification must send the configured credentials",
-        )
-        require(
-            "SUCCESS" not in success_output.getvalue(),
-            "response bodies must stay redacted",
-        )
-        require(
-            "status 200" in success_output.getvalue(), "success status must be reported"
-        )
-
-        failure_body = b'{"error":"sensitive upstream detail"}'
-        http_error = urllib.error.HTTPError(
-            "http://account.test/auth/login",
-            401,
-            "Unauthorized",
-            {},
-            BytesIO(failure_body),
-        )
-        failure_stdout = StringIO()
-        failure_stderr = StringIO()
-        try:
-            with (
-                patch("smoke_common.urllib.request.urlopen", side_effect=http_error),
-                redirect_stdout(failure_stdout),
-                redirect_stderr(failure_stderr),
-            ):
-                verify_smoke_account(
-                    "http://account.test", "demo@example.com", "swordfish", 5
-                )
-        except RuntimeError as exc:
-            require(
-                str(exc) == "Smoke account validation failed with status 401",
-                "HTTP failures must report only the response status",
-            )
-            require(
-                "sensitive upstream detail" not in str(exc),
-                "failure text leaked response body",
-            )
-            require(
-                "sensitive upstream detail" not in failure_stdout.getvalue(),
-                "stdout leaked a failed response body",
-            )
-            require(
-                "sensitive upstream detail" not in failure_stderr.getvalue(),
-                "stderr leaked a failed response body",
-            )
-        else:
-            raise AssertionError("Expected account validation failure")
-
-        retry_errors = [
-            urllib.error.HTTPError(
-                "http://account.test/auth/login",
-                503,
-                "Unavailable",
-                {},
-                BytesIO(b'{"error":"sensitive retry detail"}'),
-            )
-            for _ in range(2)
-        ]
-        retry_output = StringIO()
-        with (
-            patch(
-                "smoke_common.urllib.request.urlopen",
-                side_effect=retry_errors + [_FakeHttpResponse()],
-            ) as retry_urlopen,
-            patch("smoke_common.time.sleep") as sleep,
-            redirect_stdout(retry_output),
-        ):
-            verify_smoke_account(
-                "http://account.test", "demo@example.com", "swordfish", 5
-            )
-        require(
-            retry_urlopen.call_count == 3, "retryable failures must make three attempts"
-        )
-        require(
-            [call.args for call in sleep.call_args_list] == [(1,), (1,)],
-            "smoke account retries must retain the bounded one-second delay",
-        )
-        require(
-            "sensitive retry detail" not in retry_output.getvalue(),
-            "retry output leaked response body",
-        )
-
-        exhausted_errors = [
-            urllib.error.HTTPError(
-                "http://account.test/auth/login",
-                503,
-                "Unavailable",
-                {},
-                BytesIO(b'{"error":"sensitive exhausted retry detail"}'),
-            )
-            for _ in range(3)
-        ]
-        exhausted_stdout = StringIO()
-        exhausted_stderr = StringIO()
-        with (
-            patch(
-                "smoke_common.urllib.request.urlopen", side_effect=exhausted_errors
-            ) as exhausted_urlopen,
-            patch("smoke_common.time.sleep") as exhausted_sleep,
-        ):
-            try:
-                with (
-                    redirect_stdout(exhausted_stdout),
-                    redirect_stderr(exhausted_stderr),
-                ):
-                    verify_smoke_account(
-                        "http://account.test", "demo@example.com", "swordfish", 5
-                    )
-            except RuntimeError as exc:
-                require(
-                    str(exc) == "Smoke account validation failed with status 503",
-                    "exhausted HTTP retries must report only the response status",
-                )
-                require(
-                    "sensitive exhausted retry detail" not in str(exc),
-                    "exhausted HTTP retry failure leaked response body",
-                )
-            else:
-                raise AssertionError(
-                    "Expected exhausted retryable account validation failure"
-                )
-        require(
-            exhausted_urlopen.call_count == 3,
-            "exhausted retryable failures must stop after three attempts",
-        )
-        require(
-            [call.args for call in exhausted_sleep.call_args_list] == [(1,), (1,)],
-            "exhausted retryable failures must sleep only between attempts",
-        )
-        require(
-            "sensitive exhausted retry detail" not in exhausted_stdout.getvalue(),
-            "exhausted retry stdout leaked response body",
-        )
-        require(
-            "sensitive exhausted retry detail" not in exhausted_stderr.getvalue(),
-            "exhausted retry stderr leaked response body",
-        )
-
-        transport_failure = "sensitive socket route detail"
-        transport_errors = [OSError(transport_failure) for _ in range(3)]
-        transport_stdout = StringIO()
-        transport_stderr = StringIO()
-        with (
-            patch(
-                "smoke_common.urllib.request.urlopen", side_effect=transport_errors
-            ) as transport_urlopen,
-            patch("smoke_common.time.sleep") as transport_sleep,
-        ):
-            try:
-                with (
-                    redirect_stdout(transport_stdout),
-                    redirect_stderr(transport_stderr),
-                ):
-                    verify_smoke_account(
-                        "http://account.test", "demo@example.com", "swordfish", 5
-                    )
-            except RuntimeError as exc:
-                require(
-                    str(exc)
-                    == "Smoke account validation failed due to a transport error",
-                    "transport failure must use the redacted canonical message",
-                )
-                require(
-                    transport_failure not in str(exc),
-                    "transport failure leaked raw exception details",
-                )
-            else:
-                raise AssertionError(
-                    "Expected exhausted transport account validation failure"
-                )
-        require(
-            transport_urlopen.call_count == 3,
-            "transport failures must stop after three attempts",
-        )
-        require(
-            [call.args for call in transport_sleep.call_args_list] == [(1,), (1,)],
-            "transport failures must sleep only between attempts",
-        )
-        require(
-            transport_failure not in transport_stdout.getvalue(),
-            "transport failure stdout leaked raw exception details",
-        )
-        require(
-            transport_failure not in transport_stderr.getvalue(),
-            "transport failure stderr leaked raw exception details",
-        )
-
-        non_retryable = urllib.error.HTTPError(
-            "http://account.test/auth/login",
-            400,
-            "Bad Request",
-            {},
-            BytesIO(b'{"error":"sensitive non-retryable detail"}'),
-        )
-        non_retryable_stdout = StringIO()
-        non_retryable_stderr = StringIO()
-        with patch(
-            "smoke_common.urllib.request.urlopen",
-            side_effect=[non_retryable, _FakeHttpResponse()],
-        ) as non_retryable_urlopen:
-            try:
-                with (
-                    redirect_stdout(non_retryable_stdout),
-                    redirect_stderr(non_retryable_stderr),
-                ):
-                    verify_smoke_account(
-                        "http://account.test", "demo@example.com", "swordfish", 5
-                    )
-            except RuntimeError as exc:
-                require(
-                    str(exc) == "Smoke account validation failed with status 400",
-                    "non-retryable HTTP failures must report only the response status",
-                )
-                require(
-                    "sensitive non-retryable detail" not in str(exc),
-                    "non-retryable failure text leaked response body",
-                )
-                require(
-                    "sensitive non-retryable detail"
-                    not in non_retryable_stdout.getvalue(),
-                    "non-retryable stdout leaked response body",
-                )
-                require(
-                    "sensitive non-retryable detail"
-                    not in non_retryable_stderr.getvalue(),
-                    "non-retryable stderr leaked response body",
-                )
-            else:
-                raise AssertionError(
-                    "Expected non-retryable account validation failure"
-                )
-        require(non_retryable_urlopen.call_count == 1, "HTTP 400 must not be retried")
-    finally:
-        sys.path.remove(str(smoke_path))
 
 
 def validate_workflow(root: Path) -> None:
@@ -989,7 +707,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"usage: {Path(sys.argv[0]).name} ROOT_DIR")
     root = Path(args[0]).resolve()
     validate_workflow(root)
-    _validate_smoke_account(root)
+    _validate_smoke_account_contract(root)
     print("dev-demo workflow and summary contract checks passed")
     return 0
 

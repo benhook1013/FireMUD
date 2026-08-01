@@ -91,12 +91,18 @@ class LoggingAdminApplicationIntegrationTest {
     assertThat(
             requestMappingHandlerMapping.getHandlerMethods().keySet().stream()
                 .flatMap(mapping -> mapping.getPatternValues().stream()))
-        .noneMatch(pattern -> pattern.equals("/reports") || pattern.startsWith("/reports/"));
+        .noneMatch(
+            pattern ->
+                pattern.equals("/reports")
+                    || pattern.startsWith("/reports/")
+                    || pattern.equals("/admin/reports")
+                    || pattern.startsWith("/admin/reports/"));
   }
 
   @Test
-  void unmappedPostReportsFamilyUsesCanonicalNotFoundEnvelope() throws Exception {
-    for (String path : new String[] {"/reports", "/reports/123"}) {
+  void unmappedPostReportFamiliesUseCanonicalNotFoundEnvelope() throws Exception {
+    for (String path :
+        new String[] {"/reports", "/reports/123", "/admin/reports", "/admin/reports/123"}) {
       HttpRequest request =
           HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
               .timeout(HTTP_REQUEST_TIMEOUT)

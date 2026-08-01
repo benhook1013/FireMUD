@@ -4,7 +4,7 @@ This document defines Game Session transport framing and service-level protocol 
 
 ## Implementation Status
 
-Unless explicitly described as current behavior, this document defines the target protocol. The target requires explicit `JOIN`/`Join & Play` for first public-production entry, while an existing durable membership permits direct `PLAY` and a grant-backed non-public path may proceed only when its required durable membership already exists. A grant never creates or substitutes membership. `JOIN` and first-party `Join & Play` are not yet implemented as explicit commands/actions. Text `PLAY` now returns `JOIN_REQUIRED` instead of invoking Account's membership writer, but connect-token issuance may still call that writer implicitly. The remaining drift must be removed before claiming the complete explicit-join boundary.
+Unless explicitly described as current behavior, this document defines the target protocol. The target requires explicit `JOIN`/`Join & Play` for first public-production entry, while an existing durable membership permits direct `PLAY` and a grant-backed non-public path may proceed only when its required durable membership already exists. A grant never creates or substitutes membership. `JOIN` and first-party `Join & Play` are not yet implemented as explicit commands/actions. Text `PLAY` now returns `JOIN_REQUIRED` instead of invoking Account's membership writer, and connect-token issuance now requires existing membership and returns `JOIN_REQUIRED` when it is absent without invoking that writer. The missing membership-authority-generation reread at connect-token issuance remains a gap.
 
 ## Minimal Text Command Protocol
 
@@ -58,6 +58,17 @@ PLAY <world> [realm] [character]
 | `TELL <character> <text>` | Standard direct communication action. Targets one character directly, outside room scope by default, while still flowing through the shared communication model and Game Logic. | `TELL Sora Meet me at the forge` |
 
 Selector rules for `PLAY` match the lobby helpers. `WORLDS` returns both `tenantSlug` and tenant-scoped `worldSlug`; the canonical textual `<world>` form is `tenantSlug/worldSlug`, while a bare `tenantSlug` is shorthand only when that tenant exposes exactly one visible authored world. A bare `worldSlug` is never resolved across tenants. `<world>` may instead be a menu index from the exact `WORLDS` browse snapshot, `[realm]` accepts a `realmSlug` under the resolved world or an index from its exact `REALMS` snapshot, and `[character]` is an optional name or response-local index. If a selector is ambiguous or stale, the response guides the player toward `WORLDS`, `REALMS`, `CHARS`, or a more specific `PLAY` form rather than guessing or returning a backend-flavored error.
+
+### JOIN Translation and Status
+
+The canonical Account membership operation is `EnsurePublicProductionPlayerMembership`, whose target semantic name is `JoinPublicProductionMembership`. When the explicit text action is implemented, Game Session translates `JOIN <world>` to that one Account operation; it does not create membership locally or use a second join writer.
+
+- Game Session resolves `<world>` from the exact `WORLDS` snapshot to the tenant-scoped `worldSlug`, then resolves the world's configured default public-production `realmSlug`. The resolved `worldSlug` and `realmSlug` identify the operation target but are not independent client authority.
+- The resolved target's opaque `connectScopeId` is the selector passed to Account with the caller-generated `requestId`. Account derives and revalidates the caller, `worldSlug`, `realmSlug`, public-production policy, and current pointer from that scope at its commit boundary; a client-supplied runtime ID or independently supplied slug cannot replace the scope.
+- An ambiguous or stale world/realm selector is a lobby-selection error: Game Session does not guess, does not invoke Account, and directs the client to refresh `WORLDS`/`REALMS`. A discovered scope that is stale or no longer matches the resolved `worldSlug`/`realmSlug` fails closed with the applicable scope or admission error rather than being translated to a newer target.
+- `requestId` is the join attempt idempotency key. Account binds it to the caller, resolved `connectScopeId`, `worldSlug`, and `realmSlug`; an exact retry replays the same membership result or deterministic failure, while a changed selector or target conflicts and creates no second membership.
+
+Explicit `JOIN` and first-party `Join & Play` are not implemented as current text or HTTP actions. Current text `PLAY` returns `JOIN_REQUIRED` without invoking the membership writer, while current connect-token issuance requires existing membership and returns `JOIN_REQUIRED` when it is absent without invoking `EnsurePublicProductionPlayerMembership`. The missing membership-authority-generation reread at issuance remains a gap; these current facts must not be described as the explicit-join translation being live.
 
 ## Login and Play Flow
 

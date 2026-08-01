@@ -1056,6 +1056,13 @@ class PlayCommandHandlerTest {
         .isEqualTo(GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_CODE);
     assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
         .isEqualTo("error.play.billing-blocked");
+    assertThat(
+            meterRegistry
+                .counter("gamesession.session.resume_denied", "reason", "tenant_unavailable")
+                .count())
+        .isEqualTo(1.0);
+    Mockito.verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(context, "tenant_unavailable");
   }
 
   @Test

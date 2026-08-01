@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The accepted explicit-join decision is target state. Current runtime paths still have implicit membership behavior in connect-token issuance and `PLAY`, and the membership transaction, monotonic versioning, and durable audit/outbox boundary remain incomplete. No runtime completion is claimed by this ADR.
+The accepted explicit-join decision is target state. Current connect-token issuance and `PLAY` require existing public-production membership and return `JOIN_REQUIRED` when it is absent; neither path invokes the membership writer. Explicit `JOIN` / `Join & Play`, the membership transaction, monotonic versioning, durable audit/outbox boundary, and the membership-authority-generation reread at connect-token issuance remain incomplete. No runtime completion is claimed by this ADR.
 
 ## Decision Record
 
@@ -81,7 +81,7 @@ This avoids durable rows for casual visits but creates a second class of gamepla
 
 - Add explicit browser/mobile join and text `JOIN` flows before first character creation/connect/`PLAY`.
 - Carry the verified `connectScopeId` through `JoinPublicProductionMembership`, bind it into the versioned request/target digest, and prove the digest and selector are rechecked at the membership commit gate.
-- Converge the implicit `EnsurePublicProductionPlayerMembership` call sites onto the explicit join operation; `POST /auth/connect-token` and `PLAY` must not write membership.
+- Keep `EnsurePublicProductionPlayerMembership` behind the explicit join operation; `POST /auth/connect-token` and `PLAY` must require membership and must not write it.
 - Commit membership, its `membershipAuthorityGeneration`/`membershipVersion` changes, operation outcome, and durable audit/outbox atomically and make SQL membership/operation state authoritative for replay.
 - Gate every new membership commit on the immediately preceding fresh ADR 0028 entitlement evaluation. Prove that a failed refresh returns `ENTITLEMENT_UNAVAILABLE`, and that no membership, audit, or outbox record is committed after a failed, stale, future-dated, mismatched, or otherwise invalid evaluation, including evaluation/commit races.
 - Implement monotonic membership versioning and prove races/retries return one membership and one logical join event.

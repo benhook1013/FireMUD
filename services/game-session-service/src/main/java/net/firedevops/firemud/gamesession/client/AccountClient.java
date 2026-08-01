@@ -52,14 +52,14 @@ public final class AccountClient
   }
 
   /** Authenticates a player via the Account Service. */
-  public AuthenticateResponse authenticate(String tenantId, String username, String password) {
+  public AuthenticateResponse authenticate(String tenantId, String email, String password) {
     if (stub() == null) {
       return authenticationUnavailable();
     }
     AuthenticateRequest request =
         AuthenticateRequest.newBuilder()
             .setTenantId(tenantId)
-            .setUsername(username)
+            .setEmail(email)
             .setPassword(password)
             .build();
     try {
@@ -137,7 +137,7 @@ public final class AccountClient
   }
 
   public AuthenticateResponse authenticateForReadiness(
-      String tenantId, String username, String password) {
+      String tenantId, String email, String password) {
     if (stub() == null) {
       return AuthenticateResponse.newBuilder()
           .setError(
@@ -149,7 +149,7 @@ public final class AccountClient
     AuthenticateRequest request =
         AuthenticateRequest.newBuilder()
             .setTenantId(tenantId)
-            .setUsername(username)
+            .setEmail(email)
             .setPassword(password)
             .build();
     return stub()

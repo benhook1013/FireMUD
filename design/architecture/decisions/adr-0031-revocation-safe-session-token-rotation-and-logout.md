@@ -26,36 +26,9 @@ A gameplay connection may remain active longer than the private `game-session-ac
 
 The current target already requires periodic refresh, atomic binding replacement, idempotent per-token logout, and generation-based logout-all. The review retains those boundaries and makes refresh lineage, authority generations, expiry scheduling, overlap, and logout scope explicit.
 
-### Canonical Authority Tuple
+### Canonical Authority Tuple Boundary
 
-Rotation, revocation, leases, bindings, refresh requests, rebind handles/proofs, and registry records use one exact `authorityTuple` and no aliases:
-
-```text
-authorityTuple: {
-  issuerAuthGeneration,
-  accountAuthorityGeneration,
-  tenantAuthorityGeneration: { tenantId: generation },
-  membershipAuthorityGeneration: { tenantId: generation },
-  privateRealmGrantVersions: [
-    { tenantId, worldSlug, realmSlug, grantVersion }
-  ],
-  accountSecurityCutoff: {
-    accountAuthorityGeneration,
-    outboxStreamKey,
-    outboxSequence
-  }?,
-  tenantBillingCutoff: {
-    tenantId: {
-      tenantAuthorityGeneration,
-      tenantBillingSequence,
-      outboxStreamKey,
-      outboxSequence
-    }
-  }?
-}
-```
-
-Tenant and membership maps contain only exact applicable tenant IDs. Their key sets are determined independently by token profile and route classification; the closed `billing_safe_tenant` exception can require a membership entry while deliberately omitting the target-tenant generation. Explicitly unscoped artifacts use empty maps. `privateRealmGrantVersions` is empty for public production and otherwise contains exact `{tenantId, worldSlug, realmSlug, grantVersion}` entries. `accountSecurityCutoff` and `tenantBillingCutoff` are optional cutoff evidence, not replacement authorities; each is omitted when it is not applicable, and a present `tenantBillingCutoff` contains only exact applicable tenant-ID entries. `membershipVersion` is independent membership-data freshness and must always be compared separately from `membershipAuthorityGeneration`; neither field substitutes for the other. The same tuple is copied into every applicable JWT/registry snapshot, Account lease, gameplay binding, refresh request, rebind proof, installation acknowledgement, and outbox payload. `issuanceFence` is copied alongside it as the Account composite authority fence captured by the issuance transaction or CAS.
+[ADR 0035](./adr-0035-single-record-issued-token-registry.md) owns the single normative `authorityTuple` schema and exact field names. This ADR references that schema without redefining it. Rotation-local requirements copy the unchanged tuple into every applicable JWT/registry snapshot, Account lease, gameplay binding, refresh request, rebind proof, installation acknowledgement, and outbox payload; `issuanceFence` is copied alongside it as the Account composite authority fence captured by the issuance transaction or CAS. `membershipVersion` remains independent membership-data freshness and is always compared separately from `authorityTuple.membershipAuthorityGeneration`.
 Alongside the tuple, `outboxCheckpoints` is the complete set of one exact `{outboxStreamKey, outboxSequence}` checkpoint for every applicable authority stream in the operation scope, with no aggregate maximum or omitted stream. It is canonicalized in stream-key order and copied unchanged through protected binding metadata, the installation claim and acknowledgement, binding CAS payloads, replacement leases, `TOKEN_ROTATION` operation evidence, retries, reconciliation records, and rotation proofs. Any missing, extra, stale, regressed, or mismatched checkpoint fails closed; checkpoints prove source position but never become an alternate authority. An authenticated Account event may update only a derived consumer-local projection after its checkpoint is validated, never the Account authority or source evidence.
 
 The complete checkpoint set is part of the canonical installation request and acknowledgement digest, the binding metadata and CAS comparison, the lease and operation-evidence identity, and every retry or reconciliation comparison. A record that carries only the checkpoint for the latest cutoff or only an aggregate maximum is incomplete and cannot authorize installation, activation, replacement use, or replayed success. Consumers also retain bounded per-stream duplicate evidence; an event below a high-water mark is a no-op only when that evidence matches or an authoritative Account lookup for the exact stream and sequence proves the same event identity and digest. A high-water mark without bounded evidence or authoritative lookup is insufficient and fails closed.

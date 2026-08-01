@@ -21,7 +21,7 @@ public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
   private static final String COMPONENT = "game-session-service";
   private static final String CONTRACT = "LOGIN->LOOK";
   private static final String PROBE_TENANT_ID = "1";
-  private static final String PROBE_USERNAME = "readiness-probe@example.invalid";
+  private static final String PROBE_EMAIL = "readiness-probe@example.invalid";
   private static final String PROBE_PASSWORD = "invalid";
   private static final String PROBE_SESSION_ID = "1";
   private static final String PROBE_PLAYER_ID = "1";
@@ -55,7 +55,7 @@ public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
 
     try {
       AuthenticateResponse response =
-          accountClient.authenticateForReadiness(PROBE_TENANT_ID, PROBE_USERNAME, PROBE_PASSWORD);
+          accountClient.authenticateForReadiness(PROBE_TENANT_ID, PROBE_EMAIL, PROBE_PASSWORD);
       String outcome = response.hasError() ? response.getError().getCode() : "AUTHENTICATED";
       if (AuthenticationErrorCodes.UNAVAILABLE.equals(outcome)) {
         dependencies.put(

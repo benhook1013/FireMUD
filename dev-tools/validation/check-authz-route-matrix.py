@@ -118,6 +118,7 @@ ROUTE_STATUS_VALUES = {
 ROUTE_STATUS_OVERRIDE_VALUES = {
     "gate_wins_for_applies_to",
 }
+OPERATOR_MUTATION_SUPPORT_GATE_STATUS = "target_not_currently_routable"
 TOKEN_ISSUER = "firemud-account-service"
 MEMBERSHIP_GENERATION_APPLICABILITY_VALUES = {
     True,
@@ -647,6 +648,144 @@ def validate_token_profiles(
     return profiles
 
 
+def canonicalize_role_assurance_route_identities(
+    route_identities: Any, field: str, errors: list[str]
+) -> list[str] | None:
+    if route_identities is not None and (
+        not isinstance(route_identities, list)
+        or any(
+            not isinstance(item, str) or not item.strip()
+            for item in route_identities
+        )
+    ):
+        errors.append(f"{field} must be a list of strings")
+        return None
+    if route_identities is None:
+        return None
+
+    canonical_route_identities: list[str] = []
+    for index, identity in enumerate(route_identities):
+        service, separator, route_name = identity.partition("/")
+        components = (
+            canonical_route_components(service, route_name) if separator else None
+        )
+        if components is None:
+            errors.append(
+                f"{field}[{index}] must be a non-empty service/route identity"
+            )
+            continue
+        canonical_route_identities.append("/".join(components))
+    return canonical_route_identities
+
+
+def validate_platform_admin_role_assurance_route_identities(
+    field: str, canonical_route_identities: list[str] | None, errors: list[str]
+) -> None:
+    expected_route_identities = set(PLATFORM_ADMIN_ROLE_ASSURANCE_ROUTE_IDENTITIES)
+    if (
+        canonical_route_identities is None
+        or len(canonical_route_identities) != len(set(canonical_route_identities))
+        or set(canonical_route_identities) != expected_route_identities
+    ):
+        errors.append(
+            f"{field} must equal {sorted(expected_route_identities)}"
+        )
+
+
+def validate_role_assurance_classifications(
+    applies_to: dict[str, Any],
+    allowed_classifications: set[str],
+    label: str,
+    errors: list[str],
+) -> bool:
+    route_classifications = applies_to.get("route_classifications")
+    if not isinstance(route_classifications, list) or not route_classifications:
+        errors.append(
+            f"{label}.applies_to.route_classifications must be a non-empty list of strings"
+        )
+        return False
+    if any(not isinstance(item, str) for item in route_classifications):
+        errors.append(
+            f"{label}.applies_to.route_classifications must be a list of strings"
+        )
+        return False
+    unknown_classifications = sorted(
+        set(route_classifications) - allowed_classifications
+    )
+    if unknown_classifications:
+        errors.append(
+            f"{label}.applies_to.route_classifications contains values outside "
+            f"the classification vocabulary: {unknown_classifications}"
+        )
+    return True
+
+
+def validate_role_assurance_applies_to(
+    role: str,
+    requirement: dict[str, Any],
+    allowed_classifications: set[str],
+    label: str,
+    errors: list[str],
+) -> None:
+    legacy_keys = {"when", "when_scopes", "allowed_classifications"} & set(
+        requirement
+    )
+    if legacy_keys:
+        errors.append(
+            f"{label} must use one applies_to shape; legacy keys remain: {sorted(legacy_keys)}"
+        )
+
+    applies_to = requirement.get("applies_to")
+    if not isinstance(applies_to, dict):
+        errors.append(f"{label}.applies_to must be a mapping")
+        return
+
+    if not validate_role_assurance_classifications(
+        applies_to, allowed_classifications, label, errors
+    ):
+        return
+
+    identity_field = f"{label}.applies_to.route_identities"
+    route_identities = applies_to.get("route_identities")
+    if route_identities is not None and (
+        not isinstance(route_identities, list)
+        or any(
+            not isinstance(item, str) or not item.strip()
+            for item in route_identities
+        )
+    ):
+        canonicalize_role_assurance_route_identities(
+            route_identities, identity_field, errors
+        )
+        return
+    canonical_route_identities = canonicalize_role_assurance_route_identities(
+        route_identities, identity_field, errors
+    )
+    if role == "platformAdmin":
+        validate_platform_admin_role_assurance_route_identities(
+            identity_field, canonical_route_identities, errors
+        )
+    elif route_identities is not None:
+        errors.append(
+            f"{identity_field} is only allowed for platformAdmin"
+        )
+
+
+def validate_role_assurance_requirement(
+    role: str,
+    requirement: Any,
+    allowed_classifications: set[str],
+    label: str,
+    errors: list[str],
+) -> None:
+    if not isinstance(requirement, dict):
+        errors.append(f"{label} must be a mapping")
+        return
+    validate_role_assurance_applies_to(
+        role, requirement, allowed_classifications, label, errors
+    )
+
+
 def validate_role_assurance(document: dict[str, Any], errors: list[str]) -> set[str]:
     raw_assurance = document.get("role_assurance")
     if not isinstance(raw_assurance, dict):
@@ -699,88 +838,16 @@ def validate_role_assurance(document: dict[str, Any], errors: list[str]) -> set[
         if isinstance(item, str)
     }
     for role in sorted(REQUIRED_ROLE_ASSURANCE_ROLES):
-        requirement = requirements.get(role)
         label = (
             f"role_assurance.privileged_control_when_global_role.requirements.{role}"
         )
-        if not isinstance(requirement, dict):
-            errors.append(f"{label} must be a mapping")
-            continue
-        legacy_keys = {"when", "when_scopes", "allowed_classifications"} & set(
-            requirement
+        validate_role_assurance_requirement(
+            role,
+            requirements.get(role),
+            allowed_classifications,
+            label,
+            errors,
         )
-        if legacy_keys:
-            errors.append(
-                f"{label} must use one applies_to shape; legacy keys remain: {sorted(legacy_keys)}"
-            )
-        applies_to = requirement.get("applies_to")
-        if not isinstance(applies_to, dict):
-            errors.append(f"{label}.applies_to must be a mapping")
-            continue
-        route_classifications = applies_to.get("route_classifications")
-        if not isinstance(route_classifications, list) or not route_classifications:
-            errors.append(
-                f"{label}.applies_to.route_classifications must be a non-empty list of strings"
-            )
-            continue
-        if any(not isinstance(item, str) for item in route_classifications):
-            errors.append(
-                f"{label}.applies_to.route_classifications must be a list of strings"
-            )
-            continue
-        unknown_classifications = sorted(
-            set(route_classifications) - allowed_classifications
-        )
-        if unknown_classifications:
-            errors.append(
-                f"{label}.applies_to.route_classifications contains values outside "
-                f"the classification vocabulary: {unknown_classifications}"
-            )
-        route_identities = applies_to.get("route_identities")
-        canonical_route_identities: list[str] | None = None
-        if route_identities is not None and (
-            not isinstance(route_identities, list)
-            or any(
-                not isinstance(item, str) or not item.strip()
-                for item in route_identities
-            )
-        ):
-            errors.append(f"{label}.applies_to.route_identities must be a list of strings")
-            continue
-        if route_identities is not None:
-            canonical_route_identities = []
-            for index, identity in enumerate(route_identities):
-                service, separator, route_name = identity.partition("/")
-                components = (
-                    canonical_route_components(service, route_name)
-                    if separator
-                    else None
-                )
-                if components is None:
-                    errors.append(
-                        f"{label}.applies_to.route_identities[{index}] must be a "
-                        "non-empty service/route identity"
-                    )
-                    continue
-                canonical_route_identities.append("/".join(components))
-        if role == "platformAdmin":
-            expected_route_identities = set(
-                PLATFORM_ADMIN_ROLE_ASSURANCE_ROUTE_IDENTITIES
-            )
-            if (
-                canonical_route_identities is None
-                or len(canonical_route_identities)
-                != len(set(canonical_route_identities))
-                or set(canonical_route_identities) != expected_route_identities
-            ):
-                errors.append(
-                    f"{label}.applies_to.route_identities must equal "
-                    f"{sorted(expected_route_identities)}"
-                )
-        elif route_identities is not None:
-            errors.append(
-                f"{label}.applies_to.route_identities is only allowed for platformAdmin"
-            )
     return predicates
 
 
@@ -2524,7 +2591,14 @@ def validate_operator_mutation_support_gate(
             "operator_mutation_support_gate.route_status_override must be one of "
             f"{sorted(allowed_overrides)}"
         )
+    gate_status = gate.get("status")
+    if gate_status != OPERATOR_MUTATION_SUPPORT_GATE_STATUS:
+        errors.append(
+            "operator_mutation_support_gate.status must be "
+            f"{OPERATOR_MUTATION_SUPPORT_GATE_STATUS}"
+        )
 
+    routes_by_identity: dict[str, list[dict[str, Any]]] = {}
     route_identities = {
         identity
         for route in routes
@@ -2532,6 +2606,12 @@ def validate_operator_mutation_support_gate(
         for identity in (route_identity_from_route(route),)
         if identity is not None
     }
+    for route in routes:
+        if not isinstance(route, dict):
+            continue
+        identity = route_identity_from_route(route)
+        if identity is not None:
+            routes_by_identity.setdefault(identity, []).append(route)
     gate_identities: list[str] = []
     applies_to_identities: list[str] = []
     for field in ("applies_to", "live_exceptions"):
@@ -2599,6 +2679,18 @@ def validate_operator_mutation_support_gate(
             "operator_mutation_support_gate.coverage_drift identity is not listed in "
             f"applies_to/live_exceptions: {identity}"
         )
+    if (
+        route_status_override == "gate_wins_for_applies_to"
+        and gate_status == OPERATOR_MUTATION_SUPPORT_GATE_STATUS
+    ):
+        for identity in sorted(set(applies_to_identities)):
+            for route in routes_by_identity.get(identity, []):
+                if route.get("route_status") != gate_status:
+                    errors.append(
+                        "operator_mutation_support_gate.applies_to route "
+                        f"{identity} must declare route_status {gate_status} "
+                        "when route_status_override is gate_wins_for_applies_to"
+                    )
 
 
 def matching_routes(

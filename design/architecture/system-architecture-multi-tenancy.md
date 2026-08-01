@@ -7,7 +7,7 @@ the multi-tenant requirements in the
 
 ## Implementation Status
 
-The realm-catalog, admission-pointer, realm-local character, and explicit first-join contracts below are normative target behavior. Current runtime proof is partial: `IssueConnectToken` and text `PLAY` can still invoke implicit public-production membership creation, the membership-generation live reread at connect-token issuance is not implemented, and pointer updates still use a read-then-write check with separate pointer/audit/prepared-execution writes. These are implementation gaps only; they do not weaken tenant isolation, the distinct `tenantSlug` and tenant-scoped authored-world `worldSlug` selectors, or the required `GetAdmissionPointer(tenantId, worldSlug, realmSlug)` contract.
+The realm-catalog, admission-pointer, realm-local character, and explicit first-join contracts below are normative target behavior. Current runtime proof is partial: `IssueConnectToken` and text `PLAY` now reject absent public-production membership with `JOIN_REQUIRED`, but the explicit first-join action and membership-generation live reread at connect-token issuance are not implemented, and pointer updates still use a read-then-write check with separate pointer/audit/prepared-execution writes. These are implementation gaps only; they do not weaken tenant isolation, the distinct `tenantSlug` and tenant-scoped authored-world `worldSlug` selectors, or the required `GetAdmissionPointer(tenantId, worldSlug, realmSlug)` contract.
 
 ---
 

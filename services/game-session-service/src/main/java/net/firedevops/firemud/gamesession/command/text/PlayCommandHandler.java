@@ -789,38 +789,41 @@ public class PlayCommandHandler {
                 tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
       }
       return Optional.of(
-          failure(
-              GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_CODE,
-              GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_MESSAGE,
-              "error.play.billing-blocked",
-              Map.of(),
-              tenantTag,
-              Long.toString(selectedRealm.gameInstanceId()),
-              Long.toString(requestedCharacterId),
-              null));
+          tenantBillingBlockedFailure(
+              context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
     }
     if (!response.getGameplayAvailable()) {
-      recordResumeDeniedIfApplicable(
-          context,
-          selectedWorld.slug(),
-          selectedRealm.slug(),
-          selectedRealm.pointerVersion(),
-          selectedRealm.gameInstanceId(),
-          requestedCharacterId,
-          tenantTag,
-          "tenant_unavailable");
       return Optional.of(
-          failure(
-              GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_CODE,
-              GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_MESSAGE,
-              "error.play.billing-blocked",
-              Map.of(),
-              tenantTag,
-              Long.toString(selectedRealm.gameInstanceId()),
-              Long.toString(requestedCharacterId),
-              null));
+          tenantBillingBlockedFailure(
+              context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
     }
     return Optional.empty();
+  }
+
+  private PlayCommandHandlingResult tenantBillingBlockedFailure(
+      SessionContext context,
+      String tenantTag,
+      GameplayWorldCatalog.WorldView selectedWorld,
+      GameplayWorldCatalog.RealmView selectedRealm,
+      long requestedCharacterId) {
+    recordResumeDeniedIfApplicable(
+        context,
+        selectedWorld.slug(),
+        selectedRealm.slug(),
+        selectedRealm.pointerVersion(),
+        selectedRealm.gameInstanceId(),
+        requestedCharacterId,
+        tenantTag,
+        "tenant_unavailable");
+    return failure(
+        GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_CODE,
+        GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_MESSAGE,
+        "error.play.billing-blocked",
+        Map.of(),
+        tenantTag,
+        Long.toString(selectedRealm.gameInstanceId()),
+        Long.toString(requestedCharacterId),
+        null);
   }
 
   private PlayCommandHandlingResult authorityUnavailableFailure(

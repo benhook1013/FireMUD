@@ -299,7 +299,7 @@ required_live_check_vocabulary:
   - workload_action_scope
 implementation_status:
   known_drift:
-    - public_production_membership_is_created_implicitly_by_connect_token_or_play_in_current_runtime; this violates the explicit_join_security_contract and affected admission must fail closed in the target state
+    - explicit_public_production_JOIN_is_not_implemented; connect_token_and_play_now_require_existing_membership_and_return_JOIN_REQUIRED_when_it_is_absent_while_connect_token_membership_authority_generation_reread_remains_unimplemented
     - privileged_control_is_target_only_and_unavailable_in_current_runtime; platformAdmin_and_cross_tenant_billingAdmin_branches_requiring_it_fail_closed_while_the_support_branch_does_not_require_it
     - operator_mutation_rows_are_normative_target_contracts_not_current_availability; action_schema_mutationDigest_v1_vectors_and_account_issued_authorization_reference_flow_are_required_before_external_support
     - game_session_sessions_routes_are_current_owner_local_hooks; target_external_lifecycle_ingress_is_logging_admin_forwarding_and_no_complete_external_family_exists
@@ -1260,7 +1260,7 @@ routes:
     membership_creation: caller_bound_after_validation
     implementation_status:
       known_drift:
-        - current_runtime_invokes_membership_seam_implicitly_from_connect_token_or_play; this is a live security_contract_violation and affected admission must fail closed until explicit JOIN is the only membership writer
+        - explicit_JOIN_and_Join_And_Play_are_not_currently_implemented; connect_token_and_play_now_require_existing_membership_and_do_not_invoke_this_writer
   - service: account-service
     route: DELETE /tenants/{tenantId}/memberships/me
     scope: tenant

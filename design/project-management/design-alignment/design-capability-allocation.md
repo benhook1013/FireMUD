@@ -19,15 +19,15 @@ This ledger maps canonical design sources to the stable capabilities in the [Fir
 | Infrastructure | 6 | 6 | 0 | 100% classified |
 | Generated references | 1 | 1 | 0 | 100% classified |
 | Microservice architecture | 76 | 74 | 0; 2 explicit governance/template exemptions | 100% classified |
-| Architecture decisions | 48 | 47 | 0; 1 registry exemption | 100% classified |
-| **Total** | **220** | **217** | **0; 3 explicit exemptions** | **100% classified** |
+| Architecture decisions | 49 | 48 | 0; 1 registry exemption | 100% classified |
+| **Total** | **221** | **218** | **0; 3 explicit exemptions** | **100% classified** |
 
 ## Allocation Ledger
 
 | Design source | Heading or scope | Primary capability | Secondary handoffs | Source class | Notes or gap |
 | --- | --- | --- | --- | --- | --- |
 | [Microservice architecture allocation](./design-capability-allocation-microservices.md) | All 76 files under `design/architecture/microservices/**` | Per-source allocation | Per-source handoffs | Service design, contract, runtime/data, configuration, operations, and reference sources | Complete path-set coverage |
-| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 47 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; accepted, superseded, and withdrawn records remain distinguishable |
+| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 48 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; accepted, superseded, and withdrawn records remain distinguishable |
 | [System architecture allocation](./design-capability-allocation-system.md) | All 89 direct architecture, 6 infrastructure, and 1 generated source | Per-source allocation | Per-source handoffs | Normative design, runbook, reference, index, and generated sources | Complete path-set coverage |
 
 ## Architecture Decision Allocation
@@ -76,6 +76,7 @@ This ledger maps canonical design sources to the stable capabilities in the [Fir
 | `design/architecture/decisions/adr-0039-bounded-redis-operator-maintenance-surface.md` | `PO-1` | `PO-4`, `SF-1`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0040-account-global-control-login-and-explicit-tenant-selection.md` | `AA-1` | `EA-3`, `PO-1`, `SF-1` | Accepted |
 | `design/architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md` | `AA-1` | `GR-1`, `PO-3`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0042-global-account-and-tenant-scoped-game-relationships.md` | `AA-1` | `AA-2`, `AA-3`, `SF-2`, `PO-1` | Accepted |
 | `design/architecture/decisions/adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md` | `AA-1` | `PO-1`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0045-ordinary-login-factors-and-https-sensitive-action-step-up.md` | `AA-1` | `AA-2`, `EA-3`, `PO-1`, `SF-1` | Accepted |
 | `design/architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md` | `PO-1` | `AR-2`, `AR-3`, `GR-1`, `PO-2` | Accepted |

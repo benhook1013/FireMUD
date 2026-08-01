@@ -177,7 +177,11 @@ class AccountClientTest {
     AuthenticateResponse response = client.authenticate("22", "demo@example.com", "swordfish");
 
     assertThat(response).isEqualTo(expected);
-    verify(stub).authenticate(any(AuthenticateRequest.class));
+    ArgumentCaptor<AuthenticateRequest> requestCaptor =
+        ArgumentCaptor.forClass(AuthenticateRequest.class);
+    verify(stub).authenticate(requestCaptor.capture());
+    assertThat(requestCaptor.getValue().getEmail()).isEqualTo("demo@example.com");
+    assertThat(requestCaptor.getValue().getTenantId()).isEqualTo("22");
   }
 
   @Test
