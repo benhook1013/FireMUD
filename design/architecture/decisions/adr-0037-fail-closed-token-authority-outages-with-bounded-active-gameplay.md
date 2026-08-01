@@ -48,6 +48,10 @@ The earlier design said control-plane and new admission fail closed but did not 
 - Account issues and renews the ADR 0030 authority-freshness lease only after authoritative issued-token, account, tenant, membership, grant, and cutoff-checkpoint validation. It contains the applicable authority tuple, Account checkpoint, binding identity, issuer, absolute `authorityLeaseExpiresAt`, and its own monotonic fence. It proves prior positive token authority; it does not prove Redis coordination health.
 - The two leases use distinct issuer identities, storage fields, fence domains, renewal endpoints, and validation rules. Neither lease may satisfy the other lease's predicate, and no combined boolean or cached timestamp may replace either record. Renewal of one never changes the expiry or fence of the other.
 
+### Clock Basis And Deadline Comparison
+
+The deployment-synchronized clock basis for the ADR 0030 authority-freshness deadline is UTC epoch milliseconds from the deployment-approved synchronized wall clock. Deployment validation must establish that every Account and Game Session clock used for this contract stays within ADR 0030's configured `B_clock_skew` bound; an unavailable or out-of-bound clock fails closed. Account is the authoritative stamping clock: a successful renewal stores `authorityLeaseExpiresAt = accountTrustedNowMs + 60000` as an absolute deadline. Game Session compares that deadline using its deployment-synchronized wall clock, not Redis time, JWT time claims, process uptime, a monotonic elapsed-time estimate, socket activity, or a local heartbeat, and treats it as expired when `gameSessionTrustedNowMs + B_clock_skew >= authorityLeaseExpiresAt`. `B_clock_skew` is the only permitted comparison allowance and is already included in ADR 0030's 60-second revocation budget; it must not be added to the deadline or used as a post-expiry grace period.
+
 ### Already-Admitted Gameplay
 
 - Ordinary gameplay commands do not consult the issued-token registry or auth generations per command.
