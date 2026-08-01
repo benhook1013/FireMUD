@@ -139,9 +139,9 @@ No implementation-blocking override is active. Record an override here with the 
 
 ### Packet 2: Identity, Authority, And Security
 
-Packet 2 checklist dispositions record the human review outcome, not an inventory status. For every checked Packet 2 entry, `accepted` maps to the canonical inventory status `accepted-explicit`; `revised` maps to the same status after the revised target was accepted. Unchecked entries have no Packet 2 disposition; their canonical inventory status remains whatever the inventory records and is not inferred from this checklist. The `AUTH-02` and `AUTH-06` targets retain explicit `JOIN`/`Join & Play`, but `POST /auth/bootstrap/join` is target-state and not implemented. Current connect-token issuance requires existing caller-bound membership for every realm, regardless of realm visibility or realm grant, and does not create membership; current `PLAY` returns `JOIN_REQUIRED` for missing public-production membership and `WORLD_ACCESS_DENIED` for missing non-public membership. A realm grant never substitutes for membership, and the connect-token membership-authority-generation reread remains a gap.
+Packet 2 checklist dispositions record the human review outcome, not an inventory status. For every checked Packet 2 entry, `accepted` maps to the canonical inventory status `accepted-explicit`; `revised` maps to the same status after the revised target was accepted. Unchecked entries have no Packet 2 disposition; their canonical inventory status remains whatever the inventory records and is not inferred from this checklist. The `AUTH-02` and `AUTH-06` targets retain explicit `JOIN`/`Join & Play`, but `POST /auth/bootstrap/join` is target-state and not implemented. Current connect-token issuance and text `PLAY` may still invoke Account's `EnsurePublicProductionPlayerMembership` and implicitly create missing public-production membership until convergence; target admission instead requires existing caller-bound membership and returns `JOIN_REQUIRED` for a missing public-production membership. A realm grant never substitutes for membership, and the connect-token membership-authority-generation reread remains a gap.
 
-Packet 2 count reconciliation: the 25 reviewed decisions are covered by accepted ADRs 0020-0041, 0045, 0047, and 0048. The 26 checked rows include those 25 decisions plus one navigation-only row.
+Packet 2 count reconciliation: the 27 reviewed decisions are covered by accepted ADRs 0020-0043, 0045, 0047, and 0048. The 28 checked rows include those 27 decisions plus one navigation-only row.
 
 Packet 2 historical-alias rule: `MS-AA-TOKEN-REVOCATION` is a superseded service-scan alias, not an additional unresolved decision or an independent target. Its canonical mapping is the accepted/revised set `AUTH-03`, `JWT-01`, `JWT-02`, `JWT-03`, and `JWT-04`; new evidence or review outcomes must be recorded against those owning keys. The alias remains checked only to preserve navigation from historical scans and must not be counted as a separate Packet 2 decision or reopened as an alternative target.
 
@@ -173,8 +173,8 @@ Packet 2 historical-alias rule: `MS-AA-TOKEN-REVOCATION` is a superseded service
 #### Packet 2 P1
 
 - [x] `TENANT-02` — `revised` on 2026-07-19; [ADR 0041](../../architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md)
-- [ ] `MS-AA-GLOBAL-TENANT-BOUNDARY`
-- [ ] `MS-AA-LIFECYCLE-ERASURE`
+- [x] `MS-AA-GLOBAL-TENANT-BOUNDARY` — `revised` on 2026-07-19; [ADR 0042](../../architecture/decisions/adr-0042-global-account-and-tenant-scoped-game-relationships.md)
+- [x] `MS-AA-LIFECYCLE-ERASURE` — `revised` on 2026-07-19; [ADR 0043](../../architecture/decisions/adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md)
 - [ ] `MS-AA-PAYMENT-INSTRUMENT`
 - [x] `MS-AA-LOGIN-FACTORS` — `revised` on 2026-07-19; [ADR 0045](../../architecture/decisions/adr-0045-ordinary-login-factors-and-https-sensitive-action-step-up.md)
 - [ ] `MS-SOCIAL-PRESENCE-PRIVACY`

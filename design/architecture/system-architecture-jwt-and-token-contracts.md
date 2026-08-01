@@ -58,6 +58,47 @@ The record's absolute cleanup deadline is derived from that token's own JWT `exp
 
 JWT lifetime and the session safety margin are documented in [Environment & Secrets](./infrastructure/environment-and-secrets.md#authentication).
 
+### Canonical Profile-Catalog Byte Measurements
+
+The versioned Account token-profile catalog's byte ceilings use one deterministic representation across issuance, deployment validation, and boundary proof. For any JSON value `v`, `canonical_json_utf8(v)` means the UTF-8 bytes of its RFC 8785 JSON Canonicalization Scheme serialization: valid Unicode scalar values only, deterministic object-member ordering and number rendering, no producer-specific whitespace, and no Unicode normalization before canonicalization. Required empty maps/lists and omission of inapplicable optional objects follow the canonical presence rules above. The byte count is the length of those exact bytes, not a language object's size, a decoded value's size, or Redis allocator/protocol overhead.
+
+The profile catalog measures the following exact representations:
+
+- `authorityTupleBytes` is `len(canonical_json_utf8(authorityTuple))` for the complete applicable tuple object, including its required empty maps/lists and excluding no applicable member.
+- `compactJwtBytes` is the length in bytes of the complete ASCII compact JWT string `base64url(header) + "." + base64url(payload) + "." + base64url(signature)` (equivalently its UTF-8 byte length). The count includes both dots and every base64url character, and is taken after signing; decoded header/payload JSON, raw signature bytes, and transport framing are not substituted.
+- `registryRecordBytes` is `len(canonical_json_utf8(registryRecord))` for the complete supported-version logical registry record. The Redis value at `session:auth:token:<tokenHash>` is exactly those canonical JSON bytes; the Redis key, TTL, command framing, and storage overhead are outside this ceiling. Optional fields are omitted only when inapplicable, required empty values are serialized, and the exact record `schemaVersion` and lifecycle state are included. Every supported record state is measured after its state-specific fields are applied.
+
+Account constructs each exact claim, tuple, compact JWT, and registry-record candidate once, applies the corresponding catalog cardinality and byte ceilings before durable issuance/refresh success or registry registration, and rechecks the exact serialized record on each lifecycle transition. Deployment validation loads the same catalog and canonicalizers, validates finite limits against the same candidate shapes, and records the exact boundary values. Issuance, deployment, and focused boundary proof must use the same canonical bytes and golden vectors; decoded JWT claims, a different JSON serializer, a Redis hash-field sum, a character count under a non-UTF-8 encoding, or transport-size estimates are not equivalent measurements.
+
+### ADR 0014 Readiness-Probe Exception
+
+The only exception to the normal registry-backed authorization path is the non-authorizing readiness-probe path defined by [ADR 0014](./decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md). Its exact probe registry entry is:
+
+```text
+readinessProbeRegistryEntry = {
+  schemaVersion: 1,
+  rotationOperationId,
+  validatorId,
+  tokenProfile,
+  audience,
+  probeKind: "canary" | "representative",
+  jti,
+  target: { generation, kid },
+  expectedActive: { generation, kid },
+  registryVersion,
+  issuedAt,
+  expiresAt,
+  state: "PLANNED" | "ISSUED" | "VERIFIED" | "RETIRED" | "CLEANED"
+    | "EXPIRED" | "ABORTED"
+}
+```
+
+An entry is exact and operation-scoped by `{rotationOperationId, validatorId, tokenProfile, audience, probeKind}`. The readiness harness may submit a probe only when the caller is the deployment's allowlisted readiness-harness workload identity, that exact key and `jti` resolve to one unexpired `ISSUED` or `VERIFIED` entry, the target and expected-active signer fences match the current ADR 0014 rotation operation, and the token's profile, audience, dedicated probe type, reserved subject, `kid`, and expiry match the entry. The harness submits no application operation and supplies no caller entitlement, tenant membership, role, or scope.
+
+The registry lifecycle is `PLANNED -> ISSUED -> VERIFIED -> RETIRED -> CLEANED` on promotion, and `PLANNED|ISSUED|VERIFIED -> EXPIRED|ABORTED -> CLEANED` for expiry, failed promotion, or cancellation. Every transition compares the same operation, target/active signer fences, and entry version; a stale or cross-operation transition is rejected.
+
+This predicate is harness-only and non-authorizing. A request that fails any predicate, including an ordinary caller presenting a probe-shaped token or a harness request with a missing, extra, mismatched, expired, terminal, or cross-operation entry, is denied before normal authentication context is created, authorization is evaluated, or application side effects occur. A matching probe may proceed only through the production signature, claim, audience, algorithm, key-use, and JWKS validation code and is then unconditionally denied before authorization and side effects. A readiness entry never satisfies `session:auth:token:<tokenHash>`, grants authentication context, or permits a normal registry-backed request to bypass its required record.
+
 ## Implementation Status
 
 This document defines target-state token and revocation behavior. The current runtime has no complete issued-token registry or Account-owned authority-generation issuance, advancement, propagation, and validation path, and validators still use shared-HMAC verification rather than Account JWKS. The first implemented authority-generation path must prove that issuance and refresh cannot cross a concurrent generation advance and that every affected route rejects stale generations; no such runtime proof is currently claimed.

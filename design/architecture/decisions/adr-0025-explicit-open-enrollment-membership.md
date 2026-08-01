@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The accepted explicit-join decision is target state. Current connect-token issuance and `PLAY` require existing public-production membership and return `JOIN_REQUIRED` when it is absent; neither path invokes the membership writer. Explicit `JOIN` / `Join & Play`, the membership transaction, monotonic versioning, durable audit/outbox boundary, and the membership-authority-generation reread at connect-token issuance remain incomplete. No runtime completion is claimed by this ADR.
+The accepted explicit-join decision is target state. Until it converges, current first-party connect-token issuance and text `PLAY` can invoke `EnsurePublicProductionPlayerMembership`, which creates or returns implicit public-production membership when it is absent. Target connect-token issuance and `PLAY` instead require existing membership and return `JOIN_REQUIRED`; neither target path invokes the membership writer. Explicit `JOIN` / `Join & Play`, the membership transaction, monotonic versioning, durable audit/outbox boundary, and the membership-authority-generation reread at connect-token issuance remain incomplete. No runtime completion is claimed by this ADR.
 
 ## Decision Record
 
@@ -20,7 +20,7 @@ The accepted explicit-join decision is target state. Current connect-token issua
 
 A tenant may deliberately expose one default production realm for public discovery. Joining that game should create a durable Account-owned player membership: the relationship powers the player's game library, later discovery, return-to-game flows, creator membership views, moderation, and account/tenant data handling.
 
-The previous flow created membership implicitly during first-party connect-token issuance or text-client `PLAY`. That makes a durable relationship an invisible transport side effect and can create membership when a token, socket, character flow, or `PLAY` is abandoned. The current implementation also separates Redis replay state and best-effort audit logging from the membership transaction.
+The current flow creates membership implicitly during first-party connect-token issuance or text-client `PLAY` through `EnsurePublicProductionPlayerMembership`. That makes a durable relationship an invisible transport side effect and can create membership when a token, socket, character flow, or `PLAY` is abandoned. The current implementation also separates Redis replay state and best-effort audit logging from the membership transaction.
 
 ## Decision
 
@@ -32,7 +32,7 @@ The previous flow created membership implicitly during first-party connect-token
 - Successful membership powers the player's “my games”/return discovery even if the first connection or later `PLAY` attempt fails. A failed join transaction creates nothing.
 - For a public-production realm, connect-token issuance, character creation, and `PLAY` require the resulting membership and never create it implicitly. If it is missing, they return `JOIN_REQUIRED` with recovery guidance. `JOIN_REQUIRED` is not a private, playtest, or other non-production enrollment path.
 - `IssueConnectToken` must re-read the current caller-bound membership and membership authority generation at issuance time. A stale bootstrap token, discovery result, or cached membership decision cannot issue a connect token after membership authority has advanced or been revoked.
-- Fresh authority failure semantics are explicit: a fresh authoritative entitlement result that records a billing denial, grace state, or any state that does not allow public joining returns `TENANT_BILLING_BLOCKED`; inability to establish fresh authoritative entitlement returns `ENTITLEMENT_UNAVAILABLE` instead. A stale, future-dated, target-mismatched, version-mismatched, incomplete, or otherwise unsafe result cannot authorize a join and, if it cannot be replaced by fresh authority, follows the unavailable outcome.
+- Fresh authority failure semantics are explicit: only a fresh authoritative entitlement result that records a billing denial or a billing grace state that blocks joining returns `TENANT_BILLING_BLOCKED`. A fresh nonbilling public-production policy or admission denial returns `PUBLIC_PRODUCTION_ADMISSION_DENIED`. Inability to establish fresh authoritative entitlement, or an unavailable, stale, future-dated, target-mismatched, version-mismatched, incomplete, or otherwise unsafe entitlement result that cannot be replaced by fresh authority, returns `ENTITLEMENT_UNAVAILABLE`.
 - Private, playtest, and other non-public or non-production realms require an active tenant membership and current realm-specific grant/entitlement before connect-token issuance, character creation, or `PLAY`; they never expose public-production `JOIN` or return `JOIN_REQUIRED`.
 
 ### Membership Transaction
@@ -67,7 +67,7 @@ Redis may accelerate replay responses but is not the join transaction or audit a
 
 ### Implicit Membership During Connect or `PLAY`
 
-This removes one interaction but creates durable membership from a transport/admission attempt, makes consent unclear, and produces abandoned membership rows when later steps fail.
+This is the current `EnsurePublicProductionPlayerMembership` compatibility behavior, but it removes one interaction by creating durable membership from a transport/admission attempt, makes consent unclear, and produces abandoned membership rows when later steps fail. The accepted target therefore rejects it in favor of explicit `JOIN`.
 
 ### Invitation or Creator Approval for Every Join
 
@@ -81,9 +81,9 @@ This avoids durable rows for casual visits but creates a second class of gamepla
 
 - Add explicit browser/mobile join and text `JOIN` flows before first character creation/connect/`PLAY`.
 - Carry the verified `connectScopeId` through `JoinPublicProductionMembership`, bind it into the versioned request/target digest, and prove the digest and selector are rechecked at the membership commit gate.
-- Replace the current differently named proto seam `EnsurePublicProductionPlayerMembership` with the canonical `JoinPublicProductionMembership` operation rather than retaining a compatibility adapter. Removal is complete only after the Account proto/service, authenticated caller, Gateway/auth routing and allowlists, configuration, tests, and generated references use the canonical operation and the old symbol is absent. `POST /auth/connect-token` and `PLAY` must require membership and must not write it.
+- Replace the current differently named proto seam `EnsurePublicProductionPlayerMembership` with the canonical `JoinPublicProductionMembership` operation rather than retaining a compatibility adapter. Removal is complete only after the Account proto/service, authenticated caller, Gateway/auth routing and allowlists, configuration, tests, and generated references use the canonical operation and the old symbol is absent. In the target state, `POST /auth/connect-token` and `PLAY` must require membership and must not write it.
 - Commit membership, its `membershipAuthorityGeneration`/`membershipVersion` changes, operation outcome, and durable audit/outbox atomically and make SQL membership/operation state authoritative for replay.
-- Gate every new membership commit on the immediately preceding fresh ADR 0028 entitlement evaluation. Prove that a failed refresh returns `ENTITLEMENT_UNAVAILABLE`, and that no membership, audit, or outbox record is committed after a failed, stale, future-dated, mismatched, or otherwise invalid evaluation, including evaluation/commit races. Prove that public-production alone can return `JOIN_REQUIRED` or invoke public `JOIN`, while private/playtest/non-production admission requires active membership and its current grant/entitlement and never invokes public join.
+- Gate every new membership commit on the immediately preceding fresh ADR 0028 entitlement evaluation. Prove that unavailable or unsafe entitlement authority returns `ENTITLEMENT_UNAVAILABLE`, billing denial or a billing grace state that blocks joining returns `TENANT_BILLING_BLOCKED`, and a nonbilling public-production policy denial returns `PUBLIC_PRODUCTION_ADMISSION_DENIED`; no membership, audit, or outbox record is committed after a failed, stale, future-dated, mismatched, or otherwise invalid evaluation, including evaluation/commit races. Prove that public-production alone can return `JOIN_REQUIRED` or invoke public `JOIN`, while private/playtest/non-production admission requires active membership and its current grant/entitlement and never invokes public join.
 - Implement monotonic membership versioning and prove races/retries return one membership and one logical join event.
 - Prove a successful join survives later token/socket/`PLAY` failure, while a failed join creates no membership, audit event, character, or admission state.
 - Prove closing enrollment blocks new joins without silently removing existing members, and prove the leave surface removes future membership authority without over-deleting retained data.
