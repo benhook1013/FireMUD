@@ -310,14 +310,14 @@ FireMUD standardizes a dedicated **player bootstrap** contract for first-party g
 - On success, the endpoint returns one short-lived, memory-only **player bootstrap token** plus expiry metadata.
 - This bootstrap token is not a control-plane `control-ui` JWT and must not be accepted on admin/creator APIs.
 - It is still an Account Service-issued JWT profile and must carry at least `iss`, `sub`, `accountId`, `aud=player-bootstrap`, `jti`, `iat`, `nbf`, `exp`, positive monotonic `tokenGeneration`, complete unscoped `authorityTuple`, and positive `issuanceFence`, backed by one `session:auth:token:<tokenHash>` record so account-level revocation and logout semantics apply.
-- Audience/scope is limited to gameplay bootstrap functions: caller-bound discovery, `POST /auth/bootstrap/join`, bootstrap-authenticated character creation, and `POST /auth/connect-token`. It does not authorize gameplay commands, admin/creator APIs, or arbitrary tenant mutation.
+- Audience/scope is limited to gameplay bootstrap functions: caller-bound discovery, bootstrap-authenticated character discovery and character creation, `POST /auth/bootstrap/join`, and `POST /auth/connect-token`. It does not authorize gameplay commands, admin/creator APIs, or arbitrary tenant mutation.
 - Lifetime is intentionally short (target <= 5 minutes), stored in memory only, and cleared on tab reload/logout.
 - `POST /auth/connect-token` must derive caller identity from this bootstrap token; clients must not supply an arbitrary `accountId`.
 - The subsequent gameplay `LOGIN` remains mandatory but, for first-party `/ws/game/**` clients, it must complete using the already-verified bootstrap/connect context rather than requiring the browser to re-submit account credentials. In other words, first-party bare `LOGIN` on `/ws/game/**` is an identity-consumption/binding step, not a second credential-entry step. A mismatch between the verified bootstrap identity and the gameplay login result is a hard failure and the connect context must not be honored.
 
 - Bootstrap issuance API: Account Service endpoint (for example `POST /auth/player-bootstrap`) that authenticates the player account for first-party gameplay bootstrap only and returns one short-lived bootstrap token plus expiry metadata.
 - Issuer: Account/authentication control-plane only, after direct player-account authentication. Tenant membership and entitlement checks do not occur here because no gameplay tenant has been selected yet; those tenant-scoped checks belong to connect-token admission.
-- First-party bootstrap ownership: Account Service owns `POST /auth/player-bootstrap`, bootstrap discovery, explicit `/auth/bootstrap/join`, bootstrap-authenticated character creation, `POST /auth/connect-token`, and membership lifecycle. Game Session exposes the equivalent text `JOIN` command and owns in-socket `LOGIN`/`PLAY`, but delegates membership mutation to Account and never creates it during `PLAY`.
+- First-party bootstrap ownership: Account Service owns `POST /auth/player-bootstrap`, bootstrap discovery, bootstrap-authenticated character discovery and character creation, explicit `/auth/bootstrap/join`, `POST /auth/connect-token`, and membership lifecycle. Game Session exposes the equivalent text `JOIN` command and owns in-socket `LOGIN`/`PLAY`, but delegates membership mutation to Account and never creates it during `PLAY`.
 - `POST /auth/bootstrap/join` and the delegated `JoinPublicProductionMembership` operation accept the verified discovery `connectScopeId` plus `requestId`, not an independently authoritative tenant/world/realm tuple. Account resolves the selector for the caller, binds the resolved target and `pointerVersion` into the request/operation digest, and rechecks that selector and digest at the membership commit gate.
 - Bootstrap-discovery and mutation APIs: authenticated first-party HTTP endpoints (for example `GET /auth/bootstrap/worlds`, `GET /auth/bootstrap/worlds/{world}/realms`, `GET /auth/bootstrap/worlds/{world}/realms/{realm}/characters`, `POST /auth/bootstrap/join`, and bootstrap-authenticated `POST /auth/bootstrap/worlds/{world}/realms/{realm}/characters`) that accept only the `player-bootstrap` token profile and return or mutate the canonical lobby data used to choose a target before socket open. Character creation is allowed only after the explicit join where public-production membership is required.
   - These endpoints are the canonical pre-socket discovery path for first-party clients.
@@ -489,7 +489,7 @@ Authorization: Bearer <bootstrapToken>
 POST /auth/bootstrap/join
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_emberfall_production_v1", requestId: "req-join-1" }
--> { tenantId: "e14f2d0c-8b7a-4f26-9c51-6a3d7e8b2c40", membershipVersion: 1, joined: true }
+-> { tenantId: "e14f2d0c-8b7a-4f26-9c51-6a3d7e8b2c40", membershipLifecycleState: "ACTIVE", membershipAuthorityGeneration: 8, membershipVersion: 1, joined: true }
 
 GET /auth/bootstrap/worlds/emberfall/realms/production/characters?connectScopeId=cs_emberfall_production_v1
 Authorization: Bearer <bootstrapToken>

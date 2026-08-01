@@ -55,7 +55,7 @@ The canonical design allocation covers all 221 discovered architecture sources: 
 
 | Capability | Sources reviewed | Decisions inventoried | Human-review candidates | Coverage state |
 | --- | ---: | ---: | ---: | --- |
-| Existing ADR set | 48 ADR records (46 accepted; 2 historical/superseded) plus the architecture decision registry/index | 9 original aliases within the 68 cross-cutting decisions; later accepted records are allocated directly | Prioritized in the source ledger | Accepted registry through ADR 0050; Packet 2 coverage is ADRs 0020-0041, 0045, 0047, and 0048 |
+| Existing ADR set | 48 ADR records (46 accepted; 2 historical/superseded) plus the architecture decision registry/index | 9 original aliases within the 68 cross-cutting decisions; later accepted records are allocated directly | Prioritized in the source ledger | Accepted registry through ADR 0050; Packet 2 coverage is ADRs 0020-0043, 0045, 0047, and 0048 |
 | Cross-cutting system architecture | 22 canonical sources plus ADRs | 68 | Prioritized in the source ledger | Complete and independently audited |
 | Microservice architecture | 76 sources | 23 rows = 22 distinct decisions + navigation-only `MS-AA-TOKEN-REVOCATION` alias; stronger evidence for 40 existing keys | Prioritized in the source ledger | Complete and independently audited |
 | Specialized runtime architecture | 39 sources | 54 new; stronger evidence for 20 existing keys | Prioritized in the source ledger | Complete and independently audited |
@@ -106,15 +106,15 @@ The review facilitator must preserve the current choice's strongest argument, co
 | Packet | Scope | Reviewed distinct decisions | Navigation rows | State |
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
-| 2 | Identity, authority, and security | 25 | 32 | `in-progress` |
+| 2 | Identity, authority, and security | 27 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 0 | 43 | `not-started` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **34** | **183** | `in-progress` |
+| **Total** | | **36** | **183** | `in-progress` |
 
-The progress total counts checklist/navigation rows. Packet 2 contains 31 distinct decision keys represented by 32 rows; its extra row is the checked historical alias below. Its 26 checked rows therefore represent 25 reviewed decisions plus one navigation-only alias.
+The progress total counts checklist/navigation rows. Packet 2 contains 31 distinct decision keys represented by 32 rows; its extra row is the checked historical alias below. Its 28 checked rows therefore represent 27 reviewed decisions plus one navigation-only alias.
 
 ### Priority Overrides
 
