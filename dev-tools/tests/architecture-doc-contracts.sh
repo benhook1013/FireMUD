@@ -184,7 +184,7 @@ obsolete_envelope_phrases = ("Account-issued envelope", "Account-validated envel
 decision_history_dir = root / "design/architecture/decisions"
 
 historical_adr_record_name = re.compile(r"adr-\d{4}-.+\.md")
-status_heading = re.compile(r"^ {0,3}##[ \t]+Status[ \t]*$")
+status_heading = re.compile(r"^##[ \t]+Status[ \t]*$")
 historical_status_value = re.compile(r"^(?:Superseded|Withdrawn)\b")
 raw_html_block_start = re.compile(
     r"^[ \t]{0,3}<(?P<tag>address|article|aside|base|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|ol|p|pre|script|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \t/>]|$)",
@@ -280,6 +280,8 @@ def first_top_level_status_value(text):
             if status_heading.match(line.rstrip("\r\n")):
                 status_heading_found = True
             continue
+        if line.startswith((" ", "\t")):
+            continue
         if line.strip():
             return line.strip()
     return None
@@ -334,6 +336,14 @@ raw_html_adr_fixture_text = (
     "Account-issued envelope\n"
     "</div>\n"
 )
+indented_status_value_fixture = decision_history_dir / "adr-9996-indented-status-value-fixture.md"
+indented_status_value_fixture_text = (
+    "# ADR 9996: Indented Status Value Fixture\n\n"
+    "## Status\n\n"
+    "    Superseded by ADR 0001\n\n"
+    "Accepted\n\n"
+    "Account-issued envelope\n"
+)
 registry_index_fixture = decision_history_dir / "README.md"
 if not is_historical_adr_record(historical_adr_fixture, historical_adr_fixture_text):
     raise SystemExit("historical ADR fixture was not recognized as an exempt record")
@@ -345,6 +355,8 @@ if first_top_level_status_value(raw_html_adr_fixture_text) is not None:
     raise SystemExit("raw HTML block status was incorrectly parsed")
 if first_top_level_status_value("    ## Status\n    Superseded by ADR 0001\n") is not None:
     raise SystemExit("four-space indented code-block status was incorrectly parsed")
+if first_top_level_status_value(indented_status_value_fixture_text) != "Accepted":
+    raise SystemExit("indented fake status value bypassed the real Accepted status")
 reject_obsolete_envelope_phrases(
     historical_adr_fixture,
     historical_adr_fixture_text,
@@ -369,6 +381,16 @@ except SystemExit as error:
         raise SystemExit(f"unexpected raw HTML ADR fixture diagnostic: {error}")
 else:
     raise SystemExit("raw HTML ADR fixture bypassed obsolete phrase rejection")
+try:
+    reject_obsolete_envelope_phrases(
+        indented_status_value_fixture,
+        indented_status_value_fixture_text,
+    )
+except SystemExit as error:
+    if "obsolete current-state phrase" not in str(error):
+        raise SystemExit(f"unexpected indented status fixture diagnostic: {error}")
+else:
+    raise SystemExit("indented status fixture bypassed obsolete phrase rejection")
 try:
     reject_obsolete_envelope_phrases(
         registry_index_fixture,

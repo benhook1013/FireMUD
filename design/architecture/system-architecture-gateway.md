@@ -321,6 +321,8 @@ This section is the canonical source of truth for connect-token enforcement and 
   - `catalogRevision`
   - `connectScopeId`
   - `requestId`
+  - bounded selected-target `authorityTuple` (the canonical nested shape, including applicable target-tenant and caller-membership generations)
+  - separate exact `membershipVersion` map; it is not folded into `authorityTuple` or inferred from a generation
   - `iat` (absolute issuance time)
   - `exp` (absolute expiration)
   - `jti` (single-use nonce for replay defense)
