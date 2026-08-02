@@ -51,7 +51,43 @@ Unattended operator automation uses `IssueAutomationOperatorAuthorizationReferen
 
 The field name is intentional: `tenant_generation` is the canonical automation binding used by Account's typed API and ADR 0048 for the current tenant-scoped branch. `target_tenant_generation` is reserved for conditional target-tenant/global-role branches, including the future automated branch described above, and is not an alias for the current automation field. Both issuance RPCs also carry the current Logging and Admin reservation owner and positive claim fence; Account verifies those fields against its durable reservation record and includes them in the issuance idempotency tuple.
 
-Both issuance paths use the same bounded typed-mutation admission contract before Account issues a reference. The published action-family schema pair defines the typed scope, target, immutable typed `targetOwner`, expected-version, mutation, and audit-reason fields, explicit presence or absence, raw and normalized limits, and the `mutationDigest/v1` golden vectors. Account, Logging and Admin, and the owner reject malformed, over-limit, unsupported, or mismatched typed input before hashing, authorization issuance, persistence, or forwarding. The paths differ only in their authority attestation: the human path carries Account-validated `control-ui` token, role, assurance, generation, and applicable membership evidence; the automation path carries Account-validated exact mTLS workload and versioned policy evidence. Neither caller assertions nor an ingress-local role string is an authority source. For every supported action family, the Account-issued reference carries an immutable `authorityEvidenceBundle` containing only the complete authority evidence declared by that family's schema: the applicable `authorityTuple`, independent `membershipVersion`, positive `issuanceFence`, authority scope, source transaction/outbox or event version, projection status/freshness, issuance-operation identity, and applicable human token/role/assurance/generation or exact automation workload/policy evidence. The reference and the canonical complete `postAuthorizationExecutionTuple` separately bind `issuanceKind`, exact authenticated workload/actor or automation-policy binding, immutable typed `targetOwner`, `reservationOwnerId`, positive `reservationClaimFence`, and every schema-bound typed presence/absence value through redemption and owner commit; the bundle does not contain the execution tuple. Only fields that the action-family schema explicitly declares absent may be omitted; an ingress or owner must not omit a declared field because it is unavailable locally.
+Both issuance paths use the same bounded typed-mutation admission contract before Account issues a reference. The published action-family schema pair defines the typed scope, target, immutable typed `targetOwner`, expected-version, mutation, and audit-reason fields, explicit presence or absence, raw and normalized limits, and the `mutationDigest/v1` golden vectors. Account, Logging and Admin, and the owner reject malformed, over-limit, unsupported, or mismatched typed input before hashing, authorization issuance, persistence, or forwarding. The paths differ only in their authority attestation: the human path carries Account-validated `control-ui` token, role, assurance, generation, and applicable membership evidence; the automation path carries Account-validated exact mTLS workload and versioned policy evidence. Neither caller assertions nor an ingress-local role string is an authority source. For every supported action family, the Account-issued reference carries the exact immutable `authorityEvidenceBundle/v1` defined below. The reference and the canonical complete `postAuthorizationExecutionTuple` separately bind the bundle, `issuanceKind`, exact authenticated workload/actor or automation-policy binding, immutable typed `targetOwner`, `reservationOwnerId`, positive `reservationClaimFence`, and every schema-bound typed presence/absence value through redemption and owner commit; the bundle is authority evidence and does not contain the execution tuple. Only fields that the action-family schema explicitly declares absent may be omitted; an ingress or owner must not omit a declared field because it is unavailable locally.
+
+`authorityEvidenceBundle/v1` has one canonical logical shape across ADR 0047, ADR 0048, and the Account API:
+
+```json
+{
+  "bundleVersion": "authorityEvidenceBundle/v1",
+  "authorityScope": {
+    "scope": "...",
+    "actionFamily": "...",
+    "applicableAccountId": "... omitted when inapplicable",
+    "applicableTenantId": "... omitted when inapplicable"
+  },
+  "accountProjectionEvidence": {
+    "sourceType": "ACCOUNT",
+    "sourceEvidenceId": "...",
+    "sourceEvidenceVersion": "...",
+    "projectionStatus": "CURRENT",
+    "evaluatedAt": "...",
+    "expiresAt": "..."
+  },
+  "issuanceOperationIdentity": {
+    "issuanceOperationId": "...",
+    "controlPlaneRequestId": "...",
+    "mutationDigest": "..."
+  },
+  "issuanceKind": "HUMAN or AUTOMATION",
+  "authorityTuple": "the exact complete canonical authorityTuple object",
+  "membershipVersion": {
+    "tenantId": "version"
+  },
+  "issuanceFence": "...",
+  "issuanceEvidence": "exactly one tagged HumanAuthorityEvidence/v1 or AutomationAuthorityEvidence/v1 object"
+}
+```
+
+`authorityTuple` is copied without scalarization or field renaming from the complete canonical shape in the [JWT and token contracts](../system-architecture-jwt-and-token-contracts.md#canonical-authority-tuple). `membershipVersion` is the independently applicable Account membership-version map, including `{}` when no membership applies. `HumanAuthorityEvidence/v1` carries the Account-derived actor account, `control-ui` token `jti`, role, assurance, account generation, and applicable tenant or target-tenant generation. `AutomationAuthorityEvidence/v1` carries the exact authenticated workload, automation-policy identity/version, and applicable tenant generation. The tagged `issuanceEvidence` arm must agree with Account-derived `issuanceKind`; the inapplicable arm and inapplicable authority-scope identifiers are omitted rather than serialized as `null`, empty objects, or sentinels. Account derives every bundle member after validating the pre-authorization request. Consumers reject missing, extra, contradictory, separately sourced, stale, expired, wrongly tagged, or non-canonical bundle fields and must redeem the original reference with Account; a copied bundle never becomes a second authority.
 
 For every forwarded owner-mutation family, ADR 0048's canonical complete `postAuthorizationExecutionTuple` is the required post-authorization identity. It explicitly contains `controlPlaneRequestId`, `mutationDigest`, `issuanceKind`, Account-returned `authorizationReferenceFingerprint`, exact authenticated workload and actor/policy binding, exact typed `scope`, normalized `actionFamily`, `actionFamilySchemaId`, `actionFamilySchemaVersion`, typed `target`, immutable typed `targetOwner`, typed `expectedVersion`, typed `mutation`, typed `auditReason`, the exact applicable `authorityTuple`, independent applicable `membershipVersion`, positive `issuanceFence`, `reservationOwnerId`, positive `reservationClaimFence`, immutable `authorityEvidenceBundle` containing only authority evidence and its source versions, and every schema-bound typed presence/absence value. `targetOwner` is distinct from `target`, immutable after reservation, and is never inferred from current routing or owner state. Reservation and pre-authorization Account issuance/recovery compare `preAuthorizationReservationTuple`; post-authorization tuple completion, owner idempotency, terminal/no-commit proof, result lookup, conflict handling, and same-identifier rearm carry and compare this exact tuple; no participant may omit a required identity because it is unavailable locally.
 
@@ -190,6 +226,9 @@ Implementation and focused proof must:
 - prove ordinary gameplay and owner-local enforcement do not call Logging and Admin merely to process a command or commit domain state.
 
 Feature-flag, admission-pointer/version-upgrade, and tick owner-mutation families are unsupported pending their action-family schemas, cross-language `mutationDigest/v1` golden vectors, and Account authorization-reference issuance/redemption flow; they are not executable families in the current boundary. The separate moderation policy-input/audit persistence family is also unavailable/gated until its action schema, cross-language vectors, Account authorization-reference issuance, and Logging & Admin receiving-service validation/redemption exist; it does not require domain-owner redemption or an owning enforcement contract. Quota and broader remediation families remain deferred until their owner contracts exist. Any forwarded owner-mutation family is incomplete until its external route, audit, typed forwarding, Account reference redemption, owner mutation, negative authorization, retry, and outage behavior are all demonstrated. `/moderation/actions` must not be described as current persistence-only support while its own gate remains incomplete. A family with no current route or owner contract is recorded as coverage drift and is not represented by a placeholder endpoint.
+
+- the exact `authorityEvidenceBundle/v1` shape is preserved identically through human and automation issuance, redemption, forwarding, result lookup, and owner commit, including authority scope, source evidence/version, projection status/freshness, issuance-operation identity, `authorityTuple`, independent `membershipVersion`, `issuanceFence`, `issuanceKind`, and exactly the applicable human or automation evidence;
+- the original opaque reference reaches the current domain owner only through a bounded handoff that preserves the original expiry and reservation claim fence, zeroizes transient plaintext after redemption/expiry/failure, never issues a replacement or reuses a redeemed reference, and keeps `RecoverOperatorAuthorizationReference` pre-authorization only;
 
 ## Reversibility and Revisit Triggers
 

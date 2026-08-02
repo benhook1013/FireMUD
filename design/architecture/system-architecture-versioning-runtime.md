@@ -564,6 +564,8 @@ Runtime operations must enforce the realm-routing contract exposed to players: e
 
 For capacity admission, an entitlement-preserving one-for-one replacement cutover uses `capacityDelta=0`; a positive `capacityDelta` is reserved only for net capacity creation. A changed `admissionAttemptId` is accepted only when it is the fresh identity bound by a matching committed rearm; every other changed attempt identity is an `IDEMPOTENCY_CONFLICT`.
 
+When the bounded reconciliation deadline expires without durable positive runtime-commit evidence or durable no-accept/no-runtime-mutation evidence, the Account-owned reservation-recovery worker must durably escalate the original outer request and keep the reservation fenced in an ambiguous state. Admission remains closed, the current reservation fence remains authoritative, and timeout, process death, local absence, or operator assertion cannot release the reservation, finalize an uncommitted attempt, advance `capacityRearmFence`, start a fresh/replacement attempt, or reopen the target. Account owns the escalation and reconciliation record; lock expiry does not transfer that authority. Release, finalization of an uncommitted reservation, rearm, or replacement requires the durable no-accept/no-runtime-mutation proof bound to the original tuple, attempt, digest, reservation, and current fence. A positively committed runtime may only finalize the original accepted workflow from its independent positive commit evidence; it is not a deadline-expiry cleanup or rearm proof.
+
 ### Realm Routing Contract For Player-Addressable Realms
 
 Version cutover contract for a player-addressable realm:

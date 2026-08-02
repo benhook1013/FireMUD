@@ -93,6 +93,8 @@ The text-to-Account translation is one canonical operation across clients. `JOIN
 
 This is the target onboarding flow for discovering and entering a realm. In the current runtime, credential-bearing text clients with a selected character may still enter through the direct `LOGIN` plus `PLAY` compatibility path because explicit `JOIN`/`Join & Play` remains unimplemented; current Account membership enforcement may invoke the implicit `EnsurePublicProductionPlayerMembership` seam and create missing membership, so this path does not yet implement target `JOIN_REQUIRED` behavior. That implicit writer is implementation drift: no character, connect-token, or `PLAY` step is allowed to create or restore membership in the target contract. First-party browser and mobile-browser clients never use this exception: they remain behind authenticated bootstrap, discovery, and lobby gates. First-party WebSocket connect tokens and any future hidden Telnet smart-client metadata may narrow the target realm, but they never replace the authenticated lobby contract.
 
+The current text shortcut is not the target browser or text sequence: target first-time public entry is `LOGIN` -> explicit `JOIN`/`Join & Play` -> realm-scoped `CHARS`/creation -> connect-token or `PLAY`, while the current compatibility path is only direct credential-bearing text `LOGIN` -> `PLAY` for an already usable character. A browser reconnect or browser entry with an invalid, missing, or realm-ineligible character must complete the current realm-scoped `CHARS`/creation gate before requesting a connect token and opening gameplay; it cannot use the returning shortcut.
+
 ```plaintext
 Telnet:
 Player → TCP Proxy → WORLDS (optional public browse) → LOGIN → [REALMS if multiple]

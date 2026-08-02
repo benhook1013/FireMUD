@@ -10,6 +10,12 @@ Explicit `JOIN`/`Join & Play` is target behavior, not a complete current runtime
 
 The explicit `JOIN`/`Join & Play` action and the independent `membershipVersion` plus `membershipAuthorityGeneration` reread at connect-token issuance are both unimplemented/proof gaps. Until both are implemented and proven, the frontend must keep first public-production entry with missing or `INACTIVE` membership fail-closed and unavailable rather than exposing a retry path that can create membership implicitly or issue a token from stale authority. Returning active members and private/playtest callers with existing membership remain eligible when the full current admission checks pass, including exact `membershipAuthorityGeneration` and independent `membershipVersion` rereads; a path without that proof remains unavailable for its own authority gap. This status is the frontend summary of the target/current distinction in [Authentication & Authorization](./system-architecture-authentication.md#implementation-status).
 
+## Canonical Gameplay Enablement Gate
+
+The frontend is a consumer of the canonical [realm catalog and admission-pointer contract](./system-architecture-multi-tenancy.md#realm-catalog-and-admission-pointer-contract), not an owner of a second enablement policy. It may enable a selected realm's Join/Play action only from one current discovery snapshot whose `GetAdmissionPointer(tenantId, worldSlug, realmSlug)` result is complete, resolves the same catalog `catalogRevision`, and reports the canonical `OPEN` target with its `admissibleGameInstanceId` and `pointerVersion`; the catalog's visibility and `publicProduction` facts remain the authority for their respective policies. The client must not derive enablement from a local flag, cached slug, cached `gameInstanceId`, or a duplicated pointer/policy contract.
+
+Missing, malformed, ambiguous, stale, or unavailable pointer authority keeps auth state but disables gameplay entry and maps to `ADMISSION_POINTER_UNAVAILABLE`; a complete `CLOSED` pointer maps to `REALM_UNAVAILABLE`. The frontend reruns canonical discovery before retrying and never substitutes a cached target or infers one from display metadata. This gate does not change the separate membership, entitlement, join, or connect-token predicates owned by Account and Game Session.
+
 ## Implementation Notes
 
 - The current `web-client` baseline now uses `TanStack Query` plus local feature state rather than Redux starter scaffolding.

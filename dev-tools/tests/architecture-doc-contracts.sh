@@ -184,16 +184,50 @@ obsolete_envelope_phrases = ("Account-issued envelope", "Account-validated envel
 decision_history_dir = root / "design/architecture/decisions"
 
 historical_adr_record_name = re.compile(r"adr-\d{4}-.+\.md")
-status_heading = re.compile(r"^[ \t]*##[ \t]+Status[ \t]*$")
+status_heading = re.compile(r"^ {0,3}##[ \t]+Status[ \t]*$")
 historical_status_value = re.compile(r"^(?:Superseded|Withdrawn)\b")
+
+
+def strip_html_comments(line, in_html_comment):
+    visible = []
+    cursor = 0
+    while cursor < len(line):
+        if in_html_comment:
+            closing = line.find("-->", cursor)
+            if closing == -1:
+                return "".join(visible), True
+            in_html_comment = False
+            cursor = closing + len("-->")
+            continue
+
+        opening = line.find("<!--", cursor)
+        if opening == -1:
+            visible.append(line[cursor:])
+            break
+        visible.append(line[cursor:opening])
+        in_html_comment = True
+        cursor = opening + len("<!--")
+    return "".join(visible), in_html_comment
 
 
 def first_top_level_status_value(text):
     in_fenced_block = False
     fence_marker = None
     opening_line_number = None
+    in_html_comment = False
     status_heading_found = False
     for line_number, line in enumerate(text.splitlines(keepends=True), start=1):
+        if in_fenced_block:
+            in_fenced_block, fence_marker, opening_line_number = advance_fenced_block_state(
+                line,
+                in_fenced_block,
+                fence_marker,
+                opening_line_number,
+                line_number,
+            )
+            continue
+
+        line, in_html_comment = strip_html_comments(line, in_html_comment)
         was_in_fenced_block = in_fenced_block
         in_fenced_block, fence_marker, opening_line_number = advance_fenced_block_state(
             line,
@@ -237,12 +271,31 @@ def reject_obsolete_envelope_phrases(path, text):
 historical_adr_fixture = decision_history_dir / "adr-9999-history-fixture.md"
 historical_adr_fixture_text = "# ADR 9999: Historical Fixture\n\n## Status\n\nSuperseded by ADR 0001\n\nAccount-issued envelope\n"
 accepted_adr_fixture = decision_history_dir / "adr-9998-accepted-fixture.md"
-accepted_adr_fixture_text = "# ADR 9998: Accepted Fixture\n\n```markdown\n## Status\n\nSuperseded by ADR 0001\n```\n\n## Status\n\nAccepted\n\nAccount-issued envelope\n"
+accepted_adr_fixture_text = (
+    "# ADR 9998: Accepted Fixture\n\n"
+    "<!--\n"
+    "## Status\n\n"
+    "Superseded by ADR 0001\n"
+    "Account-issued envelope\n"
+    "-->\n\n"
+    "```markdown\n"
+    "## Status\n\n"
+    "Superseded by ADR 0001\n"
+    "```\n\n"
+    "    ## Status\n"
+    "    Superseded by ADR 0001\n\n"
+    "## Status\n\n"
+    "Accepted\n"
+)
 registry_index_fixture = decision_history_dir / "README.md"
 if not is_historical_adr_record(historical_adr_fixture, historical_adr_fixture_text):
     raise SystemExit("historical ADR fixture was not recognized as an exempt record")
 if is_historical_adr_record(registry_index_fixture, obsolete_envelope_phrases[0]):
     raise SystemExit("decision registry/index fixture was incorrectly exempted")
+if first_top_level_status_value(accepted_adr_fixture_text) != "Accepted":
+    raise SystemExit("commented, fenced, or indented fake status bypassed the Accepted fixture")
+if first_top_level_status_value("    ## Status\n    Superseded by ADR 0001\n") is not None:
+    raise SystemExit("four-space indented code-block status was incorrectly parsed")
 reject_obsolete_envelope_phrases(
     historical_adr_fixture,
     historical_adr_fixture_text,
