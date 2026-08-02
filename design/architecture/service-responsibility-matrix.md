@@ -99,7 +99,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Authoritative owner: edge admin/creator API allowlist policy | | | | | | | | | | | ✔ |
 | Admin/creator API participation (edge-routable domain APIs) | ✔ | | ✔ | ✔ | | | | ✔ | ✔ | | ✔ |
 | External operator read/proof-read ingress | | | | | | | | | ✔ | | ✔ |
-| External operator write ingress | | | | | | | | | ✔ | | ✔ |
+| External operator write ingress | | | ✔ | | | | | | ✔ | | ✔ |
 | API gateway rate limiting and abuse filters | | | | | | | | | | | ✔ |
 
 The `<tenantId, gameInstanceId, regionId>` tuple in the tick and coordination health metrics row is the diagnostic scope Game Session must support through control-plane status, structured logs, and audit records. It is not a Prometheus label tuple: metric series must use bounded `scope`, `scope_bucket`, `region_class`, or equivalent operational buckets under the cardinality policy, while exact identities remain in diagnostic records.
