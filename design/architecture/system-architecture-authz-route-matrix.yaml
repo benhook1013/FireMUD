@@ -74,6 +74,7 @@ classifications:
   - player_bootstrap_tenant
   - pre_tenant_discovery
   - public_production_onboarding
+  - gameplay_admission
   - tenant_regular
   - billing_safe_tenant
   - cross_tenant_support_safe
@@ -155,7 +156,7 @@ routes:
   - service: game-session-service
     route: PLAY
     scope: tenant
-    classification: public_production_onboarding
+    classification: gameplay_admission
     auth_path: game_session_authenticated_context
     accepted_token_profiles: []
     delegated_subject: authenticated_session_account
@@ -176,7 +177,7 @@ routes:
   - service: spring-cloud-gateway
     route: /ws/game/**
     scope: tenant
-    classification: public_production_onboarding
+    classification: gameplay_admission
     applicability:
       all_of:
         - connection_mode: first_party_web
@@ -206,7 +207,7 @@ routes:
   - service: spring-cloud-gateway
     route: /ws/game/**
     scope: tenant
-    classification: public_production_onboarding
+    classification: gameplay_admission
     applicability:
       all_of:
         - connection_mode: trusted_tcp_proxy
