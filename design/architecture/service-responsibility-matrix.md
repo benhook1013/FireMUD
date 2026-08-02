@@ -87,7 +87,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Operator quota override ingress, UX, and audit (hypothetical target-only/non-routable; Logging & Admin may forward to the Account-owned entitlement overlay only after the owner contract, action schema, shared digest vectors, and Account authorization flow exist) | | | ✔ | | | | | | ✔ | | |
 | Movement/location write contract orchestration (effect identity, order, and replay safety) | | ✔ | | ✔ | ✔ | ✔ | | | | | |
 | Instance termination orchestration (`PREPARING/ACTIVE/TERMINATING/TERMINATED`) and cross-service cleanup | | ✔ | | ✔ | ✔ | | | | ✔ | | |
-| Scoped per-instance tick pause/resume (implementation-participating but externally gated through Logging & Admin) | | | ✔ | ✔ | | | | | ✔ | | |
+| Scoped per-instance tick pause/resume (implementation-participating but externally gated through Logging & Admin) | | | ✔ | ✔ | | | | | ✔ | | ✔ |
 | Guarded tick remediation (target-only/non-routable enumeration, regional mutation, and reset/remediate orchestration until owner contracts, action schemas, shared digest vectors, and Account authorization flow exist) | | | ✔ | ✔ | | | | | ✔ | | |
 | Game asset publishing & object storage | ✔ | | | | | | | | | | |
 | Asset deletion eligibility oracle (`CanDeleteVersionAssets`) | ✔ | | | | | | | | ✔ | | |

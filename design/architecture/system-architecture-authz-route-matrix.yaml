@@ -183,11 +183,12 @@ routes:
         - connection_mode: first_party_web
         - operation: websocket_upgrade
         - admission_flow: connect_token_bootstrap
+        - client_scope: first_party_protected_cookie_clients
     auth_path: gameplay_connect
     accepted_token_profiles: [gameplay-connect]
     accepted_token_profile_audiences:
       gameplay-connect: gameplay-connect
-    accepted_carriers: [first_party_cookie, classified_non_browser_header]
+    accepted_carriers: [first_party_cookie]
     edge_consumer: spring_cloud_gateway_public_non_proxy_websocket
     connect_context_output: signed_connect_context
     required_live_checks: [connect_token_single_use_consume, replay_protection_available, replay_admission_fence_match, connect_scope_match]
