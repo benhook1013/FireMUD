@@ -43,6 +43,17 @@ route_authentication_rules:
   accepted_token_profile_audiences:
     multi_profile_routes: exact_profile_to_audience_map_required
     audience_source: token_profiles
+  gameplay_websocket_entrypoint:
+    canonical_route: /ws/game/**
+    supported_variants: [first_party_cookie, trusted_tcp_proxy]
+    future_variants:
+      non_first_party_public_header:
+        route: /ws/game/**
+        carrier: X-Firemud-Connect-Token
+        applicability: explicit_non_first_party_public_classification_only
+        status: unavailable_until_dedicated_route_variant_and_proof
+        rejection_until_available: CONNECT_TOKEN_REJECTED
+    fail_closed_rules: [no_alternate_gameplay_websocket_entrypoint, no_header_fallback, no_carrier_precedence]
 required_live_check_vocabulary:
   - account_generation
   - account_authority_tuple
@@ -71,6 +82,9 @@ required_live_check_vocabulary:
   - tenant_generation
   - target_tenant_generation
   - trusted_proxy_identity
+  - pending_deletion_credential_registry
+  - pending_deletion_workflow_state
+  - pending_deletion_action_family
 implementation_status:
   known_drift:
     - public_production_membership_may_be_created_implicitly_by_connect_token_or_play
@@ -89,6 +103,26 @@ classifications:
   - cross_tenant_data_bearing
   - internal_workload
   - pending_deletion_scoped
+classification_rules:
+  pending_deletion_scoped:
+    required_credential:
+      kind: opaque
+      profile: pending-deletion-access
+      registry: account_pending_deletion_registry
+      state: ACTIVE
+    subject_binding: [accountId, deletionWorkflowId, deletionWorkflowGeneration]
+    action_family_binding: exact_route_action_family
+    authority_generations:
+      issuer: false
+      account: false
+      tenant: false
+      membership: false
+    required_live_checks: [pending_deletion_credential_registry, pending_deletion_workflow_state, pending_deletion_action_family]
+    allowed_route_actions: [status, cancel, full_subject_export, billing_settlement]
+    forbidden_route_actions: [login, bootstrap, connect_token, tenant, purchase, gameplay]
+    invalid_or_revoked_outcome: AUTH_SESSION_REVOKED
+    dependency_unavailable_outcome: AUTH_UNAVAILABLE
+    recovery_constraint: public_recovery_may_issue_only_pending_deletion_access
 routes:
   - service: game-session-service
     route: LOGIN
@@ -134,16 +168,24 @@ routes:
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
     required_live_checks: [realm_visibility, runtime_entitlements]
+    branch_selector: exactly_one_realm_mode
+    canonical_errors:
+      any_of: [NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE]
     conditional_branches:
       public_production:
+        selector: realm_mode=public_production
         membership: pre_membership_discovery_allowed
         required_live_checks: [realm_visibility, runtime_entitlements]
       private_or_playtest:
+        selector: realm_mode=private_or_playtest
         membership: active_caller_bound_membership_required
         membership_authority_generation_applies: true
+        membership_version_applies: true
         realm_grant_authority: account_owned
         realm_grant_version: required
-        required_live_checks: [realm_visibility, membership, conditional_realm_access_grant, runtime_entitlements]
+        required_live_checks: [realm_visibility, membership, membership_generation, membership_version, conditional_realm_access_grant, grant_version, runtime_entitlements]
+        canonical_errors:
+          any_of: [NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE]
   - service: game-session-service
     route: CHARS
     scope: tenant
@@ -537,20 +579,47 @@ routes:
     issued_token_audience: gameplay-connect
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
+    membership_version_applies: true
     target_binding: opaque_server_issued_connect_scope_id_matches_route
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
-    required_live_checks: [membership, membership_generation, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match, replay_protection_available, replay_admission_fence_match]
+    required_live_checks: [membership, membership_generation, membership_version, account_authority_tuple, account_outbox_checkpoint, conditional_realm_access_grant, grant_version, runtime_entitlements, admission_pointer, connect_scope_match, replay_protection_available, replay_admission_fence_match]
     canonical_errors:
       any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, PUBLIC_PRODUCTION_ADMISSION_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, CONNECT_REPLAY_PROTECTION_UNAVAILABLE, AUTH_UNAVAILABLE, AUTH_SESSION_REVOKED]
     subject_binding: caller_account_id
     canonical_target:
       membership: existing_caller_bound_membership_required
+      membership_lifecycle_state: ACTIVE
       membership_creation: issue_connect_token_never_creates_membership
+      authority_tuple: exact_bounded_selected_target_tuple_from_one_account_snapshot
+      tenant_authority_generation: exactly_one_selected_tenant_entry
+      membership_authority_generation: exactly_one_selected_tenant_entry
+      membership_version: exactly_one_selected_tenant_entry_with_same_tenant_key
+      private_realm_grant_versions: public_empty_or_exactly_one_selected_realm_entry
     issuance_evidence:
+      schema: connect-token-issuance-evidence/v1
       account_boundary: account-auth-evidence-bundle/v1
+      request_identity: [accountId, connectScopeId, requestId, requestDigest]
+      selected_route_membership_evidence: [membershipLifecycleState, membershipAuthorityGeneration, membershipVersion]
+      gameplay_connect_fields: [authorityTuple, membershipVersion, jti, iat, exp, replayAdmissionFence]
       required_references: [runtimeEntitlementAuthorityReference, admissionPointerAuthorityReference]
-      gameplay_connect_fields: [bounded_authority_tuple, membershipVersion]
+      postconditions:
+        success:
+          request_outcome: COMMITTED
+          dedicated_gameplay_connect_record: COMMITTED
+          required_record_fields: [accountId, tenantId, gameInstanceId, membershipLifecycleState, authorityTuple, membershipVersion, jti, issuedAt, replayAdmissionFence, runtimeEntitlementAuthorityReference, admissionPointerAuthorityReference]
+        deterministic_failure:
+          request_outcome: terminal_without_token
+          dedicated_gameplay_connect_record: no_usable_record
+      idempotency:
+        key: requestId
+        digest: requestDigest
+        exact_retry: stored_success_or_deterministic_failure
+        second_token_on_retry: forbidden
+      ordinary_registry_contract:
+        player_bootstrap_authorization: required
+        gameplay_connect_registry_record: forbidden
+        excluded_registry_only_fields: [tokenGeneration, issuanceFence]
     implementation_status:
       known_drift:
         - issue_connect_token_may_still_invoke_ensure_public_production_player_membership

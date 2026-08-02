@@ -71,7 +71,26 @@ After a crash or ambiguous response, Account reconciles unresolved issuance inte
 
 A `COMMITTED` issuance intent is never signed or issued again. To recover a response lost after the fenced registry activation committed, Account may retain a separate bounded response envelope under Account-owned application encryption, using the same exception and binding discipline as ADR 0031. The envelope contains the compact JWT and is bound to the exact request identity, pre-sign request fingerprint, caller workload, token hash, profile, subject, and, for the gameplay-bound profile, the exact `gameplayBindingId`, `leaseId`, positive `leaseVersion`, and positive `installationFence`, plus the complete applicable `authorityTuple`, the required `membershipVersion` map (exact applicable tenant-ID entries or `{}`), positive `issuanceFence`, authority-record version, and issuer generation. It is not issuance evidence, registry state, or authorization authority. A retry with the exact request identity returns that same JWT only while the envelope is present and within its bounded lifetime, after revalidating the durable intent, matching `COMMITTED` issuance evidence, `active` registry record, exact gameplay binding and lease fields when applicable, authority tuple, membership version, issuance fence, authority version, profile, subject, and current revocation state. Account never re-signs or creates a second registry record for that request.
 
-If the envelope is missing, unreadable, expired, or mismatched, then for gameplay-bound issuance Account performs a bounded, idempotent, fenced cleanup of the exact Game Session binding candidate for the `gameplayBindingId` before or alongside revoking or removing the exact candidate registry record, validating the `leaseId`, `leaseVersion`, and `installationFence`; for other profiles it performs the exact candidate registry cleanup. These are ordered postconditions, not a cross-store transaction. Account records terminal `FAILED` evidence with stable outcome `ISSUANCE_RESPONSE_UNRECOVERABLE` and returns no token. If any applicable cleanup is unavailable, stale, mismatched, or ambiguous, the gameplay binding remains inadmissible, the candidate remains non-authorizing, and the recovery stays quarantined and non-replayable until durable reconciliation proves the required cleanups; a later issuance requires a new request identity. This prevents a lost response from causing duplicate reissue while ensuring an unreturned committed token cannot remain usable indefinitely.
+If the envelope is missing, unreadable, expired, or mismatched, Account must not inspect, delete, or mutate Game Session state. For gameplay-bound issuance it emits exactly one idempotent, outbox-delivered cleanup request for the exact binding candidate:
+
+```json
+{
+  "schemaVersion": 1,
+  "requestType": "gameplay-binding-cleanup/v1",
+  "requestId": "<stable cleanup request id>",
+  "issuanceOperationId": "<Account issuance operation id>",
+  "gameplayBindingId": "<exact gameplay binding id>",
+  "leaseId": "<exact Account lease id>",
+  "leaseVersion": "<positive lease version>",
+  "installationFence": "<positive installation fence>",
+  "issuanceFence": "<positive issuance fence>",
+  "candidateTokenHash": "sha256:<64 lowercase hexadecimal characters>",
+  "reason": "ISSUANCE_RESPONSE_UNRECOVERABLE",
+  "requestDigest": "sha256:<64 lowercase hexadecimal characters>"
+}
+```
+
+The request digest covers every preceding field and is computed over their RFC 8785 JSON Canonicalization Scheme representation; the request carries no raw JWT. Game Session owns the fenced CAS that removes or quarantines the exact binding and its indexes, then durably acknowledges the exact request with the same request identity, digest, `gameplayBindingId`, `leaseId`, `leaseVersion`, `installationFence`, and cleanup outcome. `CLEANED` and `ALREADY_CLEAN` are the only successful outcomes; a missing, stale, conflicting, unavailable, or ambiguous request or local cleanup is not an acknowledgement. Account owns the exact candidate registry cleanup and the durable terminal `FAILED` evidence with stable outcome `ISSUANCE_RESPONSE_UNRECOVERABLE`; it may record that failure only after the Game Session acknowledgement and its own issuance-fence-guarded registry CAS are durable. For non-gameplay profiles, Account performs the exact candidate registry cleanup directly. These are ordered postconditions, not a cross-store transaction. Until the required Game Session acknowledgement and registry cleanup are proven, the gameplay binding remains inadmissible, the candidate remains non-authorizing, and recovery stays quarantined and non-replayable; a later issuance requires a new request identity. An unavailable, stale, mismatched, or ambiguous cleanup remains same-operation quarantine and cannot be converted into `FAILED` success evidence.
 
 ### Planned Rotation
 

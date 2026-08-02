@@ -186,8 +186,9 @@ decision_history_dir = root / "design/architecture/decisions"
 historical_adr_record_name = re.compile(r"adr-\d{4}-.+\.md")
 status_heading = re.compile(r"^##[ \t]+Status[ \t]*$")
 historical_status_value = re.compile(r"^(?:Superseded|Withdrawn)\b")
+raw_html_closing_tag_only = frozenset(("pre", "script", "style", "textarea"))
 raw_html_block_start = re.compile(
-    r"^[ \t]{0,3}<(?P<tag>address|article|aside|base|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|ol|p|pre|script|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \t/>]|$)",
+    r"^[ \t]{0,3}<(?P<tag>address|article|aside|base|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|ol|p|pre|script|section|style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)(?:[ \t/>]|$)",
     re.IGNORECASE,
 )
 raw_html_special_start = re.compile(r"^[ \t]{0,3}(?:<![A-Z]|<\?|<!\[CDATA\[)", re.IGNORECASE)
@@ -218,8 +219,9 @@ def strip_html_comments(line, in_html_comment):
 def strip_raw_html_block(line, in_raw_html_block, raw_html_tag):
     """Hide CommonMark raw HTML blocks from top-level Markdown status parsing."""
     if in_raw_html_block:
-        if not line.strip():
-            return "", False, None
+        if raw_html_tag is None or raw_html_tag.lower() not in raw_html_closing_tag_only:
+            if not line.strip():
+                return "", False, None
         if raw_html_tag is not None and re.search(
             rf"</{re.escape(raw_html_tag)}[ \t]*>", line, re.IGNORECASE
         ):
@@ -335,6 +337,20 @@ raw_html_adr_fixture_text = (
     "Account-issued envelope\n"
     "</div>\n"
 )
+style_html_adr_fixture_text = (
+    "# ADR 9995: Style Raw HTML Fixture\n\n"
+    "<style>\n\n"
+    "## Status\n"
+    "Superseded by ADR 0001\n"
+    "</style>\n"
+)
+script_html_adr_fixture_text = (
+    "# ADR 9994: Script Raw HTML Fixture\n\n"
+    "<script>\n\n"
+    "## Status\n"
+    "Superseded by ADR 0001\n"
+    "</script>\n"
+)
 indented_status_value_fixture = decision_history_dir / "adr-9996-indented-status-value-fixture.md"
 indented_status_value_fixture_text = (
     "# ADR 9996: Indented Status Value Fixture\n\n"
@@ -352,6 +368,10 @@ if first_top_level_status_value(accepted_adr_fixture_text) != "Accepted":
     raise SystemExit("commented, fenced, or indented fake status bypassed the Accepted fixture")
 if first_top_level_status_value(raw_html_adr_fixture_text) is not None:
     raise SystemExit("raw HTML block status was incorrectly parsed")
+if first_top_level_status_value(style_html_adr_fixture_text) is not None:
+    raise SystemExit("style raw HTML block status was incorrectly parsed")
+if first_top_level_status_value(script_html_adr_fixture_text) is not None:
+    raise SystemExit("script raw HTML block status was incorrectly parsed")
 if first_top_level_status_value("    ## Status\n    Superseded by ADR 0001\n") is not None:
     raise SystemExit("four-space indented code-block status was incorrectly parsed")
 if first_top_level_status_value(indented_status_value_fixture_text) != "Accepted":
