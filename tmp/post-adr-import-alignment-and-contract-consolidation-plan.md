@@ -118,6 +118,19 @@ Initially add a concise contract-authority table to `design/architecture/README.
 
 Pending reviewed decisions may inform which contract families will need later work, but must not be written into merged canonical design before their application PR lands. Review pending material by bounded contract family rather than loading all 183 decisions into one pass.
 
+## ADR PR Finding Triage
+
+Use this policy while finishing the current and later ADR import PRs:
+
+1. Fix an incorrect accepted decision, ADR disposition, canonical owning contract, authority boundary, security rule, lifecycle, or externally observable behavior immediately.
+2. Fix a secondary document immediately when its current wording contradicts the owning contract, would mislead implementation, or states an incorrect local consequence.
+3. When duplicated normative prose is already scheduled for removal, do not repeatedly make every copy word-for-word equivalent. Prefer reducing the touched secondary copy to a link plus its local consequence when that is safe and coherent.
+4. If removing the duplication would materially widen the active PR, preserve correctness with the smallest unambiguous wording and record the contract family for the consolidation phase. Do not silently leave a competing target state.
+5. Keep implementation and verification claims point-in-time accurate. An accepted design decision may remain `partial` or `not-implemented`; do not manufacture code alignment inside a design import PR merely to make the documents appear converged.
+6. Classify review findings as `fix-primary-now`, `fix-local-consequence-now`, `consolidate-duplicate`, or `implementation/proof-follow-up`. This prevents repeated review cycles from treating all textual differences as equally valuable.
+
+The acceptance bar for an ADR import PR is therefore semantic correctness and absence of active contradiction, not exhaustive synchronization of prose that will be deleted. Broader alignment remains staged: high-churn contract consolidation after the current stack, a cross-family alignment pass after the main ADR imports, and capability-specific design/code/proof reconciliation during subsequent implementation.
+
 ## Execution Sequence
 
 1. Merge the current ADR stack.
