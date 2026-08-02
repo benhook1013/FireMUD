@@ -5,7 +5,7 @@ The machine-readable [authorization route matrix](./system-architecture-authz-ro
 Every protected route in a validated inventory must be listed here with:
 
 - route identifier (service + method/path),
-- classification (`public`, `account_scoped`, `caller_membership_scoped`, `player_bootstrap_tenant`, `pre_tenant_discovery`, `public_production_onboarding`, `tenant_regular`, `billing_safe_tenant`, `cross_tenant_support_safe`, `cross_tenant_billing_safe`, `cross_tenant_data_bearing`, `internal_workload`, `pending_deletion_scoped`),
+- classification (`public`, `account_scoped`, `caller_membership_scoped`, `player_bootstrap_tenant`, `pre_tenant_discovery`, `public_production_onboarding`, `gameplay_admission`, `tenant_regular`, `billing_safe_tenant`, `cross_tenant_support_safe`, `cross_tenant_billing_safe`, `cross_tenant_data_bearing`, `internal_workload`, `pending_deletion_scoped`),
 - whether a matching Account issued-token registry record is required,
 - required role checks,
 - tenant-billing authority-generation applicability,

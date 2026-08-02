@@ -266,7 +266,6 @@ def first_top_level_status_value(text):
         )
         if in_raw_html_block or not line:
             continue
-        was_in_fenced_block = in_fenced_block
         in_fenced_block, fence_marker, opening_line_number = advance_fenced_block_state(
             line,
             in_fenced_block,
@@ -274,7 +273,7 @@ def first_top_level_status_value(text):
             opening_line_number,
             line_number,
         )
-        if was_in_fenced_block or in_fenced_block:
+        if in_fenced_block:
             continue
         if not status_heading_found:
             if status_heading.match(line.rstrip("\r\n")):
