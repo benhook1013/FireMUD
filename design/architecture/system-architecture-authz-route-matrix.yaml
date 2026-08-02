@@ -169,6 +169,8 @@ routes:
     realm_grant_version: required_when_grant_gated
     required_live_checks: [realm_visibility, runtime_entitlements]
     branch_selector: exactly_one_realm_mode
+    conditional_branch_precedence:
+      branch_fields_override_top_level: true
     canonical_errors:
       any_of: [NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE]
     conditional_branches:
@@ -199,7 +201,7 @@ routes:
     realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED]
+      any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE]
   - service: game-session-service
     route: JOIN
     scope: tenant
@@ -234,7 +236,7 @@ routes:
       required: [authorityTuple, membershipVersion, outboxCheckpoints]
       comparison: exact_target_tenant_and_caller_membership_scope
     exact_binding_admission_lease: required
-    exact_binding_fence: required
+    binding_fence: required
     binding_ownership_checks: [gameplay_binding_identity, character_identity, runtime_owner]
     canonical_target:
       membership: existing_caller_bound_membership_required
@@ -348,7 +350,7 @@ routes:
     realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH]
+      any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, CONNECT_SCOPE_MISMATCH]
   - service: account-service
     route: POST /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters
     scope: tenant
@@ -363,7 +365,7 @@ routes:
     realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH]
+      any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, CONNECT_SCOPE_MISMATCH]
     delegates_to: entity-management-service/CreateCharacter
   - service: game-session-service
     route: StartSession
@@ -578,12 +580,13 @@ routes:
     issued_token_profile: gameplay-connect
     issued_token_audience: gameplay-connect
     tenant_billing_authority_generation_applies: false
+    tenant_authority_generation_applies: true
     membership_authority_generation_applies: true
     membership_version_applies: true
     target_binding: opaque_server_issued_connect_scope_id_matches_route
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
-    required_live_checks: [membership, membership_generation, membership_version, account_authority_tuple, account_outbox_checkpoint, conditional_realm_access_grant, grant_version, runtime_entitlements, admission_pointer, connect_scope_match, replay_protection_available, replay_admission_fence_match]
+    required_live_checks: [membership, target_tenant_generation, membership_generation, membership_version, account_authority_tuple, account_outbox_checkpoint, conditional_realm_access_grant, grant_version, runtime_entitlements, admission_pointer, connect_scope_match, replay_protection_available, replay_admission_fence_match]
     canonical_errors:
       any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, PUBLIC_PRODUCTION_ADMISSION_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, CONNECT_REPLAY_PROTECTION_UNAVAILABLE, AUTH_UNAVAILABLE, AUTH_SESSION_REVOKED]
     subject_binding: caller_account_id
@@ -740,7 +743,7 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
     membership_version_applies: true
-    required_live_checks: [membership]
+    required_live_checks: [membership, membership_version]
     response_profile: high_level_only
     roles:
       any_of: [tenantAdmin]
@@ -760,7 +763,7 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
     membership_version_applies: true
-    required_live_checks: [membership]
+    required_live_checks: [membership, membership_version]
     response_profile: high_level_only
     roles:
       any_of: [tenantAdmin]
@@ -772,7 +775,7 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
     membership_version_applies: true
-    required_live_checks: [membership]
+    required_live_checks: [membership, membership_version]
     response_profile: tenant_export_only
     roles:
       any_of: [tenantAdmin]
@@ -792,7 +795,7 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
     membership_version_applies: true
-    required_live_checks: [membership]
+    required_live_checks: [membership, membership_version]
     response_profile: high_level_only
     roles:
       any_of: [tenantAdmin]
@@ -820,7 +823,7 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
     membership_version_applies: true
-    required_live_checks: [membership]
+    required_live_checks: [membership, membership_version]
     response_profile: membership_self_only
     roles:
       any_of: [tenantAdmin]
@@ -840,7 +843,7 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
     membership_version_applies: true
-    required_live_checks: [membership]
+    required_live_checks: [membership, membership_version]
     mutation_contract: shared_instrument_ack_required
     canonical_errors:
       any_of: [BILLING_SHARED_INSTRUMENT_ACK_REQUIRED, AUTH_UNAVAILABLE]

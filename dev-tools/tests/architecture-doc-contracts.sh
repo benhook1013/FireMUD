@@ -191,7 +191,10 @@ raw_html_block_start = re.compile(
     r"^[ \t]{0,3}<(?P<tag>address|article|aside|base|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|ol|p|pre|script|section|style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)(?:[ \t/>]|$)",
     re.IGNORECASE,
 )
-raw_html_special_start = re.compile(r"^[ \t]{0,3}(?:<![A-Z]|<\?|<!\[CDATA\[)", re.IGNORECASE)
+raw_html_special_start = re.compile(
+    r"^[ \t]{0,3}(?:(?P<processing><\?)|(?P<declaration><![A-Z])|(?P<cdata><!\[CDATA\[))",
+    re.IGNORECASE,
+)
 
 
 def strip_html_comments(line, in_html_comment):
@@ -216,21 +219,30 @@ def strip_html_comments(line, in_html_comment):
     return "".join(visible), in_html_comment
 
 
-def strip_raw_html_block(line, in_raw_html_block, raw_html_tag):
+def strip_raw_html_block(line, in_raw_html_block, raw_html_block_kind):
     """Hide CommonMark raw HTML blocks from top-level Markdown status parsing."""
     if in_raw_html_block:
-        if raw_html_tag is None or raw_html_tag.lower() not in raw_html_closing_tag_only:
+        if raw_html_block_kind == "processing":
+            return "", "?>" not in line, None if "?>" in line else raw_html_block_kind
+        if raw_html_block_kind == "declaration":
+            return "", ">" not in line, None if ">" in line else raw_html_block_kind
+        if raw_html_block_kind == "cdata":
+            return "", "]]>" not in line, None if "]]>" in line else raw_html_block_kind
+        if (
+            raw_html_block_kind is None
+            or raw_html_block_kind.lower() not in raw_html_closing_tag_only
+        ):
             if not line.strip():
                 return "", False, None
-        if raw_html_tag is not None and re.search(
-            rf"</{re.escape(raw_html_tag)}[ \t]*>", line, re.IGNORECASE
+        if raw_html_block_kind is not None and re.search(
+            rf"</{re.escape(raw_html_block_kind)}[ \t]*>", line, re.IGNORECASE
         ):
             return "", False, None
-        return "", True, raw_html_tag
+        return "", True, raw_html_block_kind
 
     match = raw_html_block_start.match(line)
-    special = raw_html_special_start.match(line) is not None
-    if match is None and not special:
+    special = raw_html_special_start.match(line)
+    if match is None and special is None:
         return line, False, None
     tag = match.group("tag") if match is not None else None
     if tag is not None and (
@@ -238,6 +250,12 @@ def strip_raw_html_block(line, in_raw_html_block, raw_html_tag):
         or re.search(rf"</{re.escape(tag)}[ \t]*>[ \t]*$", line, re.IGNORECASE)
     ):
         return "", False, None
+    if special is not None:
+        kind = next(name for name, value in special.groupdict().items() if value is not None)
+        terminator = {"processing": "?>", "declaration": ">", "cdata": "]]>"}[kind]
+        return "", terminator not in line[special.end() :], (
+            kind if terminator not in line[special.end() :] else None
+        )
     return "", True, tag
 
 
@@ -247,7 +265,7 @@ def first_top_level_status_value(text):
     opening_line_number = None
     in_html_comment = False
     in_raw_html_block = False
-    raw_html_tag = None
+    raw_html_block_kind = None
     status_heading_found = False
     for line_number, line in enumerate(text.splitlines(keepends=True), start=1):
         if in_fenced_block:
@@ -261,10 +279,10 @@ def first_top_level_status_value(text):
             continue
 
         line, in_html_comment = strip_html_comments(line, in_html_comment)
-        line, in_raw_html_block, raw_html_tag = strip_raw_html_block(
+        line, in_raw_html_block, raw_html_block_kind = strip_raw_html_block(
             line,
             in_raw_html_block,
-            raw_html_tag,
+            raw_html_block_kind,
         )
         if in_raw_html_block or not line:
             continue
@@ -351,6 +369,24 @@ script_html_adr_fixture_text = (
     "Superseded by ADR 0001\n"
     "</script>\n"
 )
+processing_instruction_adr_fixture_text = (
+    "# ADR 9993: Processing Instruction Fixture\n\n"
+    "<?firemud\n"
+    "## Status\n"
+    "Superseded by ADR 0001\n"
+    "?>\n"
+    "## Status\n\n"
+    "Accepted\n"
+)
+cdata_adr_fixture_text = (
+    "# ADR 9992: CDATA Fixture\n\n"
+    "<![CDATA[\n"
+    "## Status\n"
+    "Superseded by ADR 0001\n"
+    "]]>\n"
+    "## Status\n\n"
+    "Accepted\n"
+)
 indented_status_value_fixture = decision_history_dir / "adr-9996-indented-status-value-fixture.md"
 indented_status_value_fixture_text = (
     "# ADR 9996: Indented Status Value Fixture\n\n"
@@ -372,6 +408,10 @@ if first_top_level_status_value(style_html_adr_fixture_text) is not None:
     raise SystemExit("style raw HTML block status was incorrectly parsed")
 if first_top_level_status_value(script_html_adr_fixture_text) is not None:
     raise SystemExit("script raw HTML block status was incorrectly parsed")
+if first_top_level_status_value(processing_instruction_adr_fixture_text) != "Accepted":
+    raise SystemExit("processing-instruction block hid the following Accepted status")
+if first_top_level_status_value(cdata_adr_fixture_text) != "Accepted":
+    raise SystemExit("CDATA block hid the following Accepted status")
 if first_top_level_status_value("    ## Status\n    Superseded by ADR 0001\n") is not None:
     raise SystemExit("four-space indented code-block status was incorrectly parsed")
 if first_top_level_status_value(indented_status_value_fixture_text) != "Accepted":
