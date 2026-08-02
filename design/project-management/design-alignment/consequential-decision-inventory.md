@@ -114,7 +114,7 @@ The review facilitator must preserve the current choice's strongest argument, co
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
 | **Total** | | **36** | **183** | `in-progress` |
 
-The progress total counts checklist/navigation rows. Packet 2 contains 31 distinct decision keys represented by 32 rows; its extra row is the checked historical alias below. Its 28 checked rows therefore represent 27 reviewed decisions plus one navigation-only alias.
+The progress total counts checklist/navigation rows. Packet 2 contains 31 distinct decision keys represented by 32 navigation rows; one is the historical alias and is excluded from checklist disposition. Its 27 checked disposition rows therefore represent exactly 27 reviewed decisions.
 
 ### Priority Overrides
 
@@ -141,9 +141,9 @@ No implementation-blocking override is active. Record an override here with the 
 
 Packet 2 checklist dispositions record the human review outcome, not an inventory status. For every checked Packet 2 entry, `accepted` maps to the canonical inventory status `accepted-explicit`; `revised` maps to the same status after the revised target was accepted. Unchecked entries have no Packet 2 disposition; their canonical inventory status remains whatever the inventory records and is not inferred from this checklist. The `AUTH-02` and `AUTH-06` targets retain explicit `JOIN`/`Join & Play`, but `POST /auth/bootstrap/join` is target-state and not implemented. Current state: text `PLAY` invokes Account's `EnsurePublicProductionPlayerMembership` when the selected realm is visible public production and the membership check denies gameplay admission; connect-token issuance at `POST /auth/connect-token` invokes the same path when the current realm is public production, no non-public realm grant applies, and the membership check denies gameplay admission, so either path can implicitly create missing public-production membership. Target admission instead requires existing caller-bound membership and returns canonical `JOIN_REQUIRED` when public-production membership is missing or `INACTIVE`; `WORLD_ACCESS_DENIED` is reserved for another reachable authoritative world/tenant denial and is mutually exclusive with `JOIN_REQUIRED`. A realm grant never substitutes for membership, and the connect-token membership-version plus membership-authority-generation reread remains a gap.
 
-Packet 2 count reconciliation: the 27 reviewed decisions are covered by accepted ADRs 0020-0043, 0045, 0047, and 0048. The 28 checked rows include those 27 decisions plus one navigation-only row.
+Packet 2 count reconciliation: the 27 reviewed decisions are covered by accepted ADRs 0020-0043, 0045, 0047, and 0048. The Packet 2 disposition contains exactly those 27 decisions; the historical alias is not a checked disposition row.
 
-Packet 2 historical-alias rule: `MS-AA-TOKEN-REVOCATION` is a superseded service-scan alias, not an additional unresolved decision or an independent target. Its canonical mapping is the accepted/revised set `AUTH-03`, `JWT-01`, `JWT-02`, `JWT-03`, and `JWT-04`; new evidence or review outcomes must be recorded against those owning keys. The alias remains checked only to preserve navigation from historical scans and must not be counted as a separate Packet 2 decision or reopened as an alternative target.
+Packet 2 historical-alias rule: `MS-AA-TOKEN-REVOCATION` is a superseded service-scan alias, not an additional unresolved decision or an independent target. Its canonical mapping is the accepted/revised set `AUTH-03`, `JWT-01`, `JWT-02`, `JWT-03`, and `JWT-04`; new evidence or review outcomes must be recorded against those owning keys. The alias may remain in historical scan/navigation material, but it is excluded from the Packet 2 disposition and must not be counted as a separate decision or reopened as an alternative target.
 
 #### Packet 2 P0
 
@@ -168,7 +168,6 @@ Packet 2 historical-alias rule: `MS-AA-TOKEN-REVOCATION` is a superseded service
 - [x] `JWT-04` — `revised` on 2026-07-19; [ADR 0038](../../architecture/decisions/adr-0038-explicit-jwt-profiles-and-mtls-workload-identity.md)
 - [x] `REDIS-06` — `revised` on 2026-07-19; [ADR 0039](../../architecture/decisions/adr-0039-bounded-redis-operator-maintenance-surface.md)
 - [x] `MS-AA-CONTROL-LOGIN-SCOPE` — `revised` on 2026-07-19; [ADR 0040](../../architecture/decisions/adr-0040-account-global-control-login-and-explicit-tenant-selection.md)
-- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-19; canonical mapping: [AUTH-03](../../architecture/decisions/adr-0022-account-authority-and-gameplay-session-ownership.md#decision-record), [JWT-01](../../architecture/decisions/adr-0035-single-record-issued-token-registry.md#decision-record), [JWT-02](../../architecture/decisions/adr-0036-monotonic-authority-generations-for-bulk-token-revocation.md#decision-record), [JWT-03](../../architecture/decisions/adr-0037-fail-closed-token-authority-outages-with-bounded-active-gameplay.md#decision-record), and [JWT-04](../../architecture/decisions/adr-0038-explicit-jwt-profiles-and-mtls-workload-identity.md#decision-record); retained only as a historical service-scan alias and not counted as a separate Packet 2 decision.
 
 #### Packet 2 P1
 

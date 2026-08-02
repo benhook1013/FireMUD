@@ -81,6 +81,7 @@ classifications:
   - cross_tenant_billing_safe
   - cross_tenant_data_bearing
   - internal_workload
+  - pending_deletion_scoped
 routes:
   - service: game-session-service
     route: LOGIN
@@ -126,6 +127,16 @@ routes:
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
     required_live_checks: [realm_visibility, runtime_entitlements]
+    conditional_branches:
+      public_production:
+        membership: pre_membership_discovery_allowed
+        required_live_checks: [realm_visibility, runtime_entitlements]
+      private_or_playtest:
+        membership: active_caller_bound_membership_required
+        membership_authority_generation_applies: true
+        realm_grant_authority: account_owned
+        realm_grant_version: required
+        required_live_checks: [realm_visibility, membership, conditional_realm_access_grant, runtime_entitlements]
   - service: game-session-service
     route: CHARS
     scope: tenant
@@ -139,7 +150,7 @@ routes:
     realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED]
+      any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED]
   - service: game-session-service
     route: JOIN
     scope: tenant
@@ -166,7 +177,7 @@ routes:
     realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE]
+      any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, AUTH_UNAVAILABLE, AUTH_SESSION_REVOKED]
     canonical_target:
       membership: existing_caller_bound_membership_required
       membership_creation: play_never_creates_membership
@@ -372,8 +383,7 @@ routes:
     implementation_status:
       target_only: true
   - service: account-service
-    route: EnsurePublicProductionPlayerMembership
-    target_route: JoinPublicProductionMembership
+    route: JoinPublicProductionMembership
     scope: tenant
     classification: internal_workload
     auth_path: exact_mtls_workload
@@ -393,6 +403,7 @@ routes:
     mutation_contract: explicit_public_membership_atomic
     implementation_status:
       known_drift:
+        - current_proto_and_internal_runtime_seam_is_named_ensure_public_production_player_membership
         - current_membership_seam_may_be_invoked_implicitly_by_connect_token_or_play
   - service: account-service
     route: DELETE /tenants/{tenantId}/memberships/me
@@ -431,21 +442,35 @@ routes:
       known_drift:
         - legacy_session_key_runtime_lacks_durable_logout_all_retry_proof
   - service: account-service
-    route: GetProfile
-    scope: account
-    classification: account_scoped
-    subject_binding: caller_account_id_or_platform_admin
+    route: GET /tenants/{tenantId}/profiles/{accountId}
+    scope: tenant
+    classification: tenant_regular
+    subject_binding: caller_account_id
     accepted_token_profiles: [control-ui]
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
+    membership_version_applies: true
+    required_live_checks: [membership]
     roles:
-      any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
+      any_of: [player, moderator, designer, tenantAdmin]
+    implementation_status:
+      known_drift:
+        - legacy_route_is_profiles_account_id
   - service: account-service
-    route: UpdateProfile
-    scope: account
-    classification: account_scoped
-    subject_binding: caller_account_id_or_platform_admin
+    route: PUT /tenants/{tenantId}/profiles/{accountId}
+    scope: tenant
+    classification: tenant_regular
+    subject_binding: caller_account_id
     accepted_token_profiles: [control-ui]
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
+    membership_version_applies: true
+    required_live_checks: [membership]
     roles:
-      any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
+      any_of: [player, moderator, designer, tenantAdmin]
+    implementation_status:
+      known_drift:
+        - legacy_route_is_profiles_account_id
   - service: account-service
     route: ExportAccount
     scope: account
@@ -489,7 +514,7 @@ routes:
     realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, membership_generation, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match, replay_protection_available, replay_admission_fence_match]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, CONNECT_REPLAY_PROTECTION_UNAVAILABLE, ENTITLEMENT_UNAVAILABLE]
+      any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, PUBLIC_PRODUCTION_ADMISSION_DENIED, TENANT_BILLING_BLOCKED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, CONNECT_REPLAY_PROTECTION_UNAVAILABLE, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, AUTH_SESSION_REVOKED]
     subject_binding: caller_account_id
     canonical_target:
       membership: existing_caller_bound_membership_required
@@ -613,6 +638,7 @@ routes:
     accepted_token_profiles: [control-ui]
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
+    membership_version_applies: true
     required_live_checks: [membership]
     response_profile: high_level_only
     roles:
@@ -632,6 +658,7 @@ routes:
     accepted_token_profiles: [control-ui]
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
+    membership_version_applies: true
     required_live_checks: [membership]
     response_profile: high_level_only
     roles:
@@ -643,6 +670,7 @@ routes:
     accepted_token_profiles: [control-ui]
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
+    membership_version_applies: true
     required_live_checks: [membership]
     response_profile: tenant_export_only
     roles:
@@ -662,6 +690,7 @@ routes:
     accepted_token_profiles: [control-ui]
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
+    membership_version_applies: true
     required_live_checks: [membership]
     response_profile: high_level_only
     roles:
@@ -689,6 +718,7 @@ routes:
     accepted_token_profiles: [control-ui]
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
+    membership_version_applies: true
     required_live_checks: [membership]
     response_profile: membership_self_only
     roles:
@@ -708,10 +738,11 @@ routes:
     accepted_token_profiles: [control-ui]
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
+    membership_version_applies: true
     required_live_checks: [membership]
     mutation_contract: shared_instrument_ack_required
     canonical_errors:
-      any_of: [BILLING_SHARED_INSTRUMENT_ACK_REQUIRED, MEMBERSHIP_AUTH_UNAVAILABLE]
+      any_of: [BILLING_SHARED_INSTRUMENT_ACK_REQUIRED, AUTH_UNAVAILABLE]
     roles:
       any_of: [tenantAdmin]
   - service: account-service

@@ -186,6 +186,11 @@ decision_history_dir = root / "design/architecture/decisions"
 historical_adr_record_name = re.compile(r"adr-\d{4}-.+\.md")
 status_heading = re.compile(r"^ {0,3}##[ \t]+Status[ \t]*$")
 historical_status_value = re.compile(r"^(?:Superseded|Withdrawn)\b")
+raw_html_block_start = re.compile(
+    r"^[ \t]{0,3}<(?P<tag>address|article|aside|base|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|ol|p|pre|script|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \t/>]|$)",
+    re.IGNORECASE,
+)
+raw_html_special_start = re.compile(r"^[ \t]{0,3}(?:<![A-Z]|<\?|<!\[CDATA\[)", re.IGNORECASE)
 
 
 def strip_html_comments(line, in_html_comment):
@@ -210,11 +215,37 @@ def strip_html_comments(line, in_html_comment):
     return "".join(visible), in_html_comment
 
 
+def strip_raw_html_block(line, in_raw_html_block, raw_html_tag):
+    """Hide CommonMark raw HTML blocks from top-level Markdown status parsing."""
+    if in_raw_html_block:
+        if not line.strip():
+            return "", False, None
+        if raw_html_tag is not None and re.search(
+            rf"</{re.escape(raw_html_tag)}[ \t]*>", line, re.IGNORECASE
+        ):
+            return "", False, None
+        return "", True, raw_html_tag
+
+    match = raw_html_block_start.match(line)
+    special = raw_html_special_start.match(line) is not None
+    if match is None and not special:
+        return line, False, None
+    tag = match.group("tag") if match is not None else None
+    if tag is not None and (
+        re.search(r"/\s*>[ \t]*$", line)
+        or re.search(rf"</{re.escape(tag)}[ \t]*>[ \t]*$", line, re.IGNORECASE)
+    ):
+        return "", False, None
+    return "", True, tag
+
+
 def first_top_level_status_value(text):
     in_fenced_block = False
     fence_marker = None
     opening_line_number = None
     in_html_comment = False
+    in_raw_html_block = False
+    raw_html_tag = None
     status_heading_found = False
     for line_number, line in enumerate(text.splitlines(keepends=True), start=1):
         if in_fenced_block:
@@ -228,6 +259,13 @@ def first_top_level_status_value(text):
             continue
 
         line, in_html_comment = strip_html_comments(line, in_html_comment)
+        line, in_raw_html_block, raw_html_tag = strip_raw_html_block(
+            line,
+            in_raw_html_block,
+            raw_html_tag,
+        )
+        if in_raw_html_block or not line:
+            continue
         was_in_fenced_block = in_fenced_block
         in_fenced_block, fence_marker, opening_line_number = advance_fenced_block_state(
             line,
@@ -287,6 +325,15 @@ accepted_adr_fixture_text = (
     "## Status\n\n"
     "Accepted\n"
 )
+raw_html_adr_fixture = decision_history_dir / "adr-9997-raw-html-fixture.md"
+raw_html_adr_fixture_text = (
+    "# ADR 9997: Raw HTML Fixture\n\n"
+    "<div class=\"history\">\n"
+    "## Status\n"
+    "Superseded by ADR 0001\n"
+    "Account-issued envelope\n"
+    "</div>\n"
+)
 registry_index_fixture = decision_history_dir / "README.md"
 if not is_historical_adr_record(historical_adr_fixture, historical_adr_fixture_text):
     raise SystemExit("historical ADR fixture was not recognized as an exempt record")
@@ -294,6 +341,8 @@ if is_historical_adr_record(registry_index_fixture, obsolete_envelope_phrases[0]
     raise SystemExit("decision registry/index fixture was incorrectly exempted")
 if first_top_level_status_value(accepted_adr_fixture_text) != "Accepted":
     raise SystemExit("commented, fenced, or indented fake status bypassed the Accepted fixture")
+if first_top_level_status_value(raw_html_adr_fixture_text) is not None:
+    raise SystemExit("raw HTML block status was incorrectly parsed")
 if first_top_level_status_value("    ## Status\n    Superseded by ADR 0001\n") is not None:
     raise SystemExit("four-space indented code-block status was incorrectly parsed")
 reject_obsolete_envelope_phrases(
@@ -310,6 +359,16 @@ except SystemExit as error:
         raise SystemExit(f"unexpected Accepted ADR fixture diagnostic: {error}")
 else:
     raise SystemExit("Accepted ADR fixture was not checked")
+try:
+    reject_obsolete_envelope_phrases(
+        raw_html_adr_fixture,
+        raw_html_adr_fixture_text,
+    )
+except SystemExit as error:
+    if "obsolete current-state phrase" not in str(error):
+        raise SystemExit(f"unexpected raw HTML ADR fixture diagnostic: {error}")
+else:
+    raise SystemExit("raw HTML ADR fixture bypassed obsolete phrase rejection")
 try:
     reject_obsolete_envelope_phrases(
         registry_index_fixture,

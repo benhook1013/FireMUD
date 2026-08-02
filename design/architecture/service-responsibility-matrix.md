@@ -31,7 +31,9 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Gated gameplay-ban moderation policy-input/audit ingress and record (`gameplay_ban`; enforcement at `GAMEPLAY_ADMISSION`) | | | | | | | | | ✔ | | |
 | Gated chat mute/chat-ban moderation policy-input/audit ingress and record (`chat_mute`, `chat_ban`; enforcement at `CHAT_SEND`) | | | | | | | | | ✔ | | |
 | Authoritative owner: moderation policy input persistence and audit (gated target record) | | | | | | | | | ✔ | | |
-| External `POST /moderation/actions` policy-input/audit persistence ingress (gated/unavailable; Gateway owns external routing and Logging & Admin owns receiving-boundary validation/redemption; action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account authorization-reference issuance required; not owner enforcement) | | | ✔ | | | | | | ✔ | | ✔ |
+| Account authorization-reference issuance for moderation writes (prerequisite only; no moderation policy-input ownership) | | | ✔ | | | | | | | | |
+| Logging & Admin receiving-boundary validation/redemption for moderation writes (prerequisite; owns policy-input/audit records) | | | | | | | | | ✔ | | |
+| External `POST /moderation/actions` policy-input/audit persistence ingress (gated/unavailable; Gateway owns external routing and Logging & Admin owns receiving-boundary validation/redemption and policy-input/audit persistence; action-family schema and shared cross-language `mutationDigest/v1` golden vectors required; not owner enforcement) | | | | | | | | | ✔ | | ✔ |
 | Internal consumer read: `EvaluateModerationPolicy` at `GAMEPLAY_ADMISSION` / `CHAT_SEND` | | | ✔ | ✔ | | | | ✔ | | | |
 | Account security policy (password rules, lockout, MFA requirements) | | | ✔ | | | | | | | | |
 | Gameplay login command handling and session binding (Redis) | | | | ✔ | | | | | | | |
