@@ -47,20 +47,20 @@ Routine implementation mechanics that do not affect the target-state contract ar
 The inventory is split into this control ledger and exhaustive source-scoped ledgers:
 
 - [Cross-cutting architecture decisions](./decision-inventory-cross-cutting.md) contains 68 decisions from the ADR set and 22 high-authority system documents.
-- [Microservice decisions](./decision-inventory-microservices.md) contains 23 service-only decisions and stronger evidence for 40 cross-cutting decisions from all 76 microservice architecture files.
+- [Microservice decisions](./decision-inventory-microservices.md) contains 23 service-only rows = 22 distinct decisions plus the navigation-only `MS-AA-TOKEN-REVOCATION` alias, and stronger evidence for 40 cross-cutting decisions from all 76 microservice architecture files.
 - [Specialized runtime decisions](./decision-inventory-specialized-runtime.md) contains 54 decisions and stronger evidence for 20 cross-cutting decisions from 39 Redis, scripting, tick, identity, token, migration, shared-library, spatial, authorization, and tracing documents.
 - [Product and operations decisions](./decision-inventory-product-operations.md) contains 38 decisions and stronger evidence for 11 existing keys from the remaining 35 product, frontend, authoring, protocol, infrastructure, deployment, recovery, observability, and generated-settings sources.
 
-The source-scoped ledgers contain 183 unique authoritative decision keys with no duplicate keys across ledgers. The nine ADR-backed aliases retained below are navigation entries and do not add to that count. Collectively, the inventories reference all 79 leaf capabilities in the taxonomy.
+The canonical design allocation covers all 221 discovered architecture sources: 218 receive a primary capability allocation and 3 are explicit governance/template/registry exemptions. This inventory accounts for the same source set as 172 non-ADR architecture documents in the source-scoped ledgers, 48 ADR records, and the architecture decision registry/index; a source may provide evidence without producing a distinct decision row. The source-scoped ledgers contain 182 distinct authoritative decisions with no duplicate decisions across ledgers. The 23 microservice service-only rows comprise 22 distinct decisions plus the navigation-only `MS-AA-TOKEN-REVOCATION` alias, so the total distinct decision count remains 182. The adversarial queue has 183 navigation rows, including the nine ADR-backed alias navigation rows already included in Packet 1; those aliases do not increase the distinct decision count of 182. `MS-AA-TOKEN-REVOCATION` remains one additional historical service-scan alias for navigation and likewise does not create a distinct decision. Collectively, the inventories reference all 79 leaf capabilities in the taxonomy.
 
 | Capability | Sources reviewed | Decisions inventoried | Human-review candidates | Coverage state |
 | --- | ---: | ---: | ---: | --- |
-| Existing ADR set | 35 records plus linked canonical sources | 9 original aliases within the 68 cross-cutting decisions; later accepted records are allocated directly | Prioritized in the source ledger | Reviewed through ADR 0035 |
+| Existing ADR set | 48 ADR records (46 accepted; 2 historical/superseded) plus the architecture decision registry/index | 9 original aliases within the 68 cross-cutting decisions; later accepted records are allocated directly | Prioritized in the source ledger | Accepted registry through ADR 0050; Packet 2 coverage is ADRs 0020-0043, 0045, 0047, and 0048 |
 | Cross-cutting system architecture | 22 canonical sources plus ADRs | 68 | Prioritized in the source ledger | Complete and independently audited |
-| Microservice architecture | 76 sources | 23 new; stronger evidence for 40 existing keys | Prioritized in the source ledger | Complete and independently audited |
+| Microservice architecture | 76 sources | 23 rows = 22 distinct decisions + navigation-only `MS-AA-TOKEN-REVOCATION` alias; stronger evidence for 40 existing keys | Prioritized in the source ledger | Complete and independently audited |
 | Specialized runtime architecture | 39 sources | 54 new; stronger evidence for 20 existing keys | Prioritized in the source ledger | Complete and independently audited |
 | Product and operations architecture | 35 sources | 38 new; stronger evidence for 11 existing keys | Prioritized in the source ledger | Complete and independently audited |
-| **Total unique decision keys** | **All 208 architecture artifacts classified; 172 decision-scan sources plus 36 decision-registry artifacts** | **183** | **Prioritized by source ledger** | **Initial inventory complete; accepted records allocated through ADR 0035** |
+| **Total distinct decisions** | **All 221 discovered architecture sources: 172 non-ADR source-ledger documents, 48 ADR records, and the registry/index; 218 allocated and 3 explicit governance/template/registry exemptions** | **182** | **Prioritized by source ledger** | **Initial inventory complete; accepted records allocated through ADR 0050** |
 
 ## Decision Ledger
 
@@ -73,7 +73,7 @@ The source-scoped ledgers contain 183 unique authoritative decision keys with no
 | `PO-EDGE-SHARDING` | `PO-2` | Does the edge own gameplay shard routing or expose a client-visible shard-handoff signal? | No; Gateway routes to a stable Game Session surface and close outcomes use the unified failure taxonomy | `accepted-explicit` | `P1` | [ADR 0007](../../architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md) | Client-carried routing keys with explicit edge shard selection and reroute close semantics | Accepted record exists; human-led adversarial review pending |
 | `GR-GAMEPLAY-CLUSTER-SCOPE` | `GR-1` | What deployment scope does gameplay execution support before a complete cross-cluster contract exists? | One Kubernetes cluster per deployment with in-cluster lease rebalancing; multi-cluster gameplay requires a dedicated design package | `accepted-explicit` | `P1` | [ADR 0008](../../architecture/decisions/adr-0008-multi-cluster-gameplay-sharding-scope.md) | Design cross-cluster routing, trust, data, and failover as current target state now | Accepted adoption gate exists; scale assumptions need review against product requirements |
 | `SF-COORDINATION-REDIS-OWNERSHIP` | `SF-2` | Who may own and mutate correctness-sensitive Redis coordination keyspaces? | Explicit narrow owners; non-owners participate only through documented owner-managed contracts and helpers | `accepted-explicit` | `P1` | [ADR 0009](../../architecture/decisions/adr-0009-coordination-redis-ownership-boundary.md) | Shared keyspace ownership with schema conventions and distributed review | Accepted record exists; cross-owner bridge completeness needs review |
-| `SF-TCP-PROXY-IDENTITY` | `SF-1` | What production identity allows Gateway to trust TCP Proxy headers? | Exact SPIFFE-style URI SAN under platform PKI; DNS is transitional and fingerprint pinning is break-glass only | `accepted-explicit` | `P2` | [ADR 0010](../../architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md) | DNS SAN as steady state, workload identity infrastructure, or certificate fingerprint pinning | Accepted record exists; deployment feasibility and fallback controls need review |
+| `SF-TCP-PROXY-IDENTITY` | `SF-1` | What bridge protocol and identity evidence allow Gateway to trust TCP Proxy headers? | ADR-0010 owns only the authenticated TCP Proxy → Gateway bridge protocol and header contract; ADR-0038 owns normalized URI-SAN workload identity, explicitly selected non-player-facing DNS-SAN migration bridge identity, and approved certificate-instance evidence. This navigation alias maps to the canonical `EDGE-03` decision. | `accepted-explicit` | `P2` | [ADR 0010](../../architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md); [ADR 0038](../../architecture/decisions/adr-0038-explicit-jwt-profiles-and-mtls-workload-identity.md) | DNS-only trust, public header trust, or treating certificate-instance evidence as workload identity | Accepted records exist; the bridge remains owned by ADR-0010, identity and certificate evidence by ADR-0038, and route selection/proof still need review |
 | `GR-SESSION-FRONTEND-EXECUTION` | `GR-1` | How are socket ownership and region execution ownership separated inside Game Session? | A session front-end owns the socket while the fenced lease owner executes region-scoped mutations over ordered internal forwarding | `accepted-explicit` | `P1` | [ADR 0011](../../architecture/decisions/adr-0011-gameplay-session-front-end-and-region-execution.md) | Co-locate socket and execution through affinity/reconnect, or use a dedicated session router | Accepted record exists; forwarding complexity and failure semantics need human-led adversarial review |
 
 ## Conflicts And Missing Decisions
@@ -103,16 +103,18 @@ The review facilitator must preserve the current choice's strongest argument, co
 
 ### Progress Summary
 
-| Packet | Scope | Reviewed | Total | State |
+| Packet | Scope | Reviewed distinct decisions | Navigation rows | State |
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `completed` |
-| 2 | Identity, authority, and security | 16 | 32 | `in-progress` |
+| 2 | Identity, authority, and security | 27 | 32 | `in-progress` |
 | 3 | Execution correctness and durability | 0 | 43 | `not-started` |
 | 4 | Publishing, settings, and authored behavior | 0 | 36 | `not-started` |
 | 5 | Gameplay and player experience | 0 | 21 | `not-started` |
 | 6 | Operations and delivery | 0 | 25 | `not-started` |
 | 7 | Existing ADR-backed and lower-risk remainder | 0 | 17 | `not-started` |
-| **Total** | | **25** | **183** | `in-progress` |
+| **Total** | | **36** | **183** | `in-progress` |
+
+The progress total counts checklist/navigation rows. Packet 2 contains 31 distinct decision keys represented by 32 navigation rows; one is the historical alias and is excluded from checklist disposition. Its 27 checked disposition rows therefore represent exactly 27 reviewed decisions.
 
 ### Priority Overrides
 
@@ -137,7 +139,11 @@ No implementation-blocking override is active. Record an override here with the 
 
 ### Packet 2: Identity, Authority, And Security
 
-Packet 2 checklist dispositions record the human review outcome, not an inventory status. For every checked Packet 2 entry, `accepted` maps to the canonical inventory status `accepted-explicit`; `revised` maps to the same status after the revised target was accepted. Unchecked entries have no Packet 2 disposition; their canonical inventory status remains whatever the inventory records and is not inferred from this checklist. The `AUTH-02` and `AUTH-06` targets retain explicit `JOIN`/`Join & Play`, but `POST /auth/bootstrap/join` is target-state and not implemented; current implicit membership creation remains implementation drift.
+Packet 2 checklist dispositions record the human review outcome, not an inventory status. For every checked Packet 2 entry, `accepted` maps to the canonical inventory status `accepted-explicit`; `revised` maps to the same status after the revised target was accepted. Unchecked entries have no Packet 2 disposition; their canonical inventory status remains whatever the inventory records and is not inferred from this checklist. The `AUTH-02` and `AUTH-06` targets retain explicit `JOIN`/`Join & Play`, but `POST /auth/bootstrap/join` is target-state and not implemented. Current state: text `PLAY` invokes Account's `EnsurePublicProductionPlayerMembership` when the selected realm is visible public production and the membership check denies gameplay admission; connect-token issuance at `POST /auth/connect-token` invokes the same path when the current realm is public production, no non-public realm grant applies, and the membership check denies gameplay admission, so either path can implicitly create missing public-production membership. Target admission instead requires existing caller-bound membership and returns canonical `JOIN_REQUIRED` when public-production membership is missing or `INACTIVE`; `WORLD_ACCESS_DENIED` is reserved for another reachable authoritative world/tenant denial and is mutually exclusive with `JOIN_REQUIRED`. A realm grant never substitutes for membership, and the connect-token membership-version plus membership-authority-generation reread remains a gap.
+
+Packet 2 count reconciliation: the 27 reviewed decisions are covered by accepted ADRs 0020-0043, 0045, 0047, and 0048. The Packet 2 disposition contains exactly those 27 decisions; the historical alias is not a checked disposition row.
+
+Packet 2 historical-alias rule: `MS-AA-TOKEN-REVOCATION` is a superseded service-scan alias, not an additional unresolved decision or an independent target. Its canonical mapping is the accepted/revised set `AUTH-03`, `JWT-01`, `JWT-02`, `JWT-03`, and `JWT-04`; new evidence or review outcomes must be recorded against those owning keys. The alias may remain in historical scan/navigation material, but it is excluded from the Packet 2 disposition and must not be counted as a separate decision or reopened as an alternative target.
 
 #### Packet 2 P0
 
@@ -157,23 +163,22 @@ Packet 2 checklist dispositions record the human review outcome, not an inventor
 - [x] `SEC-03` — `revised` on 2026-07-19; [ADR 0033](../../architecture/decisions/adr-0033-public-player-facing-telnet-requires-tls.md)
 - [x] `SEC-05` — `revised` on 2026-07-19; [ADR 0034](../../architecture/decisions/adr-0034-layered-abuse-controls-without-attacker-triggered-account-locks.md)
 - [x] `JWT-01` — `revised` on 2026-07-19; [ADR 0035](../../architecture/decisions/adr-0035-single-record-issued-token-registry.md)
-- [ ] `JWT-02`
-- [ ] `JWT-03`
-- [ ] `JWT-04`
+- [x] `JWT-02` — `revised` on 2026-07-19; [ADR 0036](../../architecture/decisions/adr-0036-monotonic-authority-generations-for-bulk-token-revocation.md)
+- [x] `JWT-03` — `revised` on 2026-07-19; [ADR 0037](../../architecture/decisions/adr-0037-fail-closed-token-authority-outages-with-bounded-active-gameplay.md)
+- [x] `JWT-04` — `revised` on 2026-07-19; [ADR 0038](../../architecture/decisions/adr-0038-explicit-jwt-profiles-and-mtls-workload-identity.md)
 - [x] `REDIS-06` — `revised` on 2026-07-19; [ADR 0039](../../architecture/decisions/adr-0039-bounded-redis-operator-maintenance-surface.md)
-- [ ] `MS-AA-CONTROL-LOGIN-SCOPE`
-- [ ] `MS-AA-TOKEN-REVOCATION`
+- [x] `MS-AA-CONTROL-LOGIN-SCOPE` — `revised` on 2026-07-19; [ADR 0040](../../architecture/decisions/adr-0040-account-global-control-login-and-explicit-tenant-selection.md)
 
 #### Packet 2 P1
 
-- [ ] `TENANT-02`
-- [ ] `MS-AA-GLOBAL-TENANT-BOUNDARY`
-- [ ] `MS-AA-LIFECYCLE-ERASURE`
+- [x] `TENANT-02` — `revised` on 2026-07-19; [ADR 0041](../../architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md)
+- [x] `MS-AA-GLOBAL-TENANT-BOUNDARY` — `revised` on 2026-07-19; [ADR 0042](../../architecture/decisions/adr-0042-global-account-and-tenant-scoped-game-relationships.md)
+- [x] `MS-AA-LIFECYCLE-ERASURE` — `revised` on 2026-07-19; [ADR 0043](../../architecture/decisions/adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md)
 - [ ] `MS-AA-PAYMENT-INSTRUMENT`
-- [ ] `MS-AA-LOGIN-FACTORS`
+- [x] `MS-AA-LOGIN-FACTORS` — `revised` on 2026-07-19; [ADR 0045](../../architecture/decisions/adr-0045-ordinary-login-factors-and-https-sensitive-action-step-up.md)
 - [ ] `MS-SOCIAL-PRESENCE-PRIVACY`
-- [ ] `SEC-04`
-- [ ] `ADMIN-01`
+- [x] `SEC-04` — `revised` on 2026-07-19; [ADR 0047](../../architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md)
+- [x] `ADMIN-01` — `revised` on 2026-07-19; [ADR 0048](../../architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md)
 - [ ] `ACCOUNT-01`
 - [ ] `DATA-01`
 

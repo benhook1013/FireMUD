@@ -43,8 +43,21 @@ route_authentication_rules:
   accepted_token_profile_audiences:
     multi_profile_routes: exact_profile_to_audience_map_required
     audience_source: token_profiles
+  gameplay_websocket_entrypoint:
+    canonical_route: /ws/game/**
+    supported_variants: [first_party_cookie, trusted_tcp_proxy]
+    future_variants:
+      non_first_party_public_header:
+        route: /ws/game/**
+        carrier: X-Firemud-Connect-Token
+        applicability: explicit_non_first_party_public_classification_only
+        status: unavailable_until_dedicated_route_variant_and_proof
+        rejection_until_available: CONNECT_TOKEN_REJECTED
+    fail_closed_rules: [no_alternate_gameplay_websocket_entrypoint, no_header_fallback, no_carrier_precedence]
 required_live_check_vocabulary:
   - account_generation
+  - account_authority_tuple
+  - account_outbox_checkpoint
   - admission_pointer
   - browser_origin
   - conditional_realm_access_grant
@@ -52,10 +65,14 @@ required_live_check_vocabulary:
   - connect_token_single_use_consume
   - csrf
   - current_token_generation
+  - exact_binding_admission_lease
+  - binding_fence
+  - binding_ownership
   - grant_version
   - issuer_generation
   - membership
   - membership_generation
+  - membership_version
   - public_production_admission
   - public_production_visibility
   - realm_visibility
@@ -63,7 +80,11 @@ required_live_check_vocabulary:
   - replay_protection_available
   - runtime_entitlements
   - tenant_generation
+  - target_tenant_generation
   - trusted_proxy_identity
+  - pending_deletion_credential_registry
+  - pending_deletion_workflow_state
+  - pending_deletion_action_family
 implementation_status:
   known_drift:
     - public_production_membership_may_be_created_implicitly_by_connect_token_or_play
@@ -74,12 +95,34 @@ classifications:
   - player_bootstrap_tenant
   - pre_tenant_discovery
   - public_production_onboarding
+  - gameplay_admission
   - tenant_regular
   - billing_safe_tenant
   - cross_tenant_support_safe
   - cross_tenant_billing_safe
   - cross_tenant_data_bearing
   - internal_workload
+  - pending_deletion_scoped
+classification_rules:
+  pending_deletion_scoped:
+    required_credential:
+      kind: opaque
+      profile: pending-deletion-access
+      registry: account_pending_deletion_registry
+      state: ACTIVE
+    subject_binding: [accountId, deletionWorkflowId, deletionWorkflowGeneration]
+    action_family_binding: exact_route_action_family
+    authority_generations:
+      issuer: false
+      account: false
+      tenant: false
+      membership: false
+    required_live_checks: [pending_deletion_credential_registry, pending_deletion_workflow_state, pending_deletion_action_family]
+    allowed_route_actions: [status, cancel, full_subject_export, billing_settlement]
+    forbidden_route_actions: [login, bootstrap, connect_token, tenant, purchase, gameplay]
+    invalid_or_revoked_outcome: AUTH_SESSION_REVOKED
+    dependency_unavailable_outcome: AUTH_UNAVAILABLE
+    recovery_constraint: public_recovery_may_issue_only_pending_deletion_access
 routes:
   - service: game-session-service
     route: LOGIN
@@ -125,6 +168,26 @@ routes:
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
     required_live_checks: [realm_visibility, runtime_entitlements]
+    branch_selector: exactly_one_realm_mode
+    conditional_branch_precedence:
+      branch_fields_override_top_level: true
+    canonical_errors:
+      any_of: [NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE]
+    conditional_branches:
+      public_production:
+        selector: realm_mode=public_production
+        membership: pre_membership_discovery_allowed
+        required_live_checks: [realm_visibility, runtime_entitlements]
+      private_or_playtest:
+        selector: realm_mode=private_or_playtest
+        membership: active_caller_bound_membership_required
+        membership_authority_generation_applies: true
+        membership_version_applies: true
+        realm_grant_authority: account_owned
+        realm_grant_version: required
+        required_live_checks: [realm_visibility, membership, membership_generation, membership_version, conditional_realm_access_grant, grant_version, runtime_entitlements]
+        canonical_errors:
+          any_of: [NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE]
   - service: game-session-service
     route: CHARS
     scope: tenant
@@ -138,7 +201,7 @@ routes:
     realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED]
+      any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE]
   - service: game-session-service
     route: JOIN
     scope: tenant
@@ -155,17 +218,26 @@ routes:
   - service: game-session-service
     route: PLAY
     scope: tenant
-    classification: public_production_onboarding
+    classification: gameplay_admission
     auth_path: game_session_authenticated_context
     accepted_token_profiles: []
     delegated_subject: authenticated_session_account
     tenant_billing_authority_generation_applies: false
+    tenant_authority_generation_applies: true
     membership_authority_generation_applies: true
+    membership_version_applies: true
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
-    required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
+    required_live_checks: [membership, target_tenant_generation, membership_generation, membership_version, conditional_realm_access_grant, runtime_entitlements, admission_pointer, account_authority_tuple, account_outbox_checkpoint, exact_binding_admission_lease, binding_fence, binding_ownership]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE]
+      any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, AUTH_SESSION_REVOKED, OWNERSHIP_UNAVAILABLE, STALE_TIMELINE]
+    account_checkpoint_tuple_evidence:
+      source: account-auth-evidence-bundle/v1
+      required: [authorityTuple, membershipVersion, outboxCheckpoints]
+      comparison: exact_target_tenant_and_caller_membership_scope
+    exact_binding_admission_lease: required
+    binding_fence: required
+    binding_ownership_checks: [gameplay_binding_identity, character_identity, runtime_owner]
     canonical_target:
       membership: existing_caller_bound_membership_required
       membership_creation: play_never_creates_membership
@@ -176,17 +248,18 @@ routes:
   - service: spring-cloud-gateway
     route: /ws/game/**
     scope: tenant
-    classification: public_production_onboarding
+    classification: gameplay_admission
     applicability:
       all_of:
         - connection_mode: first_party_web
         - operation: websocket_upgrade
         - admission_flow: connect_token_bootstrap
+        - client_scope: first_party_protected_cookie_clients
     auth_path: gameplay_connect
     accepted_token_profiles: [gameplay-connect]
     accepted_token_profile_audiences:
       gameplay-connect: gameplay-connect
-    accepted_carriers: [first_party_cookie, classified_non_browser_header]
+    accepted_carriers: [first_party_cookie]
     edge_consumer: spring_cloud_gateway_public_non_proxy_websocket
     connect_context_output: signed_connect_context
     required_live_checks: [connect_token_single_use_consume, replay_protection_available, replay_admission_fence_match, connect_scope_match]
@@ -206,7 +279,7 @@ routes:
   - service: spring-cloud-gateway
     route: /ws/game/**
     scope: tenant
-    classification: public_production_onboarding
+    classification: gameplay_admission
     applicability:
       all_of:
         - connection_mode: trusted_tcp_proxy
@@ -277,7 +350,7 @@ routes:
     realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH]
+      any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, CONNECT_SCOPE_MISMATCH]
   - service: account-service
     route: POST /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters
     scope: tenant
@@ -292,7 +365,7 @@ routes:
     realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH]
+      any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, CONNECT_SCOPE_MISMATCH]
     delegates_to: entity-management-service/CreateCharacter
   - service: game-session-service
     route: StartSession
@@ -370,8 +443,7 @@ routes:
     implementation_status:
       target_only: true
   - service: account-service
-    route: EnsurePublicProductionPlayerMembership
-    target_route: JoinPublicProductionMembership
+    route: JoinPublicProductionMembership
     scope: tenant
     classification: internal_workload
     auth_path: exact_mtls_workload
@@ -383,14 +455,27 @@ routes:
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
     delegated_subject: typed_player_execution_context
+    target_binding: verified_connectScopeId_exact_target
+    request_binding: requestId_and_caller_target_digest
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
-    required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer]
+    required_live_checks: [public_production_admission, runtime_entitlements, admission_pointer, connect_scope_match]
     canonical_errors:
-      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, TENANT_BILLING_BLOCKED]
+      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, IDEMPOTENCY_CONFLICT]
     mutation_contract: explicit_public_membership_atomic
+    exact_scope_revalidation:
+      required: true
+      fields: [connectScopeId, catalogRevision, pointerVersion, resolved_target]
+      silent_retarget: forbidden
+    idempotency_contract:
+      key: requestId
+      digest: canonical_caller_target_connect_scope_digest
+      exact_retry: same_requestId_and_digest_returns_stored_outcome
+      changed_digest: IDEMPOTENCY_CONFLICT
+      changed_requestId: distinct_operation
     implementation_status:
       known_drift:
+        - current_proto_and_internal_runtime_seam_is_named_ensure_public_production_player_membership
         - current_membership_seam_may_be_invoked_implicitly_by_connect_token_or_play
   - service: account-service
     route: DELETE /tenants/{tenantId}/memberships/me
@@ -429,21 +514,35 @@ routes:
       known_drift:
         - legacy_session_key_runtime_lacks_durable_logout_all_retry_proof
   - service: account-service
-    route: GetProfile
-    scope: account
-    classification: account_scoped
-    subject_binding: caller_account_id_or_platform_admin
+    route: GET /tenants/{tenantId}/profiles/{accountId}
+    scope: tenant
+    classification: tenant_regular
+    subject_binding: caller_account_id
     accepted_token_profiles: [control-ui]
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
+    membership_version_applies: true
+    required_live_checks: [membership]
     roles:
-      any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
+      any_of: [player, moderator, designer, tenantAdmin]
+    implementation_status:
+      known_drift:
+        - legacy_route_is_profiles_account_id
   - service: account-service
-    route: UpdateProfile
-    scope: account
-    classification: account_scoped
-    subject_binding: caller_account_id_or_platform_admin
+    route: PUT /tenants/{tenantId}/profiles/{accountId}
+    scope: tenant
+    classification: tenant_regular
+    subject_binding: caller_account_id
     accepted_token_profiles: [control-ui]
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
+    membership_version_applies: true
+    required_live_checks: [membership]
     roles:
-      any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
+      any_of: [player, moderator, designer, tenantAdmin]
+    implementation_status:
+      known_drift:
+        - legacy_route_is_profiles_account_id
   - service: account-service
     route: ExportAccount
     scope: account
@@ -481,17 +580,49 @@ routes:
     issued_token_profile: gameplay-connect
     issued_token_audience: gameplay-connect
     tenant_billing_authority_generation_applies: false
+    tenant_authority_generation_applies: true
     membership_authority_generation_applies: true
+    membership_version_applies: true
     target_binding: opaque_server_issued_connect_scope_id_matches_route
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
-    required_live_checks: [membership, membership_generation, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match, replay_protection_available, replay_admission_fence_match]
+    required_live_checks: [membership, target_tenant_generation, membership_generation, membership_version, account_authority_tuple, account_outbox_checkpoint, conditional_realm_access_grant, grant_version, runtime_entitlements, admission_pointer, connect_scope_match, replay_protection_available, replay_admission_fence_match]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, CONNECT_REPLAY_PROTECTION_UNAVAILABLE, ENTITLEMENT_UNAVAILABLE]
+      any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, PUBLIC_PRODUCTION_ADMISSION_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, CONNECT_REPLAY_PROTECTION_UNAVAILABLE, AUTH_UNAVAILABLE, AUTH_SESSION_REVOKED]
     subject_binding: caller_account_id
     canonical_target:
       membership: existing_caller_bound_membership_required
+      membership_lifecycle_state: ACTIVE
       membership_creation: issue_connect_token_never_creates_membership
+      authority_tuple: exact_bounded_selected_target_tuple_from_one_account_snapshot
+      tenant_authority_generation: exactly_one_selected_tenant_entry
+      membership_authority_generation: exactly_one_selected_tenant_entry
+      membership_version: exactly_one_selected_tenant_entry_with_same_tenant_key
+      private_realm_grant_versions: public_empty_or_exactly_one_selected_realm_entry
+    issuance_evidence:
+      schema: connect-token-issuance-evidence/v1
+      account_boundary: account-auth-evidence-bundle/v1
+      request_identity: [accountId, connectScopeId, requestId, requestDigest]
+      selected_route_membership_evidence: [membershipLifecycleState, membershipAuthorityGeneration, membershipVersion]
+      gameplay_connect_fields: [authorityTuple, membershipVersion, jti, iat, exp, replayAdmissionFence]
+      required_references: [runtimeEntitlementAuthorityReference, admissionPointerAuthorityReference]
+      postconditions:
+        success:
+          request_outcome: COMMITTED
+          dedicated_gameplay_connect_record: COMMITTED
+          required_record_fields: [accountId, tenantId, gameInstanceId, membershipLifecycleState, authorityTuple, membershipVersion, jti, issuedAt, replayAdmissionFence, runtimeEntitlementAuthorityReference, admissionPointerAuthorityReference]
+        deterministic_failure:
+          request_outcome: terminal_without_token
+          dedicated_gameplay_connect_record: no_usable_record
+      idempotency:
+        key: requestId
+        digest: requestDigest
+        exact_retry: stored_success_or_deterministic_failure
+        second_token_on_retry: forbidden
+      ordinary_registry_contract:
+        player_bootstrap_authorization: required
+        gameplay_connect_registry_record: forbidden
+        excluded_registry_only_fields: [tokenGeneration, issuanceFence]
     implementation_status:
       known_drift:
         - issue_connect_token_may_still_invoke_ensure_public_production_player_membership
@@ -611,7 +742,8 @@ routes:
     accepted_token_profiles: [control-ui]
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [membership]
+    membership_version_applies: true
+    required_live_checks: [membership, membership_version]
     response_profile: high_level_only
     roles:
       any_of: [tenantAdmin]
@@ -630,7 +762,8 @@ routes:
     accepted_token_profiles: [control-ui]
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [membership]
+    membership_version_applies: true
+    required_live_checks: [membership, membership_version]
     response_profile: high_level_only
     roles:
       any_of: [tenantAdmin]
@@ -641,7 +774,8 @@ routes:
     accepted_token_profiles: [control-ui]
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [membership]
+    membership_version_applies: true
+    required_live_checks: [membership, membership_version]
     response_profile: tenant_export_only
     roles:
       any_of: [tenantAdmin]
@@ -660,7 +794,8 @@ routes:
     accepted_token_profiles: [control-ui]
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [membership]
+    membership_version_applies: true
+    required_live_checks: [membership, membership_version]
     response_profile: high_level_only
     roles:
       any_of: [tenantAdmin]
@@ -687,7 +822,8 @@ routes:
     accepted_token_profiles: [control-ui]
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [membership]
+    membership_version_applies: true
+    required_live_checks: [membership, membership_version]
     response_profile: membership_self_only
     roles:
       any_of: [tenantAdmin]
@@ -706,10 +842,11 @@ routes:
     accepted_token_profiles: [control-ui]
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: true
-    required_live_checks: [membership]
+    membership_version_applies: true
+    required_live_checks: [membership, membership_version]
     mutation_contract: shared_instrument_ack_required
     canonical_errors:
-      any_of: [BILLING_SHARED_INSTRUMENT_ACK_REQUIRED, MEMBERSHIP_AUTH_UNAVAILABLE]
+      any_of: [BILLING_SHARED_INSTRUMENT_ACK_REQUIRED, AUTH_UNAVAILABLE]
     roles:
       any_of: [tenantAdmin]
   - service: account-service

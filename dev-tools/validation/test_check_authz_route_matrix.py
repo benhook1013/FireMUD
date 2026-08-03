@@ -475,7 +475,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
         self.assertEqual(
             [
-                "account-service EnsurePublicProductionPlayerMembership must declare ADMISSION_POINTER_UNAVAILABLE",
+                "account-service JoinPublicProductionMembership must declare ADMISSION_POINTER_UNAVAILABLE",
                 "account-service POST /auth/bootstrap/join must declare ADMISSION_POINTER_UNAVAILABLE",
                 "game-session-service JOIN must declare ADMISSION_POINTER_UNAVAILABLE",
             ],

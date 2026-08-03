@@ -26,7 +26,7 @@ REQUIRED_ISSUE_CONNECT_TOKEN_CHECKS = {
 JOIN_ROUTES_REQUIRING_POINTER_ERROR = {
     ("game-session-service", "JOIN"),
     ("account-service", "POST /auth/bootstrap/join"),
-    ("account-service", "EnsurePublicProductionPlayerMembership"),
+    ("account-service", "JoinPublicProductionMembership"),
 }
 REQUIRED_DELEGATED_ENTITLEMENT_CHECKS = {
     "conditional_realm_access_grant",
