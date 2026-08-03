@@ -18,6 +18,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -84,6 +86,15 @@ class AccountRepositoryIntegrationTest {
 
     assertThat(saved.getEmail()).isEqualTo("player@example.com");
     assertThat(repository.findByEmail("  PLAYER@EXAMPLE.COM ")).isPresent();
+  }
+
+  @ParameterizedTest
+  @NullSource
+  @ValueSource(strings = {"", "   "})
+  void saveRejectsMissingEmailBeforeStorage(String email) {
+    assertThatThrownBy(
+            () -> repository.save(account("missing-email", email, AccountLifecycleState.ACTIVE)))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test

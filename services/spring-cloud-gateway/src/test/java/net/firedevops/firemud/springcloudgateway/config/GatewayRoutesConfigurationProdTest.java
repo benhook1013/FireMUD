@@ -70,6 +70,7 @@ class GatewayRoutesConfigurationProdTest {
     URI targetUri = sessionRoute.getUri();
     assertThat(targetUri.getScheme()).isEqualTo("http");
     assertHasPath(gatewayProperties, "session-ping", "/api/session/ping");
+    assertHasMethod(gatewayProperties, "session-ping", "GET");
     assertHasStripPrefixTwo(gatewayProperties, "session-ping");
   }
 

@@ -564,6 +564,88 @@ def _validate_bootstrap_secret_command(command_lines: list[str]) -> None:
         )
 
 
+def _validate_bootstrap_temp_directory_cleanup(bootstrap_lines: list[str]) -> None:
+    cleanup_starts = [
+        index
+        for index, line in enumerate(bootstrap_lines)
+        if line == "cleanup_bootstrap_temp_dir() {"
+    ]
+    if len(cleanup_starts) != 1:
+        raise AssertionError(
+            "dev-demo bootstrap must contain exactly one cleanup_bootstrap_temp_dir function"
+        )
+    cleanup_end = _cleanup_function_end_index(bootstrap_lines, cleanup_starts[0])
+    if cleanup_end is None:
+        raise AssertionError(
+            "dev-demo bootstrap cleanup function has no same-nesting closing brace"
+        )
+    cleanup_lines = bootstrap_lines[cleanup_starts[0] : cleanup_end]
+    success_start = next(
+        (
+            index
+            for index, line in enumerate(cleanup_lines)
+            if 'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then' in line
+        ),
+        None,
+    )
+    if success_start is None:
+        raise AssertionError(
+            "dev-demo bootstrap temp directory cleanup success branch is missing"
+        )
+    success_end = closing_fi_index(cleanup_lines, success_start)
+    if success_end is None:
+        raise AssertionError(
+            "dev-demo bootstrap temp directory cleanup success branch has no closing fi"
+        )
+    success_return = next(
+        (
+            index
+            for index in range(success_start + 1, success_end)
+            if "return 0" in cleanup_lines[index]
+        ),
+        None,
+    )
+    if success_return is None:
+        raise AssertionError(
+            "dev-demo bootstrap temp directory cleanup success branch must return 0"
+        )
+    clear_directory_lines = [
+        index
+        for index, line in enumerate(cleanup_lines)
+        if line == "BOOTSTRAP_SECRET_DIR="
+    ]
+    if (
+        len(clear_directory_lines) != 1
+        or not success_start < clear_directory_lines[0] < success_return < success_end
+    ):
+        raise AssertionError(
+            "dev-demo bootstrap temp directory must clear its variable only in the "
+            "successful rm branch before return 0"
+        )
+
+
+def _validate_bootstrap_pod_spec(bootstrap_manifest: str) -> None:
+    bootstrap_pod = _extract_bootstrap_pod(bootstrap_manifest)
+    pod_spec = bootstrap_pod.get("spec")
+    if not isinstance(pod_spec, dict):
+        raise AssertionError("dev-demo bootstrap pod must define spec as a mapping")
+    containers = pod_spec.get("containers")
+    if not isinstance(containers, list) or not containers:
+        raise AssertionError(
+            "dev-demo bootstrap pod spec.containers must be a non-empty list"
+        )
+    if not isinstance(containers[0], dict):
+        raise AssertionError(
+            "dev-demo bootstrap pod spec.containers[0] must be a mapping"
+        )
+    if containers[0].get("envFrom", []) != [
+        {"secretRef": {"name": "dev-demo-bootstrap-env"}}
+    ]:
+        raise AssertionError(
+            "dev-demo bootstrap pod must import dev-demo-bootstrap-env"
+        )
+
+
 def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
     normalized = normalize_script(bootstrap_manifest)
     for expected in BOOTSTRAP_MANIFEST_REQUIRED_MARKERS:
@@ -629,82 +711,8 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
         )
 
     bootstrap_lines = [line.strip() for line in bootstrap_manifest.splitlines()]
-    cleanup_starts = [
-        index
-        for index, line in enumerate(bootstrap_lines)
-        if line == "cleanup_bootstrap_temp_dir() {"
-    ]
-    if len(cleanup_starts) != 1:
-        raise AssertionError(
-            "dev-demo bootstrap must contain exactly one cleanup_bootstrap_temp_dir function"
-        )
-    cleanup_end = _cleanup_function_end_index(bootstrap_lines, cleanup_starts[0])
-    if cleanup_end is None:
-        raise AssertionError(
-            "dev-demo bootstrap cleanup function has no same-nesting closing brace"
-        )
-    cleanup_lines = bootstrap_lines[cleanup_starts[0] : cleanup_end]
-    success_start = next(
-        (
-            index
-            for index, line in enumerate(cleanup_lines)
-            if 'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then' in line
-        ),
-        None,
-    )
-    if success_start is None:
-        raise AssertionError(
-            "dev-demo bootstrap temp directory cleanup success branch is missing"
-        )
-    success_end = closing_fi_index(cleanup_lines, success_start)
-    if success_end is None:
-        raise AssertionError(
-            "dev-demo bootstrap temp directory cleanup success branch has no closing fi"
-        )
-    success_return = next(
-        (
-            index
-            for index in range(success_start + 1, success_end)
-            if "return 0" in cleanup_lines[index]
-        ),
-        None,
-    )
-    if success_return is None:
-        raise AssertionError(
-            "dev-demo bootstrap temp directory cleanup success branch must return 0"
-        )
-    clear_directory_lines = [
-        index
-        for index, line in enumerate(cleanup_lines)
-        if line == "BOOTSTRAP_SECRET_DIR="
-    ]
-    if (
-        len(clear_directory_lines) != 1
-        or not success_start < clear_directory_lines[0] < success_return < success_end
-    ):
-        raise AssertionError(
-            "dev-demo bootstrap temp directory must clear its variable only in the "
-            "successful rm branch before return 0"
-        )
-    bootstrap_pod = _extract_bootstrap_pod(bootstrap_manifest)
-    pod_spec = bootstrap_pod.get("spec")
-    if not isinstance(pod_spec, dict):
-        raise AssertionError("dev-demo bootstrap pod must define spec as a mapping")
-    containers = pod_spec.get("containers")
-    if not isinstance(containers, list) or not containers:
-        raise AssertionError(
-            "dev-demo bootstrap pod spec.containers must be a non-empty list"
-        )
-    if not isinstance(containers[0], dict):
-        raise AssertionError(
-            "dev-demo bootstrap pod spec.containers[0] must be a mapping"
-        )
-    if containers[0].get("envFrom", []) != [
-        {"secretRef": {"name": "dev-demo-bootstrap-env"}}
-    ]:
-        raise AssertionError(
-            "dev-demo bootstrap pod must import dev-demo-bootstrap-env"
-        )
+    _validate_bootstrap_temp_directory_cleanup(bootstrap_lines)
+    _validate_bootstrap_pod_spec(bootstrap_manifest)
 
 
 def _validate_smoke_account_contract(root: Path) -> None:

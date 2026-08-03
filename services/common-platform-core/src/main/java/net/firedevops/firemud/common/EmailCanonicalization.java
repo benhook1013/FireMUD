@@ -7,6 +7,13 @@ public final class EmailCanonicalization {
   private EmailCanonicalization() {}
 
   public static String normalize(String email) {
-    return email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
+    if (email == null) {
+      throw new IllegalArgumentException("email must not be null");
+    }
+    String trimmed = email.trim();
+    if (trimmed.isEmpty()) {
+      throw new IllegalArgumentException("email must not be blank");
+    }
+    return trimmed.toLowerCase(Locale.ROOT);
   }
 }

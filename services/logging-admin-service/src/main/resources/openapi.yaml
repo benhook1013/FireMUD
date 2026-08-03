@@ -14,7 +14,8 @@ info:
     url: https://opensource.org/licenses/MIT
 servers:
   - url: https://api.firemud.com
-security: []
+security:
+  - bearerAuth: []
 components:
   securitySchemes:
     bearerAuth:
@@ -1497,6 +1498,7 @@ paths:
     get:
       summary: Health check endpoint
       operationId: ping
+      security: []
       responses:
         '200':
           description: Pong response
