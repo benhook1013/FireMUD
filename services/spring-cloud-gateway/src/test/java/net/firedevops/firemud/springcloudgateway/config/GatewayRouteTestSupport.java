@@ -3,6 +3,8 @@ package net.firedevops.firemud.springcloudgateway.config;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.cloud.gateway.config.GatewayProperties;
 import org.springframework.cloud.gateway.filter.FilterDefinition;
 import org.springframework.cloud.gateway.handler.predicate.PredicateDefinition;
@@ -37,6 +39,19 @@ final class GatewayRouteTestSupport {
       GatewayProperties gatewayProperties, String routeId, String expectedMethod) {
     assertThat(predicateArgs(gatewayProperties, routeId, "Method").values())
         .containsExactly(expectedMethod);
+  }
+
+  static void assertNoConfiguredPathStartsWith(
+      GatewayProperties gatewayProperties, String pathPrefix) {
+    Set<String> configuredPaths =
+        gatewayProperties.getRoutes().stream()
+            .flatMap(route -> route.getPredicates().stream())
+            .filter(predicate -> "Path".equalsIgnoreCase(predicate.getName()))
+            .flatMap(predicate -> predicate.getArgs().values().stream())
+            .collect(Collectors.toSet());
+
+    assertThat(configuredPaths).isNotEmpty();
+    assertThat(configuredPaths).noneMatch(path -> path.startsWith(pathPrefix));
   }
 
   static void assertHasStripPrefixTwo(GatewayProperties gatewayProperties, String routeId) {

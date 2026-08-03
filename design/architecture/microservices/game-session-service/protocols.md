@@ -28,7 +28,7 @@ The player-facing protocol is also stage-aware:
 - **Logged in, not yet playing** – existing members with confirmed durable membership can issue `PLAY` directly. Target behavior requires a first-time public-production player to issue `JOIN` first. In the current runtime, `JOIN` is unavailable and `PLAY` without the required public-production membership returns `JOIN_REQUIRED` without creating membership; non-public missing membership returns `WORLD_ACCESS_DENIED`. Players may use lobby helper commands such as `REALMS` and `CHARS` to disambiguate selection.
 - **In-game** – gameplay commands such as `LOOK`, `SAY`, and movement are available.
 
-The normal happy path for a human player should therefore be:
+The target-only happy path for a human player should therefore be:
 
 ```text
 LOGIN <email> [secret]
@@ -68,7 +68,7 @@ The target Account membership operation is `JoinPublicProductionMembership`. The
 - An ambiguous or stale world/realm selector is a lobby-selection error: Game Session does not guess, does not invoke Account, and directs the client to refresh `WORLDS`/`REALMS`. A discovered scope that is stale or no longer matches the resolved `worldSlug`/`realmSlug` fails closed with the applicable scope or admission error rather than being translated to a newer target.
 - `requestId` is the join attempt idempotency key. Account binds it to the caller, resolved `connectScopeId`, `worldSlug`, and `realmSlug`; an exact retry replays the same membership result or deterministic failure, while a changed selector or target conflicts and creates no second membership.
 
-Explicit `JOIN` and first-party `Join & Play` are not implemented as current text or HTTP actions. Current text `PLAY` returns `JOIN_REQUIRED` without invoking the membership writer, while current connect-token issuance requires existing membership and returns `JOIN_REQUIRED` when it is absent without invoking the drifted `EnsurePublicProductionPlayerMembership` seam. The missing membership-authority-generation reread at issuance remains a gap; these current facts must not be described as the explicit-join translation being live.
+Current `JOIN` availability and the membership-authority-generation gap are recorded in [Implementation Status](#implementation-status); this section defines only the target translation and must not be read as evidence that the explicit-join action is live.
 
 ## Login and Play Flow
 

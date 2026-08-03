@@ -27,6 +27,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SuppressWarnings("resource")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class AccountRepositoryIntegrationTest {
+  private static final String MIGRATION_LOCATION =
+      "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
   private static final String MIGRATION_PROOF_SCHEMA = "account_migration_proof";
   private static final String COLLISION_MIGRATION_PROOF_SCHEMA =
       "account_migration_collision_proof";
@@ -46,12 +48,7 @@ class AccountRepositoryIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
 
-    Flyway.configure()
-        .dataSource(dataSource)
-        .locations(
-            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
-        .load()
-        .migrate();
+    Flyway.configure().dataSource(dataSource).locations(MIGRATION_LOCATION).load().migrate();
 
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     repository = new AccountRepository(dsl);
@@ -93,8 +90,7 @@ class AccountRepositoryIntegrationTest {
   void flywayCanonicalizesLegacyEmailAndRejectsNonCanonicalValues() {
     Flyway.configure()
         .dataSource(dataSource)
-        .locations(
-            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
+        .locations(MIGRATION_LOCATION)
         .schemas(MIGRATION_PROOF_SCHEMA)
         .defaultSchema(MIGRATION_PROOF_SCHEMA)
         .target("21")
@@ -109,8 +105,7 @@ class AccountRepositoryIntegrationTest {
 
     Flyway.configure()
         .dataSource(dataSource)
-        .locations(
-            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
+        .locations(MIGRATION_LOCATION)
         .schemas(MIGRATION_PROOF_SCHEMA)
         .defaultSchema(MIGRATION_PROOF_SCHEMA)
         .load()
@@ -136,8 +131,7 @@ class AccountRepositoryIntegrationTest {
   void flywayRejectsCanonicalEmailCollisionsBeforeRewriting() {
     Flyway.configure()
         .dataSource(dataSource)
-        .locations(
-            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
+        .locations(MIGRATION_LOCATION)
         .schemas(COLLISION_MIGRATION_PROOF_SCHEMA)
         .defaultSchema(COLLISION_MIGRATION_PROOF_SCHEMA)
         .target("21")
@@ -159,11 +153,7 @@ class AccountRepositoryIntegrationTest {
             () ->
                 Flyway.configure()
                     .dataSource(dataSource)
-                    .locations(
-                        "filesystem:"
-                            + Path.of("src/main/resources/db/migration")
-                                .toAbsolutePath()
-                                .normalize())
+                    .locations(MIGRATION_LOCATION)
                     .schemas(COLLISION_MIGRATION_PROOF_SCHEMA)
                     .defaultSchema(COLLISION_MIGRATION_PROOF_SCHEMA)
                     .load()

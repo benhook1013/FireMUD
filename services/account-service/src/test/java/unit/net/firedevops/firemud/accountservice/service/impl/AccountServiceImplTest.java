@@ -634,8 +634,7 @@ class AccountServiceImplTest {
     emailAccount.setEmail("player@example.com");
     emailAccount.setPasswordHash(hash("password"));
     emailAccount.setLoginAuthModes("PASSWORD");
-    when(accountRepository.findByEmail("  PLAYER@EXAMPLE.COM "))
-        .thenReturn(Optional.of(emailAccount));
+    when(accountRepository.findByEmail("player@example.com")).thenReturn(Optional.of(emailAccount));
 
     PlayerBootstrapResult result =
         service.issuePlayerBootstrap("  PLAYER@EXAMPLE.COM ", "password");
@@ -1646,6 +1645,45 @@ class AccountServiceImplTest {
 
     assertEquals("PUBLIC_PRODUCTION_ADMISSION_DENIED", exception.getCode());
     assertEquals("Public joining is not allowed for the selected game", exception.getMessage());
+  }
+
+  @Test
+  void issueConnectTokenRejectsUnavailableGameplayBeforeMissingMembershipOutcomes() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.empty());
+    Subscription active = new Subscription();
+    active.setId(21L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    Subscription canceled = new Subscription();
+    canceled.setId(22L);
+    canceled.setTenantId(7L);
+    canceled.setStatus("canceled");
+    when(subscriptionRepository.findByTenantId(7L))
+        .thenReturn(java.util.List.of(active), java.util.List.of(canceled));
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    bootstrap.bootstrapToken(),
+                    new ConnectTokenRequest(connectScopeId, "req-gameplay-disabled")));
+
+    assertEquals("CONNECT_TOKEN_REJECTED", exception.getCode());
+    assertEquals("Gameplay is not available for this tenant", exception.getMessage());
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .saveAndFlush(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
   }
 
   @Test

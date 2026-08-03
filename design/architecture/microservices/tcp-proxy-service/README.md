@@ -47,7 +47,7 @@ Public Telnet TLS is configured as one of two mutually exclusive modes: a dedica
 - `readiness` is traffic-admission safety for new Telnet sessions. The service is ready only when:
   - the Telnet listener is bound;
   - the proxy can reach Spring Cloud Gateway’s readiness surface for the gameplay route; and
-  - the downstream gameplay admission path supports the currently implemented admission path `connect -> LOGIN <email> [secret] -> PLAY -> first LOOK` for callers with the required existing membership and target-specific visibility/grant authority; explicit `JOIN` / `Join & Play` remains a target gap and is not currently a readiness prerequisite.
+  - the downstream gameplay admission path supports the currently implemented admission path `connect -> LOGIN <email> [secret] -> PLAY -> first LOOK` for callers with the required existing membership and target-specific visibility/grant authority.
 - While unready, the proxy must reject new Telnet sessions immediately with an explicit startup/unavailable message and close the connection. It must not silently accept the socket and let the first gameplay command discover startup races later.
 - Loss of downstream readiness after a session is already established blocks new sessions but does not by itself imply that the proxy process is dead.
 - Readiness transition observability uses the shared contract from [Deployment Environments](../../infrastructure/deployment-environments.md): `firemud.readiness.current`, `firemud.readiness.transitions`, and structured logs keyed by the curated dependency names `telnetListener` and `gatewayGameplayPath`.

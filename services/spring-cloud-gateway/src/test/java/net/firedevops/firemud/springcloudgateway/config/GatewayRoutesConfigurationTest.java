@@ -4,6 +4,7 @@ import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestS
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasPath;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasStripPrefix;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasStripPrefixTwo;
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertNoConfiguredPathStartsWith;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.route;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -93,15 +94,7 @@ class GatewayRoutesConfigurationTest {
 
   @Test
   void publicReportsRouteIsNotConfigured() {
-    Set<String> configuredPaths =
-        gatewayProperties.getRoutes().stream()
-            .flatMap(route -> route.getPredicates().stream())
-            .filter(predicate -> "Path".equalsIgnoreCase(predicate.getName()))
-            .flatMap(predicate -> predicate.getArgs().values().stream())
-            .collect(Collectors.toSet());
-
-    assertThat(configuredPaths).isNotEmpty();
-    assertThat(configuredPaths).noneMatch(path -> path.startsWith("/api/admin/reports"));
+    assertNoConfiguredPathStartsWith(gatewayProperties, "/api/admin/reports");
   }
 
   @Test

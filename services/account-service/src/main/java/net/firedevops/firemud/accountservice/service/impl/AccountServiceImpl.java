@@ -501,13 +501,17 @@ public class AccountServiceImpl implements AccountService {
       BootstrapContext bootstrapContext,
       ConnectScopeContext scopeContext,
       ConnectTokenRequest request) {
-    RuntimeRealmTarget realm = requireCurrentConnectScopeTarget(bootstrapContext, scopeContext);
-
     RuntimeMembershipDto membership =
         getTenantMembershipForRuntime(
             bootstrapContext.accountId(), scopeContext.tenantId(), request.requestId());
     RuntimeEntitlementsDto entitlements =
         getTenantEntitlementsForRuntime(scopeContext.tenantId(), request.requestId());
+    if (!entitlements.gameplayAvailable()) {
+      throw new AuthenticationException(
+          "CONNECT_TOKEN_REJECTED", "Gameplay is not available for this tenant");
+    }
+
+    RuntimeRealmTarget realm = requireCurrentConnectScopeTarget(bootstrapContext, scopeContext);
     if (!membership.membershipExists()) {
       if (!realm.publicProductionRealm()) {
         throw new AuthenticationException(
@@ -525,10 +529,6 @@ public class AccountServiceImpl implements AccountService {
     if (!membership.gameplayAdmissionAllowed()) {
       throw new AuthenticationException(
           "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
-    }
-    if (!entitlements.gameplayAvailable()) {
-      throw new AuthenticationException(
-          "CONNECT_TOKEN_REJECTED", "Gameplay is not available for this tenant");
     }
 
     String jti =
@@ -1093,7 +1093,8 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private Optional<Account> findAccountForAuthentication(String usernameOrEmail) {
-    Optional<Account> emailMatch = accountRepository.findByEmail(usernameOrEmail);
+    Optional<Account> emailMatch =
+        accountRepository.findByEmail(EmailCanonicalization.normalize(usernameOrEmail));
     if (emailMatch.isPresent()) {
       return emailMatch;
     }

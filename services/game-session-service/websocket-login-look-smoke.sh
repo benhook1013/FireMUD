@@ -31,7 +31,7 @@ else
 fi
 
 echo "Running direct WebSocket WORLDS + LOGIN + PLAY + item/container/equipment smoke test against ${SMOKE_GAME_SESSION_WS_URL}"
-echo "Using login email='${SMOKE_LOGIN_EMAIL}' (password redacted)"
+echo "Using login credentials (email and password redacted)"
 echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
 
 "$PYTHON" - <<'PYTHON'

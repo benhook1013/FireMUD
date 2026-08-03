@@ -709,7 +709,7 @@ class PlayCommandHandlerTest {
             new TextPlayerOutputRenderer(new PresentationProperties())
                 .render(result.outputs().get(0), "fr"))
         .isEqualTo(
-            "ERROR PLAY_SELECTION_REQUIRED Selection requise. Utilisez PLAY sandbox <realm> [character] ou consultez REALMS dabord.");
+            "ERROR PLAY_SELECTION_REQUIRED Sélection requise. Utilisez PLAY sandbox <realm> [character] ou consultez REALMS d’abord.");
   }
 
   @Test

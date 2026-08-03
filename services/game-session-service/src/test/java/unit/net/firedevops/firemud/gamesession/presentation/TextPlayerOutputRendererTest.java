@@ -880,7 +880,7 @@ class TextPlayerOutputRendererTest {
                 "error.help.unknown-topic",
                 java.util.Map.of("topic", "banane")));
 
-    assertThat(rendered).isEqualTo("ERROR HELP_UNKNOWN_TOPIC Sujet d'aide inconnu : banane");
+    assertThat(rendered).isEqualTo("ERROR HELP_UNKNOWN_TOPIC Sujet d’aide inconnu : banane");
   }
 
   @Test
@@ -903,6 +903,25 @@ class TextPlayerOutputRendererTest {
 
     assertThat(rendered)
         .isEqualTo("ERROR INVALID_EXIT Aucune sortie OUEST depuis la salle R-1021.");
+  }
+
+  @Test
+  void localizedMessagePreservesUtf8AccentedCharacters() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "fr",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.error(
+                "LOGIN_RETRY_LATER", "fallback", "error.login.retry-later", java.util.Map.of()));
+
+    assertThat(rendered)
+        .isEqualTo("ERROR LOGIN_RETRY_LATER Trop de tentatives échouées ; réessayez plus tard.");
   }
 
   @Test

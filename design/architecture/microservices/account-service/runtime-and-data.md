@@ -126,15 +126,12 @@ Billing-safe mutation authority contract:
 
 Runtime caller contract:
 
-- Current implementation note:
-  - Account-first bootstrap now authenticates before tenant selection and accepts configured password or verified-email OTP modes. `GetTenantMembershipForRuntime(accountId, tenantId)`, `GetTenantEntitlementsForRuntime(tenantId)`, `GetAdmissionPointer(tenantId, worldSlug, realmSlug)`, and the existing `EnsurePublicProductionPlayerMembership` seam are present. Current connect-token issuance and text `PLAY` require existing caller-bound membership. For a publicly visible public-production target whose joining policy permits entry, missing membership returns `JOIN_REQUIRED`; non-public or non-visible targets remain grant-gated and do not use public onboarding semantics. Connect-token issuance does not reread membership authority generation after bootstrap/discovery validation.
-  - Explicit `JOIN`/`Join & Play` and the missing membership-authority-generation reread at connect-token issuance remain target follow-through. Broader reconnect/cutover consumption of admission-pointer truth and operator-facing pointer tooling are also incomplete.
 - `GetTenantMembershipForRuntime(accountId, tenantId)` is the authoritative internal membership surface for gameplay/runtime flows.
   - Minimum request fields: `accountId`, `tenantId`, `requestId`.
   - Target minimum response fields: `accountId`, `tenantId`, `membershipExists`, `roles[]`, `membershipLifecycleState`, `authorityAvailability`, `gameplayAdmissionAllowed`, `membershipVersion`, `membershipAuthorityGeneration`, and `evaluatedAt`.
   - `membershipLifecycleState` is the exact Account-owned membership state; gameplay admission requires `ACTIVE`. `authorityAvailability` must be `AVAILABLE` before the snapshot can authorize admission. `UNAVAILABLE` is an authority failure, not missing or `INACTIVE` membership, and cannot produce `JOIN_REQUIRED`.
   - `membershipAuthorityGeneration` is an opaque Account-owned value. Runtime callers compare it only for exact freshness/equality and must not infer ordering or authority from its representation. It is the authoritative generation for connect-token issuance, gameplay-token refresh, gameplay binding and reconnect validation, and membership revocation.
-  - Current implementation/proto/caller gap: the live response currently exposes `membershipVersion` and `evaluatedAt` but does not yet expose and prove the target `membershipLifecycleState`, `authorityAvailability`, and `membershipAuthorityGeneration` contract. Generated proto, Account implementation, and runtime callers must converge on these fields before those consumers can enforce the target generation and deterministic admission contract.
+  - Current implementation/proto/caller gap: the live response now exposes `accountId`, `tenantId`, `membershipExists`, `gameplayAdmissionAllowed`, `membershipVersion`, and `evaluatedAt`; it does not yet expose and prove the target `roles[]`, `membershipLifecycleState`, `authorityAvailability`, and `membershipAuthorityGeneration` contract. Generated proto, Account implementation, and runtime callers must converge on those remaining fields before consumers can enforce the target generation and deterministic admission contract.
 - `GetTenantEntitlementsForRuntime(tenantId)` is the authoritative internal entitlement surface for gameplay/runtime flows. Runtime callers may cache its positive result only under the strict-new-commitment and bounded-continuity rules in [ADR 0028](../../decisions/adr-0028-differentiated-entitlement-freshness.md); the cache never becomes a second writer.
   - Minimum request fields: `tenantId`, `requestId`.
   - Target minimum response fields: `tenantId`, `authorityAvailability`, `subscriptionStatus`, `gameplayAvailable`, `allowPublicJoin`, `allowNewGameplayBindings`, `allowNewInstanceStarts`, `quotas { ... }`, `evaluatedAt`, `entitlementVersion`, `tenantBillingSequence`, and opaque `tenantAuthorityGeneration`.
@@ -188,6 +185,11 @@ Entitlement producer contract:
   - `tenantBillingSequence` (monotonic `uint64` scoped to `tenantId`).
 - `evaluatedAt` records evaluation of authoritative committed input and must not be restamped merely because an older projection was read.
 - `tenantBillingSequence` must be monotonic for each tenant and must advance whenever billing-state transitions can affect availability/quotas.
+
+### Runtime Implementation Status and Drift
+
+- Account-first bootstrap now authenticates before tenant selection and accepts configured password or verified-email OTP modes. `GetTenantMembershipForRuntime(accountId, tenantId)`, `GetTenantEntitlementsForRuntime(tenantId)`, `GetAdmissionPointer(tenantId, worldSlug, realmSlug)`, and the existing `EnsurePublicProductionPlayerMembership` seam are present. Current connect-token issuance and text `PLAY` require existing caller-bound membership. For a publicly visible public-production target whose joining policy permits entry, missing membership returns `JOIN_REQUIRED`; non-public or non-visible targets remain grant-gated and do not use public onboarding semantics.
+- Explicit `JOIN`/`Join & Play` and the membership-authority-generation reread at connect-token issuance remain target follow-through. Broader reconnect/cutover consumption of admission-pointer truth and operator-facing pointer tooling are also incomplete.
 
 ## Monetization and Notification Domain Notes
 
