@@ -152,7 +152,7 @@ Planned prompt-flow transcript:
 
 ```text
 LOGIN
-OK LOGIN Enter username:
+OK LOGIN Enter email:
 demo@example.com
 OK LOGIN Enter password:
 swordfish

@@ -43,6 +43,7 @@ import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.PingService;
+import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
@@ -280,6 +281,31 @@ class AccountGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void createAccountConflictReturnsApplicationError() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.createAccount(Mockito.any()))
+        .thenThrow(new AccountAlreadyExistsException(new RuntimeException("duplicate")));
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    RecordingObserver<CreateAccountResponse> observer = new RecordingObserver<>();
+
+    service.createAccount(
+        CreateAccountRequest.newBuilder()
+            .setTenantId("7")
+            .setUsername("demo")
+            .setEmail("demo@example.com")
+            .setPassword("pass")
+            .build(),
+        observer);
+
+    assertNotNull(observer.response());
+    assertEquals("ALREADY_EXISTS", observer.response().getError().getCode());
+    assertEquals("Account already exists", observer.response().getError().getMessage());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
   }
 
   @Test

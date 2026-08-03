@@ -65,7 +65,12 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             deploy_job, "Create dev-demo smoke account"
         )["run"]
 
-    def _write_workflow_fixture(self, root: Path, bootstrap_manifest: str) -> None:
+    def _write_workflow_fixture(
+        self,
+        root: Path,
+        bootstrap_manifest: str,
+        summary_run: str = 'echo "safe summary" >> "$GITHUB_STEP_SUMMARY"',
+    ) -> None:
         workflow = {
             "jobs": {
                 "dev-demo-deploy": {
@@ -81,7 +86,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                         },
                         {
                             "name": "Summarize dev-demo access",
-                            "run": 'echo "safe summary" >> "$GITHUB_STEP_SUMMARY"',
+                            "run": summary_run,
                         },
                     ]
                 }
@@ -99,6 +104,67 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             root = Path(directory)
             self._write_workflow_fixture(root, self._bootstrap_manifest_fixture())
             self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_bootstrap_credentials_in_summary_writer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(
+                root,
+                self._bootstrap_manifest_fixture(),
+                'echo "password=${DEMO_SMOKE_PASSWORD}" >> "$GITHUB_STEP_SUMMARY"',
+            )
+            with self.assertRaisesRegex(
+                AssertionError,
+                "dev-demo summaries must not reference bootstrap credential material; "
+                "offending summary writers: dev-demo-deploy/Summarize dev-demo access",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_accepts_reformatted_bootstrap_secret_command(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        canonical_command = "\n".join(
+            (
+                'kubectl -n "${PREVIEW_NAMESPACE}" create secret generic '
+                'dev-demo-bootstrap-env \\',
+                '  --from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email" \\',
+                '  --from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password" \\',
+                '  --from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username"',
+            )
+        )
+        reformatted_command = "\n".join(
+            (
+                'kubectl  -n "${PREVIEW_NAMESPACE}" create secret generic '
+                'dev-demo-bootstrap-env \\',
+                '  --from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username" \\',
+                '  --from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email" \\',
+                '  --from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password"',
+            )
+        )
+        self.assertIn(canonical_command, bootstrap_manifest)
+        reformatted_manifest = bootstrap_manifest.replace(
+            canonical_command, reformatted_command, 1
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, reformatted_manifest)
+            self.validator.validate_workflow(root)
+
+    def test_validate_workflow_reports_extra_bootstrap_secret_command_options(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        command_end = (
+            '--from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username"'
+        )
+        self.assertIn(command_end, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            command_end, f"{command_end} \\\n--dry-run=client", 1
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "only --from-file arguments are allowed"
+            ):
+                self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_bootstrap_manifest_without_env_from(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
@@ -131,7 +197,8 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
     def test_smoke_account_runtime_success_is_redacted_and_bounded(self):
         success_output = StringIO()
         with (
-            smoke_account_verifier() as verify_smoke_account, patch(
+            smoke_account_verifier() as verify_smoke_account,
+            patch(
                 "smoke_common.urllib.request.urlopen",
                 return_value=_FakeHttpResponse(),
             ) as urlopen,
@@ -173,12 +240,14 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
         failure_stdout = StringIO()
         failure_stderr = StringIO()
         with (
-            smoke_account_verifier() as verify_smoke_account, patch(
+            smoke_account_verifier() as verify_smoke_account,
+            patch(
                 "smoke_common.urllib.request.urlopen",
                 side_effect=http_error,
             ),
             redirect_stdout(failure_stdout),
-            redirect_stderr(failure_stderr),self.assertRaises(RuntimeError) as raised
+            redirect_stderr(failure_stderr),
+            self.assertRaises(RuntimeError) as raised,
         ):
             verify_smoke_account(
                 "http://account.test", "demo@example.com", "swordfish", 5
@@ -217,7 +286,8 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
         ]
         retry_output = StringIO()
         with (
-            smoke_account_verifier() as verify_smoke_account, patch(
+            smoke_account_verifier() as verify_smoke_account,
+            patch(
                 "smoke_common.urllib.request.urlopen",
                 side_effect=retry_errors + [_FakeHttpResponse()],
             ) as retry_urlopen,
@@ -362,10 +432,12 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
         non_retryable_stdout = StringIO()
         non_retryable_stderr = StringIO()
         with (
-            smoke_account_verifier() as verify_smoke_account, patch(
-            "smoke_common.urllib.request.urlopen",
-            side_effect=[non_retryable, _FakeHttpResponse()],
-        ) as non_retryable_urlopen, redirect_stdout(non_retryable_stdout),
+            smoke_account_verifier() as verify_smoke_account,
+            patch(
+                "smoke_common.urllib.request.urlopen",
+                side_effect=[non_retryable, _FakeHttpResponse()],
+            ) as non_retryable_urlopen,
+            redirect_stdout(non_retryable_stdout),
             redirect_stderr(non_retryable_stderr),
             self.assertRaises(RuntimeError) as raised,
         ):

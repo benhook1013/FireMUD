@@ -109,6 +109,7 @@ public final class LoginCommandHandler {
       return handleVerifiedFirstPartyLogin(sessionId, command, requiresSoloTick);
     }
     TextCommandPayload.Credentials credentials = maybeCredentials.orElseThrow();
+    String canonicalLoginName = EmailCanonicalization.normalize(credentials.loginName());
 
     SessionIdParsing.ParsedSessionId parsedSessionId = parseSessionId(sessionId);
     if (!parsedSessionId.valid()) {
@@ -130,9 +131,7 @@ public final class LoginCommandHandler {
 
     AuthenticateResponse authResponse =
         accountClient.authenticate(
-            String.valueOf(instance.getTenantId()),
-            EmailCanonicalization.normalize(credentials.loginName()),
-            credentials.password());
+            String.valueOf(instance.getTenantId()), canonicalLoginName, credentials.password());
     var error = authResponse.getError();
     if (error != null
         && (!Optional.ofNullable(error.getCode()).orElse("").isBlank()
@@ -164,16 +163,16 @@ public final class LoginCommandHandler {
         numericSessionId,
         instance.getTenantId(),
         authenticatedAccountId,
-        credentials.loginName(),
+        canonicalLoginName,
         authResponse.getAuthToken(),
         bootstrapGameInstanceId);
     return new LoginCommandHandlingResult(
         enqueueResult,
         List.of(
             PlayerOutput.message(
-                "Logged in as " + credentials.loginName(),
+                "Logged in as " + canonicalLoginName,
                 "message.login.success",
-                Map.of("loginName", credentials.loginName()))));
+                Map.of("loginName", canonicalLoginName))));
   }
 
   private LoginCommandHandlingResult handleEmailLoginChallenge(

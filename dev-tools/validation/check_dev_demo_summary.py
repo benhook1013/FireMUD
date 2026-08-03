@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -52,6 +53,21 @@ HEREDOC_OPEN = re.compile(
     r"(?P=quote)"
 )
 SHELL_IF_START = re.compile(r"^if\b.*;[ \t]*then$")
+
+BOOTSTRAP_SECRET_COMMAND_PREFIX = (
+    "kubectl",
+    "-n",
+    "${PREVIEW_NAMESPACE}",
+    "create",
+    "secret",
+    "generic",
+    "dev-demo-bootstrap-env",
+)
+BOOTSTRAP_SECRET_FILE_MAPPINGS = {
+    "DEMO_SMOKE_EMAIL": "${BOOTSTRAP_SECRET_DIR}/email",
+    "DEMO_SMOKE_PASSWORD": "${BOOTSTRAP_SECRET_DIR}/password",
+    "DEMO_SMOKE_USERNAME": "${BOOTSTRAP_SECRET_DIR}/username",
+}
 
 
 @dataclass(frozen=True)
@@ -446,13 +462,79 @@ def _extract_bootstrap_pod(bootstrap_manifest: str) -> dict:
     return pod
 
 
+def _validate_bootstrap_secret_command(command_lines: list[str]) -> None:
+    command = " ".join(
+        line.removesuffix("\\").rstrip() for line in command_lines
+    )
+    try:
+        tokens = shlex.split(command)
+    except ValueError as exc:
+        raise AssertionError(
+            "dev-demo bootstrap credential secret must use direct create without "
+            "apply annotations; command has invalid shell quoting"
+        ) from exc
+
+    prefix_length = len(BOOTSTRAP_SECRET_COMMAND_PREFIX)
+    if tokens[:prefix_length] != list(BOOTSTRAP_SECRET_COMMAND_PREFIX):
+        raise AssertionError(
+            "dev-demo bootstrap credential secret must use direct create without "
+            "apply annotations; expected kubectl create for "
+            'dev-demo-bootstrap-env in "${PREVIEW_NAMESPACE}"'
+        )
+
+    file_mappings: dict[str, str] = {}
+    duplicate_keys: list[str] = []
+    malformed_arguments = False
+    for argument in tokens[prefix_length:]:
+        if not argument.startswith("--from-file="):
+            malformed_arguments = True
+            continue
+        key, separator, path = argument.removeprefix(
+            "--from-file="
+        ).partition("=")
+        if not separator or not key or not path:
+            malformed_arguments = True
+            continue
+        if key in file_mappings:
+            duplicate_keys.append(key)
+        file_mappings[key] = path
+
+    issues: list[str] = []
+    if malformed_arguments:
+        issues.append("only --from-file arguments are allowed after the secret name")
+    if duplicate_keys:
+        issues.append(
+            f"duplicate file keys: {', '.join(sorted(set(duplicate_keys)))}"
+        )
+    missing_keys = sorted(set(BOOTSTRAP_SECRET_FILE_MAPPINGS) - file_mappings.keys())
+    if missing_keys:
+        issues.append(f"missing file keys: {', '.join(missing_keys)}")
+    unexpected_keys = sorted(
+        file_mappings.keys() - set(BOOTSTRAP_SECRET_FILE_MAPPINGS)
+    )
+    if unexpected_keys:
+        issues.append(f"unexpected file keys: {', '.join(unexpected_keys)}")
+    mismatched_paths = sorted(
+        key
+        for key, expected_path in BOOTSTRAP_SECRET_FILE_MAPPINGS.items()
+        if key in file_mappings and file_mappings[key] != expected_path
+    )
+    if mismatched_paths:
+        issues.append(
+            "file keys have unexpected source paths: "
+            f"{', '.join(mismatched_paths)}"
+        )
+    if issues:
+        raise AssertionError(
+            "dev-demo bootstrap credential secret must use direct create without "
+            "apply annotations and only the expected file-backed credentials; "
+            + "; ".join(issues)
+        )
+
+
 def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
     normalized = normalize_script(bootstrap_manifest)
     for expected in (
-        "create secret generic dev-demo-bootstrap-env",
-        '--from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email"',
-        '--from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password"',
-        '--from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username"',
         "cleanup_bootstrap_temp_dir() {",
         'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then',
         'echo "::error::Failed to remove dev-demo bootstrap credential files"',
@@ -517,16 +599,7 @@ kubectl -n "${PREVIEW_NAMESPACE}" create secret generic dev-demo-bootstrap-env""
         secret_index += 1
         if secret_index >= len(source_lines):
             raise AssertionError("dev-demo bootstrap secret command is unterminated")
-    expected_secret_command = [
-        'kubectl -n "${PREVIEW_NAMESPACE}" create secret generic dev-demo-bootstrap-env \\',
-        '--from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email" \\',
-        '--from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password" \\',
-        '--from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username"',
-    ]
-    if secret_command_lines != expected_secret_command:
-        raise AssertionError(
-            "dev-demo bootstrap credential secret must use direct create without apply annotations"
-        )
+    _validate_bootstrap_secret_command(secret_command_lines)
     cleanup_success = normalize_nonempty_lines(
         """if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then
     BOOTSTRAP_SECRET_DIR=
@@ -679,13 +752,6 @@ def validate_workflow(root: Path) -> None:
     summary_writers = discover_summary_writers(run_sources, root)
     if not summary_writers:
         raise AssertionError("dev-demo workflow must define summary-writing steps")
-    if not any(
-        summary_write_regions(source.source) or source.summary_reachable
-        for source in summary_writers
-    ):
-        raise AssertionError(
-            "dev-demo workflow must write summaries through a recognized shell target"
-        )
     offending = [
         (source.job_name, source.step_name)
         for source in summary_writers

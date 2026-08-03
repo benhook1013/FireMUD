@@ -540,6 +540,8 @@ paths:
                 $ref: '#/components/schemas/AccountDto'
         '400':
           description: Invalid account data
+        '409':
+          description: Username or canonical email already exists
   /accounts/{accountId}/export:
     get:
       summary: Export full account data across tenants

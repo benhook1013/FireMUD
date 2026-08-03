@@ -117,6 +117,13 @@ class PlayCommandHandlerTest {
                 .setTenantBillingSequence(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
+    when(accountClient.getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString()))
+        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(true).build());
     when(sessionRoutingNormalizationService.normalizeProjectedContext(
             Mockito.any(SessionContext.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -959,6 +966,31 @@ class PlayCommandHandlerTest {
     PlayCommandHandlingResult result = handler.handle("1", invisibleRealmPlayCommand());
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    Mockito.verify(accountClient)
+        .getRealmAccessGrantForRuntime(
+            Mockito.eq("123"),
+            Mockito.eq("22"),
+            Mockito.eq("sandbox"),
+            Mockito.eq("preview"),
+            Mockito.anyString());
+  }
+
+  @Test
+  void playVisibleNonPublicRealmRequiresGrantedAccess() {
+    SessionContext context = invisibleRealmContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString()))
+        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(false).build());
+
+    PlayCommandHandlingResult result = handler.handle("1", invisibleRealmPlayCommand());
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
     Mockito.verify(accountClient)
         .getRealmAccessGrantForRuntime(
             Mockito.eq("123"),

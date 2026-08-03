@@ -38,6 +38,7 @@ import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.PingService;
+import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
@@ -98,6 +99,12 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       CreateAccountResponse response =
           CreateAccountResponse.newBuilder().setAccountId(account.id().toString()).build();
       responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AccountAlreadyExistsException ex) {
+      responseObserver.onNext(
+          CreateAccountResponse.newBuilder()
+              .setError(appError("CreateAccount", "ALREADY_EXISTS", ex.getMessage()))
+              .build());
       responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {
       responseObserver.onNext(

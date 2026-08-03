@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import net.firedevops.firemud.accountservice.entity.Account;
@@ -8,6 +9,7 @@ import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,15 +26,18 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SuppressWarnings("resource")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class AccountRepositoryIntegrationTest {
+  private static final String MIGRATION_PROOF_SCHEMA = "account_migration_proof";
+
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
+  private DriverManagerDataSource dataSource;
   private DSLContext dsl;
   private AccountRepository repository;
 
   @BeforeAll
   void setUpRepository() {
-    DriverManagerDataSource dataSource = new DriverManagerDataSource();
+    dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName(postgres.getDriverClassName());
     dataSource.setUrl(postgres.getJdbcUrl());
     dataSource.setUsername(postgres.getUsername());
@@ -79,6 +84,49 @@ class AccountRepositoryIntegrationTest {
 
     assertThat(saved.getEmail()).isEqualTo("player@example.com");
     assertThat(repository.findByEmail("player@example.com")).isPresent();
+  }
+
+  @Test
+  void flywayCanonicalizesLegacyEmailAndRejectsNonCanonicalValues() {
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations(
+            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
+        .schemas(MIGRATION_PROOF_SCHEMA)
+        .defaultSchema(MIGRATION_PROOF_SCHEMA)
+        .target("21")
+        .load()
+        .migrate();
+
+    dsl.execute(
+        "INSERT INTO "
+            + MIGRATION_PROOF_SCHEMA
+            + ".accounts (username, email, password_hash) "
+            + "VALUES ('legacy-migration', ' Legacy@Example.COM ', 'hash')");
+
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations(
+            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
+        .schemas(MIGRATION_PROOF_SCHEMA)
+        .defaultSchema(MIGRATION_PROOF_SCHEMA)
+        .load()
+        .migrate();
+
+    assertThat(
+            dsl.fetchValue(
+                "SELECT email FROM "
+                    + MIGRATION_PROOF_SCHEMA
+                    + ".accounts WHERE username = 'legacy-migration'"))
+        .isEqualTo("legacy@example.com");
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "INSERT INTO "
+                        + MIGRATION_PROOF_SCHEMA
+                        + ".accounts (username, email, password_hash) "
+                        + "VALUES ('noncanonical', ' Another@Example.COM ', 'hash')"))
+        .isInstanceOf(DataAccessException.class);
   }
 
   private Account account(String username, String email, AccountLifecycleState lifecycleState) {

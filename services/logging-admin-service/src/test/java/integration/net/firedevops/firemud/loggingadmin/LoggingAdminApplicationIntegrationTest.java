@@ -101,7 +101,7 @@ class LoggingAdminApplicationIntegrationTest {
   }
 
   @Test
-  void publicAdmissionPointerWriteMappingsAreAbsent() {
+  void publicTargetOnlyAdmissionPointerWriteMappingsAreAbsent() {
     assertThat(requestMappingHandlerMapping.getHandlerMethods().keySet())
         .noneMatch(
             mapping ->
@@ -116,13 +116,44 @@ class LoggingAdminApplicationIntegrationTest {
   }
 
   @Test
-  void unmappedAdmissionPointerWriteFamiliesUseCanonicalNotFoundEnvelope() throws Exception {
+  void externallyGatedOperatorWriteMappingsRemainMapped() {
     for (String path :
         new String[] {
-          "/admission-pointers",
-          "/admission-pointers/cutover",
-          "/admission-pointers/version-upgrades"
+          "/feature-flags/toggle",
+          "/moderation/actions",
+          "/tick-remediation/pause",
+          "/tick-remediation/resume"
         }) {
+      assertThat(requestMappingHandlerMapping.getHandlerMethods().keySet())
+          .as("path %s", path)
+          .anyMatch(
+              mapping ->
+                  mapping.getMethodsCondition().getMethods().contains(RequestMethod.POST)
+                      && mapping.getPatternValues().contains(path));
+    }
+  }
+
+  @Test
+  void mappedAdmissionPointerPostUsesCanonicalMethodNotAllowedEnvelope() throws Exception {
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/admission-pointers"))
+            .timeout(HTTP_REQUEST_TIMEOUT)
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantAdminToken(1L))
+            .POST(HttpRequest.BodyPublishers.noBody())
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(405);
+    assertThat(response.body()).contains("\"status\":\"ERROR\"");
+    assertThat(response.body()).contains("\"code\":\"METHOD_NOT_ALLOWED\"");
+    assertThat(response.body()).contains("\"message\":\"Request method is not allowed\"");
+  }
+
+  @Test
+  void unmappedAdmissionPointerWriteFamiliesUseCanonicalNotFoundEnvelope() throws Exception {
+    for (String path :
+        new String[] {"/admission-pointers/cutover", "/admission-pointers/version-upgrades"}) {
       HttpRequest request =
           HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
               .timeout(HTTP_REQUEST_TIMEOUT)

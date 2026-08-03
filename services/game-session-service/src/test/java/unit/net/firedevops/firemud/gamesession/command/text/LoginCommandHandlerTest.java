@@ -111,12 +111,15 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertTrue(result.commandResult().accepted());
-    assertEquals("Logged in as DEMO@EXAMPLE.COM", joinedOutputText(result.outputs()));
+    assertEquals("Logged in as demo@example.com", joinedOutputText(result.outputs()));
     assertEquals(
         List.of(PlayerOutputKind.MESSAGE),
         result.outputs().stream().map(output -> output.kind()).toList());
     verify(accountClient).authenticate(eq("22"), eq("demo@example.com"), eq("swordfish"));
     verify(commandService).enqueue("1", command.rawLine(), false);
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(captor.capture());
+    assertEquals("demo@example.com", captor.getValue().loginName());
   }
 
   @Test

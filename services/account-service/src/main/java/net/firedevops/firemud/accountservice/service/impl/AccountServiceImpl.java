@@ -72,6 +72,7 @@ import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
+import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.EmailCanonicalization;
@@ -83,6 +84,7 @@ import net.firedevops.firemud.common.security.JwtAuthProperties;
 import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import org.jooq.exception.IntegrityConstraintViolationException;
 import org.slf4j.Logger;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -199,7 +201,12 @@ public class AccountServiceImpl implements AccountService {
     builder.step(
         "persistAccount",
         () -> {
-          Account saved = accountRepository.save(account);
+          Account saved;
+          try {
+            saved = accountRepository.save(account);
+          } catch (IntegrityConstraintViolationException ex) {
+            throw new AccountAlreadyExistsException(ex);
+          }
           account.setId(saved.getId());
           membership.setAccount(saved);
           accountTenantMembershipRepository.save(membership);
@@ -215,6 +222,9 @@ public class AccountServiceImpl implements AccountService {
     try {
       sagaRunner.run(saga);
     } catch (SagaException e) {
+      if (e.getCause() instanceof AccountAlreadyExistsException alreadyExists) {
+        throw alreadyExists;
+      }
       logger.warn("Account creation saga failed", e);
       throw new IllegalStateException("Account creation failed", e);
     }

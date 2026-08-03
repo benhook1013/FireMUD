@@ -725,7 +725,7 @@ public class PlayCommandHandler {
           worldAccessDeniedFailure(
               context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
     }
-    if (!selectedRealm.visible()) {
+    if (!isPublicProductionRealm(selectedRealm)) {
       GetRealmAccessGrantForRuntimeResponse grantResponse =
           accountClient.getRealmAccessGrantForRuntime(
               Long.toString(context.accountId()),

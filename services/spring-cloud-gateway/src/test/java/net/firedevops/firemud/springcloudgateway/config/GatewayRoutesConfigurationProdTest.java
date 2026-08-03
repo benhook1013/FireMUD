@@ -118,14 +118,7 @@ class GatewayRoutesConfigurationProdTest {
   @Test
   void restEdgeRoutesStripExternalServicePrefixBeforeForwarding() {
     assertThat(pathPredicateArgs("admin-ping").values()).containsExactly("/api/admin/ping");
-    assertThat(
-            route("admin-admission-pointers").getPredicates().stream()
-                .filter(predicate -> "Method".equalsIgnoreCase(predicate.getName()))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("Admission-pointer route must be GET-only"))
-                .getArgs()
-                .values())
-        .containsExactly("GET");
+    assertThat(predicateArgs("admin-admission-pointers", "Method").values()).containsExactly("GET");
     assertThat(pathPredicateArgs("admin-remote-followups").values())
         .containsExactly("/api/admin/remote-followups/**");
     assertThat(pathPredicateArgs("design").values()).containsExactly("/api/design/**");
@@ -149,11 +142,18 @@ class GatewayRoutesConfigurationProdTest {
   }
 
   private Map<String, String> pathPredicateArgs(String routeId) {
+    return predicateArgs(routeId, "Path");
+  }
+
+  private Map<String, String> predicateArgs(String routeId, String predicateName) {
     return route(routeId).getPredicates().stream()
-        .filter(predicate -> "Path".equalsIgnoreCase(predicate.getName()))
+        .filter(predicate -> predicateName.equalsIgnoreCase(predicate.getName()))
         .findFirst()
-        .orElseThrow(() -> new AssertionError("Expected Path predicate for route: " + routeId))
-        .getArgs();
+        .map(predicate -> predicate.getArgs())
+        .orElseThrow(
+            () ->
+                new AssertionError(
+                    "Expected " + predicateName + " predicate for route: " + routeId));
   }
 
   private void assertHasStripPrefixTwo(RouteDefinition route) {

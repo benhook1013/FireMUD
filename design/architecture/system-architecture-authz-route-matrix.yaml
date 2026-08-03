@@ -168,8 +168,8 @@ tenant_generation_policy:
       target_tenant_generation: false
       generation_behavior: membership_authority_when_route_requires_existing_membership
       required_authority: [membership, membership_generation]
-      contract_justification: Player-bootstrap routes use caller-bound membership and gameplay admission evidence where required, but bootstrap authority does not become target-tenant authority or inherit a target-tenant generation fence.
-      target_tenant_generation_advance_behavior: remains_valid
+      contract_justification: Player-bootstrap routes use caller-bound membership and gameplay admission evidence where required; the explicit IssueConnectToken route additionally binds one selected tenant authority generation and does not make that exception implicit for other bootstrap routes.
+      target_tenant_generation_advance_behavior: route_declared
     pre_tenant_discovery:
       target_tenant_generation: false
       generation_behavior: no_tenant_or_membership_authority
@@ -186,7 +186,7 @@ tenant_generation_policy:
       target_tenant_generation: false
       generation_behavior: mode_selected_membership_and_grant_authority
       required_authority: []
-      contract_justification: Post-transport gameplay admission selects exactly one current Account-backed admission mode and then applies that mode's explicit membership, generation, grant, entitlement, routing, and binding checks; no mode inherits another mode's authority.
+      contract_justification: Post-transport gameplay admission, including PLAY, selects exactly one current Account-backed admission mode and then applies that mode's explicit membership, generation, grant, entitlement, routing, and binding checks; PLAY separately binds the selected target tenant generation and no mode inherits another mode's authority.
       target_tenant_generation_advance_behavior: route_declared
     internal_workload:
       target_tenant_generation: false

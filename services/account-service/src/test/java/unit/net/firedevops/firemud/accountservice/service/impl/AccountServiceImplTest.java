@@ -54,6 +54,7 @@ import net.firedevops.firemud.accountservice.repository.ProfileRepository;
 import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
 import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
+import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.session.SessionService;
@@ -216,6 +217,19 @@ class AccountServiceImplTest {
     org.mockito.Mockito.verify(accountRepository).save(accountCaptor.capture());
     assertEquals("demo@example.com", accountCaptor.getValue().getEmail());
     org.mockito.Mockito.verify(sagaRunner).run(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void createAccountReturnsExplicitConflictForCanonicalIdentityCollision() {
+    CreateAccountRequest request =
+        new CreateAccountRequest(7L, "demo", " DEMO@EXAMPLE.COM ", "password");
+    when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class)))
+        .thenThrow(new org.jooq.exception.IntegrityConstraintViolationException("duplicate"));
+
+    AccountAlreadyExistsException exception =
+        assertThrows(AccountAlreadyExistsException.class, () -> service.createAccount(request));
+
+    assertEquals("Account already exists", exception.getMessage());
   }
 
   @Test

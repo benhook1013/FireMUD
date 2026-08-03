@@ -247,7 +247,7 @@ REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS = {
         "target_tenant_generation": False,
         "generation_behavior": "membership_authority_when_route_requires_existing_membership",
         "required_authority": {"membership", "membership_generation"},
-        "target_tenant_generation_advance_behavior": "remains_valid",
+        "target_tenant_generation_advance_behavior": "route_declared",
     },
     "pre_tenant_discovery": {
         "target_tenant_generation": False,
@@ -675,6 +675,7 @@ def canonicalize_role_assurance_route_identities(
         return None
 
     canonical_route_identities: list[str] = []
+    invalid_identity = False
     for index, identity in enumerate(route_identities):
         service, separator, route_name = identity.partition("/")
         components = (
@@ -684,9 +685,10 @@ def canonicalize_role_assurance_route_identities(
             errors.append(
                 f"{field}[{index}] must be a non-empty service/route identity"
             )
+            invalid_identity = True
             continue
         canonical_route_identities.append("/".join(components))
-    return canonical_route_identities
+    return None if invalid_identity else canonical_route_identities
 
 
 def validate_platform_admin_role_assurance_route_identities(
@@ -758,25 +760,15 @@ def validate_role_assurance_applies_to(
 
     identity_field = f"{label}.applies_to.route_identities"
     route_identities = applies_to.get("route_identities")
-    if route_identities is not None and (
-        not isinstance(route_identities, list)
-        or any(
-            not isinstance(item, str) or not item.strip()
-            for item in route_identities
-        )
-    ):
-        canonicalize_role_assurance_route_identities(
-            route_identities, identity_field, errors
-        )
-        return
     canonical_route_identities = canonicalize_role_assurance_route_identities(
         route_identities, identity_field, errors
     )
     if role == "platformAdmin":
-        validate_platform_admin_role_assurance_route_identities(
-            identity_field, canonical_route_identities, errors
-        )
-    elif route_identities is not None:
+        if route_identities is None or canonical_route_identities is not None:
+            validate_platform_admin_role_assurance_route_identities(
+                identity_field, canonical_route_identities, errors
+            )
+    elif route_identities is not None and canonical_route_identities is not None:
         errors.append(
             f"{identity_field} is only allowed for platformAdmin"
         )
@@ -2066,15 +2058,29 @@ def validate_no_target_tenant_routes(
     errors: list[str],
     live_checks_cache: LiveChecksCache | None = None,
 ) -> None:
+    matched_explicit_target_routes: set[tuple[str, str]] = set()
     for route in routes:
         if not isinstance(route, dict):
             continue
         classification = route.get("classification")
         if not isinstance(classification, str):
             continue
-        if classification not in NO_TARGET_TENANT_CLASSES_WITHOUT_ROUTE_SPECIFIC_TARGET_AUTHORITY:
+        route_key_value = route_set_key(route)
+        if route_key_value in ROUTES_WITH_EXPLICIT_TARGET_TENANT_AUTHORITY:
+            matched_explicit_target_routes.add(route_key_value)
+            label = f"{route.get('service')} {route.get('route')}"
+            if classification != "player_bootstrap_tenant":
+                errors.append(
+                    f"{label} explicit target-tenant authority must use "
+                    "classification player_bootstrap_tenant"
+                )
+            if route.get("tenant_authority_generation_applies") is not True:
+                errors.append(
+                    f"{label} explicit target-tenant authority must set "
+                    "tenant_authority_generation_applies=true"
+                )
             continue
-        if route_set_key(route) in ROUTES_WITH_EXPLICIT_TARGET_TENANT_AUTHORITY:
+        if classification not in NO_TARGET_TENANT_CLASSES_WITHOUT_ROUTE_SPECIFIC_TARGET_AUTHORITY:
             continue
         label = f"{route.get('service')} {route.get('route')}"
         checks = (
@@ -2088,6 +2094,14 @@ def validate_no_target_tenant_routes(
                 f"{label} must not require tenant-generation checks for no-target "
                 f"classification {classification}: {sorted(forbidden_checks)}"
             )
+    missing_explicit_target_routes = sorted(
+        ROUTES_WITH_EXPLICIT_TARGET_TENANT_AUTHORITY - matched_explicit_target_routes
+    )
+    if missing_explicit_target_routes:
+        errors.append(
+            "explicit target-tenant authority routes must be declared exactly once: "
+            f"{missing_explicit_target_routes}"
+        )
 
 
 def validate_tenant_generation_policy(
@@ -3098,6 +3112,8 @@ def validate_play_generation(
     if route is None:
         return
     label = "game-session-service PLAY"
+    if route.get("classification") != "gameplay_admission":
+        errors.append(f"{label} must use classification gameplay_admission")
     for field in (
         "tenant_authority_generation_applies",
         "membership_authority_generation_applies",

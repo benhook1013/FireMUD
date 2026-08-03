@@ -6,6 +6,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.ServletRequestBindingException;
@@ -77,6 +78,14 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ApiResponse<ErrorDetail>> handleHttpMessageNotReadable(
       HttpMessageNotReadableException ex) {
     return invalidArgument("Request body is malformed");
+  }
+
+  @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+  public ResponseEntity<ApiResponse<ErrorDetail>> handleHttpRequestMethodNotSupported(
+      HttpRequestMethodNotSupportedException ex) {
+    ErrorDetail detail = new ErrorDetail("METHOD_NOT_ALLOWED", "Request method is not allowed");
+    return new ResponseEntity<>(
+        ApiResponse.error(detail), ex.getHeaders(), HttpStatus.METHOD_NOT_ALLOWED);
   }
 
   @ExceptionHandler(NoResourceFoundException.class)
