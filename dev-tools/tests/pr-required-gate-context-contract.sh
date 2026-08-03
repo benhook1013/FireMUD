@@ -240,6 +240,15 @@ JSON
   no-prior)
     printf '[{"check_runs":[]}]\n'
     ;;
+  delayed-predecessor)
+    if [[ "$count" -eq 1 ]]; then
+      printf '[{"check_runs":[]}]\n'
+    elif [[ "$count" -eq 2 ]]; then
+      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    else
+      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    fi
+    ;;
   failed-predecessor)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"failure","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
@@ -419,6 +428,13 @@ run_action "$pending_count" none pending-predecessor
   exit 1
 }
 
+delayed_count="$tmp_dir/count-delayed-predecessor"
+run_action "$delayed_count" none delayed-predecessor
+[[ "$(<"$delayed_count")" == "3" ]] || {
+  echo "required-gate action did not tolerate check-run publication delay" >&2
+  exit 1
+}
+
 alternate_pending_count="$tmp_dir/count-alternate-pending"
 run_action "$alternate_pending_count" none alternate-pending
 [[ "$(<"$alternate_pending_count")" == "4" ]] || {
@@ -501,12 +517,12 @@ set -e
   echo "required-gate action accepted the absence of a prior completed run" >&2
   exit 1
 }
-[[ "$(<"$tmp_dir/count-no-prior")" == "1" ]] || {
-  echo "required-gate action silently exhausted polling attempts with no prior run" >&2
+[[ "$(<"$tmp_dir/count-no-prior")" == "$max_attempts" ]] || {
+  echo "required-gate action did not apply its bounded polling limit when no prior run appeared" >&2
   exit 1
 }
-grep -Fq 'No prior completed' "$no_prior_output" || {
-  echo "required-gate action did not clearly report the absence of a prior completed run" >&2
+grep -Fq 'Timed out waiting for a prior' "$no_prior_output" || {
+  echo "required-gate action did not clearly report the missing prior-run timeout" >&2
   exit 1
 }
 
