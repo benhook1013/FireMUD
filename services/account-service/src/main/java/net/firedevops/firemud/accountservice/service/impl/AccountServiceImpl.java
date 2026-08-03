@@ -696,6 +696,11 @@ public class AccountServiceImpl implements AccountService {
           Instant.now().toString(),
           false);
     }
+    if (!entitlements.allowPublicJoin()) {
+      throw new AuthenticationException(
+          "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+          "Public joining is not allowed for the selected game");
+    }
 
     AccountTenantMembership created = new AccountTenantMembership();
     created.setAccount(requireAccount(accountId));

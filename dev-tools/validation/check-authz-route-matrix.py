@@ -921,13 +921,13 @@ def validate_required_fields(
             )
 
 
-def validate_route_class_branch_table(
+def _route_class_branch_entries(
     document: dict[str, Any], errors: list[str]
-) -> None:
+) -> dict[tuple[str, str], dict[str, Any]] | None:
     raw_table = document.get("route_class_branch_table")
     if not isinstance(raw_table, list):
         errors.append("route_class_branch_table must be a list of mappings")
-        return
+        return None
 
     actual: dict[tuple[str, str], dict[str, Any]] = {}
     for index, entry in enumerate(raw_table):
@@ -948,6 +948,68 @@ def validate_route_class_branch_table(
             errors.append(f"{label} duplicates route-class branch {key!r}")
         else:
             actual[key] = entry
+    return actual
+
+
+def _validate_route_class_branch_generations(
+    label: str,
+    generations: Any,
+    expected: dict[str, Any],
+    errors: list[str],
+) -> None:
+    if not isinstance(generations, dict):
+        errors.append(f"{label}.generations must be a mapping")
+        return
+    if set(generations) != set(expected["generations"]):
+        errors.append(
+            f"{label}.generations must declare exactly issuer/account/tenant/membership"
+        )
+        return
+    for generation, expected_value in expected["generations"].items():
+        actual_value = generations.get(generation)
+        if actual_value not in AUTHORITY_GENERATION_VALUES:
+            errors.append(
+                f"{label}.generations.{generation} must be one of "
+                f"{sorted(AUTHORITY_GENERATION_VALUES)}"
+            )
+        elif actual_value != expected_value:
+            errors.append(
+                f"{label}.generations.{generation} must be {expected_value!r}"
+            )
+
+
+def _validate_route_class_branch_entry(
+    key: tuple[str, str],
+    entry: dict[str, Any],
+    expected: dict[str, Any],
+    errors: list[str],
+) -> None:
+    label = f"route_class_branch_table {key[0]} {key[1]}"
+    for field in ("scope", "role"):
+        if entry.get(field) != expected[field]:
+            errors.append(f"{label} must declare {field}={expected[field]!r}")
+    privileged_control = entry.get("privileged_control")
+    if privileged_control not in PRIVILEGED_CONTROL_VALUES:
+        errors.append(
+            f"{label}.privileged_control must be one of "
+            f"{sorted(PRIVILEGED_CONTROL_VALUES)}"
+        )
+    elif privileged_control != expected["privileged_control"]:
+        errors.append(
+            f"{label} must declare "
+            f"privileged_control={expected['privileged_control']!r}"
+        )
+    _validate_route_class_branch_generations(
+        label, entry.get("generations"), expected, errors
+    )
+
+
+def validate_route_class_branch_table(
+    document: dict[str, Any], errors: list[str]
+) -> None:
+    actual = _route_class_branch_entries(document, errors)
+    if actual is None:
+        return
 
     expected_keys = set(EXPECTED_ROUTE_CLASS_BRANCHES)
     if set(actual) != expected_keys:
@@ -960,41 +1022,7 @@ def validate_route_class_branch_table(
         entry = actual.get(key)
         if entry is None:
             continue
-        label = f"route_class_branch_table {key[0]} {key[1]}"
-        for field in ("scope", "role"):
-            if entry.get(field) != expected[field]:
-                errors.append(f"{label} must declare {field}={expected[field]!r}")
-        privileged_control = entry.get("privileged_control")
-        if privileged_control not in PRIVILEGED_CONTROL_VALUES:
-            errors.append(
-                f"{label}.privileged_control must be one of "
-                f"{sorted(PRIVILEGED_CONTROL_VALUES)}"
-            )
-        elif privileged_control != expected["privileged_control"]:
-            errors.append(
-                f"{label} must declare "
-                f"privileged_control={expected['privileged_control']!r}"
-            )
-        generations = entry.get("generations")
-        if not isinstance(generations, dict):
-            errors.append(f"{label}.generations must be a mapping")
-            continue
-        if set(generations) != set(expected["generations"]):
-            errors.append(
-                f"{label}.generations must declare exactly issuer/account/tenant/membership"
-            )
-            continue
-        for generation, expected_value in expected["generations"].items():
-            actual_value = generations.get(generation)
-            if actual_value not in AUTHORITY_GENERATION_VALUES:
-                errors.append(
-                    f"{label}.generations.{generation} must be one of "
-                    f"{sorted(AUTHORITY_GENERATION_VALUES)}"
-                )
-            elif actual_value != expected_value:
-                errors.append(
-                    f"{label}.generations.{generation} must be {expected_value!r}"
-                )
+        _validate_route_class_branch_entry(key, entry, expected, errors)
 
 
 def validate_membership_policy(
@@ -1402,6 +1430,81 @@ def operator_authorization_branch_checks(
     return branches
 
 
+def _validate_conditional_operator_branch_checks(
+    label: str,
+    checks: set[str],
+    branch_checks: dict[str, list[set[str]]],
+    errors: list[str],
+) -> None:
+    tenant_branch_checks = set().union(*branch_checks.get("tenant_role", []))
+    platform_admin_branch_checks = set().union(
+        *branch_checks.get("platformAdmin_global", [])
+    )
+    branch_only_checks = set().union(*OPERATOR_AUTHORIZATION_BRANCHES.values())
+    duplicated_checks = sorted(checks & branch_only_checks)
+    if duplicated_checks:
+        errors.append(
+            f"{label} required_live_checks must not duplicate branch-qualified "
+            f"checks: {duplicated_checks}"
+        )
+    if "membership_when_tenant_role" not in tenant_branch_checks:
+        errors.append(
+            f"{label} tenant-role branch must require membership_when_tenant_role"
+        )
+    if "membership_generation" not in tenant_branch_checks:
+        errors.append(f"{label} tenant-role branch must require membership_generation")
+    if "tenant_generation" not in tenant_branch_checks:
+        errors.append(f"{label} operator route must require tenant_generation")
+    if "target_tenant_generation" not in platform_admin_branch_checks:
+        errors.append(f"{label} operator route must require target_tenant_generation")
+
+
+def _validate_conditional_operator_platform_checks(
+    label: str,
+    branch_checks: dict[str, list[set[str]]],
+    errors: list[str],
+) -> None:
+    platform_admin_branch_checks = set().union(
+        *branch_checks.get("platformAdmin_global", [])
+    )
+    for required_check in ("current_global_role", "role_appropriate_assurance"):
+        if required_check not in platform_admin_branch_checks:
+            errors.append(
+                f"{label} privileged operator route must require live check "
+                f"{required_check}"
+            )
+
+
+def _validate_conditional_operator_route_metadata(
+    route: dict[str, Any],
+    label: str,
+    checks: set[str],
+    errors: list[str],
+) -> None:
+    if "current_operator_authorization" not in checks:
+        errors.append(
+            f"{label} operator route must require live check "
+            "current_operator_authorization"
+        )
+    if (
+        route_set_key(route) in ADMISSION_POINTER_MUTATION_ROUTES
+        and "expected_pointer_version" not in checks
+    ):
+        errors.append(
+            f"{label} admission-pointer mutation must require live check "
+            "expected_pointer_version"
+        )
+    if route_set_key(route) in GAME_SESSION_OPERATOR_ROUTES:
+        if route.get("canonical_external_ingress") != CANONICAL_OPERATOR_INGRESS:
+            errors.append(
+                f"{label} must declare canonical_external_ingress {CANONICAL_OPERATOR_INGRESS}"
+            )
+        if route.get("direct_owner_route_policy") != DIRECT_OWNER_ROUTE_POLICY:
+            errors.append(
+                f"{label} must declare direct_owner_route_policy {DIRECT_OWNER_ROUTE_POLICY}"
+            )
+
+
 def validate_conditional_operator_route(
     route: dict[str, Any],
     label: str,
@@ -1429,27 +1532,9 @@ def validate_conditional_operator_route(
         branch_checks = operator_authorization_branch_checks(
             route, label, errors, live_checks_cache
         )
-    tenant_branch_checks = set().union(*branch_checks.get("tenant_role", []))
-    platform_admin_branch_checks = set().union(
-        *branch_checks.get("platformAdmin_global", [])
+    _validate_conditional_operator_branch_checks(
+        label, checks, branch_checks, errors
     )
-    branch_only_checks = set().union(*OPERATOR_AUTHORIZATION_BRANCHES.values())
-    duplicated_checks = sorted(checks & branch_only_checks)
-    if duplicated_checks:
-        errors.append(
-            f"{label} required_live_checks must not duplicate branch-qualified "
-            f"checks: {duplicated_checks}"
-        )
-    if "membership_when_tenant_role" not in tenant_branch_checks:
-        errors.append(
-            f"{label} tenant-role branch must require membership_when_tenant_role"
-        )
-    if "membership_generation" not in tenant_branch_checks:
-        errors.append(f"{label} tenant-role branch must require membership_generation")
-    if "tenant_generation" not in tenant_branch_checks:
-        errors.append(f"{label} operator route must require tenant_generation")
-    if "target_tenant_generation" not in platform_admin_branch_checks:
-        errors.append(f"{label} operator route must require target_tenant_generation")
     if (
         route.get("global_platform_admin_reference_generation_binding")
         != "target_tenant_generation"
@@ -1462,34 +1547,8 @@ def validate_conditional_operator_route(
             f"{label} operator route must declare role_assurance "
             f"{PRIVILEGED_OPERATOR_ROLE_ASSURANCE}"
         )
-    for required_check in ("current_global_role", "role_appropriate_assurance"):
-        if required_check not in platform_admin_branch_checks:
-            errors.append(
-                f"{label} privileged operator route must require live check "
-                f"{required_check}"
-            )
-    if "current_operator_authorization" not in checks:
-        errors.append(
-            f"{label} operator route must require live check "
-            "current_operator_authorization"
-        )
-    if (
-        route_key_value in ADMISSION_POINTER_MUTATION_ROUTES
-        and "expected_pointer_version" not in checks
-    ):
-        errors.append(
-            f"{label} admission-pointer mutation must require live check "
-            "expected_pointer_version"
-        )
-    if route_key_value in GAME_SESSION_OPERATOR_ROUTES:
-        if route.get("canonical_external_ingress") != CANONICAL_OPERATOR_INGRESS:
-            errors.append(
-                f"{label} must declare canonical_external_ingress {CANONICAL_OPERATOR_INGRESS}"
-            )
-        if route.get("direct_owner_route_policy") != DIRECT_OWNER_ROUTE_POLICY:
-            errors.append(
-                f"{label} must declare direct_owner_route_policy {DIRECT_OWNER_ROUTE_POLICY}"
-            )
+    _validate_conditional_operator_platform_checks(label, branch_checks, errors)
+    _validate_conditional_operator_route_metadata(route, label, checks, errors)
 
 
 def account_authorization_branch_checks(
@@ -2576,14 +2635,9 @@ def validate_operator_mutation_support_gate_override_vocabulary(
     return allowed_overrides
 
 
-def validate_operator_mutation_support_gate_coverage(
-    gate: dict[str, Any],
-    routes_by_identity: dict[str, list[dict[str, Any]]],
-    route_identities: set[str],
-    gate_status: Any,
-    route_status_override: Any,
-    errors: list[str],
-) -> None:
+def _operator_mutation_gate_identities(
+    gate: dict[str, Any], errors: list[str]
+) -> tuple[list[str], list[str]]:
     gate_identities: list[str] = []
     applies_to_identities: list[str] = []
     for field in ("applies_to", "live_exceptions"):
@@ -2600,7 +2654,12 @@ def validate_operator_mutation_support_gate_coverage(
                 gate_identities.append(identity)
                 if field == "applies_to":
                     applies_to_identities.append(identity)
+    return gate_identities, applies_to_identities
 
+
+def _operator_mutation_gate_coverage_drift(
+    gate: dict[str, Any], errors: list[str]
+) -> list[str]:
     coverage_drift = gate.get("coverage_drift")
     if not isinstance(coverage_drift, list) or not coverage_drift:
         errors.append(
@@ -2622,7 +2681,16 @@ def validate_operator_mutation_support_gate_coverage(
         note = entry.get("note")
         if not isinstance(note, str) or not note.strip():
             errors.append(f"{label}.note must be a non-empty string")
+    return drift_identities
 
+
+def _validate_operator_mutation_gate_identity_coverage(
+    gate_identities: list[str],
+    drift_identities: list[str],
+    applies_to_identities: list[str],
+    route_identities: set[str],
+    errors: list[str],
+) -> None:
     if len(set(gate_identities)) != len(gate_identities):
         errors.append(
             "operator_mutation_support_gate applies_to/live_exceptions must not duplicate identities"
@@ -2651,6 +2719,15 @@ def validate_operator_mutation_support_gate_coverage(
             "operator_mutation_support_gate.coverage_drift identity is not listed in "
             f"applies_to/live_exceptions: {identity}"
         )
+
+
+def _validate_operator_mutation_gate_route_status(
+    applies_to_identities: list[str],
+    routes_by_identity: dict[str, list[dict[str, Any]]],
+    gate_status: Any,
+    route_status_override: Any,
+    errors: list[str],
+) -> None:
     if (
         route_status_override == "gate_wins_for_applies_to"
         and gate_status == OPERATOR_MUTATION_SUPPORT_GATE_STATUS
@@ -2663,6 +2740,34 @@ def validate_operator_mutation_support_gate_coverage(
                         f"{identity} must declare route_status {gate_status} "
                         "when route_status_override is gate_wins_for_applies_to"
                     )
+
+
+def validate_operator_mutation_support_gate_coverage(
+    gate: dict[str, Any],
+    routes_by_identity: dict[str, list[dict[str, Any]]],
+    route_identities: set[str],
+    gate_status: Any,
+    route_status_override: Any,
+    errors: list[str],
+) -> None:
+    gate_identities, applies_to_identities = _operator_mutation_gate_identities(
+        gate, errors
+    )
+    drift_identities = _operator_mutation_gate_coverage_drift(gate, errors)
+    _validate_operator_mutation_gate_identity_coverage(
+        gate_identities,
+        drift_identities,
+        applies_to_identities,
+        route_identities,
+        errors,
+    )
+    _validate_operator_mutation_gate_route_status(
+        applies_to_identities,
+        routes_by_identity,
+        gate_status,
+        route_status_override,
+        errors,
+    )
 
 
 def validate_operator_mutation_support_gate(
@@ -2920,19 +3025,112 @@ def validate_admission_mode_selection(
             )
 
 
-def validate_ws_game_routes(
-    routes: list[Any],
-    errors: list[str],
-    live_checks_cache: LiveChecksCache | None = None,
-    cardinality_errors: set[str] | None = None,
-) -> None:
+def _ws_game_routes_by_mode(
+    routes: list[Any], errors: list[str]
+) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
     ws_routes = matching_routes(routes, "spring-cloud-gateway", "/ws/game/**")
     by_mode: dict[str, list[dict[str, Any]]] = {}
     for route in ws_routes:
         mode = applicability_value(route, "connection_mode", "/ws/game/**", errors)
         if isinstance(mode, str):
             by_mode.setdefault(mode, []).append(route)
+    return ws_routes, by_mode
 
+
+def _validate_ws_game_route_generation_fields(
+    by_mode: dict[str, list[dict[str, Any]]], errors: list[str]
+) -> None:
+    for mode in ("first_party_web", "trusted_tcp_proxy"):
+        route = by_mode[mode][0]
+        label = f"/ws/game/** {mode}"
+        for field in (
+            "tenant_billing_authority_generation_applies",
+            "membership_authority_generation_applies",
+        ):
+            if route.get(field) is not False:
+                errors.append(
+                    f"{label} must explicitly set {field}=false for downstream admission"
+                )
+
+
+def _validate_first_party_ws_game_route(
+    route: dict[str, Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None,
+) -> None:
+    label = "/ws/game/** first_party_web"
+    validate_applicability(
+        route,
+        label,
+        REQUIRED_FIRST_PARTY_WS_APPLICABILITY,
+        errors,
+    )
+    missing_first_party = sorted(
+        REQUIRED_WS_GAME_CHECKS
+        - route_live_checks(route, label, errors, live_checks_cache)
+    )
+    if missing_first_party:
+        errors.append(
+            f"/ws/game/** is missing required live checks: {missing_first_party}"
+        )
+    handshake_classes = route.get("handshake_error_classes", {})
+    outcomes = (
+        handshake_classes.get("any_of", [])
+        if isinstance(handshake_classes, dict)
+        else []
+    )
+    if "POLICY_PRESSURE" not in outcomes:
+        errors.append("/ws/game/** handshake outcomes must include POLICY_PRESSURE")
+    if route.get("issued_token_state") != GAMEPLAY_CONNECT_ISSUED_TOKEN_STATE:
+        errors.append(
+            "/ws/game/** first_party_web must declare the bounded single-use "
+            "gameplay-connect issued-token-state exception"
+        )
+    if route.get("issuer_authority_generation_applies") is not False:
+        errors.append(
+            "/ws/game/** first_party_web must explicitly disable "
+            "issuer_authority_generation_applies"
+        )
+    if route.get("account_authority_generation_applies") is not False:
+        errors.append(
+            "/ws/game/** first_party_web must explicitly disable "
+            "account_authority_generation_applies"
+        )
+    validate_downstream_admission_contract(route, label, errors)
+
+
+def _validate_trusted_proxy_ws_game_route(
+    route: dict[str, Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None,
+) -> None:
+    missing_trusted_proxy = sorted(
+        REQUIRED_TRUSTED_PROXY_CHECKS
+        - route_live_checks(
+            route,
+            "/ws/game/** trusted_tcp_proxy",
+            errors,
+            live_checks_cache,
+        )
+    )
+    if missing_trusted_proxy:
+        errors.append(
+            "/ws/game/** trusted_tcp_proxy is missing required live checks: "
+            f"{missing_trusted_proxy}"
+        )
+    validate_downstream_admission_contract(
+        route,
+        "/ws/game/** trusted_tcp_proxy",
+        errors,
+    )
+
+
+def _validate_ws_game_route_pair(
+    routes: list[Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None,
+) -> None:
+    ws_routes, by_mode = _ws_game_routes_by_mode(routes, errors)
     if len(ws_routes) != 2 or any(
         len(by_mode.get(mode, [])) != 1
         for mode in ("first_party_web", "trusted_tcp_proxy")
@@ -2941,88 +3139,22 @@ def validate_ws_game_routes(
             "matrix must contain exactly one first_party_web and one trusted_tcp_proxy "
             "spring-cloud-gateway /ws/game/** route"
         )
-    else:
-        for mode in ("first_party_web", "trusted_tcp_proxy"):
-            route = by_mode[mode][0]
-            label = f"/ws/game/** {mode}"
-            for field in (
-                "tenant_billing_authority_generation_applies",
-                "membership_authority_generation_applies",
-            ):
-                if route.get(field) is not False:
-                    errors.append(
-                        f"{label} must explicitly set {field}=false for downstream admission"
-                    )
+        return
+    _validate_ws_game_route_generation_fields(by_mode, errors)
+    _validate_first_party_ws_game_route(
+        by_mode["first_party_web"][0], errors, live_checks_cache
+    )
+    _validate_trusted_proxy_ws_game_route(
+        by_mode["trusted_tcp_proxy"][0], errors, live_checks_cache
+    )
 
-        first_party = by_mode["first_party_web"][0]
-        validate_applicability(
-            first_party,
-            "/ws/game/** first_party_web",
-            REQUIRED_FIRST_PARTY_WS_APPLICABILITY,
-            errors,
-        )
-        missing_first_party = sorted(
-            REQUIRED_WS_GAME_CHECKS
-            - route_live_checks(
-                first_party,
-                "/ws/game/** first_party_web",
-                errors,
-                live_checks_cache,
-            )
-        )
-        if missing_first_party:
-            errors.append(
-                f"/ws/game/** is missing required live checks: {missing_first_party}"
-            )
-        handshake_classes = first_party.get("handshake_error_classes", {})
-        outcomes = (
-            handshake_classes.get("any_of", [])
-            if isinstance(handshake_classes, dict)
-            else []
-        )
-        if "POLICY_PRESSURE" not in outcomes:
-            errors.append("/ws/game/** handshake outcomes must include POLICY_PRESSURE")
-        if first_party.get("issued_token_state") != GAMEPLAY_CONNECT_ISSUED_TOKEN_STATE:
-            errors.append(
-                "/ws/game/** first_party_web must declare the bounded single-use "
-                "gameplay-connect issued-token-state exception"
-            )
-        if first_party.get("issuer_authority_generation_applies") is not False:
-            errors.append(
-                "/ws/game/** first_party_web must explicitly disable "
-                "issuer_authority_generation_applies"
-            )
-        if first_party.get("account_authority_generation_applies") is not False:
-            errors.append(
-                "/ws/game/** first_party_web must explicitly disable "
-                "account_authority_generation_applies"
-            )
-        validate_downstream_admission_contract(
-            first_party,
-            "/ws/game/** first_party_web",
-            errors,
-        )
 
-        trusted_proxy = by_mode["trusted_tcp_proxy"][0]
-        missing_trusted_proxy = sorted(
-            REQUIRED_TRUSTED_PROXY_CHECKS
-            - route_live_checks(
-                trusted_proxy,
-                "/ws/game/** trusted_tcp_proxy",
-                errors,
-                live_checks_cache,
-            )
-        )
-        if missing_trusted_proxy:
-            errors.append(
-                "/ws/game/** trusted_tcp_proxy is missing required live checks: "
-                f"{missing_trusted_proxy}"
-            )
-        validate_downstream_admission_contract(
-            trusted_proxy,
-            "/ws/game/** trusted_tcp_proxy",
-            errors,
-        )
+def _validate_ws_game_revoke_route(
+    routes: list[Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None,
+    cardinality_errors: set[str] | None,
+) -> None:
 
     revoke_route = resolve_unique_route(
         routes,
@@ -3053,6 +3185,18 @@ def validate_ws_game_routes(
             "POST /ws/game/connect-token/revoke is missing required live checks: "
             f"{missing_revoke}"
         )
+
+
+def validate_ws_game_routes(
+    routes: list[Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+    cardinality_errors: set[str] | None = None,
+) -> None:
+    _validate_ws_game_route_pair(routes, errors, live_checks_cache)
+    _validate_ws_game_revoke_route(
+        routes, errors, live_checks_cache, cardinality_errors
+    )
 
 
 def validate_issue_connect_token(

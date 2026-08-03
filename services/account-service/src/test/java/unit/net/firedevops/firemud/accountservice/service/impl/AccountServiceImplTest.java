@@ -627,7 +627,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void issuePlayerBootstrapPrefersCanonicalEmailOverCollidingUsername() {
+  void issuePlayerBootstrapPrefersEmailLookupOverCollidingUsername() {
     Account emailAccount = new Account();
     emailAccount.setId(7L);
     emailAccount.setUsername("email-owner");
@@ -1534,6 +1534,33 @@ class AccountServiceImplTest {
     assertEquals(firstResult.requestId(), replayed.requestId());
     assertEquals(firstResult.created(), replayed.created());
     assertTrue(replayed.replayed());
+  }
+
+  @Test
+  void ensurePublicProductionMembershipRejectsCreationWhenPublicJoiningIsDisabled() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    Subscription grace = new Subscription();
+    grace.setId(22L);
+    grace.setTenantId(7L);
+    grace.setStatus("grace");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(grace));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.empty());
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.ensurePublicProductionPlayerMembership(
+                    11L, 7L, "demo", "production", "req-join-disabled"));
+
+    assertEquals("PUBLIC_PRODUCTION_ADMISSION_DENIED", exception.getCode());
+    assertEquals("Public joining is not allowed for the selected game", exception.getMessage());
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .saveAndFlush(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
   }
 
   @Test

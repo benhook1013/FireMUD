@@ -20,8 +20,3 @@ WHERE email <> LOWER(TRIM(email));
 ALTER TABLE accounts
     ADD CONSTRAINT accounts_email_canonical_check
     CHECK (email = LOWER(TRIM(email))) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;
-
--- [jooq ignore start]
-ALTER TABLE accounts
-    VALIDATE CONSTRAINT accounts_email_canonical_check;
--- [jooq ignore stop]

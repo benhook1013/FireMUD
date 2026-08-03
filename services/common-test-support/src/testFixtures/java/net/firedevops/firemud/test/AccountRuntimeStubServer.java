@@ -49,6 +49,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   private final AtomicBoolean membershipExists = new AtomicBoolean(true);
   private final AtomicBoolean gameplayAdmissionAllowed = new AtomicBoolean(true);
   private final AtomicBoolean gameplayAvailable = new AtomicBoolean(true);
+  private final AtomicBoolean allowPublicJoin = new AtomicBoolean(true);
   private final AtomicBoolean realmAccessGranted = new AtomicBoolean(true);
   private final AtomicLong defaultAccountId = new AtomicLong(1L);
   private final Map<String, Long> accountIdsByEmail = new ConcurrentHashMap<>();
@@ -111,6 +112,10 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     gameplayAvailable.set(available);
   }
 
+  public void setAllowPublicJoin(boolean allowed) {
+    allowPublicJoin.set(allowed);
+  }
+
   public void setRealmAccessGranted(boolean granted) {
     realmAccessGranted.set(granted);
   }
@@ -120,6 +125,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     membershipExists.set(true);
     gameplayAdmissionAllowed.set(true);
     gameplayAvailable.set(true);
+    allowPublicJoin.set(true);
     realmAccessGranted.set(true);
     profilesByAccountId.clear();
   }
@@ -207,7 +213,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         GetTenantEntitlementsForRuntimeResponse.newBuilder()
             .setTenantId(request.getTenantId())
             .setGameplayAvailable(gameplayAvailable.get())
-            .setAllowPublicJoin(gameplayAvailable.get())
+            .setAllowPublicJoin(allowPublicJoin.get())
             .setEntitlementVersion(1L)
             .setTenantBillingSequence(1L)
             .setEvaluatedAt(EVALUATED_AT)
