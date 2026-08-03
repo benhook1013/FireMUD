@@ -42,7 +42,6 @@ class GatewayRoutesConfigurationProdTest {
           "admin-feature-flags",
           "admin-logs",
           "admin-moderation",
-          "admin-reports",
           "admin-remote-followups",
           "admin-sagas",
           "admin-tick-remediation",
@@ -104,19 +103,35 @@ class GatewayRoutesConfigurationProdTest {
   }
 
   @Test
+  void publicReportsRouteIsNotConfigured() {
+    Set<String> configuredPaths =
+        gatewayProperties.getRoutes().stream()
+            .flatMap(route -> route.getPredicates().stream())
+            .filter(predicate -> "Path".equalsIgnoreCase(predicate.getName()))
+            .flatMap(predicate -> predicate.getArgs().values().stream())
+            .collect(Collectors.toSet());
+
+    assertThat(configuredPaths).isNotEmpty();
+    assertThat(configuredPaths).noneMatch(path -> path.startsWith("/api/admin/reports"));
+  }
+
+  @Test
   void restEdgeRoutesStripExternalServicePrefixBeforeForwarding() {
-    assertThat(route("admin-ping").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/admin/ping");
-    assertThat(route("admin-remote-followups").getPredicates().get(0).getArgs().values())
+    assertThat(pathPredicateArgs("admin-ping").values()).containsExactly("/api/admin/ping");
+    assertThat(
+            route("admin-admission-pointers").getPredicates().stream()
+                .filter(predicate -> "Method".equalsIgnoreCase(predicate.getName()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Admission-pointer route must be GET-only"))
+                .getArgs()
+                .values())
+        .containsExactly("GET");
+    assertThat(pathPredicateArgs("admin-remote-followups").values())
         .containsExactly("/api/admin/remote-followups/**");
-    assertThat(route("design").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/design/**");
-    assertThat(route("account-auth").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/account/auth/**");
-    assertThat(route("social-chat").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/social/chat/**");
-    assertThat(route("asset-store-public").getPredicates().get(0).getArgs().values())
-        .containsExactly("/assets/**");
+    assertThat(pathPredicateArgs("design").values()).containsExactly("/api/design/**");
+    assertThat(pathPredicateArgs("account-auth").values()).containsExactly("/api/account/auth/**");
+    assertThat(pathPredicateArgs("social-chat").values()).containsExactly("/api/social/chat/**");
+    assertThat(pathPredicateArgs("asset-store-public").values()).containsExactly("/assets/**");
 
     assertHasStripPrefixTwo("admin-ping");
     assertHasStripPrefixTwo("admin-remote-followups");
@@ -131,6 +146,14 @@ class GatewayRoutesConfigurationProdTest {
         .filter(route -> routeId.equals(route.getId()))
         .findFirst()
         .orElseThrow(() -> new AssertionError("Expected route to be configured: " + routeId));
+  }
+
+  private Map<String, String> pathPredicateArgs(String routeId) {
+    return route(routeId).getPredicates().stream()
+        .filter(predicate -> "Path".equalsIgnoreCase(predicate.getName()))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError("Expected Path predicate for route: " + routeId))
+        .getArgs();
   }
 
   private void assertHasStripPrefixTwo(RouteDefinition route) {

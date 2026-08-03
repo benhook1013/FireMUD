@@ -6,6 +6,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Optional;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.jooq.tables.records.AccountsRecord;
+import net.firedevops.firemud.common.EmailCanonicalization;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
 
@@ -36,6 +37,7 @@ public class AccountRepository {
   }
 
   public Account save(Account entity) {
+    entity.setEmail(EmailCanonicalization.normalize(entity.getEmail()));
     if (entity.getId() == null) {
       Long id =
           dsl.insertInto(ACCOUNTS)

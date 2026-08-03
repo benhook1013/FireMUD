@@ -52,14 +52,14 @@ public final class AccountClient
   }
 
   /** Authenticates a player via the Account Service. */
-  public AuthenticateResponse authenticate(String tenantId, String username, String password) {
+  public AuthenticateResponse authenticate(String tenantId, String email, String password) {
     if (stub() == null) {
       return authenticationUnavailable();
     }
     AuthenticateRequest request =
         AuthenticateRequest.newBuilder()
             .setTenantId(tenantId)
-            .setUsername(username)
+            .setEmail(email)
             .setPassword(password)
             .build();
     try {
@@ -137,7 +137,7 @@ public final class AccountClient
   }
 
   public AuthenticateResponse authenticateForReadiness(
-      String tenantId, String username, String password) {
+      String tenantId, String email, String password) {
     if (stub() == null) {
       return AuthenticateResponse.newBuilder()
           .setError(
@@ -149,7 +149,7 @@ public final class AccountClient
     AuthenticateRequest request =
         AuthenticateRequest.newBuilder()
             .setTenantId(tenantId)
-            .setUsername(username)
+            .setEmail(email)
             .setPassword(password)
             .build();
     return stub()
@@ -173,12 +173,7 @@ public final class AccountClient
   public GetTenantMembershipForRuntimeResponse getTenantMembershipForRuntime(
       String accountId, String tenantId, String requestId) {
     if (stub() == null) {
-      return GetTenantMembershipForRuntimeResponse.newBuilder()
-          .setError(
-              ErrorDetail.newBuilder()
-                  .setCode("MEMBERSHIP_AUTH_UNAVAILABLE")
-                  .setMessage("Membership authority unavailable"))
-          .build();
+      return membershipAuthorityUnavailable();
     }
     GetTenantMembershipForRuntimeRequest request =
         GetTenantMembershipForRuntimeRequest.newBuilder()
@@ -205,10 +200,14 @@ public final class AccountClient
     } catch (Exception ex) {
       logger.warn("Failed to call Account Service runtime membership endpoint", ex);
     }
+    return membershipAuthorityUnavailable();
+  }
+
+  private GetTenantMembershipForRuntimeResponse membershipAuthorityUnavailable() {
     return GetTenantMembershipForRuntimeResponse.newBuilder()
         .setError(
             ErrorDetail.newBuilder()
-                .setCode("MEMBERSHIP_AUTH_UNAVAILABLE")
+                .setCode(AuthenticationErrorCodes.UNAVAILABLE)
                 .setMessage("Membership authority unavailable"))
         .build();
   }
@@ -216,12 +215,7 @@ public final class AccountClient
   public GetTenantEntitlementsForRuntimeResponse getTenantEntitlementsForRuntime(
       String tenantId, String requestId) {
     if (stub() == null) {
-      return GetTenantEntitlementsForRuntimeResponse.newBuilder()
-          .setError(
-              ErrorDetail.newBuilder()
-                  .setCode("ENTITLEMENT_UNAVAILABLE")
-                  .setMessage("Entitlement authority unavailable"))
-          .build();
+      return entitlementAuthorityUnavailable();
     }
     GetTenantEntitlementsForRuntimeRequest request =
         GetTenantEntitlementsForRuntimeRequest.newBuilder()
@@ -248,23 +242,13 @@ public final class AccountClient
     } catch (Exception ex) {
       logger.warn("Failed to call Account Service runtime entitlements endpoint", ex);
     }
-    return GetTenantEntitlementsForRuntimeResponse.newBuilder()
-        .setError(
-            ErrorDetail.newBuilder()
-                .setCode("ENTITLEMENT_UNAVAILABLE")
-                .setMessage("Entitlement authority unavailable"))
-        .build();
+    return entitlementAuthorityUnavailable();
   }
 
   public GetRealmAccessGrantForRuntimeResponse getRealmAccessGrantForRuntime(
       String accountId, String tenantId, String worldSlug, String realmSlug, String requestId) {
     if (stub() == null) {
-      return GetRealmAccessGrantForRuntimeResponse.newBuilder()
-          .setError(
-              ErrorDetail.newBuilder()
-                  .setCode("MEMBERSHIP_AUTH_UNAVAILABLE")
-                  .setMessage("Realm grant authority unavailable"))
-          .build();
+      return realmAccessGrantUnavailable();
     }
     GetRealmAccessGrantForRuntimeRequest request =
         GetRealmAccessGrantForRuntimeRequest.newBuilder()
@@ -295,23 +279,13 @@ public final class AccountClient
     } catch (Exception ex) {
       logger.warn("Failed to call Account Service realm access grant endpoint", ex);
     }
-    return GetRealmAccessGrantForRuntimeResponse.newBuilder()
-        .setError(
-            ErrorDetail.newBuilder()
-                .setCode("MEMBERSHIP_AUTH_UNAVAILABLE")
-                .setMessage("Realm grant authority unavailable"))
-        .build();
+    return realmAccessGrantUnavailable();
   }
 
   public EnsurePublicProductionPlayerMembershipResponse ensurePublicProductionPlayerMembership(
       String accountId, String tenantId, String worldSlug, String realmSlug, String requestId) {
     if (stub() == null) {
-      return EnsurePublicProductionPlayerMembershipResponse.newBuilder()
-          .setError(
-              ErrorDetail.newBuilder()
-                  .setCode("MEMBERSHIP_AUTH_UNAVAILABLE")
-                  .setMessage("Membership authority unavailable"))
-          .build();
+      return publicMembershipUnavailable();
     }
     EnsurePublicProductionPlayerMembershipRequest request =
         EnsurePublicProductionPlayerMembershipRequest.newBuilder()
@@ -342,11 +316,33 @@ public final class AccountClient
     } catch (Exception ex) {
       logger.warn("Failed to call Account Service public-production membership endpoint", ex);
     }
+    return publicMembershipUnavailable();
+  }
+
+  private GetRealmAccessGrantForRuntimeResponse realmAccessGrantUnavailable() {
+    return GetRealmAccessGrantForRuntimeResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode(AuthenticationErrorCodes.UNAVAILABLE)
+                .setMessage("Realm grant authority unavailable"))
+        .build();
+  }
+
+  private EnsurePublicProductionPlayerMembershipResponse publicMembershipUnavailable() {
     return EnsurePublicProductionPlayerMembershipResponse.newBuilder()
         .setError(
             ErrorDetail.newBuilder()
-                .setCode("MEMBERSHIP_AUTH_UNAVAILABLE")
+                .setCode(AuthenticationErrorCodes.UNAVAILABLE)
                 .setMessage("Membership authority unavailable"))
+        .build();
+  }
+
+  private GetTenantEntitlementsForRuntimeResponse entitlementAuthorityUnavailable() {
+    return GetTenantEntitlementsForRuntimeResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode(AuthenticationErrorCodes.UNAVAILABLE)
+                .setMessage("Entitlement authority unavailable"))
         .build();
   }
 

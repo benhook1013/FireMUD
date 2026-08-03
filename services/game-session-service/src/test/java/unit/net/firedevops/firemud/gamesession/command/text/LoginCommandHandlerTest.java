@@ -103,15 +103,15 @@ class LoginCommandHandlerTest {
     TextCommand command =
         new TextCommand(
             TextCommandType.LOGIN,
-            List.of("demo@example.com", "swordfish"),
-            "LOGIN demo@example.com swordfish");
+            List.of("DEMO@EXAMPLE.COM", "swordfish"),
+            "LOGIN DEMO@EXAMPLE.COM swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertTrue(result.commandResult().accepted());
-    assertEquals("Logged in as demo@example.com", joinedOutputText(result.outputs()));
+    assertEquals("Logged in as DEMO@EXAMPLE.COM", joinedOutputText(result.outputs()));
     assertEquals(
         List.of(PlayerOutputKind.MESSAGE),
         result.outputs().stream().map(output -> output.kind()).toList());
@@ -143,7 +143,7 @@ class LoginCommandHandlerTest {
   void oneArgumentLoginRequestsNeutralEmailChallengeWithoutAuthenticating() {
     TextCommand command =
         new TextCommand(
-            TextCommandType.LOGIN, List.of("demo@example.com"), "LOGIN demo@example.com");
+            TextCommandType.LOGIN, List.of("DEMO@EXAMPLE.COM"), "LOGIN DEMO@EXAMPLE.COM");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.requestEmailLoginOtp("22", "demo@example.com"))

@@ -156,7 +156,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     assertThat(accountStub().capturedAuthenticateRequests())
         .anyMatch(
             request ->
-                request.getUsername().equals(GameplayTelnetScenarios.DEMO_USERNAME)
+                request.getEmail().equals(GameplayTelnetScenarios.DEMO_USERNAME)
                     && request.getPassword().equals(GameplayTelnetScenarios.DEMO_PASSWORD)
                     && request.getTenantId().equals(String.valueOf(TENANT_ID)));
   }

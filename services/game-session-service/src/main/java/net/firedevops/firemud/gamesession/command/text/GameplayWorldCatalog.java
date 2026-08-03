@@ -80,8 +80,24 @@ public final class GameplayWorldCatalog {
         .findFirst();
   }
 
+  // Admission may resolve hidden realms, but callers must still perform membership and grant
+  // checks.
+  Optional<RealmView> resolveRealmForAdmission(WorldView world, String selector) {
+    if (world == null || selector == null || selector.isBlank() || world.realms() == null) {
+      return Optional.empty();
+    }
+    String normalized = selector.trim().toLowerCase(Locale.ROOT);
+    return world.realms().stream()
+        .filter(realm -> normalized.equals(realm.slug().toLowerCase(Locale.ROOT)))
+        .findFirst();
+  }
+
   public boolean hasVisibleRealm(WorldView world, String selector) {
     return resolveRealm(world, selector).isPresent();
+  }
+
+  boolean hasRealmForAdmission(WorldView world, String selector) {
+    return resolveRealmForAdmission(world, selector).isPresent();
   }
 
   public Optional<RealmView> resolveDefaultRealm(WorldView world) {

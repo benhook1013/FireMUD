@@ -45,11 +45,12 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
 
   private final Server server;
   private final List<AuthenticateRequest> authenticateRequests = new CopyOnWriteArrayList<>();
+  private final AtomicBoolean membershipExists = new AtomicBoolean(true);
   private final AtomicBoolean gameplayAdmissionAllowed = new AtomicBoolean(true);
   private final AtomicBoolean gameplayAvailable = new AtomicBoolean(true);
   private final AtomicBoolean realmAccessGranted = new AtomicBoolean(true);
   private final AtomicLong defaultAccountId = new AtomicLong(1L);
-  private final Map<String, Long> accountIdsByUsername = new ConcurrentHashMap<>();
+  private final Map<String, Long> accountIdsByEmail = new ConcurrentHashMap<>();
   private final Map<Long, StubProfile> profilesByAccountId = new ConcurrentHashMap<>();
 
   public AccountRuntimeStubServer(int port) throws IOException {
@@ -72,8 +73,8 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     defaultAccountId.set(accountId);
   }
 
-  public void mapAccountId(String username, long accountId) {
-    accountIdsByUsername.put(username, accountId);
+  public void mapAccountId(String email, long accountId) {
+    accountIdsByEmail.put(email, accountId);
   }
 
   public void setPresenceVisibilityPolicy(long accountId, String visibilityPolicy) {
@@ -88,11 +89,17 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     gameplayAdmissionAllowed.set(allowed);
   }
 
+  public void setMembershipExists(boolean exists) {
+    membershipExists.set(exists);
+  }
+
   public void allowGameplayAdmission() {
+    setMembershipExists(true);
     setGameplayAdmissionAllowed(true);
   }
 
   public void denyGameplayAdmission() {
+    setMembershipExists(true);
     setGameplayAdmissionAllowed(false);
   }
 
@@ -106,6 +113,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
 
   public void resetRuntimeState() {
     authenticateRequests.clear();
+    membershipExists.set(true);
     gameplayAdmissionAllowed.set(true);
     gameplayAvailable.set(true);
     realmAccessGranted.set(true);
@@ -122,8 +130,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   public void authenticate(
       AuthenticateRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
     authenticateRequests.add(request);
-    long accountId =
-        accountIdsByUsername.getOrDefault(request.getUsername(), defaultAccountId.get());
+    long accountId = accountIdsByEmail.getOrDefault(request.getEmail(), defaultAccountId.get());
     profilesByAccountId.computeIfAbsent(accountId, StubProfile::defaultFor);
     responseObserver.onNext(
         AuthenticateResponse.newBuilder()
@@ -141,6 +148,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         GetTenantMembershipForRuntimeResponse.newBuilder()
             .setAccountId(request.getAccountId())
             .setTenantId(request.getTenantId())
+            .setMembershipExists(membershipExists.get())
             .setGameplayAdmissionAllowed(gameplayAdmissionAllowed.get())
             .setMembershipVersion(1L)
             .setEvaluatedAt(EVALUATED_AT)
@@ -170,6 +178,9 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       EnsurePublicProductionPlayerMembershipRequest request,
       StreamObserver<EnsurePublicProductionPlayerMembershipResponse> responseObserver) {
     boolean allowed = gameplayAdmissionAllowed.get();
+    if (allowed) {
+      membershipExists.set(true);
+    }
     responseObserver.onNext(
         EnsurePublicProductionPlayerMembershipResponse.newBuilder()
             .setAccountId(request.getAccountId())

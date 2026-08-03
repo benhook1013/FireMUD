@@ -42,7 +42,6 @@ class GatewayRoutesConfigurationTestProfileTest {
           "admin-feature-flags",
           "admin-logs",
           "admin-moderation",
-          "admin-reports",
           "admin-remote-followups",
           "admin-sagas",
           "admin-tick-remediation",
@@ -86,11 +85,11 @@ class GatewayRoutesConfigurationTestProfileTest {
     assertThat(pathArgs("admin-ping").values()).containsExactly("/api/admin/ping");
     assertThat(pathArgs("admin-admission-pointers").values())
         .containsExactly("/api/admin/admission-pointers/**");
+    assertThat(predicateArgs("admin-admission-pointers", "Method").values()).containsExactly("GET");
     assertThat(pathArgs("admin-feature-flags").values())
         .containsExactly("/api/admin/feature-flags/**");
     assertThat(pathArgs("admin-logs").values()).containsExactly("/api/admin/logs/**");
     assertThat(pathArgs("admin-moderation").values()).containsExactly("/api/admin/moderation/**");
-    assertThat(pathArgs("admin-reports").values()).containsExactly("/api/admin/reports/**");
     assertThat(pathArgs("admin-remote-followups").values())
         .containsExactly("/api/admin/remote-followups/**");
     assertThat(pathArgs("admin-sagas").values()).containsExactly("/api/admin/sagas/**");
@@ -124,7 +123,6 @@ class GatewayRoutesConfigurationTestProfileTest {
     assertHasStripPrefix("admin-feature-flags", "2");
     assertHasStripPrefix("admin-logs", "2");
     assertHasStripPrefix("admin-moderation", "2");
-    assertHasStripPrefix("admin-reports", "2");
     assertHasStripPrefix("admin-remote-followups", "2");
     assertHasStripPrefix("admin-sagas", "2");
     assertHasStripPrefix("admin-tick-remediation", "2");
@@ -149,6 +147,17 @@ class GatewayRoutesConfigurationTestProfileTest {
         .findFirst()
         .map(org.springframework.cloud.gateway.handler.predicate.PredicateDefinition::getArgs)
         .orElseThrow(() -> new AssertionError("Expected Path predicate for route " + routeId));
+  }
+
+  private Map<String, String> predicateArgs(String routeId, String predicateName) {
+    return route(routeId).getPredicates().stream()
+        .filter(predicate -> predicateName.equalsIgnoreCase(predicate.getName()))
+        .findFirst()
+        .map(org.springframework.cloud.gateway.handler.predicate.PredicateDefinition::getArgs)
+        .orElseThrow(
+            () ->
+                new AssertionError(
+                    "Expected " + predicateName + " predicate for route " + routeId));
   }
 
   private void assertHasStripPrefix(String routeId, String value) {

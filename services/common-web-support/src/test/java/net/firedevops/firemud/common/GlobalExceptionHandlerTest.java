@@ -1,16 +1,48 @@
 package net.firedevops.firemud.common;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.SpringBootConfiguration;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.ContextConfiguration;
+import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
+@WebMvcTest
+@Import(GlobalExceptionHandler.class)
+@TestPropertySource(
+    properties = {
+      "spring.mvc.throw-exception-if-no-handler-found=true",
+      "spring.mvc.static-path-pattern=/resources/**",
+      "spring.web.resources.add-mappings=true"
+    })
 class GlobalExceptionHandlerTest {
+  @Autowired private MockMvc mockMvc;
+
+  @SpringBootConfiguration
+  @EnableAutoConfiguration
+  static class WebSliceApplication {}
+
   @Test
   void handleExceptionDoesNotExposeRawMessage() {
     GlobalExceptionHandler handler = new GlobalExceptionHandler();
@@ -98,5 +130,80 @@ class GlobalExceptionHandlerTest {
     Assertions.assertNotNull(response);
     assertEquals("INVALID_ARGUMENT", response.error().code());
     assertEquals("pointerVersion must be positive", response.error().message());
+  }
+
+  @Test
+  void handleNoResourceFoundPreservesNotFoundEnvelope() {
+    GlobalExceptionHandler handler = new GlobalExceptionHandler();
+
+    var responseEntity =
+        handler.handleNoResourceFound(
+            new NoResourceFoundException(HttpMethod.POST, "/reports", "reports"));
+    ApiResponse<ErrorDetail> response = responseEntity.getBody();
+
+    assertEquals(HttpStatus.NOT_FOUND, responseEntity.getStatusCode());
+    Assertions.assertNotNull(response);
+    assertEquals("NOT_FOUND", response.error().code());
+    assertEquals("Resource not found", response.error().message());
+  }
+
+  @Test
+  void handleNoHandlerFoundPreservesNotFoundEnvelope() {
+    GlobalExceptionHandler handler = new GlobalExceptionHandler();
+
+    var responseEntity =
+        handler.handleNoHandlerFound(
+            new NoHandlerFoundException("POST", "/reports", HttpHeaders.EMPTY));
+    ApiResponse<ErrorDetail> response = responseEntity.getBody();
+
+    assertEquals(HttpStatus.NOT_FOUND, responseEntity.getStatusCode());
+    Assertions.assertNotNull(response);
+    assertEquals("NOT_FOUND", response.error().code());
+    assertEquals("Resource not found", response.error().message());
+  }
+
+  @Test
+  void unmappedPostUsesCanonicalNotFoundEnvelope() throws Exception {
+    mockMvc
+        .perform(post("/reports"))
+        .andExpect(status().isNotFound())
+        .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("NOT_FOUND"))
+        .andExpect(jsonPath("$.error.message").value("Resource not found"));
+  }
+
+  @Test
+  void missingStaticResourceUsesCanonicalNotFoundEnvelope() throws Exception {
+    mockMvc
+        .perform(get("/resources/missing-resource.txt"))
+        .andExpect(status().isNotFound())
+        .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("NOT_FOUND"))
+        .andExpect(jsonPath("$.error.message").value("Resource not found"));
+  }
+}
+
+@WebMvcTest
+@ContextConfiguration(classes = GlobalExceptionHandlerTest.WebSliceApplication.class)
+@Import(GlobalExceptionHandler.class)
+@TestPropertySource(
+    properties = {
+      "spring.mvc.throw-exception-if-no-handler-found=true",
+      "spring.web.resources.add-mappings=false"
+    })
+class GlobalExceptionHandlerWithoutStaticResourcesTest {
+  @Autowired private MockMvc mockMvc;
+
+  @Test
+  void unmappedRouteUsesCanonicalNotFoundEnvelopeWithoutStaticResourceMappings() throws Exception {
+    mockMvc
+        .perform(get("/unmapped-route"))
+        .andExpect(status().isNotFound())
+        .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("NOT_FOUND"))
+        .andExpect(jsonPath("$.error.message").value("Resource not found"));
   }
 }

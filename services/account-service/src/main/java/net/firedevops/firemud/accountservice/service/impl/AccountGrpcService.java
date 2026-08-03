@@ -122,7 +122,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       net.firedevops.firemud.accountservice.dto.AuthenticationResult result =
           accountService.authenticateForGameplay(
               requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              request.getUsername(),
+              request.getEmail(),
               request.getPassword());
       AuthenticateResponse response =
           AuthenticateResponse.newBuilder()
@@ -221,6 +221,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           GetTenantMembershipForRuntimeResponse.newBuilder()
               .setAccountId(String.valueOf(dto.accountId()))
               .setTenantId(String.valueOf(dto.tenantId()))
+              .setMembershipExists(dto.membershipExists())
               .setGameplayAdmissionAllowed(dto.gameplayAdmissionAllowed())
               .setMembershipVersion(dto.membershipVersion())
               .setEvaluatedAt(dto.evaluatedAt())

@@ -87,7 +87,7 @@ class AccountGrpcServiceTest {
     AccountService accountService = Mockito.mock(AccountService.class);
     Mockito.when(
             accountService.authenticateForGameplay(
-                Mockito.eq(1L), Mockito.eq("demo"), Mockito.eq("bad")))
+                Mockito.eq(1L), Mockito.eq("demo@example.com"), Mockito.eq("bad")))
         .thenThrow(
             new AuthenticationException(
                 AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials"));
@@ -97,7 +97,7 @@ class AccountGrpcServiceTest {
     service.authenticate(
         AuthenticateRequest.newBuilder()
             .setTenantId("1")
-            .setUsername("demo")
+            .setEmail("demo@example.com")
             .setPassword("bad")
             .build(),
         new StreamObserver<AuthenticateResponse>() {
@@ -528,7 +528,7 @@ class AccountGrpcServiceTest {
     Mockito.when(accountService.getTenantMembershipForRuntime(2L, 1L, "req-1"))
         .thenReturn(
             new net.firedevops.firemud.accountservice.dto.RuntimeMembershipDto(
-                2L, 1L, true, 44L, "2026-03-30T00:00:00Z"));
+                2L, 1L, true, true, 44L, "2026-03-30T00:00:00Z"));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
     AtomicReference<GetTenantMembershipForRuntimeResponse> ref = new AtomicReference<>();
@@ -553,8 +553,35 @@ class AccountGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals("2", ref.get().getAccountId());
+    assertTrue(ref.get().getMembershipExists());
     assertTrue(ref.get().getGameplayAdmissionAllowed());
     assertEquals(44L, ref.get().getMembershipVersion());
+  }
+
+  @Test
+  void getTenantMembershipForRuntimePreservesMissingMembershipAndAdmissionAllowed() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.getTenantMembershipForRuntime(2L, 1L, "req-1"))
+        .thenReturn(
+            new net.firedevops.firemud.accountservice.dto.RuntimeMembershipDto(
+                2L, 1L, false, true, 44L, "2026-03-30T00:00:00Z"));
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    RecordingObserver<GetTenantMembershipForRuntimeResponse> observer = new RecordingObserver<>();
+
+    service.getTenantMembershipForRuntime(
+        GetTenantMembershipForRuntimeRequest.newBuilder()
+            .setAccountId("2")
+            .setTenantId("1")
+            .setRequestId("req-1")
+            .build(),
+        observer);
+
+    assertNotNull(observer.response());
+    assertFalse(observer.response().getMembershipExists());
+    assertTrue(observer.response().getGameplayAdmissionAllowed());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
   }
 
   @Test
@@ -778,7 +805,7 @@ class AccountGrpcServiceTest {
     service.authenticate(
         AuthenticateRequest.newBuilder()
             .setTenantId("0")
-            .setUsername("demo")
+            .setEmail("demo@example.com")
             .setPassword("bad")
             .build(),
         new StreamObserver<AuthenticateResponse>() {

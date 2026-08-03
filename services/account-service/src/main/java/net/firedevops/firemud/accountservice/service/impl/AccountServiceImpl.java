@@ -74,6 +74,7 @@ import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
+import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
@@ -184,7 +185,7 @@ public class AccountServiceImpl implements AccountService {
     logger.info("Creating account {} for tenant {}", request.username(), request.tenantId());
     Account account = new Account();
     account.setUsername(request.username());
-    account.setEmail(request.email());
+    account.setEmail(EmailCanonicalization.normalize(request.email()));
     account.setPasswordHash(hashPassword(request.password()));
     account.setRole("player");
     Profile profile = new Profile();
@@ -245,8 +246,13 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.authenticate_gameplay")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticateForGameplay(
-      Long tenantId, String username, String password) {
-    PrimaryAuthentication authentication = authenticateAccountIdentity(username, password, true);
+      Long tenantId, String email, String password) {
+    Account gameplayAccount =
+        accountRepository
+            .findByEmail(EmailCanonicalization.normalize(email))
+            .orElseThrow(this::invalidCredentials);
+    PrimaryAuthentication authentication =
+        authenticateAccountIdentity(gameplayAccount, password, true);
     Account account = authentication.account();
     requireGameplayMembership(account.getId(), tenantId, "Invalid credentials");
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
@@ -264,7 +270,8 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.request_email_login_otp")
   public void requestEmailLoginOtp(Long tenantId, String email) {
-    Optional<Account> account = accountRepository.findByEmail(email == null ? "" : email.trim());
+    Optional<Account> account =
+        accountRepository.findByEmail(EmailCanonicalization.normalize(email));
     if (account.isEmpty()
         || !account.orElseThrow().isEmailVerified()
         || !allowsEmailLoginOtp(account.orElseThrow())) {
@@ -304,7 +311,7 @@ public class AccountServiceImpl implements AccountService {
       Long tenantId, String email, String code) {
     Account account =
         accountRepository
-            .findByEmail(email == null ? "" : email.trim())
+            .findByEmail(EmailCanonicalization.normalize(email))
             .orElseThrow(this::invalidCredentials);
     if (!allowsEmailLoginOtp(account)) {
       throw invalidCredentials();
@@ -484,31 +491,16 @@ public class AccountServiceImpl implements AccountService {
       BootstrapContext bootstrapContext,
       ConnectScopeContext scopeContext,
       ConnectTokenRequest request) {
-    RuntimeRealmTarget currentRealm =
-        requireCurrentConnectScopeTarget(bootstrapContext, scopeContext);
+    requireCurrentConnectScopeTarget(bootstrapContext, scopeContext);
 
-    boolean nonPublicGrant =
-        hasRealmAccessGrant(
-            bootstrapContext.accountId(),
-            scopeContext.tenantId(),
-            scopeContext.worldSlug(),
-            scopeContext.realmSlug());
     RuntimeMembershipDto membership =
         getTenantMembershipForRuntime(
             bootstrapContext.accountId(), scopeContext.tenantId(), request.requestId());
-    if (!nonPublicGrant
-        && !membership.gameplayAdmissionAllowed()
-        && currentRealm.publicProductionRealm()) {
-      membership =
-          toRuntimeMembership(
-              ensurePublicProductionPlayerMembership(
-                  bootstrapContext.accountId(),
-                  scopeContext.tenantId(),
-                  scopeContext.worldSlug(),
-                  scopeContext.realmSlug(),
-                  request.requestId()));
+    if (!membership.membershipExists()) {
+      throw new AuthenticationException(
+          "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
     }
-    if (!nonPublicGrant && !membership.gameplayAdmissionAllowed()) {
+    if (!membership.gameplayAdmissionAllowed()) {
       throw new AuthenticationException(
           "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
     }
@@ -753,6 +745,7 @@ public class AccountServiceImpl implements AccountService {
     return new RuntimeMembershipDto(
         accountId,
         tenantId,
+        membership.isPresent(),
         membership.map(AccountTenantMembership::isGameplayAdmissionAllowed).orElse(false),
         membership.map(AccountTenantMembership::getId).orElse(0L),
         Instant.now().toString());
@@ -1077,7 +1070,7 @@ public class AccountServiceImpl implements AccountService {
       return usernameMatch;
     }
 
-    return accountRepository.findByEmail(usernameOrEmail);
+    return accountRepository.findByEmail(EmailCanonicalization.normalize(usernameOrEmail));
   }
 
   private PrimaryAuthentication authenticateAccountIdentity(
@@ -1088,6 +1081,11 @@ public class AccountServiceImpl implements AccountService {
             () ->
                 new AuthenticationException(
                     AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials"));
+    return authenticateAccountIdentity(account, password, allowEmailLoginOtp);
+  }
+
+  private PrimaryAuthentication authenticateAccountIdentity(
+      Account account, String password, boolean allowEmailLoginOtp) {
     Optional<AccountEmailLoginChallenge> emailLoginChallenge = Optional.empty();
     if (allowEmailLoginOtp && allowsEmailLoginOtp(account)) {
       accountEmailLoginChallengeRepository.lockAccountChallenge(account.getId());
@@ -1412,7 +1410,7 @@ public class AccountServiceImpl implements AccountService {
   public void requestPasswordReset(PasswordResetRequest request) {
     net.firedevops.firemud.accountservice.entity.Account account =
         accountRepository
-            .findByEmail(request.email())
+            .findByEmail(EmailCanonicalization.normalize(request.email()))
             .orElseThrow(() -> new IllegalArgumentException("Account not found"));
     net.firedevops.firemud.accountservice.entity.PasswordResetToken token =
         new net.firedevops.firemud.accountservice.entity.PasswordResetToken();
@@ -1509,7 +1507,7 @@ public class AccountServiceImpl implements AccountService {
   public void sendUsernameReminder(UsernameRecoveryRequest request) {
     Account account =
         accountRepository
-            .findByEmail(request.email())
+            .findByEmail(EmailCanonicalization.normalize(request.email()))
             .orElseThrow(() -> new IllegalArgumentException("Account not found"));
     runAfterCommit(
         () ->
@@ -1598,6 +1596,7 @@ public class AccountServiceImpl implements AccountService {
     return new RuntimeMembershipDto(
         result.accountId(),
         result.tenantId(),
+        true,
         true,
         result.membershipVersion(),
         result.evaluatedAt());

@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import net.firedevops.firemud.account.AuthenticationErrorCodes;
+
 /** Stage-aware text command error codes/messages for login and gameplay admission. */
 public final class GameplayStageCommandConstants {
   public static final String LOGIN_REQUIRED_CODE = "LOGIN_REQUIRED";
@@ -19,15 +21,15 @@ public final class GameplayStageCommandConstants {
   public static final String WORLD_ACCESS_DENIED_CODE = "WORLD_ACCESS_DENIED";
   public static final String WORLD_ACCESS_DENIED_MESSAGE =
       "You are not allowed to enter that world.";
+  public static final String JOIN_REQUIRED_CODE = "JOIN_REQUIRED";
+  public static final String JOIN_REQUIRED_MESSAGE =
+      "Membership is required before PLAY; joining this world is not available yet.";
   public static final String TENANT_BILLING_BLOCKED_CODE = "TENANT_BILLING_BLOCKED";
   public static final String TENANT_BILLING_BLOCKED_MESSAGE =
       "That world is temporarily unavailable for gameplay.";
-  public static final String MEMBERSHIP_AUTH_UNAVAILABLE_CODE = "MEMBERSHIP_AUTH_UNAVAILABLE";
-  public static final String MEMBERSHIP_AUTH_UNAVAILABLE_MESSAGE =
-      "Membership authority is temporarily unavailable. Retry PLAY shortly.";
-  public static final String ENTITLEMENT_UNAVAILABLE_CODE = "ENTITLEMENT_UNAVAILABLE";
-  public static final String ENTITLEMENT_UNAVAILABLE_MESSAGE =
-      "Entitlement state is temporarily unavailable. Retry PLAY shortly.";
+  public static final String AUTH_UNAVAILABLE_CODE = AuthenticationErrorCodes.UNAVAILABLE;
+  public static final String AUTH_UNAVAILABLE_MESSAGE =
+      "Gameplay authority is temporarily unavailable. Retry PLAY shortly.";
   public static final String PLAY_IDENTITY_UNAVAILABLE_CODE = "PLAY_IDENTITY_UNAVAILABLE";
   public static final String PLAY_IDENTITY_UNAVAILABLE_MESSAGE =
       "Character identity is temporarily unavailable. Retry PLAY shortly.";

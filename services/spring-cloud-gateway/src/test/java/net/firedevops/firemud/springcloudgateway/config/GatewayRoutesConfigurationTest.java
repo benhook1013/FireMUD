@@ -40,7 +40,6 @@ class GatewayRoutesConfigurationTest {
           "admin-feature-flags",
           "admin-logs",
           "admin-moderation",
-          "admin-reports",
           "admin-remote-followups",
           "admin-sagas",
           "admin-tick-remediation",
@@ -95,14 +94,27 @@ class GatewayRoutesConfigurationTest {
   }
 
   @Test
+  void publicReportsRouteIsNotConfigured() {
+    Set<String> configuredPaths =
+        gatewayProperties.getRoutes().stream()
+            .flatMap(route -> route.getPredicates().stream())
+            .filter(predicate -> "Path".equalsIgnoreCase(predicate.getName()))
+            .flatMap(predicate -> predicate.getArgs().values().stream())
+            .collect(Collectors.toSet());
+
+    assertThat(configuredPaths).isNotEmpty();
+    assertThat(configuredPaths).noneMatch(path -> path.startsWith("/api/admin/reports"));
+  }
+
+  @Test
   void restEdgeRoutesStripExternalServicePrefixBeforeForwarding() {
     assertHasPath(route("session-ping"), "/api/session/ping");
     assertHasPath(route("admin-ping"), "/api/admin/ping");
     assertHasPath(route("admin-admission-pointers"), "/api/admin/admission-pointers/**");
+    assertHasMethod(route("admin-admission-pointers"), "GET");
     assertHasPath(route("admin-feature-flags"), "/api/admin/feature-flags/**");
     assertHasPath(route("admin-logs"), "/api/admin/logs/**");
     assertHasPath(route("admin-moderation"), "/api/admin/moderation/**");
-    assertHasPath(route("admin-reports"), "/api/admin/reports/**");
     assertHasPath(route("admin-remote-followups"), "/api/admin/remote-followups/**");
     assertHasPath(route("admin-sagas"), "/api/admin/sagas/**");
     assertHasPath(route("admin-tick-remediation"), "/api/admin/tick-remediation/**");
@@ -112,7 +124,6 @@ class GatewayRoutesConfigurationTest {
     assertHasStripPrefixTwo(route("admin-feature-flags"));
     assertHasStripPrefixTwo(route("admin-logs"));
     assertHasStripPrefixTwo(route("admin-moderation"));
-    assertHasStripPrefixTwo(route("admin-reports"));
     assertHasStripPrefixTwo(route("admin-remote-followups"));
     assertHasStripPrefixTwo(route("admin-sagas"));
     assertHasStripPrefixTwo(route("admin-tick-remediation"));
