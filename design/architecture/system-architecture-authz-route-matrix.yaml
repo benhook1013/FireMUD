@@ -702,7 +702,9 @@ routes:
     realm_grant_version: required_when_grant_gated
     required_live_checks: [membership, membership_generation, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE]
+      # JOIN_REQUIRED is only a next-step response after fresh authority
+      # confirms public visibility and an allowed public-production join.
+      any_of: [JOIN_REQUIRED, PUBLIC_PRODUCTION_ADMISSION_DENIED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE]
   - service: game-session-service
     route: JOIN
     route_status: target_not_currently_routable
@@ -741,24 +743,24 @@ routes:
       owner: game-session-service
       selector_inputs: [current_membership, public_production_target, realm_access_grant]
       ambiguity_behavior: deny
-      required_live_checks: [runtime_entitlements, admission_pointer]
+      required_live_checks: [membership_generation, runtime_entitlements, admission_pointer]
       required_live_checks_composition: common_plus_selected_branch
       branches:
         public_production_onboarding:
-          required_live_checks: [membership, membership_generation, public_production_admission, realm_visibility]
+          required_live_checks: [membership, public_production_admission, realm_visibility]
           membership_creation: explicit_join_only
         returning_membership:
-          required_live_checks: [membership, membership_generation, realm_visibility]
+          required_live_checks: [membership, realm_visibility]
           membership_creation: forbidden
         grant_backed_private_or_playtest:
-          required_live_checks: [membership, membership_generation, conditional_realm_access_grant]
+          required_live_checks: [membership, conditional_realm_access_grant]
           membership_creation: forbidden
-    # Only these admission checks are common to every selected mode. Membership and
-    # realm-grant checks stay in the selected branch below; target/generation and
-    # binding checks remain route-level authority checks for PLAY itself.
+    # Membership existence and conditional realm-grant checks belong to the
+    # selected branch. Membership generation is common to every selected mode;
+    # target/generation and binding checks remain route-level authority checks.
     required_live_checks: [target_tenant_generation, membership_generation, membership_version, runtime_entitlements, admission_pointer, account_authority_tuple, account_outbox_checkpoint, exact_binding_admission_lease, binding_fence, binding_ownership]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, AUTH_SESSION_REVOKED, OWNERSHIP_UNAVAILABLE, STALE_TIMELINE]
+      any_of: [JOIN_REQUIRED, PUBLIC_PRODUCTION_ADMISSION_DENIED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, AUTH_SESSION_REVOKED, OWNERSHIP_UNAVAILABLE, STALE_TIMELINE]
     account_checkpoint_tuple_evidence:
       source: account-auth-evidence-bundle/v1
       required: [authorityTuple, membershipVersion, outboxCheckpoints]
@@ -770,8 +772,12 @@ routes:
       membership: all_admission_modes_require_existing_caller_bound_membership
       membership_creation: play_never_creates_membership
       missing_membership_error_by_realm_visibility:
+        # JOIN_REQUIRED is a next-step response only after fresh authority
+        # confirms public visibility and an allowed public-production join.
         public_production: JOIN_REQUIRED
-        non_public: WORLD_ACCESS_DENIED
+        non_public: NON_PUBLIC_ENROLLMENT_REQUIRED
+      policy_denial: PUBLIC_PRODUCTION_ADMISSION_DENIED
+      unavailable_or_invalid_authority: applicable_unavailable_or_invalid_authority_outcome
   - service: spring-cloud-gateway
     route: /ws/game/**
     scope: tenant

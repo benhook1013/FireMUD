@@ -25,7 +25,7 @@ else
 fi
 
 echo "Running ${SMOKE_TARGET_LABEL} TCP smoke against ${SMOKE_HOST}:${TCP_PORT}"
-echo "Using login email='${SMOKE_LOGIN_EMAIL}' (password redacted)"
+echo "Using login credentials (email and password redacted)"
 
 "$PYTHON" - <<'PY'
 import os

@@ -34,7 +34,7 @@ else
 fi
 
 echo "Running Telnet WORLDS + LOGIN + PLAY + item/container/equipment smoke test against ${SMOKE_HOST}:${TCP_PORT}"
-echo "Using login email='${SMOKE_LOGIN_EMAIL}' (password redacted)"
+echo "Using login credentials (email and password redacted)"
 echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
 echo "Using account API base '${SMOKE_ACCOUNT_API_BASE}' for smoke validation"
 

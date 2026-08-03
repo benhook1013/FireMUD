@@ -37,9 +37,7 @@ class GatewayRoutesConfigurationTest {
           "session-ping",
           "admin-ping",
           "admin-admission-pointers",
-          "admin-feature-flags",
           "admin-logs",
-          "admin-moderation",
           "admin-remote-followups",
           "admin-sagas",
           "admin-tick-remediation",
@@ -112,18 +110,15 @@ class GatewayRoutesConfigurationTest {
     assertHasPath(route("admin-ping"), "/api/admin/ping");
     assertHasPath(route("admin-admission-pointers"), "/api/admin/admission-pointers/**");
     assertHasMethod(route("admin-admission-pointers"), "GET");
-    assertHasPath(route("admin-feature-flags"), "/api/admin/feature-flags/**");
     assertHasPath(route("admin-logs"), "/api/admin/logs/**");
-    assertHasPath(route("admin-moderation"), "/api/admin/moderation/**");
     assertHasPath(route("admin-remote-followups"), "/api/admin/remote-followups/**");
     assertHasPath(route("admin-sagas"), "/api/admin/sagas/**");
     assertHasPath(route("admin-tick-remediation"), "/api/admin/tick-remediation/**");
+    assertHasMethod(route("admin-tick-remediation"), "GET");
 
     assertHasStripPrefixTwo(route("admin-ping"));
     assertHasStripPrefixTwo(route("admin-admission-pointers"));
-    assertHasStripPrefixTwo(route("admin-feature-flags"));
     assertHasStripPrefixTwo(route("admin-logs"));
-    assertHasStripPrefixTwo(route("admin-moderation"));
     assertHasStripPrefixTwo(route("admin-remote-followups"));
     assertHasStripPrefixTwo(route("admin-sagas"));
     assertHasStripPrefixTwo(route("admin-tick-remediation"));

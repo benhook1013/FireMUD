@@ -70,6 +70,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
         root: Path,
         bootstrap_manifest: str,
         summary_run: str = 'echo "safe summary" >> "$GITHUB_STEP_SUMMARY"',
+        smoke_condition: str = "${{ !cancelled() }}",
     ) -> None:
         workflow = {
             "jobs": {
@@ -81,7 +82,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                         },
                         {
                             "name": "Smoke dev-demo over TCP",
-                            "if": "${{ !cancelled() }}",
+                            "if": smoke_condition,
                             "run": "echo smoke",
                         },
                         {
@@ -181,6 +182,20 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ):
                 self.validator.validate_workflow(root)
 
+    def test_validate_workflow_rejects_smoke_condition_without_cancellation_guard(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(
+                root,
+                self._bootstrap_manifest_fixture(),
+                smoke_condition="${{ success() }}",
+            )
+            with self.assertRaisesRegex(
+                AssertionError,
+                "dev-demo TCP smoke must still run after a non-cancellation bootstrap failure",
+            ):
+                self.validator.validate_workflow(root)
+
     def test_smoke_account_contract_reports_missing_script_path(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -191,6 +206,31 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                 self.validator._validate_smoke_account_contract(root)
         self.assertEqual(
             f"Smoke account contract script is missing: {missing}",
+            str(raised.exception),
+        )
+
+    def test_smoke_account_contract_reports_missing_marker(self):
+        missing_marker = (
+            "verify_smoke_account(account_api_base, login_email, password, "
+            "timeout_seconds)"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for relative_path in (
+                "services/game-session-service/websocket-login-look-smoke.sh",
+                "services/tcp-proxy-service/telnet-login-look-smoke.sh",
+            ):
+                script = root / relative_path
+                script.parent.mkdir(parents=True, exist_ok=True)
+                script.write_text(
+                    'login_email = os.environ.get("SMOKE_LOGIN_EMAIL", '
+                    'os.environ["DEMO_SMOKE_EMAIL"])\n',
+                    encoding="utf-8",
+                )
+            with self.assertRaises(AssertionError) as raised:
+                self.validator._validate_smoke_account_contract(root)
+        self.assertIn(
+            f"missing required account verification marker {missing_marker!r}",
             str(raised.exception),
         )
 
@@ -476,6 +516,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ("{ echo safe#not-a-comment }", ["{", "}"]),
             ('{ echo "# not a comment }" }', ["{", "}"]),
             (r"{ echo \#not-a-comment }", ["{", "}"]),
+            ("{ echo '\\' }", ["{", "}"]),
             ("{ echo ${value#pattern} }", ["{", "}"]),
             ('{ echo $(printf "# not a comment }") }', ["{", "}"]),
         )

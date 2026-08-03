@@ -69,6 +69,8 @@ The internal front-end to lease-owner path is a **target-state** fenced gameplay
 - Admission-pointer requests and read/audit responses carry the runtime route version separately from catalog/policy revision. Public-production admission and first-join membership creation consume current catalog visibility/public-production facts with entitlement checks instead of inferring behavior from `realmSlug`; display-only changes do not become runtime cutovers.
 - Admission-pointer audit/list responses now also expose the `preparedVersionUpgradeId` used by a cutover write so operator history preserves the same proof identity that the mutation validated.
 
+Gameplay admission uses `JOIN_REQUIRED` only as a next-step response when fresh authority confirms that the selected target is publicly visible and public-production joining is allowed, while the caller's membership is absent. A public-production policy denial remains `PUBLIC_PRODUCTION_ADMISSION_DENIED`; unavailable, stale, malformed, or ambiguous authority uses the applicable unavailable or invalid-authority outcome instead. Private/playtest admission always requires an existing caller-bound membership, the current membership authority generation, and the applicable Account-owned realm grant; a grant never replaces membership.
+
 ### ADR-0048 operator-write contract
 
 **Target state:** every mutating operator RPC listed above (`StartSession`, `StopSession`, `RestartSession`, `ToggleFeatureFlag`, `PauseTicksForScope`, `ResumeTicksForScope`, `SetAdmissionPointer`, `ExecutePreparedVersionCutover`, and `PrepareVersionUpgrade`) requires the same durable request identity: `controlPlaneRequestId` plus the canonical `mutationDigest`. Account binds both values into the bounded operator authorization reference, and Game Session recomputes and validates the digest before execution. The owner durably records the request before execution and records a terminal result only after owner-specific commit proof; PostgreSQL-owned mutations commit domain state and result atomically, while Redis-backed projections use the durable claim, fenced mutation marker, and reconciliation contract in ADR 0048. A duplicate request carrying the same digest returns the previously committed result, while the same request identifier with a different digest returns `IDEMPOTENCY_CONFLICT` without applying either payload. A timeout must not create a new request identifier; Logging & Admin may use that identifier only for owner result lookup until the exact operation is reconciled. `FENCE_REJECTED` is non-rearmable and prohibits mutation redelivery. A retry against a current owner or fence is permitted only after the owner has durably recorded terminal `NOT_EXECUTED` proof for the original attempt; it uses a new `ownerMutationId` and a newly fenced attempt while retaining the external request tuple. After authorization expiry, reconciliation is read-only.
@@ -88,10 +90,10 @@ Service definitions reside in [../../../../protos/game-session/v1](../../../../p
 Game Session owns the `/api/session/**` Gateway family, but the public gateway inventory exposes only `GET /api/session/ping`. The service-local endpoint inventory is:
 
 - `GET /ping` – basic health check returning `"pong"`.
-- `POST /sessions` – creates a game instance from a template-driven launch attempt; it is not the player gameplay-admission seam and uses the same launch-descriptor preflight as gRPC `StartSession`.
-- `POST /sessions/{sessionId}/stop` – stops a running session.
-- `POST /sessions/{sessionId}/restart` – restarts a stopped session.
-- `POST /sessions/{sessionId}/refresh-roles` – refreshes the roles for an active session.
+- `POST /sessions` – `target_not_currently_routable`; a current owner-local OpenAPI scaffold creates a game instance from a template-driven launch attempt, but it is not the player gameplay-admission seam and is not supported external operator ingress.
+- `POST /sessions/{sessionId}/stop` – `target_not_currently_routable`; a current owner-local OpenAPI scaffold stops a running session, but supported external operator ingress remains unavailable.
+- `POST /sessions/{sessionId}/restart` – `target_not_currently_routable`; a current owner-local OpenAPI scaffold restarts a stopped session, but supported external operator ingress remains unavailable.
+- `POST /sessions/{sessionId}/refresh-roles` – `current_openapi_operator_surface`; this owner-local workload-authenticated route refreshes roles for an active session and is not an Account-authorization-reference mutation.
 
 Use `/sessions/{sessionId}/refresh-roles` after updating an account's privileges so the session reflects the latest role assignments.
 

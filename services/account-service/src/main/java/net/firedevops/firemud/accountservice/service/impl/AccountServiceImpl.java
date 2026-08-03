@@ -204,7 +204,7 @@ public class AccountServiceImpl implements AccountService {
           Account saved;
           try {
             saved = accountRepository.save(account);
-          } catch (IntegrityConstraintViolationException ex) {
+          } catch (IntegrityConstraintViolationException | DataIntegrityViolationException ex) {
             throw new AccountAlreadyExistsException(ex);
           }
           account.setId(saved.getId());
@@ -501,12 +501,24 @@ public class AccountServiceImpl implements AccountService {
       BootstrapContext bootstrapContext,
       ConnectScopeContext scopeContext,
       ConnectTokenRequest request) {
-    requireCurrentConnectScopeTarget(bootstrapContext, scopeContext);
+    RuntimeRealmTarget realm = requireCurrentConnectScopeTarget(bootstrapContext, scopeContext);
 
     RuntimeMembershipDto membership =
         getTenantMembershipForRuntime(
             bootstrapContext.accountId(), scopeContext.tenantId(), request.requestId());
+    RuntimeEntitlementsDto entitlements =
+        getTenantEntitlementsForRuntime(scopeContext.tenantId(), request.requestId());
     if (!membership.membershipExists()) {
+      if (!realm.publicProductionRealm()) {
+        throw new AuthenticationException(
+            "NON_PUBLIC_ENROLLMENT_REQUIRED",
+            "Existing game membership is required for this non-public realm");
+      }
+      if (!entitlements.allowPublicJoin()) {
+        throw new AuthenticationException(
+            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+            "Public joining is not allowed for the selected game");
+      }
       throw new AuthenticationException(
           "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
     }
@@ -514,8 +526,6 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
     }
-    RuntimeEntitlementsDto entitlements =
-        getTenantEntitlementsForRuntime(scopeContext.tenantId(), request.requestId());
     if (!entitlements.gameplayAvailable()) {
       throw new AuthenticationException(
           "CONNECT_TOKEN_REJECTED", "Gameplay is not available for this tenant");
@@ -840,13 +850,16 @@ public class AccountServiceImpl implements AccountService {
     boolean gameplayAvailable =
         subscriptions.isEmpty()
             || subscriptions.stream().anyMatch(s -> isGameplayAvailableStatus(s.getStatus()));
+    boolean allowPublicJoin =
+        subscriptions.isEmpty()
+            || subscriptions.stream().anyMatch(s -> isPublicJoinAllowedStatus(s.getStatus()));
     long version =
         subscriptions.stream()
             .mapToLong(subscription -> subscription.getId() == null ? 0L : subscription.getId())
             .max()
             .orElse(0L);
     return new RuntimeEntitlementsDto(
-        tenantId, gameplayAvailable, version, version, Instant.now().toString());
+        tenantId, gameplayAvailable, allowPublicJoin, version, version, Instant.now().toString());
   }
 
   private BootstrapContext requireBootstrapContext(String bootstrapToken) {
@@ -1075,12 +1088,12 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private Optional<Account> findAccountForAuthentication(String usernameOrEmail) {
-    Optional<Account> usernameMatch = accountRepository.findByUsername(usernameOrEmail);
-    if (usernameMatch.isPresent()) {
-      return usernameMatch;
+    Optional<Account> emailMatch = accountRepository.findByEmail(usernameOrEmail);
+    if (emailMatch.isPresent()) {
+      return emailMatch;
     }
 
-    return accountRepository.findByEmail(EmailCanonicalization.normalize(usernameOrEmail));
+    return accountRepository.findByUsername(usernameOrEmail);
   }
 
   private PrimaryAuthentication authenticateAccountIdentity(
@@ -1237,7 +1250,17 @@ public class AccountServiceImpl implements AccountService {
       return false;
     }
     return switch (status.trim().toLowerCase(java.util.Locale.ROOT)) {
-      case "active", "trialing", "grace" -> true;
+      case "active", "trialing", "past_due", "grace" -> true;
+      default -> false;
+    };
+  }
+
+  private boolean isPublicJoinAllowedStatus(String status) {
+    if (status == null) {
+      return false;
+    }
+    return switch (status.trim().toLowerCase(java.util.Locale.ROOT)) {
+      case "active", "trialing", "past_due" -> true;
       default -> false;
     };
   }

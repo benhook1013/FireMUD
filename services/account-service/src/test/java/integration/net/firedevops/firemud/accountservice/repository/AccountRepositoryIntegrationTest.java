@@ -86,7 +86,7 @@ class AccountRepositoryIntegrationTest {
             account("canonical", "  Player@Example.COM ", AccountLifecycleState.ACTIVE));
 
     assertThat(saved.getEmail()).isEqualTo("player@example.com");
-    assertThat(repository.findByEmail("player@example.com")).isPresent();
+    assertThat(repository.findByEmail("  PLAYER@EXAMPLE.COM ")).isPresent();
   }
 
   @Test

@@ -66,22 +66,20 @@ REQUIRED_GAMEPLAY_ADMISSION_SELECTOR_INPUTS = {
 REQUIRED_GAMEPLAY_ADMISSION_COMMON_CHECKS = {
     "runtime_entitlements",
     "admission_pointer",
+    "membership_generation",
 }
 REQUIRED_GAMEPLAY_ADMISSION_BRANCH_CHECKS = {
     "public_production_onboarding": {
         "membership",
-        "membership_generation",
         "public_production_admission",
         "realm_visibility",
     },
     "returning_membership": {
         "membership",
-        "membership_generation",
         "realm_visibility",
     },
     "grant_backed_private_or_playtest": {
         "membership",
-        "membership_generation",
         "conditional_realm_access_grant",
     },
 }

@@ -161,6 +161,7 @@ message GetTenantEntitlementsForRuntimeResponse {
   uint64 tenant_billing_sequence = 4;
   string evaluated_at = 5;
   shared.v1.ErrorDetail error = 6;
+  bool allow_public_join = 7;
 }
 
 message GetProfileRequest {

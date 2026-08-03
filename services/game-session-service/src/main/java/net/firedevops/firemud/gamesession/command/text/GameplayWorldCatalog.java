@@ -93,10 +93,6 @@ public final class GameplayWorldCatalog {
         .findFirst();
   }
 
-  public boolean hasVisibleRealm(WorldView world, String selector) {
-    return resolveRealm(world, selector).isPresent();
-  }
-
   boolean hasRealmForAdmission(WorldView world, String selector) {
     return resolveRealmForAdmission(world, selector).isPresent();
   }

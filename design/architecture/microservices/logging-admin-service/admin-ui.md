@@ -17,20 +17,31 @@ This document outlines the administration interface delivered as a lightweight R
 - Reference [Moderation Policies](./moderation-policies.md) for the target policy-input and audit contract when the gated action route is enabled; current owner-side enforcement uses synchronous policy evaluation, while versioned propagation remains target coverage.
 - View analytics dashboards built with Grafana and Kibana.
 
-These capabilities map to the REST endpoints exposed by the service. The UI renders only the live routes listed below; availability for declared target or gated families is defined in [Implementation Status](#implementation-status).
+These capabilities map to REST endpoints exposed by the service, but the UI renders only the current live routes listed below. Declared target or gated routes are documented separately as not-rendered API capabilities and are not usable controls.
 
-Routes include:
+Currently rendered routes:
 
 ```text
 POST /logs/query
-POST /moderation/actions (unavailable/gated)
 GET  /sagas
 GET  /sagas/{id}/steps
 ```
 
+Declared but not rendered by this UI:
+
+```text
+POST /moderation/actions (unavailable/gated)
+POST /feature-flags/toggle (implemented forwarding path, unavailable)
+POST /tick-remediation/pause (implemented forwarding path, unavailable)
+POST /tick-remediation/resume (implemented forwarding path, unavailable)
+POST /admission-pointers (target-only absent)
+POST /admission-pointers/cutover (target-only absent)
+POST /admission-pointers/version-upgrades (target-only absent)
+```
+
 Mutation inventory:
 
-- Unavailable/gated mutation: `POST /moderation/actions` requires the receiving-service variant of the Operator Mutation Support Gate before it may persist policy input/audit; it does not require owner-side redemption, evaluate policy, call an enforcement owner, or mutate `GAMEPLAY_ADMISSION`/`CHAT_SEND` enforcement state. `EvaluateModerationPolicy` is the separate evaluation contract.
+- Unavailable/gated mutation, not rendered: `POST /moderation/actions` requires the receiving-service variant of the Operator Mutation Support Gate before it may persist policy input/audit; it does not require owner-side redemption, evaluate policy, call an enforcement owner, or mutate `GAMEPLAY_ADMISSION`/`CHAT_SEND` enforcement state. `EvaluateModerationPolicy` is the separate evaluation contract.
 - Target-only absent public operator mutation: `POST /admission-pointers/version-upgrades` has no public HTTP handler or Gateway forwarding; internal preparation remains available behind internal trust boundaries. `GET /admission-pointers/version-upgrades/{tenantId}/{preparationId}` is the live read-only prepared-upgrade proof surface.
 - Gated implemented owner-forwarding paths not presented as usable UI controls: `POST /feature-flags/toggle`, `POST /tick-remediation/pause`, and `POST /tick-remediation/resume` remain unavailable pending the owner-side variant of the Operator Mutation Support Gate.
 - Live backend reads not presented by this UI: admission-pointer reads, audit, and prepared-upgrade proof GET.

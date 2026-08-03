@@ -367,6 +367,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           GetTenantEntitlementsForRuntimeResponse.newBuilder()
               .setTenantId(String.valueOf(dto.tenantId()))
               .setGameplayAvailable(dto.gameplayAvailable())
+              .setAllowPublicJoin(dto.allowPublicJoin())
               .setEntitlementVersion(dto.entitlementVersion())
               .setTenantBillingSequence(dto.tenantBillingSequence())
               .setEvaluatedAt(dto.evaluatedAt())

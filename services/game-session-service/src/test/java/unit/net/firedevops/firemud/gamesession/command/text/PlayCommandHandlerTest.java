@@ -1247,10 +1247,12 @@ class PlayCommandHandlerTest {
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
+    assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode())
         .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
     assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
         .isEqualTo("error.play.authority-unavailable");
+    assertThat(meterRegistry.find("gamesession.session.resume_denied").counters()).isEmpty();
     Mockito.verify(gameplayPresenceLifecycleService, Mockito.never())
         .clearGameplayBinding(Mockito.any(), Mockito.anyString());
     Mockito.verify(sessionContextService, Mockito.never()).save(Mockito.any());

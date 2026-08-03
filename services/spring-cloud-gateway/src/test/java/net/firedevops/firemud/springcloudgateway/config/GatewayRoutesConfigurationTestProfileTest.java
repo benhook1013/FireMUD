@@ -39,9 +39,7 @@ class GatewayRoutesConfigurationTestProfileTest {
           "session-ping",
           "admin-ping",
           "admin-admission-pointers",
-          "admin-feature-flags",
           "admin-logs",
-          "admin-moderation",
           "admin-remote-followups",
           "admin-sagas",
           "admin-tick-remediation",
@@ -86,15 +84,13 @@ class GatewayRoutesConfigurationTestProfileTest {
     assertThat(pathArgs("admin-admission-pointers").values())
         .containsExactly("/api/admin/admission-pointers/**");
     assertThat(predicateArgs("admin-admission-pointers", "Method").values()).containsExactly("GET");
-    assertThat(pathArgs("admin-feature-flags").values())
-        .containsExactly("/api/admin/feature-flags/**");
     assertThat(pathArgs("admin-logs").values()).containsExactly("/api/admin/logs/**");
-    assertThat(pathArgs("admin-moderation").values()).containsExactly("/api/admin/moderation/**");
     assertThat(pathArgs("admin-remote-followups").values())
         .containsExactly("/api/admin/remote-followups/**");
     assertThat(pathArgs("admin-sagas").values()).containsExactly("/api/admin/sagas/**");
     assertThat(pathArgs("admin-tick-remediation").values())
         .containsExactly("/api/admin/tick-remediation/**");
+    assertThat(predicateArgs("admin-tick-remediation", "Method").values()).containsExactly("GET");
 
     assertThat(pathArgs("design").values()).containsExactly("/api/design/**");
 
@@ -120,9 +116,7 @@ class GatewayRoutesConfigurationTestProfileTest {
     assertHasStripPrefix("session-ping", "2");
     assertHasStripPrefix("admin-ping", "2");
     assertHasStripPrefix("admin-admission-pointers", "2");
-    assertHasStripPrefix("admin-feature-flags", "2");
     assertHasStripPrefix("admin-logs", "2");
-    assertHasStripPrefix("admin-moderation", "2");
     assertHasStripPrefix("admin-remote-followups", "2");
     assertHasStripPrefix("admin-sagas", "2");
     assertHasStripPrefix("admin-tick-remediation", "2");

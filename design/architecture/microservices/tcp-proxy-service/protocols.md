@@ -2,20 +2,20 @@
 
 ## Implementation Status
 
-The explicit `JOIN` step is target behavior. Connect-token issuance now requires existing public-production membership and returns `JOIN_REQUIRED` when it is absent without invoking the membership writer, while text `PLAY` has the same behavior. The target flow below must not be read as proof that explicit join is complete across all clients.
+The explicit `JOIN` step is target behavior. Connect-token issuance now requires existing public-production membership and text `PLAY` has the same bounded admission outcomes: `JOIN_REQUIRED` is returned only when fresh authority confirms a publicly visible target whose public-production join policy allows entry and the caller's membership is absent. `PUBLIC_PRODUCTION_ADMISSION_DENIED` remains the policy-denial outcome, while unavailable, stale, malformed, or ambiguous authority uses the applicable unavailable or invalid-authority outcome. Private/playtest admission requires existing caller-bound membership, the current membership authority generation, and the applicable realm grant; a grant never replaces membership. The target flow below must not be read as proof that explicit join is complete across all clients.
 The Telnet credential form is `LOGIN <email> [secret]`. `LOGIN <email>` starts the email challenge, while `LOGIN <email> <secret>` supplies the secret immediately.
 
 ## Cross-Path Connectivity Contract
 
 The following are canonical contracts across Telnet and WebSocket paths:
 
-- Target Telnet login-first without typed attach hints is `LOGIN` -> conditional `JOIN` -> `PLAY`: a first-time public-production account joins after login, while a returning member skips `JOIN`. In the current runtime, explicit `JOIN` is unavailable; missing public-production membership causes `PLAY` to return `JOIN_REQUIRED` without creating membership.
+- Target Telnet login-first without typed attach hints is `LOGIN` -> conditional `JOIN` -> `PLAY`: a first-time public-production account joins after login, while a returning member skips `JOIN`. In the current runtime, explicit `JOIN` is unavailable; missing public-production membership causes `PLAY` to return `JOIN_REQUIRED` only when fresh authority confirms that the public target is visible and joinable, without creating membership.
 - Proxy -> Gateway WebSocket hop is mTLS-authenticated in player-facing environments.
 - Proxy bridge-availability circuit breaker uses deterministic open/half-open/closed admission behavior during sustained upstream unreachability.
 
 ## Recommended Telnet Client Flows
 
-These flows describe how Telnet traffic is forwarded into the shared login/session pipeline; `LOGIN` / `LOGON` semantics and multi-client takeover behavior remain canonical in the [Authentication & Authorization](../../system-architecture-authentication.md) document. The target first public-production flow is `LOGIN` -> conditional `JOIN` -> `PLAY`; returning members skip `JOIN`. Text `PLAY` and connect-token issuance now return `JOIN_REQUIRED` when public-production membership is absent and do not invoke the membership writer. Explicit `JOIN` remains unimplemented, and the missing connect-token membership-authority-generation reread is a separate gap.
+These flows describe how Telnet traffic is forwarded into the shared login/session pipeline; `LOGIN` / `LOGON` semantics and multi-client takeover behavior remain canonical in the [Authentication & Authorization](../../system-architecture-authentication.md) document. The target first public-production flow is `LOGIN` -> conditional `JOIN` -> `PLAY`; returning members skip `JOIN`. Text `PLAY` and connect-token issuance return `JOIN_REQUIRED` only for a publicly visible, joinable target confirmed by fresh authority when public-production membership is absent; policy denial remains `PUBLIC_PRODUCTION_ADMISSION_DENIED`, and unavailable or invalid authority remains the applicable unavailable/invalid-authority outcome. Explicit `JOIN` remains unimplemented, and the missing connect-token membership-authority-generation reread is a separate gap.
 
 - **Target canonical player flow**
   - Connect to the TCP Proxy Service.

@@ -3298,6 +3298,25 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
         )
 
+    def test_support_and_billing_admin_cannot_use_route_identities(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for role in ("support", "billingAdmin"):
+            with self.subTest(role=role):
+                document = copy.deepcopy(baseline)
+                document_requirements = document["role_assurance"][
+                    "privileged_control_when_global_role"
+                ]["requirements"]
+                document_requirements[role]["applies_to"]["route_identities"] = [
+                    "account-service/IssueHumanOperatorAuthorizationReference"
+                ]
+                errors = []
+                self.validator.validate_role_assurance(document, errors)
+                self.assertIn(
+                    "role_assurance.privileged_control_when_global_role.requirements."
+                    f"{role}.applies_to.route_identities is only allowed for platformAdmin",
+                    errors,
+                )
+
     def test_route_identity_shape_is_validated_before_platform_admin_equality(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         requirement = document["role_assurance"][

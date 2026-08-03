@@ -207,6 +207,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         GetTenantEntitlementsForRuntimeResponse.newBuilder()
             .setTenantId(request.getTenantId())
             .setGameplayAvailable(gameplayAvailable.get())
+            .setAllowPublicJoin(gameplayAvailable.get())
             .setEntitlementVersion(1L)
             .setTenantBillingSequence(1L)
             .setEvaluatedAt(EVALUATED_AT)

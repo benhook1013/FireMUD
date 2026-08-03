@@ -762,7 +762,7 @@ class AccountGrpcServiceTest {
     Mockito.when(accountService.getTenantEntitlementsForRuntime(1L, "req-2"))
         .thenReturn(
             new net.firedevops.firemud.accountservice.dto.RuntimeEntitlementsDto(
-                1L, true, 19L, 311L, "2026-03-30T00:00:00Z"));
+                1L, true, true, 19L, 311L, "2026-03-30T00:00:00Z"));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
     AtomicReference<GetTenantEntitlementsForRuntimeResponse> ref = new AtomicReference<>();
@@ -787,6 +787,7 @@ class AccountGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals("1", ref.get().getTenantId());
     assertTrue(ref.get().getGameplayAvailable());
+    assertTrue(ref.get().getAllowPublicJoin());
     assertEquals(19L, ref.get().getEntitlementVersion());
   }
 

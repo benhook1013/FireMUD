@@ -233,6 +233,19 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void createAccountMapsSpringDataIntegrityConflict() {
+    CreateAccountRequest request =
+        new CreateAccountRequest(7L, "demo", "demo@example.com", "password");
+    when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class)))
+        .thenThrow(new org.springframework.dao.DataIntegrityViolationException("duplicate"));
+
+    AccountAlreadyExistsException exception =
+        assertThrows(AccountAlreadyExistsException.class, () -> service.createAccount(request));
+
+    assertEquals("Account already exists", exception.getMessage());
+  }
+
+  @Test
   void emailLoginOtpRequestIsNeutralForUnknownEmail() {
     when(accountRepository.findByEmail("unknown@example.com")).thenReturn(Optional.empty());
 
@@ -611,6 +624,25 @@ class AccountServiceImplTest {
     assertFalse(claims.containsKey("tenantId"));
     assertEquals(300000L, claims.getExpiration().getTime() - claims.getIssuedAt().getTime());
     verifyNoInteractions(accountEmailLoginChallengeRepository);
+  }
+
+  @Test
+  void issuePlayerBootstrapPrefersCanonicalEmailOverCollidingUsername() {
+    Account emailAccount = new Account();
+    emailAccount.setId(7L);
+    emailAccount.setUsername("email-owner");
+    emailAccount.setEmail("player@example.com");
+    emailAccount.setPasswordHash(hash("password"));
+    emailAccount.setLoginAuthModes("PASSWORD");
+    when(accountRepository.findByEmail("  PLAYER@EXAMPLE.COM "))
+        .thenReturn(Optional.of(emailAccount));
+
+    PlayerBootstrapResult result =
+        service.issuePlayerBootstrap("  PLAYER@EXAMPLE.COM ", "password");
+
+    assertEquals(7L, result.accountId());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .findByUsername(org.mockito.ArgumentMatchers.anyString());
   }
 
   @Test
@@ -1224,6 +1256,7 @@ class AccountServiceImplTest {
 
     assertEquals(7L, dto.tenantId());
     assertTrue(dto.gameplayAvailable());
+    assertTrue(dto.allowPublicJoin());
     assertEquals(31L, dto.entitlementVersion());
     assertEquals(31L, dto.tenantBillingSequence());
     assertNotNull(dto.evaluatedAt());
@@ -1554,6 +1587,38 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyLong());
+  }
+
+  @Test
+  void issueConnectTokenRejectsMissingMembershipWhenPublicJoiningIsDisabled() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.empty());
+    Subscription grace = new Subscription();
+    grace.setId(22L);
+    grace.setTenantId(7L);
+    grace.setStatus("grace");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(grace));
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    bootstrap.bootstrapToken(),
+                    new ConnectTokenRequest(connectScopeId, "req-join-disabled")));
+
+    assertEquals("PUBLIC_PRODUCTION_ADMISSION_DENIED", exception.getCode());
+    assertEquals("Public joining is not allowed for the selected game", exception.getMessage());
   }
 
   @Test
@@ -2234,9 +2299,9 @@ class AccountServiceImplTest {
                     bootstrap.bootstrapToken(),
                     new ConnectTokenRequest(connectScopeId, "req-preview-1")));
 
-    assertEquals("JOIN_REQUIRED", exception.getCode());
+    assertEquals("NON_PUBLIC_ENROLLMENT_REQUIRED", exception.getCode());
     assertEquals(
-        "Join the selected world before requesting a connect token", exception.getMessage());
+        "Existing game membership is required for this non-public realm", exception.getMessage());
     org.mockito.Mockito.verify(sessionService)
         .storeConnectTokenReplay(
             org.mockito.ArgumentMatchers.eq(7L),
@@ -2246,7 +2311,7 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.argThat(
                 replay ->
                     !replay.success()
-                        && "JOIN_REQUIRED".equals(replay.errorCode())
+                        && "NON_PUBLIC_ENROLLMENT_REQUIRED".equals(replay.errorCode())
                         && exception.getMessage().equals(replay.errorMessage())),
             org.mockito.ArgumentMatchers.longThat(ttl -> ttl > 0L));
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())

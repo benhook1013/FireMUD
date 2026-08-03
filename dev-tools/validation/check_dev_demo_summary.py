@@ -137,7 +137,7 @@ def shell_group_tokens(line: str) -> list[str]:
             word_started = True
             index += 1
             continue
-        if character == "\\":
+        if character == "\\" and quote != "'":
             escaped = True
             word_started = True
             index += 1
@@ -725,7 +725,8 @@ def _validate_smoke_account_contract(root: Path) -> None:
         for required_marker in required_markers:
             if required_marker not in source:
                 raise AssertionError(
-                    f"Smoke contract missing required account verification: {smoke_script}"
+                    "Smoke contract missing required account verification marker "
+                    f"{required_marker!r}: {smoke_script}"
                 )
 
 

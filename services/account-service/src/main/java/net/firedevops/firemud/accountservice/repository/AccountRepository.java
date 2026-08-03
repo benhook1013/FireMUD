@@ -33,7 +33,9 @@ public class AccountRepository {
 
   public Optional<Account> findByEmail(String email) {
     return Optional.ofNullable(
-        dsl.selectFrom(ACCOUNTS).where(ACCOUNTS.EMAIL.eq(email)).fetchOne(this::toEntity));
+        dsl.selectFrom(ACCOUNTS)
+            .where(ACCOUNTS.EMAIL.eq(EmailCanonicalization.normalize(email)))
+            .fetchOne(this::toEntity));
   }
 
   public Account save(Account entity) {
