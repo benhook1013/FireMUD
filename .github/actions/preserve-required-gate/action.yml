@@ -130,8 +130,13 @@ runs:
             exit 1
           fi
           if [ "${prior_status}" = "none" ]; then
-            echo "No prior completed ${REQUIRED_GATE_NAME} found for unchanged head ${HEAD_SHA}; refusing to preserve." >&2
-            exit 1
+            if [ "${attempt}" -eq "${max_attempts}" ]; then
+              echo "Timed out waiting for a prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA} to appear." >&2
+              exit 1
+            fi
+            echo "No prior ${REQUIRED_GATE_NAME} is visible yet; retrying attempt ${attempt}/${max_attempts}." >&2
+            sleep 15
+            continue
           fi
           if [ "${prior_status}" != "pending" ]; then
             echo "Unexpected prior ${REQUIRED_GATE_NAME} selection state ${prior_status:-unknown}; refusing to preserve." >&2

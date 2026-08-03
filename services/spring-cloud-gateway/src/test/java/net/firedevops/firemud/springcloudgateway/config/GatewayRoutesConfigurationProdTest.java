@@ -1,9 +1,14 @@
 package net.firedevops.firemud.springcloudgateway.config;
 
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasMethod;
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasPath;
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasStripPrefix;
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasStripPrefixTwo;
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertNoConfiguredPathStartsWith;
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.route;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.net.URI;
-import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.springcloudgateway.SpringCloudGatewayApplication;
@@ -13,7 +18,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.cloud.gateway.config.GatewayProperties;
-import org.springframework.cloud.gateway.filter.FilterDefinition;
 import org.springframework.cloud.gateway.route.RouteDefinition;
 import org.springframework.context.annotation.Import;
 
@@ -39,10 +43,7 @@ class GatewayRoutesConfigurationProdTest {
           "session-ping",
           "admin-ping",
           "admin-admission-pointers",
-          "admin-feature-flags",
           "admin-logs",
-          "admin-moderation",
-          "admin-reports",
           "admin-remote-followups",
           "admin-sagas",
           "admin-tick-remediation",
@@ -64,24 +65,13 @@ class GatewayRoutesConfigurationProdTest {
 
   @Test
   void sessionRouteUsesHttpSchemeForControlPlaneTraffic() {
-    RouteDefinition sessionRoute =
-        gatewayProperties.getRoutes().stream()
-            .filter(route -> "session-ping".equals(route.getId()))
-            .findFirst()
-            .orElseThrow(() -> new AssertionError("Expected session-ping route to be configured"));
+    RouteDefinition sessionRoute = route(gatewayProperties, "session-ping");
 
     URI targetUri = sessionRoute.getUri();
     assertThat(targetUri.getScheme()).isEqualTo("http");
-
-    Map<String, String> pathArgs =
-        sessionRoute.getPredicates().stream()
-            .filter(predicate -> "path".equalsIgnoreCase(predicate.getName()))
-            .findFirst()
-            .map(predicate -> predicate.getArgs())
-            .orElseThrow(() -> new AssertionError("Session route should have a Path predicate"));
-
-    assertThat(pathArgs.values()).containsExactly("/api/session/ping");
-    assertHasStripPrefixTwo(sessionRoute);
+    assertHasPath(gatewayProperties, "session-ping", "/api/session/ping");
+    assertHasMethod(gatewayProperties, "session-ping", "GET");
+    assertHasStripPrefixTwo(gatewayProperties, "session-ping");
   }
 
   @Test
@@ -104,54 +94,31 @@ class GatewayRoutesConfigurationProdTest {
   }
 
   @Test
+  void publicReportsRouteIsNotConfigured() {
+    assertNoConfiguredPathStartsWith(gatewayProperties, "/api/admin/reports");
+  }
+
+  @Test
   void restEdgeRoutesStripExternalServicePrefixBeforeForwarding() {
-    assertThat(route("admin-ping").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/admin/ping");
-    assertThat(route("admin-remote-followups").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/admin/remote-followups/**");
-    assertThat(route("design").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/design/**");
-    assertThat(route("account-auth").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/account/auth/**");
-    assertThat(route("social-chat").getPredicates().get(0).getArgs().values())
-        .containsExactly("/api/social/chat/**");
-    assertThat(route("asset-store-public").getPredicates().get(0).getArgs().values())
-        .containsExactly("/assets/**");
+    assertHasPath(gatewayProperties, "admin-ping", "/api/admin/ping");
+    assertHasPath(
+        gatewayProperties, "admin-admission-pointers", "/api/admin/admission-pointers/**");
+    assertHasMethod(gatewayProperties, "admin-admission-pointers", "GET");
+    assertHasPath(gatewayProperties, "admin-remote-followups", "/api/admin/remote-followups/**");
+    assertHasPath(gatewayProperties, "admin-tick-remediation", "/api/admin/tick-remediation/**");
+    assertHasMethod(gatewayProperties, "admin-tick-remediation", "GET");
+    assertHasPath(gatewayProperties, "design", "/api/design/**");
+    assertHasPath(gatewayProperties, "account-auth", "/api/account/auth/**");
+    assertHasPath(gatewayProperties, "social-chat", "/api/social/chat/**");
+    assertHasPath(gatewayProperties, "asset-store-public", "/assets/**");
 
-    assertHasStripPrefixTwo("admin-ping");
-    assertHasStripPrefixTwo("admin-remote-followups");
-    assertHasStripPrefixTwo("design");
-    assertHasStripPrefixTwo("account-auth");
-    assertHasStripPrefixTwo("social-chat");
-    assertHasStripPrefix("asset-store-public", "1");
-  }
-
-  private RouteDefinition route(String routeId) {
-    return gatewayProperties.getRoutes().stream()
-        .filter(route -> routeId.equals(route.getId()))
-        .findFirst()
-        .orElseThrow(() -> new AssertionError("Expected route to be configured: " + routeId));
-  }
-
-  private void assertHasStripPrefixTwo(RouteDefinition route) {
-    assertHasStripPrefix(route, "2");
-  }
-
-  private void assertHasStripPrefixTwo(String routeId) {
-    assertHasStripPrefix(route(routeId), "2");
-  }
-
-  private void assertHasStripPrefix(String route, String value) {
-    assertHasStripPrefix(route(route), value);
-  }
-
-  private void assertHasStripPrefix(RouteDefinition route, String value) {
-    FilterDefinition filter =
-        route.getFilters().stream()
-            .filter(candidate -> "StripPrefix".equals(candidate.getName()))
-            .findFirst()
-            .orElseThrow(
-                () -> new AssertionError("Expected StripPrefix filter for " + route.getId()));
-    assertThat(filter.getArgs().values()).containsExactly(value);
+    assertHasStripPrefixTwo(gatewayProperties, "admin-ping");
+    assertHasStripPrefixTwo(gatewayProperties, "admin-admission-pointers");
+    assertHasStripPrefixTwo(gatewayProperties, "admin-remote-followups");
+    assertHasStripPrefixTwo(gatewayProperties, "admin-tick-remediation");
+    assertHasStripPrefixTwo(gatewayProperties, "design");
+    assertHasStripPrefixTwo(gatewayProperties, "account-auth");
+    assertHasStripPrefixTwo(gatewayProperties, "social-chat");
+    assertHasStripPrefix(gatewayProperties, "asset-store-public", "1");
   }
 }

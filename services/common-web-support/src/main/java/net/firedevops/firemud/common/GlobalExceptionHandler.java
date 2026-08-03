@@ -6,6 +6,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.ServletRequestBindingException;
@@ -13,6 +14,8 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -77,6 +80,25 @@ public class GlobalExceptionHandler {
     return invalidArgument("Request body is malformed");
   }
 
+  @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+  public ResponseEntity<ApiResponse<ErrorDetail>> handleHttpRequestMethodNotSupported(
+      HttpRequestMethodNotSupportedException ex) {
+    ErrorDetail detail = new ErrorDetail("METHOD_NOT_ALLOWED", "Request method is not allowed");
+    return new ResponseEntity<>(
+        ApiResponse.error(detail), ex.getHeaders(), HttpStatus.METHOD_NOT_ALLOWED);
+  }
+
+  @ExceptionHandler(NoResourceFoundException.class)
+  public ResponseEntity<ApiResponse<ErrorDetail>> handleNoResourceFound(
+      NoResourceFoundException ex) {
+    return notFound();
+  }
+
+  @ExceptionHandler(NoHandlerFoundException.class)
+  public ResponseEntity<ApiResponse<ErrorDetail>> handleNoHandlerFound(NoHandlerFoundException ex) {
+    return notFound();
+  }
+
   @ExceptionHandler(Exception.class)
   public ResponseEntity<ApiResponse<ErrorDetail>> handleException(Exception ex) {
     ErrorDetail detail = new ErrorDetail("INTERNAL_ERROR", "Internal server error");
@@ -86,6 +108,11 @@ public class GlobalExceptionHandler {
   private ResponseEntity<ApiResponse<ErrorDetail>> invalidArgument(String message) {
     ErrorDetail detail = new ErrorDetail("INVALID_ARGUMENT", message);
     return new ResponseEntity<>(ApiResponse.error(detail), HttpStatus.BAD_REQUEST);
+  }
+
+  private ResponseEntity<ApiResponse<ErrorDetail>> notFound() {
+    ErrorDetail detail = new ErrorDetail("NOT_FOUND", "Resource not found");
+    return new ResponseEntity<>(ApiResponse.error(detail), HttpStatus.NOT_FOUND);
   }
 
   private String firstFieldErrorMessage(FieldError fieldError) {

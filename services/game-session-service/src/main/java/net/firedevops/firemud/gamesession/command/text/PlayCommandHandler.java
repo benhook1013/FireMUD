@@ -8,7 +8,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
@@ -193,7 +192,8 @@ public class PlayCommandHandler {
       }
       Optional<GameplayWorldCatalog.RealmView> maybeRealm =
           selection.explicitRealmSelector() != null
-              ? gameplayWorldCatalog.resolveRealm(selectedWorld, selection.explicitRealmSelector())
+              ? gameplayWorldCatalog.resolveRealmForAdmission(
+                  selectedWorld, selection.explicitRealmSelector())
               : selectDefaultRealm(selectedWorld, connectContextResolution.connectContext());
       if (maybeRealm.isEmpty()) {
         return failure(
@@ -683,7 +683,49 @@ public class PlayCommandHandler {
       GameplayWorldCatalog.RealmView selectedRealm,
       long requestedCharacterId,
       String requestId) {
-    if (!selectedRealm.visible()) {
+    Optional<ErrorDetail> maybeError = extractError(response.getError());
+    if (maybeError.isPresent()) {
+      if (isAuthorityUnavailable(maybeError.orElseThrow())) {
+        return Optional.of(
+            authorityUnavailableFailure(
+                tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
+      }
+      return Optional.of(
+          worldAccessDeniedFailure(
+              context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
+    }
+    if (!response.getMembershipExists()) {
+      if (isPublicProductionRealm(selectedRealm)) {
+        recordResumeDeniedIfApplicable(
+            context,
+            selectedWorld.slug(),
+            selectedRealm.slug(),
+            selectedRealm.pointerVersion(),
+            selectedRealm.gameInstanceId(),
+            requestedCharacterId,
+            tenantTag,
+            "join_required");
+        return Optional.of(
+            failure(
+                GameplayStageCommandConstants.JOIN_REQUIRED_CODE,
+                GameplayStageCommandConstants.JOIN_REQUIRED_MESSAGE,
+                "error.play.join-required",
+                Map.of(),
+                tenantTag,
+                Long.toString(selectedRealm.gameInstanceId()),
+                Long.toString(requestedCharacterId),
+                null));
+      }
+      return Optional.of(
+          worldAccessDeniedFailure(
+              context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
+    }
+    if (!response.getGameplayAdmissionAllowed()) {
+      return Optional.of(
+          worldAccessDeniedFailure(
+              context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
+    }
+    if (!isPublicProductionRealm(selectedRealm)) {
       GetRealmAccessGrantForRuntimeResponse grantResponse =
           accountClient.getRealmAccessGrantForRuntime(
               Long.toString(context.accountId()),
@@ -693,149 +735,44 @@ public class PlayCommandHandler {
               requestId);
       Optional<ErrorDetail> grantError = extractError(grantResponse.getError());
       if (grantError.isPresent() && isAuthorityUnavailable(grantError.get())) {
-        recordResumeDeniedIfApplicable(
-            context,
-            selectedWorld.slug(),
-            selectedRealm.slug(),
-            selectedRealm.pointerVersion(),
-            selectedRealm.gameInstanceId(),
-            requestedCharacterId,
-            tenantTag,
-            "authority_unavailable");
         return Optional.of(
-            failure(
-                GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_CODE,
-                GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_MESSAGE,
-                "error.play.membership-unavailable",
-                Map.of(),
-                tenantTag,
-                Long.toString(selectedRealm.gameInstanceId()),
-                Long.toString(requestedCharacterId),
-                null));
+            authorityUnavailableFailure(
+                tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
       }
       if (grantError.isPresent() || !grantResponse.getGranted()) {
-        recordResumeDeniedIfApplicable(
-            context,
-            selectedWorld.slug(),
-            selectedRealm.slug(),
-            selectedRealm.pointerVersion(),
-            selectedRealm.gameInstanceId(),
-            requestedCharacterId,
-            tenantTag,
-            "access_denied");
         return Optional.of(
-            failure(
-                GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE,
-                GameplayStageCommandConstants.WORLD_ACCESS_DENIED_MESSAGE,
-                "error.play.world-access-denied",
-                Map.of(),
-                tenantTag,
-                Long.toString(selectedRealm.gameInstanceId()),
-                Long.toString(requestedCharacterId),
-                null));
+            worldAccessDeniedFailure(
+                context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
       }
       return Optional.empty();
     }
-    Optional<ErrorDetail> maybeError = extractError(response.getError());
-    if (maybeError.isPresent()) {
-      ErrorDetail error = maybeError.get();
-      if ("NOT_FOUND".equalsIgnoreCase(error.getCode())) {
-        recordResumeDeniedIfApplicable(
-            context,
-            selectedWorld.slug(),
-            selectedRealm.slug(),
-            selectedRealm.pointerVersion(),
-            selectedRealm.gameInstanceId(),
-            requestedCharacterId,
-            tenantTag,
-            "access_denied");
-        return Optional.of(
-            failure(
-                GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE,
-                GameplayStageCommandConstants.WORLD_ACCESS_DENIED_MESSAGE,
-                "error.play.world-access-denied",
-                Map.of(),
-                tenantTag,
-                Long.toString(selectedRealm.gameInstanceId()),
-                Long.toString(requestedCharacterId),
-                null));
-      }
-      recordResumeDeniedIfApplicable(
-          context,
-          selectedWorld.slug(),
-          selectedRealm.slug(),
-          selectedRealm.pointerVersion(),
-          selectedRealm.gameInstanceId(),
-          requestedCharacterId,
-          tenantTag,
-          "authority_unavailable");
-      return Optional.of(
-          failure(
-              GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_CODE,
-              GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_MESSAGE,
-              "error.play.membership-unavailable",
-              Map.of(),
-              tenantTag,
-              Long.toString(selectedRealm.gameInstanceId()),
-              Long.toString(requestedCharacterId),
-              null));
-    }
-    if (!response.getGameplayAdmissionAllowed()) {
-      if (isPublicProductionRealm(selectedRealm)) {
-        EnsurePublicProductionPlayerMembershipResponse ensured =
-            accountClient.ensurePublicProductionPlayerMembership(
-                Long.toString(context.accountId()),
-                Long.toString(selectedRealm.tenantId()),
-                selectedWorld.slug(),
-                selectedRealm.slug(),
-                requestId);
-        Optional<ErrorDetail> ensureError = extractError(ensured.getError());
-        if (ensureError.isEmpty() && ensured.getGameplayAdmissionAllowed()) {
-          return Optional.empty();
-        }
-        if (ensureError.isPresent() && isAuthorityUnavailable(ensureError.get())) {
-          recordResumeDeniedIfApplicable(
-              context,
-              selectedWorld.slug(),
-              selectedRealm.slug(),
-              selectedRealm.pointerVersion(),
-              selectedRealm.gameInstanceId(),
-              requestedCharacterId,
-              tenantTag,
-              "authority_unavailable");
-          return Optional.of(
-              failure(
-                  GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_CODE,
-                  GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_MESSAGE,
-                  "error.play.membership-unavailable",
-                  Map.of(),
-                  tenantTag,
-                  Long.toString(selectedRealm.gameInstanceId()),
-                  Long.toString(requestedCharacterId),
-                  null));
-        }
-      }
-      recordResumeDeniedIfApplicable(
-          context,
-          selectedWorld.slug(),
-          selectedRealm.slug(),
-          selectedRealm.pointerVersion(),
-          selectedRealm.gameInstanceId(),
-          requestedCharacterId,
-          tenantTag,
-          "access_denied");
-      return Optional.of(
-          failure(
-              GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE,
-              GameplayStageCommandConstants.WORLD_ACCESS_DENIED_MESSAGE,
-              "error.play.world-access-denied",
-              Map.of(),
-              tenantTag,
-              Long.toString(selectedRealm.gameInstanceId()),
-              Long.toString(requestedCharacterId),
-              null));
-    }
     return Optional.empty();
+  }
+
+  private PlayCommandHandlingResult worldAccessDeniedFailure(
+      SessionContext context,
+      String tenantTag,
+      GameplayWorldCatalog.WorldView selectedWorld,
+      GameplayWorldCatalog.RealmView selectedRealm,
+      long requestedCharacterId) {
+    recordResumeDeniedIfApplicable(
+        context,
+        selectedWorld.slug(),
+        selectedRealm.slug(),
+        selectedRealm.pointerVersion(),
+        selectedRealm.gameInstanceId(),
+        requestedCharacterId,
+        tenantTag,
+        "access_denied");
+    return failure(
+        GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE,
+        GameplayStageCommandConstants.WORLD_ACCESS_DENIED_MESSAGE,
+        "error.play.world-access-denied",
+        Map.of(),
+        tenantTag,
+        Long.toString(selectedRealm.gameInstanceId()),
+        Long.toString(requestedCharacterId),
+        null);
   }
 
   private Optional<PlayCommandHandlingResult> validateEntitlementsResponse(
@@ -847,48 +784,60 @@ public class PlayCommandHandler {
       long requestedCharacterId) {
     Optional<ErrorDetail> maybeError = extractError(response.getError());
     if (maybeError.isPresent()) {
-      recordResumeDeniedIfApplicable(
-          context,
-          selectedWorld.slug(),
-          selectedRealm.slug(),
-          selectedRealm.pointerVersion(),
-          selectedRealm.gameInstanceId(),
-          requestedCharacterId,
-          tenantTag,
-          "authority_unavailable");
+      if (isAuthorityUnavailable(maybeError.get())) {
+        return Optional.of(
+            authorityUnavailableFailure(
+                tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
+      }
       return Optional.of(
-          failure(
-              GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_CODE,
-              GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_MESSAGE,
-              "error.play.entitlement-unavailable",
-              Map.of(),
-              tenantTag,
-              Long.toString(selectedRealm.gameInstanceId()),
-              Long.toString(requestedCharacterId),
-              null));
+          tenantBillingBlockedFailure(
+              context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
     }
     if (!response.getGameplayAvailable()) {
-      recordResumeDeniedIfApplicable(
-          context,
-          selectedWorld.slug(),
-          selectedRealm.slug(),
-          selectedRealm.pointerVersion(),
-          selectedRealm.gameInstanceId(),
-          requestedCharacterId,
-          tenantTag,
-          "tenant_unavailable");
       return Optional.of(
-          failure(
-              GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_CODE,
-              GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_MESSAGE,
-              "error.play.billing-blocked",
-              Map.of(),
-              tenantTag,
-              Long.toString(selectedRealm.gameInstanceId()),
-              Long.toString(requestedCharacterId),
-              null));
+          tenantBillingBlockedFailure(
+              context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
     }
     return Optional.empty();
+  }
+
+  private PlayCommandHandlingResult tenantBillingBlockedFailure(
+      SessionContext context,
+      String tenantTag,
+      GameplayWorldCatalog.WorldView selectedWorld,
+      GameplayWorldCatalog.RealmView selectedRealm,
+      long requestedCharacterId) {
+    recordResumeDeniedIfApplicable(
+        context,
+        selectedWorld.slug(),
+        selectedRealm.slug(),
+        selectedRealm.pointerVersion(),
+        selectedRealm.gameInstanceId(),
+        requestedCharacterId,
+        tenantTag,
+        "tenant_unavailable");
+    return failure(
+        GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_CODE,
+        GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_MESSAGE,
+        "error.play.billing-blocked",
+        Map.of(),
+        tenantTag,
+        Long.toString(selectedRealm.gameInstanceId()),
+        Long.toString(requestedCharacterId),
+        null);
+  }
+
+  private PlayCommandHandlingResult authorityUnavailableFailure(
+      String tenantTag, String gameInstanceTag, long requestedCharacterId) {
+    return failure(
+        GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE,
+        GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE,
+        "error.play.authority-unavailable",
+        Map.of(),
+        tenantTag,
+        gameInstanceTag,
+        Long.toString(requestedCharacterId),
+        null);
   }
 
   private Optional<ErrorDetail> extractError(ErrorDetail error) {
@@ -916,7 +865,7 @@ public class PlayCommandHandler {
 
   private boolean isAuthorityUnavailable(ErrorDetail error) {
     String code = Optional.ofNullable(error.getCode()).orElse("");
-    return GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_CODE.equalsIgnoreCase(code);
+    return GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE.equalsIgnoreCase(code);
   }
 
   private boolean maybeRecordFreshEntryFallback(
@@ -970,7 +919,7 @@ public class PlayCommandHandler {
         gameplayWorldCatalog.resolveWorld(worldSelector);
     if (maybeWorld.isPresent()
         && StringUtils.hasText(secondSelector)
-        && !gameplayWorldCatalog.hasVisibleRealm(maybeWorld.orElseThrow(), secondSelector)) {
+        && !gameplayWorldCatalog.hasRealmForAdmission(maybeWorld.orElseThrow(), secondSelector)) {
       return Optional.of(new ResolvedPlaySelection(worldSelector.trim(), null, secondSelector));
     }
     return Optional.of(new ResolvedPlaySelection(worldSelector.trim(), secondSelector, null));
@@ -982,7 +931,7 @@ public class PlayCommandHandler {
     if (connectContext.isPresent()
         && StringUtils.hasText(connectContext.orElseThrow().realmSlug())) {
       Optional<GameplayWorldCatalog.RealmView> hintedRealm =
-          gameplayWorldCatalog.resolveRealm(
+          gameplayWorldCatalog.resolveRealmForAdmission(
               selectedWorld, connectContext.orElseThrow().realmSlug());
       if (hintedRealm.isPresent()) {
         return hintedRealm;

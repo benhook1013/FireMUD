@@ -69,41 +69,35 @@ The internal front-end to lease-owner path is a **target-state** fenced gameplay
 - Admission-pointer requests and read/audit responses carry the runtime route version separately from catalog/policy revision. Public-production admission and first-join membership creation consume current catalog visibility/public-production facts with entitlement checks instead of inferring behavior from `realmSlug`; display-only changes do not become runtime cutovers.
 - Admission-pointer audit/list responses now also expose the `preparedVersionUpgradeId` used by a cutover write so operator history preserves the same proof identity that the mutation validated.
 
+Gameplay admission uses `JOIN_REQUIRED` only as a next-step response when fresh authority confirms that the selected target is publicly visible and public-production joining is allowed, while the caller's membership is absent. A public-production policy denial remains `PUBLIC_PRODUCTION_ADMISSION_DENIED`; unavailable, stale, malformed, or ambiguous authority uses the applicable unavailable or invalid-authority outcome instead. Private/playtest admission always requires an existing caller-bound membership, the current membership authority generation, and the applicable Account-owned realm grant; a grant never replaces membership.
+
 ### ADR-0048 operator-write contract
 
-**Target state:** every mutating operator RPC listed above (`StartSession`, `StopSession`, `RestartSession`, `ToggleFeatureFlag`, `PauseTicksForScope`, `ResumeTicksForScope`, `SetAdmissionPointer`, `ExecutePreparedVersionCutover`, and `PrepareVersionUpgrade`) requires the same durable request identity: `controlPlaneRequestId` plus the canonical `mutationDigest`. Account binds both values into the bounded operator authorization reference, and Game Session recomputes and validates the digest before execution. The owner durably records the request before execution and records a terminal result only after owner-specific commit proof; PostgreSQL-owned mutations commit domain state and result atomically, while Redis-backed projections use the durable claim, fenced mutation marker, and reconciliation contract in ADR 0048. A duplicate request carrying the same digest returns the previously committed result, while the same request identifier with a different digest returns `IDEMPOTENCY_CONFLICT` without applying either payload. A timeout must not create a new request identifier; Logging & Admin may use the same identifier for owner result lookup and, only while the original authorization remains valid, redelivery. After authorization expiry, reconciliation is read-only.
+**Target state:** every mutating operator RPC listed above (`StartSession`, `StopSession`, `RestartSession`, `ToggleFeatureFlag`, `PauseTicksForScope`, `ResumeTicksForScope`, `SetAdmissionPointer`, `ExecutePreparedVersionCutover`, and `PrepareVersionUpgrade`) requires the same durable request identity: `controlPlaneRequestId` plus the canonical `mutationDigest`. Account binds both values into the bounded operator authorization reference, and Game Session recomputes and validates the digest before execution. The owner durably records the request before execution and records a terminal result only after owner-specific commit proof; PostgreSQL-owned mutations commit domain state and result atomically, while Redis-backed projections use the durable claim, fenced mutation marker, and reconciliation contract in ADR 0048. A duplicate request carrying the same digest returns the previously committed result, while the same request identifier with a different digest returns `IDEMPOTENCY_CONFLICT` without applying either payload. A timeout must not create a new request identifier; Logging & Admin may use that identifier only for owner result lookup until the exact operation is reconciled. `FENCE_REJECTED` is non-rearmable and prohibits mutation redelivery. A retry against a current owner or fence is permitted only after the owner has durably recorded terminal `NOT_EXECUTED` proof for the original attempt; it uses a new `ownerMutationId` and a newly fenced attempt while retaining the external request tuple. After authorization expiry, reconciliation is read-only.
 
 The current proto and admission-pointer mutation flow remain incomplete against this target. `StartSessionRequest`, `PauseTicksForScopeRequest`, `ResumeTicksForScopeRequest`, and `GameplayAdmissionPointerMutation` for `SetAdmissionPointer` carry `controlPlaneRequestId` but not `mutationDigest`; those operations must not be reported as ADR-0048-complete until the missing request-field propagation, authorization binding, owner-side digest verification, replay persistence, and focused proof converge together.
 
 Service definitions reside in [../../../../protos/game-session/v1](../../../../protos/game-session/v1). Run `./gradlew generateProto` after modifying these files to regenerate stubs. The generated classes appear under `net.firedevops.firemud.gamesession.v1` in `build/generated/sources/proto/main/{grpc,java}` and are wired into `services/game-session-service/src/main/java/net/firedevops/firemud/service/impl/GameSessionGrpcService.java`.
 
-### REST endpoints
+### External Operator Lifecycle Contract
+
+**Target state:** External operator mutations enter through the Logging & Admin Service via Gateway. Logging & Admin authenticates the `control-ui` session, records the durable intent and audit context, and calls Account's canonical [`IssueHumanOperatorAuthorizationReference`](../account-service/api-contracts.md#operator-authorization-references) RPC; unattended automation uses the separately typed `IssueAutomationOperatorAuthorizationReference` branch under the restrictions that Account contract defines. Logging & Admin then forwards the opaque bounded reference unchanged with the exact typed action-family request, `actionFamilySchemaId`, `actionFamilySchemaVersion`, same `controlPlaneRequestId`, canonical `mutationDigest/v1` digest, and every scope, target, expected-version, mutation, and audit-reason field declared by that schema to the Game Session owner RPC over its exact mTLS workload identity. Only transport credentials and the authorization reference are excluded from the digest. If generation or privileged-predicate fields are copied outside the Account reference, they are non-authoritative context: Game Session must exclude those forwarded copies from authorization decisions and the mutation digest, or omit them entirely. Logging & Admin may forward the end-user `control-ui` JWT to Account only for reference issuance; it must never forward an end-user JWT or caller-asserted actor identity to Game Session. Game Session recomputes the digest from the exact schema pair and every declared digest input, then calls Account's `RedeemOperatorAuthorization` contract with the exact owner, action family and schema pair, scope, request identity, and digest. Account's returned bounded actor or automation-policy authorization projection is the sole authorization source; Game Session uses that Account-derived projection for audit while independently validating target-domain ownership, runtime fences, and owner-side idempotency. This target path is not currently routable and has no fallback external mutation route.
+
+**Current implementation status:** The current OpenAPI surface exposes an owner-local `/sessions*` HTTP family. It uses the service-local control-plane auth boundary, direct edge exposure is denied, and no Logging & Admin external `/sessions*` family is currently available. These owner-local routes are not the canonical external operator ingress or player-admission contract.
+
+### Service-Local HTTP Surface
+
+Game Session owns the `/api/session/**` Gateway family, but the public gateway inventory exposes only `GET /api/session/ping`. The service-local endpoint inventory is:
 
 - `GET /ping` – basic health check returning `"pong"`.
-- `POST /sessions` – operator/bootstrap convenience for creating a new game instance from a template-driven launch attempt. This is not the canonical player gameplay-admission seam and does apply the same launch-descriptor preflight seam as the gRPC `StartSession` path.
-- `POST /sessions/{id}/stop` – stop a running session.
-- `POST /sessions/{id}/restart` – restart a stopped session.
-- `POST /sessions/{id}/refresh-roles` – refresh the player's roles for an active session.
+- `POST /sessions` – `target_not_currently_routable`; a current owner-local OpenAPI scaffold creates a game instance from a template-driven launch attempt, but it is not the player gameplay-admission seam and is not supported external operator ingress.
+- `POST /sessions/{sessionId}/stop` – `target_not_currently_routable`; a current owner-local OpenAPI scaffold stops a running session, but supported external operator ingress remains unavailable.
+- `POST /sessions/{sessionId}/restart` – `target_not_currently_routable`; a current owner-local OpenAPI scaffold restarts a stopped session, but supported external operator ingress remains unavailable.
+- `POST /sessions/{sessionId}/refresh-roles` – `current_openapi_operator_surface`; this owner-local workload-authenticated route refreshes roles for an active session and is not an Account-authorization-reference mutation.
 
-Use `/sessions/{id}/refresh-roles` after updating an account's privileges so the session reflects the latest role assignments.
+Use `/sessions/{sessionId}/refresh-roles` after updating an account's privileges so the session reflects the latest role assignments.
 
-#### External HTTP route classification
-
-Game Session owns the `/api/session/**` Gateway family, but that family is not a blanket public-write contract. The current public gateway inventory exposes only `GET /api/session/ping`; the mutating `/sessions*` routes are legacy service-local REST hooks retained by the current OpenAPI surface, protected by privileged HTTP auth on the service itself, and not part of the public gateway allowlist. They are not the canonical external operator ingress or player-admission contract.
-
-| Service-local route | External classification | Notes |
-| --- | --- | --- |
-| `GET /ping` | Infra/local health only | Not part of the external admin/product contract. |
-| `POST /sessions` | `legacy_service_local_operator_hook`; exact `control-ui` profile plus `privileged_control_when_global_role` assurance at the current service-local boundary | Current OpenAPI hook only. Direct edge exposure is denied; the canonical external operator ingress is Logging & Admin, not this REST route, and this is not a player admission route. |
-| `POST /sessions/{id}/stop` | `legacy_service_local_operator_hook`; exact `control-ui` profile plus `privileged_control_when_global_role` assurance at the current service-local boundary | Current OpenAPI hook only. Direct edge exposure is denied; the canonical external operator ingress is Logging & Admin. |
-| `POST /sessions/{id}/restart` | `legacy_service_local_operator_hook`; exact `control-ui` profile plus `privileged_control_when_global_role` assurance at the current service-local boundary | Current OpenAPI hook only. Direct edge exposure is denied; the canonical external operator ingress is Logging & Admin. |
-| `POST /sessions/{id}/refresh-roles` | `legacy_service_local_maintenance_hook`; exact `control-ui` profile at the current service-local boundary | Current OpenAPI maintenance hook only. Direct edge exposure is denied; it is not a canonical player or external operator route. |
-
-If a future change wants any of the mutating `/sessions*` routes to be callable directly from external operator tools, the owning contract must explicitly mark that exact route as bypass-safe and explain its auth class, audit behavior, and lease-owner forwarding rules in the same change.
-
-#### Canonical external operator path
-
-External operator mutations enter through the Logging & Admin Service via Gateway. Logging & Admin authenticates the `control-ui` session, records the durable intent and audit context, and calls Account's canonical [`IssueOperatorAuthorization`](../account-service/api-contracts.md#operator-authorization-references) contract. Logging & Admin then forwards only that bounded reference and the structured non-authoritative reason, request identity, and target-scope fields to the Game Session owner RPC over its exact mTLS workload identity. It may forward the end-user `control-ui` JWT to Account only for reference issuance; it must never forward an end-user JWT or caller-asserted actor identity to Game Session. Game Session recomputes the mutation digest and calls Account's `RedeemOperatorAuthorization` contract with the exact owner, action, scope, request identity, and digest. Account returns the bounded actor and authorization projection; Game Session uses that Account-derived actor for audit while independently validating target-domain ownership, runtime fences, and owner-side idempotency.
+Direct external operator exposure of a mutating `/sessions*` route is forbidden unless the owning contract explicitly marks that exact route as bypass-safe and defines its auth class, audit behavior, and lease-owner forwarding rules in the same change.
 
 #### Owner-side operator RPC classification
 
@@ -117,7 +111,7 @@ curl http://localhost:8086/ping
 curl http://localhost:8080/api/session/ping
 ```
 
-The following direct REST example exercises the current legacy service-local hook for local development only; it is not the canonical external operator path:
+The following direct REST example exercises the owner-local implementation for local development only; it is not the canonical external operator path:
 
 To start a session via REST:
 

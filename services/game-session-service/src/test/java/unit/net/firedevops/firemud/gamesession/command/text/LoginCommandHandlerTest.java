@@ -103,8 +103,8 @@ class LoginCommandHandlerTest {
     TextCommand command =
         new TextCommand(
             TextCommandType.LOGIN,
-            List.of("demo@example.com", "swordfish"),
-            "LOGIN demo@example.com swordfish");
+            List.of("DEMO@EXAMPLE.COM", "swordfish"),
+            "LOGIN DEMO@EXAMPLE.COM swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
 
@@ -117,6 +117,9 @@ class LoginCommandHandlerTest {
         result.outputs().stream().map(output -> output.kind()).toList());
     verify(accountClient).authenticate(eq("22"), eq("demo@example.com"), eq("swordfish"));
     verify(commandService).enqueue("1", command.rawLine(), false);
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(captor.capture());
+    assertEquals("demo@example.com", captor.getValue().loginName());
   }
 
   @Test
@@ -143,7 +146,7 @@ class LoginCommandHandlerTest {
   void oneArgumentLoginRequestsNeutralEmailChallengeWithoutAuthenticating() {
     TextCommand command =
         new TextCommand(
-            TextCommandType.LOGIN, List.of("demo@example.com"), "LOGIN demo@example.com");
+            TextCommandType.LOGIN, List.of("DEMO@EXAMPLE.COM"), "LOGIN DEMO@EXAMPLE.COM");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.requestEmailLoginOtp("22", "demo@example.com"))

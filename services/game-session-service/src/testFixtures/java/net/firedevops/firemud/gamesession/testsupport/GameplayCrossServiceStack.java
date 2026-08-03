@@ -331,8 +331,8 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
       return this;
     }
 
-    public Builder mapAccountId(String username, long accountId) {
-      this.accountMappings.put(username, accountId);
+    public Builder mapAccountId(String email, long accountId) {
+      this.accountMappings.put(email, accountId);
       return this;
     }
 

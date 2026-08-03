@@ -1,8 +1,11 @@
 package net.firedevops.firemud.springcloudgateway.config;
 
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasMethod;
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasPath;
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasStripPrefix;
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertNoConfiguredPathStartsWith;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.springcloudgateway.SpringCloudGatewayApplication;
@@ -12,7 +15,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.cloud.gateway.config.GatewayProperties;
-import org.springframework.cloud.gateway.filter.FilterDefinition;
 import org.springframework.cloud.gateway.route.RouteDefinition;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
@@ -39,10 +41,7 @@ class GatewayRoutesConfigurationTestProfileTest {
           "session-ping",
           "admin-ping",
           "admin-admission-pointers",
-          "admin-feature-flags",
           "admin-logs",
-          "admin-moderation",
-          "admin-reports",
           "admin-remote-followups",
           "admin-sagas",
           "admin-tick-remediation",
@@ -82,88 +81,60 @@ class GatewayRoutesConfigurationTestProfileTest {
   }
 
   @Test
+  void publicReportsRouteIsNotConfigured() {
+    assertNoConfiguredPathStartsWith(gatewayProperties, "/api/admin/reports");
+  }
+
+  @Test
   void testProfileRestRoutesStripExternalServicePrefix() {
-    assertThat(pathArgs("admin-ping").values()).containsExactly("/api/admin/ping");
-    assertThat(pathArgs("admin-admission-pointers").values())
-        .containsExactly("/api/admin/admission-pointers/**");
-    assertThat(pathArgs("admin-feature-flags").values())
-        .containsExactly("/api/admin/feature-flags/**");
-    assertThat(pathArgs("admin-logs").values()).containsExactly("/api/admin/logs/**");
-    assertThat(pathArgs("admin-moderation").values()).containsExactly("/api/admin/moderation/**");
-    assertThat(pathArgs("admin-reports").values()).containsExactly("/api/admin/reports/**");
-    assertThat(pathArgs("admin-remote-followups").values())
-        .containsExactly("/api/admin/remote-followups/**");
-    assertThat(pathArgs("admin-sagas").values()).containsExactly("/api/admin/sagas/**");
-    assertThat(pathArgs("admin-tick-remediation").values())
-        .containsExactly("/api/admin/tick-remediation/**");
+    assertHasPath(gatewayProperties, "admin-ping", "/api/admin/ping");
+    assertHasPath(
+        gatewayProperties, "admin-admission-pointers", "/api/admin/admission-pointers/**");
+    assertHasMethod(gatewayProperties, "admin-admission-pointers", "GET");
+    assertHasPath(gatewayProperties, "admin-logs", "/api/admin/logs/**");
+    assertHasPath(gatewayProperties, "admin-remote-followups", "/api/admin/remote-followups/**");
+    assertHasPath(gatewayProperties, "admin-sagas", "/api/admin/sagas/**");
+    assertHasPath(gatewayProperties, "admin-tick-remediation", "/api/admin/tick-remediation/**");
+    assertHasMethod(gatewayProperties, "admin-tick-remediation", "GET");
 
-    assertThat(pathArgs("design").values()).containsExactly("/api/design/**");
+    assertHasPath(gatewayProperties, "design", "/api/design/**");
 
-    assertThat(pathArgs("session-ping").values()).containsExactly("/api/session/ping");
+    assertHasPath(gatewayProperties, "session-ping", "/api/session/ping");
 
-    assertThat(pathArgs("account-auth").values()).containsExactly("/api/account/auth/**");
-    assertThat(pathArgs("account-accounts").values()).containsExactly("/api/account/accounts/**");
-    assertThat(pathArgs("account-profiles").values()).containsExactly("/api/account/profiles/**");
-    assertThat(pathArgs("account-ping").values()).containsExactly("/api/account/ping");
-    assertThat(pathArgs("account-jwks").values())
-        .containsExactly("/api/account/.well-known/jwks.json");
+    assertHasPath(gatewayProperties, "account-auth", "/api/account/auth/**");
+    assertHasPath(gatewayProperties, "account-accounts", "/api/account/accounts/**");
+    assertHasPath(gatewayProperties, "account-profiles", "/api/account/profiles/**");
+    assertHasPath(gatewayProperties, "account-ping", "/api/account/ping");
+    assertHasPath(gatewayProperties, "account-jwks", "/api/account/.well-known/jwks.json");
 
-    assertThat(pathArgs("social-chat").values()).containsExactly("/api/social/chat/**");
-    assertThat(pathArgs("social-friends").values()).containsExactly("/api/social/friends/**");
-    assertThat(pathArgs("social-guilds").values()).containsExactly("/api/social/guilds/**");
-    assertThat(pathArgs("social-mail").values()).containsExactly("/api/social/mail/**");
-    assertThat(pathArgs("social-ping").values()).containsExactly("/api/social/ping");
-    assertThat(pathArgs("social-voice-token").values())
-        .containsExactly("/api/social/voice/token/**");
+    assertHasPath(gatewayProperties, "social-chat", "/api/social/chat/**");
+    assertHasPath(gatewayProperties, "social-friends", "/api/social/friends/**");
+    assertHasPath(gatewayProperties, "social-guilds", "/api/social/guilds/**");
+    assertHasPath(gatewayProperties, "social-mail", "/api/social/mail/**");
+    assertHasPath(gatewayProperties, "social-ping", "/api/social/ping");
+    assertHasPath(gatewayProperties, "social-voice-token", "/api/social/voice/token/**");
 
-    assertThat(pathArgs("asset-store-public").values()).containsExactly("/assets/**");
+    assertHasPath(gatewayProperties, "asset-store-public", "/assets/**");
 
-    assertHasStripPrefix("session-ping", "2");
-    assertHasStripPrefix("admin-ping", "2");
-    assertHasStripPrefix("admin-admission-pointers", "2");
-    assertHasStripPrefix("admin-feature-flags", "2");
-    assertHasStripPrefix("admin-logs", "2");
-    assertHasStripPrefix("admin-moderation", "2");
-    assertHasStripPrefix("admin-reports", "2");
-    assertHasStripPrefix("admin-remote-followups", "2");
-    assertHasStripPrefix("admin-sagas", "2");
-    assertHasStripPrefix("admin-tick-remediation", "2");
-    assertHasStripPrefix("design", "2");
-    assertHasStripPrefix("account-auth", "2");
-    assertHasStripPrefix("account-accounts", "2");
-    assertHasStripPrefix("account-profiles", "2");
-    assertHasStripPrefix("account-ping", "2");
-    assertHasStripPrefix("account-jwks", "2");
-    assertHasStripPrefix("social-chat", "2");
-    assertHasStripPrefix("social-friends", "2");
-    assertHasStripPrefix("social-guilds", "2");
-    assertHasStripPrefix("social-mail", "2");
-    assertHasStripPrefix("social-ping", "2");
-    assertHasStripPrefix("social-voice-token", "2");
-    assertHasStripPrefix("asset-store-public", "1");
-  }
-
-  private Map<String, String> pathArgs(String routeId) {
-    return route(routeId).getPredicates().stream()
-        .filter(predicate -> "path".equalsIgnoreCase(predicate.getName()))
-        .findFirst()
-        .map(org.springframework.cloud.gateway.handler.predicate.PredicateDefinition::getArgs)
-        .orElseThrow(() -> new AssertionError("Expected Path predicate for route " + routeId));
-  }
-
-  private void assertHasStripPrefix(String routeId, String value) {
-    FilterDefinition filter =
-        route(routeId).getFilters().stream()
-            .filter(candidate -> "StripPrefix".equals(candidate.getName()))
-            .findFirst()
-            .orElseThrow(() -> new AssertionError("Expected StripPrefix filter for " + routeId));
-    assertThat(filter.getArgs().values()).containsExactly(value);
-  }
-
-  private RouteDefinition route(String routeId) {
-    return gatewayProperties.getRoutes().stream()
-        .filter(route -> routeId.equals(route.getId()))
-        .findFirst()
-        .orElseThrow(() -> new AssertionError("Expected route to be configured: " + routeId));
+    assertHasStripPrefix(gatewayProperties, "session-ping", "2");
+    assertHasStripPrefix(gatewayProperties, "admin-ping", "2");
+    assertHasStripPrefix(gatewayProperties, "admin-admission-pointers", "2");
+    assertHasStripPrefix(gatewayProperties, "admin-logs", "2");
+    assertHasStripPrefix(gatewayProperties, "admin-remote-followups", "2");
+    assertHasStripPrefix(gatewayProperties, "admin-sagas", "2");
+    assertHasStripPrefix(gatewayProperties, "admin-tick-remediation", "2");
+    assertHasStripPrefix(gatewayProperties, "design", "2");
+    assertHasStripPrefix(gatewayProperties, "account-auth", "2");
+    assertHasStripPrefix(gatewayProperties, "account-accounts", "2");
+    assertHasStripPrefix(gatewayProperties, "account-profiles", "2");
+    assertHasStripPrefix(gatewayProperties, "account-ping", "2");
+    assertHasStripPrefix(gatewayProperties, "account-jwks", "2");
+    assertHasStripPrefix(gatewayProperties, "social-chat", "2");
+    assertHasStripPrefix(gatewayProperties, "social-friends", "2");
+    assertHasStripPrefix(gatewayProperties, "social-guilds", "2");
+    assertHasStripPrefix(gatewayProperties, "social-mail", "2");
+    assertHasStripPrefix(gatewayProperties, "social-ping", "2");
+    assertHasStripPrefix(gatewayProperties, "social-voice-token", "2");
+    assertHasStripPrefix(gatewayProperties, "asset-store-public", "1");
   }
 }
