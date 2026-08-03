@@ -209,6 +209,290 @@ for path in (root / "design").rglob("*.md"):
             "prohibitions are allowed"
         )
 
+obsolete_envelope_phrases = ("Account-issued envelope", "Account-validated envelope")
+decision_history_dir = root / "design/architecture/decisions"
+
+historical_adr_record_name = re.compile(r"adr-\d{4}-.+\.md")
+status_heading = re.compile(r"^##[ \t]+Status[ \t]*$")
+historical_status_value = re.compile(r"^(?:Superseded|Withdrawn)\b")
+raw_html_closing_tag_only = frozenset(("pre", "script", "style", "textarea"))
+raw_html_block_start = re.compile(
+    r"^[ \t]{0,3}<(?P<tag>address|article|aside|base|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|ol|p|pre|script|section|style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)(?:[ \t/>]|$)",
+    re.IGNORECASE,
+)
+raw_html_special_start = re.compile(
+    r"^[ \t]{0,3}(?:(?P<processing><\?)|(?P<declaration><![A-Z])|(?P<cdata><!\[CDATA\[))",
+    re.IGNORECASE,
+)
+
+
+def strip_html_comments(line, in_html_comment):
+    visible = []
+    cursor = 0
+    while cursor < len(line):
+        if in_html_comment:
+            closing = line.find("-->", cursor)
+            if closing == -1:
+                return "".join(visible), True
+            in_html_comment = False
+            cursor = closing + len("-->")
+            continue
+
+        opening = line.find("<!--", cursor)
+        if opening == -1:
+            visible.append(line[cursor:])
+            break
+        visible.append(line[cursor:opening])
+        in_html_comment = True
+        cursor = opening + len("<!--")
+    return "".join(visible), in_html_comment
+
+
+def strip_raw_html_block(line, in_raw_html_block, raw_html_block_kind):
+    """Hide CommonMark raw HTML blocks from top-level Markdown status parsing."""
+    if in_raw_html_block:
+        if raw_html_block_kind == "processing":
+            return "", "?>" not in line, None if "?>" in line else raw_html_block_kind
+        if raw_html_block_kind == "declaration":
+            return "", ">" not in line, None if ">" in line else raw_html_block_kind
+        if raw_html_block_kind == "cdata":
+            return "", "]]>" not in line, None if "]]>" in line else raw_html_block_kind
+        if (
+            raw_html_block_kind is None
+            or raw_html_block_kind.lower() not in raw_html_closing_tag_only
+        ):
+            if not line.strip():
+                return "", False, None
+        if raw_html_block_kind is not None and re.search(
+            rf"</{re.escape(raw_html_block_kind)}[ \t]*>", line, re.IGNORECASE
+        ):
+            return "", False, None
+        return "", True, raw_html_block_kind
+
+    match = raw_html_block_start.match(line)
+    special = raw_html_special_start.match(line)
+    if match is None and special is None:
+        return line, False, None
+    tag = match.group("tag") if match is not None else None
+    if tag is not None and (
+        re.search(r"/\s*>[ \t]*$", line)
+        or re.search(rf"</{re.escape(tag)}[ \t]*>[ \t]*$", line, re.IGNORECASE)
+    ):
+        return "", False, None
+    if special is not None:
+        kind = next(name for name, value in special.groupdict().items() if value is not None)
+        terminator = {"processing": "?>", "declaration": ">", "cdata": "]]>"}[kind]
+        return "", terminator not in line[special.end() :], (
+            kind if terminator not in line[special.end() :] else None
+        )
+    return "", True, tag
+
+
+def first_top_level_status_value(text):
+    in_fenced_block = False
+    fence_marker = None
+    opening_line_number = None
+    in_html_comment = False
+    in_raw_html_block = False
+    raw_html_block_kind = None
+    status_heading_found = False
+    for line_number, line in enumerate(text.splitlines(keepends=True), start=1):
+        if in_fenced_block:
+            in_fenced_block, fence_marker, opening_line_number = advance_fenced_block_state(
+                line,
+                in_fenced_block,
+                fence_marker,
+                opening_line_number,
+                line_number,
+            )
+            continue
+
+        line, in_html_comment = strip_html_comments(line, in_html_comment)
+        line, in_raw_html_block, raw_html_block_kind = strip_raw_html_block(
+            line,
+            in_raw_html_block,
+            raw_html_block_kind,
+        )
+        if in_raw_html_block or not line:
+            continue
+        in_fenced_block, fence_marker, opening_line_number = advance_fenced_block_state(
+            line,
+            in_fenced_block,
+            fence_marker,
+            opening_line_number,
+            line_number,
+        )
+        if in_fenced_block:
+            continue
+        if not status_heading_found:
+            if status_heading.match(line.rstrip("\r\n")):
+                status_heading_found = True
+            continue
+        if line.startswith((" ", "\t")):
+            continue
+        if line.strip():
+            return line.strip()
+    return None
+
+
+def is_historical_adr_record(path, text):
+    status_value = first_top_level_status_value(text)
+    return (
+        path.parent == decision_history_dir
+        and historical_adr_record_name.fullmatch(path.name) is not None
+        and status_value is not None
+        and historical_status_value.match(status_value) is not None
+    )
+
+
+def reject_obsolete_envelope_phrases(path, text):
+    if is_historical_adr_record(path, text):
+        return
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        for phrase in obsolete_envelope_phrases:
+            if phrase in line:
+                raise SystemExit(
+                    f"{path}:{line_number}: obsolete current-state phrase {phrase!r}"
+                )
+
+
+historical_adr_fixture = decision_history_dir / "adr-9999-history-fixture.md"
+historical_adr_fixture_text = "# ADR 9999: Historical Fixture\n\n## Status\n\nSuperseded by ADR 0001\n\nAccount-issued envelope\n"
+accepted_adr_fixture = decision_history_dir / "adr-9998-accepted-fixture.md"
+accepted_adr_fixture_text = (
+    "# ADR 9998: Accepted Fixture\n\n"
+    "<!--\n"
+    "## Status\n\n"
+    "Superseded by ADR 0001\n"
+    "Account-issued envelope\n"
+    "-->\n\n"
+    "```markdown\n"
+    "## Status\n\n"
+    "Superseded by ADR 0001\n"
+    "```\n\n"
+    "    ## Status\n"
+    "    Superseded by ADR 0001\n\n"
+    "## Status\n\n"
+    "Accepted\n"
+)
+raw_html_adr_fixture = decision_history_dir / "adr-9997-raw-html-fixture.md"
+raw_html_adr_fixture_text = (
+    "# ADR 9997: Raw HTML Fixture\n\n"
+    "<div class=\"history\">\n"
+    "## Status\n"
+    "Superseded by ADR 0001\n"
+    "Account-issued envelope\n"
+    "</div>\n"
+)
+style_html_adr_fixture_text = (
+    "# ADR 9995: Style Raw HTML Fixture\n\n"
+    "<style>\n\n"
+    "## Status\n"
+    "Superseded by ADR 0001\n"
+    "</style>\n"
+)
+script_html_adr_fixture_text = (
+    "# ADR 9994: Script Raw HTML Fixture\n\n"
+    "<script>\n\n"
+    "## Status\n"
+    "Superseded by ADR 0001\n"
+    "</script>\n"
+)
+processing_instruction_adr_fixture_text = (
+    "# ADR 9993: Processing Instruction Fixture\n\n"
+    "<?firemud\n"
+    "## Status\n"
+    "Superseded by ADR 0001\n"
+    "?>\n"
+    "## Status\n\n"
+    "Accepted\n"
+)
+cdata_adr_fixture_text = (
+    "# ADR 9992: CDATA Fixture\n\n"
+    "<![CDATA[\n"
+    "## Status\n"
+    "Superseded by ADR 0001\n"
+    "]]>\n"
+    "## Status\n\n"
+    "Accepted\n"
+)
+indented_status_value_fixture = decision_history_dir / "adr-9996-indented-status-value-fixture.md"
+indented_status_value_fixture_text = (
+    "# ADR 9996: Indented Status Value Fixture\n\n"
+    "## Status\n\n"
+    "    Superseded by ADR 0001\n\n"
+    "Accepted\n\n"
+    "Account-issued envelope\n"
+)
+registry_index_fixture = decision_history_dir / "README.md"
+if not is_historical_adr_record(historical_adr_fixture, historical_adr_fixture_text):
+    raise SystemExit("historical ADR fixture was not recognized as an exempt record")
+if is_historical_adr_record(registry_index_fixture, obsolete_envelope_phrases[0]):
+    raise SystemExit("decision registry/index fixture was incorrectly exempted")
+if first_top_level_status_value(accepted_adr_fixture_text) != "Accepted":
+    raise SystemExit("commented, fenced, or indented fake status bypassed the Accepted fixture")
+if first_top_level_status_value(raw_html_adr_fixture_text) is not None:
+    raise SystemExit("raw HTML block status was incorrectly parsed")
+if first_top_level_status_value(style_html_adr_fixture_text) is not None:
+    raise SystemExit("style raw HTML block status was incorrectly parsed")
+if first_top_level_status_value(script_html_adr_fixture_text) is not None:
+    raise SystemExit("script raw HTML block status was incorrectly parsed")
+if first_top_level_status_value(processing_instruction_adr_fixture_text) != "Accepted":
+    raise SystemExit("processing-instruction block hid the following Accepted status")
+if first_top_level_status_value(cdata_adr_fixture_text) != "Accepted":
+    raise SystemExit("CDATA block hid the following Accepted status")
+if first_top_level_status_value("    ## Status\n    Superseded by ADR 0001\n") is not None:
+    raise SystemExit("four-space indented code-block status was incorrectly parsed")
+if first_top_level_status_value(indented_status_value_fixture_text) != "Accepted":
+    raise SystemExit("indented fake status value bypassed the real Accepted status")
+reject_obsolete_envelope_phrases(
+    historical_adr_fixture,
+    historical_adr_fixture_text,
+)
+try:
+    reject_obsolete_envelope_phrases(
+        accepted_adr_fixture,
+        accepted_adr_fixture_text,
+    )
+except SystemExit as error:
+    if "obsolete current-state phrase" not in str(error):
+        raise SystemExit(f"unexpected Accepted ADR fixture diagnostic: {error}")
+else:
+    raise SystemExit("Accepted ADR fixture was not checked")
+try:
+    reject_obsolete_envelope_phrases(
+        raw_html_adr_fixture,
+        raw_html_adr_fixture_text,
+    )
+except SystemExit as error:
+    if "obsolete current-state phrase" not in str(error):
+        raise SystemExit(f"unexpected raw HTML ADR fixture diagnostic: {error}")
+else:
+    raise SystemExit("raw HTML ADR fixture bypassed obsolete phrase rejection")
+try:
+    reject_obsolete_envelope_phrases(
+        indented_status_value_fixture,
+        indented_status_value_fixture_text,
+    )
+except SystemExit as error:
+    if "obsolete current-state phrase" not in str(error):
+        raise SystemExit(f"unexpected indented status fixture diagnostic: {error}")
+else:
+    raise SystemExit("indented status fixture bypassed obsolete phrase rejection")
+try:
+    reject_obsolete_envelope_phrases(
+        registry_index_fixture,
+        obsolete_envelope_phrases[0],
+    )
+except SystemExit as error:
+    if "obsolete current-state phrase" not in str(error):
+        raise SystemExit(f"unexpected registry/index fixture diagnostic: {error}")
+else:
+    raise SystemExit("decision registry/index fixture was not checked")
+
+for path in (root / "design").rglob("*.md"):
+    reject_obsolete_envelope_phrases(path, path.read_text(encoding="utf-8"))
+
 canonical_world_dynamic = "world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>"
 for path in [
     "design/architecture/system-architecture-redis-cache.md",

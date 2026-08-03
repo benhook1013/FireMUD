@@ -25,6 +25,8 @@ import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipR
 import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
+import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
+import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
@@ -79,9 +81,7 @@ class AccountClientTest {
         .thenThrow(
             new StatusRuntimeException(
                 Status.fromCode(Status.Code.valueOf(statusName)).withDescription(description)));
-    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
-    when(channelFactory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
-        .thenReturn(mock(ManagedChannel.class));
+    GrpcChannelFactory channelFactory = newChannelFactory();
     AccountClient client = newClient(stub, channelFactory);
 
     AuthenticateResponse response = client.authenticate("22", "demo@example.com", "swordfish");
@@ -175,7 +175,11 @@ class AccountClientTest {
     AuthenticateResponse response = client.authenticate("22", "demo@example.com", "swordfish");
 
     assertThat(response).isEqualTo(expected);
-    verify(stub).authenticate(any(AuthenticateRequest.class));
+    ArgumentCaptor<AuthenticateRequest> requestCaptor =
+        ArgumentCaptor.forClass(AuthenticateRequest.class);
+    verify(stub).authenticate(requestCaptor.capture());
+    assertThat(requestCaptor.getValue().getEmail()).isEqualTo("demo@example.com");
+    assertThat(requestCaptor.getValue().getTenantId()).isEqualTo("22");
   }
 
   @Test
@@ -187,6 +191,7 @@ class AccountClientTest {
         GetTenantMembershipForRuntimeResponse.newBuilder()
             .setAccountId("42")
             .setTenantId("7")
+            .setMembershipExists(true)
             .setGameplayAdmissionAllowed(true)
             .setMembershipVersion(12L)
             .setEvaluatedAt("2026-07-31T00:00:00Z")
@@ -237,129 +242,164 @@ class AccountClientTest {
 
   @Test
   void runtimeMembershipRetriesOnceAfterUnavailableAndPreservesSuccess() throws Exception {
-    AccountServiceGrpc.AccountServiceBlockingStub initialStub =
-        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
-    AccountServiceGrpc.AccountServiceBlockingStub retryStub =
-        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
-    when(initialStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(initialStub);
-    when(retryStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(retryStub);
-    when(initialStub.getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
+    RetryFixture fixture = newRetryFixture();
+    when(fixture
+            .initialStub()
+            .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
         .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
     GetTenantMembershipForRuntimeResponse expected =
         GetTenantMembershipForRuntimeResponse.newBuilder()
             .setAccountId("42")
             .setTenantId("7")
+            .setMembershipExists(true)
             .setGameplayAdmissionAllowed(true)
             .setMembershipVersion(12L)
             .build();
-    when(retryStub.getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
+    when(fixture
+            .retryStub()
+            .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
         .thenReturn(expected);
-    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
-    when(channelFactory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
-        .thenReturn(mock(ManagedChannel.class));
-    AccountClient client = newClientWithRetryStub(initialStub, retryStub, channelFactory);
 
     GetTenantMembershipForRuntimeResponse actual =
-        client.getTenantMembershipForRuntime("42", "7", "request-1");
+        fixture.client().getTenantMembershipForRuntime("42", "7", "request-1");
 
     assertThat(actual).isEqualTo(expected);
-    verify(initialStub)
+    verify(fixture.initialStub())
         .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
-    verify(retryStub)
+    verify(fixture.retryStub())
         .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
-    verify(channelFactory).buildChannel(anyString(), anyInt(), any(), anyBoolean());
+    verify(fixture.channelFactory()).buildChannel(anyString(), anyInt(), any(), anyBoolean());
   }
 
   @Test
   void runtimeMembershipNormalizesExhaustedUnavailableToCanonicalUnavailable() throws Exception {
-    AccountServiceGrpc.AccountServiceBlockingStub initialStub =
-        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
-    AccountServiceGrpc.AccountServiceBlockingStub retryStub =
-        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
-    when(initialStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(initialStub);
-    when(retryStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(retryStub);
-    when(initialStub.getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
+    RetryFixture fixture = newRetryFixture();
+    when(fixture
+            .initialStub()
+            .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
         .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
-    when(retryStub.getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
+    when(fixture
+            .retryStub()
+            .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
         .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+
+    GetTenantMembershipForRuntimeResponse response =
+        fixture.client().getTenantMembershipForRuntime("42", "7", "request-1");
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
+    verify(fixture.initialStub())
+        .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
+    verify(fixture.retryStub())
+        .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
+    verify(fixture.channelFactory()).buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @Test
+  void runtimeEntitlementsReturnsCanonicalUnavailableWhenStubIsMissing() throws Exception {
+    GetTenantEntitlementsForRuntimeResponse response =
+        newClient(null).getTenantEntitlementsForRuntime("7", "request-1");
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getMessage()).isEqualTo("Entitlement authority unavailable");
+  }
+
+  @Test
+  void runtimeEntitlementsNormalizesExhaustedUnavailableToCanonicalUnavailable() throws Exception {
+    RetryFixture fixture = newRetryFixture();
+    when(fixture
+            .initialStub()
+            .getTenantEntitlementsForRuntime(any(GetTenantEntitlementsForRuntimeRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+    when(fixture
+            .retryStub()
+            .getTenantEntitlementsForRuntime(any(GetTenantEntitlementsForRuntimeRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+
+    GetTenantEntitlementsForRuntimeResponse response =
+        fixture.client().getTenantEntitlementsForRuntime("7", "request-1");
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getMessage()).isEqualTo("Entitlement authority unavailable");
+    verify(fixture.initialStub())
+        .getTenantEntitlementsForRuntime(any(GetTenantEntitlementsForRuntimeRequest.class));
+    verify(fixture.retryStub())
+        .getTenantEntitlementsForRuntime(any(GetTenantEntitlementsForRuntimeRequest.class));
+    verify(fixture.channelFactory()).buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @Test
+  void realmAccessGrantNormalizesExhaustedUnavailableToCanonicalUnavailable() throws Exception {
+    RetryFixture fixture = newRetryFixture();
+    when(fixture
+            .initialStub()
+            .getRealmAccessGrantForRuntime(any(GetRealmAccessGrantForRuntimeRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+    when(fixture
+            .retryStub()
+            .getRealmAccessGrantForRuntime(any(GetRealmAccessGrantForRuntimeRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+
+    GetRealmAccessGrantForRuntimeResponse response =
+        fixture.client().getRealmAccessGrantForRuntime("42", "7", "world", "realm", "request-1");
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getMessage()).isEqualTo("Realm grant authority unavailable");
+    verify(fixture.initialStub())
+        .getRealmAccessGrantForRuntime(any(GetRealmAccessGrantForRuntimeRequest.class));
+    verify(fixture.retryStub())
+        .getRealmAccessGrantForRuntime(any(GetRealmAccessGrantForRuntimeRequest.class));
+    verify(fixture.channelFactory()).buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @Test
+  void runtimeMembershipNormalizesInitialInternalWithoutRetryOrChannelRebuild() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.INTERNAL));
     GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
-    when(channelFactory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
-        .thenReturn(mock(ManagedChannel.class));
-    AccountClient client = newClientWithRetryStub(initialStub, retryStub, channelFactory);
+    AccountClient client = newClient(stub, channelFactory);
 
     GetTenantMembershipForRuntimeResponse response =
         client.getTenantMembershipForRuntime("42", "7", "request-1");
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
-    verify(initialStub)
-        .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
-    verify(retryStub)
-        .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
-    verify(channelFactory).buildChannel(anyString(), anyInt(), any(), anyBoolean());
-  }
-
-  @Test
-  void realmAccessGrantNormalizesExhaustedUnavailableToCanonicalUnavailable() throws Exception {
-    AccountServiceGrpc.AccountServiceBlockingStub initialStub =
-        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
-    AccountServiceGrpc.AccountServiceBlockingStub retryStub =
-        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
-    when(initialStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(initialStub);
-    when(retryStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(retryStub);
-    when(initialStub.getRealmAccessGrantForRuntime(any(GetRealmAccessGrantForRuntimeRequest.class)))
-        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
-    when(retryStub.getRealmAccessGrantForRuntime(any(GetRealmAccessGrantForRuntimeRequest.class)))
-        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
-    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
-    when(channelFactory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
-        .thenReturn(mock(ManagedChannel.class));
-    AccountClient client = newClientWithRetryStub(initialStub, retryStub, channelFactory);
-
-    GetRealmAccessGrantForRuntimeResponse response =
-        client.getRealmAccessGrantForRuntime("42", "7", "world", "realm", "request-1");
-
-    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
-    assertThat(response.getError().getMessage()).isEqualTo("Realm grant authority unavailable");
-    verify(initialStub)
-        .getRealmAccessGrantForRuntime(any(GetRealmAccessGrantForRuntimeRequest.class));
-    verify(retryStub)
-        .getRealmAccessGrantForRuntime(any(GetRealmAccessGrantForRuntimeRequest.class));
-    verify(channelFactory).buildChannel(anyString(), anyInt(), any(), anyBoolean());
+    verify(stub).getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
+    verify(channelFactory, times(0)).buildChannel(anyString(), anyInt(), any(), anyBoolean());
   }
 
   @Test
   void publicMembershipEnsureNormalizesExhaustedUnavailableToCanonicalUnavailable()
       throws Exception {
-    AccountServiceGrpc.AccountServiceBlockingStub initialStub =
-        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
-    AccountServiceGrpc.AccountServiceBlockingStub retryStub =
-        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
-    when(initialStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(initialStub);
-    when(retryStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(retryStub);
-    when(initialStub.ensurePublicProductionPlayerMembership(
-            any(EnsurePublicProductionPlayerMembershipRequest.class)))
+    RetryFixture fixture = newRetryFixture();
+    when(fixture
+            .initialStub()
+            .ensurePublicProductionPlayerMembership(
+                any(EnsurePublicProductionPlayerMembershipRequest.class)))
         .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
-    when(retryStub.ensurePublicProductionPlayerMembership(
-            any(EnsurePublicProductionPlayerMembershipRequest.class)))
+    when(fixture
+            .retryStub()
+            .ensurePublicProductionPlayerMembership(
+                any(EnsurePublicProductionPlayerMembershipRequest.class)))
         .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
-    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
-    when(channelFactory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
-        .thenReturn(mock(ManagedChannel.class));
-    AccountClient client = newClientWithRetryStub(initialStub, retryStub, channelFactory);
 
     EnsurePublicProductionPlayerMembershipResponse response =
-        client.ensurePublicProductionPlayerMembership("42", "7", "world", "realm", "request-1");
+        fixture
+            .client()
+            .ensurePublicProductionPlayerMembership("42", "7", "world", "realm", "request-1");
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
-    verify(initialStub)
+    verify(fixture.initialStub())
         .ensurePublicProductionPlayerMembership(
             any(EnsurePublicProductionPlayerMembershipRequest.class));
-    verify(retryStub)
+    verify(fixture.retryStub())
         .ensurePublicProductionPlayerMembership(
             any(EnsurePublicProductionPlayerMembershipRequest.class));
-    verify(channelFactory).buildChannel(anyString(), anyInt(), any(), anyBoolean());
+    verify(fixture.channelFactory()).buildChannel(anyString(), anyInt(), any(), anyBoolean());
   }
 
   @Test
@@ -399,6 +439,13 @@ class AccountClientTest {
     return newClient(stub, mock(GrpcChannelFactory.class));
   }
 
+  private static GrpcChannelFactory newChannelFactory() throws Exception {
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    when(channelFactory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
+        .thenReturn(mock(ManagedChannel.class));
+    return channelFactory;
+  }
+
   private static AccountClient newClient(
       AccountServiceGrpc.AccountServiceBlockingStub stub, GrpcChannelFactory channelFactory)
       throws Exception {
@@ -429,6 +476,27 @@ class AccountClientTest {
     setStub(client, initialStub);
     return client;
   }
+
+  private static RetryFixture newRetryFixture() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub initialStub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    AccountServiceGrpc.AccountServiceBlockingStub retryStub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(initialStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(initialStub);
+    when(retryStub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(retryStub);
+    GrpcChannelFactory channelFactory = newChannelFactory();
+    return new RetryFixture(
+        initialStub,
+        retryStub,
+        channelFactory,
+        newClientWithRetryStub(initialStub, retryStub, channelFactory));
+  }
+
+  private record RetryFixture(
+      AccountServiceGrpc.AccountServiceBlockingStub initialStub,
+      AccountServiceGrpc.AccountServiceBlockingStub retryStub,
+      GrpcChannelFactory channelFactory,
+      AccountClient client) {}
 
   private static void setStub(
       AccountClient client, AccountServiceGrpc.AccountServiceBlockingStub stub) throws Exception {

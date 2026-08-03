@@ -38,6 +38,7 @@ import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.PingService;
+import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
@@ -99,6 +100,12 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           CreateAccountResponse.newBuilder().setAccountId(account.id().toString()).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (AccountAlreadyExistsException ex) {
+      responseObserver.onNext(
+          CreateAccountResponse.newBuilder()
+              .setError(appError("CreateAccount", "ALREADY_EXISTS", ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {
       responseObserver.onNext(
           CreateAccountResponse.newBuilder()
@@ -122,7 +129,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       net.firedevops.firemud.accountservice.dto.AuthenticationResult result =
           accountService.authenticateForGameplay(
               requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              request.getUsername(),
+              request.getEmail(),
               request.getPassword());
       AuthenticateResponse response =
           AuthenticateResponse.newBuilder()
@@ -221,6 +228,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           GetTenantMembershipForRuntimeResponse.newBuilder()
               .setAccountId(String.valueOf(dto.accountId()))
               .setTenantId(String.valueOf(dto.tenantId()))
+              .setMembershipExists(dto.membershipExists())
               .setGameplayAdmissionAllowed(dto.gameplayAdmissionAllowed())
               .setMembershipVersion(dto.membershipVersion())
               .setEvaluatedAt(dto.evaluatedAt())
@@ -359,6 +367,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           GetTenantEntitlementsForRuntimeResponse.newBuilder()
               .setTenantId(String.valueOf(dto.tenantId()))
               .setGameplayAvailable(dto.gameplayAvailable())
+              .setAllowPublicJoin(dto.allowPublicJoin())
               .setEntitlementVersion(dto.entitlementVersion())
               .setTenantBillingSequence(dto.tenantBillingSequence())
               .setEvaluatedAt(dto.evaluatedAt())

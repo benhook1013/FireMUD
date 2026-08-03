@@ -3,6 +3,7 @@ package net.firedevops.firemud.test;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.web.server.context.WebServerApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -25,10 +26,15 @@ public final class ReactiveTestApplicationSupport {
     resolved.put("spring.cloud.inetutils.default-ip-address", "127.0.0.1");
     resolved.putAll(properties);
     ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(applicationClasses)
-            .properties(toPropertyArray(resolved))
-            .run();
-    int port = ((WebServerApplicationContext) context).getWebServer().getPort();
+        Objects.requireNonNull(
+            new SpringApplicationBuilder(applicationClasses)
+                .properties(toPropertyArray(resolved))
+                .run(),
+            "Spring application context");
+    int port =
+        Objects.requireNonNull(
+                ((WebServerApplicationContext) context).getWebServer(), "Reactive test web server")
+            .getPort();
     return new ReactiveAppHolder(context, port);
   }
 

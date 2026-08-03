@@ -4,16 +4,16 @@ import java.util.List;
 
 /** Shared chained-gameplay telnet scenario helpers for multi-actor proof. */
 public final class GameplayTelnetScenarios {
-  public static final String DEMO_USERNAME = "demo@example.com";
+  public static final String DEMO_LOGIN_EMAIL = "demo@example.com";
   public static final String DEMO_PASSWORD = "swordfish";
   public static final String DEMO_WORLD = "demo";
 
   public static Admission demoAdmission(String readyText) {
-    return Admission.unnamed(DEMO_USERNAME, DEMO_PASSWORD, DEMO_WORLD, readyText);
+    return Admission.unnamed(DEMO_LOGIN_EMAIL, DEMO_PASSWORD, DEMO_WORLD, readyText);
   }
 
   public static Admission demoAdmission(String characterName, String readyText) {
-    return Admission.named(DEMO_USERNAME, DEMO_PASSWORD, DEMO_WORLD, characterName, readyText);
+    return Admission.named(DEMO_LOGIN_EMAIL, DEMO_PASSWORD, DEMO_WORLD, characterName, readyText);
   }
 
   @FunctionalInterface
@@ -213,7 +213,7 @@ public final class GameplayTelnetScenarios {
 
   public static GatewayProxySession openDemoGatewayProxySession(DriverFactory factory)
       throws Exception {
-    return openGatewayProxySession(factory, DEMO_USERNAME, DEMO_PASSWORD, DEMO_WORLD, null);
+    return openGatewayProxySession(factory, DEMO_LOGIN_EMAIL, DEMO_PASSWORD, DEMO_WORLD, null);
   }
 
   public static GatewayProxySession openGatewayProxySession(

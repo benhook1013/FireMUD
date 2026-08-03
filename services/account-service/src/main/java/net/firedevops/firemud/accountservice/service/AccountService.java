@@ -30,7 +30,7 @@ public interface AccountService {
       String username, String password);
 
   net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticateForGameplay(
-      Long tenantId, String username, String password);
+      Long tenantId, String email, String password);
 
   void requestEmailLoginOtp(Long tenantId, String email);
 

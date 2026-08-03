@@ -42,24 +42,13 @@ public class CanonicalGatewayRoutesConfiguration {
                 environment.getProperty(
                     "FIREMUD_GATEWAY_ROUTE_ADMIN_URI", "http://logging-admin-service:8080"),
                 "/api/admin/admission-pointers/**",
-                2),
-            route(
-                "admin-feature-flags",
-                environment.getProperty(
-                    "FIREMUD_GATEWAY_ROUTE_ADMIN_URI", "http://logging-admin-service:8080"),
-                "/api/admin/feature-flags/**",
-                2),
+                2,
+                "GET"),
             route(
                 "admin-logs",
                 environment.getProperty(
                     "FIREMUD_GATEWAY_ROUTE_ADMIN_URI", "http://logging-admin-service:8080"),
                 "/api/admin/logs/**",
-                2),
-            route(
-                "admin-moderation",
-                environment.getProperty(
-                    "FIREMUD_GATEWAY_ROUTE_ADMIN_URI", "http://logging-admin-service:8080"),
-                "/api/admin/moderation/**",
                 2),
             route(
                 "admin-remote-followups",
@@ -78,7 +67,8 @@ public class CanonicalGatewayRoutesConfiguration {
                 environment.getProperty(
                     "FIREMUD_GATEWAY_ROUTE_ADMIN_URI", "http://logging-admin-service:8080"),
                 "/api/admin/tick-remediation/**",
-                2),
+                2,
+                "GET"),
             route(
                 "design",
                 environment.getProperty(

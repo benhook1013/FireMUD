@@ -351,7 +351,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: ⚙️ Set Up Java
-        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: 'temurin'
           java-version: '21'
@@ -362,7 +362,7 @@ jobs:
           node-version: '24.18.1'
 
       - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
         with:
           build-scan-publish: true
           build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
@@ -386,7 +386,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: ⚙️ Set Up Java
-        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: 'temurin'
           java-version: '21'
@@ -397,7 +397,7 @@ jobs:
           node-version: '24.18.1'
 
       - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
         with:
           build-scan-publish: true
           build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
@@ -515,13 +515,13 @@ jobs:
         run: python3 dev-tools/observability/validate-observability-contract.py
 
       - name: ⚙️ Set Up Java
-        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: 'temurin'
           java-version: '21'
 
       - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
         with:
           build-scan-publish: true
           build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
@@ -660,13 +660,13 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Set Up Java
-        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: 'temurin'
           java-version: ${{ matrix.java-version }}
 
       - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
         with:
           build-scan-publish: true
           build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'

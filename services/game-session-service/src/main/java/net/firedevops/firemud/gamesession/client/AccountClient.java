@@ -52,14 +52,14 @@ public final class AccountClient
   }
 
   /** Authenticates a player via the Account Service. */
-  public AuthenticateResponse authenticate(String tenantId, String username, String password) {
+  public AuthenticateResponse authenticate(String tenantId, String email, String password) {
     if (stub() == null) {
       return authenticationUnavailable();
     }
     AuthenticateRequest request =
         AuthenticateRequest.newBuilder()
             .setTenantId(tenantId)
-            .setUsername(username)
+            .setEmail(email)
             .setPassword(password)
             .build();
     try {
@@ -137,7 +137,7 @@ public final class AccountClient
   }
 
   public AuthenticateResponse authenticateForReadiness(
-      String tenantId, String username, String password) {
+      String tenantId, String email, String password) {
     if (stub() == null) {
       return AuthenticateResponse.newBuilder()
           .setError(
@@ -149,7 +149,7 @@ public final class AccountClient
     AuthenticateRequest request =
         AuthenticateRequest.newBuilder()
             .setTenantId(tenantId)
-            .setUsername(username)
+            .setEmail(email)
             .setPassword(password)
             .build();
     return stub()
@@ -215,12 +215,7 @@ public final class AccountClient
   public GetTenantEntitlementsForRuntimeResponse getTenantEntitlementsForRuntime(
       String tenantId, String requestId) {
     if (stub() == null) {
-      return GetTenantEntitlementsForRuntimeResponse.newBuilder()
-          .setError(
-              ErrorDetail.newBuilder()
-                  .setCode("ENTITLEMENT_UNAVAILABLE")
-                  .setMessage("Entitlement authority unavailable"))
-          .build();
+      return entitlementAuthorityUnavailable();
     }
     GetTenantEntitlementsForRuntimeRequest request =
         GetTenantEntitlementsForRuntimeRequest.newBuilder()
@@ -247,12 +242,7 @@ public final class AccountClient
     } catch (Exception ex) {
       logger.warn("Failed to call Account Service runtime entitlements endpoint", ex);
     }
-    return GetTenantEntitlementsForRuntimeResponse.newBuilder()
-        .setError(
-            ErrorDetail.newBuilder()
-                .setCode("ENTITLEMENT_UNAVAILABLE")
-                .setMessage("Entitlement authority unavailable"))
-        .build();
+    return entitlementAuthorityUnavailable();
   }
 
   public GetRealmAccessGrantForRuntimeResponse getRealmAccessGrantForRuntime(
@@ -344,6 +334,15 @@ public final class AccountClient
             ErrorDetail.newBuilder()
                 .setCode(AuthenticationErrorCodes.UNAVAILABLE)
                 .setMessage("Membership authority unavailable"))
+        .build();
+  }
+
+  private GetTenantEntitlementsForRuntimeResponse entitlementAuthorityUnavailable() {
+    return GetTenantEntitlementsForRuntimeResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode(AuthenticationErrorCodes.UNAVAILABLE)
+                .setMessage("Entitlement authority unavailable"))
         .build();
   }
 

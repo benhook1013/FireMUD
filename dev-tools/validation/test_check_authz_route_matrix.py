@@ -28,15 +28,6 @@ def load_validator():
     return module
 
 
-def replace_or_fail(text: str, old: str, new: str) -> str:
-    occurrences = text.count(old)
-    if occurrences != 1:
-        raise AssertionError(
-            f"expected exactly one occurrence of {old!r}, found {occurrences}"
-        )
-    return text.replace(old, new, 1)
-
-
 class RouteCardinalityError(AssertionError):
     def __init__(self, service: str, route_name: str, match_count: int):
         super().__init__(
@@ -78,6 +69,22 @@ def validate_document(validator, document):
             encoding="utf-8",
         )
         return validator.validate(path)
+
+
+def websocket_route(document, connection_mode):
+    matches = [
+        route
+        for route in document["routes"]
+        if route.get("service") == "spring-cloud-gateway"
+        and route.get("route") == "/ws/game/**"
+        and {"connection_mode": connection_mode}
+        in route.get("applicability", {}).get("all_of", [])
+    ]
+    if len(matches) != 1:
+        raise AssertionError(
+            f"expected exactly one /ws/game/** {connection_mode} route, found {len(matches)}"
+        )
+    return matches[0]
 
 
 def configure_multi_profile_route(document):
@@ -207,7 +214,101 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
         self.assertEqual([], errors)
 
-    def test_http_session_mutations_are_gated_without_losing_current_route_status(self):
+    def test_operator_mutation_gate_declares_route_status_precedence(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        self.assertEqual(
+            ["gate_wins_for_applies_to"],
+            baseline["route_status_override_vocabulary"],
+        )
+        self.assertEqual(
+            "gate_wins_for_applies_to",
+            baseline["operator_mutation_support_gate"]["route_status_override"],
+        )
+
+        mutations = (
+            (
+                "missing vocabulary",
+                lambda document: document.pop("route_status_override_vocabulary"),
+                "route_status_override_vocabulary must be a non-empty list of strings",
+            ),
+            (
+                "unknown vocabulary value",
+                lambda document: document.__setitem__(
+                    "route_status_override_vocabulary", ["route_wins"]
+                ),
+                (
+                    "route_status_override_vocabulary must contain exactly "
+                    "['gate_wins_for_applies_to']"
+                ),
+            ),
+            (
+                "missing gate override",
+                lambda document: document["operator_mutation_support_gate"].pop(
+                    "route_status_override"
+                ),
+                (
+                    "operator_mutation_support_gate.route_status_override must be one of "
+                    "['gate_wins_for_applies_to']"
+                ),
+            ),
+        )
+        for name, mutate, expected_error in mutations:
+            with self.subTest(name=name):
+                document = copy.deepcopy(baseline)
+                mutate(document)
+                errors = []
+                self.validator.validate_operator_mutation_support_gate(
+                    document, document["routes"], errors
+                )
+                self.assertIn(expected_error, errors)
+
+    def test_operator_mutation_gate_status_precedence_has_positive_and_negative_proof(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        gate = baseline["operator_mutation_support_gate"]
+        errors = []
+        self.validator.validate_operator_mutation_support_gate(
+            baseline, baseline["routes"], errors
+        )
+        self.assertEqual([], errors)
+        self.assertEqual(
+            "target_not_currently_routable",
+            gate["status"],
+        )
+
+        document = copy.deepcopy(baseline)
+        document["operator_mutation_support_gate"]["status"] = (
+            "current_openapi_operator_surface"
+        )
+        errors = []
+        self.validator.validate_operator_mutation_support_gate(
+            document, document["routes"], errors
+        )
+        self.assertIn(
+            "operator_mutation_support_gate.status must be "
+            "target_not_currently_routable",
+            errors,
+        )
+
+        document = copy.deepcopy(baseline)
+        route = route_for(
+            document, "logging-admin-service", "POST /feature-flags/toggle"
+        )
+        route["route_status"] = "current_openapi_operator_surface"
+        errors = []
+        self.validator.validate_operator_mutation_support_gate(
+            document, document["routes"], errors
+        )
+        self.assertIn(
+            "operator_mutation_support_gate.applies_to route "
+            "logging-admin-service/POST /feature-flags/toggle must declare "
+            "route_status target_not_currently_routable when "
+            "route_status_override is gate_wins_for_applies_to",
+            errors,
+        )
+
+    def test_http_operator_session_mutations_are_target_gated(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         expected = set(self.validator.REQUIRED_SESSION_LIFECYCLE_GATE_ROUTES)
         self.assertTrue(
@@ -222,7 +323,18 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         for identity in expected:
             service, route_name = identity.split("/", 1)
             route = route_for(document, service, route_name)
-            self.assertEqual("current_openapi_operator_surface", route["route_status"])
+            self.assertEqual("target_not_currently_routable", route["route_status"])
+
+        refresh_roles = "game-session-service/POST /sessions/{sessionId}/refresh-roles"
+        self.assertNotIn(
+            refresh_roles,
+            document["operator_mutation_support_gate"]["applies_to"],
+        )
+        service, route_name = refresh_roles.split("/", 1)
+        self.assertEqual(
+            "current_openapi_operator_surface",
+            route_for(document, service, route_name)["route_status"],
+        )
 
         document["operator_mutation_support_gate"]["applies_to"].remove(
             "game-session-service/POST /sessions"
@@ -280,9 +392,51 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 }
                 self.assertEqual(expected, branches)
 
-        for branch_name, missing_check in (
-            ("tenant_role", "tenant_generation"),
-            ("platformAdmin_global", "target_tenant_generation"),
+        with self.subTest(route="IssueHumanOperatorAuthorizationReference"):
+            document = copy.deepcopy(baseline)
+            route = route_for(
+                document,
+                "account-service",
+                "IssueHumanOperatorAuthorizationReference",
+            )
+            branches = {
+                branch["branch"]: set(branch["required_live_checks"])
+                for branch in route["operator_authorization_branches"]
+            }
+            self.assertEqual(expected, branches)
+
+            platform_admin_branch = next(
+                branch
+                for branch in route["operator_authorization_branches"]
+                if branch["branch"] == "platformAdmin_global"
+            )
+            platform_admin_branch["required_live_checks"].remove(
+                "target_tenant_generation"
+            )
+            errors = []
+            self.validator.validate_generation_applicability(
+                document["routes"], errors
+            )
+            self.assertTrue(
+                any(
+                    "IssueHumanOperatorAuthorizationReference"
+                    in error
+                    and "required_live_checks must equal" in error
+                    for error in errors
+                )
+            )
+
+        for branch_name, missing_check, expected_diagnostic in (
+            (
+                "tenant_role",
+                "tenant_generation",
+                "operator route must require tenant_generation",
+            ),
+            (
+                "platformAdmin_global",
+                "target_tenant_generation",
+                "operator route must require target_tenant_generation",
+            ),
         ):
             with self.subTest(branch=branch_name, missing_check=missing_check):
                 document = copy.deepcopy(baseline)
@@ -299,15 +453,11 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 self.validator.validate_generation_applicability(
                     document["routes"], errors
                 )
-                self.assertTrue(
-                    any(
-                        missing_check in error
-                        and (
-                            "tenant-role branch must require" in error
-                            or "operator route must require" in error
-                        )
-                        for error in errors
-                    )
+                route_index_value = route_index(document, route)
+                self.assertIn(
+                    f"routes[{route_index_value}] logging-admin-service "
+                    f"POST /feature-flags/toggle {expected_diagnostic}",
+                    errors,
                 )
 
     def test_admission_pointer_mutation_requires_expected_version_check(self):
@@ -403,7 +553,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_profile_routes_require_generation_checks(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         routes = grouped_routes(document, "account-service")
-        for route_name in ("GetProfile", "UpdateProfile"):
+        self.assertNotIn("GetProfile", routes)
+        self.assertNotIn("UpdateProfile", routes)
+        for _, route_name in self.validator.PROFILE_ROUTES:
             self.assertTrue(routes[route_name])
             for route in routes[route_name]:
                 self.assertTrue(route["tenant_billing_authority_generation_applies"])
@@ -420,56 +572,134 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     }.issubset(route["required_live_checks"])
                 )
 
-        routes["GetProfile"][0]["required_live_checks"].remove("tenant_generation")
+        routes[self.validator.PROFILE_ROUTES[0][1]][0]["required_live_checks"].remove(
+            "tenant_generation"
+        )
         errors = []
         self.validator.validate_profile_authority_routes(document["routes"], errors)
         self.assertIn(
-            "account-service GetProfile must require live check tenant_generation",
+            "account-service GET /tenants/{tenantId}/profiles/{accountId} must require live check tenant_generation",
             errors,
         )
 
     def test_profile_route_auth_and_method_policy_are_validated(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        route = route_for(document, "account-service", "GetProfile")
+        route = route_for(document, *self.validator.PROFILE_ROUTES[0])
         route["auth_path"] = "wrong_auth_path"
         route["method_policy"] = "all_methods"
         errors = []
         self.validator.validate_profile_authority_routes(document["routes"], errors)
         self.assertIn(
-            "account-service GetProfile must declare auth_path control_ui_plus_current_tenant_role",
+            "account-service GET /tenants/{tenantId}/profiles/{accountId} must declare auth_path control_ui_plus_current_tenant_role",
             errors,
         )
         self.assertIn(
-            "account-service GetProfile must declare method_policy exact_declared_route",
+            "account-service GET /tenants/{tenantId}/profiles/{accountId} must declare method_policy exact_declared_route",
             errors,
         )
 
-    def test_refresh_roles_uses_redeemed_operator_authority_and_idempotency(self):
+    def test_refresh_roles_uses_owner_authority_and_independent_idempotency(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         routes = grouped_routes(document, "game-session-service")
         grpc = routes["RefreshRoles"][0]
+        self.assertEqual("exact_mtls_workload", grpc["auth_path"])
+        self.assertNotIn("operator_authorization_reference", grpc)
+        self.assertNotIn("delegated_subject", grpc)
         self.assertEqual(
-            "exact_mtls_workload_plus_account_operator_authorization_reference",
-            grpc["auth_path"],
-        )
-        self.assertEqual(
-            "required_and_redeemed_with_account",
-            grpc["operator_authorization_reference"],
+            {"current_session", "current_account_roles"},
+            set(grpc["required_live_checks"]),
         )
         self.assertIn("mutation_digest", grpc["required_fields"])
         self.assertIn("IDEMPOTENCY_CONFLICT", grpc["canonical_errors"]["any_of"])
         http = routes["POST /sessions/{sessionId}/refresh-roles"][0]
+        self.assertEqual("exact_mtls_workload", http["auth_path"])
+        self.assertNotIn("operator_authorization_reference", http)
+        self.assertNotIn("delegated_subject", http)
         self.assertEqual(
-            "account_issued_bounded_reference", http["operator_authorization_reference"]
+            {"current_session", "current_account_roles"},
+            set(http["required_live_checks"]),
+        )
+        self.assertEqual(
+            "owner_atomic_idempotent_role_refresh_with_durable_result",
+            http["mutation_contract"],
         )
         self.assertIn("mutation_digest", http["required_fields"])
         self.assertIn("IDEMPOTENCY_CONFLICT", http["canonical_errors"]["any_of"])
 
-        grpc.pop("operator_authorization_reference")
+        grpc["auth_path"] = (
+            "exact_mtls_workload_plus_account_operator_authorization_reference"
+        )
+        grpc["operator_authorization_reference"] = "required_and_redeemed_with_account"
+        grpc["delegated_subject"] = "operator_authorization_reference"
+        grpc["required_live_checks"].append("current_operator_authorization")
+        grpc["required_live_checks"].remove("current_account_roles")
         errors = []
         self.validator.validate_refresh_roles_routes(document["routes"], errors)
-        self.assertTrue(
-            any("operator authorization redemption" in error for error in errors)
+        self.assertIn(
+            "game-session-service RefreshRoles must use exact_mtls_workload auth_path",
+            errors,
+        )
+        self.assertIn(
+            "game-session-service RefreshRoles must not receive an operator "
+            "authorization reference",
+            errors,
+        )
+        self.assertIn(
+            "game-session-service RefreshRoles must not declare a delegated subject",
+            errors,
+        )
+
+        http["auth_path"] = (
+            "control_ui_plus_current_role_and_role_appropriate_assurance"
+        )
+        http["operator_authorization_reference"] = "account_issued_bounded_reference"
+        http["delegated_subject"] = "authenticated_operator"
+        http["required_live_checks"].append("current_operator_authorization")
+        http["required_live_checks"].remove("current_account_roles")
+        http["mutation_contract"] = (
+            "durable_intent_then_account_redeemed_owner_idempotent_mutation"
+        )
+        errors = []
+        self.validator.validate_refresh_roles_routes(document["routes"], errors)
+        self.assertIn(
+            "game-session-service POST /sessions/{sessionId}/refresh-roles must use "
+            "exact_mtls_workload auth_path",
+            errors,
+        )
+        self.assertIn(
+            "game-session-service POST /sessions/{sessionId}/refresh-roles must not "
+            "receive an operator authorization reference",
+            errors,
+        )
+        self.assertIn(
+            "game-session-service POST /sessions/{sessionId}/refresh-roles must not "
+            "declare a delegated subject",
+            errors,
+        )
+        self.assertIn(
+            "game-session-service POST /sessions/{sessionId}/refresh-roles must "
+            "require live check current_account_roles",
+            errors,
+        )
+        self.assertIn(
+            "game-session-service POST /sessions/{sessionId}/refresh-roles must not "
+            "depend on current operator authorization",
+            errors,
+        )
+        self.assertIn(
+            "game-session-service POST /sessions/{sessionId}/refresh-roles must use "
+            "the owner role-refresh mutation contract",
+            errors,
+        )
+        self.assertIn(
+            "game-session-service RefreshRoles must require live check "
+            "current_account_roles",
+            errors,
+        )
+        self.assertIn(
+            "game-session-service RefreshRoles must not depend on current operator "
+            "authorization",
+            errors,
         )
 
     def test_refresh_roles_rejects_malformed_required_fields(self):
@@ -780,10 +1010,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_profile_routes_distinguish_self_only_subjects(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        for route_name in ("GetProfile", "UpdateProfile"):
-            route = route_for(document, "account-service", route_name)
+        for service, route_name in self.validator.PROFILE_ROUTES:
+            route = route_for(document, service, route_name)
             self.assertEqual(
-                "caller_account_id_for_self_only_roles", route["subject_binding"]
+                "caller_account_id", route["subject_binding"]
             )
             self.assertEqual(
                 ["player", "moderator", "designer"], route["self_only_roles"]
@@ -951,7 +1181,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertIn("membership", route["required_live_checks"])
         self.assertIn("current_operator_roles", route["required_live_checks"])
 
-    def test_all_billing_safe_tenant_routes_require_current_tenant_admin_role(self):
+    def test_all_billing_safe_tenant_routes_require_route_class_checks(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         routes = [
             route
@@ -959,9 +1189,19 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             if route.get("classification") == "billing_safe_tenant"
         ]
         self.assertTrue(routes, "matrix must define billing_safe_tenant routes")
+        expected_checks = {
+            "issuer_generation",
+            "account_generation",
+            "current_operator_roles",
+            "membership",
+            "membership_generation",
+            "membership_version",
+        }
         for route in routes:
             with self.subTest(route=route["route"]):
-                self.assertIn("current_operator_roles", route["required_live_checks"])
+                self.assertTrue(
+                    expected_checks.issubset(set(route["required_live_checks"]))
+                )
                 self.assertEqual(["tenantAdmin"], route["roles"]["any_of"])
 
     def test_billing_safe_tenant_route_role_check_cannot_be_omitted(self):
@@ -1000,18 +1240,103 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_play_rechecks_membership_generation(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = route_for(document, "game-session-service", "PLAY")
+        self.assertTrue(route["tenant_authority_generation_applies"])
         self.assertTrue(route["membership_authority_generation_applies"])
-        self.assertIn("membership_generation", route["required_live_checks"])
+        self.assertTrue(route["membership_version_applies"])
+        self.assertNotIn("membership_authority_generation_condition", route)
+        self.assertTrue(
+            self.validator.REQUIRED_PLAY_GENERATION_CHECKS.issubset(
+                set(route["required_live_checks"])
+            )
+        )
+
+        route["required_live_checks"].remove("target_tenant_generation")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "game-session-service PLAY is missing exact selected-tenant generation checks"
+                in error
+                for error in errors
+            )
+        )
+
+        route["classification"] = "player_bootstrap_tenant"
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "game-session-service PLAY must use classification gameplay_admission"
+                in error
+                for error in errors
+            )
+        )
+
+    def test_play_admission_composes_common_checks_with_selected_branch_metadata(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "game-session-service", "PLAY")
+        self.assertIn("TENANT_BILLING_BLOCKED", route["canonical_errors"]["any_of"])
+        selection = route["admission_mode_selection"]
+        common = set(selection["required_live_checks"])
+        self.assertEqual(
+            common,
+            self.validator.REQUIRED_GAMEPLAY_ADMISSION_COMMON_CHECKS,
+        )
+        self.assertEqual(
+            common
+            | set(selection["branches"]["returning_membership"]["required_live_checks"]),
+            {
+                "runtime_entitlements",
+                "admission_pointer",
+                "membership",
+                "membership_generation",
+                "realm_visibility",
+            },
+        )
+        self.assertNotIn(
+            "public_production_admission",
+            selection["branches"]["returning_membership"]["required_live_checks"],
+        )
+        self.assertEqual(
+            common
+            | set(
+                selection["branches"]["grant_backed_private_or_playtest"][
+                    "required_live_checks"
+                ]
+            ),
+            {
+                "runtime_entitlements",
+                "admission_pointer",
+                "membership",
+                "membership_generation",
+                "conditional_realm_access_grant",
+            },
+        )
+        self.assertTrue(common.issubset(set(route["required_live_checks"])))
+        self.assertIn("target_tenant_generation", route["required_live_checks"])
+
+    def test_play_rejects_legacy_conditional_membership_generation(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "game-session-service", "PLAY")
+        route["membership_authority_generation_applies"] = (
+            "conditional_by_admission_mode"
+        )
+        errors = []
+        self.validator.validate_generation_applicability(document["routes"], errors)
+        self.assertTrue(
+            any(
+                "membership_authority_generation_applies must be one of" in error
+                for error in errors
+            )
+        )
 
     def test_true_membership_generation_requires_live_check(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        route = route_for(document, "account-service", "GetProfile")
+        route = route_for(document, *self.validator.PROFILE_ROUTES[0])
         route["required_live_checks"].remove("membership_generation")
         errors = []
         self.validator.validate_generation_applicability(document["routes"], errors)
         self.assertTrue(
             any(
-                "account-service GetProfile membership_authority_generation_applies=true "
+                "account-service GET /tenants/{tenantId}/profiles/{accountId} membership_authority_generation_applies=true "
                 "requires live check membership_generation" in error
                 for error in errors
             )
@@ -1157,8 +1482,12 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_membership_writer_requires_current_account_state_and_pending_deletion_gate(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        self.assertNotIn(
+            "EnsurePublicProductionPlayerMembership",
+            {route["route"] for route in baseline["routes"]},
+        )
         route = route_for(
-            baseline, "account-service", "EnsurePublicProductionPlayerMembership"
+            baseline, *self.validator.MEMBERSHIP_WRITER_ROUTE
         )
         self.assertTrue(
             self.validator.REQUIRED_MEMBERSHIP_WRITER_CHECKS.issubset(
@@ -1170,8 +1499,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 document = copy.deepcopy(baseline)
                 route = route_for(
                     document,
-                    "account-service",
-                    "EnsurePublicProductionPlayerMembership",
+                    *self.validator.MEMBERSHIP_WRITER_ROUTE,
                 )
                 route["required_live_checks"].remove(missing_check)
                 errors = []
@@ -1248,6 +1576,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             "AUTH_SESSION_REVOKED",
             fresh["reachable_invalid_or_ambiguous"],
         )
+        self.assertTrue(fresh["route_specific_canonical_errors_precedence"])
         bound = document["authority_evidence_policy"]["bound_ordinary_gameplay"]
         self.assertFalse(bound["pointer_authority_reread"])
         self.assertEqual(
@@ -1265,6 +1594,11 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "reachable_invalid_or_ambiguous",
                 "AUTH_UNAVAILABLE",
                 "must fail closed with AUTH_SESSION_REVOKED",
+            ),
+            (
+                "route_specific_canonical_errors_precedence",
+                False,
+                "must give route-specific canonical_errors precedence",
             ),
         )
         for field, invalid_value, expected_error in cases:
@@ -1320,9 +1654,17 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             self.assertFalse(route["membership_authority_generation_applies"])
             downstream = route["downstream_admission_contract"]
             self.assertFalse(downstream["tenant_billing_authority_generation_applies"])
-            self.assertTrue(downstream["membership_authority_generation_applies"])
-            self.assertIn("membership", downstream["required_live_checks"])
-            self.assertIn("membership_generation", downstream["required_live_checks"])
+            self.assertEqual(
+                "required_fail_closed", downstream["admission_mode_selection"]
+            )
+            self.assertEqual(
+                {
+                    "public_production_onboarding",
+                    "returning_membership",
+                    "grant_backed_private_or_playtest",
+                },
+                set(downstream["required_mode_branches"]),
+            )
 
     def test_ws_game_downstream_membership_contract_is_required(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -1334,13 +1676,13 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             and {"connection_mode": "trusted_tcp_proxy"}
             in route.get("applicability", {}).get("all_of", [])
         )
-        route["downstream_admission_contract"][
-            "membership_authority_generation_applies"
-        ] = False
+        route["downstream_admission_contract"]["admission_mode_selection"] = (
+            "public_production_onboarding"
+        )
         errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
-                "/ws/game/** trusted_tcp_proxy downstream_admission_contract must apply membership authority generation"
+                "/ws/game/** trusted_tcp_proxy downstream_admission_contract must require fail-closed admission mode selection"
                 in error
                 for error in errors
             )
@@ -1362,41 +1704,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             self.assertNotIn("membership_generation", route["required_live_checks"])
 
     def test_unknown_live_check_is_rejected(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            text = replace_or_fail(
-                MATRIX.read_text(encoding="utf-8"),
-                """  - service: game-session-service
-    route: WORLDS_PUBLIC
-    transport_command: WORLDS
-    scope: public
-    classification: public
-    accepted_token_profiles: []
-    token_type: none
-    token_issuer: none
-    token_audience: none
-    applicability:
-      all_of:
-        - authentication_state: unauthenticated
-    response_profile: public_production_catalog_only
-    required_live_checks: [public_production_visibility, runtime_entitlements]""",
-                """  - service: game-session-service
-    route: WORLDS_PUBLIC
-    transport_command: WORLDS
-    scope: public
-    classification: public
-    accepted_token_profiles: []
-    token_type: none
-    token_issuer: none
-    token_audience: none
-    applicability:
-      all_of:
-        - authentication_state: unauthenticated
-    response_profile: public_production_catalog_only
-    required_live_checks: [unknown_check]""",
-            )
-            path.write_text(text, encoding="utf-8")
-            errors = self.validator.validate(path)
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "game-session-service", "WORLDS_PUBLIC")
+        route["required_live_checks"] = ["unknown_check"]
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any("outside the closed vocabulary" in error for error in errors)
         )
@@ -1724,17 +2035,55 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
         route["required_fields"].remove("action_family_schema_id")
         errors = validate_document(self.validator, document)
-        self.assertTrue(
+        self.assertIn(
+            "account-service IssueHumanOperatorAuthorizationReference required_fields "
+            "must include operator-reference fields: ['action_family_schema_id']",
+            errors,
+        )
+
+    def test_operator_reference_issuance_missing_required_fields_has_one_diagnostic(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            document, "account-service", "IssueHumanOperatorAuthorizationReference"
+        )
+        route.pop("required_fields")
+
+        errors = validate_document(self.validator, document)
+
+        self.assertEqual(
+            1,
+            errors.count(
+                "account-service IssueHumanOperatorAuthorizationReference "
+                "required_fields must include operator-reference fields: "
+                "['action_family', 'action_family_schema_id', "
+                "'action_family_schema_version', 'control_plane_request_id', "
+                "'mutation_digest', 'tenant_scope']"
+            ),
+        )
+        self.assertFalse(
             any(
-                "IssueHumanOperatorAuthorizationReference required_fields must include "
-                "operator-reference fields" in error
-                and "action_family_schema_id" in error
+                "account-service IssueHumanOperatorAuthorizationReference "
+                "required_fields must be a list of strings" in error
                 for error in errors
             )
         )
 
     def test_unavailable_authority_uses_one_canonical_error(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        entitlement_route = route_for(document, "game-session-service", "REALMS")
+        self.assertIn(
+            "ENTITLEMENT_UNAVAILABLE",
+            entitlement_route["canonical_errors"]["any_of"],
+        )
+        self.assertNotIn(
+            "ENTITLEMENT_UNAVAILABLE",
+            self.validator.UNAVAILABLE_AUTHORITY_ERROR_ALIASES,
+        )
+        errors = []
+        self.validator.validate_authority_unavailable_outcomes(
+            document["routes"], errors
+        )
+        self.assertEqual([], errors)
         for route_name in (
             "IssueConnectToken",
             "CommitTenantCapacityAdmission",
@@ -1914,6 +2263,42 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     entry["target_tenant_generation_advance_behavior"],
                 )
 
+    def test_class_required_authority_is_metadata_not_universal_route_checks(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        classifications = document["tenant_generation_policy"][
+            "no_target_tenant_classifications"
+        ]
+        for classification, expected in self.validator.REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS.items():
+            self.assertEqual(
+                expected["required_authority"],
+                set(classifications[classification]["required_authority"]),
+            )
+        join = route_for(document, "game-session-service", "JOIN")
+        self.assertNotIn("membership", join["required_live_checks"])
+        self.assertNotIn("membership_generation", join["required_live_checks"])
+        account_route = route_for(document, "account-service", "ExportAccount")
+        self.assertNotEqual(
+            set(account_route["required_live_checks"]),
+            set(classifications["account_scoped"]["required_authority"]),
+        )
+        pending_route = route_for(document, "account-service", "GET /accounts/{accountId}/deletion")
+        self.assertEqual(
+            set(pending_route["required_live_checks"]),
+            set(classifications["pending_deletion_scoped"]["required_authority"]),
+        )
+        errors = validate_document(self.validator, document)
+        self.assertEqual([], errors)
+
+        document["tenant_generation_policy"]["no_target_tenant_classifications"][
+            "public"
+        ]["required_authority"].append("membership")
+        errors = validate_document(self.validator, document)
+        self.assertIn(
+            "tenant_generation_policy.no_target_tenant_classifications.public "
+            "has the wrong required authority metadata",
+            errors,
+        )
+
     def test_target_generation_denial_proof_is_scoped_to_tenant_authority(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         proof = document["tenant_generation_policy"]["negative_proof"]
@@ -1940,7 +2325,6 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         route_keys = (
             ("account-service", "AuthLogout"),
             ("account-service", "DELETE /tenants/{tenantId}/memberships/me"),
-            ("account-service", "IssueConnectToken"),
         )
         for service, route_name in route_keys:
             with self.subTest(route=route_name):
@@ -1960,12 +2344,59 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         issue_connect_token = route_for(
             document, "account-service", "IssueConnectToken"
         )
-        issue_connect_token["required_live_checks"].append(
-            "target_tenant_generation"
+        self.assertIn(
+            "target_tenant_generation", issue_connect_token["required_live_checks"]
         )
+        self.assertIn(
+            ("account-service", "IssueConnectToken"),
+            self.validator.ROUTES_WITH_EXPLICIT_TARGET_TENANT_AUTHORITY,
+        )
+        player_bootstrap_policy = document["tenant_generation_policy"][
+            "no_target_tenant_classifications"
+        ]["player_bootstrap_tenant"]
+        self.assertEqual(
+            "route_declared",
+            player_bootstrap_policy["target_tenant_generation_advance_behavior"],
+        )
+
+        report_route = route_for(
+            document, "logging-admin-service", "POST /reports"
+        )
+        report_route["required_live_checks"].append("target_tenant_generation")
         errors = validate_document(self.validator, document)
         self.assertTrue(
-            any("must not require tenant-generation checks" in error for error in errors)
+            any(
+                "logging-admin-service POST /reports must not require "
+                "tenant-generation checks for no-target classification "
+                "player_bootstrap_tenant" in error
+                for error in errors
+            )
+        )
+
+    def test_selected_tenant_generation_exception_matches_route_classification(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(baseline, "account-service", "IssueConnectToken")
+
+        route["classification"] = "gameplay_admission"
+        errors = validate_document(self.validator, baseline)
+        self.assertTrue(
+            any(
+                "explicit target-tenant authority must use classification "
+                "player_bootstrap_tenant" in error
+                for error in errors
+            )
+        )
+
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "account-service", "IssueConnectToken")
+        route["tenant_authority_generation_applies"] = False
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "explicit target-tenant authority must set "
+                "tenant_authority_generation_applies=true" in error
+                for error in errors
+            )
         )
 
     def test_cross_tenant_safe_route_rejects_target_generation_checks(self):
@@ -2175,7 +2606,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 document = self.validator.yaml.safe_load(
                     MATRIX.read_text(encoding="utf-8")
                 )
-                route = route_for(document, "game-session-service", "PLAY")
+                route = route_for(document, "account-service", "IssueConnectToken")
                 route["implementation_status"]["known_drift"] = malformed
                 errors = validate_document(self.validator, document)
                 self.assertTrue(
@@ -2188,17 +2619,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 )
 
     def test_route_live_checks_must_be_a_list(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            text = replace_or_fail(
-                MATRIX.read_text(encoding="utf-8"),
-                """    response_profile: public_production_catalog_only
-    required_live_checks: [public_production_visibility, runtime_entitlements]""",
-                """    response_profile: public_production_catalog_only
-    required_live_checks: public_production_visibility""",
-            )
-            path.write_text(text, encoding="utf-8")
-            errors = self.validator.validate(path)
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "game-session-service", "WORLDS_PUBLIC")
+        route["required_live_checks"] = "public_production_visibility"
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
                 error.startswith("matrix.routes[")
@@ -2208,17 +2632,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
 
     def test_route_live_check_entries_must_be_strings(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            text = replace_or_fail(
-                MATRIX.read_text(encoding="utf-8"),
-                """    response_profile: public_production_catalog_only
-    required_live_checks: [public_production_visibility, runtime_entitlements]""",
-                """    response_profile: public_production_catalog_only
-    required_live_checks: [public_production_visibility, 7]""",
-            )
-            path.write_text(text, encoding="utf-8")
-            errors = self.validator.validate(path)
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "game-session-service", "WORLDS_PUBLIC")
+        route["required_live_checks"] = ["public_production_visibility", 7]
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
                 error.startswith("matrix.routes[")
@@ -2247,15 +2664,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
 
     def test_ws_game_live_checks_are_required(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            text = replace_or_fail(
-                MATRIX.read_text(encoding="utf-8"),
-                "required_live_checks: [connect_token_single_use_consume, replay_protection_available, replay_admission_fence_match, connect_scope_match]",
-                "required_live_checks: [connect_token_single_use_consume, replay_protection_available, connect_scope_match]",
-            )
-            path.write_text(text, encoding="utf-8")
-            errors = self.validator.validate(path)
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = websocket_route(document, "first_party_web")
+        route["required_live_checks"].remove("replay_admission_fence_match")
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
                 "/ws/game/** is missing required live checks" in error
@@ -2264,40 +2676,28 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
 
     def test_ws_game_policy_pressure_outcome_is_required(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            text = replace_or_fail(
-                MATRIX.read_text(encoding="utf-8"), "        - POLICY_PRESSURE\n", ""
-            )
-            path.write_text(text, encoding="utf-8")
-            errors = self.validator.validate(path)
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = websocket_route(document, "first_party_web")
+        route["handshake_error_classes"]["any_of"].remove("POLICY_PRESSURE")
+        errors = validate_document(self.validator, document)
         self.assertTrue(any("POLICY_PRESSURE" in error for error in errors))
 
     def test_trusted_tcp_proxy_route_is_required(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            text = replace_or_fail(
-                MATRIX.read_text(encoding="utf-8"),
-                "        - connection_mode: trusted_tcp_proxy",
-                "        - connection_mode: missing_trusted_proxy",
-            )
-            path.write_text(text, encoding="utf-8")
-            errors = self.validator.validate(path)
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = websocket_route(document, "trusted_tcp_proxy")
+        route["applicability"]["all_of"][0]["connection_mode"] = (
+            "missing_trusted_proxy"
+        )
+        errors = validate_document(self.validator, document)
         self.assertTrue(any("trusted_tcp_proxy" in error for error in errors))
 
     def test_conflicting_ws_game_connection_modes_are_rejected(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            text = replace_or_fail(
-                MATRIX.read_text(encoding="utf-8"),
-                """      all_of:
-        - connection_mode: trusted_tcp_proxy""",
-                """      all_of:
-        - connection_mode: trusted_tcp_proxy
-        - connection_mode: first_party_web""",
-            )
-            path.write_text(text, encoding="utf-8")
-            errors = self.validator.validate(path)
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = websocket_route(document, "trusted_tcp_proxy")
+        route["applicability"]["all_of"].append(
+            {"connection_mode": "first_party_web"}
+        )
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
                 "/ws/game/** has conflicting applicability values for connection_mode"
@@ -2356,24 +2756,37 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
 
     def test_first_party_ws_and_revoke_operations_are_mutually_exclusive(self):
-        for old, new, expected_label in (
+        for connection_mode, operation, expected_label in (
             (
-                "        - operation: websocket_upgrade",
-                "        - operation: connect_token_cookie_revoke",
+                "first_party_web",
+                "connect_token_cookie_revoke",
                 "/ws/game/** first_party_web",
             ),
             (
-                "        - operation: connect_token_cookie_revoke",
-                "        - operation: websocket_upgrade",
+                "first_party_web",
+                "websocket_upgrade",
                 "POST /ws/game/connect-token/revoke",
             ),
         ):
             with self.subTest(expected_label=expected_label):
-                with tempfile.TemporaryDirectory() as directory:
-                    path = Path(directory) / "matrix.yaml"
-                    text = replace_or_fail(MATRIX.read_text(encoding="utf-8"), old, new)
-                    path.write_text(text, encoding="utf-8")
-                    errors = self.validator.validate(path)
+                document = self.validator.yaml.safe_load(
+                    MATRIX.read_text(encoding="utf-8")
+                )
+                if expected_label.startswith("/ws/game"):
+                    route = websocket_route(document, connection_mode)
+                else:
+                    route = route_for(
+                        document,
+                        "spring-cloud-gateway",
+                        "POST /ws/game/connect-token/revoke",
+                    )
+                operation_predicate = next(
+                    predicate
+                    for predicate in route["applicability"]["all_of"]
+                    if predicate.get("operation") is not None
+                )
+                operation_predicate["operation"] = operation
+                errors = validate_document(self.validator, document)
                 self.assertTrue(
                     any(
                         f"{expected_label} must declare applicability operation"
@@ -2383,15 +2796,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 )
 
     def test_trusted_tcp_proxy_live_checks_are_required(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            text = replace_or_fail(
-                MATRIX.read_text(encoding="utf-8"),
-                "    required_live_checks: [trusted_proxy_identity]",
-                "    required_live_checks: []",
-            )
-            path.write_text(text, encoding="utf-8")
-            errors = self.validator.validate(path)
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = websocket_route(document, "trusted_tcp_proxy")
+        route["required_live_checks"] = []
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
                 "/ws/game/** trusted_tcp_proxy is missing required live checks" in error
@@ -2400,15 +2808,14 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
 
     def test_connect_token_revoke_checks_are_required(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            text = replace_or_fail(
-                MATRIX.read_text(encoding="utf-8"),
-                "    required_live_checks: [browser_origin, csrf]",
-                "    required_live_checks: [browser_origin]",
-            )
-            path.write_text(text, encoding="utf-8")
-            errors = self.validator.validate(path)
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            document,
+            "spring-cloud-gateway",
+            "POST /ws/game/connect-token/revoke",
+        )
+        route["required_live_checks"] = ["browser_origin"]
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
                 "POST /ws/game/connect-token/revoke is missing" in error
@@ -2425,12 +2832,17 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             self.validator.GAMEPLAY_CONNECT_ISSUED_TOKEN_STATE,
             route["issued_token_state"],
         )
-        for field in (
-            "issuer_authority_generation_applies",
-            "account_authority_generation_applies",
-        ):
-            self.assertFalse(route[field])
-        for field in self.validator.REQUIRED_REVOKE_GENERATION_APPLICABILITY:
+        expected = {
+            "issuer_authority_generation_applies": False,
+            "account_authority_generation_applies": False,
+            "tenant_billing_authority_generation_applies": False,
+            "membership_authority_generation_applies": False,
+        }
+        self.assertEqual(
+            expected,
+            self.validator.REQUIRED_REVOKE_GENERATION_APPLICABILITY,
+        )
+        for field in expected:
             self.assertFalse(route[field])
 
         route["membership_authority_generation_applies"] = True
@@ -2440,7 +2852,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
         self.assertIn(
             "spring-cloud-gateway POST /ws/game/connect-token/revoke must explicitly set "
-            "membership_authority_generation_applies=False",
+            "membership_authority_generation_applies=false",
             errors,
         )
 
@@ -2483,20 +2895,18 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 self.assertTrue(any(expected in error for error in errors))
 
     def test_malformed_ws_game_route_counts_do_not_suppress_revoke_checks(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            text = replace_or_fail(
-                MATRIX.read_text(encoding="utf-8"),
-                "        - connection_mode: trusted_tcp_proxy",
-                "        - connection_mode: malformed_route",
-            )
-            text = replace_or_fail(
-                text,
-                "    required_live_checks: [browser_origin, csrf]",
-                "    required_live_checks: [browser_origin]",
-            )
-            path.write_text(text, encoding="utf-8")
-            errors = self.validator.validate(path)
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        proxy_route = websocket_route(document, "trusted_tcp_proxy")
+        proxy_route["applicability"]["all_of"][0]["connection_mode"] = (
+            "malformed_route"
+        )
+        revoke_route = route_for(
+            document,
+            "spring-cloud-gateway",
+            "POST /ws/game/connect-token/revoke",
+        )
+        revoke_route["required_live_checks"] = ["browser_origin"]
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
                 "exactly one first_party_web and one trusted_tcp_proxy" in error
@@ -2511,15 +2921,31 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
 
     def test_issue_connect_token_replay_fence_checks_are_required(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            text = replace_or_fail(
-                MATRIX.read_text(encoding="utf-8"),
-                "admission_pointer, connect_scope_match, replay_protection_available, replay_admission_fence_match]",
-                "admission_pointer, connect_scope_match, replay_protection_available]",
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "account-service", "IssueConnectToken")
+        route["required_live_checks"].remove("replay_admission_fence_match")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "IssueConnectToken is missing required live checks" in error
+                for error in errors
             )
-            path.write_text(text, encoding="utf-8")
-            errors = self.validator.validate(path)
+        )
+
+    def test_issue_connect_token_requires_selected_tenant_generation(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "account-service", "IssueConnectToken")
+        self.assertTrue(route["tenant_authority_generation_applies"])
+        self.assertTrue(route["membership_authority_generation_applies"])
+        self.assertTrue(route["membership_version_applies"])
+        self.assertTrue(
+            self.validator.REQUIRED_ISSUE_CONNECT_TOKEN_CHECKS.issubset(
+                set(route["required_live_checks"])
+            )
+        )
+
+        route["required_live_checks"].remove("target_tenant_generation")
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
                 "IssueConnectToken is missing required live checks" in error
@@ -2528,15 +2954,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
 
     def test_malformed_classification_vocabulary_is_reported(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            text = replace_or_fail(
-                MATRIX.read_text(encoding="utf-8"),
-                "classifications:\n  - public",
-                "classifications:\n  - {invalid: value}",
-            )
-            path.write_text(text, encoding="utf-8")
-            errors = self.validator.validate(path)
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        document["classifications"][0] = {"invalid": "value"}
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
                 "classifications must be a list of strings" in error for error in errors
@@ -2544,15 +2964,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
 
     def test_null_classification_vocabulary_is_reported_without_crashing(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            text = replace_or_fail(
-                MATRIX.read_text(encoding="utf-8"),
-                "classifications:\n  - public",
-                "classifications: null",
-            )
-            path.write_text(text, encoding="utf-8")
-            errors = self.validator.validate(path)
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        document["classifications"] = None
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
                 "classifications must be a list of strings" in error for error in errors
@@ -2560,32 +2974,14 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
 
     def test_route_classification_lists_and_mappings_are_reported(self):
-        old = """    classification: public
-    accepted_token_profiles: []
-    token_type: none
-    token_issuer: none
-    token_audience: none
-    applicability:
-      all_of:
-        - authentication_state: unauthenticated"""
-        for malformed in ("[public]", "{name: public}"):
+        for malformed in (["public"], {"name": "public"}):
             with self.subTest(malformed=malformed):
-                with tempfile.TemporaryDirectory() as directory:
-                    path = Path(directory) / "matrix.yaml"
-                    text = replace_or_fail(
-                        MATRIX.read_text(encoding="utf-8"),
-                        old,
-                        f"""    classification: {malformed}
-    accepted_token_profiles: []
-    token_type: none
-    token_issuer: none
-    token_audience: none
-    applicability:
-      all_of:
-        - authentication_state: unauthenticated""",
-                    )
-                    path.write_text(text, encoding="utf-8")
-                    errors = self.validator.validate(path)
+                document = self.validator.yaml.safe_load(
+                    MATRIX.read_text(encoding="utf-8")
+                )
+                route = route_for(document, "game-session-service", "WORLDS_PUBLIC")
+                route["classification"] = malformed
+                errors = validate_document(self.validator, document)
                 self.assertEqual(
                     1,
                     sum(
@@ -2598,31 +2994,23 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 )
 
     def test_unknown_route_classification_is_rejected(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            text = replace_or_fail(
-                MATRIX.read_text(encoding="utf-8"),
-                """    route: WORLDS_PUBLIC
-    transport_command: WORLDS
-    scope: public
-    classification: public""",
-                """    route: WORLDS_PUBLIC
-    transport_command: WORLDS
-    scope: public
-    classification: not_a_real_classification""",
-            )
-            path.write_text(text, encoding="utf-8")
-            errors = self.validator.validate(path)
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "game-session-service", "WORLDS_PUBLIC")
+        route["classification"] = "not_a_real_classification"
+        errors = validate_document(self.validator, document)
         self.assertTrue(any("uses unknown classification" in error for error in errors))
 
     def test_duplicate_route_requires_applicability(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            text = MATRIX.read_text(encoding="utf-8")
-            route = "\n  - service: duplicate-service\n    route: GET /duplicate\n    classification: public\n"
-            text = replace_or_fail(text, "\nroutes:\n", f"\nroutes:{route}{route}")
-            path.write_text(text, encoding="utf-8")
-            errors = self.validator.validate(path)
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        duplicate_route = {
+            "service": "duplicate-service",
+            "route": "GET /duplicate",
+            "classification": "public",
+        }
+        document["routes"].extend(
+            [copy.deepcopy(duplicate_route), copy.deepcopy(duplicate_route)]
+        )
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
                 "duplicate route entries require explicit applicability" in error
@@ -2669,7 +3057,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             {"public"},
             errors,
         )
-        self.assertTrue(any("duplicate route applicability" in error for error in errors))
+        self.assertIn(
+            "duplicate route applicability: duplicate-service|GET /duplicate",
+            errors,
+        )
         self.assertTrue(
             any("duplicate route applicability must be JSON-serializable" in error for error in errors)
         )
@@ -2758,44 +3149,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertEqual([], errors)
 
     def test_join_routes_require_admission_pointer_error(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            text = replace_or_fail(
-                MATRIX.read_text(encoding="utf-8"),
-                """  - service: game-session-service
-    route: JOIN
-    scope: tenant
-    classification: public_production_onboarding
-    auth_path: game_session_authenticated_context
-    accepted_token_profiles: []
-    token_type: none
-    token_issuer: none
-    token_audience: none
-    delegated_subject: authenticated_session_account
-    tenant_billing_authority_generation_applies: false
-    membership_authority_generation_applies: false
-    required_live_checks: [public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, idempotency]
-    canonical_errors:
-      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, TENANT_BILLING_BLOCKED]
-    mutation_contract: explicit_public_membership_atomic
-    membership_creation: caller_bound_after_validation""",
-                """  - service: game-session-service
-    route: JOIN
-    scope: tenant
-    classification: public_production_onboarding
-    auth_path: game_session_authenticated_context
-    accepted_token_profiles: []
-    token_type: none
-    token_issuer: none
-    token_audience: none
-    delegated_subject: authenticated_session_account
-    tenant_billing_authority_generation_applies: false
-    membership_authority_generation_applies: false
-    required_live_checks: [public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, idempotency]
-    mutation_contract: explicit_public_membership_atomic""",
-            )
-            path.write_text(text, encoding="utf-8")
-            errors = self.validator.validate(path)
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "game-session-service", "JOIN")
+        route.pop("canonical_errors")
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
                 "must declare ADMISSION_POINTER_UNAVAILABLE" in error
@@ -2804,15 +3161,25 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
 
     def test_delegated_entitlement_checks_require_account_cutoffs(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "matrix.yaml"
-            text = replace_or_fail(
-                MATRIX.read_text(encoding="utf-8"),
-                "required_live_checks: [issuer_generation, account_generation, current_token_generation, tenant_generation, membership_generation, membership, runtime_entitlements, conditional_realm_access_grant, grant_version]",
-                "required_live_checks: [current_token_generation, tenant_generation, membership_generation, membership, runtime_entitlements, conditional_realm_access_grant, grant_version]",
-            )
-            path.write_text(text, encoding="utf-8")
-            errors = self.validator.validate(path)
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            document, "account-service", "GetTenantEntitlementsForRuntime"
+        )
+        policy = next(
+            policy
+            for policy in route["caller_policies"]
+            if policy.get("caller") == "game-session-service"
+        )
+        policy["required_live_checks"] = [
+            "current_token_generation",
+            "tenant_generation",
+            "membership_generation",
+            "membership",
+            "runtime_entitlements",
+            "conditional_realm_access_grant",
+            "grant_version",
+        ]
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
                 "GetTenantEntitlementsForRuntime game-session policy is missing"
@@ -2872,7 +3239,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
         self.assertEqual(
             [
-                "account-service EnsurePublicProductionPlayerMembership must declare ADMISSION_POINTER_UNAVAILABLE",
+                "account-service JoinPublicProductionMembership must declare ADMISSION_POINTER_UNAVAILABLE",
                 "account-service POST /auth/bootstrap/join must declare ADMISSION_POINTER_UNAVAILABLE",
                 "game-session-service JOIN must declare ADMISSION_POINTER_UNAVAILABLE",
             ],
@@ -2930,6 +3297,25 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 for error in errors
             )
         )
+
+    def test_support_and_billing_admin_cannot_use_route_identities(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for role in ("support", "billingAdmin"):
+            with self.subTest(role=role):
+                document = copy.deepcopy(baseline)
+                document_requirements = document["role_assurance"][
+                    "privileged_control_when_global_role"
+                ]["requirements"]
+                document_requirements[role]["applies_to"]["route_identities"] = [
+                    "account-service/IssueHumanOperatorAuthorizationReference"
+                ]
+                errors = []
+                self.validator.validate_role_assurance(document, errors)
+                self.assertIn(
+                    "role_assurance.privileged_control_when_global_role.requirements."
+                    f"{role}.applies_to.route_identities is only allowed for platformAdmin",
+                    errors,
+                )
 
     def test_route_identity_shape_is_validated_before_platform_admin_equality(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -3023,29 +3409,47 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertTrue(any("route_status must be one of" in error for error in errors))
 
     def test_private_receiver_requires_exact_token_and_method_predicates(self):
-        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        route = route_for(document, "account-service", "RefreshGameplayServiceToken")
-        policy = route["caller_policies"][0]
-        policy["token_audience"] = "internal"
-        policy["token_issuer"] = "untrusted-service"
-        policy["mtls_identity"] = "game-session-service"
-        policy["method_policy"] = "all_methods"
-        errors = validate_document(self.validator, document)
-        self.assertTrue(
-            any(
-                "token predicates must exactly match profile" in error
-                for error in errors
-            )
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            (
+                "token_audience",
+                "internal",
+                (
+                    "caller_policies[0] token predicates must exactly match profile "
+                    "'game-session-account-delegation'"
+                ),
+            ),
+            (
+                "token_issuer",
+                "untrusted-service",
+                (
+                    "caller_policies[0] token predicates must exactly match profile "
+                    "'game-session-account-delegation'"
+                ),
+            ),
+            (
+                "mtls_identity",
+                "game-session-service",
+                "caller_policies[0].mtls_identity must be a concrete spiffe:// identity",
+            ),
+            (
+                "method_policy",
+                "all_methods",
+                "caller_policies[0] must declare method_policy exact_declared_route",
+            ),
         )
-        self.assertTrue(
-            any("must be a concrete spiffe:// identity" in error for error in errors)
-        )
-        self.assertTrue(
-            any(
-                "must declare method_policy exact_declared_route" in error
-                for error in errors
-            )
-        )
+        for field, value, expected_suffix in mutations:
+            with self.subTest(field=field):
+                document = copy.deepcopy(baseline)
+                route = route_for(
+                    document, "account-service", "RefreshGameplayServiceToken"
+                )
+                route["caller_policies"][0][field] = value
+                errors = validate_document(self.validator, document)
+                self.assertIn(
+                    f"account-service RefreshGameplayServiceToken {expected_suffix}",
+                    errors,
+                )
 
     def test_tenant_generation_exception_requires_class_checks(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

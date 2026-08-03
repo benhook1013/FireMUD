@@ -23,6 +23,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -91,13 +92,51 @@ class LoggingAdminApplicationIntegrationTest {
     assertThat(
             requestMappingHandlerMapping.getHandlerMethods().keySet().stream()
                 .flatMap(mapping -> mapping.getPatternValues().stream()))
-        .noneMatch(pattern -> pattern.equals("/reports") || pattern.startsWith("/reports/"));
+        .noneMatch(
+            pattern ->
+                pattern.equals("/reports")
+                    || pattern.startsWith("/reports/")
+                    || pattern.equals("/admin/reports")
+                    || pattern.startsWith("/admin/reports/"));
   }
 
   @Test
-  void unmappedPostReportsUsesCanonicalNotFoundEnvelope() throws Exception {
+  void publicTargetOnlyAdmissionPointerWriteMappingsAreAbsent() {
+    assertThat(requestMappingHandlerMapping.getHandlerMethods().keySet())
+        .noneMatch(
+            mapping ->
+                (mapping.getMethodsCondition().getMethods().isEmpty()
+                        || mapping.getMethodsCondition().getMethods().contains(RequestMethod.POST))
+                    && mapping.getPatternValues().stream()
+                        .anyMatch(
+                            path ->
+                                path.equals("/admission-pointers")
+                                    || path.equals("/admission-pointers/cutover")
+                                    || path.equals("/admission-pointers/version-upgrades")));
+  }
+
+  @Test
+  void externallyGatedOperatorWriteMappingsRemainMapped() {
+    for (String path :
+        new String[] {
+          "/feature-flags/toggle",
+          "/moderation/actions",
+          "/tick-remediation/pause",
+          "/tick-remediation/resume"
+        }) {
+      assertThat(requestMappingHandlerMapping.getHandlerMethods().keySet())
+          .as("path %s", path)
+          .anyMatch(
+              mapping ->
+                  mapping.getMethodsCondition().getMethods().contains(RequestMethod.POST)
+                      && mapping.getPatternValues().contains(path));
+    }
+  }
+
+  @Test
+  void mappedAdmissionPointerPostUsesCanonicalMethodNotAllowedEnvelope() throws Exception {
     HttpRequest request =
-        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/reports"))
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/admission-pointers"))
             .timeout(HTTP_REQUEST_TIMEOUT)
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantAdminToken(1L))
             .POST(HttpRequest.BodyPublishers.noBody())
@@ -105,10 +144,56 @@ class LoggingAdminApplicationIntegrationTest {
 
     HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
-    assertThat(response.statusCode()).isEqualTo(404);
+    assertThat(response.statusCode()).isEqualTo(405);
     assertThat(response.body()).contains("\"status\":\"ERROR\"");
-    assertThat(response.body()).contains("\"code\":\"NOT_FOUND\"");
-    assertThat(response.body()).contains("\"message\":\"Resource not found\"");
+    assertThat(response.body()).contains("\"code\":\"METHOD_NOT_ALLOWED\"");
+    assertThat(response.body()).contains("\"message\":\"Request method is not allowed\"");
+  }
+
+  @Test
+  void unmappedAdmissionPointerWriteFamiliesUseCanonicalNotFoundEnvelope() throws Exception {
+    for (String path :
+        new String[] {"/admission-pointers/cutover", "/admission-pointers/version-upgrades"}) {
+      HttpRequest request =
+          HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+              .timeout(HTTP_REQUEST_TIMEOUT)
+              .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantAdminToken(1L))
+              .POST(HttpRequest.BodyPublishers.noBody())
+              .build();
+
+      HttpResponse<String> response =
+          HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+      assertThat(response.statusCode()).as("path %s", path).isEqualTo(404);
+      assertThat(response.body()).as("path %s", path).contains("\"status\":\"ERROR\"");
+      assertThat(response.body()).as("path %s", path).contains("\"code\":\"NOT_FOUND\"");
+      assertThat(response.body())
+          .as("path %s", path)
+          .contains("\"message\":\"Resource not found\"");
+    }
+  }
+
+  @Test
+  void unmappedPostReportFamiliesUseCanonicalNotFoundEnvelope() throws Exception {
+    for (String path :
+        new String[] {"/reports", "/reports/123", "/admin/reports", "/admin/reports/123"}) {
+      HttpRequest request =
+          HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+              .timeout(HTTP_REQUEST_TIMEOUT)
+              .header(HttpHeaders.AUTHORIZATION, "Bearer " + tenantAdminToken(1L))
+              .POST(HttpRequest.BodyPublishers.noBody())
+              .build();
+
+      HttpResponse<String> response =
+          HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+      assertThat(response.statusCode()).as("path %s", path).isEqualTo(404);
+      assertThat(response.body()).as("path %s", path).contains("\"status\":\"ERROR\"");
+      assertThat(response.body()).as("path %s", path).contains("\"code\":\"NOT_FOUND\"");
+      assertThat(response.body())
+          .as("path %s", path)
+          .contains("\"message\":\"Resource not found\"");
+    }
   }
 
   @Test

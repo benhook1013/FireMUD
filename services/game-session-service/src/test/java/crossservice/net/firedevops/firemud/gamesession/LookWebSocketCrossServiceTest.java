@@ -457,10 +457,8 @@ class LookWebSocketCrossServiceTest {
             READY_LOOK_TEXT,
             client ->
                 client.awaitMatching(
-                    response ->
-                        response.startsWith("OK PLAY")
-                            || response.startsWith("ERROR WORLD_ACCESS_DENIED"),
-                    "play acceptance or admission denial"))) {
+                    response -> response.startsWith("ERROR WORLD_ACCESS_DENIED"),
+                    "revoked membership admission denial"))) {
       return scenario.responses();
     }
   }

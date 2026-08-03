@@ -84,7 +84,7 @@ This ledger maps canonical design sources to the stable capabilities in the [Fir
 | `design/architecture/decisions/adr-0039-bounded-redis-operator-maintenance-surface.md` | `PO-1` | `PO-4`, `SF-1`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0040-account-global-control-login-and-explicit-tenant-selection.md` | `AA-1` | `EA-3`, `PO-1`, `SF-1` | Accepted |
 | `design/architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md` | `AA-1` | `GR-1`, `PO-3`, `SF-2` | Accepted |
-| `design/architecture/decisions/adr-0042-global-account-and-tenant-scoped-game-relationships.md` | `AA-1` | `PO-1`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0042-global-account-and-tenant-scoped-game-relationships.md` | `AA-1` | `AA-2`, `AA-3`, `SF-2`, `PO-1` | Accepted |
 | `design/architecture/decisions/adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md` | `AA-1` | `PO-1`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0044-account-owned-payment-instruments-with-explicit-subscription-binding.md` | `AA-1` | `PO-1`, `SF-1` | Accepted |
 | `design/architecture/decisions/adr-0045-ordinary-login-factors-and-https-sensitive-action-step-up.md` | `AA-1` | `AA-2`, `EA-3`, `PO-1`, `SF-1` | Accepted |

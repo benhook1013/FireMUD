@@ -7,11 +7,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.util.List;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.SpringBootConfiguration;
-import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
@@ -23,6 +22,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -37,10 +37,6 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
     })
 class GlobalExceptionHandlerTest {
   @Autowired private MockMvc mockMvc;
-
-  @SpringBootConfiguration
-  @EnableAutoConfiguration
-  static class WebSliceApplication {}
 
   @Test
   void handleExceptionDoesNotExposeRawMessage() {
@@ -159,6 +155,22 @@ class GlobalExceptionHandlerTest {
     Assertions.assertNotNull(response);
     assertEquals("NOT_FOUND", response.error().code());
     assertEquals("Resource not found", response.error().message());
+  }
+
+  @Test
+  void handleHttpRequestMethodNotSupportedUsesCanonicalMethodNotAllowedEnvelope() {
+    GlobalExceptionHandler handler = new GlobalExceptionHandler();
+
+    var responseEntity =
+        handler.handleHttpRequestMethodNotSupported(
+            new HttpRequestMethodNotSupportedException("POST", List.of("GET")));
+    ApiResponse<ErrorDetail> response = responseEntity.getBody();
+
+    assertEquals(HttpStatus.METHOD_NOT_ALLOWED, responseEntity.getStatusCode());
+    Assertions.assertNotNull(response);
+    assertEquals("METHOD_NOT_ALLOWED", response.error().code());
+    assertEquals("Request method is not allowed", response.error().message());
+    assertEquals("GET", responseEntity.getHeaders().getFirst(HttpHeaders.ALLOW));
   }
 
   @Test

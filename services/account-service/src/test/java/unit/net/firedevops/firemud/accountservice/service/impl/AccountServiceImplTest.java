@@ -54,6 +54,7 @@ import net.firedevops.firemud.accountservice.repository.ProfileRepository;
 import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
 import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
+import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.session.SessionService;
@@ -202,7 +203,7 @@ class AccountServiceImplTest {
   @Test
   void createAccountPersistsEntity() throws net.firedevops.firemud.common.saga.SagaException {
     CreateAccountRequest request =
-        new CreateAccountRequest(7L, "demo", "demo@example.com", "password");
+        new CreateAccountRequest(7L, "demo", "  DEMO@example.com ", "password");
     Account saved = new Account();
     saved.setId(1L);
     when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class))).thenReturn(saved);
@@ -211,7 +212,37 @@ class AccountServiceImplTest {
 
     assertEquals(1L, dto.id());
     assertEquals("demo", dto.username());
+    org.mockito.ArgumentCaptor<Account> accountCaptor =
+        org.mockito.ArgumentCaptor.forClass(Account.class);
+    org.mockito.Mockito.verify(accountRepository).save(accountCaptor.capture());
+    assertEquals("demo@example.com", accountCaptor.getValue().getEmail());
     org.mockito.Mockito.verify(sagaRunner).run(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void createAccountReturnsExplicitConflictForCanonicalIdentityCollision() {
+    CreateAccountRequest request =
+        new CreateAccountRequest(7L, "demo", " DEMO@EXAMPLE.COM ", "password");
+    when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class)))
+        .thenThrow(new org.jooq.exception.IntegrityConstraintViolationException("duplicate"));
+
+    AccountAlreadyExistsException exception =
+        assertThrows(AccountAlreadyExistsException.class, () -> service.createAccount(request));
+
+    assertEquals("Account already exists", exception.getMessage());
+  }
+
+  @Test
+  void createAccountMapsSpringDataIntegrityConflict() {
+    CreateAccountRequest request =
+        new CreateAccountRequest(7L, "demo", "demo@example.com", "password");
+    when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class)))
+        .thenThrow(new org.springframework.dao.DataIntegrityViolationException("duplicate"));
+
+    AccountAlreadyExistsException exception =
+        assertThrows(AccountAlreadyExistsException.class, () -> service.createAccount(request));
+
+    assertEquals("Account already exists", exception.getMessage());
   }
 
   @Test
@@ -337,7 +368,7 @@ class AccountServiceImplTest {
   void authenticateUsesMatchingEmailLoginOtpBeforePasswordFallback() {
     Account account = new Account();
     account.setId(9L);
-    account.setUsername("demo@example.com");
+    account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
     net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
         new net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge();
@@ -347,7 +378,7 @@ class AccountServiceImplTest {
     challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(5));
     AccountTenantMembership membership = new AccountTenantMembership();
     membership.setGameplayAdmissionAllowed(true);
-    when(accountRepository.findByUsername("demo@example.com")).thenReturn(Optional.of(account));
+    when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
     when(accountEmailLoginChallengeRepository.findByAccountId(9L))
         .thenReturn(Optional.of(challenge));
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
@@ -364,7 +395,7 @@ class AccountServiceImplTest {
   void authenticateFallsBackToPasswordWithoutBurningUnmatchedEmailLoginOtp() {
     Account account = new Account();
     account.setId(9L);
-    account.setUsername("demo@example.com");
+    account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
     net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
         new net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge();
@@ -374,7 +405,7 @@ class AccountServiceImplTest {
     challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(5));
     AccountTenantMembership membership = new AccountTenantMembership();
     membership.setGameplayAdmissionAllowed(true);
-    when(accountRepository.findByUsername("demo@example.com")).thenReturn(Optional.of(account));
+    when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
     when(accountEmailLoginChallengeRepository.findByAccountId(9L))
         .thenReturn(Optional.of(challenge));
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
@@ -394,7 +425,7 @@ class AccountServiceImplTest {
   void authenticateCountsFailedMixedModeSecretAgainstActiveEmailLoginOtp() {
     Account account = new Account();
     account.setId(9L);
-    account.setUsername("demo@example.com");
+    account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
     net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
         new net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge();
@@ -402,7 +433,7 @@ class AccountServiceImplTest {
     challenge.setAccountId(9L);
     challenge.setCodeHash(hash("123456"));
     challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(5));
-    when(accountRepository.findByUsername("demo@example.com")).thenReturn(Optional.of(account));
+    when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
     when(accountEmailLoginChallengeRepository.findByAccountId(9L))
         .thenReturn(Optional.of(challenge));
     when(accountEmailLoginChallengeRepository.save(challenge)).thenReturn(challenge);
@@ -547,14 +578,15 @@ class AccountServiceImplTest {
   void authenticateForGameplayReturnsTokenWhenPasswordMatches() {
     Account account = new Account();
     account.setId(1L);
-    account.setUsername("demo");
+    account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
-    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(1L, 1L))
         .thenReturn(Optional.of(membership(account, 1L)));
     jwtAuthProperties.setJwtSecret(null);
 
-    AuthenticationResult result = service.authenticateForGameplay(1L, "demo", "password");
+    AuthenticationResult result =
+        service.authenticateForGameplay(1L, "demo@example.com", "password");
 
     assertNotNull(result.authToken());
     assertEquals(1L, result.accountId());
@@ -592,6 +624,24 @@ class AccountServiceImplTest {
     assertFalse(claims.containsKey("tenantId"));
     assertEquals(300000L, claims.getExpiration().getTime() - claims.getIssuedAt().getTime());
     verifyNoInteractions(accountEmailLoginChallengeRepository);
+  }
+
+  @Test
+  void issuePlayerBootstrapPrefersEmailLookupOverCollidingUsername() {
+    Account emailAccount = new Account();
+    emailAccount.setId(7L);
+    emailAccount.setUsername("email-owner");
+    emailAccount.setEmail("player@example.com");
+    emailAccount.setPasswordHash(hash("password"));
+    emailAccount.setLoginAuthModes("PASSWORD");
+    when(accountRepository.findByEmail("player@example.com")).thenReturn(Optional.of(emailAccount));
+
+    PlayerBootstrapResult result =
+        service.issuePlayerBootstrap("  PLAYER@EXAMPLE.COM ", "password");
+
+    assertEquals(7L, result.accountId());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .findByUsername(org.mockito.ArgumentMatchers.anyString());
   }
 
   @Test
@@ -1083,28 +1133,28 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void authenticateFallsBackToTenantEmailLookup() {
+  void authenticateForGameplayUsesNormalizedEmailLookup() {
     Account account = new Account();
     account.setId(1L);
     account.setUsername("demo");
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
-    when(accountRepository.findByUsername("demo@example.com")).thenReturn(Optional.empty());
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(1L, 1L))
         .thenReturn(Optional.of(membership(account, 1L)));
 
     AuthenticationResult result =
-        service.authenticateForGameplay(1L, "demo@example.com", "password");
+        service.authenticateForGameplay(1L, "  DEMO@example.com ", "password");
 
     assertNotNull(result.authToken());
     assertEquals(1L, result.accountId());
     org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, result.authToken());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .findByUsername(org.mockito.ArgumentMatchers.anyString());
   }
 
   @Test
   void authenticateThrowsWhenInvalid() {
-    when(accountRepository.findByUsername("demo")).thenReturn(Optional.empty());
     when(accountRepository.findByEmail("demo")).thenReturn(Optional.empty());
     AuthenticationException exception =
         assertThrows(
@@ -1115,7 +1165,6 @@ class AccountServiceImplTest {
 
   @Test
   void authenticateDoesNotUseGlobalAccountFallback() {
-    when(accountRepository.findByUsername("demo@example.com")).thenReturn(Optional.empty());
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.empty());
 
     AuthenticationException exception =
@@ -1124,22 +1173,24 @@ class AccountServiceImplTest {
             () -> service.authenticateForGameplay(1L, "demo@example.com", "password"));
 
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .findByUsername(org.mockito.ArgumentMatchers.anyString());
   }
 
   @Test
   void authenticateRejectsMissingGameplayMembership() {
     Account account = new Account();
     account.setId(7L);
-    account.setUsername("demo");
+    account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
-    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(7L, 1L))
         .thenReturn(Optional.empty());
 
     AuthenticationException exception =
         assertThrows(
             AuthenticationException.class,
-            () -> service.authenticateForGameplay(1L, "demo", "password"));
+            () -> service.authenticateForGameplay(1L, "demo@example.com", "password"));
 
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
     assertEquals("Invalid credentials", exception.getMessage());
@@ -1160,6 +1211,7 @@ class AccountServiceImplTest {
 
     assertEquals(11L, dto.accountId());
     assertEquals(7L, dto.tenantId());
+    assertTrue(dto.membershipExists());
     assertTrue(dto.gameplayAdmissionAllowed());
     assertEquals(711L, dto.membershipVersion());
     assertNotNull(dto.evaluatedAt());
@@ -1187,6 +1239,7 @@ class AccountServiceImplTest {
 
     assertEquals(11L, dto.accountId());
     assertEquals(7L, dto.tenantId());
+    assertTrue(!dto.membershipExists());
     assertTrue(!dto.gameplayAdmissionAllowed());
   }
 
@@ -1202,6 +1255,7 @@ class AccountServiceImplTest {
 
     assertEquals(7L, dto.tenantId());
     assertTrue(dto.gameplayAvailable());
+    assertTrue(dto.allowPublicJoin());
     assertEquals(31L, dto.entitlementVersion());
     assertEquals(31L, dto.tenantBillingSequence());
     assertNotNull(dto.evaluatedAt());
@@ -1482,7 +1536,34 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void issueConnectTokenCreatesPublicProductionMembershipWhenMissing() {
+  void ensurePublicProductionMembershipRejectsCreationWhenPublicJoiningIsDisabled() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    Subscription grace = new Subscription();
+    grace.setId(22L);
+    grace.setTenantId(7L);
+    grace.setStatus("grace");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(grace));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.empty());
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.ensurePublicProductionPlayerMembership(
+                    11L, 7L, "demo", "production", "req-join-disabled"));
+
+    assertEquals("PUBLIC_PRODUCTION_ADMISSION_DENIED", exception.getCode());
+    assertEquals("Public joining is not allowed for the selected game", exception.getMessage());
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .saveAndFlush(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+  }
+
+  @Test
+  void issueConnectTokenRequiresExplicitPublicProductionMembership() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -1490,44 +1571,118 @@ class AccountServiceImplTest {
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
     when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
-        .thenReturn(Optional.of(membership(account, 7L)))
-        .thenReturn(Optional.empty())
-        .thenReturn(Optional.empty())
-        .thenReturn(Optional.empty())
         .thenReturn(Optional.empty());
     Subscription active = new Subscription();
     active.setId(22L);
     active.setTenantId(7L);
     active.setStatus("active");
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
-    when(accountTenantMembershipRepository.saveAndFlush(org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation -> {
-              AccountTenantMembership membership = invocation.getArgument(0);
-              membership.setAccount(account);
-              membership.setTenantId(7L);
-              membership.setGameplayAdmissionAllowed(true);
-              java.lang.reflect.Field idField =
-                  AccountTenantMembership.class.getDeclaredField("id");
-              idField.setAccessible(true);
-              idField.set(membership, 711L);
-              return membership;
-            });
-
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
     when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
 
-    ConnectTokenResult result =
-        service.issueConnectToken(
-            bootstrap.bootstrapToken(), new ConnectTokenRequest(connectScopeId, "req-join-2"));
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    bootstrap.bootstrapToken(),
+                    new ConnectTokenRequest(connectScopeId, "req-join-2")));
 
-    assertEquals(11L, result.accountId());
-    assertEquals(7L, result.tenantId());
-    assertEquals("req-join-2", result.requestId());
-    assertTrue(!result.replayed());
-    org.mockito.Mockito.verify(accountTenantMembershipRepository)
+    assertEquals("JOIN_REQUIRED", exception.getCode());
+    assertEquals(
+        "Join the selected world before requesting a connect token", exception.getMessage());
+    org.mockito.Mockito.verify(sessionService)
+        .storeConnectTokenReplay(
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq(11L),
+            org.mockito.ArgumentMatchers.eq(connectScopeId),
+            org.mockito.ArgumentMatchers.eq("req-join-2"),
+            org.mockito.ArgumentMatchers.argThat(
+                replay ->
+                    !replay.success()
+                        && "JOIN_REQUIRED".equals(replay.errorCode())
+                        && exception.getMessage().equals(replay.errorMessage())),
+            org.mockito.ArgumentMatchers.longThat(ttl -> ttl > 0L));
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .saveAndFlush(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeSession(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong());
+  }
+
+  @Test
+  void issueConnectTokenRejectsMissingMembershipWhenPublicJoiningIsDisabled() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.empty());
+    Subscription grace = new Subscription();
+    grace.setId(22L);
+    grace.setTenantId(7L);
+    grace.setStatus("grace");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(grace));
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    bootstrap.bootstrapToken(),
+                    new ConnectTokenRequest(connectScopeId, "req-join-disabled")));
+
+    assertEquals("PUBLIC_PRODUCTION_ADMISSION_DENIED", exception.getCode());
+    assertEquals("Public joining is not allowed for the selected game", exception.getMessage());
+  }
+
+  @Test
+  void issueConnectTokenRejectsUnavailableGameplayBeforeMissingMembershipOutcomes() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.empty());
+    Subscription active = new Subscription();
+    active.setId(21L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    Subscription canceled = new Subscription();
+    canceled.setId(22L);
+    canceled.setTenantId(7L);
+    canceled.setStatus("canceled");
+    when(subscriptionRepository.findByTenantId(7L))
+        .thenReturn(java.util.List.of(active), java.util.List.of(canceled));
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    bootstrap.bootstrapToken(),
+                    new ConnectTokenRequest(connectScopeId, "req-gameplay-disabled")));
+
+    assertEquals("CONNECT_TOKEN_REJECTED", exception.getCode());
+    assertEquals("Gameplay is not available for this tenant", exception.getMessage());
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
         .saveAndFlush(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
   }
 
@@ -2148,7 +2303,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void issueConnectTokenAllowsNonPublicRealmWithGrant() {
+  void issueConnectTokenRequiresMembershipForNonPublicRealmWithGrant() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -2201,15 +2356,37 @@ class AccountServiceImplTest {
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
 
-    ConnectTokenResult result =
-        service.issueConnectToken(
-            bootstrap.bootstrapToken(), new ConnectTokenRequest(connectScopeId, "req-preview-1"));
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    bootstrap.bootstrapToken(),
+                    new ConnectTokenRequest(connectScopeId, "req-preview-1")));
 
-    assertEquals(11L, result.accountId());
-    assertEquals(7L, result.tenantId());
-    assertEquals(55L, result.gameInstanceId());
+    assertEquals("NON_PUBLIC_ENROLLMENT_REQUIRED", exception.getCode());
+    assertEquals(
+        "Existing game membership is required for this non-public realm", exception.getMessage());
+    org.mockito.Mockito.verify(sessionService)
+        .storeConnectTokenReplay(
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq(11L),
+            org.mockito.ArgumentMatchers.eq(connectScopeId),
+            org.mockito.ArgumentMatchers.eq("req-preview-1"),
+            org.mockito.ArgumentMatchers.argThat(
+                replay ->
+                    !replay.success()
+                        && "NON_PUBLIC_ENROLLMENT_REQUIRED".equals(replay.errorCode())
+                        && exception.getMessage().equals(replay.errorMessage())),
+            org.mockito.ArgumentMatchers.longThat(ttl -> ttl > 0L));
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
         .saveAndFlush(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeSession(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong());
   }
 
   @Test
@@ -2412,7 +2589,7 @@ class AccountServiceImplTest {
     account.setEmail("demo@example.com");
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
 
-    service.requestPasswordReset(new PasswordResetRequest("demo@example.com"));
+    service.requestPasswordReset(new PasswordResetRequest("  DEMO@example.com "));
 
     org.mockito.Mockito.verify(passwordResetTokenRepository)
         .save(org.mockito.ArgumentMatchers.any());
@@ -2433,7 +2610,8 @@ class AccountServiceImplTest {
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
 
     service.sendUsernameReminder(
-        new net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest("demo@example.com"));
+        new net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest(
+            "  DEMO@example.com "));
 
     org.mockito.Mockito.verify(emailService)
         .sendEmail(

@@ -20,6 +20,7 @@ import net.firedevops.firemud.accountservice.dto.TenantDataExportDto;
 import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequest;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthMode;
 import net.firedevops.firemud.accountservice.service.AccountService;
+import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -75,6 +76,24 @@ class AccountControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.username").value("demo"));
+  }
+
+  @Test
+  void createAccountConflictUsesCanonicalEnvelope() throws Exception {
+    CreateAccountRequest request =
+        new CreateAccountRequest(7L, "demo", "demo@example.com", "password");
+    when(accountService.createAccount(request))
+        .thenThrow(new AccountAlreadyExistsException(new RuntimeException("duplicate")));
+
+    mockMvc
+        .perform(
+            post("/accounts")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("ALREADY_EXISTS"))
+        .andExpect(jsonPath("$.error.message").value("Account already exists"));
   }
 
   @Test

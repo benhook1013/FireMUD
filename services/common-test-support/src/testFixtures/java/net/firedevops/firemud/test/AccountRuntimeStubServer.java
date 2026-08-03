@@ -28,6 +28,7 @@ import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
+import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.account.AccountProfileJson;
 
 /** Shared fake Account runtime authority for cross-service gameplay tests. */
@@ -45,11 +46,13 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
 
   private final Server server;
   private final List<AuthenticateRequest> authenticateRequests = new CopyOnWriteArrayList<>();
+  private final AtomicBoolean membershipExists = new AtomicBoolean(true);
   private final AtomicBoolean gameplayAdmissionAllowed = new AtomicBoolean(true);
   private final AtomicBoolean gameplayAvailable = new AtomicBoolean(true);
+  private final AtomicBoolean allowPublicJoin = new AtomicBoolean(true);
   private final AtomicBoolean realmAccessGranted = new AtomicBoolean(true);
   private final AtomicLong defaultAccountId = new AtomicLong(1L);
-  private final Map<String, Long> accountIdsByUsername = new ConcurrentHashMap<>();
+  private final Map<String, Long> accountIdsByEmail = new ConcurrentHashMap<>();
   private final Map<Long, StubProfile> profilesByAccountId = new ConcurrentHashMap<>();
 
   public AccountRuntimeStubServer(int port) throws IOException {
@@ -72,8 +75,8 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     defaultAccountId.set(accountId);
   }
 
-  public void mapAccountId(String username, long accountId) {
-    accountIdsByUsername.put(username, accountId);
+  public void mapAccountId(String email, long accountId) {
+    accountIdsByEmail.put(EmailCanonicalization.normalize(email), accountId);
   }
 
   public void setPresenceVisibilityPolicy(long accountId, String visibilityPolicy) {
@@ -88,16 +91,29 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     gameplayAdmissionAllowed.set(allowed);
   }
 
+  public void setMembershipExists(boolean exists) {
+    if (!exists) {
+      gameplayAdmissionAllowed.set(false);
+    }
+    membershipExists.set(exists);
+  }
+
   public void allowGameplayAdmission() {
+    setMembershipExists(true);
     setGameplayAdmissionAllowed(true);
   }
 
   public void denyGameplayAdmission() {
+    setMembershipExists(true);
     setGameplayAdmissionAllowed(false);
   }
 
   public void setGameplayAvailable(boolean available) {
     gameplayAvailable.set(available);
+  }
+
+  public void setAllowPublicJoin(boolean allowed) {
+    allowPublicJoin.set(allowed);
   }
 
   public void setRealmAccessGranted(boolean granted) {
@@ -106,8 +122,10 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
 
   public void resetRuntimeState() {
     authenticateRequests.clear();
+    membershipExists.set(true);
     gameplayAdmissionAllowed.set(true);
     gameplayAvailable.set(true);
+    allowPublicJoin.set(true);
     realmAccessGranted.set(true);
     profilesByAccountId.clear();
   }
@@ -122,8 +140,8 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   public void authenticate(
       AuthenticateRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
     authenticateRequests.add(request);
-    long accountId =
-        accountIdsByUsername.getOrDefault(request.getUsername(), defaultAccountId.get());
+    String canonicalEmail = EmailCanonicalization.normalize(request.getEmail());
+    long accountId = accountIdsByEmail.getOrDefault(canonicalEmail, defaultAccountId.get());
     profilesByAccountId.computeIfAbsent(accountId, StubProfile::defaultFor);
     responseObserver.onNext(
         AuthenticateResponse.newBuilder()
@@ -141,6 +159,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         GetTenantMembershipForRuntimeResponse.newBuilder()
             .setAccountId(request.getAccountId())
             .setTenantId(request.getTenantId())
+            .setMembershipExists(membershipExists.get())
             .setGameplayAdmissionAllowed(gameplayAdmissionAllowed.get())
             .setMembershipVersion(1L)
             .setEvaluatedAt(EVALUATED_AT)
@@ -170,6 +189,9 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       EnsurePublicProductionPlayerMembershipRequest request,
       StreamObserver<EnsurePublicProductionPlayerMembershipResponse> responseObserver) {
     boolean allowed = gameplayAdmissionAllowed.get();
+    if (allowed) {
+      membershipExists.set(true);
+    }
     responseObserver.onNext(
         EnsurePublicProductionPlayerMembershipResponse.newBuilder()
             .setAccountId(request.getAccountId())
@@ -191,6 +213,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         GetTenantEntitlementsForRuntimeResponse.newBuilder()
             .setTenantId(request.getTenantId())
             .setGameplayAvailable(gameplayAvailable.get())
+            .setAllowPublicJoin(allowPublicJoin.get())
             .setEntitlementVersion(1L)
             .setTenantBillingSequence(1L)
             .setEvaluatedAt(EVALUATED_AT)
