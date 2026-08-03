@@ -953,7 +953,7 @@ class PlayCommandHandlerTest {
   @Test
   void playInvisibleRealmWithGrantedAccessContinuesAdmission() {
     markPreviewRealmInvisible();
-    SessionContext context = invisibleRealmContext();
+    SessionContext context = previewRealmContext();
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -963,7 +963,7 @@ class PlayCommandHandlerTest {
             Mockito.anyString()))
         .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(true).build());
 
-    PlayCommandHandlingResult result = handler.handle("1", invisibleRealmPlayCommand());
+    PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     Mockito.verify(accountClient)
@@ -977,7 +977,7 @@ class PlayCommandHandlerTest {
 
   @Test
   void playVisibleNonPublicRealmRequiresGrantedAccess() {
-    SessionContext context = invisibleRealmContext();
+    SessionContext context = previewRealmContext();
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -987,7 +987,7 @@ class PlayCommandHandlerTest {
             Mockito.anyString()))
         .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(false).build());
 
-    PlayCommandHandlingResult result = handler.handle("1", invisibleRealmPlayCommand());
+    PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
     assertThat(result.commandResult().errorCode())
         .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
@@ -1003,7 +1003,7 @@ class PlayCommandHandlerTest {
   @Test
   void playInvisibleRealmWithDeniedGrantClearsBinding() {
     markPreviewRealmInvisible();
-    SessionContext context = invisibleRealmContext();
+    SessionContext context = previewRealmContext();
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -1013,7 +1013,7 @@ class PlayCommandHandlerTest {
             Mockito.anyString()))
         .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(false).build());
 
-    PlayCommandHandlingResult result = handler.handle("1", invisibleRealmPlayCommand());
+    PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
     assertThat(result.commandResult().errorCode())
         .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
@@ -1023,7 +1023,7 @@ class PlayCommandHandlerTest {
   @Test
   void playInvisibleRealmWithNonAuthorityGrantClearsBinding() {
     markPreviewRealmInvisible();
-    SessionContext context = invisibleRealmContext();
+    SessionContext context = previewRealmContext();
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -1040,7 +1040,7 @@ class PlayCommandHandlerTest {
                         .build())
                 .build());
 
-    PlayCommandHandlingResult result = handler.handle("1", invisibleRealmPlayCommand());
+    PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
     assertThat(result.commandResult().errorCode())
         .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
@@ -1050,7 +1050,7 @@ class PlayCommandHandlerTest {
   @Test
   void playInvisibleRealmWithUnavailableGrantFailsClosed() {
     markPreviewRealmInvisible();
-    SessionContext context = invisibleRealmContext();
+    SessionContext context = previewRealmContext();
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -1067,7 +1067,7 @@ class PlayCommandHandlerTest {
                         .build())
                 .build());
 
-    PlayCommandHandlingResult result = handler.handle("1", invisibleRealmPlayCommand());
+    PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
     assertThat(result.commandResult().errorCode())
         .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
@@ -1348,7 +1348,7 @@ class PlayCommandHandlerTest {
     gameplayCatalogProperties.getWorlds().get(1).getRealms().get(1).setVisible(false);
   }
 
-  private SessionContext invisibleRealmContext() {
+  private SessionContext previewRealmContext() {
     return new SessionContext(
         1L,
         22L,
@@ -1367,7 +1367,7 @@ class PlayCommandHandlerTest {
         "SHARED");
   }
 
-  private TextCommand invisibleRealmPlayCommand() {
+  private TextCommand previewRealmPlayCommand() {
     return new TextCommand(
         TextCommandType.PLAY,
         List.of("sandbox", "preview", "Emberline"),

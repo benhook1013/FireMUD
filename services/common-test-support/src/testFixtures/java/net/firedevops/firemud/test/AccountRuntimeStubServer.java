@@ -28,6 +28,7 @@ import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
+import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.account.AccountProfileJson;
 
 /** Shared fake Account runtime authority for cross-service gameplay tests. */
@@ -74,7 +75,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   }
 
   public void mapAccountId(String email, long accountId) {
-    accountIdsByEmail.put(email, accountId);
+    accountIdsByEmail.put(EmailCanonicalization.normalize(email), accountId);
   }
 
   public void setPresenceVisibilityPolicy(long accountId, String visibilityPolicy) {
@@ -90,6 +91,9 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   }
 
   public void setMembershipExists(boolean exists) {
+    if (!exists) {
+      gameplayAdmissionAllowed.set(false);
+    }
     membershipExists.set(exists);
   }
 
@@ -130,7 +134,8 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   public void authenticate(
       AuthenticateRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
     authenticateRequests.add(request);
-    long accountId = accountIdsByEmail.getOrDefault(request.getEmail(), defaultAccountId.get());
+    String canonicalEmail = EmailCanonicalization.normalize(request.getEmail());
+    long accountId = accountIdsByEmail.getOrDefault(canonicalEmail, defaultAccountId.get());
     profilesByAccountId.computeIfAbsent(accountId, StubProfile::defaultFor);
     responseObserver.onNext(
         AuthenticateResponse.newBuilder()

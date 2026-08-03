@@ -566,6 +566,13 @@ coverage_drift:
       - POST /sessions/{sessionId}/restart
       - POST /sessions/{sessionId}/refresh-roles
     note: The listed current routes are Game Session owner-local hooks, not the canonical external ingress. Logging and Admin has no complete current /sessions* external route family in its source-stable OpenAPI surface; the owner-local hooks remain explicitly edge-denied and migrate to Logging and Admin, so do not invent external routes or claim the family covered until that contract exists.
+  - family: logging-admin-administrative-report-persistence
+    status: drift-found
+    current_routes: []
+    target_ingress: logging-admin-service
+    target_routes:
+      - POST /admin/reports
+    note: The owning Logging & Admin contract reserves POST /admin/reports for the future administrative report surface, but its public HTTP controller and Gateway route are absent until canonical authorization and live reference-validation checks exist. The separate player-bootstrap POST /reports route is not coverage for this administrative identity.
   - family: commerce-payment-instrument
     status: drift-found
     current_routes: []
@@ -746,7 +753,10 @@ routes:
         grant_backed_private_or_playtest:
           required_live_checks: [membership, membership_generation, conditional_realm_access_grant]
           membership_creation: forbidden
-    required_live_checks: [membership, target_tenant_generation, membership_generation, membership_version, conditional_realm_access_grant, runtime_entitlements, admission_pointer, account_authority_tuple, account_outbox_checkpoint, exact_binding_admission_lease, binding_fence, binding_ownership]
+    # Only these admission checks are common to every selected mode. Membership and
+    # realm-grant checks stay in the selected branch below; target/generation and
+    # binding checks remain route-level authority checks for PLAY itself.
+    required_live_checks: [target_tenant_generation, membership_generation, membership_version, runtime_entitlements, admission_pointer, account_authority_tuple, account_outbox_checkpoint, exact_binding_admission_lease, binding_fence, binding_ownership]
     canonical_errors:
       any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, AUTH_SESSION_REVOKED, OWNERSHIP_UNAVAILABLE, STALE_TIMELINE]
     account_checkpoint_tuple_evidence:
@@ -1177,6 +1187,7 @@ routes:
     implementation_status:
       known_drift:
         - this current owner-local workload route is not operator-reference-redeeming and remains outside the operator mutation support gate
+        - the current owner-local handler does not enforce the declared control_plane_request_id, mutation_digest, and owner_atomic_idempotent_role_refresh_with_durable_result mutation contract
   - service: account-service
     route: AuthLogin
     scope: public

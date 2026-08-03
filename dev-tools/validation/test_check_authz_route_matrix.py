@@ -2852,7 +2852,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
         self.assertIn(
             "spring-cloud-gateway POST /ws/game/connect-token/revoke must explicitly set "
-            "membership_authority_generation_applies=False",
+            "membership_authority_generation_applies=false",
             errors,
         )
 

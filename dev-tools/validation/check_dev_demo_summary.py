@@ -68,6 +68,39 @@ BOOTSTRAP_SECRET_FILE_MAPPINGS = {
     "DEMO_SMOKE_PASSWORD": "${BOOTSTRAP_SECRET_DIR}/password",
     "DEMO_SMOKE_USERNAME": "${BOOTSTRAP_SECRET_DIR}/username",
 }
+BOOTSTRAP_MANIFEST_REQUIRED_MARKERS = (
+    "cleanup_bootstrap_temp_dir() {",
+    'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then',
+    'echo "::error::Failed to remove dev-demo bootstrap credential files"',
+    "if ! cleanup_bootstrap_temp_dir; then",
+    "cleanup_bootstrap_resources() {",
+    "trap cleanup_bootstrap_resources EXIT",
+    "trap 'exit 130' INT",
+    "trap 'exit 143' TERM",
+)
+BOOTSTRAP_CREDENTIAL_VALIDATION = """for credential in DEMO_SMOKE_EMAIL DEMO_SMOKE_PASSWORD DEMO_SMOKE_USERNAME; do
+  if [[ -z "${!credential:-}" ]]; then
+    echo "::error::${credential} is empty; refusing to create dev-demo bootstrap credentials" >&2
+    exit 1
+  fi
+done
+BOOTSTRAP_SECRET_DIR="$(mktemp -d)"""
+BOOTSTRAP_SECRET_CLEANUP_AND_CREATE = """if ! cleanup_bootstrap_secret; then
+  exit 1
+fi
+kubectl -n "${PREVIEW_NAMESPACE}" create secret generic dev-demo-bootstrap-env"""
+BOOTSTRAP_TEMP_DIRECTORY_CLEANUP_SUCCESS = """if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then
+    BOOTSTRAP_SECRET_DIR=
+    return 0"""
+BOOTSTRAP_TEMP_DIRECTORY_CLEANUP_FAILURE = """echo "::error::Failed to remove dev-demo bootstrap credential files" >&2
+  return 1"""
+BOOTSTRAP_POST_LOG_CLEANUP = """kubectl -n "${PREVIEW_NAMESPACE}" logs dev-demo-bootstrap | tee "${BOOTSTRAP_POD_LOG}"
+  kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true
+  kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true
+  cleanup_bootstrap_secret"""
+BOOTSTRAP_MANIFEST_HEREDOC_OPENER = (
+    "cat <<'EOF' | kubectl -n \"${PREVIEW_NAMESPACE}\" apply -f -\n"
+)
 
 
 @dataclass(frozen=True)
@@ -433,13 +466,12 @@ def _cleanup_function_end_index(lines: list[str], function_start: int) -> int | 
 
 
 def _extract_bootstrap_pod(bootstrap_manifest: str) -> dict:
-    manifest_opener = "cat <<'EOF' | kubectl -n \"${PREVIEW_NAMESPACE}\" apply -f -\n"
-    if bootstrap_manifest.count(manifest_opener) != 1:
+    if bootstrap_manifest.count(BOOTSTRAP_MANIFEST_HEREDOC_OPENER) != 1:
         raise AssertionError(
             "dev-demo bootstrap step must contain exactly one expected pod manifest heredoc opener"
         )
     try:
-        manifest_start = bootstrap_manifest.index(manifest_opener)
+        manifest_start = bootstrap_manifest.index(BOOTSTRAP_MANIFEST_HEREDOC_OPENER)
         manifest_start = bootstrap_manifest.index("\n", manifest_start) + 1
         try:
             manifest_end = bootstrap_manifest.index("\nEOF\n", manifest_start)
@@ -534,31 +566,14 @@ def _validate_bootstrap_secret_command(command_lines: list[str]) -> None:
 
 def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
     normalized = normalize_script(bootstrap_manifest)
-    for expected in (
-        "cleanup_bootstrap_temp_dir() {",
-        'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then',
-        'echo "::error::Failed to remove dev-demo bootstrap credential files"',
-        "if ! cleanup_bootstrap_temp_dir; then",
-        "cleanup_bootstrap_resources() {",
-        "trap cleanup_bootstrap_resources EXIT",
-        "trap 'exit 130' INT",
-        "trap 'exit 143' TERM",
-    ):
+    for expected in BOOTSTRAP_MANIFEST_REQUIRED_MARKERS:
         if normalize_script(expected) not in normalized:
             raise AssertionError(
                 f"dev-demo bootstrap step contract missing: {expected}"
             )
 
     normalized_lines = normalize_nonempty_lines(bootstrap_manifest)
-    credential_validation = normalize_nonempty_lines(
-        '''for credential in DEMO_SMOKE_EMAIL DEMO_SMOKE_PASSWORD DEMO_SMOKE_USERNAME; do
-  if [[ -z "${!credential:-}" ]]; then
-    echo "::error::${credential} is empty; refusing to create dev-demo bootstrap credentials" >&2
-    exit 1
-  fi
-done
-BOOTSTRAP_SECRET_DIR="$(mktemp -d)"'''
-    )
+    credential_validation = normalize_nonempty_lines(BOOTSTRAP_CREDENTIAL_VALIDATION)
     if credential_validation not in normalized_lines:
         raise AssertionError(
             "dev-demo bootstrap must reject empty credentials before creating temporary files"
@@ -568,10 +583,7 @@ BOOTSTRAP_SECRET_DIR="$(mktemp -d)"'''
             "dev-demo bootstrap must rely on mktemp directory permissions"
         )
     secret_cleanup_and_create = normalize_nonempty_lines(
-        """if ! cleanup_bootstrap_secret; then
-  exit 1
-fi
-kubectl -n "${PREVIEW_NAMESPACE}" create secret generic dev-demo-bootstrap-env"""
+        BOOTSTRAP_SECRET_CLEANUP_AND_CREATE
     )
     if secret_cleanup_and_create not in normalized_lines:
         raise AssertionError(
@@ -600,29 +612,17 @@ kubectl -n "${PREVIEW_NAMESPACE}" create secret generic dev-demo-bootstrap-env""
         if secret_index >= len(source_lines):
             raise AssertionError("dev-demo bootstrap secret command is unterminated")
     _validate_bootstrap_secret_command(secret_command_lines)
-    cleanup_success = normalize_nonempty_lines(
-        """if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then
-    BOOTSTRAP_SECRET_DIR=
-    return 0"""
-    )
+    cleanup_success = normalize_nonempty_lines(BOOTSTRAP_TEMP_DIRECTORY_CLEANUP_SUCCESS)
     if cleanup_success not in normalized_lines:
         raise AssertionError(
             "dev-demo bootstrap temp directory must clear its variable only after rm succeeds"
         )
-    cleanup_failure = normalize_nonempty_lines(
-        """echo "::error::Failed to remove dev-demo bootstrap credential files" >&2
-  return 1"""
-    )
+    cleanup_failure = normalize_nonempty_lines(BOOTSTRAP_TEMP_DIRECTORY_CLEANUP_FAILURE)
     if cleanup_failure not in normalized_lines:
         raise AssertionError(
             "dev-demo bootstrap temp directory removal failure must return failure"
         )
-    post_log_cleanup = normalize_nonempty_lines(
-        """kubectl -n "${PREVIEW_NAMESPACE}" logs dev-demo-bootstrap | tee "${BOOTSTRAP_POD_LOG}"
-  kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true
-  kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true
-  cleanup_bootstrap_secret"""
-    )
+    post_log_cleanup = normalize_nonempty_lines(BOOTSTRAP_POST_LOG_CLEANUP)
     if post_log_cleanup not in normalized_lines:
         raise AssertionError(
             "dev-demo bootstrap must remove its credential secret after successful pod logging"
@@ -712,18 +712,21 @@ def _validate_smoke_account_contract(root: Path) -> None:
         root / "services/game-session-service/websocket-login-look-smoke.sh",
         root / "services/tcp-proxy-service/telnet-login-look-smoke.sh",
     )
-    required_call = (
-        "verify_smoke_account(account_api_base, username, password, timeout_seconds)"
+    required_markers = (
+        'login_email = os.environ.get("SMOKE_LOGIN_EMAIL", os.environ["DEMO_SMOKE_EMAIL"])',
+        "verify_smoke_account(account_api_base, login_email, password, timeout_seconds)",
     )
     for smoke_script in smoke_script_paths:
         if not smoke_script.is_file():
             raise AssertionError(
                 f"Smoke account contract script is missing: {smoke_script}"
             )
-        if required_call not in smoke_script.read_text(encoding="utf-8"):
-            raise AssertionError(
-                f"Smoke contract missing required account verification: {smoke_script}"
-            )
+        source = smoke_script.read_text(encoding="utf-8")
+        for required_marker in required_markers:
+            if required_marker not in source:
+                raise AssertionError(
+                    f"Smoke contract missing required account verification: {smoke_script}"
+                )
 
 
 def validate_workflow(root: Path) -> None:

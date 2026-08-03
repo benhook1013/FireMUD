@@ -6,7 +6,7 @@ source "$FIREMUD_REPO_ROOT/dev-tools/smoke/demo-smoke-defaults.sh"
 
 SMOKE_HOST=${SMOKE_TELNET_HOST:?SMOKE_TELNET_HOST is required}
 TCP_PORT=${TCP_PORT:?TCP_PORT is required}
-SMOKE_USERNAME=${SMOKE_USERNAME:-$DEMO_SMOKE_USERNAME}
+SMOKE_LOGIN_EMAIL=${SMOKE_LOGIN_EMAIL:-$DEMO_SMOKE_EMAIL}
 SMOKE_PASSWORD=${SMOKE_PASSWORD:-$DEMO_SMOKE_PASSWORD}
 SMOKE_WORLD=${SMOKE_WORLD:-$DEMO_SMOKE_WORLD}
 SMOKE_TARGET_LABEL=${SMOKE_TARGET_LABEL:-hosted environment}
@@ -25,7 +25,7 @@ else
 fi
 
 echo "Running ${SMOKE_TARGET_LABEL} TCP smoke against ${SMOKE_HOST}:${TCP_PORT}"
-echo "Using username='${SMOKE_USERNAME}' (password redacted)"
+echo "Using login email='${SMOKE_LOGIN_EMAIL}' (password redacted)"
 
 "$PYTHON" - <<'PY'
 import os
@@ -39,7 +39,7 @@ from smoke_common import login_play_look_steps, run_telnet_smoke_session
 
 host = os.environ["SMOKE_TELNET_HOST"]
 port = int(os.environ["TCP_PORT"])
-username = os.environ.get("SMOKE_USERNAME", os.environ["DEMO_SMOKE_USERNAME"])
+login_email = os.environ.get("SMOKE_LOGIN_EMAIL", os.environ["DEMO_SMOKE_EMAIL"])
 password = os.environ.get("SMOKE_PASSWORD", os.environ["DEMO_SMOKE_PASSWORD"])
 world = os.environ.get("SMOKE_WORLD", os.environ["DEMO_SMOKE_WORLD"])
 timeout_seconds = int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "20"))
@@ -51,7 +51,7 @@ run_telnet_smoke_session(
     host,
     port,
     login_play_look_steps(
-        username,
+        login_email,
         password,
         world,
         worlds_expect,

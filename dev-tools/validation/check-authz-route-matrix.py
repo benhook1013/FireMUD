@@ -1326,12 +1326,8 @@ def validate_membership_generation(
     route: dict[str, Any], label: str, errors: list[str]
 ) -> Any:
     value = route.get("membership_authority_generation_applies")
-    valid_scalar = isinstance(value, bool) or (
-        isinstance(value, str)
-        and value
-        in {
-            "conditional_by_operator_role",
-        }
+    valid_scalar = isinstance(value, (bool, str)) and (
+        value in MEMBERSHIP_GENERATION_APPLICABILITY_VALUES
     )
     if value is not None and not valid_scalar:
         errors.append(
@@ -3166,7 +3162,10 @@ def validate_connect_token_revoke_generation_applicability(
     label = f"{service} {name}"
     for field, expected in REQUIRED_REVOKE_GENERATION_APPLICABILITY.items():
         if route.get(field) is not expected:
-            errors.append(f"{label} must explicitly set {field}={expected}")
+            expected_yaml = (
+                str(expected).lower() if isinstance(expected, bool) else expected
+            )
+            errors.append(f"{label} must explicitly set {field}={expected_yaml}")
 
 
 def validate_join_routes(

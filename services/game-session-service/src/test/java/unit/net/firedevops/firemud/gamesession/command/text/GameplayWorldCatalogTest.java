@@ -129,6 +129,44 @@ class GameplayWorldCatalogTest {
     assertThat(catalog.resolveRealmForAdmission(visibleWorld, "   ")).isEmpty();
   }
 
+  @Test
+  void normalizeWorldsDropsRealmViewsWithoutSlugsBeforeAdmissionLookup() {
+    GameplayWorldCatalog.WorldView sourceWorld =
+        new GameplayWorldCatalog.WorldView(
+            "demo",
+            "Demo World",
+            List.of(
+                new GameplayWorldCatalog.RealmView(
+                    "production",
+                    "Live Realm",
+                    7L,
+                    11L,
+                    1L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW"),
+                new GameplayWorldCatalog.RealmView(
+                    null,
+                    "Invalid Realm",
+                    7L,
+                    12L,
+                    1L,
+                    true,
+                    false,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW")));
+    GameplayWorldCatalog catalog = GameplayWorldCatalog.forWorldViews(List.of(sourceWorld));
+    GameplayWorldCatalog.WorldView normalizedWorld = catalog.resolveWorld("demo").orElseThrow();
+
+    assertThat(normalizedWorld.realms())
+        .extracting(GameplayWorldCatalog.RealmView::slug)
+        .containsExactly("production");
+    assertThat(catalog.resolveRealmForAdmission(normalizedWorld, "invalid")).isEmpty();
+  }
+
   private static GameplayWorldCatalog.WorldView worldWithTargetRealm(
       String realmSlug, boolean visible) {
     return new GameplayWorldCatalog.WorldView(

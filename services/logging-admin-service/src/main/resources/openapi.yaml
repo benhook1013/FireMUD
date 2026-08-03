@@ -2,13 +2,12 @@ openapi: 3.0.3
 info:
   title: Logging & Admin Service API
   description: >-
-    Operator-facing moderation and runtime-control APIs. Public /reports is intentionally
-    absent; internal report RPC/types are not public ingress. Admission-pointer reads, audit,
-    and prepared-proof reads are live. The existing admission-pointer write and prepared-cutover
-    paths remain unsupported implementation drift. Version-upgrade preparation has an
-    implementation path for operator participation but remains externally gated and unavailable
-    until its action-family schema, shared cross-language mutationDigest/v1 golden vectors, and
-    Account-issued authorization-reference issuance plus owner-side redemption are complete.
+    Operator-facing moderation and runtime-control APIs. Public report persistence is unavailable:
+    /reports is reserved for the separate player-bootstrap contract and /admin/reports is not
+    currently routable. Admission-pointer reads, audit, and prepared-upgrade proof reads are
+    live. Public admission-pointer mutation, preparation, and cutover routes are target-only
+    absent; feature-flag and per-instance tick-remediation mutations are unavailable/gated until
+    their canonical mutation and authorization-reference contracts are complete.
   version: 1.0.0
   license:
     name: MIT

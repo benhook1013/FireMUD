@@ -7,7 +7,7 @@ source "$FIREMUD_REPO_ROOT/dev-tools/smoke/demo-smoke-defaults.sh"
 
 TCP_PORT=${TCP_PROXY_PORT:-2323}
 SMOKE_HOST=${SMOKE_TELNET_HOST:-localhost}
-SMOKE_USERNAME=${SMOKE_USERNAME:-$DEMO_SMOKE_USERNAME}
+SMOKE_LOGIN_EMAIL=${SMOKE_LOGIN_EMAIL:-$DEMO_SMOKE_EMAIL}
 SMOKE_PASSWORD=${SMOKE_PASSWORD:-$DEMO_SMOKE_PASSWORD}
 SMOKE_SESSION_ID=${SMOKE_SESSION_ID:-1}
 SMOKE_TENANT_ID=${SMOKE_TENANT_ID:-1}
@@ -34,7 +34,7 @@ else
 fi
 
 echo "Running Telnet WORLDS + LOGIN + PLAY + item/container/equipment smoke test against ${SMOKE_HOST}:${TCP_PORT}"
-echo "Using username='${SMOKE_USERNAME}' (password redacted)"
+echo "Using login email='${SMOKE_LOGIN_EMAIL}' (password redacted)"
 echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
 echo "Using account API base '${SMOKE_ACCOUNT_API_BASE}' for smoke validation"
 
@@ -60,7 +60,7 @@ from smoke_common import (
 
 host = os.environ.get("SMOKE_TELNET_HOST", "localhost")
 port = int(os.environ.get("TCP_PORT", "2323"))
-username = os.environ.get("SMOKE_USERNAME", os.environ["DEMO_SMOKE_USERNAME"])
+login_email = os.environ.get("SMOKE_LOGIN_EMAIL", os.environ["DEMO_SMOKE_EMAIL"])
 password = os.environ.get("SMOKE_PASSWORD", os.environ["DEMO_SMOKE_PASSWORD"])
 session_id = os.environ.get("SMOKE_SESSION_ID", "1")
 tenant_id = os.environ.get("SMOKE_TENANT_ID", "1")
@@ -130,9 +130,9 @@ wait_for_http_readiness(
 wait_for_http_readiness(
     "tcp-proxy-service", tcp_proxy_api_base, startup_wait_seconds, timeout_seconds
 )
-verify_smoke_account(account_api_base, username, password, timeout_seconds)
+verify_smoke_account(account_api_base, login_email, password, timeout_seconds)
 steps = gameplay_item_container_equipment_steps(
-    username, password, worlds_expect, login_expect, play_expect, look_expect
+    login_email, password, worlds_expect, login_expect, play_expect, look_expect
 )
 run_telnet_smoke_session(host, port, steps, timeout_seconds)
 

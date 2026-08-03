@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
@@ -174,6 +175,13 @@ class TextCommandInterpreterTest {
                 .setMembershipVersion(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
+    when(accountClient.getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString()))
+        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(true).build());
     when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyLong()))
         .thenReturn(
             net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()

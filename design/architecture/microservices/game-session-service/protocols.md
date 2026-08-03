@@ -61,14 +61,14 @@ Selector rules for `PLAY` match the lobby helpers. `WORLDS` returns both `tenant
 
 ### JOIN Translation and Status
 
-The canonical Account membership operation is `EnsurePublicProductionPlayerMembership`, whose target semantic name is `JoinPublicProductionMembership`. When the explicit text action is implemented, Game Session translates `JOIN <world>` to that one Account operation; it does not create membership locally or use a second join writer.
+The target Account membership operation is `JoinPublicProductionMembership`. The current `EnsurePublicProductionPlayerMembership` seam is implementation drift from that target name and contract; it is not a second target join writer. When the explicit text action is implemented, Game Session translates `JOIN <world>` to the sole target operation `JoinPublicProductionMembership`; it does not create membership locally or use another join writer.
 
 - Game Session resolves `<world>` from the exact `WORLDS` snapshot to the tenant-scoped `worldSlug`, then resolves the world's configured default public-production `realmSlug`. The resolved `worldSlug` and `realmSlug` identify the operation target but are not independent client authority.
 - The resolved target's opaque `connectScopeId` is the selector passed to Account with the caller-generated `requestId`. Account derives and revalidates the caller, `worldSlug`, `realmSlug`, public-production policy, and current pointer from that scope at its commit boundary; a client-supplied runtime ID or independently supplied slug cannot replace the scope.
 - An ambiguous or stale world/realm selector is a lobby-selection error: Game Session does not guess, does not invoke Account, and directs the client to refresh `WORLDS`/`REALMS`. A discovered scope that is stale or no longer matches the resolved `worldSlug`/`realmSlug` fails closed with the applicable scope or admission error rather than being translated to a newer target.
 - `requestId` is the join attempt idempotency key. Account binds it to the caller, resolved `connectScopeId`, `worldSlug`, and `realmSlug`; an exact retry replays the same membership result or deterministic failure, while a changed selector or target conflicts and creates no second membership.
 
-Explicit `JOIN` and first-party `Join & Play` are not implemented as current text or HTTP actions. Current text `PLAY` returns `JOIN_REQUIRED` without invoking the membership writer, while current connect-token issuance requires existing membership and returns `JOIN_REQUIRED` when it is absent without invoking `EnsurePublicProductionPlayerMembership`. The missing membership-authority-generation reread at issuance remains a gap; these current facts must not be described as the explicit-join translation being live.
+Explicit `JOIN` and first-party `Join & Play` are not implemented as current text or HTTP actions. Current text `PLAY` returns `JOIN_REQUIRED` without invoking the membership writer, while current connect-token issuance requires existing membership and returns `JOIN_REQUIRED` when it is absent without invoking the drifted `EnsurePublicProductionPlayerMembership` seam. The missing membership-authority-generation reread at issuance remains a gap; these current facts must not be described as the explicit-join translation being live.
 
 ## Login and Play Flow
 

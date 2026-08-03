@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.FlywayException;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
@@ -27,6 +28,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class AccountRepositoryIntegrationTest {
   private static final String MIGRATION_PROOF_SCHEMA = "account_migration_proof";
+  private static final String COLLISION_MIGRATION_PROOF_SCHEMA =
+      "account_migration_collision_proof";
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -127,6 +130,59 @@ class AccountRepositoryIntegrationTest {
                         + ".accounts (username, email, password_hash) "
                         + "VALUES ('noncanonical', ' Another@Example.COM ', 'hash')"))
         .isInstanceOf(DataAccessException.class);
+  }
+
+  @Test
+  void flywayRejectsCanonicalEmailCollisionsBeforeRewriting() {
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations(
+            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
+        .schemas(COLLISION_MIGRATION_PROOF_SCHEMA)
+        .defaultSchema(COLLISION_MIGRATION_PROOF_SCHEMA)
+        .target("21")
+        .load()
+        .migrate();
+
+    dsl.execute(
+        "INSERT INTO "
+            + COLLISION_MIGRATION_PROOF_SCHEMA
+            + ".accounts (username, email, password_hash) "
+            + "VALUES ('collision-first', 'Player@Example.COM', 'hash')");
+    dsl.execute(
+        "INSERT INTO "
+            + COLLISION_MIGRATION_PROOF_SCHEMA
+            + ".accounts (username, email, password_hash) "
+            + "VALUES ('collision-second', ' player@example.com ', 'hash')");
+
+    assertThatThrownBy(
+            () ->
+                Flyway.configure()
+                    .dataSource(dataSource)
+                    .locations(
+                        "filesystem:"
+                            + Path.of("src/main/resources/db/migration")
+                                .toAbsolutePath()
+                                .normalize())
+                    .schemas(COLLISION_MIGRATION_PROOF_SCHEMA)
+                    .defaultSchema(COLLISION_MIGRATION_PROOF_SCHEMA)
+                    .load()
+                    .migrate())
+        .isInstanceOf(FlywayException.class)
+        .hasStackTraceContaining("accounts_email_canonicalization_collision");
+
+    assertThat(
+            dsl.fetchValue(
+                "SELECT email FROM "
+                    + COLLISION_MIGRATION_PROOF_SCHEMA
+                    + ".accounts WHERE username = 'collision-first'"))
+        .isEqualTo("Player@Example.COM");
+    assertThat(
+            dsl.fetchValue(
+                "SELECT email FROM "
+                    + COLLISION_MIGRATION_PROOF_SCHEMA
+                    + ".accounts WHERE username = 'collision-second'"))
+        .isEqualTo(" player@example.com ");
   }
 
   private Account account(String username, String email, AccountLifecycleState lifecycleState) {

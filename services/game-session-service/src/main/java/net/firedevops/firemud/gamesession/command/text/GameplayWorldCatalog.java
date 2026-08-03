@@ -88,6 +88,7 @@ public final class GameplayWorldCatalog {
     }
     String normalized = selector.trim().toLowerCase(Locale.ROOT);
     return world.realms().stream()
+        .filter(realm -> realm != null && realm.slug() != null && !realm.slug().isBlank())
         .filter(realm -> normalized.equals(realm.slug().toLowerCase(Locale.ROOT)))
         .findFirst();
   }
@@ -299,6 +300,7 @@ public final class GameplayWorldCatalog {
             ? List.of()
             : input.realms().stream()
                 .filter(Objects::nonNull)
+                .filter(realm -> realm.slug() != null && !realm.slug().isBlank())
                 .map(GameplayWorldCatalog::copyRealmView)
                 .toList());
   }
