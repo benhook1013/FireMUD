@@ -162,8 +162,14 @@ public class FriendServiceImpl implements FriendService {
     Map<Long, FriendPresenceVisibilityPolicyValue> visibilityPolicies =
         Optional.ofNullable(accountClient.getPresenceVisibilityPolicies(tenantId, friendAccountIds))
             .orElseGet(Map::of);
+    List<Long> presenceAccountIds =
+        friendAccountIds.stream()
+            .filter(
+                friendAccountId ->
+                    canQueryPresence(visibilityPolicyFor(friendAccountId, visibilityPolicies)))
+            .toList();
     Map<Long, FriendPresenceDto> byAccountId =
-        loadFriendPresenceByAccountId(tenantId, accountId, friendAccountIds, visibilityPolicies);
+        loadFriendPresenceByAccountId(tenantId, accountId, presenceAccountIds, visibilityPolicies);
     List<FriendRosterEntryDto> roster =
         java.util.stream.IntStream.range(0, links.size())
             .mapToObj(index -> toRosterEntry(index + 1, links.get(index), byAccountId))
@@ -310,6 +316,9 @@ public class FriendServiceImpl implements FriendService {
       long accountId,
       List<Long> friendAccountIds,
       Map<Long, FriendPresenceVisibilityPolicyValue> visibilityPolicies) {
+    if (friendAccountIds.isEmpty()) {
+      return Map.of();
+    }
     QueryAccountPresenceResponse response =
         gameSessionClient.queryAccountPresence(tenantId, accountId, friendAccountIds);
     if (response == null) {
@@ -328,6 +337,13 @@ public class FriendServiceImpl implements FriendService {
               friendAccountId, entry, visibilityPolicyFor(friendAccountId, visibilityPolicies)));
     }
     return byAccountId;
+  }
+
+  private boolean canQueryPresence(FriendPresenceVisibilityPolicyValue visibilityPolicy) {
+    return switch (visibilityPolicy) {
+      case PUBLIC, FRIENDS_ONLY -> true;
+      default -> false;
+    };
   }
 
   private FriendPresenceDto mapPresence(

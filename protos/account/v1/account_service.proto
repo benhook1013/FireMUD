@@ -15,7 +15,6 @@ service AccountService {
   rpc VerifyEmailLoginOtp(VerifyEmailLoginOtpRequest) returns (AuthenticateResponse);
   rpc GetTenantMembershipForRuntime(GetTenantMembershipForRuntimeRequest) returns (GetTenantMembershipForRuntimeResponse);
   rpc GetRealmAccessGrantForRuntime(GetRealmAccessGrantForRuntimeRequest) returns (GetRealmAccessGrantForRuntimeResponse);
-  rpc EnsurePublicProductionPlayerMembership(EnsurePublicProductionPlayerMembershipRequest) returns (EnsurePublicProductionPlayerMembershipResponse);
   rpc GetTenantEntitlementsForRuntime(GetTenantEntitlementsForRuntimeRequest) returns (GetTenantEntitlementsForRuntimeResponse);
   rpc GetProfile(GetProfileRequest) returns (GetProfileResponse);
   rpc ListPresenceVisibilityPolicies(ListPresenceVisibilityPoliciesRequest)
@@ -125,28 +124,6 @@ message GetRealmAccessGrantForRuntimeResponse {
   uint64 grant_version = 6;
   string evaluated_at = 7;
   shared.v1.ErrorDetail error = 8;
-}
-
-message EnsurePublicProductionPlayerMembershipRequest {
-  string account_id = 1;
-  string tenant_id = 2;
-  string realm_slug = 3;
-  string request_id = 4;
-  string world_slug = 5;
-}
-
-message EnsurePublicProductionPlayerMembershipResponse {
-  string account_id = 1;
-  string tenant_id = 2;
-  string realm_slug = 3;
-  bool gameplay_admission_allowed = 4;
-  uint64 membership_version = 5;
-  bool created = 6;
-  string request_id = 7;
-  string evaluated_at = 8;
-  bool replayed = 9;
-  shared.v1.ErrorDetail error = 10;
-  string world_slug = 11;
 }
 
 message GetTenantEntitlementsForRuntimeRequest {

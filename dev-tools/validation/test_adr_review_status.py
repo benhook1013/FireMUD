@@ -699,7 +699,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 )
                 expect_failure(
                     self,
-                    lambda: self.validator.supersession_index_rows(
+                    lambda path=path: self.validator.supersession_index_rows(
                         path, path.parent
                     ),
                     expected,

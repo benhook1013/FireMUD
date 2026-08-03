@@ -197,11 +197,6 @@ for path in (root / "design").rglob("*.md"):
         raise SystemExit(f"{path}: use the canonical <deploymentEventId> path placeholder")
     if obsolete_public_resume_signature in text:
         raise SystemExit(f"{path}: uses obsolete caller-supplied recovery scope")
-    if obsolete_redis_rebind_envelope.search(text):
-        raise SystemExit(
-            f"{path}: design-tree Redis contract must use the opaque rebindHandle, "
-            "not rebind-envelope terminology"
-        )
     if has_forbidden_maintenance_lock_token_syntax(text, path):
         raise SystemExit(
             f"{path}: recovery command examples must not expose "
@@ -345,6 +340,16 @@ def is_historical_adr_record(path, text):
     )
 
 
+def reject_obsolete_redis_rebind_envelope(path, text):
+    if is_historical_adr_record(path, text):
+        return
+    if obsolete_redis_rebind_envelope.search(text):
+        raise SystemExit(
+            f"{path}: design-tree Redis contract must use the opaque rebindHandle, "
+            "not rebind-envelope terminology"
+        )
+
+
 def reject_obsolete_envelope_phrases(path, text):
     if is_historical_adr_record(path, text):
         return
@@ -357,7 +362,7 @@ def reject_obsolete_envelope_phrases(path, text):
 
 
 historical_adr_fixture = decision_history_dir / "adr-9999-history-fixture.md"
-historical_adr_fixture_text = "# ADR 9999: Historical Fixture\n\n## Status\n\nSuperseded by ADR 0001\n\nAccount-issued envelope\n"
+historical_adr_fixture_text = "# ADR 9999: Historical Fixture\n\n## Status\n\nSuperseded by ADR 0001\n\nAccount-issued envelope\nrebind-envelope\n"
 accepted_adr_fixture = decision_history_dir / "adr-9998-accepted-fixture.md"
 accepted_adr_fixture_text = (
     "# ADR 9998: Accepted Fixture\n\n"
@@ -374,6 +379,7 @@ accepted_adr_fixture_text = (
     "    Superseded by ADR 0001\n\n"
     "## Status\n\n"
     "Accepted\n"
+    "rebind-envelope\n"
 )
 raw_html_adr_fixture = decision_history_dir / "adr-9997-raw-html-fixture.md"
 raw_html_adr_fixture_text = (
@@ -427,6 +433,10 @@ indented_status_value_fixture_text = (
 registry_index_fixture = decision_history_dir / "README.md"
 if not is_historical_adr_record(historical_adr_fixture, historical_adr_fixture_text):
     raise SystemExit("historical ADR fixture was not recognized as an exempt record")
+reject_obsolete_redis_rebind_envelope(
+    historical_adr_fixture,
+    historical_adr_fixture_text,
+)
 if is_historical_adr_record(registry_index_fixture, obsolete_envelope_phrases[0]):
     raise SystemExit("decision registry/index fixture was incorrectly exempted")
 if first_top_level_status_value(accepted_adr_fixture_text) != "Accepted":
@@ -449,6 +459,16 @@ reject_obsolete_envelope_phrases(
     historical_adr_fixture,
     historical_adr_fixture_text,
 )
+try:
+    reject_obsolete_redis_rebind_envelope(
+        accepted_adr_fixture,
+        accepted_adr_fixture_text,
+    )
+except SystemExit as error:
+    if "design-tree Redis contract must use" not in str(error):
+        raise SystemExit(f"unexpected Accepted ADR Redis diagnostic: {error}")
+else:
+    raise SystemExit("Accepted ADR was not checked for obsolete Redis terminology")
 try:
     reject_obsolete_envelope_phrases(
         accepted_adr_fixture,
@@ -491,7 +511,9 @@ else:
     raise SystemExit("decision registry/index fixture was not checked")
 
 for path in (root / "design").rglob("*.md"):
-    reject_obsolete_envelope_phrases(path, path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    reject_obsolete_redis_rebind_envelope(path, text)
+    reject_obsolete_envelope_phrases(path, text)
 
 canonical_world_dynamic = "world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>"
 for path in [

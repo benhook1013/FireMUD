@@ -70,30 +70,4 @@ public class LoggingAdminClient
             .build();
     stub().createLogEvent(request);
   }
-
-  /** Log that public-production gameplay membership was created. */
-  public void logPublicProductionMembershipCreated(
-      long tenantId,
-      long accountId,
-      String worldSlug,
-      String realmSlug,
-      long membershipVersion,
-      String requestId) {
-    CreateLogEventRequest request =
-        CreateLogEventRequest.newBuilder()
-            .setTenantId(Long.toString(tenantId))
-            .setAccountId(Long.toString(accountId))
-            .setType("PUBLIC_PRODUCTION_MEMBERSHIP_CREATED")
-            .setMessage(
-                "worldSlug="
-                    + worldSlug
-                    + " realmSlug="
-                    + realmSlug
-                    + " membershipVersion="
-                    + membershipVersion
-                    + " requestId="
-                    + requestId)
-            .build();
-    stub().createLogEvent(request);
-  }
 }

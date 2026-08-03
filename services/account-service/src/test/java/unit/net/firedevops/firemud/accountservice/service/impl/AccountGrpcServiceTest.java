@@ -16,8 +16,6 @@ import net.firedevops.firemud.account.v1.CreateAccountRequest;
 import net.firedevops.firemud.account.v1.CreateAccountResponse;
 import net.firedevops.firemud.account.v1.DeleteAccountRequest;
 import net.firedevops.firemud.account.v1.DeleteAccountResponse;
-import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipRequest;
-import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.ExportAccountRequest;
 import net.firedevops.firemud.account.v1.ExportAccountResponse;
 import net.firedevops.firemud.account.v1.ExportTenantDataRequest;
@@ -673,85 +671,6 @@ class AccountGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("accountId must be positive", ref.get().getError().getMessage());
-    Mockito.verifyNoInteractions(accountService);
-  }
-
-  @Test
-  void ensurePublicProductionPlayerMembershipReturnsResponse() {
-    PingService pingService = Mockito.mock(PingService.class);
-    AccountService accountService = Mockito.mock(AccountService.class);
-    Mockito.when(
-            accountService.ensurePublicProductionPlayerMembership(
-                2L, 1L, "demo", "production", "req-1"))
-        .thenReturn(
-            new net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult(
-                2L, 1L, "demo", "production", 55L, true, "req-1", "2026-03-30T00:00:00Z", false));
-    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
-
-    AtomicReference<EnsurePublicProductionPlayerMembershipResponse> ref = new AtomicReference<>();
-    service.ensurePublicProductionPlayerMembership(
-        EnsurePublicProductionPlayerMembershipRequest.newBuilder()
-            .setAccountId("2")
-            .setTenantId("1")
-            .setWorldSlug("demo")
-            .setRealmSlug("production")
-            .setRequestId("req-1")
-            .build(),
-        new StreamObserver<EnsurePublicProductionPlayerMembershipResponse>() {
-          @Override
-          public void onNext(EnsurePublicProductionPlayerMembershipResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertNotNull(ref.get());
-    assertEquals("2", ref.get().getAccountId());
-    assertEquals("production", ref.get().getRealmSlug());
-    assertEquals("demo", ref.get().getWorldSlug());
-    assertTrue(ref.get().getGameplayAdmissionAllowed());
-    assertEquals(55L, ref.get().getMembershipVersion());
-    assertTrue(ref.get().getCreated());
-    assertEquals("req-1", ref.get().getRequestId());
-    assertFalse(ref.get().getReplayed());
-  }
-
-  @Test
-  void ensurePublicProductionPlayerMembershipRejectsZeroTenantIdBeforeLookup() {
-    PingService pingService = Mockito.mock(PingService.class);
-    AccountService accountService = Mockito.mock(AccountService.class);
-    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
-
-    AtomicReference<EnsurePublicProductionPlayerMembershipResponse> ref = new AtomicReference<>();
-    service.ensurePublicProductionPlayerMembership(
-        EnsurePublicProductionPlayerMembershipRequest.newBuilder()
-            .setAccountId("2")
-            .setTenantId("0")
-            .setWorldSlug("demo")
-            .setRealmSlug("production")
-            .setRequestId("req-1")
-            .build(),
-        new StreamObserver<EnsurePublicProductionPlayerMembershipResponse>() {
-          @Override
-          public void onNext(EnsurePublicProductionPlayerMembershipResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertNotNull(ref.get());
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
     Mockito.verifyNoInteractions(accountService);
   }
 

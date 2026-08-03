@@ -8,8 +8,6 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
-import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipRequest;
-import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
@@ -282,58 +280,12 @@ public final class AccountClient
     return realmAccessGrantUnavailable();
   }
 
-  public EnsurePublicProductionPlayerMembershipResponse ensurePublicProductionPlayerMembership(
-      String accountId, String tenantId, String worldSlug, String realmSlug, String requestId) {
-    if (stub() == null) {
-      return publicMembershipUnavailable();
-    }
-    EnsurePublicProductionPlayerMembershipRequest request =
-        EnsurePublicProductionPlayerMembershipRequest.newBuilder()
-            .setAccountId(accountId)
-            .setTenantId(tenantId)
-            .setWorldSlug(worldSlug)
-            .setRealmSlug(realmSlug)
-            .setRequestId(requestId == null ? "" : requestId)
-            .build();
-    try {
-      return callStub().ensurePublicProductionPlayerMembership(request);
-    } catch (StatusRuntimeException ex) {
-      if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
-        logger.warn(
-            "Account Service unavailable; rebuilding channel and retrying public-production membership",
-            ex);
-        try {
-          initClient();
-          return callStub().ensurePublicProductionPlayerMembership(request);
-        } catch (Exception retryEx) {
-          logger.warn(
-              "Failed to retry Account Service public-production membership after channel reload",
-              retryEx);
-        }
-      } else {
-        logger.warn("Failed to call Account Service public-production membership endpoint", ex);
-      }
-    } catch (Exception ex) {
-      logger.warn("Failed to call Account Service public-production membership endpoint", ex);
-    }
-    return publicMembershipUnavailable();
-  }
-
   private GetRealmAccessGrantForRuntimeResponse realmAccessGrantUnavailable() {
     return GetRealmAccessGrantForRuntimeResponse.newBuilder()
         .setError(
             ErrorDetail.newBuilder()
                 .setCode(AuthenticationErrorCodes.UNAVAILABLE)
                 .setMessage("Realm grant authority unavailable"))
-        .build();
-  }
-
-  private EnsurePublicProductionPlayerMembershipResponse publicMembershipUnavailable() {
-    return EnsurePublicProductionPlayerMembershipResponse.newBuilder()
-        .setError(
-            ErrorDetail.newBuilder()
-                .setCode(AuthenticationErrorCodes.UNAVAILABLE)
-                .setMessage("Membership authority unavailable"))
         .build();
   }
 

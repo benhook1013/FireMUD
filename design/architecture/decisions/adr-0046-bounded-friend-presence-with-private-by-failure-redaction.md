@@ -85,6 +85,13 @@ Future focused contract and integration proof must demonstrate that:
 - pageable requests create an opaque snapshot whenever a continuation can be returned, including when one backend chunk is sufficient; snapshot creation is capped at 10,000 subjects, page size at 100, and candidates scanned per continuation at 1,000, with lower tenant settings allowed; exceeding a snapshot or page-size cap produces no entries or continuation token, while reaching the scan cap before page fill or exhaustion returns accumulated entries plus a continuation advanced through `lastScanned`, with an empty page only when no subject was emitted; snapshot exhaustion returns accumulated entries without a continuation, including an empty page only when no subject was emitted; snapshot-bound Account and Game Session reads remain bounded to 100 IDs per chunk, expiry is terminal with the `page-expired` error, request-level Account authorization or accepted-friend-snapshot failure and any raw-presence, chunk-shape, or snapshot-integrity failure produce no partial page or continuation token, and any policy chunk or transport failure produces uniform private-by-failure redaction for the entire page; and
 - `WHO` remains instance-local while applicable game-authored invisibility and perception policy is enforced independently before rendering.
 
+## Canonical Design Links
+
+- [System Architecture Overview](../system-architecture-overview.md)
+- [Account Service API Contracts](../microservices/account-service/api-contracts.md)
+- [Game Session Service API Contracts](../microservices/game-session-service/api-contracts.md)
+- [Social & Groups Service API Contracts](../microservices/social-groups-service/api-contracts.md)
+
 ## Reversibility and Revisit Triggers
 
 The projection fields and audiences can be narrowed without changing raw-presence ownership. Revisit this decision if FireMUD introduces an explicitly consented public player directory, non-friend presence audiences, organization-managed privacy, relationship graphs too large for bounded paginated reads, or a dedicated presence service that can assume raw-presence authority without duplicating Game Session state.

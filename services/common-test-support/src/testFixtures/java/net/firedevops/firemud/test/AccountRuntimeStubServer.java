@@ -14,8 +14,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
-import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipRequest;
-import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.GetProfileRequest;
 import net.firedevops.firemud.account.v1.GetProfileResponse;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
@@ -41,7 +39,6 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
           "Authenticate",
           "GetTenantMembershipForRuntime",
           "GetRealmAccessGrantForRuntime",
-          "EnsurePublicProductionPlayerMembership",
           "GetTenantEntitlementsForRuntime");
 
   private final Server server;
@@ -179,27 +176,6 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setRealmSlug(request.getRealmSlug())
             .setGranted(realmAccessGranted.get())
             .setGrantVersion(1L)
-            .setEvaluatedAt(EVALUATED_AT)
-            .build());
-    responseObserver.onCompleted();
-  }
-
-  @Override
-  public void ensurePublicProductionPlayerMembership(
-      EnsurePublicProductionPlayerMembershipRequest request,
-      StreamObserver<EnsurePublicProductionPlayerMembershipResponse> responseObserver) {
-    boolean allowed = gameplayAdmissionAllowed.get();
-    if (allowed) {
-      membershipExists.set(true);
-    }
-    responseObserver.onNext(
-        EnsurePublicProductionPlayerMembershipResponse.newBuilder()
-            .setAccountId(request.getAccountId())
-            .setTenantId(request.getTenantId())
-            .setRealmSlug(request.getRealmSlug())
-            .setGameplayAdmissionAllowed(allowed)
-            .setMembershipVersion(1L)
-            .setCreated(allowed)
             .setEvaluatedAt(EVALUATED_AT)
             .build());
     responseObserver.onCompleted();

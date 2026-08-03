@@ -29,7 +29,6 @@ import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
-import net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult;
 import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
 import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
@@ -154,13 +153,6 @@ class AccountServiceImplTest {
     when(sessionService.getConnectTokenReplay(
             org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyLong(),
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.anyString()))
-        .thenReturn(Optional.empty());
-    when(sessionService.getPublicProductionMembershipReplay(
-            org.mockito.ArgumentMatchers.anyLong(),
-            org.mockito.ArgumentMatchers.anyLong(),
-            org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString()))
         .thenReturn(Optional.empty());
@@ -1461,105 +1453,6 @@ class AccountServiceImplTest {
     assertEquals(firstResult.expiresAt(), replayed.expiresAt());
     assertEquals(firstResult.requestId(), replayed.requestId());
     assertTrue(replayed.replayed());
-  }
-
-  @Test
-  void ensurePublicProductionMembershipCreatesGameplayMembershipWhenMissing() {
-    Account account = new Account();
-    account.setId(11L);
-    account.setUsername("demo");
-    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
-    Subscription active = new Subscription();
-    active.setId(22L);
-    active.setTenantId(7L);
-    active.setStatus("active");
-    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
-        .thenReturn(Optional.empty())
-        .thenReturn(Optional.of(membership(account, 7L)));
-    when(accountTenantMembershipRepository.saveAndFlush(org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation -> {
-              AccountTenantMembership membership = invocation.getArgument(0);
-              membership.setAccount(account);
-              membership.setTenantId(7L);
-              membership.setGameplayAdmissionAllowed(true);
-              java.lang.reflect.Field idField =
-                  AccountTenantMembership.class.getDeclaredField("id");
-              idField.setAccessible(true);
-              idField.set(membership, 711L);
-              return membership;
-            });
-
-    PublicProductionMembershipResult result =
-        service.ensurePublicProductionPlayerMembership(11L, 7L, "demo", "production", "req-join-1");
-
-    assertEquals(11L, result.accountId());
-    assertEquals(7L, result.tenantId());
-    assertEquals("demo", result.worldSlug());
-    assertEquals("production", result.realmSlug());
-    assertEquals(711L, result.membershipVersion());
-    assertTrue(result.created());
-    assertEquals("req-join-1", result.requestId());
-    assertTrue(!result.replayed());
-    org.mockito.Mockito.verify(loggingAdminClient)
-        .logPublicProductionMembershipCreated(7L, 11L, "demo", "production", 711L, "req-join-1");
-  }
-
-  @Test
-  void ensurePublicProductionMembershipReplaysSameResultForSameRequestId() {
-    Account account = new Account();
-    account.setId(11L);
-    account.setUsername("demo");
-    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
-    Subscription active = new Subscription();
-    active.setId(22L);
-    active.setTenantId(7L);
-    active.setStatus("active");
-    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
-    PublicProductionMembershipResult firstResult =
-        new PublicProductionMembershipResult(
-            11L, 7L, "demo", "production", 711L, true, "req-join-1", "2026-03-30T00:00:00Z", false);
-    when(sessionService.getPublicProductionMembershipReplay(
-            7L, 11L, "demo", "production", "req-join-1"))
-        .thenReturn(
-            Optional.of(
-                new SessionService.PublicProductionMembershipReplay(true, firstResult, "", "")));
-
-    PublicProductionMembershipResult replayed =
-        service.ensurePublicProductionPlayerMembership(11L, 7L, "demo", "production", "req-join-1");
-
-    assertEquals(firstResult.membershipVersion(), replayed.membershipVersion());
-    assertEquals(firstResult.requestId(), replayed.requestId());
-    assertEquals(firstResult.created(), replayed.created());
-    assertTrue(replayed.replayed());
-  }
-
-  @Test
-  void ensurePublicProductionMembershipRejectsCreationWhenPublicJoiningIsDisabled() {
-    Account account = new Account();
-    account.setId(11L);
-    account.setUsername("demo");
-    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
-    Subscription grace = new Subscription();
-    grace.setId(22L);
-    grace.setTenantId(7L);
-    grace.setStatus("grace");
-    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(grace));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
-        .thenReturn(Optional.empty());
-
-    AuthenticationException exception =
-        assertThrows(
-            AuthenticationException.class,
-            () ->
-                service.ensurePublicProductionPlayerMembership(
-                    11L, 7L, "demo", "production", "req-join-disabled"));
-
-    assertEquals("PUBLIC_PRODUCTION_ADMISSION_DENIED", exception.getCode());
-    assertEquals("Public joining is not allowed for the selected game", exception.getMessage());
-    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
-        .saveAndFlush(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
   }
 
   @Test

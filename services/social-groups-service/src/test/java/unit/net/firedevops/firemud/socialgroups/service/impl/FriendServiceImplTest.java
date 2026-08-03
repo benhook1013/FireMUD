@@ -639,13 +639,11 @@ class FriendServiceImplTest {
             Map.of(
                 3L, FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY,
                 4L, FriendPresenceVisibilityPolicyValue.PRIVATE));
-    when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L, 4L)))
+    when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()
                 .addPresences(
                     AccountPresenceEntry.newBuilder().setAccountId("3").setOnline(true).build())
-                .addPresences(
-                    AccountPresenceEntry.newBuilder().setAccountId("4").setOnline(false).build())
                 .build());
 
     var result = service.listFriends(11L, 2L, FriendRosterFilter.FRIENDS_ONLY);
@@ -657,6 +655,7 @@ class FriendServiceImplTest {
     assertEquals(1, result.friends().get(0).ordinal());
     assertEquals(3L, result.friends().get(0).friendAccountId());
     assertEquals("FRIENDS_ONLY", result.friends().get(0).presence().visibilityPolicy());
+    Mockito.verify(gameSessionClient).queryAccountPresence(11L, 2L, List.of(3L));
   }
 
   @Test
@@ -809,6 +808,8 @@ class FriendServiceImplTest {
     assertTrue(
         hiddenStaffFiltered.friends().stream()
             .allMatch(entry -> entry.presence().visibilityPolicy() == null));
+    Mockito.verify(gameSessionClient, Mockito.never())
+        .queryAccountPresence(Mockito.anyLong(), Mockito.anyLong(), Mockito.any());
 
     var summary = service.getFriendRosterSummary(11L, 2L);
     assertEquals(2, summary.totalCount());
@@ -879,6 +880,8 @@ class FriendServiceImplTest {
     assertEquals(null, result.presences().get(0).activityState());
     assertEquals(null, result.presences().get(0).lastSeenAt());
     assertNull(result.presences().get(0).recentDisposition());
+    Mockito.verify(gameSessionClient, Mockito.never())
+        .queryAccountPresence(Mockito.anyLong(), Mockito.anyLong(), Mockito.any());
 
     var privateFiltered = service.listFriends(11L, 2L, FriendRosterFilter.PRIVATE);
     assertEquals(1, privateFiltered.matchCount());
