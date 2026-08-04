@@ -255,7 +255,7 @@ Initial hosted preview proof target:
 - [Developer Tools & Scripting](./system-architecture-scripting.md)
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Testing Strategy](./system-architecture-testing.md)
-- [User Journeys – Testing & Continuous Delivery](./user-journeys-operators.md#3-testing--continuous-delivery)
+- [User Journeys – Testing & Continuous Delivery](../product/user-journeys/operators.md#3-testing--continuous-delivery)
 
 ---
 

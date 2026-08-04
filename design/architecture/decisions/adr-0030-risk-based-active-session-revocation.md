@@ -162,7 +162,7 @@ Checking Account or Redis before every command gives a tighter revocation observ
 - [Account subscription management](../microservices/account-service/subscription-management.md)
 - [Account Service runtime and data](../microservices/account-service/runtime-and-data.md)
 - [Game Session runtime and data](../microservices/game-session-service/runtime-and-data.md)
-- [Operator journeys](../user-journeys-operators.md)
+- [Operator journeys](../../product/user-journeys/operators.md)
 - [ADR 0028: Differentiated Entitlement Freshness](./adr-0028-differentiated-entitlement-freshness.md)
 - [Player access and session tracking](../../project-management/implementation-tracking/player-access-and-session.md)
 

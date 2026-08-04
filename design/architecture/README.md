@@ -1,8 +1,8 @@
 # Architecture Overview
 
-The architecture section describes the platform infrastructure and each microservice.
+The architecture section describes FireMUD's technical contracts, runtime boundaries, infrastructure, and microservices. Product requirements and observable product behavior live in [`design/product`](../product/README.md); architecture documents define the technical contracts that implement those product outcomes.
 
-Unless a document explicitly says otherwise, docs in `design/architecture/` describe the canonical target-state behavior and are normative for implementation. Read overview tables, responsibility matrices, glossary terms, and explicitly labeled canonical sections as contracts rather than as informal background.
+Unless a document explicitly says otherwise, docs in `design/architecture/` describe canonical target-state technical contracts and are normative for implementation. Product requirements and observable product behavior are defined in `design/product`; read architecture overview tables, responsibility matrices, glossary terms, and explicitly labeled canonical sections as technical contracts rather than as informal background.
 
 ## High-Level Diagrams
 
@@ -35,9 +35,9 @@ Open or amend the architecture docs before implementation when a change would al
 ## Directories
 
 - [**decisions/**](./decisions/README.md) – Consequential architecture decision records and their current status.
+- [**generated/**](./generated/README.md) – Checked-in references generated from canonical settings metadata.
 - [**infrastructure/**](./infrastructure/) – Deployment environments and secrets management.
 - [**microservices/**](./microservices/) – Individual service responsibilities and APIs.
-- [**product-capability-taxonomy.md**](./product-capability-taxonomy.md) – Stable capability identifiers for design navigation, decision review, and implementation alignment.
 - [**repository-structure.md**](./repository-structure.md) – Layout of Gradle modules and repository files.
 
 ## Runtime Architecture
@@ -63,6 +63,7 @@ Open or amend the architecture docs before implementation when a change would al
 - [**system-architecture-security.md**](./system-architecture-security.md) – Cross-service security and secret management.
 - [**system-architecture-shared-libraries.md**](./system-architecture-shared-libraries.md) – Common libraries for microservices.
 - [**system-architecture-testing.md**](./system-architecture-testing.md) – Unit, integration, and load testing strategy.
+- [**system-architecture-threat-model.md**](./system-architecture-threat-model.md) – Deferred placeholder for a future whole-platform threat model; no threat model is accepted yet.
 - [**system-architecture-ticks.md**](./system-architecture-ticks.md) – Tick system and runtime design.
 - [**system-architecture-tracing.md**](./system-architecture-tracing.md) – Deploying the OpenTelemetry Collector and Jaeger.
 - [**system-architecture-transactions.md**](./system-architecture-transactions.md) – Transaction strategies, synchronous sagas, and Temporal boundaries for cross-service workflows.
@@ -72,12 +73,12 @@ Open or amend the architecture docs before implementation when a change would al
 
 - [**system-architecture-backup-recovery.md**](./system-architecture-backup-recovery.md) – Backup strategy and disaster recovery procedures.
 - [**system-architecture-cicd.md**](./system-architecture-cicd.md) – CI/CD pipeline design using GitHub Actions.
-- [**system-architecture-runbooks.md**](./system-architecture-runbooks.md) – Operational runbooks for deployment, scaling, and recovery.
+- [**Operations documentation**](../operations/README.md) – Operator-facing deployment, recovery, incident, credential, and compliance procedures.
 
 ## Additional Resources
 
-- [**../project-management/slice-support/playtesting-feedback.md**](../project-management/slice-support/playtesting-feedback.md) – Staging playtests and feedback collection.
+- [**Playtesting and feedback**](../project-management/slice-support/playtesting-feedback.md) – Staging playtests and feedback collection.
 - [**../developer-workflows/player-playtest-checklist.md**](../developer-workflows/player-playtest-checklist.md) – High-level manual player checklist covering the currently implemented gameplay feature surface.
-- [**user-journeys.md**](./user-journeys.md) – Example creator and player workflows.
+- [**Product user journeys**](../product/user-journeys/overview.md) – Product-facing creator, player, and operator workflows.
 
 Refer to the README files within each subdirectory for more details.

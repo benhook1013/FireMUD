@@ -81,7 +81,7 @@ details on shared infrastructure components.
 - [Logging & Monitoring](../../system-architecture-logging-monitoring.md)
 - [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
 - [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
-- [User Journeys – Player Login and Gameplay](../../user-journeys-players.md#3-player-login-and-gameplay)
+- [User Journeys – Player Login and Gameplay](../../../product/user-journeys/players.md#3-player-login-and-gameplay)
 - [Testing Strategy](../../system-architecture-testing.md)
 - [CI/CD Pipeline](../../system-architecture-cicd.md)
 - [System Architecture Diagram](../../system-architecture-diagram.md)

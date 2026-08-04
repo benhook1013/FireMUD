@@ -1,6 +1,6 @@
 # FireMUD System Architecture: Multi-Tenancy
 
-This document explains how FireMUD hosts many independent games on shared infrastructure. It complements the [System Architecture Overview](./system-architecture-overview.md) and the multi-tenant requirements in the [Core Requirements](../project-management/core-requirements.md).
+This document explains how FireMUD hosts many independent games on shared infrastructure. It complements the [System Architecture Overview](./system-architecture-overview.md) and the multi-tenant requirements in the [Core Requirements](../product/requirements.md).
 
 ## Normative Target Contract
 

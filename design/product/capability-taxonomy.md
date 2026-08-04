@@ -6,7 +6,7 @@ This taxonomy provides stable product-capability identifiers for canonical desig
 
 ## Implementation Status
 
-This is the current allocation taxonomy. The complete canonical design corpus is being allocated against these stable identifiers.
+This is the canonical product allocation taxonomy. The complete canonical design corpus is allocated against these stable identifiers; the taxonomy does not define technical runtime behavior.
 
 ## Taxonomy Contract
 
@@ -233,23 +233,23 @@ The taxonomy was checked against the canonical product requirements, persona jou
 
 | Capability | Representative canonical sources |
 | --- | --- |
-| `AA-1` | [Core requirements](../project-management/core-requirements.md), [Account Service](./microservices/account-service/README.md), [Player journeys](./user-journeys-players.md) |
-| `AA-2` | [Authentication](./system-architecture-authentication.md), [Reconnection](./system-architecture-reconnection.md), [Session behavior](./system-architecture-session-behavior.md) |
-| `AA-3` | [Multi-tenancy](./system-architecture-multi-tenancy.md), [Versioning and runtime](./system-architecture-versioning-runtime.md), [Player journeys](./user-journeys-players.md) |
-| `EA-1` | [Player command model](./system-architecture-player-command-model.md), [Input, output, and presentation](./system-architecture-input-output-and-presentation.md) |
-| `EA-2` | [Core requirements](../project-management/core-requirements.md), [Social and Groups Service](./microservices/social-groups-service/README.md), [Player journeys](./user-journeys-players.md) |
-| `EA-3` | [Frontend architecture](./system-architecture-frontend.md), [Player journeys](./user-journeys-players.md), [Creator journeys](./user-journeys-creators.md), [Operator journeys](./user-journeys-operators.md) |
-| `GR-1` | [Tick architecture](./system-architecture-ticks.md), [System overview](./system-architecture-overview.md), [Game Session Service](./microservices/game-session-service/README.md) |
-| `GR-2` | [Core requirements](../project-management/core-requirements.md), [World Management Service](./microservices/world-management-service/README.md), [System overview](./system-architecture-overview.md) |
-| `GR-3` | [Core requirements](../project-management/core-requirements.md), [Entity Management Service](./microservices/entity-management-service/README.md) |
-| `GR-4` | [Core requirements](../project-management/core-requirements.md), [Game Logic Service](./microservices/game-logic-service/README.md) |
-| `AR-1` | [Creator journeys](./user-journeys-creators.md), [Game Design Service](./microservices/game-design-service/README.md), [LLM content tools](./system-architecture-llm-content-tools.md) |
-| `AR-2` | [Settings model](./system-architecture-settings-model.md), [Game customization](./system-architecture-game-customization.md) |
-| `AR-3` | [Versioning and runtime](./system-architecture-versioning-runtime.md), [Creator journeys](./user-journeys-creators.md), [World creation workflow](./microservices/world-management-service/world-creation-workflow.md) |
-| `AS-1` | [Scripting architecture](./system-architecture-scripting.md), [Automation and Scripting Service](./microservices/automation-scripting-service/README.md) |
-| `SF-1` | [gRPC architecture](./system-architecture-grpc.md), [Security](./system-architecture-security.md), [Identifier glossary](./system-architecture-identifier-glossary.md) |
-| `SF-2` | [Database migrations](./system-architecture-database-migrations.md), [Redis architecture](./system-architecture-redis.md), [Transactions](./system-architecture-transactions.md), [Temporal workflows](./system-architecture-temporal-workflows.md) |
-| `PO-1` | [Operator journeys](./user-journeys-operators.md), [Logging and Admin Service](./microservices/logging-admin-service/README.md), [Moderation policies](./microservices/logging-admin-service/moderation-policies.md) |
-| `PO-2` | [Gateway](./system-architecture-gateway.md), [Protocol bridging](./system-architecture-protocol-bridging.md), [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) |
-| `PO-3` | [Infrastructure](./infrastructure/README.md), [Deployment environments](./infrastructure/deployment-environments.md), [Backup and recovery](./system-architecture-backup-recovery.md), [CI/CD](./system-architecture-cicd.md) |
-| `PO-4` | [Logging and monitoring](./system-architecture-logging-monitoring.md), [Testing](./system-architecture-testing.md), [Tracing](./system-architecture-tracing.md) |
+| `AA-1` | [Core requirements](requirements.md), [Account Service](../architecture/microservices/account-service/README.md), [Player journeys](user-journeys/players.md) |
+| `AA-2` | [Authentication](../architecture/system-architecture-authentication.md), [Reconnection](../architecture/system-architecture-reconnection.md), [Session behavior](../architecture/system-architecture-session-behavior.md) |
+| `AA-3` | [Multi-tenancy](../architecture/system-architecture-multi-tenancy.md), [Versioning and runtime](../architecture/system-architecture-versioning-runtime.md), [Player journeys](user-journeys/players.md) |
+| `EA-1` | [Player command model](../architecture/system-architecture-player-command-model.md), [Input, output, and presentation](../architecture/system-architecture-input-output-and-presentation.md) |
+| `EA-2` | [Core requirements](requirements.md), [Social and Groups Service](../architecture/microservices/social-groups-service/README.md), [Player journeys](user-journeys/players.md) |
+| `EA-3` | [Frontend architecture](../architecture/system-architecture-frontend.md), [Player journeys](user-journeys/players.md), [Creator journeys](user-journeys/creators.md), [Operator journeys](user-journeys/operators.md) |
+| `GR-1` | [Tick architecture](../architecture/system-architecture-ticks.md), [System overview](../architecture/system-architecture-overview.md), [Game Session Service](../architecture/microservices/game-session-service/README.md) |
+| `GR-2` | [Core requirements](requirements.md), [World Management Service](../architecture/microservices/world-management-service/README.md), [System overview](../architecture/system-architecture-overview.md) |
+| `GR-3` | [Core requirements](requirements.md), [Entity Management Service](../architecture/microservices/entity-management-service/README.md) |
+| `GR-4` | [Core requirements](requirements.md), [Game Logic Service](../architecture/microservices/game-logic-service/README.md) |
+| `AR-1` | [Creator journeys](user-journeys/creators.md), [Game Design Service](../architecture/microservices/game-design-service/README.md), [LLM content tools](../architecture/system-architecture-llm-content-tools.md) |
+| `AR-2` | [Settings model](../architecture/system-architecture-settings-model.md), [Game customization](../architecture/system-architecture-game-customization.md) |
+| `AR-3` | [Versioning and runtime](../architecture/system-architecture-versioning-runtime.md), [Creator journeys](user-journeys/creators.md), [World creation workflow](../architecture/microservices/world-management-service/world-creation-workflow.md) |
+| `AS-1` | [Scripting architecture](../architecture/system-architecture-scripting.md), [Automation and Scripting Service](../architecture/microservices/automation-scripting-service/README.md) |
+| `SF-1` | [gRPC architecture](../architecture/system-architecture-grpc.md), [Security](../architecture/system-architecture-security.md), [Identifier glossary](../architecture/system-architecture-identifier-glossary.md) |
+| `SF-2` | [Database migrations](../architecture/system-architecture-database-migrations.md), [Redis architecture](../architecture/system-architecture-redis.md), [Transactions](../architecture/system-architecture-transactions.md), [Temporal workflows](../architecture/system-architecture-temporal-workflows.md) |
+| `PO-1` | [Operator journeys](user-journeys/operators.md), [Logging and Admin Service](../architecture/microservices/logging-admin-service/README.md), [Moderation policies](../architecture/microservices/logging-admin-service/moderation-policies.md) |
+| `PO-2` | [Gateway](../architecture/system-architecture-gateway.md), [Protocol bridging](../architecture/system-architecture-protocol-bridging.md), [TCP Proxy Service](../architecture/microservices/tcp-proxy-service/README.md) |
+| `PO-3` | [Infrastructure](../architecture/infrastructure/README.md), [Deployment environments](../architecture/infrastructure/deployment-environments.md), [Backup and recovery](../architecture/system-architecture-backup-recovery.md), [CI/CD](../architecture/system-architecture-cicd.md) |
+| `PO-4` | [Logging and monitoring](../architecture/system-architecture-logging-monitoring.md), [Testing](../architecture/system-architecture-testing.md), [Tracing](../architecture/system-architecture-tracing.md) |

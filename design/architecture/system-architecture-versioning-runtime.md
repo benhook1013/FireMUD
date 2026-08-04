@@ -503,7 +503,7 @@ Illustrative compatibility responses:
 
 ## Version Activation & Rollback
 
-The **Game Session Service** controls which published version is active for each live game instance. See [User Journeys – Publish and Start a Game Instance](./user-journeys-creators.md#4-publish-and-start-a-game-instance) for the high level flow.
+The **Game Session Service** controls which published version is active for each live game instance. See [User Journeys – Publish and Start a Game Instance](../product/user-journeys/creators.md#4-publish-and-start-a-game-instance) for the high level flow.
 
 - When starting a game, it reads the desired `version_id` from a manifest or launch request and stores this value as `runtime_version` in the `game_instances` table.
 - The available versions a tenant can launch are listed in the `game_manifest`

@@ -125,4 +125,4 @@ Shared keys and patterns that apply across services are summarized in the catalo
 - [Redis architecture](../system-architecture-redis.md) - Redis architecture hub.
 - [Authentication architecture](../system-architecture-authentication.md) - Authentication and authorization flows.
 - [Redis usage and profiles](../system-architecture-redis-usage-and-profiles.md) - How Redis roles and profiles are wired in different environments.
-- [System architecture runbooks](../system-architecture-runbooks.md) - Operational runbooks, including Redis session cleanup and rotation jobs.
+- [Operations documentation](../../operations/README.md) - Operator procedures, including Redis session cleanup and credential handling.

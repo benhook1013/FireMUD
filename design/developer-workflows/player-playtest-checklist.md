@@ -5,7 +5,7 @@ This document is the high-signal human playtest checklist for the currently impl
 It is intentionally different from:
 
 - automated smoke scripts in `dev-tools/`;
-- narrow slice-specific proof docs such as [look-smoke-tests.md](../project-management/slice-support/look-smoke-tests.md);
+- narrow capability-specific proof docs such as [look-smoke-tests.md](../project-management/slice-support/look-smoke-tests.md);
 - creator playtest process notes in [playtesting-feedback.md](../project-management/slice-support/playtesting-feedback.md).
 
 Use this checklist when you want to sit down as a tester and verify that the currently shipped player-facing systems feel coherent from the outside.

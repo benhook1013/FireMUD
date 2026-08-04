@@ -2,7 +2,7 @@
 
 Read the following documents. Follow references and read nearby related files as required when a listed document points to another canonical source or when a closely related file is needed to judge an implementation-blocking operational gap. Do not recursively traverse the full operations doc tree.
 
-- `design/architecture/system-architecture-runbooks.md`
+- `design/operations/README.md`
 - `design/architecture/system-architecture-backup-recovery.md`
 - `design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md`
 - `design/architecture/system-architecture-scaling-runbook.md`

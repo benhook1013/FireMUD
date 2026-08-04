@@ -90,6 +90,46 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
         with fixture_root() as directory:
             self.validator.validate(Path(directory))
 
+    def test_product_sources_are_discovered_and_allocated(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            source_sets = self.validator.repository_files(root)
+            expected = set(self.validator.PRODUCT_ALLOCATION_EXPECTATIONS)
+            self.assertEqual(source_sets["Product documentation"], expected)
+            rows = self.validator.validate_product(root, source_sets, self.validator.group_ids(root))
+            self.assertEqual({row.path for row in rows}, expected)
+
+    def test_missing_product_ledger_row(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            path = root / self.validator.TOP_ALLOCATION
+            text = path.read_text(encoding="utf-8")
+            path.write_text(
+                "\n".join(
+                    line
+                    for line in text.splitlines()
+                    if "[design/product/requirements.md]" not in line
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            expect_call_failure(
+                "missing product ledger row",
+                lambda: self.validator.validate(root),
+                "source manifest mismatch",
+            )
+
+    def test_unallocated_product_markdown_fails_closed(self) -> None:
+        with fixture_root() as directory:
+            root = Path(directory)
+            new_source = root / "design/product/unallocated.md"
+            new_source.write_text("# Unallocated product source\n", encoding="utf-8")
+            expect_call_failure(
+                "unallocated product Markdown",
+                lambda: self.validator.validate(root),
+                "product allocation expectations drifted",
+            )
+
     def test_missing_architecture_ledger_row(self) -> None:
         with fixture_root() as directory:
             root = Path(directory)
@@ -115,7 +155,7 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
             root = Path(directory)
             path = root / self.validator.SYSTEM_ALLOCATION
             replace_in_line(path, "system-architecture-authentication.md", "| `AA-2` |", "| `SF-1` |")
-            replace_once(path, "AA-2 4", "AA-2 3")
+            replace_once(path, "AA-2 3", "AA-2 2")
             replace_once(path, "SF-1 19", "SF-1 20")
             expect_call_failure(
                 "system primary allocation drift with adjusted counts",
@@ -128,8 +168,8 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
             root = Path(directory)
             path = root / self.validator.SYSTEM_ALLOCATION
             replace_in_line(path, "system-architecture-authentication.md", "| normative design |", "| reference |")
-            replace_once(path, "`56` normative design", "`55` normative design")
-            replace_once(path, "`14` reference", "`15` reference")
+            replace_once(path, "`55` normative design", "`54` normative design")
+            replace_once(path, "`12` reference", "`13` reference")
             expect_call_failure(
                 "system classification drift with adjusted counts",
                 lambda: self.validator.validate(root),
@@ -173,8 +213,8 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
             path = root / self.validator.SYSTEM_ALLOCATION
             replace_once(
                 path,
-                "Classification counts are: `56` normative design",
-                "Classification counts are: `55` normative design, `56` normative design",
+                "Classification counts are: `55` normative design",
+                "Classification counts are: `54` normative design, `55` normative design",
             )
             expect_call_failure(
                 "duplicate classification count claim",

@@ -2,13 +2,13 @@
 
 Read the following documents. Follow references and read nearby related files as required when a listed document clearly delegates a canonical contract or when a closely related file is needed to judge whether a journey is actually supported. Do not recursively expand into the full architecture set.
 
-- `design/architecture/user-journeys.md`
-- `design/architecture/user-journeys-players.md`
-- `design/architecture/user-journeys-creators.md`
-- `design/architecture/user-journeys-operators.md`
+- `design/product/user-journeys/overview.md`
+- `design/product/user-journeys/players.md`
+- `design/product/user-journeys/creators.md`
+- `design/product/user-journeys/operators.md`
 - `design/user-guides/game-creator-guide.md`
 - `design/architecture/system-architecture-game-customization.md`
-- `design/project-management/core-requirements.md`
+- `design/product/requirements.md`
 
 Then:
 

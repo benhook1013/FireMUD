@@ -2,7 +2,7 @@
 
 Status: Complete inventory for `design/architecture/microservices/**`.
 
-This ledger maps every Markdown source under [`design/architecture/microservices`](../../architecture/microservices/README.md) to the stable capabilities in the [FireMUD Product Capability Taxonomy](../../architecture/product-capability-taxonomy.md). It is a non-normative allocation and coverage artifact; the linked architecture sources remain authoritative for runtime behavior and ownership.
+This ledger maps every Markdown source under [`design/architecture/microservices`](../../architecture/microservices/README.md) to the stable capabilities in the [FireMUD Product Capability Taxonomy](../../product/capability-taxonomy.md). It is a non-normative allocation and coverage artifact; the linked architecture sources remain authoritative for runtime behavior and ownership.
 
 ## Allocation Rules
 

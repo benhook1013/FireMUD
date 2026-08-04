@@ -293,4 +293,4 @@ This split ensures that contract drift is caught on every change, while backend-
 
 - [CI/CD Pipeline](./system-architecture-cicd.md)
 - [System Architecture Overview](./system-architecture-overview.md)
-- [User Journeys – Testing & Continuous Delivery](./user-journeys-operators.md#3-testing--continuous-delivery)
+- [User Journeys – Testing & Continuous Delivery](../product/user-journeys/operators.md#3-testing--continuous-delivery)

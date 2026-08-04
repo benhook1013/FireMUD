@@ -245,6 +245,6 @@ For diagnostic purposes, operators may take ad hoc copies of Coordination Redis 
 - [CI/CD Pipeline](./system-architecture-cicd.md)
 - [Database Migrations](./system-architecture-database-migrations.md)
 - [Redis Reset and Recovery](./system-architecture-redis-reset-and-recovery.md)
-- [Runbooks](./system-architecture-runbooks.md#recovery)
+- [Operations documentation](../operations/README.md#recovery)
 - [Deploy Preflight Policy](./system-architecture-deploy-preflight-policy.md)
 - [Deployment Runbook](./system-architecture-deployment-runbook.md)

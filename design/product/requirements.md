@@ -2,7 +2,7 @@
 
 ## 1. Introduction
 
-This document is the canonical product requirements summary and detailed requirements set for the FireMUD platform.
+This document is the canonical product requirements overview for the FireMUD platform. It records product scope and intended outcomes; detailed technical contracts remain in the linked architecture documents.
 
 ### 1.1 Purpose
 

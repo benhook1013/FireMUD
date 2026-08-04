@@ -64,7 +64,7 @@ See [Gateway Architecture](../../system-architecture-gateway.md), [Deployment En
 - [Redis Architecture](../../system-architecture-redis.md)
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../../service-responsibility-matrix.md)
-- [User Journeys – Add Automation & Scripting](../../user-journeys-creators.md#3-add-automation--scripting)
+- [User Journeys – Add Automation & Scripting](../../../product/user-journeys/creators.md#3-add-automation--scripting)
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
 - [Shared Libraries Overview](../../system-architecture-shared-libraries.md)

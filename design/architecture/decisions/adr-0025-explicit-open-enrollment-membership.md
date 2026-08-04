@@ -102,7 +102,7 @@ This avoids durable rows for casual visits but creates a second class of gamepla
 - [Authentication and authorization](../system-architecture-authentication.md)
 - [Frontend architecture](../system-architecture-frontend.md)
 - [Authorization route matrix](../system-architecture-authz-route-matrix.md)
-- [Player journeys](../user-journeys-players.md)
+- [Player journeys](../../product/user-journeys/players.md)
 - [Account Service API contracts](../microservices/account-service/api-contracts.md)
 - [Account Service runtime and data](../microservices/account-service/runtime-and-data.md)
 - [Game Session protocols](../microservices/game-session-service/protocols.md)

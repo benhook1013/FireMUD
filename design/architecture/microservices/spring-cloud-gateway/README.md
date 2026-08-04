@@ -78,7 +78,7 @@ These are the primary canonical references for gateway behaviour:
 - [Security Architecture](../../system-architecture-security.md)
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../../service-responsibility-matrix.md)
-- [User Journeys – Player Login and Gameplay](../../user-journeys-players.md#3-player-login-and-gameplay)
+- [User Journeys – Player Login and Gameplay](../../../product/user-journeys/players.md#3-player-login-and-gameplay)
 - [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
 - [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
 - [Testing Strategy](../../system-architecture-testing.md)

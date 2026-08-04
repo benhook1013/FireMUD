@@ -89,8 +89,8 @@ Canonical architecture references:
 ## Docs Map
 
 - [Design Documentation Index](design/README.md) – best entry point for architecture, workflows, project-management docs, and user guides.
-- [Core Requirements](design/project-management/core-requirements.md) – product-level requirements and platform scope.
-- [User Journeys](design/architecture/user-journeys.md) – player, creator, and operator flows.
+- [Product Requirements](design/product/requirements.md) – canonical product requirements and platform scope.
+- [User Journeys](design/product/user-journeys/overview.md) – player, creator, and operator flows.
 - [Infrastructure Overview](design/architecture/infrastructure/README.md) – deployment environments and shared systems.
 - [FAQ](FAQ.md) – quick context on licensing and common questions.
 

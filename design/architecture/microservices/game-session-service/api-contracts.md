@@ -8,7 +8,7 @@ This document mixes live and target-state control-plane surfaces. Current live b
 - the shipped owner/status read is `GetRuntimeOwnershipStatus`, not yet the fuller target-state `GetRegionTickStatus` surface described below;
 - canonical region pause/status remains incomplete for maintenance, reset, migration, and future scoped recovery. Routine online PostgreSQL backup does not depend on this control; player-facing restore remains blocked instead on the environment-wide cold-start quarantine, convergence, hardening, and proof gaps.
 
-Read the pause/status/recovery APIs below as the target-state contract unless the repo implementation or slice docs explicitly say they are already live.
+Read the pause/status/recovery APIs below as the target-state contract unless the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md) explicitly records them as live.
 
 ## Service Interactions
 

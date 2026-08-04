@@ -65,7 +65,7 @@ scriptService.schedule("onEnter", characterId, roomInstanceId, () -> {
 ## Related Documentation
 
 - [System Architecture: Scripting & Automation](../architecture/system-architecture-scripting.md)
-- [User Journeys](../architecture/user-journeys.md)
+- [User Journeys](../product/user-journeys/overview.md)
 
 [world-edit]: ../architecture/microservices/game-design-service/world-editing-tools.md
 [web-editor]: ../architecture/microservices/game-design-service/web-visual-interface.md

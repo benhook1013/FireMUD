@@ -90,7 +90,7 @@ See [Identifier Glossary](../../system-architecture-identifier-glossary.md) for 
 - [Redis Architecture](../../system-architecture-redis.md)
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../../service-responsibility-matrix.md)
-- [User Journeys – World and Entity Design](../../user-journeys-creators.md#2-world-and-entity-design)
+- [User Journeys – World and Entity Design](../../../product/user-journeys/creators.md#2-world-and-entity-design)
 - [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
 - [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
 - [Database Migrations](../../system-architecture-database-migrations.md)

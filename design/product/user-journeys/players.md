@@ -1,0 +1,333 @@
+# FireMUD User Journeys: Players
+
+This guide summarizes typical player-centric workflows in FireMUD. Each numbered step links to the microservice or design document that manages that portion of the flow. Use it alongside the [Architecture Overview](../../architecture/README.md), the [System Architecture Overview](../../architecture/system-architecture-overview.md), the [System Architecture Diagram](../../architecture/system-architecture-diagram.md), and the [System Context Diagram](../../architecture/system-context-diagram.md) to understand how players traverse the platform. For a breakdown of every service see the [Microservices Overview](../../architecture/microservices/README.md) and the [Service Responsibility Matrix](../../architecture/service-responsibility-matrix.md).
+
+For creator and operator workflows, see:
+
+- [Creator Journeys](./creators.md)
+- [Operator Journeys](./operators.md)
+- [User Journeys Hub](./overview.md)
+
+Accounts span multiple hosted games. The [Multi-Tenancy](../../architecture/system-architecture-multi-tenancy.md) model explains how characters and worlds remain isolated under a single platform account.
+
+These journeys define observable product behavior and user-facing outcomes; technical contracts remain in the linked architecture documents.
+
+## Table of Contents
+
+- [Goals](#goals)
+- [Implementation Status](#implementation-status)
+- [Quick Reference](#quick-reference)
+- [1. Sign Up](#1-sign-up)
+- [2. Join a Game for the First Time](#2-join-a-game-for-the-first-time)
+- [3. Character Creation & Selection](#3-character-creation--selection)
+- [4. Player Login and Gameplay](#4-player-login-and-gameplay)
+- [5. Social Interaction & Safety](#5-social-interaction--safety)
+- [6. Purchases and Subscriptions](#6-purchases-and-subscriptions)
+- [7. Password Resets & Account Recovery](#7-password-resets--account-recovery)
+- [8. Switch Games or Manage Multiple Games](#8-switch-games-or-manage-multiple-games)
+- [9. Account Data Export](#9-account-data-export)
+- [10. Account Deletion](#10-account-deletion)
+- [Related Documentation](#related-documentation)
+
+---
+
+## Goals
+
+- Provide a quick reference for how a player moves through the system.
+- Map each step to the microservice that owns the logic or data from a player’s point of view.
+- Link back to deeper design docs for anyone who needs additional context.
+
+---
+
+## Implementation Status
+
+The target journey below requires an explicit `JOIN` / `Join & Play`, then realm-scoped `CHARS`, before character creation, connect-token issuance, or `PLAY` for first-time public-production entry; later admission surfaces never create or restore membership. The public-production membership lifecycle is exact: missing -> `JOIN` creates `ACTIVE` and advances `membershipVersion`; `INACTIVE` -> `JOIN` restores `ACTIVE` and advances `membershipVersion`; each create or restore commits one transition audit/outbox event; `ACTIVE` -> exact idempotent current snapshot with no event; all other states reject. `membershipAuthorityGeneration` advances independently only when the committed transition records `callerBoundAuthorityInvalidated=true`; otherwise it remains unchanged with same-snapshot proof. `JOIN_REQUIRED` covers missing or `INACTIVE` membership only after the selected public target permits joining; a denied `allowPublicJoin` policy returns `PUBLIC_PRODUCTION_ADMISSION_DENIED` without creating or restoring membership. Returning `ACTIVE` members and grant-backed non-public players preserve their existing membership/grant-backed discovery flow; first-party returning players skip only the public-production join action after fresh Account evidence confirms `membershipLifecycleState=ACTIVE`, the exact `membershipAuthorityGeneration`, and independent `membershipVersion` for the unexpired discovery snapshot. They still use realm-scoped `CHARS` or creation when no valid current character exists; character validity is required only before connect-token issuance or `PLAY`. The canonical join operation is `JoinPublicProductionMembership`, exposed as `POST /auth/bootstrap/join` and translated from text `JOIN <world>`. Explicit `JOIN` / `Join & Play` remains target-only and unimplemented; the obsolete implicit membership-writer surface has been removed. Current connect-token issuance and text `PLAY` now require existing membership and return `JOIN_REQUIRED` for eligible missing or `INACTIVE` public-production membership. The explicit join action and complete realm-scoped character gate remain unimplemented, so the target journey must not be read as fully shipped behavior. Account export is likewise only a partial current implementation: `GET /accounts/{accountId}/export` returns Account/profile-local data, not the target cross-service export. Retention-aware Account deletion is also target/partial: the current implementation does not yet prove the complete cross-service terminal-erasure workflow or all finite-retention guarantees described below, so those guarantees must not be read as shipped behavior.
+
+Realm-aware character discovery and the current creation-policy decision are implemented at the backend boundary, but the richer character-creation descriptor remains a gap. The current flow does not yet provide first-party clients with the published-version-specific template, race, class, and option descriptor needed to render the complete creation choices.
+
+---
+
+## Quick Reference
+
+- [Sign Up](#1-sign-up) – Create a platform account and enable auth options.
+- [Join a Game for the First Time](#2-join-a-game-for-the-first-time) – Discover a world, choose a realm, and reach the lobby.
+- [Character Creation & Selection](#3-character-creation--selection) – Create and choose characters for the selected game and realm target.
+- [Player Login and Gameplay](#4-player-login-and-gameplay) – Connect to running realms and play.
+- [Social Interaction & Safety](#5-social-interaction--safety) – Chat, groups, and moderation outcomes.
+- [Purchases and Subscriptions](#6-purchases-and-subscriptions) – Manage subscriptions and in-game purchases.
+- [Password Resets & Account Recovery](#7-password-resets--account-recovery) – Recover access when credentials are lost.
+- [Switch Games or Manage Multiple Games](#8-switch-games-or-manage-multiple-games) – Move between games under one account.
+- [Account Data Export](#9-account-data-export) – Target: durable asynchronous export; current implementation: partial Account/profile-only export.
+- [Account Deletion](#10-account-deletion) – Request separate account erasure after billing obligations are resolved.
+
+Creator-focused design flows are described in the [Creator Journeys](./creators.md). Operational and moderation flows are described in the [Operator Journeys](./operators.md), including how outages and recoveries surface to players.
+
+---
+
+## 1. Sign Up
+
+Players register for an account through the [Account Service](../../architecture/microservices/account-service/README.md). Email verification and the baseline password/verified-email-code login modes are outlined in [Authentication & Authorization](../../architecture/system-architecture-authentication.md). Under [ADR 0049](../../architecture/decisions/adr-0049-optional-provider-specific-external-identity-linking.md), **Google**, **Discord**, and **Steam** are planned optional HTTPS linking and sign-in integrations rather than baseline launch promises. Each provider is available only after its complete provider-specific security, recovery, collision, outage, and lifecycle contract is implemented and proven; provider-first account creation remains deferred.
+
+```plaintext
+Player → Account Service
+```
+
+---
+
+## 2. Join a Game for the First Time
+
+The first successful session for a new player converges on one membership and gameplay-admission contract, while client transports use distinct onboarding gates:
+
+1. **Authenticate the Platform Account**
+   - **First-party web client** – Obtains a short-lived player bootstrap token through the [Account Service](../../architecture/microservices/account-service/README.md), then uses bootstrap-backed discovery endpoints to choose a world/realm target. For first-time public-production entry with missing or `INACTIVE` membership, the player completes `Join & Play` before character selection/creation and before `POST /auth/connect-token`; returning `ACTIVE` members skip that action after fresh Account evidence confirms `membershipLifecycleState=ACTIVE`, the exact `membershipAuthorityGeneration`, and independent `membershipVersion` for the unexpired discovery snapshot, while grant-backed non-public players use existing `ACTIVE` membership plus the exact current grant and also skip it. Eligible players then select or create a character, request a connect token, and open the gameplay WebSocket through the [Spring Cloud Gateway](../../architecture/microservices/spring-cloud-gateway/README.md). Browser clients receive the connect token as the short-lived `Firemud-Connect-Token` HttpOnly cookie, so they do not depend on custom WebSocket headers.
+   - **Telnet / MCP client** – Connects through the [TCP Proxy Service](../../architecture/microservices/tcp-proxy-service/README.md) and authenticates in-band with `LOGIN`.
+2. **Browse or Discover Joinable Worlds** – The player may use `WORLDS` before login to browse the platform publicly, then use the same command again after login to see the authenticated discovery set they can actually enter. Existing memberships qualify the world for authenticated discovery, but do not by themselves qualify every realm. In v1, a live default production realm may also be publicly discoverable even before the player has joined that tenant, so brand-new accounts can still discover where they would enter through the public-production onboarding path. Additional realms are not implied by world visibility: they require an explicit Account-owned realm-access grant for the caller, and grant visibility never substitutes for required membership. Responses use world slugs and friendly names rather than raw IDs, as defined in [Authentication & Authorization](../../architecture/system-architecture-authentication.md) and [Multi-Tenancy](../../architecture/system-architecture-multi-tenancy.md).
+
+   Discovery has one deterministic `REALMS <world>` route class, `public_production_onboarding`, across both stages of resolution. Before membership exists, the selector must resolve exactly one caller-visible `{tenantId, worldSlug}` and may expose the catalog-designated public-production realm without membership or grant. After the world resolves, the same class applies exact tenant-scoped checks: public production still requires current visibility and entitlement, while every non-public realm requires existing caller-bound membership with exact `membershipLifecycleState=ACTIVE` plus the current Account grant for the exact `{accountId, tenantId, worldSlug, realmSlug}`; a grant never substitutes for membership. Both stages use the shared catalog/pointer pair; missing, malformed, ambiguous, stale, or unavailable pointer evidence is `ADMISSION_POINTER_UNAVAILABLE`, while a complete `CLOSED` realm is `REALM_UNAVAILABLE`. Hidden or unauthorized realms are omitted rather than disclosed as a hidden or generic authorization failure.
+
+3. **Choose a Realm When Needed, Then Join** – **Target journey only for the Telnet membership-gated sequence.** If the selected world exposes more than one visible realm, the player uses `REALMS <world>` to understand the available targets. Public discovery and open enrollment apply only to the world's single configured default production realm in v1, so `JOIN <world>` always resolves that unambiguous public-production target and does not accept a realm argument. A first-time public player with missing or `INACTIVE` membership explicitly selects `Join & Play` or issues `JOIN <world>`; the selected target's `allowPublicJoin` policy is evaluated first, with `PUBLIC_PRODUCTION_ADMISSION_DENIED` stopping the flow without membership mutation when joining is denied. Only an allowed target proceeds through the canonical lifecycle by creating or restoring `ACTIVE` membership and advancing `membershipVersion` for either committed transition, while `membershipAuthorityGeneration` advances independently only when `callerBoundAuthorityInvalidated=true`. One transition audit/outbox event is committed for either create or restore; an `ACTIVE` membership returns the exact idempotent current snapshot without an event and all other states reject. Grant-backed private or playtest realms require existing `ACTIVE` membership plus the current grant, skip `JOIN`, and never create or restore membership. Hidden or unauthorized realms are never disclosed.
+4. **List Characters or Create New** – **Target `JOIN` -> `CHARS` sequence for Telnet.** After `JOIN <world>` or `Join & Play` has established or returned the exact current `ACTIVE` membership for a first-time public-production target, the player uses `CHARS <world> [realm]` to view the character choices valid for the selected realm target. Returning members use their existing `ACTIVE` membership; grant-backed private or playtest players use existing `ACTIVE` membership plus the applicable realm grant without a public join. A realm grant never substitutes for tenant membership. `CHARS` and allowed character creation require the applicable membership, grant, and entitlement checks but do not require an existing character; a valid character becomes required only before connect-token issuance or `PLAY`. In shared-state realms this typically means the tenant's normal live durable character roster. In isolated realms it may instead mean copied fork-local state, seeded/sample-state characters, or fresh standalone realm-local state for the same account. The current backend discovery contract is realm-aware: character listing carries the resolved `gameInstanceId` and playable-state scope, and bootstrap/text discovery expose the selected realm's state scope and character-creation policy instead of reading a tenant-wide roster behind a realm label. If no visible character exists, the client must complete the world's character-creation flow before `PLAY` succeeds unless the resolved realm's policy forbids creation. The authoritative character-creation owner for this step is the [Entity Management Service](../../architecture/microservices/entity-management-service/README.md), whose `CreateCharacter` contract defines how new player characters are created for the selected realm scope. For playtest forks, a player may arrive with copied fork-local character state from the source snapshot. If no visible fork-local character exists for that account, fork policy determines whether the player may create a fresh fork-local character or whether the fork is restricted to copied characters only; whichever policy a fork uses must be surfaced consistently in the lobby/client UX. If a fork permits both copied and newly created fork-local characters, `CHARS` returns them in one fork-local list and the client does not need a separate mode switch. If no visible character exists and fork policy forbids creation, the canonical player-facing failure is a hard character-selection denial rather than a generic `CHARACTER_REQUIRED` prompt.
+   - Minimum realm-policy consequence: when the selected realm is isolated-state, character discovery and any allowed creation target only that realm's gameplay state namespace. They must not silently read from or write to the tenant's normal live production roster.
+   - `CHARS` must also expose the realm-local creation decision clearly enough that clients do not infer policy from roster shape alone. A realm that denies fresh creation must say so explicitly; a realm that allows fresh realm-local creation may do so alongside copied/seeded characters without introducing a separate client mode switch.
+5. **Bind to Gameplay** – `PLAY <world> [realm] [character]` resolves to canonical `{tenantId, gameInstanceId, characterId}` values and binds the session to the selected realm. After this step, normal gameplay commands become available.
+
+For the target public-production flow, the explicit join action changes the player's Account-owned membership transactionally before character creation, connect-token issuance, or gameplay binding. Missing membership becomes `ACTIVE`; `INACTIVE` becomes `ACTIVE`; either committed transition advances `membershipVersion`, while `membershipAuthorityGeneration` advances independently only when `callerBoundAuthorityInvalidated=true`. Each create or restore emits one transition audit/outbox event; `ACTIVE` returns the exact idempotent current snapshot without an event; all other states reject. A successful join remains the intentional durable relationship even if later connection or `PLAY` fails; a failed join transaction creates or changes nothing. For `POST /auth/connect-token`, public-production targets use the canonical [PLAY Error Inventory](../../architecture/system-architecture-protocol-bridging.md#canonical-play-error-inventory) for `PUBLIC_PRODUCTION_ADMISSION_DENIED` and `JOIN_REQUIRED`; `WORLD_ACCESS_DENIED` is reserved for another reachable authoritative world/tenant denial and is mutually exclusive with `JOIN_REQUIRED`. Private/playtest targets never evaluate public-joining policy: they require existing `ACTIVE` membership plus the exact current realm-access grant and return `NON_PUBLIC_ENROLLMENT_REQUIRED`, not `JOIN_REQUIRED`, for missing or `INACTIVE` membership. Both target modes preserve lifecycle, membership-generation, membership-version, entitlement, and routing checks. Character creation, connect-token issuance, and `PLAY` never create or restore membership.
+
+The text-to-Account translation is one canonical operation across clients. `JOIN <world>` resolves the exact lobby selector to `worldSlug` and the configured default public-production `realmSlug`; it uses the corresponding verified opaque `connectScopeId` and caller-generated `requestId` when calling `JoinPublicProductionMembership`. The join request has only the authority-bound `connectScopeId` and `requestId` as operation inputs; Account derives the target and the `{catalogRevision, pointerVersion}` pair from `connectScopeId`, so resolved `{tenantId, worldSlug, realmSlug, gameInstanceId, catalogRevision, pointerVersion}` are immutable comparison evidence rather than duplicate request fields. Account binds `requestId` to the canonical operation `JoinPublicProductionMembership`, the authenticated `accountId`/caller, the verified `connectScopeId`, and that resolved evidence. Ambiguous or stale world/realm selectors are rejected before the call and require fresh discovery; a stale scope fails closed rather than being silently rebound to a newer target. An exact retry with the same binding replays the stored membership result or deterministic failure, while a changed selector or digest conflicts and requires a new `requestId`. Explicit text `JOIN` and first-party `Join & Play` remain target-only and unimplemented; the obsolete implicit membership-writer surface has been removed, and these mappings describe the target contract rather than current behavior.
+
+This is the target onboarding flow for discovering and entering a realm. In the current runtime, credential-bearing text clients with an existing active membership and selected character may still enter through the direct `LOGIN` plus `PLAY` path because explicit `JOIN`/`Join & Play` remains unimplemented. Current Account connect-token issuance and text `PLAY` require existing membership and return `JOIN_REQUIRED` for eligible missing or `INACTIVE` public-production membership; the obsolete implicit membership-writer surface has been removed. First-party browser and mobile-browser clients remain behind authenticated bootstrap, discovery, and lobby gates. First-party WebSocket connect tokens and any future hidden Telnet smart-client metadata may narrow the target realm, but they never replace the authenticated lobby contract.
+
+The current text shortcut is not the target browser or text sequence: the target Telnet membership/character-gated sequence is `JOIN` -> `CHARS`/creation -> `PLAY`, while the current compatibility path remains direct credential-bearing text `LOGIN` -> `PLAY` for an already usable character. This direct path is implementation drift and must not be read as a prerequisite for `CHARS` or character creation. `CHARS`/creation require the applicable membership, grant, and entitlement checks but no valid character; a valid character is required only before connect-token issuance or `PLAY`. A browser reconnect or browser entry with an invalid, missing, or realm-ineligible character must complete the current realm-scoped `CHARS`/creation gate before requesting a connect token and opening gameplay; it cannot use the returning shortcut.
+
+```plaintext
+Telnet:
+Player → TCP Proxy → WORLDS (optional public browse) → LOGIN → [REALMS if multiple]
+       → [JOIN <world> when public membership is missing or INACTIVE] → CHARS / Create Character → PLAY
+
+First-party web:
+Player → Account bootstrap/discovery → [Join & Play when public membership is missing or INACTIVE] → CHARS / Create Character
+       → connect-token issuance → Gateway WebSocket handshake → bare LOGIN → PLAY
+```
+
+Example text-client transcript:
+
+```text
+WORLDS
+OK WORLDS
+1) emberfall  Emberfall
+LOGIN player@example.com swordfish
+OK LOGIN Logged in as player@example.com
+JOIN emberfall
+OK JOIN Joined Emberfall
+CHARS emberfall production
+OK CHARS 1) Mara
+PLAY emberfall production Mara
+OK PLAY Entered Emberfall / Live Realm as Mara
+```
+
+Example first-party web flow for a returning member or grant-backed target:
+
+```text
+POST /auth/player-bootstrap { accountIdentifier=player@example.com, secret=<redacted> }
+GET /auth/bootstrap/worlds
+GET /auth/bootstrap/worlds/{world}/realms
+GET /auth/bootstrap/worlds/{world}/realms/{realm}/characters?connectScopeId={scope}
+POST /auth/connect-token { connectScopeId=cs_demo_production_v17 }
+GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
+LOGIN
+PLAY <world> [realm] [character]
+```
+
+Example first-time public production join:
+
+```text
+POST /auth/player-bootstrap { accountIdentifier=player@example.com, secret=<redacted> }
+GET /auth/bootstrap/worlds
+GET /auth/bootstrap/worlds/emberfall/realms
+POST /auth/bootstrap/join { connectScopeId=cs_emberfall_production_v1, requestId=req-join-1 }
+GET /auth/bootstrap/worlds/emberfall/realms/production/characters?connectScopeId=cs_emberfall_production_v1
+POST /auth/bootstrap/worlds/emberfall/realms/production/characters { connectScopeId=cs_emberfall_production_v1, name=Mara, template=human-fighter }
+POST /auth/connect-token { connectScopeId=cs_emberfall_production_v1, requestId=req-connect-1 }
+GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
+LOGIN
+PLAY emberfall production Mara
+OK PLAY Entered Emberfall / Live Realm as Mara
+```
+
+After this first successful join, the player's account now has normal `player` membership for Emberfall, so later discovery no longer depends on public-production visibility alone.
+The player-facing character-creation call in this sequence is the Account-owned `POST /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters` facade backed by Entity Management's internal `CreateCharacter` contract. It requires the opaque server-issued discovery `connectScopeId`, is permitted only for that still-admissible realm target, and must complete before the new character is admissible through `PLAY`. The currently resolved backend substrate covers realm scope and creation policy; the remaining product contract is a richer character-creation descriptor that tells first-party clients which template/race/class/options to render for a given published game version.
+Any non-production realm shown in fork/playtest examples is assumed to already be grant-visible to that caller; non-public realms are not publicly discoverable by default.
+
+---
+
+## 3. Character Creation & Selection
+
+Character ownership is scoped per game (tenant), while character selection is always resolved against the specific realm the player is trying to enter. Depending on realm policy, the selected realm may expose the tenant's normal live durable character state or isolated realm-local state created from a copy, seeded/sample data, or fresh standalone records for the same account. These flows use the [Entity Management Service](../../architecture/microservices/entity-management-service/README.md) and [Game Session Service](../../architecture/microservices/game-session-service/README.md). Creation flows are coordinated with the [Game Design Service](../../architecture/microservices/game-design-service/README.md) to ensure race, class, and ability choices match the published game configuration. Explicit character creation and selection are part of the v1 admission contract; the platform does not fall back to an implicit account-derived default character. See [World and Entity Design](./creators.md#2-world-and-entity-design) for creator-side details on how these options are defined.
+
+Behind the scenes:
+
+- **Account & Character Link** – The [Account Service](../../architecture/microservices/account-service/README.md) tracks ownership of characters per account.
+- **Character Templates** – Starting attributes come from templates in the [Game Design Service](../../architecture/microservices/game-design-service/README.md).
+- **Character Storage** – The [Entity Management Service](../../architecture/microservices/entity-management-service/README.md) persists characters with deferred writes coordinated by the Game Session Service.
+
+---
+
+## 4. Player Login and Gameplay
+
+Players connect using either a web client or a traditional Telnet client:
+
+- **Web Client** – Connects via WebSocket and HTTP through the [Spring Cloud Gateway](../../architecture/microservices/spring-cloud-gateway/README.md).
+- **MUD/Telnet Client** – Connects over TCP to the [TCP Proxy Service](../../architecture/microservices/tcp-proxy-service/README.md), which upgrades traffic to WebSocket for the Gateway. Both paths converge into a stateless WebSocket flow; see [Protocol Bridging](../../architecture/system-architecture-protocol-bridging.md) for details. The target Telnet journey authenticates with `LOGIN` or its `LOGON` alias, takes the conditional `JOIN` step for missing or `INACTIVE` public-production membership, selects or creates a character with `CHARS` or the character-creation flow, and then issues `PLAY`; returning `ACTIVE` members skip `JOIN` after fresh Account evidence confirms `membershipLifecycleState=ACTIVE`, the exact `membershipAuthorityGeneration`, and independent `membershipVersion`. They may take abbreviated direct `PLAY` only when the unexpired discovery snapshot also proves a valid current character; otherwise they proceed through `CHARS` or creation, which does not require an existing character. Current credential-bearing Telnet clients may still use direct `LOGIN` -> `PLAY` as compatibility drift. Any future smart-client attach hints should be hidden MCP metadata rather than typed player commands.
+
+Gameplay sessions are managed by the [Game Session Service](../../architecture/microservices/game-session-service/README.md), which coordinates ticks, sessions, and reconnect behavior. Redis stores gameplay session bindings and related runtime coordination state as described in [Redis Architecture](../../architecture/system-architecture-redis.md), allowing the Game Session Service to rebind sessions when players reconnect. The Account-auth issued-token registry and its revocation/version state live under the Account Service-owned `session:auth:*` contract rather than as generic Game Session auth state. Authentication is delegated to the [Account Service](../../architecture/microservices/account-service/README.md) as described in [Authentication & Authorization](../../architecture/system-architecture-authentication.md).
+
+Game actions are resolved on a fixed tick loop as outlined in the [Tick System](../../architecture/system-architecture-ticks.md). Players recover from disconnects through the layered reconnect flow described in [Reconnection Strategy](../../architecture/system-architecture-reconnection.md).
+
+If a tenant is temporarily unavailable because billing or entitlements block gameplay, the player sees a clear tenant-scoped error before `PLAY` succeeds. The canonical [PLAY Error Inventory](../../architecture/system-architecture-protocol-bridging.md#canonical-play-error-inventory) owns the shared routing, scope, entitlement, denial, and membership outcomes and their precedence. These outcomes preserve the authenticated lobby/session state and create no gameplay binding; this journey records only those local consequences. If a creator or operator cuts a realm over to a replacement instance, reconnect follows the same lobby and admission flow and lands on the currently routable realm target.
+
+The current player-facing gameplay loop includes room views, communication, movement, and the first item-management commands. After `PLAY`, a player can use `LOOK` to read the current room, `INV HERE` to inspect visible room-ground items, `GET <item>` / `DROP <item>` to move items between the room and their carried inventory, `INVENTORY` to inspect carried items, `CONTAINER <item>` / `PUT` / `TAKE` for named carried or nearby room-ground containers, and `EQUIPMENT` / `WEAR` / `REMOVE` for equipment state. Item views expose stable selectors when exact targeting is needed, so duplicate or stack-backed items can be manipulated without relying on prose descriptions alone. Equipment actions are validated against the game's authored slot/body-layout model when that schema exists, so non-humanoid characters or game-specific attachment points produce explicit errors rather than silent no-ops.
+
+Example gameplay transcript:
+
+```text
+LOOK
+The Ember Gate
+You stand before a red stone arch.
+Items here:
+- Torch [torch3]
+INV HERE
+Room Inventory:
+- Torch [torch3]
+GET torch3
+You pick up Torch.
+INVENTORY
+Inventory:
+- Torch [torch3]
+EQUIPMENT
+You have nothing equipped.
+WEAR torch3
+You wear Torch.
+EQUIPMENT
+Equipment:
+- HAND: Torch [torch3]
+```
+
+```plaintext
+Player → TCP Proxy / Gateway → Game Session Service → Backend Services
+```
+
+---
+
+## 5. Social Interaction & Safety
+
+Players communicate and coordinate through the [Social & Groups Service](../../architecture/microservices/social-groups-service/README.md):
+
+1. **Chat Channels** – Global, zone, and group chat messages are routed through the Social & Groups Service.
+2. **Friends and Guilds** – Friend lists and guild memberships are scoped per game (`tenantId`), as outlined in [Multi-Tenancy](../../architecture/system-architecture-multi-tenancy.md).
+3. **Moderation Hooks** – Messages and social actions may be subject to moderation and logging via the [Logging & Admin Service](../../architecture/microservices/logging-admin-service/README.md). See [Monitoring and Moderation](./operators.md#monitoring-and-moderation) for operator flows.
+
+4. **Chat Validation** – In-game chat commands (say, tell, guild chat, mail) are first validated by the [Game Logic Service](../../architecture/microservices/game-logic-service/README.md) against the [World Management Service](../../architecture/microservices/world-management-service/README.md) and [Entity Management Service](../../architecture/microservices/entity-management-service/README.md) to ensure they respect world and entity state.
+5. **Profanity & Friends** – The Social & Groups Service performs profanity checks, logs communication, and delivers messages. Account-level friends automatically appear in-game when the feature is enabled.
+6. **Player Reporting** – Public player report submission is not currently available: the public HTTP report controller and route are removed, and the internal `CreateReport` gRPC persistence seam is service-to-service only, not player ingress. A future caller-bound player reporting surface remains target work.
+7. **Moderation Outcomes** – Moderation actions surface as specific player-visible outcomes rather than a generic "ban" message:
+   - `account_security_ban` blocks account authentication and recovery to the normal account-security path.
+   - `gameplay_ban` blocks `PLAY` for the affected tenant/realm scope with a canonical gameplay denial.
+   - `chat_mute` / `chat_ban` allow gameplay to continue but reject affected messaging commands with canonical chat errors.
+
+Canonical player-facing examples:
+
+- `account_security_ban` – `ERROR ACCOUNT_LOCKED Contact support to recover this account.`
+- `gameplay_ban` – `ERROR GAMEPLAY_BANNED You cannot enter this realm.`
+- `chat_mute` / `chat_ban` – `ERROR CHAT_RESTRICTED You cannot send messages in this realm.`
+
+Implementation note:
+
+- The current playable chat slice is room-local speech. Future slices are expected to differentiate speech mode from audience scope so game rules can support behavior such as target-limited whispers, directed tells, and topology-aware shouts or announcements that propagate across an area, region, map, or continent rather than assuming all communication is equivalent to `SAY`.
+
+```plaintext
+Player → Game Session Service → Social & Groups Service → Logging & Admin Service
+```
+
+Current gameplay implementation note: the foundational shared communication path is now live for `SAY`, `WHISPER`, and `TELL`. Structured metadata-only observer handling for `WHISPER` and recipient-side live delivery for generic WebSocket and Telnet now exist in the shared communication model. Broader audible scopes (`area`, `map`, `region`, `continent`, channel-level) and first-party/MCP-aware recipient presentation remain later communication slices.
+
+---
+
+## 6. Purchases and Subscriptions
+
+1. **Payment Processing** – The [Account Service](../../architecture/microservices/account-service/README.md) handles subscriptions, one-time purchases, and optional donations via Stripe.
+2. **Platform Fee & Restrictions** – A small platform fee applies to each transaction and external payment methods are not allowed, per the [Core Requirements](../../product/requirements.md#2.8-moderation-administration--monetization).
+3. **One-Time Purchase Entitlements** – One-time purchases that grant ongoing value create Account Service-owned purchase entitlements after Stripe success; refunds revoke those entitlements unless the product was explicitly consumed under a non-revocable product contract.
+4. **Audit and Compliance** – Transactions are logged through the [Logging & Admin Service](../../architecture/microservices/logging-admin-service/README.md) for reporting and refunds.
+5. **Tenant Availability & Limits** – Whether a game can start new instances or accept new logins depends on the tenant’s subscription state and plan entitlements as described in the [Subscription Management Design](../../architecture/microservices/account-service/subscription-management.md) and [Multi-Tenancy](../../architecture/system-architecture-multi-tenancy.md#tenant-configuration--scaling). When a tenant is suspended for billing, login attempts fail with clear errors until billing is resolved.
+6. **Billing Recovery** – Billing-safe management actions stay reachable even when gameplay is suspended so creators can resolve payment issues without operator intervention. Players see tenant-scoped unavailability errors until the creator restores service.
+
+```plaintext
+Player → Account Service → Logging & Admin Service
+```
+
+---
+
+## 7. Password Resets & Account Recovery
+
+Players occasionally lose access to their accounts. Recovery is performed through the [Account Service](../../architecture/microservices/account-service/README.md), which issues password reset emails and temporary login tokens. Suspicious attempts are logged by the [Logging & Admin Service](../../architecture/microservices/logging-admin-service/README.md).
+
+```plaintext
+Player → Account Service → Logging & Admin Service (audit)
+```
+
+Operational recovery flows (for example, restoring services after outages) are described from the operator perspective in [Operator Recovery Journeys](./operators.md#operator-recovery-journeys), including how incidents surface to players.
+
+---
+
+## 8. Switch Games or Manage Multiple Games
+
+Players can participate in multiple games using the same platform account. The [Multi-Tenancy](../../architecture/system-architecture-multi-tenancy.md) model keeps character ownership per `tenantId` while resolving actual playable character choices against the selected realm's `gameInstanceId`. Account selection and tenant setup are managed through the [Account Service](../../architecture/microservices/account-service/README.md) and [Game Design Service](../../architecture/microservices/game-design-service/README.md).
+
+Switching now follows the same lobby contract used during onboarding:
+
+1. `WORLDS` lists accessible worlds.
+2. `REALMS <world>` lists visible realms for that world when more than one exists.
+3. `CHARS <world> [realm]` shows characters scoped to the selected world/realm.
+4. `PLAY <world> [realm] [character]` rebinds gameplay to the new target.
+
+```plaintext
+Account Service → Game Design Service (select tenant) → Game Session Service
+```
+
+---
+
+## 9. Account Data Export
+
+Account owners request portable account data through the [Account Service](../../architecture/microservices/account-service/README.md). The canonical asynchronous lifecycle, including subject authorization, request identity/idempotency, owner retry outcomes, status/manifest availability, and completed-content access, is defined in the [Account Service export contract](../../architecture/microservices/account-service/api-contracts.md#current-vs-target-export-lifecycle) and [ADR 0050](../../architecture/decisions/adr-0050-versioned-export-retention-and-erasure-policy.md). In summary, `POST /accounts/{accountId}/exports` creates or replays one account-subject operation keyed by `requestId` and versioned `requestDigest`; a matching retry returns the same `exportId`, while a changed digest conflicts. The status/manifest resource remains available as the owner fan-in progresses or reaches a terminal outcome, and content is available only for a complete export. The same routes are the explicitly allowlisted `pending_deletion_scoped` export lifecycle during `deactivated_pending_delete`; they do not accept a tenant selector or support bypass. The current `GET /accounts/{accountId}/export` implementation remains Account/profile-local drift.
+
+Tenant-admin exports are separate tenant-controlled contracts, not account-owner exports. The [Account Service tenant-admin contract](../../architecture/microservices/account-service/api-contracts.md#subject-binding-rules-normative) and [ADR 0050 tenant-admin export contract](../../architecture/decisions/adr-0050-versioned-export-retention-and-erasure-policy.md#tenant-administrator-export) define `GET /tenant-admin/tenants/{tenantId}/export` as the tenant-only `billing_safe_tenant` route: it requires fresh issuer/account authority, live caller-bound membership and membership-generation evidence, the exact target tenant, and a live `tenantAdmin` role. Ordinary `tenant_regular` export remains unavailable while billing-blocked; this target-only recovery route remains eligible by omitting only the target-tenant generation under the closed exception. No global-role or cached-authorization bypass is implied. Results contain only tenant-owned exportable records and minimum stable subject references, never global credentials, email, external identities, security state, or unrelated account data.
+
+```plaintext
+Player → Account Service (durable export initiation) → required owner fan-in → manifest retrieval
+```
+
+---
+
+## 10. Account Deletion
+
+Account deletion is a separate confirmed global operation, not tenant membership deletion. The [Account Service deletion contract](../../architecture/microservices/account-service/api-contracts.md#subject-binding-rules-normative), [ADR 0043 lifecycle contract](../../architecture/decisions/adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md#decision), and [ADR 0050 retention contract](../../architecture/decisions/adr-0050-versioned-export-retention-and-erasure-policy.md#deletion-and-shared-records) define the target state, authorization, pending-deletion credential, durable workflow identity/idempotency, retry, status, audit, and terminal-erasure behavior. In summary, recent authentication and explicit confirmation bind `DELETE /accounts/{accountId}` to the global account subject; eligible deletion revokes ordinary authority, enters `deactivated_pending_delete`, and leaves only the explicitly allowlisted status, cancellation, export, and necessary billing-settlement routes. A retry uses the same deletion workflow identity and request digest; failures remain pending with diagnostics and must not restore normal access or report terminal deletion. These guarantees are target/partial rather than a claim that the full cross-service workflow is shipped.
+
+Deletion remains blocked while the account owns an authoritative subscription in `pending`, `provisioning`, `trialing`, `active`, `past_due`, `grace`, or `suspended`; is the old or proposed owner in a nonterminal `subscription_transfer`; or has unresolved customer, subscription, transfer, cancellation/end, webhook, outbox, or provider-reconciliation work. `BILLING_RECONCILIATION_TERMINAL_FAILURE` and other terminal reconciliation failures remain blockers until explicit operator resolution proves terminal provider cancellation or completed audited ownership transfer. Bounded reconciliation records an explicit terminal outcome for each affected tenant/provider operation, but a durably scheduled step remains intermediate pending evidence. Eligibility clears only after that cancellation or transfer outcome, followed by terminal reconciliation of the affected provider and durable work; provider absence or reconciliation alone is insufficient. Payment instruments, invoices, tenant hosting responsibility, direct identity, and shared or legally/policy-required evidence follow the finite, minimized retention rules in the linked canonical contracts. Deletion revokes active sessions and is recorded by the [Logging & Admin Service](../../architecture/microservices/logging-admin-service/README.md) for audit.
+
+```plaintext
+Player → Account Service → Logging & Admin Service (audit)
+```
+
+---
+
+## Related Documentation
+
+- [Authentication & Authorization](../../architecture/system-architecture-authentication.md)
+- [Game Creator Guide](../../user-guides/game-creator-guide.md)
+- [Game Customization](../../architecture/system-architecture-game-customization.md)
+- [Logging & Monitoring Overview](../../architecture/system-architecture-logging-monitoring.md)
+- [Moderation Policies](../../architecture/microservices/logging-admin-service/moderation-policies.md)
+- [Multi-Tenancy](../../architecture/system-architecture-multi-tenancy.md)
+- [Mud Client Protocol (MCP) Support](../../architecture/system-architecture-mud-client-protocol.md)
+- [System Architecture Overview](../../architecture/system-architecture-overview.md)
+- [System Context Diagram](../../architecture/system-context-diagram.md)

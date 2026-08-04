@@ -22,6 +22,7 @@ This directory contains core documentation for the shared infrastructure that po
 | [Temporal Control-Plane Workflows](../system-architecture-temporal-workflows.md) | Canonical durable workflow substrate and the boundary between Temporal and short synchronous saga usage. |
 | [CI/CD Pipeline](../system-architecture-cicd.md) | Overview of GitHub Actions workflows for building, testing, and promotion evidence, plus the operator-applied deployment model for staging and production. |
 | [Backup & Disaster Recovery](../system-architecture-backup-recovery.md) | Snapshot schedules and restore workflow. |
+| [Infrastructure Schedule](./schedule.md) | CI and deployment cadence expectations by environment. |
 
 ---
 
