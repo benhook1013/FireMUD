@@ -121,7 +121,7 @@ def adr_number(path: Path) -> int:
     return int(match.group(1))
 
 
-def section_value(text: str, heading: str) -> str:
+def section_value_line(text: str, heading: str) -> MarkdownLine:
     lines = text.splitlines()
     visible_lines = visible_markdown_lines(text)
     heading_re = re.compile(rf"^## {re.escape(heading)}[ \t]*$")
@@ -140,7 +140,11 @@ def section_value(text: str, heading: str) -> str:
         or lines[value_line_number - 1].strip() == ""
     ):
         fail(f"missing or malformed {heading!r} section")
-    return lines[value_line_number - 1].strip()
+    return MarkdownLine(value_line_number, lines[value_line_number - 1].strip())
+
+
+def section_value(text: str, heading: str) -> str:
+    return section_value_line(text, heading).text
 
 
 def markdown_section(text: str, heading: str) -> str:
@@ -447,7 +451,7 @@ def validate_supersession(
                     for line in visible_lines
                     if line.text.strip() == legacy_source
                 ),
-                0,
+                section_value_line(text, "Status").number,
             )
             validate_replacement_adr_target(
                 path,

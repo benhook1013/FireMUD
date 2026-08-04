@@ -23,7 +23,7 @@ For `security_locked` accounts, Account's successful recovery authorization issu
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `account_service.proto`.
 - `CreateAccount` – registers a new user and returns its `accountId` so internal services can establish their own sessions using the authentication flows described below.
 - `SendNotification` – deliver account notifications asynchronously.
-- `Authenticate` – verifies an email credential using a required, typed `CredentialSourceContext` and, only for the approved Game Session-to-Account control path, issues the receiver-specific private `game-session-account-delegation` JWT with exact audience `account-service`. The pre-v1 wire convergence reserves the former `username` field number and places `email` on a new field number, so mixed old/new Account and Game Session versions fail closed instead of reinterpreting one identifier as another; the two services must be deployed as one compatibility cohort for uninterrupted gameplay login. The target registry-backed flow stores one `session:auth:token:<tokenHash>` record; current issuance still uses the legacy account/tenant session keys identified above. Generic `Service JWT` and `aud=internal` profiles are forbidden; workload-only authorization uses mTLS. The context contains a server-derived canonical client address and transport class; Account rejects absent or untrusted context in player-facing environments, and public callers cannot assert it.
+- `Authenticate` – verifies one account-selected ordinary credential mode, either `PASSWORD` or verified-email `EMAIL_OTP`, using a required, typed `CredentialSourceContext` and, only for the approved Game Session-to-Account control path, issues the receiver-specific private `game-session-account-delegation` JWT with exact audience `account-service`. The pre-v1 wire convergence reserves the former `username` field number and places `email` on a new field number, so mixed old/new Account and Game Session versions fail closed instead of reinterpreting one identifier as another; the two services must be deployed as one compatibility cohort for uninterrupted gameplay login. The target registry-backed flow stores one `session:auth:token:<tokenHash>` record; current issuance still uses the legacy account/tenant session keys identified above. Generic `Service JWT` and `aud=internal` profiles are forbidden; workload-only authorization uses mTLS. The context contains a server-derived canonical client address and transport class; Account rejects absent or untrusted context in player-facing environments, and public callers cannot assert it.
 - `ResolveEffectiveSecurityPolicy` – **Target-state internal Account contract.** Resolve the effective policy for the exact account, optional tenant-scoped action, and action class from the versioned platform baseline, deployment policy, and applicable tenant policy using the tightening precedence in ADR 0045. Return the contributing policy versions, resolved values, and opaque `effectivePolicyVersion`/digest from one Account-owned resolution. Callers must not merge inputs or use cached/default policy; missing, invalid, contradictory, stale, or unavailable resolution fails the sensitive action closed. No other service is a policy authority.
 - `RefreshGameplayServiceToken` – rotates the private `game-session-account-delegation` JWT used by an active Game Session binding after validating its exact `account-service` audience, the presented current per-lineage `tokenGeneration`, captured applicable issuer/account/tenant/membership authority generations, binding identity, account state, current membership, and all applicable live authority state. Replacement issuance must lock or compare-and-set the durable account authority generation so it cannot commit across a concurrent logout-all or equivalent security cutoff. Game Session mTLS identity alone is not refresh authority. Account first creates the replacement as non-authorizing `pending`, commits the matching durable rotation operation, and atomically marks the replacement registry record `active` while moving the predecessor to `retiring` before exposing the response. The rotated private token remains non-authorizing until the exact Account-owned installation lease and binding-installation fence are durably `INSTALLED`; mismatched or unproved retirement acknowledgements fail closed.
 - `IssueHumanOperatorAuthorizationReference` – target Account-owned typed issuance RPC used only by the exact Logging & Admin workload while forwarding the authenticated operator's `control-ui` evidence. Account derives the actor account and current authority rather than trusting request-supplied identity, validates the `human_operator` issuance kind, exact authenticated workload and actor binding, required role, assurance, applicable tenant or global scope, action-family schema pair, typed request fields, `controlPlaneRequestId`, canonical `mutationDigest`, `reservationOwnerId`, and positive `reservationClaimFence`, and issues one opaque bounded reference for the requested owner.
@@ -61,16 +61,16 @@ For `security_locked` accounts, Account's successful recovery authorization issu
   - Admission precedence is deterministic: after required target and authority checks, `PUBLIC_PRODUCTION_ADMISSION_DENIED` means the selected public-production target's current joining policy disallows joining; `JOIN_REQUIRED` means that policy permits joining but fresh membership is missing or `INACTIVE`. Authority-unavailable outcomes remain distinct from both results.
 - `GetCallerTenantMembership` – return authoritative caller-bound account-tenant membership and roles for billing-safe mutation checks.
 - `GetTenantMembershipForAccount` – cross-tenant membership lookup for billing/reporting workflows (`billingAdmin`/`platformAdmin` only).
-- `GetTenantMembershipForRuntime` – authoritative internal membership read for gameplay admission, reconnect/resume, and membership-gap reconciliation.
+- `GetTenantMembershipForRuntime(accountId, tenantId, requestId)` – authoritative internal membership read for gameplay admission, reconnect/resume, and membership-gap reconciliation.
 - `GetTenantEntitlementsForRuntime(tenantId, requestId)` – unredacted internal runtime/admission entitlement snapshot for exact Game Session and World Management workload identities. Game Session supplies current private delegation for player-scoped admission; World Management supplies tenant/operation-bound instance-lifecycle context. Logging & Admin and `control-ui` callers must use the redacted route variants instead.
 
-- `GetRealmAccessGrant` / `ListRealmAccessGrantsForAccount` – authoritative internal realm-grant reads for non-public realm bootstrap discovery and gameplay admission.
+- `GetRealmAccessGrant(accountId, tenantId, worldSlug, realmSlug, requestId)` / `ListRealmAccessGrantsForAccount(accountId, tenantId, requestId)` – authoritative internal realm-grant reads for non-public realm bootstrap discovery and gameplay admission.
 - `GetTenantEntitlementsTenant` – caller-bound tenant-admin entitlement view for billing-safe control-plane UX.
 - `GetTenantEntitlementsCrossTenantSupportSafe` – cross-tenant support-safe entitlement view with redacted, high-level fields only.
 - `RequestEmailVerification` – send a verification email.
 - `VerifyEmail` – confirm an email verification token.
 - `CreatePaymentIntent` – initiate a Stripe payment.
-- `CreateSubscription` – target request contract for one recurring subscription under [ADR 0044](../../decisions/adr-0044-account-owned-payment-instruments-with-explicit-subscription-binding.md). The caller supplies a high-entropy stable `requestId`; Account computes and persists a versioned `requestDigest` from the normalized create tuple, including the resolved billing owner, immutable `tenantId`, initial `plan_code`, and exact instrument-selection input. Clients do not supply the digest. A retry with the same `requestId` and normalized create fields recomputes the same digest and replays the same durable operation and outcome; changed fields that produce a different digest return `IDEMPOTENCY_CONFLICT`. The caller identity is distinct from the provider `subscription_provisioning_request_id`. The current proto and implementation carry only tenant/account/plan fields and do not yet provide this retry boundary.
+- `CreateSubscription` – target request contract for one recurring subscription under [ADR 0044](../../decisions/adr-0044-account-owned-payment-instruments-with-explicit-subscription-binding.md). The caller supplies a high-entropy stable `requestId`; Account computes and persists a versioned `requestDigest` from the normalized create tuple, including the resolved billing owner, immutable `tenantId`, initial `plan_code`, and exact instrument-selection input. Clients do not supply the digest. Before the local intent/outbox transaction commits, Account captures the resolved billing owner's authority version/generation and lock/CAS-validates that exact fence; an owner change or mismatch fails closed before provider work. A retry with the same `requestId` and normalized create fields recomputes the same digest and replays the same durable operation and outcome; changed fields that produce a different digest return `IDEMPOTENCY_CONFLICT`. The caller identity is distinct from the provider `subscription_provisioning_request_id`. The current proto and implementation carry only tenant/account/plan fields and do not yet provide this retry boundary.
 - `CreateDonation` – process a donation payment.
 - `RefundPayment` – issue a refund for a payment.
 - `GetBalance` – retrieve a virtual currency balance.
@@ -237,7 +237,9 @@ Canonical `GetTenantMembershipForRuntime(accountId, tenantId, requestId)` respon
   "outboxCheckpoints": [
     {
       "outboxStreamKey": "account:auth-authority:v1:membership/42/7",
-      "outboxSequence": 12
+      "outboxSequence": 12,
+      "sourceEventId": "01JQMEMBERSHIP12",
+      "sourceEventDigest": "event-digest-v1:membership:12"
     }
   ]
 }
@@ -253,11 +255,11 @@ Required semantics:
 - `membershipAuthorityGeneration` is an opaque Account-owned authority fence that advances whenever membership or tenant-role authority issued to the caller must be invalidated; it is distinct from the membership content/version counter, and consumers compare it only for exact equality without parsing, deriving, incrementing, or substituting it.
 - `authorityTuple` is the complete applicable Account authority tuple used for this snapshot; it is not reconstructed from membership version or a caller-provided value.
 - `evaluatedAt` timestamps the live membership decision used for admission or resume.
-- `outboxCheckpoints` includes the matching Account authority stream checkpoint for `account:auth-authority:v1:membership/<accountId>/<tenantId>`. The checkpoint, tuple, membership version, roles, and admission flag must come from one authoritative snapshot or transaction.
+- `outboxCheckpoints` includes the matching Account authority stream checkpoint for `account:auth-authority:v1:membership/<accountId>/<tenantId>`. Every positive checkpoint includes the source event ID and canonical source event digest for that sequence. The checkpoint, source event evidence, tuple, membership version, roles, and admission flag must come from one authoritative snapshot or transaction; sequence zero omits the source-event fields because no positive event exists.
 - `GetTenantMembershipForRuntime` is an internal-only gameplay/runtime authority surface and must not be reused as a caller-facing tenant membership endpoint or as a substitute for `GetCallerTenantMembership`.
 - `GetTenantMembershipForRuntime` returns only a fresh Account-authoritative snapshot; an unreachable or timed-out read maps to `AUTH_UNAVAILABLE`, while reachable stale, regressed, malformed, scope-mismatched, or otherwise conflicting evidence maps to the applicable denial or revocation outcome. None is positive admission authority or may be interpreted as missing/`INACTIVE` membership.
 
-Illustrative `GetRealmAccessGrant(accountId, tenantId, worldSlug, realmSlug)` response:
+Illustrative `GetRealmAccessGrant(accountId, tenantId, worldSlug, realmSlug, requestId)` response:
 
 ```json
 {
@@ -288,7 +290,16 @@ Illustrative `GetTenantEntitlementsForRuntime(tenantId, requestId)` response:
 
 ```json
 {
+  "callerAccountId": 42,
   "tenantId": 7,
+  "verifiedConnectScopeId": "cs_demo_production_v17",
+  "target": {
+    "worldSlug": "demo",
+    "realmSlug": "production",
+    "gameInstanceId": "instance-17",
+    "catalogRevision": 42,
+    "pointerVersion": 17
+  },
   "provisioningStatus": null,
   "authorityAvailability": "AVAILABLE",
   "tenantAuthorityGeneration": "opaque-tenant-generation-12",
@@ -318,7 +329,9 @@ Illustrative `GetTenantEntitlementsForRuntime(tenantId, requestId)` response:
   "outboxCheckpoints": [
     {
       "outboxStreamKey": "account:billing:v1:tenant/7",
-      "outboxSequence": 311
+      "outboxSequence": 311,
+      "sourceEventId": "01JQBILLING311",
+      "sourceEventDigest": "event-digest-v1:billing:311"
     }
   ]
 }
@@ -336,8 +349,8 @@ Required semantics:
 - `tenantBillingSequence` allows consumers to detect stale or gapped billing-event application before admitting gameplay.
 - `tenantAuthorityGeneration` is an opaque Account-owned tenant authority fence. Consumers compare it only for exact equality and must not infer ordering or use it as an event identity.
 - `evaluatedAt` records evaluation of authoritative committed input and is used with the differentiated freshness policy from the authentication and subscription-management designs; reading an old projection must not restamp it as fresh.
-- `bundleVersion`, `snapshotIdentity`, and `evaluationIdentity` authenticate the evidence schema, committed source snapshot, and this evaluation. The entitlement fields, identities, complete `authorityTuple`, applicable `tenantBillingCutoff`, and complete `outboxCheckpoints[]` are returned as one Account-authenticated bundle and are never reconstructed by callers.
-- The billing cutoff and matching checkpoint must name the same stream and sequence and carry the same `tenantBillingSequence`; missing, extra, contradictory, or separately sourced evidence is invalid.
+- `bundleVersion`, `snapshotIdentity`, and `evaluationIdentity` authenticate the evidence schema, committed source snapshot, and this evaluation. For player admission, `callerAccountId`, `verifiedConnectScopeId`, and the exact resolved `target` are required and must be cryptographically or transactionally bound to the same Account-authenticated bundle. The scope and target must resolve to the same caller-visible `{tenantId, worldSlug, realmSlug, gameInstanceId, catalogRevision, pointerVersion}`; a tenant-only runtime read cannot be reused as player admission evidence. The entitlement fields, identities, complete `authorityTuple`, applicable `tenantBillingCutoff`, and complete `outboxCheckpoints[]` are returned as one Account-authenticated bundle and are never reconstructed by callers.
+- The billing cutoff and matching checkpoint must name the same stream and sequence, carry the same `tenantBillingSequence`, and include the positive source event ID and canonical source event digest. Missing, extra, contradictory, or separately sourced evidence is invalid.
 - Missing subscription state is not implicit availability. Free or trial hosting is returned as an explicit entitlement state.
 - The response above is target-state shape. Current proto and runtime-caller support for the paired `authorityAvailability`/`tenantAuthorityGeneration` authority contract is not yet fully aligned and remains implementation drift.
 

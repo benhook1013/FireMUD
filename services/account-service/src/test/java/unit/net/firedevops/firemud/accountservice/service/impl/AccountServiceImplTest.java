@@ -1401,6 +1401,65 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void issueConnectTokenResolvesAdmissionRoutingBeforeEntitlementEvaluation() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    org.mockito.Mockito.clearInvocations(accountTenantMembershipRepository, subscriptionRepository);
+
+    Subscription canceled = new Subscription();
+    canceled.setId(23L);
+    canceled.setTenantId(7L);
+    canceled.setStatus("canceled");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(canceled));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("production")
+                    .setDisplayName("Live Realm")
+                    .setTenantId("")
+                    .setGameInstanceId("44")
+                    .setPointerVersion(17L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(true)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    bootstrap.bootstrapToken(),
+                    new ConnectTokenRequest(connectScopeId, "req-routing-first")));
+
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", exception.getCode());
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .findByAccountIdAndTenantId(11L, 7L);
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.never())
+        .findByTenantId(7L);
+  }
+
+  @Test
   void issueConnectTokenReplaysSameTokenForSameRequestIdAfterLaterPointerCutover() {
     Account account = new Account();
     account.setId(11L);
@@ -2195,8 +2254,10 @@ class AccountServiceImplTest {
     assertEquals(0, realms.size());
   }
 
-  @Test
-  void issueConnectTokenRequiresMembershipForNonPublicRealmWithGrant() {
+  @ParameterizedTest
+  @CsvSource({"true, false", "false, true"})
+  void issueConnectTokenRequiresMembershipForNonPublicRealmWithGrant(
+      boolean visible, boolean publicProductionRealm) {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -2220,7 +2281,8 @@ class AccountServiceImplTest {
                     .setTenantId("7")
                     .setGameInstanceId("55")
                     .setPointerVersion(19L)
-                    .setVisible(false)
+                    .setVisible(visible)
+                    .setPublicProductionRealm(publicProductionRealm)
                     .setRequiresCharacterSelection(false)
                     .setStateScope("SHARED")
                     .setCharacterCreationPolicy("ALLOW_NEW")
@@ -2235,7 +2297,8 @@ class AccountServiceImplTest {
                 .setTenantId("7")
                 .setGameInstanceId("55")
                 .setPointerVersion(19L)
-                .setVisible(false)
+                .setVisible(visible)
+                .setPublicProductionRealm(publicProductionRealm)
                 .setRequiresCharacterSelection(false)
                 .setStateScope("SHARED")
                 .setCharacterCreationPolicy("ALLOW_NEW")

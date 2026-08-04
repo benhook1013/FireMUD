@@ -152,13 +152,14 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   public void getTenantMembershipForRuntime(
       GetTenantMembershipForRuntimeRequest request,
       StreamObserver<GetTenantMembershipForRuntimeResponse> responseObserver) {
+    boolean exists = membershipExists.get();
     responseObserver.onNext(
         GetTenantMembershipForRuntimeResponse.newBuilder()
             .setAccountId(request.getAccountId())
             .setTenantId(request.getTenantId())
-            .setMembershipExists(membershipExists.get())
+            .setMembershipExists(exists)
             .setGameplayAdmissionAllowed(gameplayAdmissionAllowed.get())
-            .setMembershipVersion(1L)
+            .setMembershipVersion(exists ? 1L : 0L)
             .setEvaluatedAt(EVALUATED_AT)
             .build());
     responseObserver.onCompleted();

@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.command.text;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -878,11 +880,12 @@ public class PlayCommandHandler {
       return false;
     }
     try {
+      Instant.parse(response.getEvaluatedAt());
       if (Long.parseLong(response.getAccountId()) != context.accountId()
           || Long.parseLong(response.getTenantId()) != selectedRealm.tenantId()) {
         return false;
       }
-    } catch (NumberFormatException ex) {
+    } catch (DateTimeParseException | NumberFormatException ex) {
       return false;
     }
     return response.getMembershipExists()

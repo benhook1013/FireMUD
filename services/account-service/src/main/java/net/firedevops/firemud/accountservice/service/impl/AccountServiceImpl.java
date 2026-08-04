@@ -424,7 +424,8 @@ public class AccountServiceImpl implements AccountService {
     ConnectScopeContext scopeContext = requireConnectScopeContext(connectScopeId);
     validateConnectScopeAgainstBootstrap(bootstrapContext, scopeContext);
     validateConnectScopeRoute(scopeContext, worldSlug, realmSlug);
-    RuntimeRealmTarget realm = requireCurrentConnectScopeTarget(bootstrapContext, scopeContext);
+    RuntimeRealmTarget realm =
+        requireCurrentAdmissibleConnectScopeTarget(bootstrapContext, scopeContext);
     return entityManagementClient
         .listCharactersByAccount(
             realm.tenantId(),
@@ -500,19 +501,19 @@ public class AccountServiceImpl implements AccountService {
       BootstrapContext bootstrapContext,
       ConnectScopeContext scopeContext,
       ConnectTokenRequest request) {
-    RuntimeMembershipDto membership =
-        getTenantMembershipForRuntime(
-            bootstrapContext.accountId(), scopeContext.tenantId(), request.requestId());
+    RuntimeRealmTarget realm = requireCurrentConnectScopeTarget(scopeContext);
     RuntimeEntitlementsDto entitlements =
         getTenantEntitlementsForRuntime(scopeContext.tenantId(), request.requestId());
     if (!entitlements.gameplayAvailable()) {
       throw new AuthenticationException(
           "CONNECT_TOKEN_REJECTED", "Gameplay is not available for this tenant");
     }
+    RuntimeMembershipDto membership =
+        getTenantMembershipForRuntime(
+            bootstrapContext.accountId(), scopeContext.tenantId(), request.requestId());
 
-    RuntimeRealmTarget realm = requireCurrentConnectScopeTarget(bootstrapContext, scopeContext);
     if (!membership.membershipExists() || !membership.gameplayAdmissionAllowed()) {
-      if (!realm.publicProductionRealm()) {
+      if (!isPublicProductionRealm(realm)) {
         if (membership.membershipExists()) {
           throw new AuthenticationException(
               "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
@@ -737,6 +738,17 @@ public class AccountServiceImpl implements AccountService {
       Long expectedTenantId,
       String worldSlug,
       String realmSlug) {
+    RuntimeRealmTarget realm = requireRealmTarget(expectedTenantId, worldSlug, realmSlug);
+    if (!isRealmAdmissible(bootstrapContext, realm)) {
+      throw new AuthenticationException(
+          "ADMISSION_POINTER_UNAVAILABLE",
+          "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
+    }
+    return realm;
+  }
+
+  private RuntimeRealmTarget requireRealmTarget(
+      Long expectedTenantId, String worldSlug, String realmSlug) {
     try {
       List<RuntimeRealmTarget> candidates =
           gameSessionClient.listGameplayRealms(worldSlug).stream()
@@ -749,18 +761,12 @@ public class AccountServiceImpl implements AccountService {
         throw new IllegalStateException("Selected gameplay realm is absent or ambiguous");
       }
       RuntimeRealmTarget candidate = candidates.getFirst();
-      if (!isRealmAdmissible(bootstrapContext, candidate)) {
-        throw new AuthenticationException(
-            "ADMISSION_POINTER_UNAVAILABLE",
-            "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
-      }
       RuntimeRealmTarget realm =
           readRuntimeRealmTarget(
               gameSessionClient.getAdmissionPointer(candidate.tenantId(), worldSlug, realmSlug));
       if (realm.tenantId() != candidate.tenantId()
           || !java.util.Objects.equals(worldSlug, realm.worldSlug())
-          || !java.util.Objects.equals(realmSlug, realm.realmSlug())
-          || !isRealmAdmissible(bootstrapContext, realm)) {
+          || !java.util.Objects.equals(realmSlug, realm.realmSlug())) {
         throw new AuthenticationException(
             "ADMISSION_POINTER_UNAVAILABLE",
             "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
@@ -786,22 +792,19 @@ public class AccountServiceImpl implements AccountService {
 
   private boolean isRealmAdmissible(BootstrapContext bootstrapContext, RuntimeRealmTarget realm) {
     long tenantId = realm.tenantId();
-    if (!realm.visible()) {
+    if (!isPublicProductionRealm(realm)) {
       if (!hasRealmAccessGrant(
           bootstrapContext.accountId(), tenantId, realm.worldSlug(), realm.realmSlug())) {
-        return false;
-      }
-    } else {
-      RuntimeMembershipDto membership =
-          getTenantMembershipForRuntime(
-              bootstrapContext.accountId(), tenantId, "bootstrap-discovery");
-      if (!membership.gameplayAdmissionAllowed() && !realm.publicProductionRealm()) {
         return false;
       }
     }
     RuntimeEntitlementsDto entitlements =
         getTenantEntitlementsForRuntime(tenantId, "bootstrap-discovery");
     return entitlements.gameplayAvailable();
+  }
+
+  private boolean isPublicProductionRealm(RuntimeRealmTarget realm) {
+    return realm.visible() && realm.publicProductionRealm();
   }
 
   private String mintConnectScopeId(
@@ -916,18 +919,26 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
-  private RuntimeRealmTarget requireCurrentConnectScopeTarget(
-      BootstrapContext bootstrapContext, ConnectScopeContext scopeContext) {
+  private RuntimeRealmTarget requireCurrentConnectScopeTarget(ConnectScopeContext scopeContext) {
     RuntimeRealmTarget currentRealm =
-        requireAdmissibleRealm(
-            bootstrapContext,
-            scopeContext.tenantId(),
-            scopeContext.worldSlug(),
-            scopeContext.realmSlug());
+        requireRealmTarget(
+            scopeContext.tenantId(), scopeContext.worldSlug(), scopeContext.realmSlug());
     if (currentRealm.tenantId() != scopeContext.tenantId()
         || currentRealm.gameInstanceId() != scopeContext.gameInstanceId()
         || currentRealm.pointerVersion() != scopeContext.pointerVersion()) {
       throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
+    }
+    return currentRealm;
+  }
+
+  private RuntimeRealmTarget requireCurrentAdmissibleConnectScopeTarget(
+      BootstrapContext bootstrapContext, ConnectScopeContext scopeContext) {
+    RuntimeRealmTarget currentRealm =
+        requireCurrentConnectScopeTarget(scopeContext);
+    if (!isRealmAdmissible(bootstrapContext, currentRealm)) {
+      throw new AuthenticationException(
+          "ADMISSION_POINTER_UNAVAILABLE",
+          "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
     }
     return currentRealm;
   }

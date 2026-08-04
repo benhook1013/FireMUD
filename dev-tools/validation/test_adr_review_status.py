@@ -944,6 +944,26 @@ class AdrReviewStatusTests(unittest.TestCase):
                     "status must be exactly",
                 )
 
+    def test_legacy_replacement_uses_status_value_line_when_text_is_not_visible(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = root / "design/architecture/decisions/adr-0001-legacy.md"
+            expect_failure(
+                self,
+                lambda: self.validator.validate_supersession(
+                    Path("design/architecture/decisions/adr-0001-legacy.md"),
+                    path,
+                    root / "design/architecture/decisions",
+                    "Superseded",
+                    1,
+                    path.read_text(encoding="utf-8"),
+                    legacy_status=(
+                        "Superseded by [ADR 0012](./missing-replacement.md)"
+                    ),
+                ),
+                "malformed legacy replacement ADR at line 5",
+            )
+
     def test_status_and_review_disposition_mapping_is_enforced(self) -> None:
         invalid_pairs = (
             ("Accepted", "Superseded"),
