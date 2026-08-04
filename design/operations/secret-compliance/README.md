@@ -1,6 +1,10 @@
 # Secret Compliance Evidence
 
-This directory contains machine-readable environment provisioning-status records consumed by secret-compliance validation. The `.yaml` filenames are retained as the stable checked-in interface even though their current payloads use JSON syntax, which is valid YAML.
+This directory contains machine-readable environment provisioning-status records consumed by secret-compliance validation.
+
+## Current Implementation Status
+
+The `.yaml` filenames are the stable checked-in interface; their current payloads use JSON syntax, which is valid YAML.
 
 - [Hobby self-hosted](./hobby-self-hosted.yaml)
 - [Staging](./staging.yaml)
