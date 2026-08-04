@@ -933,8 +933,7 @@ public class AccountServiceImpl implements AccountService {
 
   private RuntimeRealmTarget requireCurrentAdmissibleConnectScopeTarget(
       BootstrapContext bootstrapContext, ConnectScopeContext scopeContext) {
-    RuntimeRealmTarget currentRealm =
-        requireCurrentConnectScopeTarget(scopeContext);
+    RuntimeRealmTarget currentRealm = requireCurrentConnectScopeTarget(scopeContext);
     if (!isRealmAdmissible(bootstrapContext, currentRealm)) {
       throw new AuthenticationException(
           "ADMISSION_POINTER_UNAVAILABLE",

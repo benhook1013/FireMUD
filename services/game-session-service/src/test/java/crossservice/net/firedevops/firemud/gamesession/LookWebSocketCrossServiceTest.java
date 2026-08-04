@@ -456,7 +456,7 @@ class LookWebSocketCrossServiceTest {
             READY_LOOK_TEXT,
             client ->
                 client.awaitMatching(
-                    response -> response.startsWith("ERROR WORLD_ACCESS_DENIED"),
+                    response -> response.startsWith("ERROR JOIN_REQUIRED"),
                     "revoked membership admission denial"))) {
       return scenario.responses();
     }
