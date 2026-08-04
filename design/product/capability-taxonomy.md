@@ -233,16 +233,16 @@ The taxonomy was checked against the canonical product requirements, persona jou
 
 | Capability | Representative canonical sources |
 | --- | --- |
-| `AA-1` | [Core requirements](requirements.md), [Account Service](../architecture/microservices/account-service/README.md), [Player journeys](user-journeys/players.md) |
+| `AA-1` | [Product requirements](requirements.md), [Account Service](../architecture/microservices/account-service/README.md), [Player journeys](user-journeys/players.md) |
 | `AA-2` | [Authentication](../architecture/system-architecture-authentication.md), [Reconnection](../architecture/system-architecture-reconnection.md), [Session behavior](../architecture/system-architecture-session-behavior.md) |
 | `AA-3` | [Multi-tenancy](../architecture/system-architecture-multi-tenancy.md), [Versioning and runtime](../architecture/system-architecture-versioning-runtime.md), [Player journeys](user-journeys/players.md) |
 | `EA-1` | [Player command model](../architecture/system-architecture-player-command-model.md), [Input, output, and presentation](../architecture/system-architecture-input-output-and-presentation.md) |
-| `EA-2` | [Core requirements](requirements.md), [Social and Groups Service](../architecture/microservices/social-groups-service/README.md), [Player journeys](user-journeys/players.md) |
+| `EA-2` | [Product requirements](requirements.md), [Social and Groups Service](../architecture/microservices/social-groups-service/README.md), [Player journeys](user-journeys/players.md) |
 | `EA-3` | [Frontend architecture](../architecture/system-architecture-frontend.md), [Player journeys](user-journeys/players.md), [Creator journeys](user-journeys/creators.md), [Operator journeys](user-journeys/operators.md) |
 | `GR-1` | [Tick architecture](../architecture/system-architecture-ticks.md), [System overview](../architecture/system-architecture-overview.md), [Game Session Service](../architecture/microservices/game-session-service/README.md) |
-| `GR-2` | [Core requirements](requirements.md), [World Management Service](../architecture/microservices/world-management-service/README.md), [System overview](../architecture/system-architecture-overview.md) |
-| `GR-3` | [Core requirements](requirements.md), [Entity Management Service](../architecture/microservices/entity-management-service/README.md) |
-| `GR-4` | [Core requirements](requirements.md), [Game Logic Service](../architecture/microservices/game-logic-service/README.md) |
+| `GR-2` | [Product requirements](requirements.md), [World Management Service](../architecture/microservices/world-management-service/README.md), [System overview](../architecture/system-architecture-overview.md) |
+| `GR-3` | [Product requirements](requirements.md), [Entity Management Service](../architecture/microservices/entity-management-service/README.md) |
+| `GR-4` | [Product requirements](requirements.md), [Game Logic Service](../architecture/microservices/game-logic-service/README.md) |
 | `AR-1` | [Creator journeys](user-journeys/creators.md), [Game Design Service](../architecture/microservices/game-design-service/README.md), [LLM content tools](../architecture/system-architecture-llm-content-tools.md) |
 | `AR-2` | [Settings model](../architecture/system-architecture-settings-model.md), [Game customization](../architecture/system-architecture-game-customization.md) |
 | `AR-3` | [Versioning and runtime](../architecture/system-architecture-versioning-runtime.md), [Creator journeys](user-journeys/creators.md), [World creation workflow](../architecture/microservices/world-management-service/world-creation-workflow.md) |

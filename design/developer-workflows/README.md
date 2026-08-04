@@ -1,6 +1,6 @@
 # Developer Workflows
 
-This directory contains repeatable contributor procedures for changing, validating, reviewing, and manually exercising FireMUD. The root [AGENTS.md](../../AGENTS.md) contains the always-on project, authority, and safety rules; use these guides only when their trigger applies.
+This directory contains repeatable contributor procedures for changing, validating, reviewing, and manually exercising FireMUD. The root [AGENTS.md](../../AGENTS.md) contains repository-wide AI authority, safety, and workflow-routing rules; use these guides only when their trigger applies.
 
 Use the workflow that matches the current contribution, validation, review, or manual product-flow task rather than loading every procedure up front.
 

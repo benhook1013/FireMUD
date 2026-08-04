@@ -138,42 +138,33 @@ See [Game Design Service](../architecture/microservices/game-design-service/READ
 
 ### 3.1 Networking & API Gateway
 
-- **WebSocket/TCP-based real-time networking** for low-latency gameplay.
-- **TCP Proxy Service** bridges legacy **Telnet** clients to WebSockets before reaching the Gateway.
-- **API Gateway** manages requests between microservices and handles external integrations.
-- **Gameplay login is handled by the Game Session Service**; any JWT on admin or REST endpoints is validated by the consuming service. For first-party `/ws/game/**` handshakes, Spring Cloud Gateway validates the short-lived connect token at the edge and Game Session validates the signed Gateway-issued connect context before gameplay admission. Gameplay credentials and admission still remain `LOGIN` / `PLAY`-driven rather than JWT-on-every-message.
-- **Internal microservices communicate over gRPC**, with **mTLS** as the canonical target-state transport for Kubernetes-backed environments using Spring Boot SSL bundles plus Spring gRPC server SSL bundle binding. Hosted preview may temporarily use plaintext internal gRPC as an explicitly documented exception while the bundle-based path is being re-proved.
-- **Cert-manager** provisions and rotates these certificates as **Kubernetes Secrets**.
-- Multi-server support enables **scaling hosted games separately**.
-See [Gateway Architecture](../architecture/system-architecture-gateway.md) and [Reconnection Strategy](../architecture/system-architecture-reconnection.md) for network flow details.
+- The platform must provide **low-latency, real-time gameplay networking** for supported clients over WebSocket/TCP.
+- First-party WebSocket clients and legacy **Telnet/TCP clients** must have supported paths into the same gameplay experience, with consistent admission and failure behavior. See [Protocol Bridging](../architecture/system-architecture-protocol-bridging.md) and [Gateway Architecture](../architecture/system-architecture-gateway.md).
+- External client traffic must use **stable, supported entry points** with the routing, filtering, and edge-failure behavior required for gameplay and platform integrations. The exact edge topology is defined by [Gateway Architecture](../architecture/system-architecture-gateway.md).
+- Players must be able to **authenticate and enter gameplay securely** through the Game Session and Account ownership boundaries, while administrative and REST clients must have credentials and permissions enforced by the consuming service. See [Authentication & Authorization](../architecture/system-architecture-authentication.md) and [JWT and Token Contracts](../architecture/system-architecture-jwt-and-token-contracts.md).
+- Internal service communication must be **authenticated, confidential, and contract-governed**, with environment-specific deployment exceptions documented rather than silently weakening the security boundary. See [gRPC API Style & Versioning](../architecture/system-architecture-grpc.md), [Security Architecture](../architecture/system-architecture-security.md), and [Infrastructure Documentation](../architecture/infrastructure/README.md) for the exact transport and certificate contracts.
+- Multi-server support must enable **hosted games to scale independently**.
 
 ### 3.2 Persistence & Caching
 
-- **PostgreSQL** is the primary database for game world, entity, and account storage.
-- **Redis** stores transient gameplay and session state only; all authoritative data remains in PostgreSQL.
-- **Database migrations are managed per service using [Flyway](../architecture/system-architecture-database-migrations.md).**
-See [Redis Architecture](../architecture/system-architecture-redis.md) for key conventions and caching strategy.
+- The platform must **durably persist authoritative game-world, entity, and account data** beyond individual player sessions.
+- Transient session state and caching may support responsive gameplay and recovery, but must not replace or override **authoritative domain data**. See [Redis Architecture](../architecture/system-architecture-redis.md) for the ownership and durability boundary.
+- Each service must support **safe, independently managed persistence evolution** without compromising data integrity. See [Database Migrations](../architecture/system-architecture-database-migrations.md) for the canonical schema and migration contract.
 
 ### 3.3 Deployment Model
 
-- The platform is designed for **cloud-native deployment**, using:
-  - **Docker & Kubernetes** for containerization and scaling.
-  - **Automated CI/CD pipelines** for service updates and maintenance (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md)).
-- Infrastructure should allow **horizontal scaling** for high-concurrency use cases.
-- Supports **multi-region deployments** to provide better latency for global users.
-- **Central logging and metrics** use the stack described in [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md).
-- **Velero** backs up Kubernetes manifests only. PostgreSQL data is protected by a `pg_dump` CronJob. The production backup schedule is defined in [Backup & Disaster Recovery](../architecture/system-architecture-backup-recovery.md).
-See the [CI/CD Pipeline](../architecture/system-architecture-cicd.md) for workflow details.
+- The platform must support **repeatable cloud deployment and automated service delivery**, with independently scalable services. See [Deployment Environments](../architecture/infrastructure/deployment-environments.md) and the [CI/CD Pipeline](../architecture/system-architecture-cicd.md) for the deployment contract.
+- Infrastructure must support **horizontal scaling** for high-concurrency use cases and **multi-region deployment** to improve latency for global users.
+- Operators must have **centralized logging and metrics** sufficient to monitor player activity, service health, and game performance. See [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md).
+- Deployment configuration and authoritative data must have **scheduled backup and disaster-recovery coverage** sufficient to restore the platform after infrastructure or data loss. See [Backup & Disaster Recovery](../architecture/system-architecture-backup-recovery.md) for the exact backup responsibilities.
 
 ### 3.4 Gameplay Session Architecture
 
-- **Game Session Service** orchestrates tick execution and runtime configuration.
-- **Redis** stores volatile session state so gameplay sessions can be recovered cleanly after disruptions.
-- Tick regions operate independently for scalability but rely on Redis for atomic coordination.
-- Redis runs with **AOF persistence**; replication remains asynchronous, and tick state is treated as volatile coordination data that can be reconstructed via idempotent replay after failover.
-- Lua scripts in Redis ensure atomic, shard-local tick updates on the primary; correctness and recovery rely on AOF plus idempotent replays against PostgreSQL rather than synchronous replica acknowledgments.
-- A layered reconnection model—**TCP Proxy Service → Spring Cloud Gateway → Game Session Service**—must provide a clear, reliable recovery path for all clients. Third-party clients recover through the documented reconnect flow, while first-party clients may automate that same flow to reduce user-visible friction.
-See [Tick System](../architecture/system-architecture-ticks.md) and [Reconnection Strategy](../architecture/system-architecture-reconnection.md) for implementation details.
+- Active gameplay sessions must provide **consistent tick execution and runtime configuration**, with the Game Session ownership and versioning boundaries defined by [Tick System](../architecture/system-architecture-ticks.md) and [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md).
+- Players must be able to **recover gameplay sessions after service or connection disruptions** using current authoritative state and the documented resume-or-reload behavior, without treating transient coordination state as authoritative. See [Reconnection Strategy](../architecture/system-architecture-reconnection.md) and [Redis Architecture](../architecture/system-architecture-redis.md).
+- Game execution must support **independently scalable regions** while preserving deterministic action processing and coordination correctness. The exact tick, coordination, and failover contracts are defined by [Tick System](../architecture/system-architecture-ticks.md).
+- Failover and recovery must preserve **gameplay correctness and bounded availability**, including safe reconstruction of volatile coordination from durable state where required. See [Tick Failures & Operations](../architecture/system-architecture-tick-failures-and-operations.md) and [Redis Recovery](../architecture/system-architecture-redis-reset-and-recovery.md).
+- All clients must have a **clear, reliable reconnect path**. Third-party clients must be able to follow the documented flow independently; first-party clients may automate that same flow to reduce user-visible friction. See [Reconnection Strategy](../architecture/system-architecture-reconnection.md).
 
 ---
 

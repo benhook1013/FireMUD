@@ -64,7 +64,7 @@ The gameplay `WHO` command is intentionally a current-game-instance presence vie
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../../service-responsibility-matrix.md)
-- [User Journeys – Social Interaction](../../../product/user-journeys/players.md#4-social-interaction)
+- [User Journeys – Social Interaction](../../../product/user-journeys/players.md#5-social-interaction--safety)
 - [Redis Architecture](../../system-architecture-redis.md)
 - [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
 - [Shared Libraries Overview](../../system-architecture-shared-libraries.md)

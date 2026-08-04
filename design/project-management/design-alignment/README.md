@@ -56,7 +56,7 @@ The design-allocation and decision-inventory phases were completed against these
 
 - `python3 dev-tools/validation/check-design-capability-allocation.py` derives the product and architecture source sets, parses each allocation ledger, and reconciles the declared `225`-source coverage summary (`222` capability allocations plus the canonical `2` governance/template exemptions and `1` registry exemption).
 - all intended FireMUD user, creator, operator, runtime, authoring, automation, platform, and commercial concerns have a capability home;
-- every Markdown source under `design/product/**` and `design/architecture/**` is present in the allocation ledger or explicitly classified as non-allocatable generated/index material;
+- every Markdown source under `design/product/**` and `design/architecture/**` is present and classified in the allocation ledger, including generated/index material, unless it is one of the two explicit governance/template exemptions or the decision-registry exemption;
 - mixed canonical documents have heading-level allocations where file-level allocation would hide a real ownership split;
 - every capability has been inspected for consequential explicit and implicit decisions;
 - existing ADRs are mapped, including superseded and withdrawn records;

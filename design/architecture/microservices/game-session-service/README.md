@@ -102,6 +102,6 @@ Game Session front-end instances and region lease owners must externalize meanin
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [Service Responsibility Matrix](../../service-responsibility-matrix.md)
 - [User Journeys – Publish and Start a Game Instance](../../../product/user-journeys/creators.md#4-publish-and-start-a-game-instance)
-- [User Journeys – Player Login and Gameplay](../../../product/user-journeys/players.md#3-player-login-and-gameplay)
+- [User Journeys – Player Login and Gameplay](../../../product/user-journeys/players.md#4-player-login-and-gameplay)
 - [System Architecture Diagram](../../system-architecture-diagram.md)
 - [System Context Diagram](../../system-context-diagram.md)

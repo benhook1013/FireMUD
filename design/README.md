@@ -22,4 +22,4 @@ Additional generated documentation lives in:
 - [**grpc-docs/**](./grpc-docs/) – API references generated from our protobuf definitions.
 - [**observability/**](./observability/) – Default dashboards, alert references, and observability assets.
 
-Refer to the README files within each subdirectory for more details. For a high-level walkthrough of common creator and player workflows see [**User Journeys**](product/user-journeys/overview.md).
+Refer to the README files within each subdirectory for more details. For a high-level walkthrough of common player, creator, and operator workflows see [**User Journeys**](product/user-journeys/overview.md).
