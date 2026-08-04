@@ -12,8 +12,6 @@ import net.firedevops.firemud.account.v1.CreateAccountRequest;
 import net.firedevops.firemud.account.v1.CreateAccountResponse;
 import net.firedevops.firemud.account.v1.DeleteAccountRequest;
 import net.firedevops.firemud.account.v1.DeleteAccountResponse;
-import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipRequest;
-import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.ExportAccountRequest;
 import net.firedevops.firemud.account.v1.ExportAccountResponse;
 import net.firedevops.firemud.account.v1.ExportTenantDataRequest;
@@ -290,64 +288,6 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       GetRealmAccessGrantForRuntimeResponse response =
           GetRealmAccessGrantForRuntimeResponse.newBuilder()
               .setError(appError("GetRealmAccessGrantForRuntime", "NOT_FOUND", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    }
-  }
-
-  @Override
-  @Timed(value = "accountGrpc.ensurePublicProductionPlayerMembership")
-  public void ensurePublicProductionPlayerMembership(
-      EnsurePublicProductionPlayerMembershipRequest request,
-      StreamObserver<EnsurePublicProductionPlayerMembershipResponse> responseObserver) {
-    try {
-      var dto =
-          accountService.ensurePublicProductionPlayerMembership(
-              requirePositiveRequestId(request.getAccountId(), "accountId"),
-              requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              request.getWorldSlug(),
-              request.getRealmSlug(),
-              request.getRequestId());
-      EnsurePublicProductionPlayerMembershipResponse response =
-          EnsurePublicProductionPlayerMembershipResponse.newBuilder()
-              .setAccountId(String.valueOf(dto.accountId()))
-              .setTenantId(String.valueOf(dto.tenantId()))
-              .setWorldSlug(dto.worldSlug())
-              .setRealmSlug(dto.realmSlug())
-              .setGameplayAdmissionAllowed(true)
-              .setMembershipVersion(dto.membershipVersion())
-              .setCreated(dto.created())
-              .setRequestId(dto.requestId())
-              .setEvaluatedAt(dto.evaluatedAt())
-              .setReplayed(dto.replayed())
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (InvalidRequestException ex) {
-      EnsurePublicProductionPlayerMembershipResponse response =
-          EnsurePublicProductionPlayerMembershipResponse.newBuilder()
-              .setError(
-                  appError(
-                      "EnsurePublicProductionPlayerMembership",
-                      "INVALID_ARGUMENT",
-                      ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (AuthenticationException ex) {
-      EnsurePublicProductionPlayerMembershipResponse response =
-          EnsurePublicProductionPlayerMembershipResponse.newBuilder()
-              .setError(
-                  appError("EnsurePublicProductionPlayerMembership", ex.getCode(), ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (IllegalArgumentException ex) {
-      EnsurePublicProductionPlayerMembershipResponse response =
-          EnsurePublicProductionPlayerMembershipResponse.newBuilder()
-              .setError(
-                  appError("EnsurePublicProductionPlayerMembership", "NOT_FOUND", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

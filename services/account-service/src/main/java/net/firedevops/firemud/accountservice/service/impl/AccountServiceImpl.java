@@ -37,7 +37,6 @@ import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.dto.ProfileDto;
-import net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult;
 import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
 import net.firedevops.firemud.accountservice.dto.RealmAccessGrantResult;
 import net.firedevops.firemud.accountservice.dto.RuntimeEntitlementsDto;
@@ -425,7 +424,8 @@ public class AccountServiceImpl implements AccountService {
     ConnectScopeContext scopeContext = requireConnectScopeContext(connectScopeId);
     validateConnectScopeAgainstBootstrap(bootstrapContext, scopeContext);
     validateConnectScopeRoute(scopeContext, worldSlug, realmSlug);
-    RuntimeRealmTarget realm = requireCurrentConnectScopeTarget(bootstrapContext, scopeContext);
+    RuntimeRealmTarget realm =
+        requireCurrentAdmissibleConnectScopeTarget(bootstrapContext, scopeContext);
     return entityManagementClient
         .listCharactersByAccount(
             realm.tenantId(),
@@ -501,19 +501,23 @@ public class AccountServiceImpl implements AccountService {
       BootstrapContext bootstrapContext,
       ConnectScopeContext scopeContext,
       ConnectTokenRequest request) {
-    RuntimeMembershipDto membership =
-        getTenantMembershipForRuntime(
-            bootstrapContext.accountId(), scopeContext.tenantId(), request.requestId());
+    RuntimeRealmTarget realm = requireCurrentConnectScopeTarget(scopeContext);
     RuntimeEntitlementsDto entitlements =
         getTenantEntitlementsForRuntime(scopeContext.tenantId(), request.requestId());
     if (!entitlements.gameplayAvailable()) {
       throw new AuthenticationException(
           "CONNECT_TOKEN_REJECTED", "Gameplay is not available for this tenant");
     }
+    RuntimeMembershipDto membership =
+        getTenantMembershipForRuntime(
+            bootstrapContext.accountId(), scopeContext.tenantId(), request.requestId());
 
-    RuntimeRealmTarget realm = requireCurrentConnectScopeTarget(bootstrapContext, scopeContext);
-    if (!membership.membershipExists()) {
-      if (!realm.publicProductionRealm()) {
+    if (!membership.membershipExists() || !membership.gameplayAdmissionAllowed()) {
+      if (!isPublicProductionRealm(realm)) {
+        if (membership.membershipExists()) {
+          throw new AuthenticationException(
+              "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
+        }
         throw new AuthenticationException(
             "NON_PUBLIC_ENROLLMENT_REQUIRED",
             "Existing game membership is required for this non-public realm");
@@ -525,10 +529,6 @@ public class AccountServiceImpl implements AccountService {
       }
       throw new AuthenticationException(
           "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
-    }
-    if (!membership.gameplayAdmissionAllowed()) {
-      throw new AuthenticationException(
-          "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
     }
 
     String jti =
@@ -604,159 +604,6 @@ public class AccountServiceImpl implements AccountService {
         request.requestId(),
         jti);
     return result;
-  }
-
-  @Override
-  @Transactional
-  @Timed(value = "account.public_production_membership")
-  public PublicProductionMembershipResult ensurePublicProductionPlayerMembership(
-      Long accountId, Long tenantId, String worldSlug, String realmSlug, String requestId) {
-    Optional<
-            net.firedevops.firemud.accountservice.service.session.SessionService
-                .PublicProductionMembershipReplay>
-        cachedReplay =
-            sessionService.getPublicProductionMembershipReplay(
-                tenantId, accountId, worldSlug, realmSlug, requestId);
-    if (cachedReplay.isPresent()) {
-      var replay = cachedReplay.orElseThrow();
-      if (replay.success()) {
-        logger.info(
-            "Replayed public-production membership attempt for account {} tenant {} world {} realm {} requestId {}",
-            accountId,
-            tenantId,
-            worldSlug,
-            realmSlug,
-            requestId);
-        return replayedPublicProductionMembershipResult(replay.result());
-      }
-      logger.info(
-          "Replayed failed public-production membership attempt for account {} tenant {} world {} realm {} requestId {} code {}",
-          accountId,
-          tenantId,
-          worldSlug,
-          realmSlug,
-          requestId,
-          replay.errorCode());
-      throw new AuthenticationException(replay.errorCode(), replay.errorMessage());
-    }
-    try {
-      PublicProductionMembershipResult result =
-          ensurePublicProductionPlayerMembershipFresh(
-              accountId, tenantId, worldSlug, realmSlug, requestId);
-      sessionService.storePublicProductionMembershipReplay(
-          tenantId,
-          accountId,
-          worldSlug,
-          realmSlug,
-          requestId,
-          new net.firedevops.firemud.accountservice.service.session.SessionService
-              .PublicProductionMembershipReplay(true, result, "", ""),
-          tokenProperties.getSessionExpirationMs());
-      return result;
-    } catch (AuthenticationException ex) {
-      sessionService.storePublicProductionMembershipReplay(
-          tenantId,
-          accountId,
-          worldSlug,
-          realmSlug,
-          requestId,
-          new net.firedevops.firemud.accountservice.service.session.SessionService
-              .PublicProductionMembershipReplay(false, null, ex.getCode(), ex.getMessage()),
-          tokenProperties.getSessionExpirationMs());
-      throw ex;
-    }
-  }
-
-  private PublicProductionMembershipResult ensurePublicProductionPlayerMembershipFresh(
-      Long accountId, Long tenantId, String worldSlug, String realmSlug, String requestId) {
-    requireAccount(accountId);
-    var realm = requirePublicProductionRealm(tenantId, worldSlug, realmSlug);
-    RuntimeEntitlementsDto entitlements = getTenantEntitlementsForRuntime(tenantId, requestId);
-    if (!entitlements.gameplayAvailable()) {
-      throw new AuthenticationException(
-          "GAMEPLAY_UNAVAILABLE", "Gameplay is not available for this tenant");
-    }
-
-    Optional<AccountTenantMembership> existing =
-        accountTenantMembershipRepository.findByAccountIdAndTenantId(accountId, tenantId);
-    if (existing.isPresent()) {
-      AccountTenantMembership membership = existing.orElseThrow();
-      if (!membership.isGameplayAdmissionAllowed()) {
-        throw new AuthenticationException(
-            "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
-      }
-      return new PublicProductionMembershipResult(
-          accountId,
-          tenantId,
-          realm.worldSlug(),
-          realm.realmSlug(),
-          membership.getId(),
-          false,
-          requestId,
-          Instant.now().toString(),
-          false);
-    }
-    if (!entitlements.allowPublicJoin()) {
-      throw new AuthenticationException(
-          "PUBLIC_PRODUCTION_ADMISSION_DENIED",
-          "Public joining is not allowed for the selected game");
-    }
-
-    AccountTenantMembership created = new AccountTenantMembership();
-    created.setAccount(requireAccount(accountId));
-    created.setTenantId(tenantId);
-    created.setGameplayAdmissionAllowed(true);
-    try {
-      created = accountTenantMembershipRepository.saveAndFlush(created);
-    } catch (DataIntegrityViolationException ex) {
-      AccountTenantMembership concurrent =
-          accountTenantMembershipRepository
-              .findByAccountIdAndTenantId(accountId, tenantId)
-              .orElseThrow(() -> ex);
-      if (!concurrent.isGameplayAdmissionAllowed()) {
-        throw new AuthenticationException(
-            "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
-      }
-      return new PublicProductionMembershipResult(
-          accountId,
-          tenantId,
-          realm.worldSlug(),
-          realm.realmSlug(),
-          concurrent.getId(),
-          false,
-          requestId,
-          Instant.now().toString(),
-          false);
-    }
-
-    long membershipVersion = created.getId();
-    runAfterCommit(
-        () ->
-            safeLogPublicProductionMembershipCreated(
-                tenantId,
-                accountId,
-                realm.worldSlug(),
-                realm.realmSlug(),
-                membershipVersion,
-                requestId));
-    logger.info(
-        "Created public-production gameplay membership for account {} tenant {} world {} realm {} membershipVersion {} requestId {}",
-        accountId,
-        tenantId,
-        realm.worldSlug(),
-        realm.realmSlug(),
-        membershipVersion,
-        requestId);
-    return new PublicProductionMembershipResult(
-        accountId,
-        tenantId,
-        realm.worldSlug(),
-        realm.realmSlug(),
-        membershipVersion,
-        true,
-        requestId,
-        Instant.now().toString(),
-        false);
   }
 
   @Override
@@ -891,6 +738,17 @@ public class AccountServiceImpl implements AccountService {
       Long expectedTenantId,
       String worldSlug,
       String realmSlug) {
+    RuntimeRealmTarget realm = requireRealmTarget(expectedTenantId, worldSlug, realmSlug);
+    if (!isRealmAdmissible(bootstrapContext, realm)) {
+      throw new AuthenticationException(
+          "ADMISSION_POINTER_UNAVAILABLE",
+          "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
+    }
+    return realm;
+  }
+
+  private RuntimeRealmTarget requireRealmTarget(
+      Long expectedTenantId, String worldSlug, String realmSlug) {
     try {
       List<RuntimeRealmTarget> candidates =
           gameSessionClient.listGameplayRealms(worldSlug).stream()
@@ -903,18 +761,12 @@ public class AccountServiceImpl implements AccountService {
         throw new IllegalStateException("Selected gameplay realm is absent or ambiguous");
       }
       RuntimeRealmTarget candidate = candidates.getFirst();
-      if (!isRealmAdmissible(bootstrapContext, candidate)) {
-        throw new AuthenticationException(
-            "ADMISSION_POINTER_UNAVAILABLE",
-            "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
-      }
       RuntimeRealmTarget realm =
           readRuntimeRealmTarget(
               gameSessionClient.getAdmissionPointer(candidate.tenantId(), worldSlug, realmSlug));
       if (realm.tenantId() != candidate.tenantId()
           || !java.util.Objects.equals(worldSlug, realm.worldSlug())
-          || !java.util.Objects.equals(realmSlug, realm.realmSlug())
-          || !isRealmAdmissible(bootstrapContext, realm)) {
+          || !java.util.Objects.equals(realmSlug, realm.realmSlug())) {
         throw new AuthenticationException(
             "ADMISSION_POINTER_UNAVAILABLE",
             "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
@@ -940,22 +792,19 @@ public class AccountServiceImpl implements AccountService {
 
   private boolean isRealmAdmissible(BootstrapContext bootstrapContext, RuntimeRealmTarget realm) {
     long tenantId = realm.tenantId();
-    if (!realm.visible()) {
+    if (!isPublicProductionRealm(realm)) {
       if (!hasRealmAccessGrant(
           bootstrapContext.accountId(), tenantId, realm.worldSlug(), realm.realmSlug())) {
-        return false;
-      }
-    } else {
-      RuntimeMembershipDto membership =
-          getTenantMembershipForRuntime(
-              bootstrapContext.accountId(), tenantId, "bootstrap-discovery");
-      if (!membership.gameplayAdmissionAllowed() && !realm.publicProductionRealm()) {
         return false;
       }
     }
     RuntimeEntitlementsDto entitlements =
         getTenantEntitlementsForRuntime(tenantId, "bootstrap-discovery");
     return entitlements.gameplayAvailable();
+  }
+
+  private boolean isPublicProductionRealm(RuntimeRealmTarget realm) {
+    return realm.visible() && realm.publicProductionRealm();
   }
 
   private String mintConnectScopeId(
@@ -1070,18 +919,25 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
-  private RuntimeRealmTarget requireCurrentConnectScopeTarget(
-      BootstrapContext bootstrapContext, ConnectScopeContext scopeContext) {
+  private RuntimeRealmTarget requireCurrentConnectScopeTarget(ConnectScopeContext scopeContext) {
     RuntimeRealmTarget currentRealm =
-        requireAdmissibleRealm(
-            bootstrapContext,
-            scopeContext.tenantId(),
-            scopeContext.worldSlug(),
-            scopeContext.realmSlug());
+        requireRealmTarget(
+            scopeContext.tenantId(), scopeContext.worldSlug(), scopeContext.realmSlug());
     if (currentRealm.tenantId() != scopeContext.tenantId()
         || currentRealm.gameInstanceId() != scopeContext.gameInstanceId()
         || currentRealm.pointerVersion() != scopeContext.pointerVersion()) {
       throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
+    }
+    return currentRealm;
+  }
+
+  private RuntimeRealmTarget requireCurrentAdmissibleConnectScopeTarget(
+      BootstrapContext bootstrapContext, ConnectScopeContext scopeContext) {
+    RuntimeRealmTarget currentRealm = requireCurrentConnectScopeTarget(scopeContext);
+    if (!isRealmAdmissible(bootstrapContext, currentRealm)) {
+      throw new AuthenticationException(
+          "ADMISSION_POINTER_UNAVAILABLE",
+          "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
     }
     return currentRealm;
   }
@@ -1276,28 +1132,6 @@ public class AccountServiceImpl implements AccountService {
       loggingAdminClient.logAccountCreation(tenantId, accountId);
     } catch (RuntimeException ex) {
       logger.warn("Account creation logging failed for account {}", accountId, ex);
-    }
-  }
-
-  private void safeLogPublicProductionMembershipCreated(
-      Long tenantId,
-      Long accountId,
-      String worldSlug,
-      String realmSlug,
-      long membershipVersion,
-      String requestId) {
-    try {
-      loggingAdminClient.logPublicProductionMembershipCreated(
-          tenantId, accountId, worldSlug, realmSlug, membershipVersion, requestId);
-    } catch (RuntimeException ex) {
-      logger.warn(
-          "Failed to record public-production membership creation for tenant {} account {} world {} realm {} requestId {}",
-          tenantId,
-          accountId,
-          worldSlug,
-          realmSlug,
-          requestId,
-          ex);
     }
   }
 
@@ -1631,16 +1465,6 @@ public class AccountServiceImpl implements AccountService {
 
   private record BootstrapContext(long accountId) {}
 
-  private RuntimeMembershipDto toRuntimeMembership(PublicProductionMembershipResult result) {
-    return new RuntimeMembershipDto(
-        result.accountId(),
-        result.tenantId(),
-        true,
-        true,
-        result.membershipVersion(),
-        result.evaluatedAt());
-  }
-
   private ConnectTokenResult replayedConnectTokenResult(ConnectTokenResult result) {
     return new ConnectTokenResult(
         result.accountId(),
@@ -1654,45 +1478,6 @@ public class AccountServiceImpl implements AccountService {
         result.issuedAt(),
         result.expiresAt(),
         true);
-  }
-
-  private PublicProductionMembershipResult replayedPublicProductionMembershipResult(
-      PublicProductionMembershipResult result) {
-    return new PublicProductionMembershipResult(
-        result.accountId(),
-        result.tenantId(),
-        result.worldSlug(),
-        result.realmSlug(),
-        result.membershipVersion(),
-        result.created(),
-        result.requestId(),
-        result.evaluatedAt(),
-        true);
-  }
-
-  private RuntimeRealmTarget requirePublicProductionRealm(
-      Long tenantId, String worldSlug, String realmSlug) {
-    RuntimeRealmTarget realm;
-    try {
-      realm =
-          readRuntimeRealmTarget(
-              gameSessionClient.getAdmissionPointer(tenantId, worldSlug, realmSlug));
-    } catch (IllegalArgumentException | IllegalStateException ex) {
-      throw new AuthenticationException(
-          "ADMISSION_POINTER_UNAVAILABLE", "Selected gameplay realm is not admissible", ex);
-    }
-    if (realm.tenantId() != tenantId
-        || !java.util.Objects.equals(worldSlug, realm.worldSlug())
-        || !java.util.Objects.equals(realmSlug, realm.realmSlug())) {
-      throw new AuthenticationException(
-          "ADMISSION_POINTER_UNAVAILABLE", "Selected gameplay realm is not admissible");
-    }
-    if (!realm.publicProductionRealm()) {
-      throw new AuthenticationException(
-          "PUBLIC_PRODUCTION_MEMBERSHIP_NOT_ALLOWED",
-          "Public membership creation is not allowed for this realm");
-    }
-    return realm;
   }
 
   private RuntimeRealmTarget readRuntimeRealmTarget(

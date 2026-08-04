@@ -24,7 +24,7 @@ This file is the always-on project, authority, and safety kernel for AI work. Re
 - For implementation or branch reconciliation, read the owning implementation tracker before interpreting branch names, commits, or raw diffs. Proactively repair nearby in-scope drift when practical.
 - Prefer batches that measurably advance an owned capability, close a declared gap, or strengthen its focused proof rather than accumulating seams that leave tracked capability state unchanged.
 - Keep design docs target-state first. Put partial implementation status near the top in a dedicated section; document one canonical current behavior and remove obsolete transitional guidance unless history is requested.
-- Mark an AI-authored ADR `Proposed - Pending Human Review`; an agent must not accept it. Reversible work may continue only when existing canonical design supports it and the work does not rely on the proposal as accepted.
+- Mark an AI-authored ADR `Proposed - Pending Human Review` with pending human-review metadata. An agent may record a completed human review only when a checked consequential-decision queue entry links the exact `[ADR NNNN]` outcome and the ADR metadata matches the queue's aggregated review date, disposition, and source decision keys. A checked reference alone establishes review eligibility, not acceptance. Reversible work may continue only when existing canonical design supports it and the work does not rely on the proposal as accepted.
 - Do not manually hard-wrap documentation. Use GitHub-compatible relative links without line suffixes, and do not use emojis in Markdown headings.
 
 ## Execution Basics
@@ -37,7 +37,7 @@ This file is the always-on project, authority, and safety kernel for AI work. Re
 
 - PR status, CodeRabbit, CI, Renovate, merge authorization, branch topology, and post-merge cleanup use [PR lifecycle](design/developer-workflows/pr-lifecycle.md).
 - Every code or documentation change uses [validation and runtime proof](design/developer-workflows/validation-and-runtime-proof.md) to select and report the required formatting and checks; use its runtime sections when the change affects runtime or smoke behavior.
-- Subagent selection, delegation boundaries, and independent review use [AI delegation and review](design/developer-workflows/ai-delegation-and-review.md).
+- Subagent selection, delegation boundaries, and independent review use [AI delegation and review](design/developer-workflows/ai-delegation-and-review.md). That linked workflow is authoritative for complete delegation boundaries; keep this root file lean rather than duplicating its full list.
 - PR or review status handling starts with unresolved non-outdated review threads and the latest completed review summary, reports outdated unresolved threads separately, and checks CI and mergeability second. Summary-only duplicate and outside-diff findings still require verification. Before calling a review complete or merge-ready, use `python3 dev-tools/validation/check-coderabbit-review.py --repo <owner/repo> --pr <number>`; request a full CodeRabbit review at meaningful checkpoints only after current findings are resolved and no review is active or rate limited.
 
 ## Orchestration
@@ -45,5 +45,6 @@ This file is the always-on project, authority, and safety kernel for AI work. Re
 The main `gpt-5.6-sol` thread owns planning, human design discussion, task decomposition, integration, validation, and final repository decisions. It does not delegate product or architecture design decisions. Subagent approval is model-specific: `gpt-5.6-sol` may run at medium autonomously, but using it at high requires explicit human approval. Luna reasoning levels are not approval-gated.
 
 - Use process proportional to the risk and size of the change. Do not create ledgers, audit suites, repeated review machinery, or speculative governance infrastructure for small edits unless a concrete correctness risk requires it.
-- Delegate bounded bulk reading, mechanical work, or focused investigation only with a disjoint scope and explicit success conditions. The main thread reviews and integrates delegated results.
+- Delegate bounded bulk reading, mechanical work, or focused investigation only with a disjoint scope and explicit success conditions.
+- Every delegation prompt repeats the authoritative workflow's full prohibition text; omitting it grants no permission.
 - Preserve one authority direction: architecture defines target behavior; implementation tracking records status; workflow guidance selects process; the orchestrator evaluates evidence and makes the final decision.

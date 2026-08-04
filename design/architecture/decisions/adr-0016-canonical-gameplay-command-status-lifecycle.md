@@ -15,6 +15,10 @@ The decision is accepted; implementation and proof remain partial. The existing 
 - Affected capabilities: `SF-2.3`, `GR-1.4`, `AA-2.2`, `PO-4.2`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `CMD-STATUS-01`
+- Human review status: Completed
+- Human review date: 2026-07-18
+- Human review disposition: Revised
+- Review source: `CMD-STATUS-01`
 
 ## Context
 

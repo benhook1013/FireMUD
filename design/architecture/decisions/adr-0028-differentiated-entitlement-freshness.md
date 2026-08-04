@@ -15,6 +15,10 @@ The accepted cache and freshness policy is not implemented. Account currently re
 - Affected capabilities: `AA-3.2`, `AA-2.1`, `SF-1.3`, `PO-4.2`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `ADMIT-01`
+- Human review status: Completed
+- Human review date: 2026-07-19
+- Human review disposition: Revised
+- Review source: `ADMIT-01`
 
 ## Context
 
@@ -27,7 +31,7 @@ The runtime therefore needs operation-specific freshness rather than one uniform
 ### Account Authority And Snapshot Contract
 
 - Account remains the sole entitlement writer and authoritative refresh source.
-- Runtime snapshots carry committed `subscriptionStatus`, `gameplayAvailable`, `allowPublicJoin`, `allowNewGameplayBindings`, `allowNewInstanceStarts`, applicable quotas, `evaluatedAt`, monotonic `entitlementVersion`, monotonic per-tenant `tenantBillingSequence`, and the opaque Account-owned `tenantAuthorityGeneration` needed to fence tenant-authority changes at commitment.
+- Runtime snapshots are one Account-authenticated evidence bundle carrying positive `bundleVersion`, opaque `snapshotIdentity` and `evaluationIdentity`, committed `subscriptionStatus`, `gameplayAvailable`, `allowPublicJoin`, `allowNewGameplayBindings`, `allowNewInstanceStarts`, applicable quotas, `evaluatedAt`, monotonic `entitlementVersion`, monotonic per-tenant `tenantBillingSequence`, the opaque Account-owned `tenantAuthorityGeneration`, the complete applicable `authorityTuple` and `tenantBillingCutoff`, and complete applicable `outboxCheckpoints[]`. Callers do not reconstruct or separately source any member.
 - Before any snapshot evaluation, deployment configuration must reject a `maxClockSkew` that is non-finite, negative, or not strictly less than every applicable finite freshness or continuity limit. Consumers must not evaluate a snapshot under invalid configuration. `evaluatedAt` represents when Account evaluated authoritative committed inputs, stamped from its deployment-synchronized UTC clock. Runtime receipt time, Redis time, and caller restamping never make an older snapshot fresh. Consumers use one common predicate for every finite limit `L`: `maxClockSkew < L`, `evaluatedAt <= localNow + maxClockSkew`, and `localNow < evaluatedAt + L - maxClockSkew`. The age form is equivalent to the deadline form only after the future-timestamp guard has passed: `conservativeAge = max(0, localNow - evaluatedAt) + maxClockSkew < L` is valid only when `evaluatedAt <= localNow + maxClockSkew`; otherwise `conservativeAge` is invalid and the snapshot fails closed. A timestamp within the skew bound remains eligible only when the same strict age/deadline test passes and never widens freshness. A limit is unusable when `maxClockSkew >= L`; a future timestamp beyond the skew bound is invalid. Exact boundaries remain expired; no caller may widen a freshness window to compensate for clock uncertainty.
 - Absence of subscription/entitlement state is not implicit permission. Free, trial, or otherwise non-paid hosting is represented by an explicit entitlement state.
 - `trialing`, `active`, and `past_due` permit gameplay under ordinary quotas. `grace` remains available only for connected sessions and the same still-resumable binding; it denies public join, fresh gameplay bindings, new instances, scale-out, and quota growth. `suspended` and `canceled` are hard denials.
@@ -53,7 +57,7 @@ Known denial returns `TENANT_BILLING_BLOCKED`, not `ENTITLEMENT_UNAVAILABLE`.
 
 A fresh snapshot is necessary but not sufficient: its operation-specific flag must also allow the requested commitment. In particular, fresh `grace` state still denies the new commitments listed above.
 
-Every strict commitment captures `tenantAuthorityGeneration`, `tenantBillingSequence`, and the entitlement version from the fresh snapshot at its admission gate. The owning Account transaction or authoritative commit surface must conditionally commit only while that authority tuple remains unchanged; a generation or sequence advance between evaluation and commit causes a retry or fail-closed rejection rather than relying on cache invalidation alone.
+Every strict commitment captures the exact complete Account-authenticated bundle from the fresh evaluation, including its version, snapshot/evaluation identities, entitlement fields, complete applicable `authorityTuple`, exact tenant entry in `tenantAuthorityGeneration`, applicable `tenantBillingCutoff`, separate `entitlementVersion`, and complete billing checkpoints. `CommitTenantCapacityAdmission` binds stable `(tenantId, requestId, admissionId)`, bounded `capacityDelta`, and a versioned `mutationDigest` over that identity and complete payload. The owning Account transaction conditionally commits only while every member remains unchanged; an exact retry replays, while any changed bundle, cutoff/checkpoint, delta, or digest is an idempotency conflict before mutation.
 
 ### Bounded Continuity And Recovery
 

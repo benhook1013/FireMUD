@@ -15,6 +15,10 @@ The decision is accepted; implementation and proof remain partial. The live path
 - Affected capabilities: `AR-2.2`, `AR-2.3`, `EA-1.2`, `GR-1.1`, `SF-2.1`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `SET-01`
+- Human review status: Completed
+- Human review date: 2026-07-18
+- Human review disposition: Revised
+- Review source: `SET-01`
 
 ## Context
 

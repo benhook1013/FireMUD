@@ -266,8 +266,14 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md": adr_allocation(
         "AA-1", "Accepted", "PO-1", "SF-2"
     ),
+    "design/architecture/decisions/adr-0044-account-owned-payment-instruments-with-explicit-subscription-binding.md": adr_allocation(
+        "AA-1", "Accepted", "PO-1", "SF-1"
+    ),
     "design/architecture/decisions/adr-0045-ordinary-login-factors-and-https-sensitive-action-step-up.md": adr_allocation(
         "AA-1", "Accepted", "AA-2", "EA-3", "PO-1", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0046-bounded-friend-presence-with-private-by-failure-redaction.md": adr_allocation(
+        "EA-2", "Accepted", "AA-1", "AA-2", "SF-1"
     ),
     "design/architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md": adr_allocation(
         "PO-1", "Accepted", "AR-2", "AR-3", "GR-1", "PO-2"

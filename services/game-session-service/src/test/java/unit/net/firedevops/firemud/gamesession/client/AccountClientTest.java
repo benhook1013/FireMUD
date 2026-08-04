@@ -21,8 +21,6 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
-import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipRequest;
-import net.firedevops.firemud.account.v1.EnsurePublicProductionPlayerMembershipResponse;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
@@ -231,16 +229,6 @@ class AccountClientTest {
   }
 
   @Test
-  void publicMembershipEnsureReturnsCanonicalUnavailableWhenStubIsMissing() throws Exception {
-    EnsurePublicProductionPlayerMembershipResponse response =
-        newClient(null)
-            .ensurePublicProductionPlayerMembership("42", "7", "world", "realm", "request-1");
-
-    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
-    assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
-  }
-
-  @Test
   void runtimeMembershipRetriesOnceAfterUnavailableAndPreservesSuccess() throws Exception {
     RetryFixture fixture = newRetryFixture();
     when(fixture
@@ -369,37 +357,6 @@ class AccountClientTest {
     assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
     verify(stub).getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
     verify(channelFactory, times(0)).buildChannel(anyString(), anyInt(), any(), anyBoolean());
-  }
-
-  @Test
-  void publicMembershipEnsureNormalizesExhaustedUnavailableToCanonicalUnavailable()
-      throws Exception {
-    RetryFixture fixture = newRetryFixture();
-    when(fixture
-            .initialStub()
-            .ensurePublicProductionPlayerMembership(
-                any(EnsurePublicProductionPlayerMembershipRequest.class)))
-        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
-    when(fixture
-            .retryStub()
-            .ensurePublicProductionPlayerMembership(
-                any(EnsurePublicProductionPlayerMembershipRequest.class)))
-        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
-
-    EnsurePublicProductionPlayerMembershipResponse response =
-        fixture
-            .client()
-            .ensurePublicProductionPlayerMembership("42", "7", "world", "realm", "request-1");
-
-    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
-    assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
-    verify(fixture.initialStub())
-        .ensurePublicProductionPlayerMembership(
-            any(EnsurePublicProductionPlayerMembershipRequest.class));
-    verify(fixture.retryStub())
-        .ensurePublicProductionPlayerMembership(
-            any(EnsurePublicProductionPlayerMembershipRequest.class));
-    verify(fixture.channelFactory()).buildChannel(anyString(), anyInt(), any(), anyBoolean());
   }
 
   @Test

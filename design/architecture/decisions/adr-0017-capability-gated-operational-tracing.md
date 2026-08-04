@@ -15,6 +15,10 @@ The decision is accepted; implementation and proof remain partial. Metrics, stru
 - Affected capabilities: `PO-4.2`, `GR-1.2`, `AA-2.2`, `SF-1.3`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `TRACE-01`
+- Human review status: Completed
+- Human review date: 2026-07-18
+- Human review disposition: Revised
+- Review source: `TRACE-01`
 
 ## Context
 

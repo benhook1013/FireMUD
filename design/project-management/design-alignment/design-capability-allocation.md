@@ -4,6 +4,14 @@ Status: Complete and independently coverage-audited.
 
 This ledger maps canonical design sources to the stable capabilities in the [FireMUD Product Capability Taxonomy](../../architecture/product-capability-taxonomy.md). It is an allocation and coverage artifact, not an alternative design authority.
 
+## Validation And Proof References
+
+- Source-set allocation and the declared coverage summary are mechanically checked by [`check-design-capability-allocation.py`](../../../dev-tools/validation/check-design-capability-allocation.py); the complete gate contract is listed in the [design-alignment workstream](./README.md#automated-gates).
+- Focused validation run on 2026-07-30: `python3 dev-tools/validation/check-design-capability-allocation.py` returned `design capability allocation passed: 223 sources (220 allocated, 3 explicit exemptions)`.
+- Markdown/link validation on 2026-07-31: `linkCheck` checked 3,496 links with 0 errors; `lintMarkdown` checked 407 files with 0 issues.
+- Runtime proof is not applicable to this documentation-only allocation change.
+- Implementation and verification evidence do not belong in this allocation ledger. The canonical capability reconciliation and focused-proof anchors are maintained in [capability implementation reconciliation](./capability-implementation-reconciliation.md) and the permanent implementation trackers.
+
 ## Allocation Rules
 
 - Every canonical Markdown source under `design/architecture/**` receives one primary allocation, normally at file scope. Mixed sources may instead allocate separately normative sections at heading scope; only documented governance, template, or registry/index artifacts are exempt.
@@ -19,15 +27,15 @@ This ledger maps canonical design sources to the stable capabilities in the [Fir
 | Infrastructure | 6 | 6 | 0 | 100% classified |
 | Generated references | 1 | 1 | 0 | 100% classified |
 | Microservice architecture | 76 | 74 | 0; 2 explicit governance/template exemptions | 100% classified |
-| Architecture decisions | 49 | 48 | 0; 1 registry exemption | 100% classified |
-| **Total** | **221** | **218** | **0; 3 explicit exemptions** | **100% classified** |
+| Architecture decisions | 51 | 50 | 0; 1 registry exemption | 100% classified |
+| **Total** | **223** | **220** | **0; 3 explicit exemptions** | **100% classified** |
 
 ## Allocation Ledger
 
 | Design source | Heading or scope | Primary capability | Secondary handoffs | Source class | Notes or gap |
 | --- | --- | --- | --- | --- | --- |
-| [Microservice architecture allocation](./design-capability-allocation-microservices.md) | All 76 files under `design/architecture/microservices/**` | Per-source allocation | Per-source handoffs | Service design, contract, runtime/data, configuration, operations, and reference sources | Complete path-set coverage |
-| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 48 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; accepted, superseded, and withdrawn records remain distinguishable |
+| [Microservice architecture allocation](./design-capability-allocation-microservices.md) | All 76 files under `design/architecture/microservices/**` | Per-source allocation | Per-source handoffs | Service design, contract, runtime/data, configuration, operations, and reference sources | All 76 files are accounted for as 74 allocated sources plus 2 exempt governance/template files: `service-documentation-structure.md` and `service-template.md`; complete path-set coverage |
+| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 50 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; accepted, superseded, and withdrawn records remain distinguishable |
 | [System architecture allocation](./design-capability-allocation-system.md) | All 89 direct architecture, 6 infrastructure, and 1 generated source | Per-source allocation | Per-source handoffs | Normative design, runbook, reference, index, and generated sources | Complete path-set coverage |
 
 ## Architecture Decision Allocation
@@ -78,7 +86,9 @@ This ledger maps canonical design sources to the stable capabilities in the [Fir
 | `design/architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md` | `AA-1` | `GR-1`, `PO-3`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0042-global-account-and-tenant-scoped-game-relationships.md` | `AA-1` | `AA-2`, `AA-3`, `SF-2`, `PO-1` | Accepted |
 | `design/architecture/decisions/adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md` | `AA-1` | `PO-1`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0044-account-owned-payment-instruments-with-explicit-subscription-binding.md` | `AA-1` | `PO-1`, `SF-1` | Accepted |
 | `design/architecture/decisions/adr-0045-ordinary-login-factors-and-https-sensitive-action-step-up.md` | `AA-1` | `AA-2`, `EA-3`, `PO-1`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0046-bounded-friend-presence-with-private-by-failure-redaction.md` | `EA-2` | `AA-1`, `AA-2`, `SF-1` | Accepted |
 | `design/architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md` | `PO-1` | `AR-2`, `AR-3`, `GR-1`, `PO-2` | Accepted |
 | `design/architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md` | `PO-1` | `GR-1`, `PO-4`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0049-optional-provider-specific-external-identity-linking.md` | `AA-1` | `EA-3`, `SF-1` | Accepted |
@@ -86,7 +96,9 @@ This ledger maps canonical design sources to the stable capabilities in the [Fir
 
 ## Unallocated Or Ambiguous Sources
 
-No product-capability gap was found in the 76-file microservice corpus. Two files are deliberately exempt from product allocation:
+No product-capability gap was found in the covered source classes. Three files are deliberately exempt from product allocation:
+
+- The [architecture decision registry](../../architecture/decisions/README.md) is an index rather than a product capability.
 
 - `design/architecture/microservices/service-documentation-structure.md` defines documentation governance.
 - `design/architecture/microservices/service-template.md` is a documentation template.

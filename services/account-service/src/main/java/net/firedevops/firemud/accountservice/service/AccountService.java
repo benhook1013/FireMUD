@@ -13,7 +13,6 @@ import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.dto.ProfileDto;
-import net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult;
 import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
 import net.firedevops.firemud.accountservice.dto.RealmAccessGrantResult;
 import net.firedevops.firemud.accountservice.dto.RuntimeEntitlementsDto;
@@ -47,9 +46,6 @@ public interface AccountService {
       String bootstrapToken, String worldSlug, String realmSlug, String connectScopeId);
 
   ConnectTokenResult issueConnectToken(String bootstrapToken, ConnectTokenRequest request);
-
-  PublicProductionMembershipResult ensurePublicProductionPlayerMembership(
-      Long accountId, Long tenantId, String worldSlug, String realmSlug, String requestId);
 
   RuntimeMembershipDto getTenantMembershipForRuntime(
       Long accountId, Long tenantId, String requestId);

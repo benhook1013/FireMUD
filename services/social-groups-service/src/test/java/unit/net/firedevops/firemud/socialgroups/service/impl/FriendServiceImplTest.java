@@ -2,6 +2,7 @@ package net.firedevops.firemud.socialgroups.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -23,7 +24,6 @@ import net.firedevops.firemud.socialgroups.dto.AddFriendRequest;
 import net.firedevops.firemud.socialgroups.dto.FriendLinkDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceVisibilityPolicyValue;
-import net.firedevops.firemud.socialgroups.dto.FriendRecentPresenceDisposition;
 import net.firedevops.firemud.socialgroups.dto.FriendRosterFilter;
 import net.firedevops.firemud.socialgroups.dto.FriendRosterSummaryDto;
 import net.firedevops.firemud.socialgroups.entity.AccountFriendLink;
@@ -146,6 +146,35 @@ class FriendServiceImplTest {
   }
 
   @Test
+  void listFriendsUsesOnlyMutuallyAcceptedLinks() {
+    AccountFriendLink oneSided = new AccountFriendLink();
+    oneSided.setTenantId(11L);
+    oneSided.setAccountId(2L);
+    oneSided.setFriendAccountId(3L);
+    oneSided.setStatus("active");
+    AccountFriendLink mutual = new AccountFriendLink();
+    mutual.setTenantId(11L);
+    mutual.setAccountId(2L);
+    mutual.setFriendAccountId(4L);
+    mutual.setStatus("active");
+    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+        .thenReturn(List.of(oneSided));
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+        .thenReturn(List.of(mutual));
+    when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(4L)))
+        .thenReturn(QueryAccountPresenceResponse.newBuilder().build());
+
+    var result = service.listFriends(11L, 2L, FriendRosterFilter.ALL);
+
+    assertEquals(1, result.totalCount());
+    assertEquals(4L, result.friends().getFirst().friendAccountId());
+    Mockito.verify(accountRepository)
+        .findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active");
+    Mockito.verify(accountRepository, Mockito.never())
+        .findByTenantIdAndAccountIdAndStatus(11L, 2L, "active");
+  }
+
+  @Test
   void getFriendRosterSummaryReturnsCanonicalCounts() {
     AccountFriendLink sora = new AccountFriendLink();
     sora.setId(7L);
@@ -161,7 +190,7 @@ class FriendServiceImplTest {
     nyx.setFriendAccountId(4L);
     nyx.setStatus("active");
     nyx.setCreatedAt(Instant.parse("2026-04-10T01:02:04Z"));
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(sora, nyx));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L, 4L)))
         .thenReturn(
@@ -201,7 +230,7 @@ class FriendServiceImplTest {
     sora.setFriendAccountId(3L);
     sora.setStatus("active");
     sora.setCreatedAt(Instant.parse("2026-04-10T01:02:03Z"));
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(sora));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
         .thenReturn(
@@ -231,7 +260,7 @@ class FriendServiceImplTest {
     sora.setFriendAccountId(3L);
     sora.setStatus("active");
     sora.setCreatedAt(Instant.parse("2026-04-10T01:02:03Z"));
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(sora));
     when(accountRepository.findFirstByTenantIdAndAccountIdAndFriendAccountIdAndStatus(
             11L, 2L, 3L, "active"))
@@ -255,7 +284,7 @@ class FriendServiceImplTest {
     sora.setFriendAccountId(3L);
     sora.setStatus("active");
     sora.setCreatedAt(Instant.parse("2026-04-10T01:02:03Z"));
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(sora));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L))).thenReturn(null);
 
@@ -264,6 +293,7 @@ class FriendServiceImplTest {
     assertEquals(1, result.totalCount());
     assertEquals(false, result.friends().getFirst().presence().online());
     assertEquals(null, result.friends().getFirst().presence().characterName());
+    assertNull(result.friends().getFirst().presence().visibilityPolicy());
   }
 
   @Test
@@ -275,7 +305,7 @@ class FriendServiceImplTest {
     sora.setFriendAccountId(3L);
     sora.setStatus("active");
     sora.setCreatedAt(Instant.parse("2026-04-10T01:02:03Z"));
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(sora));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
         .thenReturn(
@@ -302,7 +332,7 @@ class FriendServiceImplTest {
     sora.setFriendAccountId(3L);
     sora.setStatus("active");
     sora.setCreatedAt(Instant.parse("2026-04-10T01:02:03Z"));
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(sora));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
         .thenReturn(
@@ -338,7 +368,7 @@ class FriendServiceImplTest {
     sora.setFriendAccountId(3L);
     sora.setStatus("active");
     sora.setCreatedAt(Instant.parse("2026-04-10T01:02:03Z"));
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(sora));
 
     var result = service.listFriendPresence(11L, 2L, FriendRosterFilter.ALL);
@@ -353,6 +383,16 @@ class FriendServiceImplTest {
   void getFriendPresencePolicyReturnsCanonicalAccountPolicy() {
     when(accountClient.getPresenceVisibilityPolicy(11L, 2L))
         .thenReturn(Optional.of(FriendPresenceVisibilityPolicyValue.PRIVATE));
+
+    var result = service.getFriendPresencePolicy(11L, 2L);
+
+    assertEquals(FriendPresenceVisibilityPolicyValue.PRIVATE, result.currentPolicy());
+  }
+
+  @Test
+  void getFriendPresencePolicyRedactsLegacyHiddenStaff() {
+    when(accountClient.getPresenceVisibilityPolicy(11L, 2L))
+        .thenReturn(Optional.of(FriendPresenceVisibilityPolicyValue.HIDDEN_STAFF));
 
     var result = service.getFriendPresencePolicy(11L, 2L);
 
@@ -403,7 +443,7 @@ class FriendServiceImplTest {
     link.setFriendAccountId(3L);
     link.setStatus("active");
     link.setCreatedAt(Instant.parse("2026-04-10T01:02:03Z"));
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(link));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
         .thenReturn(
@@ -442,8 +482,10 @@ class FriendServiceImplTest {
     link.setAccountId(2L);
     link.setFriendAccountId(3L);
     link.setStatus("active");
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(link));
+    when(accountClient.getPresenceVisibilityPolicies(11L, List.of(3L)))
+        .thenReturn(Map.of(3L, FriendPresenceVisibilityPolicyValue.PUBLIC));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()
@@ -483,9 +525,7 @@ class FriendServiceImplTest {
     assertEquals(17L, result.presences().get(0).pointerVersion());
     assertEquals(FriendPresenceActivityState.AUTO_AFK, result.presences().get(0).activityState());
     assertEquals(Instant.parse("2026-04-11T06:15:30Z"), result.presences().get(0).lastSeenAt());
-    assertEquals(
-        FriendRecentPresenceDisposition.TRANSPORT_LOSS,
-        result.presences().get(0).recentDisposition());
+    assertNull(result.presences().get(0).recentDisposition());
   }
 
   @Test
@@ -497,7 +537,7 @@ class FriendServiceImplTest {
     link.setFriendAccountId(3L);
     link.setStatus("active");
     link.setCreatedAt(Instant.parse("2026-04-10T01:02:03Z"));
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(link));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
         .thenReturn(
@@ -540,6 +580,7 @@ class FriendServiceImplTest {
     assertEquals(true, result.friends().get(0).presence().online());
     assertEquals("SHARED", result.friends().get(0).presence().playableStateScope());
     assertEquals("Ben", result.friends().get(0).presence().characterName());
+    assertNull(result.friends().get(0).presence().recentDisposition());
   }
 
   @Test
@@ -556,7 +597,7 @@ class FriendServiceImplTest {
     offlineLink.setAccountId(2L);
     offlineLink.setFriendAccountId(4L);
     offlineLink.setStatus("active");
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(onlineLink, offlineLink));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L, 4L)))
         .thenReturn(
@@ -591,20 +632,18 @@ class FriendServiceImplTest {
     privateLink.setAccountId(2L);
     privateLink.setFriendAccountId(4L);
     privateLink.setStatus("active");
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(friendsOnlyLink, privateLink));
     when(accountClient.getPresenceVisibilityPolicies(11L, List.of(3L, 4L)))
         .thenReturn(
             Map.of(
                 3L, FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY,
                 4L, FriendPresenceVisibilityPolicyValue.PRIVATE));
-    when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L, 4L)))
+    when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()
                 .addPresences(
                     AccountPresenceEntry.newBuilder().setAccountId("3").setOnline(true).build())
-                .addPresences(
-                    AccountPresenceEntry.newBuilder().setAccountId("4").setOnline(false).build())
                 .build());
 
     var result = service.listFriends(11L, 2L, FriendRosterFilter.FRIENDS_ONLY);
@@ -616,6 +655,7 @@ class FriendServiceImplTest {
     assertEquals(1, result.friends().get(0).ordinal());
     assertEquals(3L, result.friends().get(0).friendAccountId());
     assertEquals("FRIENDS_ONLY", result.friends().get(0).presence().visibilityPolicy());
+    Mockito.verify(gameSessionClient).queryAccountPresence(11L, 2L, List.of(3L));
   }
 
   @Test
@@ -632,7 +672,7 @@ class FriendServiceImplTest {
     isolatedLink.setAccountId(2L);
     isolatedLink.setFriendAccountId(4L);
     isolatedLink.setStatus("active");
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(sharedLink, isolatedLink));
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L, 4L)))
         .thenReturn(
@@ -667,7 +707,7 @@ class FriendServiceImplTest {
   }
 
   @Test
-  void listFriendPresenceSuppressesPrivateAndHiddenStaffDetails() {
+  void listFriendPresenceRedactsLegacyHiddenStaffAsPrivate() {
     AccountFriendLink privateLink = new AccountFriendLink();
     privateLink.setTenantId(11L);
     privateLink.setAccountId(2L);
@@ -678,7 +718,7 @@ class FriendServiceImplTest {
     hiddenLink.setAccountId(2L);
     hiddenLink.setFriendAccountId(4L);
     hiddenLink.setStatus("active");
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(privateLink, hiddenLink));
     when(accountClient.getPresenceVisibilityPolicies(11L, List.of(3L, 4L)))
         .thenReturn(
@@ -711,6 +751,9 @@ class FriendServiceImplTest {
                         .setGameInstanceId("10")
                         .setCharacterId("100")
                         .setCharacterName("Admin")
+                        .setRecentDisposition(
+                            net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition
+                                .ACCOUNT_RECENT_PRESENCE_DISPOSITION_TAKEOVER)
                         .build())
                 .build());
 
@@ -718,19 +761,67 @@ class FriendServiceImplTest {
 
     assertEquals(2, result.totalCount());
     assertEquals(2, result.matchCount());
-    assertEquals(true, result.presences().get(0).online());
+    assertEquals(false, result.presences().get(0).online());
+    assertNull(result.presences().get(0).visibilityPolicy());
     assertEquals(null, result.presences().get(0).characterName());
     assertEquals(null, result.presences().get(0).gameInstanceId());
+    assertEquals(null, result.presences().get(0).playableStateScope());
     assertEquals(null, result.presences().get(0).worldSlug());
     assertEquals(null, result.presences().get(0).worldDisplayName());
     assertEquals(null, result.presences().get(0).realmSlug());
     assertEquals(null, result.presences().get(0).realmDisplayName());
-    assertEquals(Instant.parse("2026-04-11T06:15:30Z"), result.presences().get(0).lastSeenAt());
-    assertEquals(
-        FriendRecentPresenceDisposition.LOGOUT, result.presences().get(0).recentDisposition());
+    assertEquals(null, result.presences().get(0).pointerVersion());
+    assertEquals(null, result.presences().get(0).characterId());
+    assertEquals(null, result.presences().get(0).activityState());
+    assertEquals(null, result.presences().get(0).lastSeenAt());
+    assertNull(result.presences().get(0).recentDisposition());
     assertEquals(false, result.presences().get(1).online());
+    assertNull(result.presences().get(1).visibilityPolicy());
+    assertEquals(null, result.presences().get(1).gameInstanceId());
+    assertEquals(null, result.presences().get(1).playableStateScope());
+    assertEquals(null, result.presences().get(1).worldSlug());
+    assertEquals(null, result.presences().get(1).worldDisplayName());
+    assertEquals(null, result.presences().get(1).realmSlug());
+    assertEquals(null, result.presences().get(1).realmDisplayName());
+    assertEquals(null, result.presences().get(1).pointerVersion());
+    assertEquals(null, result.presences().get(1).characterId());
     assertEquals(null, result.presences().get(1).characterName());
+    assertEquals(null, result.presences().get(1).activityState());
     assertEquals(null, result.presences().get(1).lastSeenAt());
+    assertNull(result.presences().get(1).recentDisposition());
+
+    var privateFiltered = service.listFriends(11L, 2L, FriendRosterFilter.PRIVATE);
+    assertEquals(2, privateFiltered.totalCount());
+    assertEquals(2, privateFiltered.matchCount());
+    assertEquals(1, privateFiltered.friends().getFirst().ordinal());
+    assertEquals(3L, privateFiltered.friends().getFirst().friendAccountId());
+    assertNull(privateFiltered.friends().getFirst().presence().visibilityPolicy());
+    assertEquals(2, privateFiltered.friends().get(1).ordinal());
+    assertEquals(4L, privateFiltered.friends().get(1).friendAccountId());
+    assertNull(privateFiltered.friends().get(1).presence().visibilityPolicy());
+
+    var hiddenStaffFiltered = service.listFriends(11L, 2L, FriendRosterFilter.HIDDEN_STAFF);
+    assertEquals(FriendRosterFilter.PRIVATE, hiddenStaffFiltered.filter());
+    assertEquals(2, hiddenStaffFiltered.totalCount());
+    assertEquals(2, hiddenStaffFiltered.matchCount());
+    assertEquals(2, hiddenStaffFiltered.friends().size());
+    assertTrue(
+        hiddenStaffFiltered.friends().stream()
+            .allMatch(entry -> entry.presence().visibilityPolicy() == null));
+    Mockito.verify(gameSessionClient, Mockito.never())
+        .queryAccountPresence(Mockito.anyLong(), Mockito.anyLong(), Mockito.any());
+
+    var summary = service.getFriendRosterSummary(11L, 2L);
+    assertEquals(2, summary.totalCount());
+    assertEquals(0, summary.onlineCount());
+    assertEquals(2, summary.offlineCount());
+    assertEquals(0, summary.recentCount());
+    assertEquals(0, summary.publicCount());
+    assertEquals(0, summary.friendsOnlyCount());
+    assertEquals(2, summary.privateCount());
+    assertEquals(0, summary.hiddenStaffCount());
+    assertEquals(0, summary.unspecifiedVisibilityCount());
+    assertEquals(2, summary.unspecifiedScopeCount());
   }
 
   @Test
@@ -740,9 +831,9 @@ class FriendServiceImplTest {
     link.setAccountId(2L);
     link.setFriendAccountId(3L);
     link.setStatus("active");
-    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
         .thenReturn(List.of(link));
-    when(accountClient.getPresenceVisibilityPolicies(11L, List.of(3L))).thenReturn(Map.of());
+    when(accountClient.getPresenceVisibilityPolicies(11L, List.of(3L))).thenReturn(null);
     when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()
@@ -751,21 +842,54 @@ class FriendServiceImplTest {
                         .setAccountId("3")
                         .setOnline(true)
                         .setGameInstanceId("9")
+                        .setPlayableStateScope(
+                            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                                .PLAYABLE_STATE_SCOPE_SHARED)
                         .setWorldSlug("demo")
+                        .setWorldDisplayName("Demo World")
                         .setRealmSlug("production")
+                        .setRealmDisplayName("Live Realm")
+                        .setPointerVersion(17)
                         .setCharacterId("99")
                         .setCharacterName("Ben")
+                        .setActivityState(
+                            AccountPresenceActivityState.ACCOUNT_PRESENCE_ACTIVITY_STATE_AUTO_AFK)
+                        .setLastSeenAtMs(Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
+                        .setRecentDisposition(
+                            net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition
+                                .ACCOUNT_RECENT_PRESENCE_DISPOSITION_LOGOUT)
                         .build())
                 .build());
 
     var result = service.listFriendPresence(11L, 2L);
 
-    assertEquals("PRIVATE", result.presences().get(0).visibilityPolicy());
-    assertEquals(true, result.presences().get(0).online());
+    assertEquals(1, result.totalCount());
+    assertEquals(1, result.matchCount());
+    assertEquals(3L, result.presences().get(0).friendAccountId());
+    assertNull(result.presences().get(0).visibilityPolicy());
+    assertEquals(false, result.presences().get(0).online());
     assertEquals(null, result.presences().get(0).gameInstanceId());
+    assertEquals(null, result.presences().get(0).playableStateScope());
     assertEquals(null, result.presences().get(0).worldSlug());
+    assertEquals(null, result.presences().get(0).worldDisplayName());
     assertEquals(null, result.presences().get(0).realmSlug());
+    assertEquals(null, result.presences().get(0).realmDisplayName());
+    assertEquals(null, result.presences().get(0).pointerVersion());
     assertEquals(null, result.presences().get(0).characterId());
     assertEquals(null, result.presences().get(0).characterName());
+    assertEquals(null, result.presences().get(0).activityState());
+    assertEquals(null, result.presences().get(0).lastSeenAt());
+    assertNull(result.presences().get(0).recentDisposition());
+    Mockito.verify(gameSessionClient, Mockito.never())
+        .queryAccountPresence(Mockito.anyLong(), Mockito.anyLong(), Mockito.any());
+
+    var privateFiltered = service.listFriends(11L, 2L, FriendRosterFilter.PRIVATE);
+    assertEquals(1, privateFiltered.matchCount());
+    assertEquals(3L, privateFiltered.friends().getFirst().friendAccountId());
+    assertNull(privateFiltered.friends().getFirst().presence().visibilityPolicy());
+
+    var summary = service.getFriendRosterSummary(11L, 2L);
+    assertEquals(1, summary.privateCount());
+    assertEquals(0, summary.unspecifiedVisibilityCount());
   }
 }

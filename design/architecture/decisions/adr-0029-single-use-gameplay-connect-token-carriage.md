@@ -15,6 +15,10 @@ Gateway currently accepts one header or cookie, rejects simultaneous carriers, p
 - Affected capabilities: `SF-1.3`, `AA-2.1`, `PO-2.2`, `PO-2.4`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `EDGE-04`
+- Human review status: Completed
+- Human review date: 2026-07-19
+- Human review disposition: Revised
+- Review source: `EDGE-04`
 
 ## Context
 

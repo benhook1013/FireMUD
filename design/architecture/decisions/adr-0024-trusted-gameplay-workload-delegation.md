@@ -15,6 +15,10 @@ The target unsigned `PlayerExecutionContext`, concrete workload identity, and ex
 - Affected capabilities: `SF-1.1`, `SF-1.2`, `GR-1.1`, `PO-3.2`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `AUTH-05`, including separate current-design and simplest-credible-alternative evidence passes
+- Human review status: Completed
+- Human review date: 2026-07-19
+- Human review disposition: Revised
+- Review source: `AUTH-05`
 
 ## Context
 

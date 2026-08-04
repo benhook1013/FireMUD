@@ -21,7 +21,6 @@ import net.firedevops.firemud.socialgroups.dto.FriendPresenceDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresencePolicyViewDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceViewDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceVisibilityPolicyValue;
-import net.firedevops.firemud.socialgroups.dto.FriendRecentPresenceDisposition;
 import net.firedevops.firemud.socialgroups.dto.FriendRosterEntryDto;
 import net.firedevops.firemud.socialgroups.dto.FriendRosterFilter;
 import net.firedevops.firemud.socialgroups.dto.FriendRosterSummaryDto;
@@ -144,41 +143,57 @@ public class FriendServiceImpl implements FriendService {
   @Override
   @Timed(value = "friend.list")
   public FriendRosterViewDto listFriends(long tenantId, long accountId, FriendRosterFilter filter) {
+    return loadFriendRoster(tenantId, accountId, filter).view();
+  }
+
+  private FriendRosterSnapshot loadFriendRoster(
+      long tenantId, long accountId, FriendRosterFilter filter) {
+    FriendRosterFilter effectiveFilter = normalizeRosterFilter(filter);
     List<AccountFriendLink> links =
-        accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(
+        accountFriendLinkRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(
             tenantId, accountId, "active");
     if (links.isEmpty()) {
-      return new FriendRosterViewDto(filter, 0, 0, List.of());
+      return new FriendRosterSnapshot(
+          new FriendRosterViewDto(effectiveFilter, 0, 0, List.of()), Map.of());
     }
 
     List<Long> friendAccountIds =
         links.stream().map(AccountFriendLink::getFriendAccountId).distinct().toList();
     Map<Long, FriendPresenceVisibilityPolicyValue> visibilityPolicies =
-        accountClient.getPresenceVisibilityPolicies(tenantId, friendAccountIds);
+        Optional.ofNullable(accountClient.getPresenceVisibilityPolicies(tenantId, friendAccountIds))
+            .orElseGet(Map::of);
+    List<Long> presenceAccountIds =
+        friendAccountIds.stream()
+            .filter(
+                friendAccountId ->
+                    canQueryPresence(visibilityPolicyFor(friendAccountId, visibilityPolicies)))
+            .toList();
     Map<Long, FriendPresenceDto> byAccountId =
-        loadFriendPresenceByAccountId(tenantId, accountId, friendAccountIds, visibilityPolicies);
+        loadFriendPresenceByAccountId(tenantId, accountId, presenceAccountIds, visibilityPolicies);
     List<FriendRosterEntryDto> roster =
         java.util.stream.IntStream.range(0, links.size())
-            .mapToObj(
-                index ->
-                    toRosterEntry(index + 1, links.get(index), byAccountId, visibilityPolicies))
+            .mapToObj(index -> toRosterEntry(index + 1, links.get(index), byAccountId))
             .toList();
     List<FriendRosterEntryDto> filtered =
-        roster.stream().filter(entry -> matchesFilter(filter, entry)).toList();
+        roster.stream()
+            .filter(entry -> matchesFilter(effectiveFilter, entry, visibilityPolicies))
+            .toList();
 
-    return new FriendRosterViewDto(filter, roster.size(), filtered.size(), filtered);
+    return new FriendRosterSnapshot(
+        new FriendRosterViewDto(effectiveFilter, roster.size(), filtered.size(), filtered),
+        visibilityPolicies);
   }
 
   @Override
   @Timed(value = "friend.summary")
   public FriendRosterSummaryDto getFriendRosterSummary(long tenantId, long accountId) {
-    FriendRosterViewDto roster = listFriends(tenantId, accountId, FriendRosterFilter.ALL);
+    FriendRosterSnapshot snapshot = loadFriendRoster(tenantId, accountId, FriendRosterFilter.ALL);
+    FriendRosterViewDto roster = snapshot.view();
     int onlineCount = 0;
     int recentCount = 0;
     int publicCount = 0;
     int friendsOnlyCount = 0;
     int privateCount = 0;
-    int hiddenStaffCount = 0;
     int unspecifiedVisibilityCount = 0;
     int sharedCount = 0;
     int isolatedCount = 0;
@@ -189,12 +204,10 @@ public class FriendServiceImpl implements FriendService {
       } else if (entry.presence().lastSeenAt() != null) {
         recentCount++;
       }
-      String visibilityPolicy = entry.presence().visibilityPolicy();
-      switch (visibilityPolicy == null ? "" : visibilityPolicy) {
-        case "PUBLIC" -> publicCount++;
-        case "FRIENDS_ONLY" -> friendsOnlyCount++;
-        case "PRIVATE" -> privateCount++;
-        case "HIDDEN_STAFF" -> hiddenStaffCount++;
+      switch (visibilityPolicyFor(entry.friendAccountId(), snapshot.visibilityPolicies())) {
+        case PUBLIC -> publicCount++;
+        case FRIENDS_ONLY -> friendsOnlyCount++;
+        case PRIVATE -> privateCount++;
         default -> unspecifiedVisibilityCount++;
       }
       String playableStateScope = entry.presence().playableStateScope();
@@ -212,7 +225,7 @@ public class FriendServiceImpl implements FriendService {
         publicCount,
         friendsOnlyCount,
         privateCount,
-        hiddenStaffCount,
+        0,
         unspecifiedVisibilityCount,
         sharedCount,
         isolatedCount,
@@ -239,7 +252,7 @@ public class FriendServiceImpl implements FriendService {
             .getPresenceVisibilityPolicy(tenantId, accountId)
             .orElseThrow(
                 () -> new IllegalStateException("Friend presence visibility policy unavailable"));
-    return new FriendPresencePolicyViewDto(visibilityPolicy);
+    return new FriendPresencePolicyViewDto(normalizeVisibilityPolicy(visibilityPolicy));
   }
 
   @Override
@@ -254,10 +267,7 @@ public class FriendServiceImpl implements FriendService {
   }
 
   private FriendRosterEntryDto toRosterEntry(
-      int ordinal,
-      AccountFriendLink link,
-      Map<Long, FriendPresenceDto> byAccountId,
-      Map<Long, FriendPresenceVisibilityPolicyValue> visibilityPolicies) {
+      int ordinal, AccountFriendLink link, Map<Long, FriendPresenceDto> byAccountId) {
     return new FriendRosterEntryDto(
         ordinal,
         link.getId(),
@@ -267,28 +277,38 @@ public class FriendServiceImpl implements FriendService {
         link.getStatus(),
         link.getCreatedAt(),
         byAccountId.getOrDefault(
-            link.getFriendAccountId(),
-            defaultPresence(
-                link.getFriendAccountId(),
-                visibilityPolicyFor(link.getFriendAccountId(), visibilityPolicies))));
+            link.getFriendAccountId(), defaultPresence(link.getFriendAccountId())));
   }
 
-  private boolean matchesFilter(FriendRosterFilter filter, FriendRosterEntryDto entry) {
+  private boolean matchesFilter(
+      FriendRosterFilter filter,
+      FriendRosterEntryDto entry,
+      Map<Long, FriendPresenceVisibilityPolicyValue> visibilityPolicies) {
     FriendPresenceDto presence = entry.presence();
     return switch (filter) {
       case ALL -> true;
       case ONLINE -> presence.online();
       case OFFLINE -> !presence.online();
       case RECENT -> !presence.online() && presence.lastSeenAt() != null;
-      case PUBLIC -> "PUBLIC".equals(presence.visibilityPolicy());
-      case FRIENDS_ONLY -> "FRIENDS_ONLY".equals(presence.visibilityPolicy());
-      case PRIVATE -> "PRIVATE".equals(presence.visibilityPolicy());
-      case HIDDEN_STAFF -> "HIDDEN_STAFF".equals(presence.visibilityPolicy());
-      case UNSPECIFIED_VISIBILITY -> !StringUtils.hasText(presence.visibilityPolicy());
+      case PUBLIC ->
+          visibilityPolicyFor(entry.friendAccountId(), visibilityPolicies)
+              == FriendPresenceVisibilityPolicyValue.PUBLIC;
+      case FRIENDS_ONLY ->
+          visibilityPolicyFor(entry.friendAccountId(), visibilityPolicies)
+              == FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY;
+      case PRIVATE ->
+          visibilityPolicyFor(entry.friendAccountId(), visibilityPolicies)
+              == FriendPresenceVisibilityPolicyValue.PRIVATE;
+      case UNSPECIFIED_VISIBILITY -> false;
       case SHARED -> "SHARED".equals(presence.playableStateScope());
       case ISOLATED -> "ISOLATED".equals(presence.playableStateScope());
       case UNSPECIFIED_SCOPE -> !StringUtils.hasText(presence.playableStateScope());
+      default -> false;
     };
+  }
+
+  private FriendRosterFilter normalizeRosterFilter(FriendRosterFilter filter) {
+    return filter == FriendRosterFilter.HIDDEN_STAFF ? FriendRosterFilter.PRIVATE : filter;
   }
 
   private Map<Long, FriendPresenceDto> loadFriendPresenceByAccountId(
@@ -296,6 +316,9 @@ public class FriendServiceImpl implements FriendService {
       long accountId,
       List<Long> friendAccountIds,
       Map<Long, FriendPresenceVisibilityPolicyValue> visibilityPolicies) {
+    if (friendAccountIds.isEmpty()) {
+      return Map.of();
+    }
     QueryAccountPresenceResponse response =
         gameSessionClient.queryAccountPresence(tenantId, accountId, friendAccountIds);
     if (response == null) {
@@ -316,10 +339,21 @@ public class FriendServiceImpl implements FriendService {
     return byAccountId;
   }
 
+  private boolean canQueryPresence(FriendPresenceVisibilityPolicyValue visibilityPolicy) {
+    return switch (visibilityPolicy) {
+      case PUBLIC, FRIENDS_ONLY -> true;
+      default -> false;
+    };
+  }
+
   private FriendPresenceDto mapPresence(
       long friendAccountId,
       AccountPresenceEntry entry,
       FriendPresenceVisibilityPolicyValue visibilityPolicy) {
+    if (visibilityPolicy != FriendPresenceVisibilityPolicyValue.PUBLIC
+        && visibilityPolicy != FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY) {
+      return defaultPresence(friendAccountId);
+    }
     return new FriendPresenceDto(
         friendAccountId,
         visibleOnline(entry, visibilityPolicy),
@@ -334,12 +368,11 @@ public class FriendServiceImpl implements FriendService {
         visibleCharacterName(entry, visibilityPolicy),
         visibilityPolicy.name(),
         visibleActivityState(entry, visibilityPolicy),
-        entry.getLastSeenAtMs() > 0 ? Instant.ofEpochMilli(entry.getLastSeenAtMs()) : null,
-        visibleRecentDisposition(entry, visibilityPolicy));
+        visibleLastSeenAt(entry, visibilityPolicy),
+        null);
   }
 
-  private FriendPresenceDto defaultPresence(
-      long friendAccountId, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
+  private FriendPresenceDto defaultPresence(long friendAccountId) {
     return new FriendPresenceDto(
         friendAccountId,
         false,
@@ -352,7 +385,7 @@ public class FriendServiceImpl implements FriendService {
         null,
         null,
         null,
-        visibilityPolicy.name(),
+        null,
         null,
         null,
         null);
@@ -370,7 +403,7 @@ public class FriendServiceImpl implements FriendService {
   private boolean visibleOnline(
       AccountPresenceEntry entry, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     return switch (visibilityPolicy) {
-      case HIDDEN_STAFF -> false;
+      case PRIVATE, HIDDEN_STAFF -> false;
       default -> entry.getOnline();
     };
   }
@@ -460,17 +493,32 @@ public class FriendServiceImpl implements FriendService {
     };
   }
 
-  private FriendRecentPresenceDisposition visibleRecentDisposition(
+  private Instant visibleLastSeenAt(
       AccountPresenceEntry entry, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     return switch (visibilityPolicy) {
-      case HIDDEN_STAFF -> null;
-      default -> mapRecentDisposition(entry.getRecentDisposition());
+      case PRIVATE, HIDDEN_STAFF -> null;
+      default -> entry.getLastSeenAtMs() > 0 ? Instant.ofEpochMilli(entry.getLastSeenAtMs()) : null;
     };
   }
 
   private FriendPresenceVisibilityPolicyValue visibilityPolicyFor(
       long accountId, Map<Long, FriendPresenceVisibilityPolicyValue> visibilityPolicies) {
-    return visibilityPolicies.getOrDefault(accountId, FriendPresenceVisibilityPolicyValue.PRIVATE);
+    if (visibilityPolicies == null) {
+      return FriendPresenceVisibilityPolicyValue.PRIVATE;
+    }
+    return normalizeVisibilityPolicy(visibilityPolicies.get(accountId));
+  }
+
+  private FriendPresenceVisibilityPolicyValue normalizeVisibilityPolicy(
+      FriendPresenceVisibilityPolicyValue visibilityPolicy) {
+    if (visibilityPolicy == null) {
+      return FriendPresenceVisibilityPolicyValue.PRIVATE;
+    }
+    return switch (visibilityPolicy) {
+      case PUBLIC, FRIENDS_ONLY, PRIVATE -> visibilityPolicy;
+      case HIDDEN_STAFF -> FriendPresenceVisibilityPolicyValue.PRIVATE;
+      default -> FriendPresenceVisibilityPolicyValue.PRIVATE;
+    };
   }
 
   private Long parseOptionalPositivePresenceId(String value, String fieldName) {
@@ -490,14 +538,7 @@ public class FriendServiceImpl implements FriendService {
     }
   }
 
-  private FriendRecentPresenceDisposition mapRecentDisposition(
-      net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition disposition) {
-    return switch (disposition) {
-      case ACCOUNT_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS ->
-          FriendRecentPresenceDisposition.TRANSPORT_LOSS;
-      case ACCOUNT_RECENT_PRESENCE_DISPOSITION_LOGOUT -> FriendRecentPresenceDisposition.LOGOUT;
-      case ACCOUNT_RECENT_PRESENCE_DISPOSITION_TAKEOVER -> FriendRecentPresenceDisposition.TAKEOVER;
-      default -> null;
-    };
-  }
+  private record FriendRosterSnapshot(
+      FriendRosterViewDto view,
+      Map<Long, FriendPresenceVisibilityPolicyValue> visibilityPolicies) {}
 }

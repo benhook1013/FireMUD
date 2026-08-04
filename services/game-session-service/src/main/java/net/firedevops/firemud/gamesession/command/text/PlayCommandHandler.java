@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.command.text;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -685,16 +687,21 @@ public class PlayCommandHandler {
       String requestId) {
     Optional<ErrorDetail> maybeError = extractError(response.getError());
     if (maybeError.isPresent()) {
-      if (isAuthorityUnavailable(maybeError.orElseThrow())) {
+      if (!isAuthorityUnavailable(maybeError.orElseThrow())) {
         return Optional.of(
-            authorityUnavailableFailure(
-                tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
+            worldAccessDeniedFailure(
+                context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
       }
       return Optional.of(
-          worldAccessDeniedFailure(
-              context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
+          authorityUnavailableFailure(
+              tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
     }
-    if (!response.getMembershipExists()) {
+    if (!isSafeMembershipAuthorityResponse(response, context, selectedRealm)) {
+      return Optional.of(
+          authorityUnavailableFailure(
+              tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
+    }
+    if (!response.getMembershipExists() || !response.getGameplayAdmissionAllowed()) {
       if (isPublicProductionRealm(selectedRealm)) {
         recordResumeDeniedIfApplicable(
             context,
@@ -716,11 +723,6 @@ public class PlayCommandHandler {
                 Long.toString(requestedCharacterId),
                 null));
       }
-      return Optional.of(
-          worldAccessDeniedFailure(
-              context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
-    }
-    if (!response.getGameplayAdmissionAllowed()) {
       return Optional.of(
           worldAccessDeniedFailure(
               context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
@@ -866,6 +868,29 @@ public class PlayCommandHandler {
   private boolean isAuthorityUnavailable(ErrorDetail error) {
     String code = Optional.ofNullable(error.getCode()).orElse("");
     return GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE.equalsIgnoreCase(code);
+  }
+
+  private boolean isSafeMembershipAuthorityResponse(
+      GetTenantMembershipForRuntimeResponse response,
+      SessionContext context,
+      GameplayWorldCatalog.RealmView selectedRealm) {
+    if (!StringUtils.hasText(response.getAccountId())
+        || !StringUtils.hasText(response.getTenantId())
+        || !StringUtils.hasText(response.getEvaluatedAt())) {
+      return false;
+    }
+    try {
+      Instant.parse(response.getEvaluatedAt());
+      if (Long.parseLong(response.getAccountId()) != context.accountId()
+          || Long.parseLong(response.getTenantId()) != selectedRealm.tenantId()) {
+        return false;
+      }
+    } catch (DateTimeParseException | NumberFormatException ex) {
+      return false;
+    }
+    return response.getMembershipExists()
+        ? response.getMembershipVersion() > 0L
+        : response.getMembershipVersion() == 0L;
   }
 
   private boolean maybeRecordFreshEntryFallback(

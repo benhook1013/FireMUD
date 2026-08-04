@@ -23,6 +23,34 @@ public class AccountFriendLinkRepository {
     this.dsl = dsl;
   }
 
+  public List<AccountFriendLink> findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(
+      Long tenantId, Long accountId, String status) {
+    var reciprocal = ACCOUNT_FRIEND_LINKS.as("reciprocal_friend_link");
+    return dsl.selectFrom(ACCOUNT_FRIEND_LINKS)
+        .where(
+            ACCOUNT_FRIEND_LINKS
+                .TENANT_ID
+                .eq(tenantId)
+                .and(ACCOUNT_FRIEND_LINKS.ACCOUNT_ID.eq(accountId))
+                .and(ACCOUNT_FRIEND_LINKS.STATUS.eq(status))
+                .andExists(
+                    dsl.selectOne()
+                        .from(reciprocal)
+                        .where(
+                            reciprocal
+                                .TENANT_ID
+                                .eq(ACCOUNT_FRIEND_LINKS.TENANT_ID)
+                                .and(
+                                    reciprocal.ACCOUNT_ID.eq(
+                                        ACCOUNT_FRIEND_LINKS.FRIEND_ACCOUNT_ID))
+                                .and(
+                                    reciprocal.FRIEND_ACCOUNT_ID.eq(
+                                        ACCOUNT_FRIEND_LINKS.ACCOUNT_ID))
+                                .and(reciprocal.STATUS.eq(status)))))
+        .orderBy(ACCOUNT_FRIEND_LINKS.ID.asc())
+        .fetch(this::toEntity);
+  }
+
   public List<AccountFriendLink> findByTenantIdAndAccountIdAndStatus(
       Long tenantId, Long accountId, String status) {
     return dsl.selectFrom(ACCOUNT_FRIEND_LINKS)

@@ -73,7 +73,6 @@ firemud:
         - account.v1.AccountService/VerifyEmailLoginOtp
         - account.v1.AccountService/Ping
         - account.v1.AccountService/GetTenantMembershipForRuntime
-        - account.v1.AccountService/EnsurePublicProductionPlayerMembership
         - account.v1.AccountService/GetTenantEntitlementsForRuntime
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}

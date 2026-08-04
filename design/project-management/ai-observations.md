@@ -30,3 +30,8 @@ Entry format:
   - Context: an identity and admission ADR PR crossed CodeRabbit's current file cap after a required runtime fix, while a small smoke and validation subset in the same branch was already independently coherent and validated.
   - Observation: removing the review fix, repeatedly reshaping the large branch, or accepting an unreviewable PR would all lose useful review signal. The independent subset could instead land directly on `develop`, after which rebasing removed those files from the larger PR's diff.
   - Expected pattern: when a PR crosses a review file cap, first look for a small, already-validated, independently mergeable subset. Extract that subset to a short `develop`-based PR, merge it, and rebase the original PR; do not force this strategy when the files are coupled or the extraction would weaken the original review boundary.
+
+- `2026-07-28`: ADR review eligibility is not human acceptance
+  - Context: delegated edits encountered accepted ADR metadata while reconciling the consequential-decision inventory.
+  - Observation: an ADR reference establishes eligibility for recorded review, but does not prove a human disposition by itself.
+  - Expected pattern: agents preserve pending status unless the checked review queue records the completed human disposition; delegated workers may mutate external review state only when the exact scope and authorization explicitly permit it; otherwise they must not.

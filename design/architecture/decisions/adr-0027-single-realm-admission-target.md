@@ -15,6 +15,10 @@ Current routing has one required target and a read-then-write expected-version c
 - Affected capabilities: `AA-3.1`, `AA-3.2`, `AR-3.2`, `GR-2.1`, `GR-1.1`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of `TENANT-01`
+- Human review status: Completed
+- Human review date: 2026-07-19
+- Human review disposition: Revised
+- Review source: `TENANT-01`
 
 ## Context
 

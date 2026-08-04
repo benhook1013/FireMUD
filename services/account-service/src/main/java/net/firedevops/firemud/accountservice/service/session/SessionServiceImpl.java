@@ -12,7 +12,6 @@ import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.accountservice.config.AccountTokenProperties;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
-import net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -173,120 +172,6 @@ public class SessionServiceImpl implements SessionService {
         .set(connectTokenReplayKey(tenantId, accountId, connectScopeId, requestId), stored, ttl);
   }
 
-  @Override
-  @Timed(value = "session.public_production_membership_replay.get")
-  public Optional<PublicProductionMembershipReplay> getPublicProductionMembershipReplay(
-      Long tenantId, Long accountId, String worldSlug, String realmSlug, String requestId) {
-    Object value =
-        redisTemplate
-            .opsForValue()
-            .get(
-                publicProductionMembershipReplayKey(
-                    tenantId, accountId, worldSlug, realmSlug, requestId));
-    if (!(value instanceof Map<?, ?> stored)) {
-      return Optional.empty();
-    }
-    Optional<Boolean> success = parseRequiredBoolean(stored.get("success"));
-    if (success.isEmpty()) {
-      return Optional.empty();
-    }
-    if (success.get()) {
-      Optional<Long> replayAccountId = parseRequiredLong(stored.get("accountId"));
-      Optional<Long> replayTenantId = parseRequiredLong(stored.get("tenantId"));
-      Optional<Long> membershipVersion = parseRequiredLong(stored.get("membershipVersion"));
-      Optional<String> replayWorldSlug = parseRequiredText(stored.get("worldSlug"));
-      Optional<String> replayRealmSlug = parseRequiredText(stored.get("realmSlug"));
-      Optional<String> replayRequestId = parseRequiredText(stored.get("requestId"));
-      Optional<String> evaluatedAt = parseRequiredText(stored.get("evaluatedAt"));
-      if (replayAccountId.isEmpty()
-          || replayTenantId.isEmpty()
-          || membershipVersion.isEmpty()
-          || replayWorldSlug.isEmpty()
-          || replayRealmSlug.isEmpty()
-          || replayRequestId.isEmpty()
-          || evaluatedAt.isEmpty()) {
-        return Optional.empty();
-      }
-      if (!replayAccountId.get().equals(accountId) || !replayTenantId.get().equals(tenantId)) {
-        return Optional.empty();
-      }
-      if (!worldSlug.equals(replayWorldSlug.get()) || !realmSlug.equals(replayRealmSlug.get())) {
-        return Optional.empty();
-      }
-      if (!requestId.equals(replayRequestId.get())) {
-        return Optional.empty();
-      }
-      Optional<Boolean> created = parseRequiredBoolean(stored.get("created"));
-      if (created.isEmpty()) {
-        return Optional.empty();
-      }
-      PublicProductionMembershipResult result =
-          new PublicProductionMembershipResult(
-              replayAccountId.orElseThrow(),
-              replayTenantId.orElseThrow(),
-              replayWorldSlug.orElseThrow(),
-              replayRealmSlug.orElseThrow(),
-              membershipVersion.orElseThrow(),
-              created.get(),
-              replayRequestId.orElseThrow(),
-              evaluatedAt.orElseThrow(),
-              false);
-      return Optional.of(new PublicProductionMembershipReplay(true, result, "", ""));
-    }
-    String errorCode = stringValue(stored.get("errorCode"));
-    String errorMessage = stringValue(stored.get("errorMessage"));
-    if (errorCode.isBlank() || errorMessage.isBlank()) {
-      return Optional.empty();
-    }
-    return Optional.of(new PublicProductionMembershipReplay(false, null, errorCode, errorMessage));
-  }
-
-  @Override
-  @Timed(value = "session.public_production_membership_replay.store")
-  public void storePublicProductionMembershipReplay(
-      Long tenantId,
-      Long accountId,
-      String worldSlug,
-      String realmSlug,
-      String requestId,
-      PublicProductionMembershipReplay replay,
-      long expirationMs) {
-    Duration ttl = Duration.ofMillis(expirationMs);
-    Map<String, String> stored = new HashMap<>();
-    stored.put("success", Boolean.toString(replay.success()));
-    if (replay.success()) {
-      PublicProductionMembershipResult result =
-          requireResult(replay.result(), "public production membership replay");
-      requireReplayIdMatch(
-          accountId, result.accountId(), "accountId", "public production membership replay");
-      requireReplayIdMatch(
-          tenantId, result.tenantId(), "tenantId", "public production membership replay");
-      if (!worldSlug.equals(result.worldSlug()) || !realmSlug.equals(result.realmSlug())) {
-        throw new IllegalArgumentException("public production membership replay payload mismatch");
-      }
-      requireReplayTextMatch(
-          requestId, result.requestId(), "requestId", "public production membership replay");
-      stored.put("accountId", Long.toString(result.accountId()));
-      stored.put("tenantId", Long.toString(result.tenantId()));
-      stored.put("worldSlug", result.worldSlug());
-      stored.put("realmSlug", result.realmSlug());
-      stored.put("membershipVersion", Long.toString(result.membershipVersion()));
-      stored.put("created", Boolean.toString(result.created()));
-      stored.put("requestId", result.requestId());
-      stored.put("evaluatedAt", result.evaluatedAt());
-    } else {
-      stored.put("errorCode", replay.errorCode());
-      stored.put("errorMessage", replay.errorMessage());
-    }
-    redisTemplate
-        .opsForValue()
-        .set(
-            publicProductionMembershipReplayKey(
-                tenantId, accountId, worldSlug, realmSlug, requestId),
-            stored,
-            ttl);
-  }
-
   private String accountKey(Long accountId, String token) {
     return "session:auth:account:" + accountId + ":" + tokenHash(token);
   }
@@ -303,20 +188,6 @@ public class SessionServiceImpl implements SessionService {
         + accountId
         + ":scope:"
         + tokenHash(connectScopeId)
-        + ":request:"
-        + tokenHash(requestId);
-  }
-
-  private String publicProductionMembershipReplayKey(
-      Long tenantId, Long accountId, String worldSlug, String realmSlug, String requestId) {
-    return "session:public-production-membership:tenant:"
-        + tenantId
-        + ":account:"
-        + accountId
-        + ":world:"
-        + tokenHash(worldSlug)
-        + ":realm:"
-        + tokenHash(realmSlug)
         + ":request:"
         + tokenHash(requestId);
   }

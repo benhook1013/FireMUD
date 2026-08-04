@@ -20,6 +20,7 @@ import net.firedevops.firemud.socialgroups.client.LoggingAdminClient;
 import net.firedevops.firemud.socialgroups.client.ModerationPolicyClient;
 import net.firedevops.firemud.socialgroups.dto.ChatMessageDto;
 import net.firedevops.firemud.socialgroups.dto.SendMessageRequestDto;
+import net.firedevops.firemud.socialgroups.entity.AccountFriendLink;
 import net.firedevops.firemud.socialgroups.enums.ChatType;
 import net.firedevops.firemud.socialgroups.repository.AccountFriendLinkRepository;
 import net.firedevops.firemud.socialgroups.repository.ChatMessageRepository;
@@ -213,6 +214,7 @@ class SocialGroupsApplicationIntegrationTest {
                         """))
                 .build());
     assertThat(addResponse.statusCode()).isEqualTo(200);
+    acceptFriendLink(1L, 2L, 3L);
 
     Mockito.when(TEST_GAME_SESSION_CLIENT.queryAccountPresence(1L, 2L, List.of(3L)))
         .thenReturn(
@@ -287,6 +289,7 @@ class SocialGroupsApplicationIntegrationTest {
                     {"tenantId":1,"accountId":2,"friendAccountId":3}
                     """))
             .build());
+    acceptFriendLink(1L, 2L, 3L);
 
     Mockito.when(TEST_GAME_SESSION_CLIENT.queryAccountPresence(1L, 2L, List.of(3L)))
         .thenReturn(QueryAccountPresenceResponse.newBuilder().build());
@@ -312,6 +315,7 @@ class SocialGroupsApplicationIntegrationTest {
                     {"tenantId":1,"accountId":2,"friendAccountId":3}
                     """))
             .build());
+    acceptFriendLink(1L, 2L, 3L);
     send(
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -322,6 +326,7 @@ class SocialGroupsApplicationIntegrationTest {
                     {"tenantId":1,"accountId":2,"friendAccountId":4}
                     """))
             .build());
+    acceptFriendLink(1L, 2L, 4L);
 
     Mockito.when(TEST_GAME_SESSION_CLIENT.queryAccountPresence(1L, 2L, List.of(3L, 4L)))
         .thenReturn(
@@ -359,6 +364,7 @@ class SocialGroupsApplicationIntegrationTest {
                     {"tenantId":1,"accountId":2,"friendAccountId":3}
                     """))
             .build());
+    acceptFriendLink(1L, 2L, 3L);
     send(
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -369,6 +375,7 @@ class SocialGroupsApplicationIntegrationTest {
                     {"tenantId":1,"accountId":2,"friendAccountId":4}
                     """))
             .build());
+    acceptFriendLink(1L, 2L, 4L);
 
     Mockito.when(TEST_GAME_SESSION_CLIENT.queryAccountPresence(1L, 2L, List.of(3L, 4L)))
         .thenReturn(
@@ -418,6 +425,7 @@ class SocialGroupsApplicationIntegrationTest {
                     {"tenantId":1,"accountId":2,"friendAccountId":3}
                     """))
             .build());
+    acceptFriendLink(1L, 2L, 3L);
     send(
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -428,6 +436,7 @@ class SocialGroupsApplicationIntegrationTest {
                     {"tenantId":1,"accountId":2,"friendAccountId":4}
                     """))
             .build());
+    acceptFriendLink(1L, 2L, 4L);
 
     Mockito.when(TEST_GAME_SESSION_CLIENT.queryAccountPresence(1L, 2L, List.of(3L, 4L)))
         .thenReturn(
@@ -460,6 +469,84 @@ class SocialGroupsApplicationIntegrationTest {
   }
 
   @Test
+  void friendEndpointsRequireReciprocalActiveLinksWithinRequestedTenant() throws Exception {
+    String token = privilegedAccountToken(2L);
+    saveFriendLink(1L, 2L, 3L, "active");
+    saveFriendLink(1L, 2L, 4L, "active");
+    saveFriendLink(1L, 4L, 2L, "inactive");
+    saveFriendLink(1L, 2L, 5L, "active");
+    saveFriendLink(1L, 5L, 2L, "active");
+
+    HttpResponse<String> tenantOneRoster =
+        send(authedGet(token, "http://localhost:" + port + "/friends?tenantId=1&accountId=2"));
+    assertThat(tenantOneRoster.statusCode()).isEqualTo(200);
+    assertThat(tenantOneRoster.body()).contains("\"totalCount\":1");
+    assertThat(tenantOneRoster.body()).contains("\"friendAccountId\":5");
+    assertThat(tenantOneRoster.body()).doesNotContain("\"friendAccountId\":3");
+    assertThat(tenantOneRoster.body()).doesNotContain("\"friendAccountId\":4");
+
+    HttpResponse<String> tenantOnePresence =
+        send(
+            authedGet(
+                token, "http://localhost:" + port + "/friends/presence?tenantId=1&accountId=2"));
+    assertThat(tenantOnePresence.statusCode()).isEqualTo(200);
+    assertThat(tenantOnePresence.body()).contains("\"friendAccountId\":5");
+    assertThat(tenantOnePresence.body()).doesNotContain("\"friendAccountId\":3");
+    assertThat(tenantOnePresence.body()).doesNotContain("\"friendAccountId\":4");
+
+    HttpResponse<String> reciprocalDetail =
+        send(authedGet(token, "http://localhost:" + port + "/friends/5?tenantId=1&accountId=2"));
+    assertThat(reciprocalDetail.statusCode()).isEqualTo(200);
+    assertThat(reciprocalDetail.body()).contains("\"friendAccountId\":5");
+
+    HttpResponse<String> reciprocalOrdinal =
+        send(
+            authedGet(
+                token, "http://localhost:" + port + "/friends/entry/1?tenantId=1&accountId=2"));
+    assertThat(reciprocalOrdinal.statusCode()).isEqualTo(200);
+    assertThat(reciprocalOrdinal.body()).contains("\"friendAccountId\":5");
+
+    HttpResponse<String> tenantOneSummary =
+        send(
+            authedGet(
+                token, "http://localhost:" + port + "/friends/summary?tenantId=1&accountId=2"));
+    assertThat(tenantOneSummary.statusCode()).isEqualTo(200);
+    assertThat(tenantOneSummary.body()).contains("\"totalCount\":1");
+
+    HttpResponse<String> oneWayDetail =
+        send(authedGet(token, "http://localhost:" + port + "/friends/3?tenantId=1&accountId=2"));
+    assertThat(oneWayDetail.statusCode()).isEqualTo(404);
+    HttpResponse<String> inactiveReciprocalDetail =
+        send(authedGet(token, "http://localhost:" + port + "/friends/4?tenantId=1&accountId=2"));
+    assertThat(inactiveReciprocalDetail.statusCode()).isEqualTo(404);
+
+    HttpResponse<String> wrongTenantRoster =
+        send(authedGet(token, "http://localhost:" + port + "/friends?tenantId=2&accountId=2"));
+    assertThat(wrongTenantRoster.statusCode()).isEqualTo(200);
+    assertThat(wrongTenantRoster.body()).contains("\"totalCount\":0");
+    HttpResponse<String> wrongTenantPresence =
+        send(
+            authedGet(
+                token, "http://localhost:" + port + "/friends/presence?tenantId=2&accountId=2"));
+    assertThat(wrongTenantPresence.statusCode()).isEqualTo(200);
+    assertThat(wrongTenantPresence.body()).doesNotContain("\"friendAccountId\":5");
+    HttpResponse<String> wrongTenantDetail =
+        send(authedGet(token, "http://localhost:" + port + "/friends/5?tenantId=2&accountId=2"));
+    assertThat(wrongTenantDetail.statusCode()).isEqualTo(404);
+    HttpResponse<String> wrongTenantOrdinal =
+        send(
+            authedGet(
+                token, "http://localhost:" + port + "/friends/entry/1?tenantId=2&accountId=2"));
+    assertThat(wrongTenantOrdinal.statusCode()).isEqualTo(404);
+    HttpResponse<String> wrongTenantSummary =
+        send(
+            authedGet(
+                token, "http://localhost:" + port + "/friends/summary?tenantId=2&accountId=2"));
+    assertThat(wrongTenantSummary.statusCode()).isEqualTo(200);
+    assertThat(wrongTenantSummary.body()).contains("\"totalCount\":0");
+  }
+
+  @Test
   void addFriendIsIdempotentForExistingActiveAccountLink() throws Exception {
     String token = privilegedAccountToken(2L);
     HttpRequest request =
@@ -479,6 +566,17 @@ class SocialGroupsApplicationIntegrationTest {
     assertThat(firstResponse.statusCode()).isEqualTo(200);
     assertThat(secondResponse.statusCode()).isEqualTo(200);
     assertThat(accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(1L, 2L, "active"))
+        .hasSize(1);
+    assertThat(
+            accountFriendLinkRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(
+                1L, 2L, "active"))
+        .isEmpty();
+
+    acceptFriendLink(1L, 2L, 3L);
+
+    assertThat(
+            accountFriendLinkRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(
+                1L, 2L, "active"))
         .hasSize(1);
   }
 
@@ -554,6 +652,8 @@ class SocialGroupsApplicationIntegrationTest {
                     """))
             .build());
 
+    acceptFriendLink(1L, 2L, 3L);
+
     HttpResponse<String> deleteResponse =
         send(
             HttpRequest.newBuilder(
@@ -610,6 +710,26 @@ class SocialGroupsApplicationIntegrationTest {
         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
         .GET()
         .build();
+  }
+
+  private void acceptFriendLink(long tenantId, long accountId, long friendAccountId) {
+    AccountFriendLink reciprocal = new AccountFriendLink();
+    reciprocal.setTenantId(tenantId);
+    reciprocal.setAccountId(friendAccountId);
+    reciprocal.setFriendAccountId(accountId);
+    reciprocal.setStatus("active");
+    reciprocal.setCreatedAt(java.time.Instant.now());
+    accountFriendLinkRepository.save(reciprocal);
+  }
+
+  private void saveFriendLink(long tenantId, long accountId, long friendAccountId, String status) {
+    AccountFriendLink link = new AccountFriendLink();
+    link.setTenantId(tenantId);
+    link.setAccountId(accountId);
+    link.setFriendAccountId(friendAccountId);
+    link.setStatus(status);
+    link.setCreatedAt(java.time.Instant.now());
+    accountFriendLinkRepository.save(link);
   }
 
   private static String privilegedAccountToken(long accountId) {

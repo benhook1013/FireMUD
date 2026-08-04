@@ -167,6 +167,30 @@ def require_contains(path, snippets):
     if missing:
         raise SystemExit(f"{path}: missing required snippets: {missing}")
 
+obsolete_redis_rebind_envelope = re.compile(
+    r"\brebind(?:[-_\s]?handle)?[-_\s]?envelope\b",
+    re.IGNORECASE,
+)
+
+for obsolete_rebind_term in (
+    "rebind-envelope",
+    "rebind_envelope",
+    "rebind envelope",
+    "rebindHandleEnvelope",
+    "rebind-handle-envelope",
+):
+    if obsolete_redis_rebind_envelope.search(obsolete_rebind_term) is None:
+        raise SystemExit(
+            "obsolete Redis rebind-envelope matcher missed "
+            f"{obsolete_rebind_term!r}"
+        )
+for canonical_rebind_term in ("rebindHandle", "rebind-handle", "rebind handle"):
+    if obsolete_redis_rebind_envelope.search(canonical_rebind_term):
+        raise SystemExit(
+            "obsolete Redis rebind-envelope matcher rejected canonical "
+            f"{canonical_rebind_term!r}"
+        )
+
 for path in (root / "design").rglob("*.md"):
     text = path.read_text(encoding="utf-8")
     if "<deployment-event-id>" in text:
@@ -316,6 +340,16 @@ def is_historical_adr_record(path, text):
     )
 
 
+def reject_obsolete_redis_rebind_envelope(path, text):
+    if is_historical_adr_record(path, text):
+        return
+    if obsolete_redis_rebind_envelope.search(text):
+        raise SystemExit(
+            f"{path}: design-tree Redis contract must use the opaque rebindHandle, "
+            "not rebind-envelope terminology"
+        )
+
+
 def reject_obsolete_envelope_phrases(path, text):
     if is_historical_adr_record(path, text):
         return
@@ -328,7 +362,7 @@ def reject_obsolete_envelope_phrases(path, text):
 
 
 historical_adr_fixture = decision_history_dir / "adr-9999-history-fixture.md"
-historical_adr_fixture_text = "# ADR 9999: Historical Fixture\n\n## Status\n\nSuperseded by ADR 0001\n\nAccount-issued envelope\n"
+historical_adr_fixture_text = "# ADR 9999: Historical Fixture\n\n## Status\n\nSuperseded by ADR 0001\n\nAccount-issued envelope\nrebind-envelope\n"
 accepted_adr_fixture = decision_history_dir / "adr-9998-accepted-fixture.md"
 accepted_adr_fixture_text = (
     "# ADR 9998: Accepted Fixture\n\n"
@@ -345,6 +379,7 @@ accepted_adr_fixture_text = (
     "    Superseded by ADR 0001\n\n"
     "## Status\n\n"
     "Accepted\n"
+    "rebind-envelope\n"
 )
 raw_html_adr_fixture = decision_history_dir / "adr-9997-raw-html-fixture.md"
 raw_html_adr_fixture_text = (
@@ -398,6 +433,10 @@ indented_status_value_fixture_text = (
 registry_index_fixture = decision_history_dir / "README.md"
 if not is_historical_adr_record(historical_adr_fixture, historical_adr_fixture_text):
     raise SystemExit("historical ADR fixture was not recognized as an exempt record")
+reject_obsolete_redis_rebind_envelope(
+    historical_adr_fixture,
+    historical_adr_fixture_text,
+)
 if is_historical_adr_record(registry_index_fixture, obsolete_envelope_phrases[0]):
     raise SystemExit("decision registry/index fixture was incorrectly exempted")
 if first_top_level_status_value(accepted_adr_fixture_text) != "Accepted":
@@ -420,6 +459,16 @@ reject_obsolete_envelope_phrases(
     historical_adr_fixture,
     historical_adr_fixture_text,
 )
+try:
+    reject_obsolete_redis_rebind_envelope(
+        accepted_adr_fixture,
+        accepted_adr_fixture_text,
+    )
+except SystemExit as error:
+    if "design-tree Redis contract must use" not in str(error):
+        raise SystemExit(f"unexpected Accepted ADR Redis diagnostic: {error}")
+else:
+    raise SystemExit("Accepted ADR was not checked for obsolete Redis terminology")
 try:
     reject_obsolete_envelope_phrases(
         accepted_adr_fixture,
@@ -462,7 +511,9 @@ else:
     raise SystemExit("decision registry/index fixture was not checked")
 
 for path in (root / "design").rglob("*.md"):
-    reject_obsolete_envelope_phrases(path, path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    reject_obsolete_redis_rebind_envelope(path, text)
+    reject_obsolete_envelope_phrases(path, text)
 
 canonical_world_dynamic = "world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>"
 for path in [
@@ -515,6 +566,35 @@ require_contains(
         "Confirm that the named canonical owner in the tracker is the owner in code and that no local fallback or competing authority is silently carrying the behavior.",
         "Prefer narrow unit/integration/cross-service proof over interpreting an unrelated broad test pass as evidence.",
         "If any answer is no, leave the capability incomplete or complete only at its explicitly bounded current boundary.",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md",
+    [
+        "`/moderation/actions` is unavailable/gated",
+        "The accepted numeric source grammar is ASCII",
+        "Game Session session lifecycle (`/sessions*`)",
+    ],
+)
+require_contains(
+    "design/architecture/microservices/logging-admin-service/api-contracts.md",
+    [
+        "`/moderation/actions` is an unavailable/gated human mutation",
+        "Game instance session lifecycle remains a current Game Session owner-local route family",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-authz-route-matrix.md",
+    [
+        "Operator mutation rows that require an Account-issued authorization reference",
+        "`PaymentInstrumentWalletAccount`",
+        "`PaymentInstrumentWalletCrossTenant`",
+    ],
+)
+require_contains(
+    "design/project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md",
+    [
+        "no focused consumer-level proof establishes that these values cannot authorize delegated work"
     ],
 )
 require_contains(
@@ -744,6 +824,8 @@ PY
 
 python3 dev-tools/validation/check-design-capability-allocation.py
 python3 dev-tools/validation/test_design_capability_allocation.py
+python3 dev-tools/validation/check-adr-review-status.py
+python3 dev-tools/validation/test_adr_review_status.py
 python3 dev-tools/validation/check-implementation-capability-tracking.py
 python3 dev-tools/validation/test_implementation_capability_tracking.py
 python3 dev-tools/validation/check-authz-route-matrix.py

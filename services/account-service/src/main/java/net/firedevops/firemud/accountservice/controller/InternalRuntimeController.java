@@ -2,8 +2,6 @@ package net.firedevops.firemud.accountservice.controller;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
-import net.firedevops.firemud.accountservice.dto.PublicProductionMembershipRequest;
-import net.firedevops.firemud.accountservice.dto.PublicProductionMembershipResult;
 import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
 import net.firedevops.firemud.accountservice.dto.RealmAccessGrantResult;
 import net.firedevops.firemud.accountservice.service.AccountService;
@@ -27,28 +25,6 @@ public class InternalRuntimeController {
       justification = "AccountService is injected and not exposed")
   public InternalRuntimeController(AccountService accountService) {
     this.accountService = accountService;
-  }
-
-  @PostMapping("/public-production-membership")
-  public ResponseEntity<ApiResponse<PublicProductionMembershipResult>>
-      ensurePublicProductionMembership(
-          @Valid @RequestBody PublicProductionMembershipRequest request) {
-    SessionContext.requireGlobalPrivilegedRole();
-    PublicProductionMembershipRequest normalizedRequest =
-        new PublicProductionMembershipRequest(
-            AccountRequestReaders.requireAccountId(request.accountId()),
-            AccountRequestReaders.requireTenantId(request.tenantId()),
-            request.worldSlug(),
-            request.realmSlug(),
-            request.requestId());
-    return ResponseEntity.ok(
-        ApiResponse.success(
-            accountService.ensurePublicProductionPlayerMembership(
-                normalizedRequest.accountId(),
-                normalizedRequest.tenantId(),
-                normalizedRequest.worldSlug(),
-                normalizedRequest.realmSlug(),
-                normalizedRequest.requestId())));
   }
 
   @PostMapping("/realm-access-grants")

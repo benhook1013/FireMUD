@@ -53,13 +53,10 @@ class GrpcJwtAuthInterceptorTest {
         new AuthTokenInterceptor(
             jwtUtil,
             Set.of(
-                AccountServiceGrpc.getGetTenantMembershipForRuntimeMethod().getFullMethodName(),
-                AccountServiceGrpc.getEnsurePublicProductionPlayerMembershipMethod()
-                    .getFullMethodName()));
+                AccountServiceGrpc.getGetTenantMembershipForRuntimeMethod().getFullMethodName()));
     TestServerCall call =
         new TestServerCall(
-            AccountServiceGrpc.getEnsurePublicProductionPlayerMembershipMethod()
-                .getFullMethodName());
+            AccountServiceGrpc.getGetTenantMembershipForRuntimeMethod().getFullMethodName());
     Metadata headers = new Metadata();
 
     ServerCall.Listener<?> listener =
