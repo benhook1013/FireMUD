@@ -16,7 +16,7 @@ Do not edit the overlapping alignment and architecture surfaces until this curre
 2. PR `#2581`, `design/adr-parcel-03-identity-session-enforcement` -> PR `#2583`.
 3. PR `#2529`, `design/adr-parcel-03-security-and-account-lifecycle` -> PR `#2581`.
 
-After the stack merges, rebase `design/adversarial-decision-review` onto fresh `develop` before classifying current repository state.
+After the stack merges, treat `design/adversarial-decision-review` as the reviewed source archive. Start each remaining parcel branch from fresh `develop` and selectively import its pending decisions; do not wholesale rebase the archive across already-imported ADR and architecture changes.
 
 The human review worktree records `183/183` decisions reviewed. That is review-stage evidence, not a claim that all resulting decisions are canonical on `develop`. Only merged ADR and architecture changes count as applied target state.
 
