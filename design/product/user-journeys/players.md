@@ -253,7 +253,7 @@ Current gameplay implementation note: the foundational shared communication path
 ## 6. Purchases and Subscriptions
 
 1. **Payment Processing** – The [Account Service](../../architecture/microservices/account-service/README.md) handles subscriptions, one-time purchases, and optional donations via Stripe.
-2. **Platform Fee & Restrictions** – A small platform fee applies to each transaction and external payment methods are not allowed, per the [Product Requirements](../../product/requirements.md#2.8-moderation-administration--monetization).
+2. **Platform Fee & Restrictions** – A small platform fee applies to each transaction and external payment methods are not allowed, per the [Product Requirements](../../product/requirements.md#28-moderation-administration--monetization).
 3. **One-Time Purchase Entitlements** – One-time purchases that grant ongoing value create Account Service-owned purchase entitlements after Stripe success; refunds revoke those entitlements unless the product was explicitly consumed under a non-revocable product contract.
 4. **Audit and Compliance** – Transactions are logged through the [Logging & Admin Service](../../architecture/microservices/logging-admin-service/README.md) for reporting and refunds.
 5. **Tenant Availability & Limits** – Whether a game can start new instances or accept new logins depends on the tenant’s subscription state and plan entitlements as described in the [Subscription Management Design](../../architecture/microservices/account-service/subscription-management.md) and [Multi-Tenancy](../../architecture/system-architecture-multi-tenancy.md#tenant-configuration--scaling). When a tenant is suspended for billing, login attempts fail with clear errors until billing is resolved.

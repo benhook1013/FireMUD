@@ -14,7 +14,7 @@ This ledger maps canonical product and architecture sources to the stable capabi
 
 ## Allocation Rules
 
-- Every canonical Markdown source under `design/product/**` and `design/architecture/**` receives one primary allocation, normally at file scope. Product sources classify requirements, taxonomy, indexes, or observable product behavior; architecture sources classify technical contracts, runbooks, references, and indexes. Mixed architecture sources may instead allocate separately normative sections at heading scope; only documented governance, template, or registry/index artifacts are exempt.
+- Every canonical Markdown source under `design/product/**` and `design/architecture/**` receives one primary allocation, normally at file scope. Product sources classify requirements, taxonomy, index, or observable product behavior; architecture sources classify normative design, runbook, reference, index, or generated material. Mixed architecture sources may instead allocate separate normative sections at heading scope; only documented governance, template, or registry/index artifacts are exempt.
 - Secondary capabilities identify required handoffs and review scope without duplicating primary ownership.
 - References and runbooks map to the capability whose contract or operation they support.
 - Ambiguous or missing taxonomy coverage is recorded as a gap rather than forced into the nearest category.
