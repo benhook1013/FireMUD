@@ -1,6 +1,6 @@
 [versions]
 spring-boot = "4.1.0"
-jooq = "3.21.6"
+jooq = "3.21.7"
 flyway = "13.1.0"
 mapstruct = "1.6.3"
 lombok = "1.18.42"
