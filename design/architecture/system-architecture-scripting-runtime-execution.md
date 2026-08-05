@@ -22,6 +22,7 @@ It is a companion to:
 ## Table of Contents
 
 - [Scope and Ownership](#scope-and-ownership)
+- [Current Implementation Status](#current-implementation-status)
 - [Work Item Outbox Contract](#work-item-outbox-contract-normative)
 - [`scriptEventId` Lifecycle and Deduplication](#scripteventid-lifecycle-and-deduplication)
 - [Runtime Deployment & Versioning](#runtime-deployment--versioning)
@@ -47,11 +48,19 @@ It is a companion to:
 
 When this document and the DSL reference appear to overlap, use the DSL reference for graph/model/determinism semantics and this document for runtime ownership, outbox, queue projection, and rollback behavior.
 
-## Implementation Notes
+## Current Implementation Status
+
+This section records current implementation boundaries, not target-state authority. The normative contracts below and the linked owning documents remain canonical.
 
 The current runtime now includes a first durable work-item executor instead of stopping at ingress-only outbox materialization. Automation claims `PENDING_EVALUATION` rows, enforces per-script quota before execution, loads the persisted script definition, evaluates a current-boundary command-emission format, and hands emitted commands to Game Session through `EnqueueAutomationCommandIfAbsent`.
 
-That current-boundary execution format is intentionally narrow but no longer raw-text-only: script definitions may expose `emitCommands` at the top level or under `eventHandlers.<eventType>.emitCommands`, and each emitted command may currently carry either direct `commandText` or a structured `commandAlias` plus templated `arguments`, along with optional `targetEntityId` or first multi-target `targetEntityIds[]`, optional explicit target runtime scope (`targetGameInstanceId`, `targetRegionId`, `targetRegionEpoch`), `requiresSoloTick`, and optional `dueTickId`. If neither target field is present, the command targets the triggering work item's entity; if explicit target runtime scope is absent, the command defaults to the triggering work item's owned gameplay scope. `targetEntityIds[]` expands one emitted command node into multiple gameplay handoffs that share the same rendered command text and deterministic output order under the same work item. The current evaluator can preserve that order locally, but end-to-end `commandOrdinal` propagation is target-state until the Game Session handoff is widened. Command nodes may also carry bounded `when` / `unless` predicate maps over durable work-item metadata and flat primitive payload fields; skipped nodes do not consume command ordinals. Template substitution is still limited to durable work-item metadata and flat primitive payload fields such as `{{payload.commandName}}`. Richer graph execution and broader DSL semantics remain target-state work above this first production evaluator path.
+That current-boundary execution format is intentionally narrow but no longer raw-text-only: script definitions may expose `emitCommands` at the top level or under `eventHandlers.<eventType>.emitCommands`, and each emitted command may currently carry either direct `commandText` or a structured `commandAlias` plus templated `arguments`, along with optional `targetEntityId` or first multi-target `targetEntityIds[]`, optional explicit target runtime scope (`targetGameInstanceId`, `targetRegionId`, `targetRegionEpoch`), `requiresSoloTick`, and optional `dueTickId`. If neither target field is present, the command targets the triggering work item's entity; if explicit target runtime scope is absent, the command defaults to the triggering work item's owned gameplay scope. `targetEntityIds[]` expands one emitted command node into multiple gameplay handoffs that share the same rendered command text and deterministic output order under the same work item. The current evaluator can preserve that order locally, while end-to-end command identity propagation remains target-state until the Game Session handoff is widened. Command nodes may also carry bounded `when` / `unless` predicate maps over durable work-item metadata and flat primitive payload fields; skipped nodes do not consume command ordinals. Template substitution is still limited to durable work-item metadata and flat primitive payload fields such as `{{payload.commandName}}`. Richer graph execution and broader DSL semantics remain target-state work above this first production evaluator path.
+
+The current `onLoad` implementation slice is tenant-readiness work limited to configuration/runtime metadata validation and warming recomputable in-process caches. It does not perform per-entity setup or create durable shared state.
+
+At the live Game Session handoff boundary, `EnqueueAutomationCommandIfAbsent` currently carries `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, optional `dueTickId`, `automationDispatchId`, `automationWorkItemId`, `scriptId`, `scriptPatchVersion`, target entity, rendered command text, `requiresSoloTick`, `pluginId`, `pluginVersionId`, `playableStateScope`, routing fields, and origin-source fields; its response returns the live Game Session `commandId` and admission outcome. It does not yet carry `commandOrdinal`, `bindingId`, `eventType`, `eventSchemaVersion`, `scriptEventId`, `isDryRun`, `scheduleDefinitionId`, `triggerMode`, or the complete applicable Trigger Identity.
+
+Current dedupe, rejection, and status diagnostics use the available `outboxWorkItemId`/parent work-item correlation, persisted `automationDispatchId`, Game Session `commandId`/persisted `gameSessionCommandId`, command text, selected provenance, and `script_event_audit`. This is a live diagnostic and retry fallback only; it does not claim end-to-end complete Trigger Identity, `commandOrdinal`, or target command-level deduplication/fence proof.
 
 ## Work Item Outbox Contract (Normative)
 
@@ -71,9 +80,11 @@ Each persisted script work item must include:
 - `commandCount` (for budgeting/inspection).
 - `cancelReason` (nullable; required when canceled).
 
+`outboxWorkItemId` is the Automation-owned durable work-item identifier and the stable queue-pointer and executor-deduplication key. At the current Game Session boundary, Automation produces `EnqueueAutomationCommandIfAbsentRequest.automationWorkItemId` with this same value, and Game Session consumes/reports it under the wire field name `automationWorkItemId`; these are boundary-specific names for one identifier, not separate work-item records. `automationDispatchId` is a separate command-handoff identity and must not replace the outbox key.
+
 When a work item is handed to Game Session, the local wire boundary is:
 
-- `EnqueueAutomationCommandIfAbsent` carries `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, optional `dueTickId`, `automationDispatchId`, `automationWorkItemId`, `scriptId`, `scriptPatchVersion`, target entity, rendered command text, `requiresSoloTick`, `pluginId`, `pluginVersionId`, `playableStateScope`, routing fields, and origin-source fields; its response returns the live Game Session `commandId`/admission outcome. It does not yet carry `commandOrdinal`, `bindingId`, `eventType`, `eventSchemaVersion`, `scriptEventId`, `isDryRun`, `scheduleDefinitionId`, `triggerMode`, or the complete applicable Trigger Identity. Current dedupe, rejection, and status diagnostics therefore use this narrower fallback and must not claim full-identity ordinal semantics. The target handoff identity and fenced acceptance rule are owned by the [cross-service scripting contracts](./system-architecture-scripting-contracts.md#2-script-work-item-vs-tick-command-boundary).
+- `EnqueueAutomationCommandIfAbsent` carries the local handoff fields described in [Current Implementation Status](#current-implementation-status), and its response returns the live Game Session `commandId`/admission outcome. The target handoff identity and fenced acceptance rule are owned by the [cross-service scripting contracts](./system-architecture-scripting-contracts.md#2-script-work-item-vs-tick-command-boundary).
 
 ### Minimum Status Model
 
@@ -90,7 +101,7 @@ Statuses are a target-state contract; implementations may use different internal
 
 Entries in `automation:queue:{tenantInstanceTag}:<entityId>` must contain enough information to locate and safely process the durable outbox record:
 
-- `outboxWorkItemId`
+- `outboxWorkItemId` - the stable durable pointer and deduplication key; it must not be replaced by Redis list position or `automationDispatchId`.
 - A minimal identity checksum (for example `gameInstanceId`, `scriptPatchVersion`, optional `pluginVersionId`) so rebuild/drain logic can detect version-fence mismatches early without reading full payloads.
 
 The pointer/index format must be forward-compatible (versioned envelope) so it can evolve without requiring out-of-band Redis migrations.
@@ -112,7 +123,7 @@ The pointer/index format must be forward-compatible (versioned envelope) so it c
 
 ## `scriptEventId` Lifecycle and Deduplication
 
-Trigger Identity, endpoint-specific `scriptEventId` ownership, audit uniqueness, and command-level retry identity are defined in the [normative contract tables](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields) and [cross-service scripting contracts](./system-architecture-scripting-contracts.md#4-scripteventid-identity-and-at-most-once-dedupe). Runtime persistence carries the applicable identity on the durable work item and preserves it across queue projection, claims, and handoff attempts. The current live Game Session boundary remains the narrower fallback described in [Minimum Outbox Record Fields](#minimum-outbox-record-fields).
+Trigger Identity, endpoint-specific `scriptEventId` ownership, audit uniqueness, and command-level retry identity are defined in the [normative contract tables](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields) and [cross-service scripting contracts](./system-architecture-scripting-contracts.md#4-scripteventid-identity-and-at-most-once-dedupe). Runtime persistence carries the applicable identity on the durable work item and preserves it across queue projection, claims, and handoff attempts.
 
 ## Runtime Deployment & Versioning
 
@@ -207,7 +218,7 @@ When script components call other services over gRPC, they must pass a stable id
 
 ## Version Fencing and Rollback Safety
 
-Rollback of a script patch must not allow previously queued work from the rolled-back patch to continue affecting gameplay. The version-fence fields, rejection disposition, and diagnostic identity are owned by the [cross-service scripting contracts](./system-architecture-scripting-contracts.md#3-version-fencing-rollback-safety). Locally, script work items retain the effective `scriptPatchVersion`; until the Game Session proto carries the complete target identity and `commandOrdinal`, rejection/status diagnostics use the live `automationDispatchId`, command id/text, selected provenance, and parent work-item correlation. A version or runtime-scope mismatch is not applied, temporary plugin-authority unavailability leaves the durable effect retryable, and rollback flows drain or purge queued work that cannot satisfy the fence.
+Rollback of a script patch must not allow previously queued work from the rolled-back patch to continue affecting gameplay. The version-fence fields, rejection disposition, and diagnostic identity are owned by the [cross-service scripting contracts](./system-architecture-scripting-contracts.md#3-version-fencing-rollback-safety). Locally, script work items retain the effective `scriptPatchVersion`; current live handoff limitations and rejection/status diagnostic fallback are recorded in [Current Implementation Status](#current-implementation-status). A version or runtime-scope mismatch is not applied, temporary plugin-authority unavailability leaves the durable effect retryable, and rollback flows drain or purge queued work that cannot satisfy the fence.
 
 ## Timer Failure Semantics
 

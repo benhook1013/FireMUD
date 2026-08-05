@@ -14,9 +14,9 @@ The canonical target is Account-owned authentication and authority, exact JWT pr
 
 ### Canonical Authority Tuple
 
-The canonical `authorityTuple` schema, exact nested field names, profile requirements, and registry mapping are defined in [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md#canonical-authority-tuple). This document does not duplicate that schema. Authentication applies the canonical tuple unchanged to JWT claims, issued-token records, revocation events, Account leases, gameplay bindings, refresh requests, rebind proofs, and installation acknowledgements; a missing applicable field, extra scope, malformed value, or mismatch fails closed.
+The canonical `authorityTuple` schema, exact nested field names, profile requirements, and registry mapping are defined in [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md#canonical-authority-tuple). This document does not duplicate that schema. Authentication applies the canonical `authorityTuple` unchanged to JWT claims, issued-token records, revocation events, Account leases, gameplay bindings, refresh requests, rebind proofs, and installation acknowledgements; a missing applicable field, extra scope, malformed value, or mismatch fails closed.
 
-Authentication applies the owner-defined tuple unchanged to admission and authorization. Account-owned generation/projection rules, route-class exceptions, and token-registry semantics remain canonical in [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md) and [Authorization Route Matrix](./system-architecture-authz-route-matrix.md); `membershipVersion` never substitutes for `membershipAuthorityGeneration`.
+Authentication applies the canonical `authorityTuple` unchanged to admission and authorization. Account-owned generation/projection rules, route-class exceptions, and token-registry semantics remain canonical in [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md) and [Authorization Route Matrix](./system-architecture-authz-route-matrix.md); `membershipVersion` is separate membership-version evidence and never substitutes for the `membershipAuthorityGeneration` member of `authorityTuple`.
 
 ## Implementation Status
 

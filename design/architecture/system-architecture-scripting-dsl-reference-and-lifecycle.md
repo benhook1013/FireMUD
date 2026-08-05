@@ -84,7 +84,7 @@ The required Trigger Identity fields and target-scope exceptions are defined in 
 | --- | --- | --- | --- |
 | 1 | **Trigger** | A concrete event such as `onEnterRegion`, `onCommand`, or a custom event emitted by a service. | gRPC `TriggerScriptEvent` call, tick heartbeat, or internal scheduler event. |
 | 2 | **DSL run** | Execution of a script handler in the sandboxed DSL for a single trigger. Produces domain commands, not direct state changes. | In-memory execution in the Automation & Scripting Service; results summarized as script work items. |
-| 3 | **Script work item** | A post-DSL, per-trigger descriptor of what should happen (domain commands plus the full applicable Trigger Identity, including `scriptEventId`, `playableStateScope` and `regionEpoch` when applicable, and version metadata) persisted durably (outbox). | Indexed via `automation:queue:{tenantInstanceTag}:<entityId>` when the work targets an entity, and later claimed by Automation's durable executor for Game Session handoff. |
+| 3 | **Script work item** | A post-DSL, per-trigger descriptor of what should happen (domain commands plus the applicable Trigger Identity defined in the [normative contract tables](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields), and version metadata) persisted durably (outbox). | Indexed via `automation:queue:{tenantInstanceTag}:<entityId>` when the work targets an entity, and later claimed by Automation's durable executor for Game Session handoff. |
 | 4 | **Tick command** | A concrete command that the Game Session Service executes during game ticks under its normal locking and idempotency rules. | Enqueued into `tick:{tenantRegionTag}:queue:<entityId>` for consumption by the tick loop. |
 
 Triggers lead to DSL runs, which produce durable script work items plus queue-pointer projection entries, and Automation's execution loop turns those work items into tick commands for the Game Session Service.
@@ -95,7 +95,7 @@ Triggers lead to DSL runs, which produce durable script work items plus queue-po
 
 The authoritative outbox, queue-pointer contract, and drain/handoff semantics now live in [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#work-item-outbox-contract-normative). This DSL reference keeps the anchor so existing readers can jump to the runtime owner without losing the lifecycle overview.
 
-The firing transition leaves one durable handler-level `script_event_audit` row for the applicable Trigger Identity; stage and outcome semantics are defined in the [normative audit table](./system-architecture-scripting-normative-contract-tables.md#table-2-script_event_audit-stages-and-outcomes). Command-level outcomes remain separate from that handler row. Handoff identity and retry rules follow the [cross-service scripting contracts](./system-architecture-scripting-contracts.md#2-script-work-item-vs-tick-command-boundary). At the current live boundary, the Game Session proto exposes `automationDispatchId`, command id/text, and selected provenance fields, but not `commandOrdinal` or the complete Trigger Identity; current diagnostics use those fields and parent work-item correlation as a fallback until the target proto migration.
+The firing transition leaves one durable handler-level `script_event_audit` row for the applicable Trigger Identity; stage and outcome semantics are defined in the [normative audit table](./system-architecture-scripting-normative-contract-tables.md#table-2-script_event_audit-stages-and-outcomes). Command-level outcomes remain separate from that handler row. Handoff identity and retry rules follow the [cross-service scripting contracts](./system-architecture-scripting-contracts.md#2-script-work-item-vs-tick-command-boundary). Current runtime implementation boundaries, including the live Game Session handoff shape and diagnostic fallback, are recorded in [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#current-implementation-status).
 
 ---
 
@@ -110,7 +110,7 @@ The firing transition leaves one durable handler-level `script_event_audit` row 
 The DSL supports a variety of **built-in lifecycle events** and **custom events**. The exact set of events and their payload schemas are defined in the Automation & Scripting Service and domain service contracts; this section summarizes the main categories and how they behave.
 
 - **Script lifecycle events**
-  - `onLoad` is a **script-level lifecycle event** that runs once per canonical readiness identity while that patch is becoming tenant-`READY`. In the first implementation slice it is limited to ephemeral readiness work (for example, validating configuration and warming recomputable in-process caches) rather than per-entity setup or durable shared-state creation.
+  - `onLoad` is a **script-level lifecycle event** that runs once per canonical readiness identity while that patch is becoming tenant-`READY`.
 
 - **Spawn and destruction events**
   - `onSpawn` events fire when an entity (such as an NPC) is created or enters a relevant region.
@@ -397,7 +397,7 @@ Determinism depends not only on stable RNG/time, but also on a stable **read sna
   - carry its own immutable version/read token captured at admission and reused for the whole run.
 - For custom and service-specific events, the event registry is the source of truth for snapshot authority and consistency class. Ingress must reject an event whose payload omits a registry-required snapshot token or whose token scope does not match the required Trigger Identity fields.
 - Eventually consistent or best-effort operational views may be exposed only to components whose outputs are non-authoritative (for example logging/diagnostics) or whose contract explicitly states that they do not affect gameplay branching.
-- `onLoad` and dry-run/test execution must also declare their snapshot source. In the first implementation slice:
+- `onLoad` and dry-run/test execution must also declare their snapshot source:
   - `onLoad` may read only configuration/runtime metadata and recomputable caches using a tenant-scoped readiness snapshot, not mutable gameplay state.
   - dry-run/test runs must either accept an explicit snapshot selector from tooling or record the server-chosen latest committed snapshot token in the returned/audited result so the run is reproducible.
 
@@ -436,7 +436,7 @@ message GetNearbyEntitiesRequest {
 
 In this shape, Automation captures `read_snapshot_token` once from ingress and forwards the same byte-for-byte token on every authoritative read made during that handler-scoped run. The resolved `playable_state_scope` also travels as first-class trigger identity for gameplay-originated events so shared-state and isolated-state realms do not collide in durable work, timer follow-up rows, or operator read models. A downstream service may decode the snapshot token internally into fields such as `regionEpoch=14` and `tickId=981223`, but the calling contract remains "one run, one committed snapshot."
 
-Crucially, **script handlers are not re-executed during tick replay or recovery**. The current Automation & Scripting executor evaluates each trigger at most once and retries a persisted work item without re-entering the DSL graph. At the current live handoff boundary, those retries use the available `automationDispatchId`, command id/text, selected provenance, and parent work-item correlation; this fallback does not claim end-to-end full Trigger Identity or ordinal support because the live Game Session proto lacks `commandOrdinal` and several applicable identity fields. Handoff retry and tick-effect idempotency follow the [cross-service scripting contracts](./system-architecture-scripting-contracts.md#2-script-work-item-vs-tick-command-boundary) and the tick idempotency rules. Determinism for scripting therefore depends on the **“no re-execution per trigger”** guarantee plus the seeded RNG, authoritative snapshot token, and time constraints.
+Crucially, **script handlers are not re-executed during tick replay or recovery**. A persisted work item is retried without re-entering the DSL graph. Handoff retry and tick-effect idempotency follow the [cross-service scripting contracts](./system-architecture-scripting-contracts.md#2-script-work-item-vs-tick-command-boundary) and the tick idempotency rules; the current live diagnostic fallback is recorded in [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#current-implementation-status). Determinism for scripting therefore depends on the **“no re-execution per trigger”** guarantee plus the seeded RNG, authoritative snapshot token, and time constraints.
 
 ---
 

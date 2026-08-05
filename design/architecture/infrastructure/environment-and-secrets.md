@@ -66,7 +66,7 @@ Redis coordination and cache/rate‑limit variables, along with the precedence a
 
 Environment variables that configure gRPC TLS certificate paths and the TCP Proxy → Gateway WebSocket mTLS hop are documented in the [TLS and certificates catalog](./environment-and-secrets-catalog.md#tls--certificates). Conceptual TLS and rotation behavior is covered in:
 
-- [Certificate management and watchers](environment-and-secrets-overview.md#certificate-management-watchers)
+- [Certificate management and watchers](environment-and-secrets-overview.md#certificate-management-and-watchers)
 - [TLS termination for Gateway](../system-architecture-security.md#tls-termination-for-gateway)
 - [Key and certificate rotation](../system-architecture-security.md#key-and-certificate-rotation)
 

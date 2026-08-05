@@ -398,7 +398,7 @@ OK PLAY Entered world: Demo World
 
 LOOK
 OK LOOK
-Room: Candle-lit Antechamber (Room Instance ID: 1021)
+Room: Candle-lit Antechamber (Room Instance ID: R-1021)
 Short: You stand in a basalt chamber warmed by a single brazier.
 Long: Stalactites drip along the northern wall while a faint draft carries the smell of damp earth from the lower tunnels.
 Exits: NORTH (arched passage toward the cavern mouth), EAST (narrow fissure descending toward the forges).
@@ -419,3 +419,5 @@ You tell Sora, "Meet me at the forge."
 DANCE
 ERROR UNKNOWN_COMMAND DANCE
 ```
+
+This current-runtime transcript retains the World Management bridge's `R-<roomInstanceRowId>` encoding. Target scoped numeric `roomInstanceId` examples follow the [Identifier Glossary](../../system-architecture-identifier-glossary.md) and the [World Management room-identity migration contract](../world-management-service/api-contracts.md#target-same-fence-contract).
