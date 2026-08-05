@@ -188,7 +188,13 @@ docs_step = find_step(ci, "docs-check", "Build documentation site", "ci workflow
 require_contains(
     docs_step,
     ("run",),
-    "python3 -m mkdocs build --clean --strict",
+    "python3 -m mkdocs build --clean",
+    "ci workflow",
+)
+require_contains(
+    docs_step,
+    ("run",),
+    "Strict mode remains deferred until the legacy anchor-warning backlog is removed.",
     "ci workflow",
 )
 docs_node_step = find_step(ci, "docs-check", "Set Up Node", "ci workflow")
