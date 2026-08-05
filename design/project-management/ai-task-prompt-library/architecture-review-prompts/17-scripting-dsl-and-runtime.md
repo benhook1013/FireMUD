@@ -3,9 +3,8 @@
 Read the following documents. Follow references and read nearby related files as required when a listed document explicitly delegates a canonical contract or when a closely related file is required to judge an implementation-blocking gap. Do not recursively fan out further.
 
 - `design/architecture/system-architecture-scripting.md`
-- `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md`
-- `design/architecture/system-architecture-scripting-dsl-for-designers.md`
 - `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`
+- `design/architecture/system-architecture-scripting-dsl-for-designers.md`
 - `design/architecture/system-architecture-scripting-runtime-execution.md`
 - `design/architecture/system-architecture-scripting-scheduler-and-timers.md`
 - `design/architecture/system-architecture-scripting-examples-and-patterns.md`

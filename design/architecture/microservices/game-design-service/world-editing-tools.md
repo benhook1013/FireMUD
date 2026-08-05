@@ -310,4 +310,4 @@ Schema changes or identifier migrations that affect these shared templates must 
 
 - [Game Design Service Architecture](README.md)
 - [System Architecture – Transactions](../../system-architecture-transactions.md)
-- [User Journeys – World and Entity Design](../../user-journeys-creators.md#2-world-and-entity-design)
+- [User Journeys – World and Entity Design](../../../product/user-journeys/creators.md#2-world-and-entity-design)

@@ -46,4 +46,4 @@ If an operator credential is suspected compromised:
 ## Related Documentation
 
 - `design/architecture/system-architecture-security.md`
-- `design/architecture/system-architecture-runbooks.md`
+- [Operations documentation](../operations/README.md)

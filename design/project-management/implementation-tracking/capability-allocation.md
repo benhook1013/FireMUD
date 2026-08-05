@@ -4,7 +4,7 @@ Status: Current allocation map.
 
 ## Purpose and Authority Boundary
 
-This file allocates every leaf capability in the [Product Capability Taxonomy](../../architecture/product-capability-taxonomy.md) to exactly one primary implementation tracker. It is an implementation-tracking navigation and ownership map, not a source of product behavior, architecture, implementation status, or verification state. Canonical target-state behavior remains in `design/architecture`, and each primary tracker remains authoritative for its own implementation and proof record.
+This file allocates every leaf capability in the [Product Capability Taxonomy](../../product/capability-taxonomy.md) to exactly one primary implementation tracker. It is an implementation-tracking navigation and ownership map, not a source of product requirements, observable behavior, technical contracts, implementation status, or verification state. Product authority remains in `design/product`, technical-contract authority remains in `design/architecture`, and each primary tracker remains authoritative for its own implementation and proof record.
 
 Primary allocation identifies the tracker responsible for maintaining the complete reader-facing implementation record for that capability. Secondary handoffs identify adjacent tracker records that participate in the capability without creating duplicate ownership.
 

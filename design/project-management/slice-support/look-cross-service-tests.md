@@ -1,6 +1,12 @@
 # LOOK Cross-Service Test Plan
 
-This plan documents how the cross-service WebSocket and Telnet tests exercise the data-driven `LOOK` path end-to-end. See `design/project-management/slice-support/look-and-say-regressions.md` for the shared LOOK/SAY regression catalog and metrics notes.
+This plan documents how the cross-service WebSocket and Telnet tests exercise the data-driven `LOOK` path end-to-end. See [LOOK and communication regressions](./look-and-say-regressions.md) for the shared LOOK/SAY regression catalog and metrics notes.
+
+## Current Implementation
+
+- `LookWebSocketCrossServiceTest` boots Game Session, Game Logic (pointed at stubbed World/Entity servers), Redis, Postgres, and the Gateway stub, then runs `POST /sessions` → `LOGIN` → `LOOK`, validates `LookTestFixtures.canonicalLookText()`, and captures failure metrics/logs when `ROOM_NOT_FOUND` is triggered.
+- `TelnetGatewayGameSessionAccountCrossServiceIntegrationTest` runs the same stack via TCP Proxy/Gateway, drives `WORLDS` / `LOGIN` / `PLAY` / `LOOK`, ensures the Telnet transcript matches the WebSocket output, then triggers a missing-room failure so the instrumentation docs capture `ERROR ROOM_NOT_FOUND`.
+- Each module exposes a `crossServiceTest` task and the root `./gradlew crossServiceTest` aggregates them, so the automation runs only when explicitly requested.
 
 ## Goals
 
@@ -19,19 +25,7 @@ This plan documents how the cross-service WebSocket and Telnet tests exercise th
 
 - Stub the World and Entity services via lightweight gRPC servers that return the deterministic room snapshot and entity list referenced earlier so the tests control the `LOOK` response and failure modes. Point Game Logic at these stubs (`firemud.services.world-management-service`, `firemud.services.entity-management-service`) and the Game Session service at the sprung-up Game Logic instance (`firemud.services.game-logic-service`). For WebSocket/Telnet runs driven by Testcontainers, expose the stub ports via dynamic properties so each test can create reproducible transcripts.
 - Exercise the full `LOGIN` → `LOOK` flow: authenticate via `AccountService` (stubbed to accept `demo@example.com`/`swordfish`), send the authenticated `LOOK` request through WebSocket or Telnet, and assert both the structured `LookResult` and rendered text match the documented transcript in Section 1. Toggle `game.logic.default-room-id` to a missing room so the failure paths (`ERROR ROOM_NOT_FOUND`, `ERROR WORLD_UNAVAILABLE`, `ERROR ENTITY_UNAVAILABLE`) are also covered.
-- Capture the new observability signals before/after each attempt using `design/project-management/slice-support/look-instrumentation.md`: hit `/actuator/prometheus` to verify `gamesession.command.look.invocations` increments and `gamesession.command.look.failures{error=<CODE>}` tags the expected code, and tail Game Session/Game Logic logs to ensure `LookCommandHandler`/`LookAggregationService` emit the `Rendered LOOK text`/`LOG WARN LOOK failed <ERROR>` lines.
-
-## Implementation checklist
-
-1. Create or reuse `LookTestFixtures` (already committed) so the stubs can return the canonical transcript used by both the Game Logic renderer and the cross-service assertions.
-2. Add a WebSocket-focused cross-service integration test that:
-   - Starts Game Session, Game Logic (pointed at stall world/entity stubs), Redis, Postgres, and the Gateway stub.
-   - Performs `POST /sessions` → `LOGIN` → `LOOK`.
-   - Validates the multi-line `LOOK` response matches `LookTestFixtures.canonicalLookText()`.
-   - Toggles `game.logic.default-room-id`/`firemud.services.world-management-service` to trigger `ERROR ROOM_NOT_FOUND` and ensures the error transcript plus metrics/log tags match the instrumentation doc.
-3. Add a Telnet/TCP Proxy variant that reuses the same service stack, sending `WORLDS` + `LOGIN` + `PLAY` + `LOOK` over the proxy. Compare the Telnet transcripts to the WebSocket output (ignoring prompts).
-4. Capture the relevant metrics/logs in both tests (via `/actuator/prometheus` or log tailing) and assert `gamesession.command.look.*` increments as documented.
-5. Wire both tests into a dedicated Gradle source set/task (for example `crossServiceTest`) so they can be run independently from the default suite and referenced in README/test docs.
+- Capture the observability signals before/after each attempt using [LOOK instrumentation](./look-instrumentation.md): hit `/actuator/prometheus` to verify `gamesession.command.look.invocations` increments and `gamesession.command.look.failures{error=<CODE>}` tags the expected code, and tail Game Session/Game Logic logs to ensure `LookCommandHandler`/`LookAggregationService` emit the `Rendered LOOK text`/`LOG WARN LOOK failed <ERROR>` lines.
 
 ## WebSocket Test
 
@@ -58,12 +52,6 @@ This plan documents how the cross-service WebSocket and Telnet tests exercise th
 - Each module now exposes a `crossServiceTest` task that only runs the `crossservice` test packages so Game Session and TCP Proxy can bootstrap their respective flows without affecting the default test suite.
 - A root-level `./gradlew crossServiceTest` task aggregates `:game-session-service:crossServiceTest` and `:tcp-proxy-service:crossServiceTest`, making the entire regression suite easy to run in CI or locally while isolating it from the standard unit tests.
 
-## Follow-up
+## Maintenance
 
-- Once these tests exist, update `design/project-management/testing-focus-areas.md`, `look-smoke-tests.md`, `look-instrumentation.md`, and the new transcripts folder with links to `./gradlew crossServiceTest`, any new artifacts, and the observed error codes so the monitoring docs stay in sync.
-
-## Current implementation
-
-- `LookWebSocketCrossServiceTest` now boots Game Session, Game Logic (pointed at the stubbed World/Entity servers), Redis, Postgres, and the Gateway stub, then runs `POST /sessions` → `LOGIN` → `LOOK`, validates `LookTestFixtures.canonicalLookText()`, and captures the failure metrics/logs when `ROOM_NOT_FOUND` is triggered.
-- `TelnetGatewayGameSessionAccountCrossServiceIntegrationTest` runs the same stack via the TCP Proxy/Gateway, drives `WORLDS` / `LOGIN` / `PLAY` / `LOOK`, ensures the Telnet transcript matches the WebSocket output, then triggers a missing room failure so the instrumentation docs capture the `ERROR ROOM_NOT_FOUND` path.
-- Each module exposes a `crossServiceTest` task and the root `./gradlew crossServiceTest` aggregates them, so the automation only runs when explicitly requested.
+- Keep [testing focus areas](../testing-focus-areas.md), [LOOK smoke tests](./look-smoke-tests.md), and [LOOK instrumentation](./look-instrumentation.md) aligned with `./gradlew crossServiceTest`, its artifacts, and observed error codes.

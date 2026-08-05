@@ -8,7 +8,7 @@ For the canonical, detailed design, see `design/architecture/system-architecture
 
 ## Implementation Notes
 
-This document describes the full target-state recovery and operator model. The current live substrate is narrower and should be read alongside the `02.18.7` through `02.18.9` slice docs:
+This document describes the full target-state recovery and operator model. Current implementation and proof status is tracked in [Game Session runtime and tick coordination](../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md). The live substrate is narrower:
 
 - the live durable ownership row is currently `{tenantId, gameInstanceId}`-scoped;
 - the live owner/status API is `GetRuntimeOwnershipStatus`, not yet a full region-scoped status surface;

@@ -863,4 +863,4 @@ Gameplay takeover, reconnect, token refresh, membership-version handling, and co
 - [Session Behavior](./system-architecture-session-behavior.md)
 - [System Architecture Overview](./system-architecture-overview.md)
 - [Tick System and Runtime Design](./system-architecture-ticks.md)
-- [User Journeys – Sign Up](./user-journeys-players.md#1-sign-up)
+- [User Journeys – Sign Up](../product/user-journeys/players.md#1-sign-up)

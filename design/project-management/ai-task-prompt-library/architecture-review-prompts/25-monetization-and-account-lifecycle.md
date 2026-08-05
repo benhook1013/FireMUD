@@ -8,7 +8,7 @@ Read the following documents. Follow references and read nearby related files as
 - `design/architecture/microservices/account-service/subscription-management.md`
 - `design/architecture/system-architecture-authentication.md`
 - `design/architecture/system-architecture-multi-tenancy.md`
-- `design/project-management/core-requirements.md`
+- `design/product/requirements.md`
 
 Then:
 

@@ -96,7 +96,7 @@ Exposing raw instance IDs makes routing explicit to the client but leaks replace
 - [Multi-tenancy](../system-architecture-multi-tenancy.md)
 - [Runtime versioning](../system-architecture-versioning-runtime.md)
 - [Session behavior](../system-architecture-session-behavior.md)
-- [Creator journeys](../user-journeys-creators.md)
+- [Creator journeys](../../product/user-journeys/creators.md)
 - [Game Session API contracts](../microservices/game-session-service/api-contracts.md)
 - [Realm routing and playable state tracker](../../project-management/implementation-tracking/realm-routing-and-playable-state.md)
 

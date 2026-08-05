@@ -2,7 +2,7 @@
 
 ## 1. Introduction
 
-This document is the canonical product requirements summary and detailed requirements set for the FireMUD platform.
+This document is the canonical product requirements overview for the FireMUD platform. It records product scope and intended outcomes; detailed technical contracts remain in the linked architecture documents.
 
 ### 1.1 Purpose
 
@@ -49,7 +49,7 @@ This document outlines the **core functional and non-functional requirements** f
 ### 2.3 User & Account Management
 
 - The platform must provide **secure authentication and user management**.
-- Gameplay login commands are fronted by the **Game Session Service**, which calls the **Account Service** to verify credentials and issue JWTs/tokens used by backend services.
+- Gameplay clients must provide **secure, consistent login and session admission**, with credentials and delegated access limited to the authority required for each operation. See [Authentication & Authorization](../architecture/system-architecture-authentication.md).
 - Role-based access control (RBAC) for **admins, moderators, and players**.
 - Users should be able to **create and manage multiple characters per game**.
 - Sessions should support **persistent logins and reconnection handling**.
@@ -69,9 +69,7 @@ See [Account Service](../architecture/microservices/account-service/README.md) f
   - The platform must support **persistent world states**, ensuring that world changes **persist beyond player sessions**.
   - **Scheduled events** (e.g., daily resets, seasonal world changes, NPC schedules) should be configurable.
   - NPC actions and environmental changes should **continue in a believable way even if no players are online**.
-- Persistent storage for **player, NPC, and item data** across services:
-  - The [Entity Management Service](../architecture/microservices/entity-management-service/README.md) owns all runtime entities and inventories, including player gear, containers, and items on the ground in rooms.
-  - The [World Management Service](../architecture/microservices/world-management-service/README.md) owns world topology and ambient world state (rooms, regions, instances, environmental state) but does **not** store live items or inventory contents.
+- Persistent world, character, NPC, item, inventory, and environmental state must remain **consistent, durable, and independently evolvable** across its owning domains. See the [Entity Management Service](../architecture/microservices/entity-management-service/README.md) and [World Management Service](../architecture/microservices/world-management-service/README.md) for the exact ownership boundary.
 
 ### 2.5 Game Logic & Automation
 
@@ -82,7 +80,7 @@ See [Account Service](../architecture/microservices/account-service/README.md) f
   - NPCs react dynamically to the world using **event-driven** (trigger-based) and **state-driven** (persistent memory) behaviors.
   - NPCs maintain **awareness of past interactions**, allowing dynamic responses.
   - The system supports **world simulation**, enabling **autonomous NPC actions** even when no players are online.
-- Uses a **hybrid tick model** with **one action per entity per tick** for deterministic processing across independently scaled regions.
+- Time-based gameplay must process actions **deterministically and fairly** across independently scalable regions while supporting game-configured pacing. See the [Tick System](../architecture/system-architecture-ticks.md).
 See [Game Logic Service](../architecture/microservices/game-logic-service/README.md) and [Automation & Scripting Service](../architecture/microservices/automation-scripting-service/README.md) for design details.
 
 ### 2.6 Real-Time Multiplayer & Communication
@@ -100,8 +98,8 @@ See [Social & Groups Service](../architecture/microservices/social-groups-servic
   - The platform offers **AI & scripting tools** for creating deep, dynamic game interactions.
   - Games can define **unique AI behaviors, quest logic, and in-game events** without requiring custom code deployments.
   - AI behaviors should be flexible enough to allow **autonomous world simulation**, making the game feel persistent and alive.
-  - Scripts are authored through a **component-based DSL** with a **visual editor**.
-  - The Automation & Scripting Service executes scripts in a **sandbox** with **resource quotas** to prevent abuse.
+  - Creators can author validated automation through **textual and visual tools** appropriate to their experience level.
+  - Untrusted automation must not compromise platform security, stability, tenant isolation, or gameplay fairness; execution resources remain bounded. See [Scripting & Automation](../architecture/system-architecture-scripting.md).
 - **Item & equipment balancing tools** to allow game creators to tweak in-game balance.
 
 See [Game Design Service](../architecture/microservices/game-design-service/README.md) for authoring tools.
@@ -112,7 +110,7 @@ See [Game Design Service](../architecture/microservices/game-design-service/READ
 - **In-game reporting & ban system** for handling violations.
 - **Moderation policy definitions** including profanity filters.
 - **Central analytics dashboards and logging** for tracking player activity and game performance.
-- **Runtime feature flags** are defined in the **Game Design Service**, stored and managed by the **Game Session Service**, and can be toggled through the **Logging & Admin Service**. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md) for details.
+- Operators and authorized game administrators can manage **tenant-scoped runtime feature flags** through audited controls. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md) for the ownership and activation contract.
 - **Monetization & Payment System**:
   - The platform integrates **Stripe or similar services** for in-game purchases.
   - Game creators can offer **subscriptions, one-time purchases, and donations**.
@@ -125,11 +123,10 @@ See [Logging & Admin Service](../architecture/microservices/logging-admin-servic
 
 ### 2.9 Versioning & Runtime Configuration
 
-- The **Game Design Service** publishes immutable game versions identified by a `version_id`.
-- Domain services copy design data by `version_id` and do not query the design database at runtime.
-- The **Game Session Service** activates the desired `version_id` when launching or cutting over the instance currently routed behind a specific realm.
-- Runtime feature flags are stored with the session and edited via the **Logging & Admin Service**. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md).
-- The Game Design Service maintains **patch notes** for each published version so administrators can track changes over time.
+- Creators can publish **immutable, identifiable game versions** and select a published version when launching or updating a realm.
+- A running realm uses one **internally consistent published design** rather than mixing independently changing authoring state.
+- Authorized administrators can activate versions and runtime flags through controlled launch, cutover, and rollback experiences. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md).
+- Published versions include **patch notes** so creators, administrators, and players can understand relevant changes over time.
 See [Game Design Service](../architecture/microservices/game-design-service/README.md) for publishing workflows.
 
 ---
@@ -138,42 +135,33 @@ See [Game Design Service](../architecture/microservices/game-design-service/READ
 
 ### 3.1 Networking & API Gateway
 
-- **WebSocket/TCP-based real-time networking** for low-latency gameplay.
-- **TCP Proxy Service** bridges legacy **Telnet** clients to WebSockets before reaching the Gateway.
-- **API Gateway** manages requests between microservices and handles external integrations.
-- **Gameplay login is handled by the Game Session Service**; any JWT on admin or REST endpoints is validated by the consuming service. For first-party `/ws/game/**` handshakes, Spring Cloud Gateway validates the short-lived connect token at the edge and Game Session validates the signed Gateway-issued connect context before gameplay admission. Gameplay credentials and admission still remain `LOGIN` / `PLAY`-driven rather than JWT-on-every-message.
-- **Internal microservices communicate over gRPC**, with **mTLS** as the canonical target-state transport for Kubernetes-backed environments using Spring Boot SSL bundles plus Spring gRPC server SSL bundle binding. Hosted preview may temporarily use plaintext internal gRPC as an explicitly documented exception while the bundle-based path is being re-proved.
-- **Cert-manager** provisions and rotates these certificates as **Kubernetes Secrets**.
-- Multi-server support enables **scaling hosted games separately**.
-See [Gateway Architecture](../architecture/system-architecture-gateway.md) and [Reconnection Strategy](../architecture/system-architecture-reconnection.md) for network flow details.
+- The platform must provide **low-latency, real-time gameplay networking** for supported clients over WebSocket/TCP.
+- First-party WebSocket clients and legacy **Telnet/TCP clients** must have supported paths into the same gameplay experience, with consistent admission and failure behavior. See [Protocol Bridging](../architecture/system-architecture-protocol-bridging.md) and [Gateway Architecture](../architecture/system-architecture-gateway.md).
+- External client traffic must use **stable, supported entry points** with the routing, filtering, and edge-failure behavior required for gameplay and platform integrations. The exact edge topology is defined by [Gateway Architecture](../architecture/system-architecture-gateway.md).
+- Players must be able to **authenticate and enter gameplay securely** through the Game Session and Account ownership boundaries, while administrative and REST clients must have credentials and permissions enforced by the consuming service. See [Authentication & Authorization](../architecture/system-architecture-authentication.md) and [JWT and Token Contracts](../architecture/system-architecture-jwt-and-token-contracts.md).
+- Internal service communication must be **authenticated, confidential, and contract-governed**, with environment-specific deployment exceptions documented rather than silently weakening the security boundary. See [gRPC API Style & Versioning](../architecture/system-architecture-grpc.md), [Security Architecture](../architecture/system-architecture-security.md), and [Infrastructure Documentation](../architecture/infrastructure/README.md) for the exact transport and certificate contracts.
+- Multi-server support must enable **hosted games to scale independently**.
 
 ### 3.2 Persistence & Caching
 
-- **PostgreSQL** is the primary database for game world, entity, and account storage.
-- **Redis** stores transient gameplay and session state only; all authoritative data remains in PostgreSQL.
-- **Database migrations are managed per service using [Flyway](../architecture/system-architecture-database-migrations.md).**
-See [Redis Architecture](../architecture/system-architecture-redis.md) for key conventions and caching strategy.
+- The platform must **durably persist authoritative game-world, entity, and account data** beyond individual player sessions.
+- Transient session state and caching may support responsive gameplay and recovery, but must not replace or override **authoritative domain data**. See [Redis Architecture](../architecture/system-architecture-redis.md) for the ownership and durability boundary.
+- Each service must support **safe, independently managed persistence evolution** without compromising data integrity. See [Database Migrations](../architecture/system-architecture-database-migrations.md) for the canonical schema and migration contract.
 
 ### 3.3 Deployment Model
 
-- The platform is designed for **cloud-native deployment**, using:
-  - **Docker & Kubernetes** for containerization and scaling.
-  - **Automated CI/CD pipelines** for service updates and maintenance (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md)).
-- Infrastructure should allow **horizontal scaling** for high-concurrency use cases.
-- Supports **multi-region deployments** to provide better latency for global users.
-- **Central logging and metrics** use the stack described in [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md).
-- **Velero** backs up Kubernetes manifests only. PostgreSQL data is protected by a `pg_dump` CronJob. The production backup schedule is defined in [Backup & Disaster Recovery](../architecture/system-architecture-backup-recovery.md).
-See the [CI/CD Pipeline](../architecture/system-architecture-cicd.md) for workflow details.
+- The platform must support **repeatable cloud deployment and automated service delivery**, with independently scalable services. See [Deployment Environments](../architecture/infrastructure/deployment-environments.md) and the [CI/CD Pipeline](../architecture/system-architecture-cicd.md) for the deployment contract.
+- Infrastructure must support **horizontal scaling** for high-concurrency use cases and **multi-region deployment** to improve latency for global users.
+- Operators must have **centralized logging and metrics** sufficient to monitor player activity, service health, and game performance. See [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md).
+- Deployment configuration and authoritative data must have **scheduled backup and disaster-recovery coverage** sufficient to restore the platform after infrastructure or data loss. See [Backup & Disaster Recovery](../architecture/system-architecture-backup-recovery.md) for the exact backup responsibilities.
 
 ### 3.4 Gameplay Session Architecture
 
-- **Game Session Service** orchestrates tick execution and runtime configuration.
-- **Redis** stores volatile session state so gameplay sessions can be recovered cleanly after disruptions.
-- Tick regions operate independently for scalability but rely on Redis for atomic coordination.
-- Redis runs with **AOF persistence**; replication remains asynchronous, and tick state is treated as volatile coordination data that can be reconstructed via idempotent replay after failover.
-- Lua scripts in Redis ensure atomic, shard-local tick updates on the primary; correctness and recovery rely on AOF plus idempotent replays against PostgreSQL rather than synchronous replica acknowledgments.
-- A layered reconnection model—**TCP Proxy Service → Spring Cloud Gateway → Game Session Service**—must provide a clear, reliable recovery path for all clients. Third-party clients recover through the documented reconnect flow, while first-party clients may automate that same flow to reduce user-visible friction.
-See [Tick System](../architecture/system-architecture-ticks.md) and [Reconnection Strategy](../architecture/system-architecture-reconnection.md) for implementation details.
+- Active gameplay sessions must provide **consistent tick execution and runtime configuration**, with the Game Session ownership and versioning boundaries defined by [Tick System](../architecture/system-architecture-ticks.md) and [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md).
+- Players must be able to **recover gameplay sessions after service or connection disruptions** using current authoritative state and the documented resume-or-reload behavior, without treating transient coordination state as authoritative. See [Reconnection Strategy](../architecture/system-architecture-reconnection.md) and [Redis Architecture](../architecture/system-architecture-redis.md).
+- Game execution must support **independently scalable regions** while preserving deterministic action processing and coordination correctness. The exact tick, coordination, and failover contracts are defined by [Tick System](../architecture/system-architecture-ticks.md).
+- Failover and recovery must preserve **gameplay correctness and bounded availability**, including safe reconstruction of volatile coordination from durable state where required. See [Tick Failures & Operations](../architecture/system-architecture-tick-failures-and-operations.md) and [Redis Recovery](../architecture/system-architecture-redis-reset-and-recovery.md).
+- All clients must have a **clear, reliable reconnect path**. Third-party clients must be able to follow the documented flow independently; first-party clients may automate that same flow to reduce user-visible friction. See [Reconnection Strategy](../architecture/system-architecture-reconnection.md).
 
 ---
 

@@ -446,7 +446,7 @@ For details on the metrics glossary and cross-service correlation, see `design/a
 
 - [Automation & Scripting Service](../automation-scripting-service/README.md)
 - [Game Design Service Architecture](README.md)
-- [User Journeys – Extensibility & External Tools](../../user-journeys-creators.md#8-extensibility--external-tools)
+- [User Journeys – Extensibility & External Tools](../../../product/user-journeys/creators.md#8-extensibility--external-tools)
 - [System Architecture – Scripting & Automation](../../system-architecture-scripting.md)
 - [Asset Storage Setup](asset-storage.md)
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)

@@ -1010,7 +1010,7 @@ def _validate_doc_semantics() -> list[Finding]:
             )
         )
 
-    runbook_index = REPO_ROOT / "design" / "architecture" / "system-architecture-runbooks.md"
+    runbook_index = REPO_ROOT / "design" / "operations" / "README.md"
     runbook_index_text = _read_text(runbook_index)
     if not re.search(r"Player Experience Incidents[\s\S]*Telnet/WebSocket path availability", runbook_index_text):
         findings.append(

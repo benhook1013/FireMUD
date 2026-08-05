@@ -132,4 +132,4 @@ Prompt/status handling should evolve toward MCP or other structured client data 
 - [Protocol Bridging](./system-architecture-protocol-bridging.md)
 - [TCP Proxy Service](./microservices/tcp-proxy-service/README.md)
 - [System Architecture Overview](./system-architecture-overview.md)
-- [User Journeys – Extensibility & External Tools](./user-journeys-creators.md#8-extensibility--external-tools)
+- [User Journeys – Extensibility & External Tools](../product/user-journeys/creators.md#8-extensibility--external-tools)

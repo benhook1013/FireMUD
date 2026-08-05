@@ -177,6 +177,6 @@ Operational behavior around Stripe integration focuses on observability, idempot
 
 For current requirements and additional context, see:
 
-- [Core Requirements – Monetization](../../../project-management/core-requirements.md#2.8-moderation-administration--monetization)
+- [Product Requirements – Monetization](../../../product/requirements.md#28-moderation-administration--monetization)
 - [Subscription Management Design](./subscription-management.md)
 - [Account Service README](./README.md)

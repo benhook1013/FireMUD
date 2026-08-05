@@ -10,7 +10,7 @@ from urllib.parse import unquote
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TAXONOMY = ROOT / "design/architecture/product-capability-taxonomy.md"
+TAXONOMY = ROOT / "design/product/capability-taxonomy.md"
 TRACKING_DIR = ROOT / "design/project-management/implementation-tracking"
 ALLOCATION = TRACKING_DIR / "capability-allocation.md"
 TRACKERS = {
@@ -187,7 +187,7 @@ def is_canonical_proof_tool(relative: str) -> bool:
 def is_docs_only_target(relative: str) -> bool:
     path = Path(relative)
     return (
-        relative.startswith(("design/architecture/", "docs/"))
+        relative.startswith(("design/architecture/", "design/product/", "docs/"))
         or path.suffix.lower() in MARKDOWN_SUFFIXES
         or path.name.lower().startswith("readme")
     )
@@ -212,8 +212,8 @@ def validate_evidence_anchor(
 ) -> None:
     _, relative, _ = resolve_evidence_target(root, owner, target, context)
     if category == "design":
-        if not relative.startswith("design/architecture/"):
-            fail(f"{context}: design evidence must target design/architecture, got {relative}")
+        if not relative.startswith(("design/architecture/", "design/product/")):
+            fail(f"{context}: design evidence must target design/architecture or design/product, got {relative}")
     elif category == "production":
         if is_docs_only_target(relative) or is_test_target(relative):
             # This contract script is a declared implementation anchor for the

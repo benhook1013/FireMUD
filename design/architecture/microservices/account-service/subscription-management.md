@@ -228,6 +228,6 @@ External HTTP billing and subscription APIs use the declared `control-ui` JWT pl
 
 For related context, see:
 
-- [Core Requirements – Monetization](../../../project-management/core-requirements.md#2.8-moderation-administration--monetization)
+- [Product Requirements – Monetization](../../../product/requirements.md#28-moderation-administration--monetization)
 - [Stripe Integration Design](./stripe-integration.md)
 - [Account Service README](./README.md)

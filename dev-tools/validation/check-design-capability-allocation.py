@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the architecture design-allocation ledgers against repository paths."""
+"""Validate the product and architecture design-allocation ledgers against repository paths."""
 
 from __future__ import annotations
 
@@ -12,13 +12,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 ALIGNMENT_DIR = Path("design/project-management/design-alignment")
 ARCHITECTURE_DIR = Path("design/architecture")
-TAXONOMY = Path("design/architecture/product-capability-taxonomy.md")
+PRODUCT_DIR = Path("design/product")
+TAXONOMY = PRODUCT_DIR / "capability-taxonomy.md"
 TOP_ALLOCATION = ALIGNMENT_DIR / "design-capability-allocation.md"
 SYSTEM_ALLOCATION = ALIGNMENT_DIR / "design-capability-allocation-system.md"
 MICROSERVICE_ALLOCATION = ALIGNMENT_DIR / "design-capability-allocation-microservices.md"
 MARKDOWN_LINK_RE = re.compile(r"\[[^]]+\]\(([^)]+)\)")
 GROUP_ID_RE = re.compile(r"[A-Z]{2}-\d+")
 SYSTEM_CLASSIFICATIONS = {"normative design", "runbook", "reference", "index"}
+PRODUCT_CLASSIFICATIONS = {"requirements", "taxonomy", "observable product behavior", "index"}
 
 
 def adr_allocation(primary: str, classification: str, *secondary: str) -> tuple[str, str, frozenset[str]]:
@@ -28,7 +30,6 @@ def adr_allocation(primary: str, classification: str, *secondary: str) -> tuple[
 SYSTEM_ALLOCATION_EXPECTATIONS = {
     # Direct architecture sources.
     "design/architecture/README.md": ("SF-1", "index"),
-    "design/architecture/product-capability-taxonomy.md": ("SF-1", "normative design"),
     "design/architecture/repository-structure.md": ("PO-3", "reference"),
     "design/architecture/service-responsibility-matrix.md": ("SF-1", "normative design"),
     "design/architecture/system-architecture-asset-store-runbook.md": ("AR-1", "runbook"),
@@ -79,13 +80,11 @@ SYSTEM_ALLOCATION_EXPECTATIONS = {
     "design/architecture/system-architecture-redis-script-rollout-and-compatibility.md": ("SF-2", "runbook"),
     "design/architecture/system-architecture-redis-usage-and-profiles.md": ("SF-2", "normative design"),
     "design/architecture/system-architecture-redis.md": ("SF-2", "normative design"),
-    "design/architecture/system-architecture-runbooks.md": ("PO-3", "index"),
     "design/architecture/system-architecture-scaling-runbook.md": ("PO-4", "runbook"),
     "design/architecture/system-architecture-scripting-contracts.md": ("AS-1", "normative design"),
     "design/architecture/system-architecture-scripting-control-plane-api.md": ("AS-1", "normative design"),
     "design/architecture/system-architecture-scripting-control-plane-events.md": ("SF-1", "normative design"),
     "design/architecture/system-architecture-scripting-control-plane-operations.md": ("AR-3", "normative design"),
-    "design/architecture/system-architecture-scripting-dsl-and-lifecycle.md": ("AS-1", "index"),
     "design/architecture/system-architecture-scripting-dsl-for-designers.md": ("AR-1", "reference"),
     "design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md": (
         "AS-1",
@@ -112,6 +111,7 @@ SYSTEM_ALLOCATION_EXPECTATIONS = {
     "design/architecture/system-architecture-telnet-degraded-runbook.md": ("PO-2", "runbook"),
     "design/architecture/system-architecture-temporal-workflows.md": ("SF-2", "normative design"),
     "design/architecture/system-architecture-testing.md": ("PO-4", "normative design"),
+    "design/architecture/system-architecture-threat-model.md": ("SF-1", "reference"),
     "design/architecture/system-architecture-tick-concepts-and-invariants.md": ("GR-1", "normative design"),
     "design/architecture/system-architecture-tick-execution-flows.md": ("GR-1", "normative design"),
     "design/architecture/system-architecture-tick-failures-and-operations.md": ("PO-4", "normative design"),
@@ -121,10 +121,6 @@ SYSTEM_ALLOCATION_EXPECTATIONS = {
     "design/architecture/system-architecture-transactions.md": ("SF-2", "normative design"),
     "design/architecture/system-architecture-versioning-runtime.md": ("AR-3", "normative design"),
     "design/architecture/system-context-diagram.md": ("SF-1", "index"),
-    "design/architecture/user-journeys-creators.md": ("AR-1", "reference"),
-    "design/architecture/user-journeys-operators.md": ("PO-1", "reference"),
-    "design/architecture/user-journeys-players.md": ("AA-2", "reference"),
-    "design/architecture/user-journeys.md": ("EA-3", "index"),
     # Infrastructure and generated sources.
     "design/architecture/infrastructure/README.md": ("PO-3", "index"),
     "design/architecture/infrastructure/deployment-environments.md": ("PO-3", "normative design"),
@@ -132,7 +128,18 @@ SYSTEM_ALLOCATION_EXPECTATIONS = {
     "design/architecture/infrastructure/environment-and-secrets-overview.md": ("SF-1", "normative design"),
     "design/architecture/infrastructure/environment-and-secrets.md": ("SF-1", "index"),
     "design/architecture/infrastructure/schedule.md": ("PO-3", "reference"),
+    "design/architecture/generated/README.md": ("AR-2", "index"),
     "design/architecture/generated/platform-settings-reference.md": ("AR-2", "generated"),
+}
+
+PRODUCT_ALLOCATION_EXPECTATIONS = {
+    "design/product/README.md": ("SF-1", "index"),
+    "design/product/requirements.md": ("SF-1", "requirements"),
+    "design/product/capability-taxonomy.md": ("SF-1", "taxonomy"),
+    "design/product/user-journeys/overview.md": ("EA-3", "observable product behavior"),
+    "design/product/user-journeys/players.md": ("AA-2", "observable product behavior"),
+    "design/product/user-journeys/creators.md": ("AR-1", "observable product behavior"),
+    "design/product/user-journeys/operators.md": ("PO-1", "observable product behavior"),
 }
 # Secondary sets are copied from the allocation registry and intentionally locked here so registry drift fails validation.
 ADR_ALLOCATION_EXPECTATIONS = {
@@ -493,6 +500,11 @@ def repository_files(root: Path) -> dict[str, set[str]]:
             for path in (root / ARCHITECTURE_DIR / "decisions").rglob("*.md")
             if path.is_file()
         },
+        "Product documentation": {
+            path.relative_to(root).as_posix()
+            for path in (root / PRODUCT_DIR).rglob("*.md")
+            if path.is_file()
+        },
     }
     all_paths: list[str] = []
     for name, paths in sets.items():
@@ -501,7 +513,7 @@ def repository_files(root: Path) -> dict[str, set[str]]:
             fail(f"{name}: duplicate repository path")
     duplicates = [path for path, count in Counter(all_paths).items() if count > 1]
     if duplicates:
-        fail(f"architecture source sets overlap: {sorted(duplicates)}")
+        fail(f"design source sets overlap: {sorted(duplicates)}")
     return sets
 
 
@@ -737,7 +749,7 @@ def validate_system(root: Path, source_sets: dict[str, set[str]], groups: set[st
         "Generated Ledger",
         source_sets["Generated references"],
         groups,
-        {"generated"},
+        {"generated", "index"},
         SYSTEM_ALLOCATION_EXPECTATIONS,
     )
     rows_by_name = {
@@ -824,6 +836,22 @@ def validate_system(root: Path, source_sets: dict[str, set[str]], groups: set[st
     if claimed_classifications != dict(actual_classifications):
         fail(f"{document.relative_to(root)}: classification count claim does not match ledger rows")
     return [*direct, *infrastructure, *generated]
+
+
+def validate_product(root: Path, source_sets: dict[str, set[str]], groups: set[str]) -> list[LedgerRow]:
+    document = root / TOP_ALLOCATION
+    expected_paths = source_sets["Product documentation"]
+    if set(PRODUCT_ALLOCATION_EXPECTATIONS) != expected_paths:
+        fail(f"{document.relative_to(root)}: product allocation expectations drifted")
+    return parse_linked_ledger(
+        root,
+        document,
+        "Product Documentation Allocation",
+        expected_paths,
+        groups,
+        PRODUCT_CLASSIFICATIONS,
+        PRODUCT_ALLOCATION_EXPECTATIONS,
+    )
 
 
 def parse_summary_table(
@@ -928,6 +956,10 @@ def expected_top_allocation_rows(
                 f"{len(source_sets['Infrastructure'])} infrastructure, and "
                 f"{generated_count} generated {generated_label}"
             ),
+            "Per-source allocation",
+        ),
+        "design/product/README.md": (
+            f"All {len(source_sets['Product documentation'])} files under `design/product/**`",
             "Per-source allocation",
         ),
     }
@@ -1035,6 +1067,7 @@ def validate_top_summary(
     system_rows: list[LedgerRow],
     micro_rows: list[LedgerRow],
     decision_rows: list[LedgerRow],
+    product_rows: list[LedgerRow],
 ) -> None:
     document = root / TOP_ALLOCATION
     headers, values = parse_summary_table(root, document, "Coverage Summary", {"Source class", "Discovered", "Allocated", "Ambiguous or gap", "Coverage"})
@@ -1048,6 +1081,7 @@ def validate_top_summary(
         "Generated references": sum(row.primary != "Exempt" for row in system_rows if row.path in source_sets["Generated references"]),
         "Microservice architecture": sum(row.primary != "Exempt" for row in micro_rows),
         "Architecture decisions": sum(row.primary != "Exempt" for row in decision_rows),
+        "Product documentation": sum(row.primary != "Exempt" for row in product_rows),
     }
     exemption_counts = {
         "Top-level architecture": 0,
@@ -1055,6 +1089,7 @@ def validate_top_summary(
         "Generated references": 0,
         "Microservice architecture": sum(row.primary == "Exempt" for row in micro_rows),
         "Architecture decisions": sum(row.primary == "Exempt" for row in decision_rows),
+        "Product documentation": sum(row.primary == "Exempt" for row in product_rows),
     }
     if set(values) != set(source_sets) | {"Total"}:
         fail(f"{document.relative_to(root)}: top-level coverage summary rows drifted")
@@ -1090,15 +1125,16 @@ def validate(root: Path = ROOT) -> None:
     system_rows = validate_system(root, source_sets, groups)
     micro_rows = parse_microservice_ledger(root, groups, source_sets["Microservice architecture"])
     validate_microservice_summary(root, micro_rows, source_sets["Microservice architecture"])
+    product_rows = validate_product(root, source_sets, groups)
     decision_rows = validate_top_allocation_ledger(
         root, groups, source_sets["Architecture decisions"], source_sets
     )
-    validate_top_summary(root, source_sets, system_rows, micro_rows, decision_rows)
+    validate_top_summary(root, source_sets, system_rows, micro_rows, decision_rows, product_rows)
     print(
         "design capability allocation passed: "
         f"{sum(len(paths) for paths in source_sets.values())} sources "
-        f"({sum(row.primary != 'Exempt' for row in [*system_rows, *micro_rows, *decision_rows])} allocated, "
-        f"{sum(row.primary == 'Exempt' for row in [*system_rows, *micro_rows, *decision_rows])} explicit exemptions)"
+        f"({sum(row.primary != 'Exempt' for row in [*system_rows, *micro_rows, *decision_rows, *product_rows])} allocated, "
+        f"{sum(row.primary == 'Exempt' for row in [*system_rows, *micro_rows, *decision_rows, *product_rows])} explicit exemptions)"
     )
 
 

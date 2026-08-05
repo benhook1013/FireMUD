@@ -1,6 +1,6 @@
 # Capability Implementation Reconciliation
 
-This record summarizes the automated reconciliation from the complete product capability taxonomy through the permanent implementation trackers. It reports status and evidence; canonical target-state behavior remains under [`design/architecture`](../../architecture/README.md).
+This record summarizes the automated reconciliation from the complete product capability taxonomy through the permanent implementation trackers. It reports status and evidence; product requirements and observable behavior remain under [`design/product`](../../product/README.md), while technical contracts remain under [`design/architecture`](../../architecture/README.md).
 
 ## Status
 
