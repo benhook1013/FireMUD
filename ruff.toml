@@ -1,5 +1,7 @@
 line-length = 120
-target-version = "py314"
+# Repository tools remain compatible with the supported local Python 3.10 runtime;
+# CI validates that same source on a newer interpreter.
+target-version = "py310"
 
 [lint]
 # Repository tools are invoked through an explicit Python interpreter; executable
