@@ -106,7 +106,7 @@ In addition to live event handling, the service exposes a non-committing test pa
 
 ## Reload Backpressure Contract
 
-During `reloadState=RELOADING`, event ingress must return explicit backpressure signals so callers can decide whether to retry:
+Reload admission and retry semantics follow the canonical [Scripting & Automation Cross-Service Contracts](../../system-architecture-scripting-contracts.md#7-reload-backpressure-contract). At this API boundary, during `reloadState=RELOADING`, event ingress must return explicit backpressure signals so callers can decide whether to retry:
 
 - `TriggerScriptEventResponse.admitted=false`
 - `TriggerScriptEventResponse.admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_RELOADING`
@@ -125,11 +125,7 @@ These ingress response fields are event-scope only. A successful ingress admissi
 
 Event-scope admission outcomes are intentionally limited to ingress-time fences such as reload/rollback backpressure, version visibility, pin visibility, signer-policy visibility, and event-registry validation. These pre-resolution outcomes are recorded in `script_event_ingress_audit`; handler-scoped outcomes such as `quota_denied`, `script_disabled`, `plugin_disabled`, and `plugin_component_blocked` are recorded only after binding resolution in `script_event_audit`.
 
-For retry behavior:
-
-- Low-rate external events may retry with the same full applicable Trigger Identity, including the same `scriptEventId`, using bounded exponential backoff and jitter with explicit `maxAttempts` and `maxElapsedMs`.
-- Timer-derived scheduler events use best-effort timer semantics; triggers not admitted during reload are not backfilled unless explicitly covered by a bounded catch-up rule.
-- Event-ingress response fields (`admitted`, `admissionOutcome`, `admissionReason`, `retryAfterMs`) and enum values are normative API contract and must align with [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md).
+Retry identity and timer catch-up behavior follow the linked scripting contract. The event-ingress response fields (`admitted`, `admissionOutcome`, `admissionReason`, `retryAfterMs`) and enum values are normative API contract and must align with [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md).
 
 ## Script Patch and Plugin Visibility APIs
 

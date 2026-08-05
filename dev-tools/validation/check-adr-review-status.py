@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate ADR human-review provenance against the checked decision queue."""
+"""Validate ADR human-review provenance against applied decision provenance."""
 
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ FENCE_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})")
 FENCE_CLOSER_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})[ \t]*$")
 LEVEL_TWO_HEADING_RE = re.compile(r"^## [^\r\n]*$")
 SECTION_BOUNDARY_HEADING_RE = re.compile(r"^#{1,2} [^\r\n]*$")
-REVIEW_QUEUE_HEADING_RE = re.compile(r"^## Adversarial Review Queue[ \t]*$")
+REVIEW_QUEUE_HEADING_RE = re.compile(r"^## Applied Review Provenance[ \t]*$")
 SUPERSEDED_SCAN_ALIAS_KEY_RE = re.compile(r"^MS-[A-Z0-9]+(?:-[A-Z0-9]+)+$")
 SUPERSEDED_SCAN_ALIAS_SUFFIX = "; retained as a historical service-scan alias."
 
@@ -711,10 +711,10 @@ def checked_reviews(
         if REVIEW_QUEUE_HEADING_RE.fullmatch(markdown_line.text)
     ]
     if not queue_starts:
-        fail(f"{path}: missing 'Adversarial Review Queue' section")
+        fail(f"{path}: missing 'Applied Review Provenance' section")
     if len(queue_starts) != 1:
         fail(
-            f"{path}: expected exactly one 'Adversarial Review Queue' section, "
+            f"{path}: expected exactly one 'Applied Review Provenance' section, "
             f"found {len(queue_starts)}"
         )
     queue_start = queue_starts[0]

@@ -66,7 +66,7 @@ def fixture_root() -> tempfile.TemporaryDirectory[str]:
         root
         / "design/project-management/design-alignment/consequential-decision-inventory.md",
         """
-        ## Adversarial Review Queue
+        ## Applied Review Provenance
 
         - [x] `TEST-01` — `revised` on 2026-07-27; [ADR 0012](../../architecture/decisions/adr-0012-reviewed.md)
         """,
@@ -361,13 +361,13 @@ class AdrReviewStatusTests(unittest.TestCase):
             root = Path(fixture)
             path = queue_path(root)
             path.write_text(
-                path.read_text(encoding="utf-8") + "\n## Adversarial Review Queue\n",
+                path.read_text(encoding="utf-8") + "\n## Applied Review Provenance\n",
                 encoding="utf-8",
             )
             expect_failure(
                 self,
                 lambda: checked_reviews(self.validator, root),
-                "expected exactly one 'Adversarial Review Queue' section, found 2",
+                "expected exactly one 'Applied Review Provenance' section, found 2",
             )
 
     def test_review_queue_requires_a_visible_queue_heading(self) -> None:
@@ -376,14 +376,14 @@ class AdrReviewStatusTests(unittest.TestCase):
             path = queue_path(root)
             path.write_text(
                 path.read_text(encoding="utf-8").replace(
-                    "## Adversarial Review Queue\n", "", 1
+                    "## Applied Review Provenance\n", "", 1
                 ),
                 encoding="utf-8",
             )
             expect_failure(
                 self,
                 lambda: checked_reviews(self.validator, root),
-                "missing 'Adversarial Review Queue' section",
+                "missing 'Applied Review Provenance' section",
             )
 
     def test_fenced_queue_heading_does_not_count_as_duplicate(self) -> None:
@@ -392,7 +392,7 @@ class AdrReviewStatusTests(unittest.TestCase):
             path = queue_path(root)
             path.write_text(
                 path.read_text(encoding="utf-8")
-                + "\n```text\n## Adversarial Review Queue\n```\n",
+                + "\n```text\n## Applied Review Provenance\n```\n",
                 encoding="utf-8",
             )
             self.validator.validate(root)
@@ -1451,7 +1451,7 @@ class AdrReviewStatusTests(unittest.TestCase):
             )
             queue = queue_path(root)
             lines = queue.read_text(encoding="utf-8").splitlines()
-            queue_start = lines.index("## Adversarial Review Queue")
+            queue_start = lines.index("## Applied Review Provenance")
             notes_heading = lines.index("## Notes")
             self.assertEqual(
                 notes_heading,

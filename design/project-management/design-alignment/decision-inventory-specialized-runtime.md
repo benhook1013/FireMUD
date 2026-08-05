@@ -6,7 +6,7 @@ This inventory contains 54 decision rows: 48 retained rows and 6 distinct eviden
 
 ## Implementation Status
 
-`Complete` means the assigned corpus scan and independent coverage/fidelity audit are complete. It does not mean every recorded decision is implemented, approved, or adversarially reviewed; each row's status and the queues below retain those distinctions.
+`Complete` means the assigned corpus scan and independent coverage/fidelity audit are complete. Human-led review is complete in the source archive, but this merged ledger retains pre-import evidence for reviewed outcomes not yet applied to `develop`. It does not claim those outcomes are canonical, implemented, or proven.
 
 The required baseline documents were read before the assigned corpus: [product capability taxonomy](../../product/capability-taxonomy.md), [system allocation](./design-capability-allocation-system.md), [main consequential decision inventory](./consequential-decision-inventory.md), and [cross-cutting decision inventory](./decision-inventory-cross-cutting.md).
 
@@ -179,7 +179,9 @@ These rows are deliberately not duplicated in the decision ledger. The specializ
 | Tracing | [ADR 0017](../../architecture/decisions/adr-0017-capability-gated-operational-tracing.md) and [tracing](../../architecture/system-architecture-tracing.md) define baseline, workflow, service-sampling, and tenant/game-instance/region-sampling levels. | The design conflict is resolved. Environments and runbooks may claim only proved levels; named spans, propagation, sampler controls, collector policies, and operational proof remain implementation gaps. |
 | JWT rotation | [cross-cutting inventory](./decision-inventory-cross-cutting.md) key `SEC-02` records incomplete rotation, while [JWT and token contracts](../../architecture/system-architecture-jwt-and-token-contracts.md) § `JWT Claim Contract (Normative)` requires production JWKS and § `Token Validity and Revocation` defines active revocation. | Token verification/revocation policy is explicit, but production key-rotation readiness remains an existing unresolved gate. |
 
-## Adversarial Priority Queue
+## Historical Adversarial Review Questions
+
+These questions preserve the priority model used by the completed human review. They are not an active autonomous review queue.
 
 | Priority | Exact capability focus | Decision keys | Adversarial question |
 | --- | --- | --- | --- |

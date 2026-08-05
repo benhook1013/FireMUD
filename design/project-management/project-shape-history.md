@@ -20,4 +20,4 @@ Its strongest qualities are:
 
 The main risk is not bad architecture. It is excessive surface area. The system has many credible foundations but relatively few completely converged product capabilities. It can remain nearly complete everywhere without becoming complete in the player-visible paths that matter most.
 
-The recommended response is to resolve known drift first, then finish selected high-value capabilities end to end, prioritizing playable user journeys over additional broad substrate. The detailed baseline and active gaps are recorded in the [capability implementation reconciliation](./design-alignment/capability-implementation-reconciliation.md).
+The recommended response is to resolve known drift first, then finish selected high-value capabilities end to end, prioritizing playable user journeys over additional broad substrate. The detailed point-in-time baseline is preserved in the frozen [capability implementation reconciliation snapshot](./design-alignment/capability-implementation-reconciliation.md); active gaps remain in the domain trackers.

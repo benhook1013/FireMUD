@@ -1,17 +1,19 @@
-# Capability Implementation Reconciliation
+# Capability Implementation Reconciliation Snapshot
 
-This record summarizes the automated reconciliation from the complete product capability taxonomy through the permanent implementation trackers. It reports status and evidence; product requirements and observable behavior remain under [`design/product`](../../product/README.md), while technical contracts remain under [`design/architecture`](../../architecture/README.md).
+Status: Frozen point-in-time evidence as of 2026-08-05.
 
-## Status
+This record preserves the completed automated reconciliation from the product capability taxonomy through the permanent implementation trackers. It is not a live parallel tracker. Product requirements and observable behavior remain under [`design/product`](../../product/README.md), technical contracts remain under [`design/architecture`](../../architecture/README.md), and current implementation and verification states remain in the [ten domain trackers](../implementation-tracking/README.md).
+
+## Snapshot Status
 
 - All 79 leaf capabilities have exactly one primary implementation tracker.
 - All ten tracker domains have primary ownership and explicit secondary handoffs in the [capability allocation](../implementation-tracking/capability-allocation.md).
 - Every leaf has separate implementation and verification states, canonical design links, production anchors, proof anchors, handoffs, and a remaining gap or decision.
-- Current implementation totals are 7 `implemented`, 70 `partial`, and 2 `not-implemented`.
-- Current verification totals are 53 `proven`, 14 `audited`, 11 `drift-found`, and 1 `unverified`.
-- `AUTO-01`, `CONTENT-05`, and `SESSION-08` now have one reconciled canonical baseline each. Their decision-inventory entries preserve alternatives for later human review without presenting the sources as currently contradictory.
+- Snapshot implementation totals are 7 `implemented`, 70 `partial`, and 2 `not-implemented`.
+- Snapshot verification totals are 53 `proven`, 14 `audited`, 11 `drift-found`, and 1 `unverified`.
+- At the snapshot boundary, `AUTO-01`, `CONTENT-05`, and `SESSION-08` had one reconciled merged baseline each. Later human-reviewed outcomes remain non-canonical until selectively imported to `develop`.
 
-## Reconciled Cross-Domain Boundaries
+## Snapshot Cross-Domain Boundaries
 
 - Account identity is global; tenant membership, authorization, entitlements, and playable-state admission are explicit scoped checks rather than inferred from account ownership.
 - Game Design owns revision, publication, and activation policy, while World and Entity services retain their domain-owned Draft mutation and runtime-state boundaries.
@@ -22,9 +24,9 @@ This record summarizes the automated reconciliation from the complete product ca
 - gRPC application errors remain normal-response `ErrorDetail` values, while transport errors are reserved for infrastructure failures.
 - Operational evidence, deployment gates, recovery, and audit records are platform responsibilities fed by domain-owned health and lifecycle signals.
 
-## Active Cross-Domain Gaps
+## Snapshot Cross-Domain Gaps
 
-These are implementation or proof gaps, not silently competing target states:
+These were implementation or proof gaps at the snapshot boundary, not silently competing target states. Use the owning domain tracker to determine their current state.
 
 - World-owned location and occupancy, Entity-owned actor state, and Game Session bindings still need a fully converged room/location identity and snapshot contract.
 - Publication and activation still need complete same-commit validation across design, assets, scripts, schemas, runtime readiness, cutover, and rollback.
@@ -40,14 +42,6 @@ These are implementation or proof gaps, not silently competing target states:
 
 [`check-implementation-capability-tracking.py`](../../../dev-tools/validation/check-implementation-capability-tracking.py) enforces taxonomy/allocation/tracker coverage, primary ownership, state vocabularies, required evidence cells, valid capability references, and local link integrity. It runs through the existing architecture-document contract suite.
 
-## Post-Review Convergence Priorities
+## Ongoing Convergence
 
-After the human-led adversarial decision review establishes any required design changes:
-
-1. Resolve the six current `drift-found` capabilities.
-2. Select high-value `partial` capabilities and close their designed boundaries end to end rather than adding more isolated substrate.
-3. Prioritize complete playable user journeys over widening foundations that are already credible enough to support them.
-
-## Human Review Boundary
-
-The automated alignment work ends after independent evidence-quality validation. The human decision owner then conducts adversarial review of the consequential-decision inventory. Agents may prepare evidence or competing arguments only when explicitly requested; they must not accept, revise, defer, withdraw, or supersede decisions autonomously.
+Current priorities and capability states belong in the domain trackers and [Project Shape History](../project-shape-history.md), not in this frozen snapshot. The completed human-led review is preserved in the source archive; accepted outcomes become canonical only through selective ADR and design imports to `develop`.

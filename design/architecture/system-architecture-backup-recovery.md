@@ -19,7 +19,7 @@ The main body of this document describes the target-state backup workflow. Curre
 - `PauseTicksForScope` / `ResumeTicksForScope` support pausing by `tenant_id` + `game_instance_id` today; `region_id` scoping exists in the proto contract but is not yet enforced end to end.
 - The live ownership/status read is currently `GetRuntimeOwnershipStatus` at the `{tenantId, gameInstanceId}` boundary, not the fuller target-state `GetRegionTickStatus(scope)` surface used throughout the long-term maintenance and reset contract.
 - Region pause/status remains incomplete for maintenance and future scoped recovery, but routine online backups do not depend on tick pause.
-- `verify-backups.sh` currently proves only Velero backup existence and optional pg-dump object-store reachability; it does not prove immutable lineage, artifact readability, restore-tool compatibility, or readiness.
+- `verify-backups.sh` currently proves only Velero backup existence and optional pg-dump object-store reachability.
 - Player-facing restore-point recovery remains unsupported because enforced restore quarantine, empty-Redis proof, environment-wide durable convergence, session/epoch invalidation, post-restore hardening automation, and complete recovery-controller/projection validation are not implemented end to end.
 - Until that convergence is complete, production first-live, reopen after PostgreSQL rewind, and `roll-forward-only` production promotion are non-compliant.
 
@@ -212,7 +212,7 @@ The target-state Docker Compose restore is not a reduced recovery mode. It must 
 
 ## Backup Verification & Restoration Testing
 
-- `verify-backups.sh` proves only that Velero backup artifacts exist and that optional pg-dump object storage is reachable. It does not prove immutable lineage, artifact readability, restore-tool compatibility, or player-facing readiness.
+- `verify-backups.sh` does not prove immutable lineage, artifact readability, restore-tool compatibility, or player-facing readiness; those require the restore drills and evidence described below.
 - Restore drills prove the artifact, restore tooling, canonical environment-wide `cold_start_restore` mode, and post-restore hardening flow actually produce a recoverable environment.
 - Every successful restore drill must record:
   - environment-wide `cold_start_restore` and empty-Redis proof
