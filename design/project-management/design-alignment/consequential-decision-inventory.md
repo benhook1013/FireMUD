@@ -1,6 +1,6 @@
 # Consequential Design Decision Inventory
 
-Status: Complete and independently coverage/fidelity-audited. Human-led review is complete in the source archive; reviewed outcomes are applied on `develop` through ADR 0050.
+Status: Inventory and human-led review are complete and independently coverage/fidelity-audited. On `develop`, 40 of 182 distinct active decisions have imported, merged provenance through ADR 0050; 142 reviewed decisions remain pending selective import. The historical navigation alias is excluded from both counts.
 
 ## Implementation Status
 
@@ -51,7 +51,7 @@ The inventory is split into this control ledger and exhaustive source-scoped led
 - [Specialized runtime decisions](./decision-inventory-specialized-runtime.md) contains 54 decisions and stronger evidence for 20 cross-cutting decisions from 39 Redis, scripting, tick, identity, token, migration, shared-library, spatial, authorization, and tracing documents.
 - [Product and operations decisions](./decision-inventory-product-operations.md) contains 38 decisions and stronger evidence for 11 existing keys from the remaining 35 product, frontend, authoring, protocol, infrastructure, deployment, recovery, observability, and generated-settings sources.
 
-The canonical design allocation covers all 223 discovered architecture artifacts: 220 receive a primary capability allocation and 3 are explicit governance/template/registry exemptions. This inventory accounts for the same source set as 172 non-ADR architecture documents in the source-scoped ledgers, 50 ADR records, and the architecture decision registry/index; a source may provide evidence without producing a distinct decision row. The source-scoped ledgers contain 182 distinct active canonical decisions with no duplicate decisions across ledgers. The 23 microservice service-only rows comprise 22 active decisions plus the superseded historical service-scan alias `MS-AA-TOKEN-REVOCATION`, so the source-scoped ledgers have 183 key/navigation rows while the distinct decision count remains 182. The completed human-review queue has 183 navigation rows, including the nine ADR-backed alias navigation rows already included in Packet 1; those aliases do not increase the distinct decision count. The historical service-scan alias remains navigation-only and is excluded from review disposition. Collectively, the inventories reference all 79 leaf capabilities in the taxonomy.
+The canonical design allocation covers all 225 discovered product and architecture sources: 222 receive a primary capability allocation and 3 are explicit governance, template, or registry exemptions. This inventory inspects the 223 potentially decision-bearing sources: 172 allocated non-ADR product and architecture documents, 50 ADR records, and the architecture decision registry/index. The two exempt microservice governance/template documents are covered by allocation but excluded from decision evidence. A source may provide evidence without producing a distinct decision row. The source-scoped ledgers contain 182 distinct active decisions with no duplicates across ledgers. The 23 microservice service-only rows comprise 22 active decisions plus the superseded historical service-scan alias `MS-AA-TOKEN-REVOCATION`, so the source-scoped ledgers have 183 key/navigation rows while the distinct decision count remains 182. The completed human-review archive has 183 navigation rows, including nine ADR alias-navigation rows that do not increase the distinct decision count. The historical service-scan alias remains navigation-only and is excluded from review disposition. Collectively, the inventories reference all 79 leaf capabilities in the taxonomy.
 
 | Capability | Sources reviewed | Decisions inventoried | Human-review candidates | Coverage state |
 | --- | ---: | ---: | ---: | --- |
@@ -60,7 +60,7 @@ The canonical design allocation covers all 223 discovered architecture artifacts
 | Microservice architecture | 76 sources | 23 rows = 22 active decisions + superseded historical `MS-AA-TOKEN-REVOCATION` alias; stronger evidence for 40 existing keys | Complete in the source archive | Complete and independently audited |
 | Specialized runtime architecture | 39 sources | 54 new; stronger evidence for 20 existing keys | Complete in the source archive | Complete and independently audited |
 | Product and operations architecture | 35 sources | 38 new; stronger evidence for 11 existing keys | Complete in the source archive | Complete and independently audited |
-| **Total active decisions / navigation rows** | **All 223 discovered architecture artifacts: 172 non-ADR source-ledger documents, 50 ADR records, and the registry/index; 220 allocated and 3 explicit governance/template/registry exemptions** | **182 active decisions; 183 navigation/key rows including one historical alias** | **All 183 queue/navigation rows reviewed in the source archive** | **Merged provenance applied through ADR 0050** |
+| **Total active decisions / navigation rows** | **All 225 design sources: 223 decision-bearing source rows (172 allocated non-ADR documents, 50 ADR records, and the exempt registry/index) plus 2 excluded governance/template exemptions; 222 allocated and 3 total exemptions** | **182 active decisions; 183 navigation/key rows including one historical alias** | **All 183 queue/navigation rows reviewed in the source archive** | **40 distinct decisions have merged provenance through ADR 0050; 142 remain pending import** |
 
 ## Legacy ADR Alias Navigation
 
@@ -107,9 +107,9 @@ These rows preserve the original conflict inventory and now summarize its human-
 
 ## Applied Review Provenance
 
-The remotely backed `design/adversarial-decision-review` archive records the completed human-led review of all `183` queue/navigation rows. This section is the authoritative checked provenance only for reviewed outcomes already imported to `develop`: a checked row must link the merged ADR or canonical design that applies its outcome. An unchecked row here means `reviewed, pending import`, not `unreviewed`.
+The remotely backed `design/adversarial-decision-review` archive records the completed human-led review of all `183` queue/navigation rows. This section is the authoritative checked provenance only for reviewed outcomes already imported and merged to `develop`: `applied` means the reviewed result is present in merged canonical design, not merely recorded in the archive. A checked row must link that merged ADR or canonical design. An unchecked row here means `reviewed, pending import`, not `unreviewed`.
 
-Future imports preserve the archive's exact disposition and review date, apply the accepted result to canonical design, and check the corresponding row only in the same change that provides its merged provenance. Closely coupled keys may share an ADR, but every key retains its own outcome.
+Future imports preserve the archive's exact disposition and review date, materialize the reviewed result, and check the corresponding row only in the same change that provides its merged provenance. An `accepted` or `revised` result updates canonical design and any required accepted ADR; `deferred` records the accepted deferral and its revisit boundary without presenting the deferred capability as current target state; `superseded` links the replacement and removes the superseded target as current guidance; and `withdrawn` removes or declines the target and records the withdrawal rationale. Closely coupled keys may share an ADR, but every key retains its own outcome.
 
 ### Progress Summary
 

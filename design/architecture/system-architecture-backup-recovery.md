@@ -19,7 +19,7 @@ The main body of this document describes the target-state backup workflow. Curre
 - `PauseTicksForScope` / `ResumeTicksForScope` support pausing by `tenant_id` + `game_instance_id` today; `region_id` scoping exists in the proto contract but is not yet enforced end to end.
 - The live ownership/status read is currently `GetRuntimeOwnershipStatus` at the `{tenantId, gameInstanceId}` boundary, not the fuller target-state `GetRegionTickStatus(scope)` surface used throughout the long-term maintenance and reset contract.
 - Region pause/status remains incomplete for maintenance and future scoped recovery, but routine online backups do not depend on tick pause.
-- `verify-backups.sh` currently proves only Velero backup existence and optional pg-dump object-store reachability.
+- `verify-backups.sh` currently proves Velero backup existence and, when `PG_DUMP_BUCKET` is configured, pg-dump object-store reachability. Production deployments using that configuration require the object-store proof; a skipped upload caused by missing configuration is a deployment failure, not an optional proof result.
 - Player-facing restore-point recovery remains unsupported because enforced restore quarantine, empty-Redis proof, environment-wide durable convergence, session/epoch invalidation, post-restore hardening automation, and complete recovery-controller/projection validation are not implemented end to end.
 - Until that convergence is complete, production first-live, reopen after PostgreSQL rewind, and `roll-forward-only` production promotion are non-compliant.
 

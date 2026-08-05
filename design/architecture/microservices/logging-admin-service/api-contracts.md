@@ -109,7 +109,7 @@ grpcurl -plaintext -d '{"tenant_id":"1","reporter_account_id":"1","target_accoun
 
 ## Endpoint Authentication Classes
 
-Operator authentication and receiving-boundary rules are canonical in the [Authorization Route Matrix](../../system-architecture-authz-route-matrix.md#operator-delegation). The table below retains Logging & Admin's local endpoint availability and forwarding consequences.
+Operator authentication and receiving-boundary rules are canonical in the [Authorization Route Matrix](../../system-architecture-authz-route-matrix.md#operator-delegation). The table below retains Logging & Admin's local endpoint availability and forwarding consequences. Every gated human or implemented mutation remains unavailable until its action-family schema, shared `mutationDigest/v1` golden vectors, Account authorization-reference issuance, and receiving-boundary validation or redemption are implemented; route authentication alone does not establish mutation support.
 
 | Surface | Examples | Required auth path | Notes |
 | --- | --- | --- | --- |

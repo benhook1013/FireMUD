@@ -118,7 +118,7 @@ def fixture_root() -> tempfile.TemporaryDirectory[str]:
     return fixture
 
 
-def queue_path(root: Path) -> Path:
+def provenance_path(root: Path) -> Path:
     return (
         root
         / "design/project-management/design-alignment/consequential-decision-inventory.md"
@@ -127,14 +127,14 @@ def queue_path(root: Path) -> Path:
 
 def checked_reviews(validator, root: Path):
     return validator.checked_reviews(
-        queue_path(root),
+        provenance_path(root),
         root.resolve(),
         root / "design/architecture/decisions",
     )
 
 
-def append_queue_row(root: Path, row: str) -> None:
-    path = queue_path(root)
+def append_provenance_row(root: Path, row: str) -> None:
+    path = provenance_path(root)
     path.write_text(
         path.read_text(encoding="utf-8") + f"\n{row}\n",
         encoding="utf-8",
@@ -174,10 +174,10 @@ def set_review_status(
     disposition: str,
     supersession: str | None = None,
 ) -> None:
-    queue = queue_path(root)
-    queue.write_text(
+    provenance = provenance_path(root)
+    provenance.write_text(
         replace_once(
-            queue.read_text(encoding="utf-8"),
+            provenance.read_text(encoding="utf-8"),
             "`revised`",
             f"`{disposition.lower()}`",
         ),
@@ -223,7 +223,7 @@ def add_formal_superseded_adr(
     root: Path,
     supersession: str | None = "- Replacement ADR: [ADR 0012](./adr-0012-reviewed.md)",
 ) -> Path:
-    append_queue_row(
+    append_provenance_row(
         root,
         "- [x] `TEST-SUPERSEDED` — `superseded` on 2026-07-27; "
         "[ADR 0014](../../architecture/decisions/adr-0014-superseded.md)",
@@ -292,7 +292,7 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_script_entrypoint_accepts_fixture_root_and_reports_failure(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            queue_path(root).unlink()
+            provenance_path(root).unlink()
             result = subprocess.run(
                 [sys.executable, str(SCRIPT), str(root)],
                 check=False,
@@ -300,7 +300,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 text=True,
             )
             self.assertNotEqual(0, result.returncode)
-            self.assertIn("ADR review queue missing", result.stderr)
+            self.assertIn("ADR review provenance missing", result.stderr)
 
     def test_section_value_accepts_lf_and_crlf_without_carriage_return(self) -> None:
         for newline in ("\n", "\r\n"):
@@ -356,10 +356,10 @@ class AdrReviewStatusTests(unittest.TestCase):
                 self.assertNotIn("Fenced heading", section)
                 self.assertNotIn("not part of the section", section)
 
-    def test_review_queue_requires_exactly_one_queue_heading(self) -> None:
+    def test_review_provenance_requires_exactly_one_provenance_heading(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            path = queue_path(root)
+            path = provenance_path(root)
             path.write_text(
                 path.read_text(encoding="utf-8") + "\n## Applied Review Provenance\n",
                 encoding="utf-8",
@@ -370,10 +370,10 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "expected exactly one 'Applied Review Provenance' section, found 2",
             )
 
-    def test_review_queue_requires_a_visible_queue_heading(self) -> None:
+    def test_review_provenance_requires_a_visible_provenance_heading(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            path = queue_path(root)
+            path = provenance_path(root)
             path.write_text(
                 path.read_text(encoding="utf-8").replace(
                     "## Applied Review Provenance\n", "", 1
@@ -386,10 +386,28 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "missing 'Applied Review Provenance' section",
             )
 
-    def test_fenced_queue_heading_does_not_count_as_duplicate(self) -> None:
+    def test_retired_adversarial_review_heading_is_not_accepted(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            path = queue_path(root)
+            path = provenance_path(root)
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "## Applied Review Provenance\n",
+                    "## Adversarial Review Queue\n",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "missing 'Applied Review Provenance' section",
+            )
+
+    def test_fenced_provenance_heading_does_not_count_as_duplicate(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = provenance_path(root)
             path.write_text(
                 path.read_text(encoding="utf-8")
                 + "\n```text\n## Applied Review Provenance\n```\n",
@@ -400,7 +418,7 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_pre_formal_record_requires_completed_metadata_when_checked(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `TEST-LEGACY` — `revised` on 2026-07-27; "
                 "[ADR 0001](../../architecture/decisions/adr-0001-legacy.md)",
@@ -414,7 +432,7 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_pre_formal_legacy_status_with_checked_row_is_rejected(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `TEST-LEGACY` — `superseded` on 2026-07-27; "
                 "[ADR 0001](../../architecture/decisions/adr-0001-legacy.md)",
@@ -442,14 +460,14 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "ADR directory missing",
             )
 
-    def test_missing_review_queue_fails_clearly(self) -> None:
+    def test_missing_review_provenance_fails_clearly(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            queue_path(root).unlink()
+            provenance_path(root).unlink()
             expect_failure(
                 self,
                 lambda: self.validator.validate(root),
-                "ADR review queue missing",
+                "ADR review provenance missing",
             )
 
     def test_accepted_record_requires_checked_review(self) -> None:
@@ -465,7 +483,7 @@ class AdrReviewStatusTests(unittest.TestCase):
             expect_failure(
                 self,
                 lambda: self.validator.validate(root),
-                "terminal ADR status lacks a checked human-review queue entry",
+                "terminal ADR status lacks a checked human-review provenance entry",
             )
 
     def test_all_terminal_statuses_require_checked_review(self) -> None:
@@ -486,7 +504,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 expect_failure(
                     self,
                     lambda root=root: self.validator.validate(root),
-                    "terminal ADR status lacks a checked human-review queue entry",
+                    "terminal ADR status lacks a checked human-review provenance entry",
                 )
 
     def test_checked_review_provenance_accepts_all_terminal_statuses(self) -> None:
@@ -1048,10 +1066,10 @@ class AdrReviewStatusTests(unittest.TestCase):
                     "pending proposal requires exact",
                 )
 
-    def test_pending_record_cannot_be_backed_by_checked_queue(self) -> None:
+    def test_pending_record_cannot_be_backed_by_checked_provenance(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `TEST-PENDING` — `revised` on 2026-07-27; "
                 "[ADR 0013](../../architecture/decisions/adr-0013-pending.md)",
@@ -1062,10 +1080,10 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "checked human review requires",
             )
 
-    def test_pending_record_rejects_completed_revised_queue_mismatch(self) -> None:
+    def test_pending_record_rejects_completed_revised_provenance_mismatch(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `TEST-PENDING` — `revised` on 2026-07-27; "
                 "[ADR 0013](../../architecture/decisions/adr-0013-pending.md)",
@@ -1097,7 +1115,7 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_checked_deferred_row_with_exact_adr_provenance_is_rejected(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `TEST-DEFERRED` — `deferred` on 2026-07-27; "
                 "[ADR 0013](../../architecture/decisions/adr-0013-pending.md)",
@@ -1111,7 +1129,7 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_checked_non_deferred_row_requires_exact_adr_provenance(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `TEST-NOTES` — `accepted` on 2026-07-27; "
                 "[notes](https://example.com)",
@@ -1125,7 +1143,7 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_checked_superseded_row_requires_exact_adr_provenance(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `TEST-SUPERSEDED` — `superseded` on 2026-07-27 by "
                 "[notes](https://example.com)",
@@ -1143,7 +1161,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 root / "design/architecture/decisions/adr-0014-replacement.md",
                 "# ADR 0014\n",
             )
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27 by "
                 "[replacement ADR 0014](../../architecture/decisions/"
@@ -1157,7 +1175,7 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_superseded_scan_alias_requires_replacement_links(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27; "
                 "retained as a historical service-scan alias.",
@@ -1177,7 +1195,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 root / "design/architecture/decisions/adr-0014-replacement.md",
                 "# ADR 0014\n",
             )
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27 by "
                 "[replacement ADR 0015](../../architecture/decisions/"
@@ -1199,7 +1217,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 root / "design/architecture/adr-0014-outside.md",
                 "# ADR 0014\n",
             )
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27 by "
                 "[replacement ADR 0014](../../architecture/"
@@ -1219,7 +1237,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 root / "design/architecture/decision-notes.md",
                 "# Decision notes\n",
             )
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27 by "
                 "[MS-AA-LOGIN-FACTORS](../../architecture/decision-notes.md); "
@@ -1231,7 +1249,7 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_superseded_scan_alias_rejects_missing_decision_key_target(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27 by "
                 "[MS-AA-LOGIN-FACTORS](../../architecture/missing-decision.md); "
@@ -1249,7 +1267,7 @@ class AdrReviewStatusTests(unittest.TestCase):
         with fixture_root() as fixture:
             root = Path(fixture)
             write(root / "design/architecture/decision-notes.txt", "notes\n")
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27 by "
                 "[MS-AA-LOGIN-FACTORS](../../architecture/decision-notes.txt); "
@@ -1269,7 +1287,7 @@ class AdrReviewStatusTests(unittest.TestCase):
             outside = root.parent / f"{root.name}-outside.md"
             outside.write_text("# Outside\n", encoding="utf-8")
             try:
-                append_queue_row(
+                append_provenance_row(
                     root,
                     "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27 by "
                     "[MS-AA-LOGIN-FACTORS](../../../../"
@@ -1286,7 +1304,7 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_superseded_scan_alias_rejects_arbitrary_replacement_label(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27 by "
                 "[notes](https://example.com); retained as a historical "
@@ -1305,7 +1323,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 root / "design/architecture/decisions/adr-0014-replacement.md",
                 "# ADR 0014\n",
             )
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27 by "
                 "[ADR 0014](../../architecture/decisions/"
@@ -1321,7 +1339,7 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_superseded_alias_marker_does_not_exempt_non_scan_key(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `TEST-ALIAS` — `superseded` on 2026-07-27 by "
                 "[replacement](https://example.com); retained as a historical "
@@ -1336,7 +1354,7 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_checked_row_inside_fenced_example_is_ignored(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "```text\n"
                 "- [x] `FAKE-ROW` — `accepted` on 2026-07-27; "
@@ -1397,7 +1415,7 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_nested_fence_with_info_string_does_not_expose_checked_row(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "````text\n"
                 "```text\n"
@@ -1413,7 +1431,7 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_indented_fence_like_line_opens_a_fence(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "    ```text\n"
                 "- [x] `FAKE-INDENTED-FENCE` — `accepted` on 2026-07-27; "
@@ -1425,10 +1443,10 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "unterminated code fence opened at line",
             )
 
-    def test_fenced_level_two_heading_does_not_end_review_queue(self) -> None:
+    def test_fenced_level_two_heading_does_not_end_review_provenance(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "```text\n"
                 "## Example heading inside the fenced block\n"
@@ -1442,20 +1460,20 @@ class AdrReviewStatusTests(unittest.TestCase):
                 {review.key for review in reviews[12]},
             )
 
-    def test_scan_review_queue_ignores_headings_inside_fences(self) -> None:
+    def test_scan_review_provenance_ignores_headings_inside_fences(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "```text\n## Example heading inside the fenced block\n```\n## Notes\n",
             )
-            queue = queue_path(root)
-            lines = queue.read_text(encoding="utf-8").splitlines()
-            queue_start = lines.index("## Applied Review Provenance")
+            provenance = provenance_path(root)
+            lines = provenance.read_text(encoding="utf-8").splitlines()
+            provenance_start = lines.index("## Applied Review Provenance")
             notes_heading = lines.index("## Notes")
             self.assertEqual(
                 notes_heading,
-                self.validator.scan_review_queue(lines, queue_start).end,
+                self.validator.scan_review_provenance(lines, provenance_start).end,
             )
 
     def test_unterminated_code_fence_fails_closed_with_path_and_opening_line(
@@ -1463,16 +1481,16 @@ class AdrReviewStatusTests(unittest.TestCase):
     ) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            queue = queue_path(root)
-            expected_queue_path = queue.resolve()
-            queue.write_text(
-                queue.read_text(encoding="utf-8") + "\n```text\n",
+            provenance = provenance_path(root)
+            expected_provenance_path = provenance.resolve()
+            provenance.write_text(
+                provenance.read_text(encoding="utf-8") + "\n```text\n",
                 encoding="utf-8",
             )
             with self.assertRaises(self.validator.ValidationError) as raised:
                 self.validator.validate(root)
             message = str(raised.exception)
-            self.assertIn(str(expected_queue_path), message)
+            self.assertIn(str(expected_provenance_path), message)
             self.assertRegex(message, r"unterminated code fence opened at line [0-9]+")
 
     def test_unterminated_adr_fence_is_rejected_before_decision_record_detection(
@@ -1500,7 +1518,7 @@ class AdrReviewStatusTests(unittest.TestCase):
             root = Path(fixture)
             outside = root / "design/architecture/adr-0013-outside.md"
             outside.write_text("# Outside\n", encoding="utf-8")
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `TEST-OUTSIDE` — `accepted` on 2026-07-27; "
                 "[ADR 0013](../../architecture/adr-0013-outside.md)",
@@ -1514,7 +1532,7 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_checked_review_rejects_absolute_target(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `TEST-ABSOLUTE` — `accepted` on 2026-07-27; "
                 "[ADR 0013](/design/architecture/decisions/adr-0013-pending.md)",
@@ -1532,7 +1550,7 @@ class AdrReviewStatusTests(unittest.TestCase):
         with fixture_root() as fixture:
             root = Path(fixture)
             for index, suffix in enumerate(("?view=full#status", "#status?view=full")):
-                append_queue_row(
+                append_provenance_row(
                     root,
                     f"- [x] `TEST-SUFFIX-{index}` — `accepted` on 2026-07-27; "
                     "[ADR 0013](../../architecture/decisions/"
@@ -1547,7 +1565,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 {review.key for review in reviews[13]},
             )
 
-    def test_checked_review_date_must_match_queue(self) -> None:
+    def test_checked_review_date_must_match_provenance(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
             path = root / "design/architecture/decisions/adr-0012-reviewed.md"
@@ -1561,7 +1579,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "human review date must match",
             )
 
-    def test_checked_review_disposition_must_match_queue(self) -> None:
+    def test_checked_review_disposition_must_match_provenance(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
             path = root / "design/architecture/decisions/adr-0012-reviewed.md"
@@ -1578,7 +1596,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "human review disposition must match",
             )
 
-    def test_checked_review_source_must_match_queue(self) -> None:
+    def test_checked_review_source_must_match_provenance(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
             path = root / "design/architecture/decisions/adr-0012-reviewed.md"
@@ -1618,10 +1636,10 @@ class AdrReviewStatusTests(unittest.TestCase):
         expect_failure(
             self,
             lambda: self.validator.parse_review_source("`TEST-01`, `TEST-01`"),
-            "review source must not contain duplicate queue keys",
+            "review source must not contain duplicate provenance keys",
         )
 
-    def test_completed_metadata_requires_checked_queue_entry(self) -> None:
+    def test_completed_metadata_requires_checked_provenance_entry(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
             path = root / "design/architecture/decisions/adr-0013-pending.md"
@@ -1637,10 +1655,10 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "completed human review is not backed",
             )
 
-    def test_unchecked_queue_row_does_not_back_terminal_record(self) -> None:
+    def test_unchecked_provenance_row_does_not_back_terminal_record(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [ ] `TEST-UNCHECKED` — `revised` on 2026-07-27; "
                 "[ADR 0013](../../architecture/decisions/adr-0013-pending.md)",
@@ -1655,7 +1673,7 @@ class AdrReviewStatusTests(unittest.TestCase):
             expect_failure(
                 self,
                 lambda: self.validator.validate(root),
-                "terminal ADR status lacks a checked human-review queue entry",
+                "terminal ADR status lacks a checked human-review provenance entry",
             )
 
     def test_duplicate_adr_number_is_rejected(self) -> None:
@@ -1769,10 +1787,10 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "missing or malformed 'Status' section",
             )
 
-    def test_checked_queue_entry_requires_matching_adr(self) -> None:
+    def test_checked_provenance_entry_requires_matching_adr(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `TEST-99` — `accepted` on 2026-07-27; "
                 "[ADR 0099](../../architecture/decisions/adr-0099-missing.md)",
@@ -1783,14 +1801,14 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "ADR 0099 target does not exist",
             )
 
-    def test_checked_queue_row_collects_every_adr_link(self) -> None:
+    def test_checked_provenance_row_collects_every_adr_link(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
             write(
                 root / "design/architecture/decisions/adr-0014-other.md",
                 "# ADR 0014\n",
             )
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `TEST-COUPLED` — `revised` on 2026-07-27; "
                 "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md); "
@@ -1800,10 +1818,10 @@ class AdrReviewStatusTests(unittest.TestCase):
             self.assertEqual(set(reviews), {12, 14})
             self.assertEqual(reviews[14][0].key, "TEST-COUPLED")
 
-    def test_checked_queue_accepts_uppercase_x(self) -> None:
+    def test_checked_provenance_accepts_uppercase_x(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [X] `TEST-UPPERCASE` — `revised` on 2026-07-27; "
                 "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md)",
@@ -1811,11 +1829,11 @@ class AdrReviewStatusTests(unittest.TestCase):
             reviews = checked_reviews(self.validator, root)
             self.assertEqual(reviews[12][-1].key, "TEST-UPPERCASE")
 
-    def test_checked_queue_accepts_all_top_level_markers(self) -> None:
+    def test_checked_provenance_accepts_all_top_level_markers(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
             for index, marker in enumerate(("-", "*", "+")):
-                append_queue_row(
+                append_provenance_row(
                     root,
                     f"{marker} [x] `TEST-MARKER-{index}` — "
                     "`accepted` on 2026-07-27; "
@@ -1827,10 +1845,10 @@ class AdrReviewStatusTests(unittest.TestCase):
                 {review.key for review in reviews[13]},
             )
 
-    def test_checked_items_outside_review_queue_are_ignored(self) -> None:
+    def test_checked_items_outside_review_provenance_are_ignored(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            path = queue_path(root)
+            path = provenance_path(root)
             path.write_text(
                 "- [x] `OUTSIDE` — malformed checked item\n\n"
                 + path.read_text(encoding="utf-8")
@@ -1839,10 +1857,10 @@ class AdrReviewStatusTests(unittest.TestCase):
             )
             self.validator.validate(root)
 
-    def test_checked_queue_rejects_duplicate_adr_links_in_one_row(self) -> None:
+    def test_checked_provenance_rejects_duplicate_adr_links_in_one_row(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `TEST-DUP-LINK` — `revised` on 2026-07-27; "
                 "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md); "
@@ -1854,10 +1872,10 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "contains duplicate ADR outcome links",
             )
 
-    def test_checked_queue_rejects_mismatched_adr_link_provenance(self) -> None:
+    def test_checked_provenance_rejects_mismatched_adr_link_provenance(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `TEST-MISMATCH` — `revised` on 2026-07-27; "
                 "[ADR 0013](../../architecture/decisions/adr-0012-reviewed.md)",
@@ -1875,7 +1893,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 root / "design/architecture/decisions/adr-0014-replacement.md",
                 "# ADR 0014\n",
             )
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `TEST-SUPERSEDED` — `superseded` on 2026-07-27 by "
                 "[ADR 0013](../../architecture/decisions/adr-0013-pending.md); "
@@ -1886,7 +1904,7 @@ class AdrReviewStatusTests(unittest.TestCase):
             self.assertEqual(reviews[13][0].key, "TEST-SUPERSEDED")
             self.assertNotIn(14, reviews)
 
-    def test_malformed_checked_queue_rows_fail_closed(self) -> None:
+    def test_malformed_checked_provenance_rows_fail_closed(self) -> None:
         rows = (
             "- [x] `TEST-99`",
             "- [x] `TEST-99` — `revised`",
@@ -1895,15 +1913,15 @@ class AdrReviewStatusTests(unittest.TestCase):
         for row in rows:
             with self.subTest(row=row), fixture_root() as fixture:
                 root = Path(fixture)
-                append_queue_row(root, row)
+                append_provenance_row(root, row)
                 expect_failure(
                     self,
                     lambda root=root: checked_reviews(self.validator, root),
-                    "malformed checked review queue row",
+                    "malformed checked review provenance row",
                 )
 
         with fixture_root() as fixture:
-            append_queue_row(
+            append_provenance_row(
                 Path(fixture),
                 "- [x] `TEST-99` — `revised` on 2026-07-27; outcome without link",
             )
@@ -1913,10 +1931,10 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "must contain at least one Markdown outcome link",
             )
 
-    def test_indented_checked_queue_rows_are_rejected(self) -> None:
+    def test_indented_checked_provenance_rows_are_rejected(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            path = queue_path(root)
+            path = provenance_path(root)
             path.write_text(
                 path.read_text(encoding="utf-8")
                 + "\n  - [x] `TEST-INDENTED` — `revised` on 2026-07-27; "
@@ -1930,13 +1948,13 @@ class AdrReviewStatusTests(unittest.TestCase):
                     root.resolve(),
                     root / "design/architecture/decisions",
                 ),
-                "indented checked review queue row",
+                "indented checked review provenance row",
             )
 
     def test_duplicate_checked_review_source_is_rejected(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `TEST-01` — `revised` on 2026-07-27; "
                 "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md)",
@@ -1950,7 +1968,7 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_conflicting_duplicate_adr_rows_are_rejected(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `TEST-02` — `accepted` on 2026-07-27; "
                 "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md)",
@@ -1964,7 +1982,7 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_matching_duplicate_adr_rows_require_all_review_sources(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            append_queue_row(
+            append_provenance_row(
                 root,
                 "- [x] `TEST-02` — `revised` on 2026-07-27; "
                 "[ADR 0012](../../architecture/decisions/adr-0012-reviewed.md)",

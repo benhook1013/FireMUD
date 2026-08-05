@@ -16,7 +16,7 @@ Current phase: capability allocation, implementation/proof reconciliation, cross
 | Cross-domain convergence | Complete and independently validated as a point-in-time baseline | [Frozen capability implementation reconciliation](./capability-implementation-reconciliation.md) |
 | Human-led adversarial decision review | Complete in the `design/adversarial-decision-review` source archive | Human-owned dispositions for all `183` queue/navigation rows |
 | Accepted-decision application | In progress | ADRs 0001-0050 and their canonical-design changes are merged; ADRs 0051-0173 remain pending import |
-| Merged contract-authority consolidation | Complete through ADR 0050 | [Architecture contract authority map](../../architecture/README.md#contract-authority-map) and link-plus-local-consequence secondary documents |
+| Contract-authority consolidation | Foundation established for ADRs 0001-0050; secondary-document consolidation remains in progress | [Architecture contract authority map](../../architecture/README.md#contract-authority-map) and the first link-plus-local-consequence conversions |
 
 ## Implementation Status
 
@@ -52,7 +52,7 @@ flowchart LR
     classDef evidence fill:#f8eef8,stroke:#7a4e7a
 ```
 
-Product and architecture documents are normative within their stated boundaries. ADRs explain accepted consequential choices. Allocation, inventory, application-status, tracker, and reconciliation artifacts are non-normative. Code and proof are implementation evidence. A human-reviewed decision becomes canonical only after its ADR and owning design changes merge to `develop`.
+Product and architecture documents are normative within their stated boundaries. ADRs explain accepted consequential choices. Allocation, inventory, application-status, tracker, and reconciliation artifacts are non-normative. Code and proof are implementation evidence. A human-reviewed decision becomes canonical only after any required ADR and its owning design changes merge to `develop`.
 
 ## Decision Application Status
 
@@ -60,10 +60,10 @@ This table describes merged repository state, not merely completed human review.
 
 | Decision parcel | Human review | Applied to `develop` | Contract consolidation | Implementation and proof |
 | --- | --- | --- | --- | --- |
-| Pre-formal ADRs 0001-0011 | Complete in the review archive | ADRs and accepted design already present | Complete at the current merged boundary | Live gaps remain in the domain trackers |
-| Foundational parcel, ADRs 0012-0019 | Complete | Merged by [PR 2527](https://github.com/benhook1013/FireMUD/pull/2527), with recovery and CI follow-through in [PR 2537](https://github.com/benhook1013/FireMUD/pull/2537) | Complete at the current merged boundary | Live gaps remain in the domain trackers |
-| Identity and admission parcel, ADRs 0020-0035 | Complete | Merged by [PR 2528](https://github.com/benhook1013/FireMUD/pull/2528) | Complete at the current merged boundary | Live gaps remain in the domain trackers |
-| Authority, security, and account parcel, ADRs 0036-0050 | Complete | Merged across [PR 2574](https://github.com/benhook1013/FireMUD/pull/2574), [PR 2583](https://github.com/benhook1013/FireMUD/pull/2583), [PR 2581](https://github.com/benhook1013/FireMUD/pull/2581), and [PR 2529](https://github.com/benhook1013/FireMUD/pull/2529) | Complete at the current merged boundary | Live gaps remain in the domain trackers |
+| Pre-formal ADRs 0001-0011 | Complete in the review archive | ADRs and accepted design already present | Initial owner allocation complete; exhaustive secondary-document consolidation remains pending | Live gaps remain in the domain trackers |
+| Foundational parcel, ADRs 0012-0019 | Complete | Merged by #2527, with recovery and CI follow-through in #2537 | Initial owner allocation complete; exhaustive secondary-document consolidation remains pending | Live gaps remain in the domain trackers |
+| Identity and admission parcel, ADRs 0020-0035 | Complete | Merged by #2528 | Initial owner allocation complete; exhaustive secondary-document consolidation remains pending | Live gaps remain in the domain trackers |
+| Authority, security, and account parcel, ADRs 0036-0050 | Complete | Merged across #2574, #2583, #2581, and #2529 | Initial owner allocation complete; exhaustive secondary-document consolidation remains pending | Live gaps remain in the domain trackers |
 | Remaining reviewed outcomes, ADRs 0051-0173 | Complete in the review archive | Pending selective import; not canonical on `develop` | Not started; consolidate after each accepted family lands | Reconcile owning trackers as each family lands |
 
 ## Authority Boundaries
@@ -85,16 +85,13 @@ This table describes merged repository state, not merely completed human review.
 - Human product or architecture decisions remain unresolved until explicitly discussed and accepted.
 - Routine local implementation choices do not require ADRs. ADR candidates are cross-cutting, expensive to reverse, authority-setting, security-sensitive, or supported by credible competing target states.
 
-## Work Sequence
+## Current Work Sequence
 
-1. Finalize the complete product capability taxonomy.
-2. Allocate every canonical design source to a primary capability and explicit secondary handoffs.
-3. Inventory consequential explicit and implicit decisions against that allocation.
-4. Resolve only direct canonical contradictions that block trustworthy implementation classification.
-5. Allocate every leaf capability to one primary implementation tracker and explicit secondary handoffs.
-6. Reconcile code, contracts, schemas, configuration, tests, and operational proof against every capability, then validate cross-domain authority and gaps.
-7. The human decision owner manually runs adversarial review against the completed register and chooses whether to accept, revise, defer, withdraw, or supersede each consequential decision.
-8. Apply human-accepted decisions to canonical design and create, amend, or supersede ADRs where warranted.
+1. Select a reviewed, pending decision family from the source archive against current `develop` rather than rebasing the archive wholesale.
+2. Verify its human-owned disposition and strongest evidence against current canonical product and architecture documents.
+3. Import any required ADR and the owning design changes, consolidate repeated contract ownership, and add checked applied-review provenance in the same change.
+4. Reconcile the live domain trackers only where the merged decision changes implementation, verification, or remaining-gap state.
+5. Validate and merge the family before importing a dependent family. The completed taxonomy, allocation, inventory, reconciliation baseline, and human-led review are historical prerequisites, not steps to rerun for each import.
 
 ## Automated Gates
 

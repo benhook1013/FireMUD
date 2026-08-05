@@ -14,7 +14,7 @@ The taxonomy IDs below are the exact child IDs from [capability-taxonomy.md](../
 
 - **Scan completeness:** The microservice documentation scan is complete for all 76 paths and its 63 service/source rows; no source path was omitted. The `MS-AA-TOKEN-REVOCATION` row is retained for historical navigation and is not an additional distinct decision.
 - **Canonical key count:** This ledger contributes 22 active service-only canonical keys. Its 40 cross-cutting rows are repeated evidence references, and its one superseded alias is historical traceability rather than an active canonical decision. Across the source-scoped ledgers, the established universe therefore comprises 182 active canonical decisions plus one historical alias, represented by 183 key/navigation rows.
-- **Implementation and approval state:** The `Complete` status above describes scan coverage and fidelity. Human-led review is complete in the source archive, while this merged ledger continues to describe only outcomes applied to `develop`; row-level implementation and proof remain separate.
+- **Implementation and approval state:** The `Complete` status above describes scan coverage and fidelity. Human-led review is complete in the source archive. This merged ledger contains both outcomes applied to `develop` and explicitly historical source-archive evidence whose reviewed deltas remain unapplied; only [Applied Review Provenance](./consequential-decision-inventory.md#applied-review-provenance) establishes merged application state. Row-level implementation and proof remain separate.
 
 ## Status And Review Notation
 
@@ -195,7 +195,7 @@ The inventory uses child IDs only. IDs in the primary column are authority-beari
 
 ## Historical Consultation And Review Evidence
 
-The suspected consultation gaps below preserve the evidence that fed the completed human review archive. They are not an active queue and are not claims that no human approved the choices; the reviewed documents did not expose a decision owner or consultation record.
+The suspected consultation gaps below preserve the evidence that fed the completed human review archive. They are not an active queue and are not claims that no human approved the choices; the source scan found no decision owner or consultation record in the reviewed source documents. That source-scan observation does not apply to rows with equivalent merged provenance in [Applied Review Provenance](./consequential-decision-inventory.md#applied-review-provenance).
 
 | Priority | Decision keys | Exact child focus | Adversarial review question |
 | --- | --- | --- | --- |
