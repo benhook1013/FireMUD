@@ -387,19 +387,22 @@ class AdrReviewStatusTests(unittest.TestCase):
             )
 
     def test_retired_adversarial_review_heading_is_not_accepted(self) -> None:
-        with fixture_root() as fixture:
-            root = Path(fixture)
-            path = provenance_path(root)
-            path.write_text(
-                path.read_text(encoding="utf-8")
-                + "\n## Adversarial Review Queue\n",
-                encoding="utf-8",
-            )
-            expect_failure(
-                self,
-                lambda: checked_reviews(self.validator, root),
-                "retired 'Adversarial Review Queue' section is not allowed",
-            )
+        for heading in (
+            "## Adversarial Review Queue",
+            "## Prioritized Adversarial Review Queue",
+        ):
+            with self.subTest(heading=heading), fixture_root() as fixture:
+                root = Path(fixture)
+                path = provenance_path(root)
+                path.write_text(
+                    path.read_text(encoding="utf-8") + f"\n{heading}\n",
+                    encoding="utf-8",
+                )
+                expect_failure(
+                    self,
+                    lambda: checked_reviews(self.validator, root),
+                    "retired 'Adversarial Review Queue' section is not allowed",
+                )
 
     def test_fenced_provenance_heading_does_not_count_as_duplicate(self) -> None:
         with fixture_root() as fixture:

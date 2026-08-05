@@ -72,7 +72,7 @@ def find_required_cyclonedx_json(ort_results: Path) -> Path:
             payload = json.loads(candidate.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError):
             continue
-        if payload.get("bomFormat") == "CycloneDX":
+        if isinstance(payload, dict) and payload.get("bomFormat") == "CycloneDX":
             return candidate
     raise FileNotFoundError(
         f"No CycloneDX JSON report was found under {ort_results}",

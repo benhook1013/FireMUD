@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: read # Classify the complete pull-request file list.
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
     outputs:
       lightweight_only: ${{ steps.compute.outputs.lightweight_only }}
@@ -34,6 +34,7 @@ jobs:
       - name: Check out change classifier
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
           persist-credentials: false
 
       - name: Compute security scope
@@ -41,11 +42,16 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
-            const { classifyGithubChangeScope } = require(
-              `${process.env.GITHUB_WORKSPACE}/.github/scripts/classify-change-scope.cjs`
-            );
-            const scope = await classifyGithubChangeScope(github, context);
-            core.setOutput("lightweight_only", String(scope.lightweightOnly));
+            const fs = require("node:fs");
+            const classifierPath = `${process.env.GITHUB_WORKSPACE}/.github/scripts/classify-change-scope.cjs`;
+            if (fs.existsSync(classifierPath)) {
+              const { classifyGithubChangeScope } = require(classifierPath);
+              const scope = await classifyGithubChangeScope(github, context);
+              core.setOutput("lightweight_only", String(scope.lightweightOnly));
+            } else {
+              core.warning("Base revision predates the change classifier; running the complete security scope.");
+              core.setOutput("lightweight_only", "false");
+            }
 
   trivy-scan:
     name: Trivy Filesystem Scan

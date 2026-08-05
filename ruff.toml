@@ -1,5 +1,5 @@
 line-length = 120
-target-version = "py310"
+target-version = "py314"
 
 [lint]
 # Repository tools are invoked through an explicit Python interpreter; executable

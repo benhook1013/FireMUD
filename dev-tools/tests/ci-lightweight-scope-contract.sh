@@ -103,17 +103,32 @@ require_equal(
     "read",
     "ci workflow",
 )
+ci_classifier_checkout = find_step(
+    ci, "changes", "Check out change classifier", "ci workflow"
+)
+require_equal(
+    ci_classifier_checkout,
+    ("with", "ref"),
+    "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}",
+    "ci workflow",
+)
 ci_compute_step = find_step(ci, "changes", "Compute affected jobs", "ci workflow")
 require_contains(
     ci_compute_step,
     ("with", "script"),
-    "const { classifyGithubChangeScope } = require(",
+    "const { classifyGithubChangeScope } = require(classifierPath)",
     "ci workflow",
 )
 require_contains(
     ci_compute_step,
     ("with", "script"),
     "await classifyGithubChangeScope(github, context)",
+    "ci workflow",
+)
+require_contains(
+    ci_compute_step,
+    ("with", "script"),
+    "Base revision predates the change classifier; using complete validation scope.",
     "ci workflow",
 )
 
@@ -132,7 +147,7 @@ require_equal(
 require_contains(
     ci,
     ("jobs", "python-script-validation", "if"),
-    "needs.changes.outputs.lightweight_only",
+    "needs.changes.outputs.python_changed == 'true'",
     "ci workflow",
 )
 python_step = find_step(
@@ -153,7 +168,13 @@ require_equal(
 require_contains(
     ci,
     ("jobs", "dev-tool-contract-checks", "if"),
-    "needs.changes.outputs.lightweight_only",
+    "needs.changes.outputs.design_docs_changed == 'true'",
+    "ci workflow",
+)
+require_contains(
+    ci,
+    ("jobs", "dev-tool-contract-checks", "if"),
+    "needs.changes.outputs.validation_python_changed == 'true'",
     "ci workflow",
 )
 require_equal(
@@ -219,11 +240,27 @@ require_contains(
     'echo "Validate Documentation => $DOCS_CHECK"',
     "ci workflow",
 )
+for expected in (
+    'if [ "$LIGHTWEIGHT_ONLY" = "true" ]',
+    'is_acceptable_optional_result "$result"',
+    'if [ "$PYTHON_CHANGED" = "true" ]',
+    'if [ "$DESIGN_DOCS_CHANGED" = "true" ] || [ "$VALIDATION_PYTHON_CHANGED" = "true" ]',
+):
+    require_contains(validation_step, ("run",), expected, "ci workflow")
 
 require_equal(
     security,
     ("jobs", "changes", "permissions", "pull-requests"),
     "read",
+    "security workflow",
+)
+security_classifier_checkout = find_step(
+    security, "changes", "Check out change classifier", "security workflow"
+)
+require_equal(
+    security_classifier_checkout,
+    ("with", "ref"),
+    "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}",
     "security workflow",
 )
 security_compute_step = find_step(
@@ -232,13 +269,19 @@ security_compute_step = find_step(
 require_contains(
     security_compute_step,
     ("with", "script"),
-    "const { classifyGithubChangeScope } = require(",
+    "const { classifyGithubChangeScope } = require(classifierPath)",
     "security workflow",
 )
 require_contains(
     security_compute_step,
     ("with", "script"),
     "await classifyGithubChangeScope(github, context)",
+    "security workflow",
+)
+require_contains(
+    security_compute_step,
+    ("with", "script"),
+    "Base revision predates the change classifier; running the complete security scope.",
     "security workflow",
 )
 require_equal(
@@ -275,7 +318,13 @@ require_equal(
     "security workflow",
 )
 
-for path_item in ("design/**", "dev-tools/docs/**", "dev-tools/validation/**/*.py"):
+for path_item in (
+    "**/*.md",
+    "mkdocs.yml",
+    "design/**",
+    "dev-tools/docs/**",
+    "dev-tools/validation/**/*.py",
+):
     require_list_item(
         preview,
         ("on", "pull_request", "paths-ignore"),

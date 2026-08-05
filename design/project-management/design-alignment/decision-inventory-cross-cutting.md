@@ -24,7 +24,7 @@ The ledger contains 68 decision rows: 59 retained rows and 9 distinct evidence-b
 
 ## Human Review Evidence
 
-`accepted-explicit` records a canonical choice, not human approval. A human-review claim is authoritative only when the linked ADR or consequential-decision record names the decision owner, review date, status, disposition, and exact checked queue provenance in [Applied Review Provenance](./consequential-decision-inventory.md#applied-review-provenance). Every ADR below names the FireMUD human product and architecture owner, records `Human review status: Completed`, and names the matching checked queue key as its review source:
+`accepted-explicit` records a canonical choice, not human approval. A human-review claim is authoritative only when the linked ADR or consequential-decision record names the decision owner, review date, status, disposition, and exact checked provenance entry in [Applied Review Provenance](./consequential-decision-inventory.md#applied-review-provenance). Every ADR below names the FireMUD human product and architecture owner, records `Human review status: Completed`, and names the matching checked decision key as its review source:
 
 | Queue key | Completed ADR | Review date | Disposition |
 | --- | --- | --- | --- |

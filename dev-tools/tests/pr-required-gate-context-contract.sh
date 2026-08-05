@@ -163,6 +163,14 @@ try:
 except (KeyError, TypeError, yaml.YAMLError) as exc:
     raise SystemExit(f"{workflow} must contain a structured {gate} job: {exc}") from exc
 
+if not isinstance(job, dict):
+    raise SystemExit(f"{workflow} {gate} job must be a mapping")
+if job_id not in expected_job_if or job_id not in result_step_names:
+    raise SystemExit(
+        f"{workflow} {gate}: unknown gate job ID {job_id!r}; "
+        "add it to expected_job_if and result_step_names"
+    )
+
 if job.get("if") != expected_job_if[job_id]:
     raise SystemExit(
         f"{workflow} {gate} must retain its exact job if condition: "

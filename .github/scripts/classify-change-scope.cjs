@@ -59,7 +59,7 @@ function isFrontend(file) {
 }
 
 function isUnknownServicePath(file) {
-  const match = /^services\/([^/]+)\//.exec(file);
+  const match = /^services\/([^/]+)(?:\/|$)/.exec(file);
   return match !== null && !ALL_SERVICES.includes(match[1]);
 }
 

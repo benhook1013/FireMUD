@@ -68,7 +68,9 @@ FENCE_CLOSER_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})[ \t]*$")
 LEVEL_TWO_HEADING_RE = re.compile(r"^## [^\r\n]*$")
 SECTION_BOUNDARY_HEADING_RE = re.compile(r"^#{1,2} [^\r\n]*$")
 REVIEW_PROVENANCE_HEADING_RE = re.compile(r"^## Applied Review Provenance[ \t]*$")
-RETIRED_REVIEW_QUEUE_HEADING_RE = re.compile(r"^## Adversarial Review Queue[ \t]*$")
+RETIRED_REVIEW_QUEUE_HEADING_RE = re.compile(
+    r"^## (?:Prioritized )?Adversarial Review Queue[ \t]*$"
+)
 SUPERSEDED_SCAN_ALIAS_KEY_RE = re.compile(r"^MS-[A-Z0-9]+(?:-[A-Z0-9]+)+$")
 SUPERSEDED_SCAN_ALIAS_SUFFIX = "; retained as a historical service-scan alias."
 

@@ -94,6 +94,17 @@ test("non-PR runs always execute the complete path", () => {
   assert.deepEqual(result.affectedServices, ALL_SERVICES);
 });
 
+test("GitHub non-PR events always execute the complete path", async () => {
+  const result = await classifyGithubChangeScope({}, {
+    eventName: "push",
+  });
+
+  assert.equal(result.runAll, true);
+  assert.equal(result.lightweightOnly, false);
+  assert.equal(result.pythonChanged, true);
+  assert.deepEqual(result.affectedServices, ALL_SERVICES);
+});
+
 test("GitHub file-count mismatches fail closed to the complete path", async () => {
   const github = {
     paginate: async () => ["design/README.md"],
@@ -155,14 +166,16 @@ test("GitHub shared paths force the complete path", async () => {
 });
 
 test("GitHub unknown service paths force the complete path", async () => {
-  const result = await classifyGithubFiles(
-    ["services/unknown-service/src/main.java"],
-    1,
-  );
+  for (const path of [
+    "services/unknown-service",
+    "services/unknown-service/src/main.java",
+  ]) {
+    const result = await classifyGithubFiles([path], 1);
 
-  assert.equal(result.runAll, true);
-  assert.equal(result.lightweightOnly, false);
-  assert.deepEqual(result.affectedServices, ALL_SERVICES);
+    assert.equal(result.runAll, true, path);
+    assert.equal(result.lightweightOnly, false, path);
+    assert.deepEqual(result.affectedServices, ALL_SERVICES, path);
+  }
 });
 
 test("GitHub complete docs and known Account service lists target Account only", async () => {

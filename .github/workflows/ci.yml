@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: read # Classify the complete pull-request file list.
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
     outputs:
       run_all: ${{ steps.compute.outputs.run_all }}
@@ -42,6 +42,7 @@ jobs:
       - name: Check out change classifier
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
           persist-credentials: false
 
       - name: Compute affected jobs
@@ -49,20 +50,47 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
-            const { classifyGithubChangeScope } = require(
-              `${process.env.GITHUB_WORKSPACE}/.github/scripts/classify-change-scope.cjs`
-            );
-            const scope = await classifyGithubChangeScope(github, context);
-            const outputs = {
-              run_all: scope.runAll,
-              affected_services: scope.affectedServices,
-              docs_changed: scope.docsChanged,
-              frontend_changed: scope.frontendChanged,
-              python_changed: scope.pythonChanged,
-              design_docs_changed: scope.designDocsChanged,
-              validation_python_changed: scope.validationPythonChanged,
-              lightweight_only: scope.lightweightOnly,
-            };
+            const fs = require("node:fs");
+            const classifierPath = `${process.env.GITHUB_WORKSPACE}/.github/scripts/classify-change-scope.cjs`;
+            let outputs;
+            if (fs.existsSync(classifierPath)) {
+              const { classifyGithubChangeScope } = require(classifierPath);
+              const scope = await classifyGithubChangeScope(github, context);
+              outputs = {
+                run_all: scope.runAll,
+                affected_services: scope.affectedServices,
+                docs_changed: scope.docsChanged,
+                frontend_changed: scope.frontendChanged,
+                python_changed: scope.pythonChanged,
+                design_docs_changed: scope.designDocsChanged,
+                validation_python_changed: scope.validationPythonChanged,
+                lightweight_only: scope.lightweightOnly,
+              };
+            } else {
+              core.warning("Base revision predates the change classifier; using complete validation scope.");
+              outputs = {
+                run_all: true,
+                affected_services: [
+                  "account-service",
+                  "automation-scripting-service",
+                  "entity-management-service",
+                  "game-design-service",
+                  "game-logic-service",
+                  "game-session-service",
+                  "logging-admin-service",
+                  "social-groups-service",
+                  "spring-cloud-gateway",
+                  "tcp-proxy-service",
+                  "world-management-service",
+                ],
+                docs_changed: true,
+                frontend_changed: true,
+                python_changed: true,
+                design_docs_changed: true,
+                validation_python_changed: true,
+                lightweight_only: false,
+              };
+            }
             for (const [name, value] of Object.entries(outputs)) {
               core.setOutput(
                 name,
@@ -736,7 +764,7 @@ jobs:
               ["GitHub workflow lint", "${{ needs.workflow-lint.result }}"],
               ["Helm chart lint", "${{ needs.helm-lint.result }}"],
               ["Helm render validation", "${{ needs.helm-render-validation.result }}"],
-              ["Docs and links", "${{ needs.docs-check.result }}"],
+              ["Validate Documentation", "${{ needs.docs-check.result }}"],
               ["Frontend checks", "${{ needs.frontend-checks.result }}"],
               ["Service build/test matrix", "${{ needs.build-and-test.result }}"],
             ];
