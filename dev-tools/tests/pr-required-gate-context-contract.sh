@@ -131,10 +131,63 @@ while IFS='|' read -r workflow gate_job_id gate; do
     echo "$workflow $gate caller must retain contents: read" >&2
     exit 1
   }
-  if ! grep -Fq 'needs.changes.result' <<<"$gate_block"; then
-    echo "$workflow $gate must fail closed when change detection fails" >&2
-    exit 1
-  fi
+  python3 - "$path" "$gate_job_id" "$workflow" "$gate" <<'PY'
+from pathlib import Path
+import sys
+
+import yaml
+
+
+expected_job_if = {
+    "validation-gate": "${{ always() }}",
+    "security-gate": "${{ always() }}",
+    "license-gate": "${{ always() }}",
+    "smoke-gate": "${{ always() && github.event_name == 'pull_request' }}",
+    "codeql-gate": "${{ always() && github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main') }}",
+}
+result_step_names = {
+    "validation-gate": "Enforce validation success",
+    "security-gate": "Enforce security success",
+    "license-gate": "Verify ORT results",
+    "smoke-gate": "Classify smoke gate execution",
+    "codeql-gate": "Enforce successful CodeQL analysis",
+}
+
+path = Path(sys.argv[1])
+job_id = sys.argv[2]
+workflow = sys.argv[3]
+gate = sys.argv[4]
+try:
+    data = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    job = data["jobs"][job_id]
+except (KeyError, TypeError, yaml.YAMLError) as exc:
+    raise SystemExit(f"{workflow} must contain a structured {gate} job: {exc}") from exc
+
+if job.get("if") != expected_job_if[job_id]:
+    raise SystemExit(
+        f"{workflow} {gate} must retain its exact job if condition: "
+        f"{expected_job_if[job_id]!r}"
+    )
+
+steps = job.get("steps")
+if not isinstance(steps, list):
+    raise SystemExit(f"{workflow} {gate} must define steps as a list")
+result_steps = [
+    step
+    for step in steps
+    if isinstance(step, dict) and step.get("name") == result_step_names[job_id]
+]
+if len(result_steps) != 1:
+    raise SystemExit(
+        f"{workflow} {gate} must contain exactly one {result_step_names[job_id]!r} step"
+    )
+result_env = result_steps[0].get("env")
+if not isinstance(result_env, dict) or result_env.get("CHANGES_RESULT") != "${{ needs.changes.result }}":
+    raise SystemExit(
+        f"{workflow} {gate} must read needs.changes.result through the exact "
+        f"{result_step_names[job_id]!r} CHANGES_RESULT field"
+    )
+PY
 
   group_line=$(grep -m1 '^  group:' "$path" || true)
   if [[ "$group_line" != *"&& 'metadata' || 'required' }}"* ]]; then

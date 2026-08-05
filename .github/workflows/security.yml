@@ -19,6 +19,9 @@ jobs:
   changes:
     name: Detect Security-Relevant Changes
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
     outputs:
       lightweight_only: ${{ steps.compute.outputs.lightweight_only }}
@@ -38,24 +41,10 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
-            const { classifyChangeScope } = require(
+            const { classifyGithubChangeScope } = require(
               `${process.env.GITHUB_WORKSPACE}/.github/scripts/classify-change-scope.cjs`
             );
-            let files = [];
-            if (context.eventName === "pull_request") {
-              files = await github.paginate(
-                github.rest.pulls.listFiles,
-                {
-                  ...context.repo,
-                  pull_number: context.payload.pull_request.number,
-                  per_page: 100,
-                },
-                (response) => response.data.map((file) => file.filename)
-              );
-            }
-            const scope = classifyChangeScope(files, {
-              forceAll: context.eventName !== "pull_request",
-            });
+            const scope = await classifyGithubChangeScope(github, context);
             core.setOutput("lightweight_only", String(scope.lightweightOnly));
 
   trivy-scan:
@@ -134,7 +123,7 @@ jobs:
   secret-compliance:
     name: Secret Compliance Validation
     needs: [changes]
-    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
     uses: ./.github/workflows/validate-secret-compliance.yml
     with:
       enforcement_mode: ${{ github.event_name == 'pull_request' && 'strict' || 'advisory' }}
@@ -187,8 +176,8 @@ jobs:
               echo "Security Gate received an unexpected Trivy result for the lightweight path." >&2
               exit 1
             fi
-            if [ "$SECRET_COMPLIANCE" != "skipped" ] && [ "$SECRET_COMPLIANCE" != "success" ]; then
-              echo "Security Gate received an unexpected secret-compliance result for the lightweight path." >&2
+            if [ "$SECRET_COMPLIANCE" != "success" ]; then
+              echo "Security Gate failed because secret compliance validation did not succeed." >&2
               exit 1
             fi
             exit 0
@@ -220,10 +209,11 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
+            const failureResults = ["failure", "cancelled", "timed_out", "action_required"];
             const statusIcon = (value) => {
               if (value === "success") return "✅";
-              if (value === "failure") return "❌";
               if (value === "cancelled") return "⚪";
+              if (failureResults.includes(value)) return "❌";
               return "⏭️";
             };
 
@@ -233,9 +223,7 @@ jobs:
               ["Secret compliance validation", "${{ needs.secret-compliance.result }}"],
             ];
 
-            const failedChecks = checks.filter(([, result]) =>
-              ["failure", "cancelled", "timed_out", "action_required"].includes(result)
-            );
+            const failedChecks = checks.filter(([, result]) => failureResults.includes(result));
             const headline = failedChecks.length === 0
               ? "✅ Security checks passed or were intentionally skipped"
               : "❌ Security checks failed";

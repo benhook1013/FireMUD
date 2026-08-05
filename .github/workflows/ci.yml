@@ -20,6 +20,9 @@ jobs:
   changes:
     name: Detect CI-Relevant Changes
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
     outputs:
       run_all: ${{ steps.compute.outputs.run_all }}
@@ -46,25 +49,10 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
-            const { classifyChangeScope } = require(
+            const { classifyGithubChangeScope } = require(
               `${process.env.GITHUB_WORKSPACE}/.github/scripts/classify-change-scope.cjs`
             );
-            let files = [];
-            if (context.eventName === "pull_request") {
-              files = await github.paginate(
-                github.rest.pulls.listFiles,
-                {
-                  ...context.repo,
-                  pull_number: context.payload.pull_request.number,
-                  per_page: 100,
-                },
-                (response) => response.data.map((file) => file.filename)
-              );
-            }
-
-            const scope = classifyChangeScope(files, {
-              forceAll: context.eventName !== "pull_request",
-            });
+            const scope = await classifyGithubChangeScope(github, context);
             const outputs = {
               run_all: scope.runAll,
               affected_services: scope.affectedServices,
@@ -496,18 +484,19 @@ jobs:
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 24
+          node-version: '24.19.0'
           cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: 📦 Install documentation dependencies
         run: |
           npm ci
-          python3 -m pip install --disable-pip-version-check mkdocs mkdocs-material
+          python3 -m pip install --disable-pip-version-check mkdocs==1.6.1 mkdocs-material==9.6.5
 
       - name: 🧹 Lint Markdown and links
         run: |
           npx markdownlint-cli2 --config config/markdownlint/.markdownlint-cli2.jsonc '**/*.md'
-          CHECK_EXTERNAL_LINKS=1 bash ./dev-tools/docs/link-check.sh
+          CHECK_EXTERNAL_LINKS=${{ github.event_name == 'pull_request' && '0' || '1' }} bash ./dev-tools/docs/link-check.sh
 
       - name: 🏗️ Build documentation site
         run: |
@@ -927,7 +916,7 @@ jobs:
             fi
           fi
 
-          echo "Lint Docs and Links => $DOCS_CHECK"
+          echo "Validate Documentation => $DOCS_CHECK"
           if [ "$DOCS_CHANGED" = "true" ]; then
             if [ "$DOCS_CHECK" != "success" ]; then
               failed=1

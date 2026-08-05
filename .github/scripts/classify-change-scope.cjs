@@ -36,6 +36,10 @@ const SHARED_FILES = new Set([
   "settings.gradle.kts",
   "gradle.properties",
   ".github/workflows/ci.yml",
+  ".github/workflows/security.yml",
+  ".github/workflows/preview.yml",
+  ".github/workflows/zap-baseline.yml",
+  ".github/scripts/classify-change-scope.cjs",
 ]);
 
 function isDocumentation(file) {
@@ -99,9 +103,31 @@ function classifyChangeScope(inputFiles, options = {}) {
   };
 }
 
+async function classifyGithubChangeScope(github, context) {
+  if (context.eventName !== "pull_request") {
+    return classifyChangeScope([], { forceAll: true });
+  }
+
+  const files = await github.paginate(
+    github.rest.pulls.listFiles,
+    {
+      ...context.repo,
+      pull_number: context.payload.pull_request.number,
+      per_page: 100,
+    },
+    (response) => response.data.map((file) => file.filename),
+  );
+  const expectedFileCount = context.payload.pull_request.changed_files;
+  const fileListIncomplete =
+    Number.isInteger(expectedFileCount) && expectedFileCount !== files.length;
+
+  return classifyChangeScope(files, { forceAll: fileListIncomplete });
+}
+
 module.exports = {
   ALL_SERVICES,
   classifyChangeScope,
+  classifyGithubChangeScope,
   isDocumentation,
   isValidationPython,
 };

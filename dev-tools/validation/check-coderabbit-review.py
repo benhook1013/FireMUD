@@ -469,9 +469,14 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
                 substantive_review_evidence.append((created_at_dt, body))
             if PLAN_REVIEW_SKIP_MARKER in body and PLAN_CEILING_PATTERN.search(body):
                 plan_ceiling_evidence.append(created_at_dt)
-        if author == "coderabbitai" and SUBSTANTIVE_REVIEW_MARKER in body and (
-            latest_coderabbit_review_finished_dt is None
-            or created_at_dt > latest_coderabbit_review_finished_dt
+        if (
+            author == "coderabbitai"
+            and created_at_dt is not None
+            and SUBSTANTIVE_REVIEW_MARKER in body
+            and (
+                latest_coderabbit_review_finished_dt is None
+                or created_at_dt > latest_coderabbit_review_finished_dt
+            )
         ):
             latest_coderabbit_review_finished_dt = created_at_dt
             latest_coderabbit_review_finished_at = created_at

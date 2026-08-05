@@ -765,6 +765,24 @@ write_fixture(
 )
 PY
 
+python3 - "$TMP_DIR/pass.json" "$TMP_DIR/substantive-review-missing-created-at.json" <<'PY'
+import json
+import sys
+
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    payload = json.load(source)
+payload["data"]["repository"]["pullRequest"]["comments"]["nodes"].append(
+    {
+        "author": {"login": "coderabbitai"},
+        "body": "<!-- walkthrough_start -->",
+        "url": "https://example.test/missing-created-at",
+    }
+)
+with open(sys.argv[2], "w", encoding="utf-8") as destination:
+    json.dump(payload, destination)
+PY
+
 EXPECT_FAILURE_STATUS=0
 
 expect_failure_output() {
@@ -789,6 +807,12 @@ grep -q "retrigger_review_allowed=true" <<<"$pass_output"
 grep -q "manual_thread_resolution_required=false" <<<"$pass_output"
 grep -q "must_resolve_outdated_threads=false" <<<"$pass_output"
 grep -q "ok=true" <<<"$pass_output"
+
+missing_created_at_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/substantive-review-missing-created-at.json")"
+grep -q "latest_coderabbit_review_finished_at=2026-07-03T02:40:05Z" <<<"$missing_created_at_output"
+grep -q "review_finished_after_latest_request=true" <<<"$missing_created_at_output"
+grep -q "substantive_review_after_latest_commit=true" <<<"$missing_created_at_output"
+grep -q "ok=true" <<<"$missing_created_at_output"
 
 expect_failure_output "$TMP_DIR/incremental-review-no-evidence.json" "$TMP_DIR/incremental-review-no-evidence.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]

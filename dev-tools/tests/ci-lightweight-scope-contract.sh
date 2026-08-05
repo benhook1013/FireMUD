@@ -21,37 +21,264 @@ require_contains() {
 
 for expected in \
   'function isDocumentation(file)' \
-  'function isValidationPython(file)' \
-  'lightweightOnly:'; do
+  'function isValidationPython(file)'; do
   require_contains "$CLASSIFIER" "$expected"
 done
 
-for expected in \
-  'lightweight_only: ${{ steps.compute.outputs.lightweight_only }}' \
-  'ruff check "${python_files[@]}"' \
-  'python3 -m mkdocs build --clean' \
-  'needs.changes.outputs.lightweight_only'; do
-  require_contains "$CI_WORKFLOW" "$expected"
-done
+python3 - "$CI_WORKFLOW" "$SECURITY_WORKFLOW" "$PREVIEW_WORKFLOW" "$ZAP_WORKFLOW" <<'PY'
+from pathlib import Path
+import sys
 
-for expected in \
-  'Detect Security-Relevant Changes' \
-  'needs: [changes, trivy-scan, secret-compliance]' \
-  'LIGHTWEIGHT_ONLY: ${{ needs.changes.outputs.lightweight_only }}'; do
-  require_contains "$SECURITY_WORKFLOW" "$expected"
-done
+import yaml
 
-for expected in \
-  "      - 'design/**'" \
-  "      - 'dev-tools/docs/**'" \
-  "      - 'dev-tools/validation/**/*.py'"; do
-  require_contains "$PREVIEW_WORKFLOW" "$expected"
-done
 
-for expected in \
-  "      - '.github/workflows/zap-baseline.yml'" \
-  "      - 'web-client/**'"; do
-  require_contains "$ZAP_WORKFLOW" "$expected"
-done
+def load_workflow(path_text):
+    path = Path(path_text)
+    try:
+        workflow = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    except yaml.YAMLError as exc:
+        raise SystemExit(f"{path}: invalid YAML: {exc}") from exc
+    if not isinstance(workflow, dict):
+        raise SystemExit(f"{path}: workflow root must be a mapping")
+    return workflow
+
+
+def value_at(mapping, path, label):
+    value = mapping
+    for key in path:
+        if not isinstance(value, dict) or key not in value:
+            raise SystemExit(f"{label}: missing YAML field {'/'.join(path)}")
+        value = value[key]
+    return value
+
+
+def require_equal(mapping, path, expected, label):
+    actual = value_at(mapping, path, label)
+    if actual != expected:
+        raise SystemExit(
+            f"{label}: {'/'.join(path)} must be {expected!r}, got {actual!r}"
+        )
+
+
+def require_contains(mapping, path, expected, label):
+    actual = value_at(mapping, path, label)
+    if not isinstance(actual, str) or expected not in actual:
+        raise SystemExit(
+            f"{label}: {'/'.join(path)} must contain {expected!r}, got {actual!r}"
+        )
+
+
+def require_list_item(mapping, path, expected, label):
+    actual = value_at(mapping, path, label)
+    if not isinstance(actual, list) or expected not in actual:
+        raise SystemExit(
+            f"{label}: {'/'.join(path)} must contain {expected!r}, got {actual!r}"
+        )
+
+
+def find_step(workflow, job_id, name_suffix, label):
+    steps = value_at(workflow, ("jobs", job_id, "steps"), label)
+    matches = [
+        step
+        for step in steps
+        if isinstance(step, dict)
+        and isinstance(step.get("name"), str)
+        and step["name"].endswith(name_suffix)
+    ]
+    if len(matches) != 1:
+        raise SystemExit(
+            f"{label}: expected one {name_suffix!r} step in jobs/{job_id}, found {len(matches)}"
+        )
+    return matches[0]
+
+
+ci = load_workflow(sys.argv[1])
+security = load_workflow(sys.argv[2])
+preview = load_workflow(sys.argv[3])
+zap = load_workflow(sys.argv[4])
+
+require_equal(
+    ci,
+    ("jobs", "changes", "permissions", "pull-requests"),
+    "read",
+    "ci workflow",
+)
+ci_compute_step = find_step(ci, "changes", "Compute affected jobs", "ci workflow")
+require_contains(
+    ci_compute_step,
+    ("with", "script"),
+    "const { classifyGithubChangeScope } = require(",
+    "ci workflow",
+)
+require_contains(
+    ci_compute_step,
+    ("with", "script"),
+    "await classifyGithubChangeScope(github, context)",
+    "ci workflow",
+)
+
+require_equal(
+    ci,
+    ("jobs", "changes", "outputs", "lightweight_only"),
+    "${{ steps.compute.outputs.lightweight_only }}",
+    "ci workflow",
+)
+require_equal(
+    ci,
+    ("jobs", "python-script-validation", "needs"),
+    ["changes"],
+    "ci workflow",
+)
+require_contains(
+    ci,
+    ("jobs", "python-script-validation", "if"),
+    "needs.changes.outputs.lightweight_only",
+    "ci workflow",
+)
+python_step = find_step(
+    ci, "python-script-validation", "Validate tracked Python scripts", "ci workflow"
+)
+require_contains(
+    python_step,
+    ("run",),
+    'ruff check "${python_files[@]}"',
+    "ci workflow",
+)
+require_equal(
+    ci,
+    ("jobs", "dev-tool-contract-checks", "needs"),
+    ["changes"],
+    "ci workflow",
+)
+require_contains(
+    ci,
+    ("jobs", "dev-tool-contract-checks", "if"),
+    "needs.changes.outputs.lightweight_only",
+    "ci workflow",
+)
+require_equal(
+    ci,
+    ("jobs", "docs-check", "needs"),
+    ["changes"],
+    "ci workflow",
+)
+docs_step = find_step(ci, "docs-check", "Build documentation site", "ci workflow")
+require_contains(
+    docs_step,
+    ("run",),
+    "python3 -m mkdocs build --clean",
+    "ci workflow",
+)
+docs_node_step = find_step(ci, "docs-check", "Set Up Node", "ci workflow")
+require_equal(
+    docs_node_step,
+    ("with", "node-version"),
+    "24.19.0",
+    "ci workflow",
+)
+require_equal(
+    docs_node_step,
+    ("with", "cache-dependency-path"),
+    "package-lock.json",
+    "ci workflow",
+)
+docs_dependencies_step = find_step(
+    ci, "docs-check", "Install documentation dependencies", "ci workflow"
+)
+require_contains(
+    docs_dependencies_step,
+    ("run",),
+    "python3 -m pip install --disable-pip-version-check mkdocs==1.6.1 mkdocs-material==9.6.5",
+    "ci workflow",
+)
+docs_links_step = find_step(ci, "docs-check", "Lint Markdown and links", "ci workflow")
+require_contains(
+    docs_links_step,
+    ("run",),
+    "CHECK_EXTERNAL_LINKS=${{ github.event_name == 'pull_request' && '0' || '1' }} bash ./dev-tools/docs/link-check.sh",
+    "ci workflow",
+)
+validation_step = find_step(
+    ci, "validation-gate", "Enforce validation success", "ci workflow"
+)
+require_contains(
+    validation_step,
+    ("run",),
+    'echo "Validate Documentation => $DOCS_CHECK"',
+    "ci workflow",
+)
+
+require_equal(
+    security,
+    ("jobs", "changes", "permissions", "pull-requests"),
+    "read",
+    "security workflow",
+)
+security_compute_step = find_step(
+    security, "changes", "Compute security scope", "security workflow"
+)
+require_contains(
+    security_compute_step,
+    ("with", "script"),
+    "const { classifyGithubChangeScope } = require(",
+    "security workflow",
+)
+require_contains(
+    security_compute_step,
+    ("with", "script"),
+    "await classifyGithubChangeScope(github, context)",
+    "security workflow",
+)
+require_equal(
+    security,
+    ("jobs", "trivy-scan", "if"),
+    "${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}",
+    "security workflow",
+)
+require_equal(
+    security,
+    ("jobs", "secret-compliance", "if"),
+    "${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}",
+    "security workflow",
+)
+require_equal(
+    security,
+    ("jobs", "changes", "name"),
+    "Detect Security-Relevant Changes",
+    "security workflow",
+)
+require_equal(
+    security,
+    ("jobs", "security-gate", "needs"),
+    ["changes", "trivy-scan", "secret-compliance"],
+    "security workflow",
+)
+security_step = find_step(
+    security, "security-gate", "Enforce security success", "security workflow"
+)
+require_equal(
+    security_step,
+    ("env", "LIGHTWEIGHT_ONLY"),
+    "${{ needs.changes.outputs.lightweight_only }}",
+    "security workflow",
+)
+
+for path_item in ("design/**", "dev-tools/docs/**", "dev-tools/validation/**/*.py"):
+    require_list_item(
+        preview,
+        ("on", "pull_request", "paths-ignore"),
+        path_item,
+        "preview workflow",
+    )
+
+for event in ("push", "pull_request"):
+    for path_item in (".github/workflows/zap-baseline.yml", "web-client/**"):
+        require_list_item(
+            zap,
+            ("on", event, "paths"),
+            path_item,
+            "ZAP workflow",
+        )
+PY
 
 echo "CI lightweight scope contract passed"

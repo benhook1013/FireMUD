@@ -51,7 +51,7 @@ JsonValue = bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"
 JsonObject = dict[str, JsonValue]
 JSON_READ_ERRORS = (OSError, UnicodeError, json.JSONDecodeError)
 YAML_READ_ERRORS = (OSError, UnicodeError, yaml.YAMLError)
-TIMESTAMP_ERRORS = (TypeError, ValueError, AttributeError)
+TIMESTAMP_ERRORS = (TypeError, ValueError, AttributeError, OverflowError)
 
 # These are the policy results emitted by this executable. The two JWT policies
 # documented as target-state-only are deliberately not included until they are
@@ -291,6 +291,26 @@ def parse_timestamp(value: Any, field_name: str) -> dt.datetime:
     if parsed.tzinfo is None:
         raise ValueError(f"{field_name} must include a timezone")
     return parsed.astimezone(dt.timezone.utc)
+
+
+def secret_lookup_failure(secret_name: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["kubectl", "get", "secret", "-n", "firemud", secret_name],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        return f"Secret lookup could not be verified for firemud/{secret_name}: {exc}"
+    if result.returncode == 0:
+        return None
+
+    stderr = result.stderr.strip()
+    if "(NotFound)" in stderr:
+        return f"Missing required Secret in cluster: firemud/{secret_name}"
+    detail = stderr or "kubectl returned a non-zero status without stderr"
+    return f"Secret lookup could not be verified for firemud/{secret_name}: {detail}"
 
 
 def is_missing(value: Any) -> bool:
@@ -2839,16 +2859,11 @@ def main() -> int:
             ) or has_required_failure
     else:
         for secret_name in ("postgres-credentials", "jwt-signing-keys", "jwt-jwks"):
-            result = subprocess.run(
-                ["kubectl", "get", "secret", "-n", "firemud", secret_name],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
+            failure_message = secret_lookup_failure(secret_name)
+            if failure_message is not None:
                 has_required_failure = append_result(
                     check_results,
-                    "PREFLIGHT-SECRETS-001", True, "fail", f"Missing required Secret in cluster: firemud/{secret_name}",
+                    "PREFLIGHT-SECRETS-001", True, "fail", failure_message,
                 ) or has_required_failure
                 secret_check_failed = True
                 break

@@ -67,7 +67,7 @@ The main [`ci.yml`](../../.github/workflows/ci.yml) workflow:
 - Validates tracked Bash scripts across the repository with ShellCheck and validates every tracked Python script with `py_compile` plus repository-wide Ruff linting.
 - Invokes a dedicated `generate-erd` job that runs [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) to build ERD diagrams from service migrations and upload them as artifacts.
 - Caches Buf modules, Node dependencies, Trivy database, and Gradle artifacts to speed up repeat workflow runs.
-- Runs markdownlint, internal/external link checks, structural design contracts, and a MkDocs site build in `ci.yml`, then verifies links again in the `docs.yml` workflow before publishing to GitHub Pages.
+- Runs markdownlint, blocking internal link checks, structural design contracts, and a MkDocs site build in pull-request CI. Push CI also checks external links; `docs.yml` verifies internal links again before publishing to GitHub Pages.
 - Posts a summary comment on pull requests with test status and coverage, while Codecov publishes patch-coverage status separately.
 
 The primary [`ci.yml`](../../.github/workflows/ci.yml) workflow builds and validates the repository:
@@ -220,7 +220,7 @@ The repository should not accumulate additional ad hoc scripting languages for a
 Current CI enforcement is:
 
 - ShellCheck for all tracked `.sh` scripts in the repository.
-- Python syntax validation for all tracked `.py` scripts in the repository.
+- Python syntax validation and Ruff linting for all tracked `.py` scripts in the repository.
 
 Release dependency-notice automation is a separate concern from repository scripting:
 
