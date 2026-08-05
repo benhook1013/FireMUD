@@ -130,7 +130,7 @@ Developer / Operator → Docker Compose / Kubernetes → Running Services
 
 Operators troubleshoot issues and tune performance using the centralized [Logging & Admin Service](../../architecture/microservices/logging-admin-service/README.md) and observability stack:
 
-1. **Log Aggregation** – Fluent Bit forwards service logs to **Elasticsearch**, which are explored via **Kibana**. See [Logging & Monitoring](../../architecture/system-architecture-logging-monitoring.md).
+1. **Log Aggregation** – Fluent Bit forwards service logs to **Elasticsearch**, and operators explore them in **Kibana**. See [Logging & Monitoring](../../architecture/system-architecture-logging-monitoring.md).
 2. **Metrics & Alerts** – **Prometheus** scrapes metrics, sends alerts through **Alertmanager**, and **Grafana** visualizes dashboards such as the [Service Overview](../../observability/grafana/service-overview.json).
 3. **Tracing** – Distributed traces are sent to **Jaeger** via the OpenTelemetry Collector as described in [Tracing](../../architecture/system-architecture-tracing.md).
 4. **Kibana Dashboards** – Pre-built views like the [Log Volume dashboard](../../observability/kibana/log-volume.json) help monitor logging rates.

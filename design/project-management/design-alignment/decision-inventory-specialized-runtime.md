@@ -2,7 +2,7 @@
 
 Status: Complete and independently coverage/fidelity-audited. This artifact is non-normative.
 
-This inventory contains 54 decision rows: 48 retained rows and 6 distinct evidence-backed additions. It covers the specialized Redis, scripting, tick, identity, token, migration, shared-library, spatial-effects, authorization, and tracing sources allocated by `design-capability-allocation-system.md`. The main Redis, scripting, and tick hub documents were used only as cross-partition evidence and are not part of the assigned 39-file corpus; citations to those hubs are labeled accordingly. This file records only decisions that are not already represented by a key in `decision-inventory-cross-cutting.md`, or materially stronger or contradictory evidence for an existing key.
+This inventory contains 54 decision rows: 48 retained rows and 6 distinct evidence-backed additions. It covers the specialized Redis, scripting, tick, identity, token, migration, shared-library, spatial-effects, authorization, and tracing sources allocated by `design-capability-allocation-system.md`. The main Redis, scripting, and tick hub documents were used only as cross-partition evidence and are not part of the assigned 38-file corpus; citations to those hubs are labeled accordingly. This file records only decisions that are not already represented by a key in `decision-inventory-cross-cutting.md`, or materially stronger or contradictory evidence for an existing key.
 
 ## Implementation Status
 
@@ -24,7 +24,7 @@ The required baseline documents were read before the assigned corpus: [product c
 
 ## Coverage Proof
 
-The assigned corpus contains 12 Redis companions, 16 scripting companions, 4 tick companions, and 7 named specialized documents: 39 files and approximately 10,028 source lines. This is the exact middle partition of the disjoint `22 + 39 + 35` source allocation. Every assigned path is listed below with the exact visible headings inspected and the resulting inventory disposition.
+The assigned corpus contains 12 Redis companions, 15 scripting companions, 4 tick companions, and 7 named specialized documents: 38 files and 10,982 source lines at this reconciliation snapshot. This is the exact middle partition of the disjoint `22 + 38 + 35` source allocation. Every assigned path is listed below with the exact visible headings inspected and the resulting inventory disposition.
 
 | Assigned path | Exact headings considered | Disposition |
 | --- | --- | --- |

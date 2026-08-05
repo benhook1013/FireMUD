@@ -2,6 +2,10 @@
 
 This section records implementation status, design/code reconciliation, reusable review material, and project history. It does not own product requirements or technical target-state contracts: use [product documentation](../product/README.md) and [architecture](../architecture/README.md) for those authorities.
 
+## Current Implementation Status
+
+Domain-centric [implementation tracking](./implementation-tracking/README.md) is the canonical active status surface. The `slice-support/` directory remains a partial supplemental collection of capability-specific proof and playtest material; its legacy path name is retained pending a separate rename-only cleanup.
+
 Key files include:
 
 - [**AGENTS.md**](../../AGENTS.md) – Repository-wide AI coding and documentation guidelines.
@@ -9,7 +13,7 @@ Key files include:
 - [**implementation-tracking/**](./implementation-tracking/README.md) – Domain-centric implementation status and the canonical surface for active capability tracking.
 - [**design-alignment/**](./design-alignment/README.md) – Capability allocation, consequential-decision inventory, and point-in-time design/code/proof reconciliation.
 - [**project-shape-history.md**](./project-shape-history.md) – Append-only dated assessments of overall implementation shape and convergence risk.
-- [**slice-support/**](./slice-support/README.md) – Capability-specific regression notes, instrumentation references, and playtesting support docs; the legacy path name is retained pending a separate rename-only cleanup.
+- [**slice-support/**](./slice-support/README.md) – Capability-specific regression notes, instrumentation references, and playtesting support docs.
 - [**player-playtest-checklist.md**](../developer-workflows/player-playtest-checklist.md) – High-level manual player-facing feature verification workflow.
 - [**ai-task-prompt-library/**](./ai-task-prompt-library/) – Reusable prompt material for architecture and implementation review workflows.
 - [**ai-observations.md**](./ai-observations.md) – Append-only inbox for reusable AI process, tooling, environment, and design observations.

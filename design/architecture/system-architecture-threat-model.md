@@ -1,8 +1,10 @@
 # FireMUD Threat Model
 
-Status: Deferred; not yet considered or accepted as a whole-platform design.
+## Implementation Status
 
-This file reserves the canonical location for a future FireMUD threat model. It does not define threat actors, attack trees, trust-boundary analysis, mitigations, risk acceptance, or implementation status.
+Deferred; not yet considered or accepted as a whole-platform design.
+
+This file reserves the canonical location for a future FireMUD threat model. It does not define threat actors, attack trees, trust-boundary analysis, mitigations, risk acceptance, or implemented threat-model controls.
 
 Existing security, authentication, authorization, secret, and network contracts remain authoritative within their documented scopes. A future threat-model pass must reconcile those contracts rather than infer a platform-wide model from this placeholder.
 

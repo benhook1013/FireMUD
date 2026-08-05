@@ -27,18 +27,6 @@ This plan documents how the cross-service WebSocket and Telnet tests exercise th
 - Exercise the full `LOGIN` → `LOOK` flow: authenticate via `AccountService` (stubbed to accept `demo@example.com`/`swordfish`), send the authenticated `LOOK` request through WebSocket or Telnet, and assert both the structured `LookResult` and rendered text match the documented transcript in Section 1. Toggle `game.logic.default-room-id` to a missing room so the failure paths (`ERROR ROOM_NOT_FOUND`, `ERROR WORLD_UNAVAILABLE`, `ERROR ENTITY_UNAVAILABLE`) are also covered.
 - Capture the observability signals before/after each attempt using [LOOK instrumentation](./look-instrumentation.md): hit `/actuator/prometheus` to verify `gamesession.command.look.invocations` increments and `gamesession.command.look.failures{error=<CODE>}` tags the expected code, and tail Game Session/Game Logic logs to ensure `LookCommandHandler`/`LookAggregationService` emit the `Rendered LOOK text`/`LOG WARN LOOK failed <ERROR>` lines.
 
-## Implementation checklist
-
-1. Create or reuse `LookTestFixtures` (already committed) so the stubs can return the canonical transcript used by both the Game Logic renderer and the cross-service assertions.
-2. Add a WebSocket-focused cross-service integration test that:
-   - Starts Game Session, Game Logic (pointed at stall world/entity stubs), Redis, Postgres, and the Gateway stub.
-   - Performs `POST /sessions` → `LOGIN` → `LOOK`.
-   - Validates the multi-line `LOOK` response matches `LookTestFixtures.canonicalLookText()`.
-   - Toggles `game.logic.default-room-id`/`firemud.services.world-management-service` to trigger `ERROR ROOM_NOT_FOUND` and ensures the error transcript plus metrics/log tags match the instrumentation doc.
-3. Add a Telnet/TCP Proxy variant that reuses the same service stack, sending `WORLDS` + `LOGIN` + `PLAY` + `LOOK` over the proxy. Compare the Telnet transcripts to the WebSocket output (ignoring prompts).
-4. Capture the relevant metrics/logs in both tests (via `/actuator/prometheus` or log tailing) and assert `gamesession.command.look.*` increments as documented.
-5. Wire both tests into a dedicated Gradle source set/task (for example `crossServiceTest`) so they can be run independently from the default suite and referenced in README/test docs.
-
 ## WebSocket Test
 
 1. Start Testcontainers for Game Session, Game Logic, World Management, Entity Management, Redis, and Postgres (reuse existing service test setup/configs).

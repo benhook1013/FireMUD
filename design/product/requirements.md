@@ -49,7 +49,7 @@ This document outlines the **core functional and non-functional requirements** f
 ### 2.3 User & Account Management
 
 - The platform must provide **secure authentication and user management**.
-- Gameplay login commands are fronted by the **Game Session Service**, which calls the **Account Service** to verify credentials and issue JWTs/tokens used by backend services.
+- Gameplay clients must provide **secure, consistent login and session admission**, with credentials and delegated access limited to the authority required for each operation. See [Authentication & Authorization](../architecture/system-architecture-authentication.md).
 - Role-based access control (RBAC) for **admins, moderators, and players**.
 - Users should be able to **create and manage multiple characters per game**.
 - Sessions should support **persistent logins and reconnection handling**.
@@ -69,9 +69,7 @@ See [Account Service](../architecture/microservices/account-service/README.md) f
   - The platform must support **persistent world states**, ensuring that world changes **persist beyond player sessions**.
   - **Scheduled events** (e.g., daily resets, seasonal world changes, NPC schedules) should be configurable.
   - NPC actions and environmental changes should **continue in a believable way even if no players are online**.
-- Persistent storage for **player, NPC, and item data** across services:
-  - The [Entity Management Service](../architecture/microservices/entity-management-service/README.md) owns all runtime entities and inventories, including player gear, containers, and items on the ground in rooms.
-  - The [World Management Service](../architecture/microservices/world-management-service/README.md) owns world topology and ambient world state (rooms, regions, instances, environmental state) but does **not** store live items or inventory contents.
+- Persistent world, character, NPC, item, inventory, and environmental state must remain **consistent, durable, and independently evolvable** across its owning domains. See the [Entity Management Service](../architecture/microservices/entity-management-service/README.md) and [World Management Service](../architecture/microservices/world-management-service/README.md) for the exact ownership boundary.
 
 ### 2.5 Game Logic & Automation
 
@@ -82,7 +80,7 @@ See [Account Service](../architecture/microservices/account-service/README.md) f
   - NPCs react dynamically to the world using **event-driven** (trigger-based) and **state-driven** (persistent memory) behaviors.
   - NPCs maintain **awareness of past interactions**, allowing dynamic responses.
   - The system supports **world simulation**, enabling **autonomous NPC actions** even when no players are online.
-- Uses a **hybrid tick model** with **one action per entity per tick** for deterministic processing across independently scaled regions.
+- Time-based gameplay must process actions **deterministically and fairly** across independently scalable regions while supporting game-configured pacing. See the [Tick System](../architecture/system-architecture-ticks.md).
 See [Game Logic Service](../architecture/microservices/game-logic-service/README.md) and [Automation & Scripting Service](../architecture/microservices/automation-scripting-service/README.md) for design details.
 
 ### 2.6 Real-Time Multiplayer & Communication
@@ -100,8 +98,8 @@ See [Social & Groups Service](../architecture/microservices/social-groups-servic
   - The platform offers **AI & scripting tools** for creating deep, dynamic game interactions.
   - Games can define **unique AI behaviors, quest logic, and in-game events** without requiring custom code deployments.
   - AI behaviors should be flexible enough to allow **autonomous world simulation**, making the game feel persistent and alive.
-  - Scripts are authored through a **component-based DSL** with a **visual editor**.
-  - The Automation & Scripting Service executes scripts in a **sandbox** with **resource quotas** to prevent abuse.
+  - Creators can author validated automation through **textual and visual tools** appropriate to their experience level.
+  - Untrusted automation must not compromise platform security, stability, tenant isolation, or gameplay fairness; execution resources remain bounded. See [Scripting & Automation](../architecture/system-architecture-scripting.md).
 - **Item & equipment balancing tools** to allow game creators to tweak in-game balance.
 
 See [Game Design Service](../architecture/microservices/game-design-service/README.md) for authoring tools.
@@ -112,7 +110,7 @@ See [Game Design Service](../architecture/microservices/game-design-service/READ
 - **In-game reporting & ban system** for handling violations.
 - **Moderation policy definitions** including profanity filters.
 - **Central analytics dashboards and logging** for tracking player activity and game performance.
-- **Runtime feature flags** are defined in the **Game Design Service**, stored and managed by the **Game Session Service**, and can be toggled through the **Logging & Admin Service**. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md) for details.
+- Operators and authorized game administrators can manage **tenant-scoped runtime feature flags** through audited controls. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md) for the ownership and activation contract.
 - **Monetization & Payment System**:
   - The platform integrates **Stripe or similar services** for in-game purchases.
   - Game creators can offer **subscriptions, one-time purchases, and donations**.
@@ -125,11 +123,10 @@ See [Logging & Admin Service](../architecture/microservices/logging-admin-servic
 
 ### 2.9 Versioning & Runtime Configuration
 
-- The **Game Design Service** publishes immutable game versions identified by a `version_id`.
-- Domain services copy design data by `version_id` and do not query the design database at runtime.
-- The **Game Session Service** activates the desired `version_id` when launching or cutting over the instance currently routed behind a specific realm.
-- Runtime feature flags are stored with the session and edited via the **Logging & Admin Service**. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md).
-- The Game Design Service maintains **patch notes** for each published version so administrators can track changes over time.
+- Creators can publish **immutable, identifiable game versions** and select a published version when launching or updating a realm.
+- A running realm uses one **internally consistent published design** rather than mixing independently changing authoring state.
+- Authorized administrators can activate versions and runtime flags through controlled launch, cutover, and rollback experiences. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md).
+- Published versions include **patch notes** so creators, administrators, and players can understand relevant changes over time.
 See [Game Design Service](../architecture/microservices/game-design-service/README.md) for publishing workflows.
 
 ---

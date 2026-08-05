@@ -2,16 +2,16 @@
 
 Status: Complete and independently coverage/fidelity-audited. This artifact is non-normative. It records consequential decisions found in the assigned product, frontend, authoring, protocol, infrastructure, deployment, recovery, observability, and generated-settings sources. It does not replace the canonical architecture or cross-cutting inventories.
 
-This inventory contains 38 decision rows. Its assigned source set is the exact 35-path product/operations partition in the disjoint `22 + 39 + 35 = 96` allocation: 22 counted cross-cutting paths, 39 additional specialized runtime/support paths, and 35 product/operations paths. Counts and capability coverage below are derived from the rows in this file.
+This inventory contains 38 decision rows. Its assigned source set is the exact 35-path product/operations partition in the disjoint `22 + 38 + 35 = 95` allocation: 22 counted cross-cutting paths, 38 additional specialized runtime/support paths, and 35 product/operations paths. Counts and capability coverage below are derived from the rows in this file.
 
 ## Implementation Status
 
-- **Scan completeness:** The product/operations documentation scan is complete for its disjoint 35-path assignment; the full 96-path allocation is accounted for by the 22 cross-cutting, 39 specialized runtime/support, and 35 assigned paths.
+- **Scan completeness:** The product/operations documentation scan is complete for its disjoint 35-path assignment; the full 95-path allocation is accounted for by the 22 cross-cutting, 38 specialized runtime/support, and 35 assigned paths.
 - **Implementation and approval state:** The `Complete` status above describes scan coverage and fidelity only. It does not mean that every decision is implemented or approved; each row's status and human-consultation field record the current state.
 
 ## Scope And Method
 
-The 96-path allocation universe contains 89 direct architecture sources, 6 infrastructure sources, and 1 generated source. The 22 paths already counted by `decision-inventory-cross-cutting.md` were excluded from this scan:
+The 95-path allocation universe contains 88 direct architecture sources, 6 infrastructure sources, and 1 generated source. The 22 paths already counted by `decision-inventory-cross-cutting.md` were excluded from this scan:
 
 - `design/architecture/README.md`
 - `design/architecture/system-architecture-overview.md`
@@ -36,7 +36,7 @@ The 96-path allocation universe contains 89 direct architecture sources, 6 infra
 - `design/architecture/system-architecture-backup-recovery.md`
 - `design/architecture/service-responsibility-matrix.md`
 
-The specialized runtime/support exclusion contains 42 named or pattern-matched paths, but three (`system-architecture-redis.md`, `system-architecture-scripting.md`, and `system-architecture-ticks.md`) are already in the counted cross-cutting partition. The disjoint specialized set therefore contributes 39 additional paths: all remaining `system-architecture-redis*.md`, `system-architecture-scripting*.md`, and `system-architecture-tick*.md` files, plus `system-architecture-spatial-and-ambient-effects-catalog.md`, `system-architecture-identifier-glossary.md`, `system-architecture-authz-route-matrix.md`, `system-architecture-jwt-and-token-contracts.md`, `system-architecture-shared-libraries.md`, `system-architecture-database-migrations.md`, and `system-architecture-tracing.md`. The resulting assigned set is the 35 paths in the coverage ledger below.
+The specialized runtime/support exclusion contains 41 named or pattern-matched paths, but three (`system-architecture-redis.md`, `system-architecture-scripting.md`, and `system-architecture-ticks.md`) are already in the counted cross-cutting partition. The disjoint specialized set therefore contributes 38 additional paths: all remaining `system-architecture-redis*.md`, `system-architecture-scripting*.md`, and `system-architecture-tick*.md` files, plus `system-architecture-spatial-and-ambient-effects-catalog.md`, `system-architecture-identifier-glossary.md`, `system-architecture-authz-route-matrix.md`, `system-architecture-jwt-and-token-contracts.md`, `system-architecture-shared-libraries.md`, `system-architecture-database-migrations.md`, and `system-architecture-tracing.md`. The resulting assigned set is the 35 paths in the coverage ledger below.
 
 Cross-partition references may be cited to reconcile an assigned-source decision with its canonical system contract, but they do not become part of this inventory's assigned corpus or its 35-path coverage count. In particular, `SESSION-08` cross-checks `system-architecture-reconnection.md`, `system-architecture-redis.md`, and `system-architecture-session-behavior.md`; those three remain counted only in the cross-cutting partition.
 
