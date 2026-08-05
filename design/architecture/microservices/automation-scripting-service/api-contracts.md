@@ -27,7 +27,7 @@ curl http://localhost:8080/ping
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `automation_scripting_service.proto`.
 - `UpdateScript` – bootstrap/dev-only script upload path that replaces the script definition and its event bindings for that `<tenantId, scriptPatchVersion, scriptId>` tuple in one operation.
 - `GetScriptStatus` – queries durable queued work (`PENDING_EVALUATION`) and active evaluation work (`EVALUATING`) in the script work-item outbox.
-- `NotifyScriptVersionUpdate` – informs the service that a new `script_patch_version` is available for tenant-readiness ingestion.
+- `NotifyScriptVersionUpdate` – production rollout notification to Automation & Scripting that a Game Design-published `script_patch_version` is available for tenant-readiness ingestion.
 - Event-ingress RPCs such as `TriggerScriptEvent` or a batch equivalent deliver script events from domain services and must carry runtime scope, idempotency, and patch-selection fields as described below.
 - `GetDraftDesignDigest` – returns publish-gating digest for full publishes and script-patch publishes using a typed scope selector `oneof { versionId, scriptPatchVersion }`.
 
@@ -73,6 +73,12 @@ Canonical event-registry contract for ingress:
 - For authoritative gameplay-affecting events, the registry entry must state that `readSnapshotToken` is required and must define the required scope encoded by that token.
 - For non-authoritative or synthetic events, the registry entry must explicitly mark `readSnapshotToken` forbidden so callers cannot imply stronger consistency than the event contract provides.
 - Registry rejection is an event-scope ingress failure and must use `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED` with a bounded `admissionReason` such as `unknown_event_type`, `schema_version_unsupported`, `producer_not_authorized`, `snapshot_token_required`, or `snapshot_token_forbidden`.
+
+### Production script-patch publication and rollout
+
+`PublishScriptPatchVersion` is owned by the Game Design Service. Its canonical design-time publication contract is defined in the [Game Design Service API contracts](../game-design-service/api-contracts.md#grpc-apis) and the [Game Design gRPC proto](../../../../protos/game-design/v1/game_design_service.proto): it publishes an immutable script-only patch referencing a base version. The [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md#game-design-design-time-publication-visibility) is canonical for the boundary between that `PUBLISHED` design status and Automation & Scripting runtime readiness.
+
+Production rollout therefore uses `PublishScriptPatchVersion` followed by Automation & Scripting's `NotifyScriptVersionUpdate`, which validates and stages the published patch for tenant readiness. Game Session remains the owner of the instance `scriptPatchVersion` pin; a notification does not repin a running instance by itself. `UpdateScript` remains limited to bootstrap/dev tooling and must not be used as either the production publication or rollout path.
 
 Direct script upload and update APIs such as `UpdateScript` are limited to bootstrap/dev tooling and must not be used as a production runtime publish path.
 

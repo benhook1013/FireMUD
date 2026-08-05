@@ -51,6 +51,22 @@ test("validation Python remains lightweight but requests Python proof", () => {
   assert.equal(result.docsChanged, false);
 });
 
+test("script tests avoid service validation but retain normal tooling proof", () => {
+  const testResult = classifyChangeScope([
+    ".github/scripts/classify-change-scope.test.cjs",
+  ]);
+  assert.equal(testResult.runAll, false);
+  assert.equal(testResult.lightweightOnly, false);
+  assert.deepEqual(testResult.affectedServices, []);
+
+  const runtimeResult = classifyChangeScope([
+    ".github/scripts/classify-change-scope.cjs",
+  ]);
+  assert.equal(runtimeResult.runAll, true);
+  assert.equal(runtimeResult.lightweightOnly, false);
+  assert.deepEqual(runtimeResult.affectedServices, ALL_SERVICES);
+});
+
 test("operational Python forces the normal validation path", () => {
   const result = classifyChangeScope([
     "dev-tools/hosted/preview/render-preview-values.py",

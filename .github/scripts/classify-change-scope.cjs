@@ -54,6 +54,10 @@ function isValidationPython(file) {
   return file.startsWith("dev-tools/validation/") && file.endsWith(".py");
 }
 
+function isValidationTooling(file) {
+  return /^\.github\/scripts\/[^/]+\.test\.cjs$/.test(file);
+}
+
 function isFrontend(file) {
   return file.startsWith("web-client/") || file.startsWith("config/openapi/");
 }
@@ -71,7 +75,8 @@ function classifyChangeScope(inputFiles, options = {}) {
     files.some(
       (file) =>
         SHARED_FILES.has(file) ||
-        SHARED_PREFIXES.some((prefix) => file.startsWith(prefix)) ||
+        (SHARED_PREFIXES.some((prefix) => file.startsWith(prefix)) &&
+          !isValidationTooling(file)) ||
         isUnknownServicePath(file),
     );
 
@@ -134,4 +139,5 @@ module.exports = {
   classifyGithubChangeScope,
   isDocumentation,
   isValidationPython,
+  isValidationTooling,
 };

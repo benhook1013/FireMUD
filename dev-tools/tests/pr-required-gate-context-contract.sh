@@ -177,6 +177,16 @@ if job.get("if") != expected_job_if[job_id]:
         f"{expected_job_if[job_id]!r}"
     )
 
+needs = job.get("needs")
+if isinstance(needs, str):
+    dependencies = [needs]
+elif isinstance(needs, list):
+    dependencies = needs
+else:
+    raise SystemExit(f"{workflow} {gate} must define needs as a scalar or list")
+if "changes" not in dependencies:
+    raise SystemExit(f"{workflow} {gate} must depend on the changes job")
+
 steps = job.get("steps")
 if not isinstance(steps, list):
     raise SystemExit(f"{workflow} {gate} must define steps as a list")

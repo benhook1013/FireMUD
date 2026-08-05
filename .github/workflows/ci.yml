@@ -217,7 +217,7 @@ jobs:
             exit 0
           fi
           python3 -m py_compile "${python_files[@]}"
-          ruff check "${python_files[@]}"
+          ruff check --force-exclude "${python_files[@]}"
 
   dev-tool-contract-checks:
     name: Dev Tool Contract Checks
@@ -270,7 +270,7 @@ jobs:
           bash ./dev-tools/tests/smoke-image-env-contract.sh
           bash ./dev-tools/tests/architecture-doc-contracts.sh
           bash ./dev-tools/tests/lint-yaml-contract.sh
-          python3 -m unittest dev-tools/validation/test_check_proto_time_fields.py
+          python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'
 
       - name: 🧪 Validate architecture document contracts
         if: ${{ needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.design_docs_changed == 'true' }}
@@ -529,7 +529,7 @@ jobs:
       - name: 🏗️ Build documentation site
         run: |
           python3 dev-tools/docs/build_pages_site.py
-          python3 -m mkdocs build --clean
+          python3 -m mkdocs build --clean --strict
 
   frontend-checks:
     name: Frontend Checks

@@ -61,8 +61,8 @@ The main [`ci.yml`](../../.github/workflows/ci.yml) workflow:
 
 - Generates protobuf outputs to keep generated stubs aligned with the checked-in schemas.
 - Runs formatting and lint steps (Spotless, markdownlint, link checks).
-- Executes a matrix of Gradle `check` tasks (one per microservice) with SpotBugs, Checkstyle, and tests enabled.
-- Generates coverage with JaCoCo, uploads per-service coverage reports to Codecov using GitHub OIDC, and runs Trivy scans over the workspace.
+- On the complete CI path, executes a matrix of Gradle `check` tasks (one per microservice) with SpotBugs, Checkstyle, and tests enabled; lightweight documentation-only PR validation does not run these service checks.
+- On the complete CI path, generates coverage with JaCoCo, uploads per-service coverage reports to Codecov using GitHub OIDC, and runs the Trivy scans; lightweight documentation-only PR validation does not run these Trivy jobs.
 - Uses Node 24 to lint OpenAPI specs, run React linters, and execute an accessibility audit using headless Chrome.
 - Validates tracked Bash scripts across the repository with ShellCheck and validates every tracked Python script with `py_compile` plus repository-wide Ruff linting.
 - Invokes a dedicated `generate-erd` job that runs [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) to build ERD diagrams from service migrations and upload them as artifacts.

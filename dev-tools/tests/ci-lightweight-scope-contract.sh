@@ -21,7 +21,8 @@ require_contains() {
 
 for expected in \
   'function isDocumentation(file)' \
-  'function isValidationPython(file)'; do
+  'function isValidationPython(file)' \
+  'function isValidationTooling(file)'; do
   require_contains "$CLASSIFIER" "$expected"
 done
 
@@ -156,7 +157,7 @@ python_step = find_step(
 require_contains(
     python_step,
     ("run",),
-    'ruff check "${python_files[@]}"',
+    'ruff check --force-exclude "${python_files[@]}"',
     "ci workflow",
 )
 require_equal(
@@ -187,7 +188,7 @@ docs_step = find_step(ci, "docs-check", "Build documentation site", "ci workflow
 require_contains(
     docs_step,
     ("run",),
-    "python3 -m mkdocs build --clean",
+    "python3 -m mkdocs build --clean --strict",
     "ci workflow",
 )
 docs_node_step = find_step(ci, "docs-check", "Set Up Node", "ci workflow")
@@ -243,10 +244,20 @@ require_contains(
 for expected in (
     'if [ "$LIGHTWEIGHT_ONLY" = "true" ]',
     'is_acceptable_optional_result "$result"',
-    'if [ "$PYTHON_CHANGED" = "true" ]',
-    'if [ "$DESIGN_DOCS_CHANGED" = "true" ] || [ "$VALIDATION_PYTHON_CHANGED" = "true" ]',
+    'if [ "$LIGHTWEIGHT_ONLY" != "true" ] || [ "$PYTHON_CHANGED" = "true" ]',
+    'if [ "$LIGHTWEIGHT_ONLY" != "true" ] || [ "$DESIGN_DOCS_CHANGED" = "true" ] || [ "$VALIDATION_PYTHON_CHANGED" = "true" ]',
 ):
     require_contains(validation_step, ("run",), expected, "ci workflow")
+
+complete_contract_step = find_step(
+    ci, "dev-tool-contract-checks", "Validate dev tool contracts", "ci workflow"
+)
+require_contains(
+    complete_contract_step,
+    ("run",),
+    "python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'",
+    "ci workflow",
+)
 
 require_equal(
     security,

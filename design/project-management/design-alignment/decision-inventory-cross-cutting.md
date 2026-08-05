@@ -26,7 +26,7 @@ The ledger contains 68 decision rows: 59 retained rows and 9 distinct evidence-b
 
 `accepted-explicit` records a canonical choice, not human approval. A human-review claim is authoritative only when the linked ADR or consequential-decision record names the decision owner, review date, status, disposition, and exact checked provenance entry in [Applied Review Provenance](./consequential-decision-inventory.md#applied-review-provenance). Every ADR below names the FireMUD human product and architecture owner, records `Human review status: Completed`, and names the matching checked decision key as its review source:
 
-| Queue key | Completed ADR | Review date | Disposition |
+| Decision key | Completed ADR | Review date | Disposition |
 | --- | --- | --- | --- |
 | `AUTH-02` | [ADR 0021](../../architecture/decisions/adr-0021-staged-player-authentication-and-gameplay-binding.md) | 2026-07-18 | Revised |
 | `AUTH-03` | [ADR 0022](../../architecture/decisions/adr-0022-account-authority-and-gameplay-session-ownership.md) | 2026-07-18 | Accepted |
@@ -44,7 +44,7 @@ The ledger contains 68 decision rows: 59 retained rows and 9 distinct evidence-b
 | `SEC-05` | [ADR 0034](../../architecture/decisions/adr-0034-layered-abuse-controls-without-attacker-triggered-account-locks.md) | 2026-07-19 | Revised |
 | `JWT-01` | [ADR 0035](../../architecture/decisions/adr-0035-single-record-issued-token-registry.md) | 2026-07-19 | Revised |
 
-The later completed records currently relevant to claims in this ledger are [ADR 0041](../../architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md) for `TENANT-02`, [ADR 0047](../../architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md) for `SEC-04`, and [ADR 0048](../../architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md) for `ADMIN-01`; each records completion on 2026-07-19 with a revised disposition and a validator-checked matching queue row. Coupled decisions without equivalent evidence remain pending; completed ADR records must not be regressed to pending merely because the broader inventory queue remains open.
+The later completed records currently relevant to claims in this ledger are [ADR 0041](../../architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md) for `TENANT-02`, [ADR 0047](../../architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md) for `SEC-04`, and [ADR 0048](../../architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md) for `ADMIN-01`; each records completion on 2026-07-19 with a revised disposition and a validator-checked matching decision row. Coupled decisions without equivalent evidence remain pending; completed ADR records must not be regressed to pending merely because the broader inventory remains open.
 
 ## Source Index
 
