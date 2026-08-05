@@ -55,7 +55,7 @@ That current-boundary execution format is intentionally narrow but no longer raw
 
 ## Work Item Outbox Contract (Normative)
 
-The Automation & Scripting Service must treat Redis automation queues (`automation:queue:*`) as derived indexes/pointers only. The authoritative record of admitted post-DSL work is the durable work item outbox.
+The Automation & Scripting Service must treat Redis automation queues (`automation:queue:*`) as derived indexes/pointers only. The authoritative record of admitted post-DSL work is the durable work item outbox. Queue ownership, command handoff, and cross-service retry invariants are defined in the [scripting cross-service contracts](./system-architecture-scripting-contracts.md); this section retains the local outbox schema and projection behavior.
 
 This section defines the minimum contract that makes "persist -> index -> drain -> handoff" interoperable and rollback-safe across services and operational tooling.
 
@@ -71,12 +71,9 @@ Each persisted script work item must include:
 - `commandCount` (for budgeting/inspection).
 - `cancelReason` (nullable; required when canceled).
 
-When a work item is handed to Game Session, the handoff identity has a current live boundary and a target-state contract:
+When a work item is handed to Game Session, the local wire boundary is:
 
-- **Current live boundary/fallback:** `EnqueueAutomationCommandIfAbsent` carries `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, optional `dueTickId`, `automationDispatchId`, `automationWorkItemId`, `scriptId`, `scriptPatchVersion`, target entity, rendered command text, `requiresSoloTick`, `pluginId`, `pluginVersionId`, `playableStateScope`, routing fields, and origin-source fields; its response returns the live Game Session `commandId`/admission outcome. It does not yet carry `commandOrdinal`, `bindingId`, `eventType`, `eventSchemaVersion`, `scriptEventId`, `isDryRun`, `scheduleDefinitionId`, `triggerMode`, or the complete applicable Trigger Identity, so current dedupe, rejection, and status diagnostics use this narrower fallback and must not claim full-identity ordinal semantics.
-- **Target-state handoff identity:** every outbox work item that emits gameplay commands creates one stable `automationDispatchId` and persists it before the first handoff attempt. Retries reuse that value rather than minting another dispatch identity. Each emitted gameplay command receives a deterministic `commandOrdinal` under that shared dispatch, including the single-command case.
-- **Target-state downstream behavior:** Game Session dedupe, stale-timeline rejection, replay/no-op outcomes, and later execution-fence reporting key each command by the applicable scope plus `(automationDispatchId, commandOrdinal)`, while operator tooling retains the parent `outboxWorkItemId` and complete Trigger Identity for correlation.
-- Before target-state handoff is reported as accepted, Game Session must atomically validate the applicable runtime scope and epoch/fence (`regionEpoch`, the current `executorFence`, and any active rollback `admissionEpoch`) together with per-command deduplication and tick-queue admission. If those operations cannot share one storage transaction, the downstream enqueue or execution fence must provide equivalent validation and reject stale commands. Automation must not record successful `TICK_HANDOFF` until that fenced downstream acceptance is confirmed.
+- `EnqueueAutomationCommandIfAbsent` carries `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, optional `dueTickId`, `automationDispatchId`, `automationWorkItemId`, `scriptId`, `scriptPatchVersion`, target entity, rendered command text, `requiresSoloTick`, `pluginId`, `pluginVersionId`, `playableStateScope`, routing fields, and origin-source fields; its response returns the live Game Session `commandId`/admission outcome. It does not yet carry `commandOrdinal`, `bindingId`, `eventType`, `eventSchemaVersion`, `scriptEventId`, `isDryRun`, `scheduleDefinitionId`, `triggerMode`, or the complete applicable Trigger Identity. Current dedupe, rejection, and status diagnostics therefore use this narrower fallback and must not claim full-identity ordinal semantics. The target handoff identity and fenced acceptance rule are owned by the [cross-service scripting contracts](./system-architecture-scripting-contracts.md#2-script-work-item-vs-tick-command-boundary).
 
 ### Minimum Status Model
 
@@ -115,25 +112,7 @@ The pointer/index format must be forward-compatible (versioned envelope) so it c
 
 ## `scriptEventId` Lifecycle and Deduplication
 
-`scriptEventId` is the caller- or scheduler-generated idempotency token within a complete script Trigger Identity; it appears on automation queue entries, tick commands, and `script_event_audit` rows so behavior can be correlated end to end. It is not a standalone identifier or idempotency key: deduplication and retry decisions use every applicable field in the full Trigger Identity from the normative contract tables, while emitted-command handoff uses `(automationDispatchId, commandOrdinal)`.
-
-- **Generation rules**
-  - For external events, the event source that owns the trigger creates a `scriptEventId` when the event is first emitted and includes it in the `TriggerScriptEvent` payload. If the caller retries the gRPC call due to infrastructure errors, it must reuse the same full applicable Trigger Identity, including the same `scriptEventId`; changing any identity field is not a retry of the original trigger.
-  - For scheduler-originated events such as `onInterval` and `onTimerExpire`, the Automation & Scripting scheduler creates the `scriptEventId` deterministically from the due point and all applicable Trigger Identity fields when the timer or interval becomes due.
-  - For dry-run/test invocations, the Automation & Scripting Service generates `scriptEventId` by default so test tooling does not create cross-client collisions.
-
-- **Uniqueness scope**
-  - Uniqueness is enforced over the full applicable Trigger Identity field set, including `gameInstanceId`, `playableStateScope` and, for gameplay/tick-aligned triggers, `regionEpoch`; `scriptEventId` alone must never define the idempotency scope.
-  - There is no requirement for global uniqueness across all tenants; downstream idempotency keys are derived from the full applicable Trigger Identity, plus tick context and command identity when applicable, rather than from `scriptEventId` alone.
-
-- **Deterministic scheduler IDs**
-  - Scheduler-originated `scriptEventId` values must be deterministic so leader failover and bounded catch-up do not double-fire.
-  - The specific encoding is an implementation detail, but it must be derived from stable inputs, not from process-local randomness.
-
-- **Handling retries and duplicates**
-  - The Automation & Scripting Service treats script execution as at-most-once per the full applicable Trigger Identity, never per `scriptEventId` alone.
-  - Duplicate delivery handling must preserve a single `script_event_audit` row per Trigger Identity with monotonic stage progression.
-  - Downstream services and replay tools rely on stable idempotency tokens derived from Trigger Identity plus tick context when applicable.
+Trigger Identity, endpoint-specific `scriptEventId` ownership, audit uniqueness, and command-level retry identity are defined in the [normative contract tables](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields) and [cross-service scripting contracts](./system-architecture-scripting-contracts.md#4-scripteventid-identity-and-at-most-once-dedupe). Runtime persistence carries the applicable identity on the durable work item and preserves it across queue projection, claims, and handoff attempts. The current live Game Session boundary remains the narrower fallback described in [Minimum Outbox Record Fields](#minimum-outbox-record-fields).
 
 ## Runtime Deployment & Versioning
 
@@ -141,7 +120,7 @@ Deployment semantics, publish-time ownership, and the canonical versioning model
 
 ## Script Patch Lifecycle
 
-The canonical patch lifecycle and readiness states remain owned by [Scripting DSL Reference & Event Lifecycle](./system-architecture-scripting-dsl-reference-and-lifecycle.md#script-patch-lifecycle). Runtime execution consumes that lifecycle by enforcing pin visibility and admission checks:
+The canonical patch lifecycle and readiness states remain owned by [Scripting DSL Reference & Event Lifecycle](./system-architecture-scripting-dsl-reference-and-lifecycle.md#script-patch-lifecycle). Runtime execution consumes that lifecycle by enforcing the [canonical version-fence contract](./system-architecture-scripting-contracts.md#3-version-fencing-rollback-safety) at its local admission boundary:
 
 - If the supplied `scriptPatchVersion` is `READY` for the tenant, runtime must additionally compare it to a fresh-enough observed pin for `<tenantId, gameInstanceId>`.
 - If pin visibility is stale beyond its configured max age and fresh control-plane state cannot be obtained, admission fails closed.
@@ -196,10 +175,7 @@ Quota and budget accounting must be deterministic so operators can reason about 
 
 ## Ordering Between Player and Script Commands
 
-- Each entity has a single authoritative command queue in Redis that contains both player-originated commands and script-generated commands.
-- Commands are appended to this queue in the order they are accepted by the Game Session Service.
-- During tick processing, the Game Session Service reads at most one command per entity per tick from this combined queue.
-- Script-generated commands carry `scriptEventId`, `scriptId`, and when applicable upstream ordering tokens such as `tickId`.
+Game Session owns the combined per-entity tick queue and its enqueue/order invariants as defined in the [cross-service scripting contracts](./system-architecture-scripting-contracts.md#1-tick-queue-ownership-tick). At this runtime boundary, script-generated commands retain their source `scriptEventId`, `scriptId`, and applicable upstream ordering tokens such as `tickId` when the local handoff carries them.
 
 ## Redis Key Summary for Scripting
 
@@ -215,21 +191,11 @@ The main Redis keys used by the Automation & Scripting Service are:
 
 ## Failure Modes and Error Handling
 
-Script executions are treated as at-most-once per full applicable Trigger Identity. Common outcome classes include:
-
-- `success`
-- `quota_denied`
-- `sandbox_error`
-- `validation_error`
-- `disabled_due_to_errors`
-- `version_unavailable`
-- `signer_policy_unavailable`
-- `infrastructure_error`
-- `validation_error` with `finalReason=unsafe_component`
+The canonical stage and outcome taxonomy is defined in the [normative audit table](./system-architecture-scripting-normative-contract-tables.md#table-2-script_event_audit-stages-and-outcomes). Runtime-specific failure behavior includes quota, sandbox, validation, version, signer-policy, and infrastructure failures; the executor does not re-enter the DSL for a persisted trigger when retrying an idempotent downstream operation.
 
 Component safety classification for core scripts is fixed at validation and readiness time, not reevaluated as a live runtime policy on already-READY patches.
 
-`success` is valid only after tick-handoff acceptance, not merely after DSL evaluation. Audit records therefore stay stage-aware through `finalStage`, `finalOutcome`, and `finalReason` rather than collapsing runtime behavior into a single undifferentiated status.
+Live `success` is valid only after tick-handoff acceptance, not merely after DSL evaluation; the owner table defines the stage-aware audit fields and allowed outcomes.
 
 Retry behavior:
 
@@ -241,30 +207,17 @@ When script components call other services over gRPC, they must pass a stable id
 
 ## Version Fencing and Rollback Safety
 
-Rollback of a script patch must not allow previously queued work from the rolled-back patch to continue affecting gameplay.
-
-- Script work items and tick commands carry the effective `scriptPatchVersion` used to produce them.
-- Game Session revalidates the admitted runtime scope and current pinned script patch immediately before durable effect execution. Plugin-backed commands also re-read the authoritative Automation & Scripting plugin status and require the same enabled version and runtime scope.
-- **Target-state full-identity diagnostics:** any handoff or execution-time version-fence rejection must retain every applicable Trigger Identity field and command identity for diagnosis, including `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `eventType`, `eventSchemaVersion`, `scriptEventId`, `isDryRun`, and `scriptPatchVersion`; plugin handlers must also retain `pluginId`, `pluginVersionId`, and `bindingId`, while scheduler/timer handlers must retain `scheduleDefinitionId`, `triggerMode`, and the applicable due point. The command identity `(automationDispatchId, commandOrdinal)` and its parent `outboxWorkItemId` must remain available for correlation.
-- **Current live fallback:** until the Game Session proto carries that complete identity and `commandOrdinal`, rejection/status diagnostics use the live `automationDispatchId`, command id/text, selected provenance, and parent work-item correlation. This narrower fallback is not a substitute for the target-state full-identity record.
-- A version or runtime-scope mismatch terminalizes the command as not applied. Temporary inability to read the plugin authority leaves the durable effect retryable rather than executing without a fence.
-- Operational rollback flows include a drain/purge step for queued automation work items and staging entries that cannot satisfy the version fence.
+Rollback of a script patch must not allow previously queued work from the rolled-back patch to continue affecting gameplay. The version-fence fields, rejection disposition, and diagnostic identity are owned by the [cross-service scripting contracts](./system-architecture-scripting-contracts.md#3-version-fencing-rollback-safety). Locally, script work items retain the effective `scriptPatchVersion`; until the Game Session proto carries the complete target identity and `commandOrdinal`, rejection/status diagnostics use the live `automationDispatchId`, command id/text, selected provenance, and parent work-item correlation. A version or runtime-scope mismatch is not applied, temporary plugin-authority unavailability leaves the durable effect retryable, and rollback flows drain or purge queued work that cannot satisfy the fence.
 
 ## Timer Failure Semantics
 
-Timer-based triggers such as `onInterval` and `onTimerExpire` are subject to the same at-most-once per trigger semantics as other events:
-
-- When a timer becomes due, the scheduler attempts to admit the corresponding trigger subject to quotas and budgets.
-- If a timer trigger is skipped because of quotas, budgets, or an unavailable patch, the scheduler records the skip in `script_event_audit` with a canonical outcome and reason.
-- If a timer trigger fails with `infrastructure_error` after admission, the DSL body is not re-executed for the same full applicable Trigger Identity; `scriptEventId` alone does not authorize re-execution or deduplication.
-- The scheduler’s responsibility is to attempt to fire timers that fit within configured budgets and capacity; there is no guarantee of eventual execution for every individual interval or timer firing.
+Timer admission, due-point identity, catch-up, reload, and failure outcomes follow the [normative timer semantics](./system-architecture-scripting-normative-contract-tables.md#table-3-timer-semantics-matrix). Runtime-specific behavior is at-most-once DSL evaluation for an admitted timer identity: an infrastructure failure may retry independently idempotent downstream operations, but must not re-enter the DSL for the same trigger. The scheduler makes a best-effort attempt within configured capacity; individual firings are not guaranteed.
 
 ## `onLoad` Semantics and Failure Handling
 
-The `onLoad` lifecycle event is a tenant-readiness check for scripts in a given `<tenantId, scriptPatchVersion>` before that patch becomes active:
+The `onLoad` lifecycle event is a tenant-readiness check for scripts in a given `<tenantId, scriptPatchVersion>` before that patch becomes active. Its lifecycle and identity are defined by the [DSL lifecycle](./system-architecture-scripting-dsl-reference-and-lifecycle.md#onload-semantics) and [normative readiness contract](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields):
 
 - `onLoad` handlers run after static validation and compilation succeed, but before the patch is marked `READY` for a tenant.
-- Each `onLoad` execution is keyed by the canonical readiness Trigger Identity `<tenantId, scriptId, eventSchemaVersion, scriptPatchVersion, eventType=onLoad, scriptEventId, isDryRun=false>` and is treated as at-most-once.
 - Allowed uses are limited to ephemeral or trivially recomputable runtime initialization.
 - `onLoad` must not create durable or semi-durable artifacts in databases, Redis, object storage, or other shared stores.
 - There is no compensating `onUnload` / `onDeactivate` lifecycle in the current architecture.
@@ -276,7 +229,6 @@ Failure handling:
 - If `onLoad` completes successfully for a tenant, the Automation & Scripting Service may mark the patch as `READY` for that tenant.
 - If `onLoad` fails with a logical or sandbox-level error, the patch is marked `FAILED` for that tenant and events that reference the failed patch are rejected at admission with `version_unavailable` or a more specific bounded variant such as `onload_failed`.
 - If the dedicated `onLoad` initialization budget is exhausted before completion, the patch must fail deterministically with an explicit bounded reason.
-- If `onLoad` encounters `infrastructure_error`, the service must not re-enter the DSL for that Trigger Identity. Only an external infrastructure operation that is independently idempotent may be retried, using the same operation idempotency key and the same persisted onLoad identity; the DSL evaluation and its `onLoad` audit lifecycle remain at-most-once. If the required infrastructure step cannot be retried safely, readiness fails rather than executing the DSL again.
+- If `onLoad` encounters `infrastructure_error`, the service must not re-enter the DSL for that readiness identity. Only an external infrastructure operation that is independently idempotent may be retried; if the required step cannot be retried safely, readiness fails rather than executing the DSL again.
 
-All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad`, the target `scriptPatchVersion`, and their final stage-aware outcome. A successful `onLoad` contributes to patch readiness aggregation and must use `finalStage=DSL_EVAL`, `finalOutcome=readiness_success`; it does not use live `finalOutcome=success`, which remains reserved for tick handoff.
-Patch-level readiness for `<tenantId, scriptPatchVersion>` is derived from the aggregate of all required per-script `onLoad` runs, where each required run is counted by its full readiness Trigger Identity, including `eventSchemaVersion`; the patch becomes `READY` only after every required identity succeeds.
+All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad` and the target `scriptPatchVersion`; stage/outcome fields follow the [normative audit table](./system-architecture-scripting-normative-contract-tables.md#table-2-script_event_audit-stages-and-outcomes). Patch-level readiness for `<tenantId, scriptPatchVersion>` is derived from the aggregate of all required per-script runs and becomes `READY` only after every required readiness execution succeeds.

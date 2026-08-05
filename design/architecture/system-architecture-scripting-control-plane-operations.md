@@ -1,6 +1,6 @@
 # FireMUD Scripting & Automation: Control Plane Operations
 
-This document defines the workflow layer for scripting and automation control-plane changes. It covers rollback, pause/resume, drain/purge, dead-letter recovery, convergence checks, and operator audit flows.
+This document defines the service participation and API-usage layer for scripting and automation control-plane changes. It covers pause/resume, drain/purge, dead-letter recovery, convergence reads, and operator audit flows. The canonical promotion and rollback sequence, state machine, timeouts, and degraded-operation policy live in [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md).
 
 The direct API surface and request/response contracts for pinning, plugin activation, plugin drain, patch visibility, and admission outcomes live in [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md).
 
@@ -11,8 +11,6 @@ The direct API surface and request/response contracts for pinning, plugin activa
 - [Actors and Responsibilities](#actors-and-responsibilities)
 - [Control Plane Workflow APIs (Normative)](#control-plane-workflow-apis-normative)
 - [Rollback and Recovery Workflow](#rollback-and-recovery-workflow)
-- [Rollback Orchestration State Machine (Required)](#rollback-orchestration-state-machine-required)
-- [Pin-State Degraded Operations Policy (Required)](#pin-state-degraded-operations-policy-required)
 - [Related Control Plane Contracts](#related-control-plane-contracts)
 
 ---
@@ -375,30 +373,14 @@ If implemented, these APIs must remain thin orchestration and must not become an
 
 ## Rollback and Recovery Workflow
 
-Rollback orchestration must prevent previously queued work from a rolled-back `scriptPatchVersion` from continuing to affect gameplay.
+The canonical rollback ordering, durable state machine, convergence timeout, drain gate, schedule reconciliation, and degraded-operation policy are defined in [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#patch-rollback-operator-driven-required). The [operations cookbook](./system-architecture-scripting-operations-cookbook.md#script-patch-rollback-sequence) owns the concrete command sequence.
 
-At a minimum, rollback consists of:
+This document retains only the participating API consequences:
 
-1. Fence new evaluation by setting Automation admission to rollback-pause mode, waiting for that barrier to be acknowledged, and then calling `PauseTicks`; a future operation may acquire both fences atomically, but it must not pause ticks first while Automation admission remains open. Keep the admission barrier active through repin, schedule reconciliation, cancellation, purge, convergence, and drain.
-2. Repin the affected game instance(s) to the target `scriptPatchVersion` using the Game Session control-plane API.
-3. Reconcile durable schedule entries before timer admission resumes: create or confirm every target-version entry, then retire displaced version-owned entries as one atomic durable result or a resumable idempotent operation. This is a required mutating rollback phase and records the same `controlPlaneRequestId`, `requestedBy`, and `reason` as the surrounding operator workflow, with `executedBy=system:automation` for the worker. Never record `actor=system:automation` or replace the operator's `requestedBy` value. Each schedule child is keyed by its full owner identity plus `scheduleDefinitionId`; the parent `controlPlaneRequestId` coordinates the operation but does not replace per-schedule identity. Preserve `scheduleDefinitionId` only as the stable logical schedule identity; do not rewrite old entries or reuse their trigger claims or `scriptEventId` values.
-4. Drain or purge queued script work items and staging entries that carry the rolled-back patch.
-5. If plugin versions are also being rolled back, disabled, or revoked, cancel pending work for those `pluginVersionId` values before queue purge.
-6. Verify pin convergence and drain completion before resuming normal admission.
-7. Invoke `ResumeTicks` as the `RESUMING` action while Automation admission remains paused. A failed resume leaves ticks paused and the workflow retryable rather than falsely marking rollback complete.
-8. After `ResumeTicks` succeeds, set Automation admission to `NORMAL`. Persist `COMPLETED` only after both actions succeed.
-
-Concrete rollback sequence example:
-
-1. Call `SetAutomationAdmissionMode(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` so new external, scheduler, and timer triggers are rejected before any tick barrier is acquired.
-2. After the Automation admission barrier is acknowledged, call `PauseTicks(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` so Game Session stops new tick scheduling and command intake for that instance.
-3. Call `RollbackScriptPatchVersion(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, targetScriptPatchVersion=P21, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` to repin the instance to the known-good patch.
-4. Run the system-owned durable schedule/timer reconciliation for `tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, and target `P21` across every region of that instance while the admission barrier remains active. The audit record carries `controlPlaneRequestId=RB-42`, `requestedBy=operator:alice`, `executedBy=system:automation`, and `reason="rollback RB-42"`; it does not overload `actor` with the executing principal. Each schedule child is keyed by its applicable `scheduleDefinitionId` and full owner identity. It creates or confirms only target-version rows before retiring displaced `P22` rows as one atomic durable result or a resumable idempotent operation, and creates no firing claim or `scriptEventId` before timer admission resumes.
-5. Call `CancelPendingWorkItemsForPatch(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, scriptPatchVersion=P22, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` and `PurgeQueuedTickCommandsForScriptPatch(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, scriptPatchVersion=P22, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`. The optional `regionId` is deliberately omitted so this instance-wide repin cleans every affected region. When plugin versions are displaced, invoke the separate plugin-version cancel and queued-command purge operations with their `pluginId` and `pluginVersionId`.
-6. Poll `GetAutomationPinConvergence(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444)` and `GetGameSessionPinConvergence(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444)` until both report `observedPinnedScriptPatchVersion=P21` and `lastObservedControlPlaneRequestId=RB-42`.
-7. Poll `GetAutomationDrainStatus(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444)` until `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` for the current rollback-scope `admissionEpoch`.
-8. Call `ResumeTicks(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` while Automation admission remains paused.
-9. After `ResumeTicks` succeeds, call `SetAutomationAdmissionMode(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, mode=NORMAL, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
+- Automation & Scripting implements the admission barrier, durable schedule reconciliation, work-item cancellation, drain-status reads, pin-convergence projection, and auditable cleanup APIs described above.
+- Game Session owns the durable rollback workflow and patch pin, and exposes tick pause/resume, queued-command purge, and convergence APIs. Logging & Admin may orchestrate those APIs but must not persist a competing workflow state machine.
+- The same `controlPlaneRequestId`, authenticated operator `actor`/`requestedBy`, and `reason` flow through every mutating step. System-owned reconciliation records use a separate `executedBy=system:automation` rather than replacing the operator identity.
+- Patch- and plugin-scoped cancel/purge calls omit `regionId` for an instance-wide repin so every affected region is covered. API retries remain idempotent under the owning request/response contracts.
 
 Operationally, use control-plane APIs rather than direct data-store edits for pending and dead-lettered work:
 
@@ -406,56 +388,9 @@ Operationally, use control-plane APIs rather than direct data-store edits for pe
 - `ReplayDeadLetteredWorkItems` for bounded replay of recoverable items.
 - `PurgeOutboxWorkItems` for auditable cleanup of terminally invalid or stale items.
 
-## Rollback Orchestration State Machine (Required)
-
-Rollback orchestration must expose and persist a state machine so partial failures are recoverable and retries are deterministic.
-
-Ownership and source-of-truth requirements:
-
-- Game Session is the producer-of-record for rollback orchestration state keyed by `controlPlaneRequestId`.
-- Logging & Admin may expose convenience orchestration APIs, but these must call the Game Session workflow APIs and read back the same canonical workflow state; they must not persist a competing rollback-state machine.
-- Automation & Scripting participates via idempotent step APIs (`SetAutomationAdmissionMode`, cancel/purge hooks, convergence reads) and must not infer orchestration completion from local state alone.
-
-Required states:
-
-- `PAUSING` -> `REPINNING` -> `RECONCILING_SCHEDULES` -> `CANCELING` -> `PURGING` -> `CONVERGING` -> `DRAINING` -> `RESUMING` (invoke `ResumeTicks`, then set admission `NORMAL`) -> `COMPLETED`
-- Terminal failure state: `ROLLBACK_CONVERGENCE_TIMEOUT`
-
-State rules:
-
-- Each transition must be idempotent and keyed by `controlPlaneRequestId`.
-- Re-running a request in the same state must return current state, not restart from scratch.
-- `RECONCILING_SCHEDULES` must complete before timer admission, normal admission, or tick resumption can proceed. Replacement creation and displaced-row retirement must be one atomic durable result or a resumable idempotent operation keyed by `controlPlaneRequestId`; retries may carry due state only when the requested displaced-to-replacement mapping matches the complete immutable schedule-owner identity: `<tenantId, gameInstanceId, playableStateScope, targetScopeType, targetScopeId, scriptId, eventType, eventSchemaVersion, isDryRun, scheduleDefinitionId, scheduleSemanticsHash, pluginId?, displacedScriptPatchVersion, replacementScriptPatchVersion?, displacedPluginVersionId?, replacementPluginVersionId?, bindingId?>`. The mapping must retain both the displaced and replacement owner identities, including their patch/plugin versions and binding, rather than comparing only a logical schedule ID. If any tenant, instance, target scope, applicable owner, displaced/replacement owner, schedule-definition, or semantics component differs, create the replacement with fresh due state; retire the displaced row only after the full mapping matches. Reconciliation creates no firing claim or `scriptEventId`.
-- Failures in `CANCELING`, `PURGING`, or `RESUMING` must not auto-resume admission or ticks; admission remains paused until `ResumeTicks` succeeds and the `NORMAL` transition succeeds.
-- `RESUMING` represents the in-flight `ResumeTicks` action followed by the admission transition to `NORMAL`. Only a successful `ResumeTicks` result and successful `NORMAL` transition may transition the workflow to `COMPLETED`; failures leave the relevant barrier paused and `RESUMING` retryable.
-- Operator retries must continue from the last durable state.
-- `ROLLBACK_CONVERGENCE_TIMEOUT` keeps admission and ticks paused until explicit operator action.
-- `DRAINING` is required. Rollback must not resume admission or ticks until the current rollback-scope `admissionEpoch` has no active pre-pause executions and no remaining cancelable outbox work according to `GetAutomationDrainStatus`.
-
-Convergence timeout semantics (required):
-
-- Rollback orchestration must apply a bounded convergence timeout for the convergence step.
-- If timeout is reached before both convergence APIs report the expected `controlPlaneRequestId`, the rollback enters terminal state `ROLLBACK_CONVERGENCE_TIMEOUT`.
-- In `ROLLBACK_CONVERGENCE_TIMEOUT`, Automation admission remains paused for scope safety and ticks remain paused until an operator explicitly issues resume or abort actions.
-- The system must emit terminal event `ScriptRollbackConvergenceTimedOut` and increment the corresponding rollback timeout metric.
-- While timeout terminal state remains active, ingress admissions in scope must record a rollback timeout admission outcome and a bounded final reason.
-
-## Pin-State Degraded Operations Policy (Required)
-
-`pin_state_unavailable` is fail-closed by default. Any override mode must be explicit and tightly constrained:
-
-- Override must be activated by an authenticated operator action with `controlPlaneRequestId`, `actor`, `reason`, and a bounded TTL.
-- Override scope must be explicit (`tenantId` + `gameInstanceId` minimum).
-- Override must emit control-plane audit and event records so post-incident reconciliation can prove exactly when fail-closed behavior was bypassed.
-- On TTL expiry, fail-closed behavior (`pin_state_unavailable`) must resume automatically.
-
-Notes:
-
-- Even without an explicit purge, Game Session’s version fence prevents execution of commands produced under the rolled-back patch, but rollback must still drain and purge automation staging to avoid unbounded queue growth and operator confusion.
-- Rollback does not attempt compensating actions for already-executed tick effects. Operators rely on normal incident response patterns for remediation such as restore, rollback data, or targeted admin operations.
-
 ## Related Control Plane Contracts
 
 - [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md) defines the direct request/response contracts, canonical errors, and admission rules.
+- [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md) defines promotion and rollback ordering, orchestration state, convergence, and degraded-operation policy.
 - [Scripting & Automation: Control Plane Events](./system-architecture-scripting-control-plane-events.md) defines the durable event families emitted by the workflow APIs in this document.
 - [Scripting Observability Contract](./system-architecture-scripting-observability-contract.md) defines the metric names, labels, and audit surfaces referenced by the workflow steps in this document.

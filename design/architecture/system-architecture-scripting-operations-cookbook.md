@@ -1,6 +1,6 @@
 # FireMUD Scripting Operations Cookbook
 
-This document collects the operator-facing playbooks for scripting and automation. It complements [Scripting Quotas & Operations](./system-architecture-scripting-quotas-and-operations.md), which remains the canonical owner for steady-state quota, budget, security, and observability contracts.
+This document collects operator-facing procedures and examples for scripting and automation. [Scripting Quotas & Operations](./system-architecture-scripting-quotas-and-operations.md) owns steady-state quota, budget, security, and observability contracts; [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md) owns promotion and rollback semantics. The cookbook demonstrates those contracts without redefining them.
 
 ## Operational Cookbook: Quotas, Budgets, and Metrics
 
@@ -147,7 +147,7 @@ At a minimum, rollback consists of:
    - After schedule reconciliation, cancel/purge, and rollback draining confirm that every stale old-version execution is terminal or fenced and that pre-pause executions and cancelable outbox work for the current rollback-scope `admissionEpoch` have quiesced, call `ResumeTicks` while Automation & Scripting admission remains paused. Set admission to normal only after `ResumeTicks` succeeds; if tick resumption fails, retain rollback-pause admission and the durable rollback state until the failure is converged.
    - If an old-epoch execution reaches persist or handoff checks after rollback pause has advanced the scope `admissionEpoch`, it must fail as `finalOutcome=canceled` with a bounded `finalReason` such as `rollback_epoch_advanced` rather than creating new live work. Operators should expect to see these rows in `script_event_audit` during rollback convergence and draining.
 
-Rollback orchestration should be modeled as a durable state machine (`PAUSING`, `REPINNING`, `RECONCILING_SCHEDULES`, `CANCELING`, `PURGING`, `CONVERGING`, `DRAINING`, `RESUMING`, `COMPLETED`, terminal `ROLLBACK_CONVERGENCE_TIMEOUT`) keyed by `controlPlaneRequestId` so partial failures can be resumed deterministically.
+The procedure operates the canonical durable state machine in [Scripting Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#rollback-orchestration-state-machine-required), keyed by `controlPlaneRequestId`; operators resume the recorded workflow rather than starting a competing sequence.
 
 Concrete rollback sequence example:
 

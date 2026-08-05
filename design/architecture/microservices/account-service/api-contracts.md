@@ -30,8 +30,8 @@ For `security_locked` accounts, Account's successful recovery authorization issu
 - `IssueAutomationOperatorAuthorizationReference` – target Account-owned typed issuance RPC for the exact Logging & Admin workload mTLS identity and a versioned automation policy. It is a separate automation-specific tenant-scoped authority path, not a human membership or `control-ui` path; Account validates the `automation_operator` issuance kind, exact authenticated workload binding, policy identity/version, `tenant_generation`, target/scope, action-family schema pair, typed request fields, `controlPlaneRequestId`, canonical `mutationDigest`, `reservationOwnerId`, and positive `reservationClaimFence`, and issues no user or global-role authority.
 - `RedeemOperatorAuthorization` – target Account-owned redemption RPC used only by the exact owner workload named in the issued record. The owner presents the exact opaque reference plus the Account-returned `authorizationReferenceFingerprint` transported unchanged through Logging & Admin, its independently derived action family, schema pair, typed target/scope/request fields, `controlPlaneRequestId`, canonical `mutationDigest`, `reservationOwnerId`, and positive `reservationClaimFence`; Account authenticates the exact mTLS caller and returns the authenticated authority projection, a fresh Account recomputation of `authorizationReferenceFingerprint`, and immutable `authorityEvidenceBundle` only when every value and current authority state still match. The owner compares the forwarded fingerprint with that fresh Account value before treating redemption as successful or authorizing the mutation. Account consumes the reference atomically on successful redemption and durably records the redemption result. Before successful redemption, an exact same-tuple retry may replay that durable result; after consumption, any replayed result is evidence for the same completed redemption only and cannot authorize a new owner attempt. Owner rearm after a terminal result requires fresh Account authorization and a new opaque reference.
 - `RecoverOperatorAuthorizationReference` – target Account-owned read-only recovery RPC for the exact authenticated Logging & Admin workload. The request repeats the complete immutable typed issuance tuple, actor or automation-policy evidence, and current reservation owner/claim fence; Account returns only the original issuance response or original terminal outcome from its durable record. Durable `NOT_FOUND` is read-only lookup evidence that no matching record was found, never proof for `NOT_EXECUTED_BEFORE_AUTHORIZATION`; that terminal state requires durable phase evidence that Account authorization cannot complete and durable dispatch evidence that no owner-forward call occurred and no owner-forward call can still occur. Until both proofs exist, the operation remains `AUTHORIZATION_PENDING`, non-replayable and non-rearmable. It never issues, extends, rotates, redeems, or semantically recreates a reference.
-- `GetProfile` – retrieves the caller's profile relationship through canonical `GET /tenants/{tenantId}/profiles/{accountId}`, classified `tenant_regular`. Account's live membership authority is the source of truth for the membership lifecycle, current `membershipAuthorityGeneration`, and independent `membershipVersion`; it requires the exact `control-ui` profile, `accountId` bound to `caller_account_id`, and one of `player`, `moderator`, `designer`, or `tenantAdmin` in `scopedRoles[tenantId]`. The legacy `/profiles/{accountId}` route is implementation drift only; `platformAdmin` is not an override.
-- `UpdateProfile` – modifies the caller's profile relationship through canonical `PUT /tenants/{tenantId}/profiles/{accountId}` under the same `tenant_regular` authorization and caller-subject binding. Account's live membership authority supplies the current `membershipAuthorityGeneration` and independent `membershipVersion`; it requires one of `player`, `moderator`, `designer`, or `tenantAdmin` in `scopedRoles[tenantId]` and triggers notification emails. Account holders may select `PUBLIC`, `FRIENDS_ONLY`, or `PRIVATE` presence visibility; `HIDDEN_STAFF` remains reserved for the staff-visibility owner and cannot be set through ordinary profile writes. The legacy `/profiles/{accountId}` route is implementation drift only; `platformAdmin` is not an override.
+- `GetProfile` – retrieves the caller's profile relationship through canonical `GET /tenants/{tenantId}/profiles/{accountId}`, classified `tenant_regular`. Caller subject, scoped-role, and membership-generation validation follow [Account Runtime and Data](./runtime-and-data.md#membership-and-entitlement-authority); the legacy `/profiles/{accountId}` route is implementation drift and `platformAdmin` is not an override.
+- `UpdateProfile` – modifies the caller's profile relationship through canonical `PUT /tenants/{tenantId}/profiles/{accountId}` under the same `tenant_regular` authorization and caller-subject binding. Membership authority follows [Account Runtime and Data](./runtime-and-data.md#membership-and-entitlement-authority); the local API triggers notification emails and permits account holders to select `PUBLIC`, `FRIENDS_ONLY`, or `PRIVATE`, while `HIDDEN_STAFF` remains reserved for the staff-visibility owner. The legacy `/profiles/{accountId}` route is implementation drift and `platformAdmin` is not an override.
 
 - `ListPresenceVisibilityPolicies` – bounded internal bulk read of current tenant-scoped profile visibility policy for up to 100 account IDs. Social projections consume this authority at read time; unknown or unavailable entries are intentionally omitted so callers apply complete `PRIVATE` redaction.
 - `ExportAccount` – **target-state RPC** equivalent of `POST /accounts/{accountId}/exports`; starts or reads the persisted export operation for the caller's `requestId` and matching versioned `requestDigest`, returning the same stable `exportId` on replay and an idempotency conflict on digest mismatch. It gathers every required owning-service contribution and exposes a versioned portable-data manifest with explicit complete, partial, omitted, redacted, unavailable, retryable, failed, and separately retained owner outcomes; this is not a promise of every account-related record or secret. The current implementation behind this method remains the local legacy export described above.
@@ -43,26 +43,18 @@ For `security_locked` accounts, Account's successful recovery authorization issu
 - `POST /auth/pending-deletion/recovery/challenge` and `POST /auth/pending-deletion/recovery` are dedicated target recovery routes classified `public`; they may issue only `pending-deletion-access`, never normal login, bootstrap, connect-token, tenant, purchase, or gameplay authority. These target routes are not currently routable.
 - `RequestPasswordReset` – initiate a password reset email.
 - `CompletePasswordReset` – update the password using a token.
-- Provider-specific external identity linking is planned but not currently routable. Each provider must use a server-verified callback, global `{provider, issuer, subject}` uniqueness, recent reauthentication, and safe unlink/recovery behavior before its dedicated surface is advertised; the caller-asserted `LinkExternalAccount` scaffold is unsupported drift.
+- External identity binding and lifecycle are owned by [Account Runtime and Data](./runtime-and-data.md). Provider-specific linking is planned but not currently routable; the caller-asserted `LinkExternalAccount` scaffold remains unsupported drift.
 - `IssuePlayerBootstrapToken` – authenticate a first-party player account and issue the short-lived `player-bootstrap` token profile used only for gameplay bootstrap.
 - `ListBootstrapWorlds` – list caller-visible worlds for first-party gameplay bootstrap.
 - `ListBootstrapRealms` – list caller-visible realms for a selected world during first-party gameplay bootstrap.
 - `ListBootstrapCharacters` – list caller-visible characters for the selected opaque server-issued `connectScopeId` target during first-party gameplay bootstrap; the route world/realm must match the resolved scope.
-- Bootstrap discovery response contract (target): for each admissible realm target, return a `connectScopeId` that cryptographically binds the exact `tenantId`, `worldSlug`, `realmSlug`, `gameInstanceId`, `catalogRevision`, `pointerVersion`, and `connectScopeExpiresAt`, together with `evaluatedAt`.
-  - Required behavior: treat `connectScopeId` as short-lived cryptographic proof of the exact evaluated realm target, not a durable reservation; callers must rerun discovery after `connectScopeExpiresAt` or after stale-scope failures. `catalogRevision` and `pointerVersion` are required fields of the same authoritative Game Session routing snapshot: `catalogRevision` references the separately versioned catalog/policy snapshot and `pointerVersion` is the routing record's CAS version. At the `JoinPublicProductionMembership` membership commit gate, Account verifies the scope's signature, expiry, and exact bound pair against that same fresh snapshot. If either field is missing, unavailable, malformed, ambiguous, stale, or regressed, the routing authority fails closed as `ADMISSION_POINTER_UNAVAILABLE`; if the valid scope-bound pair differs from the fresh snapshot, the result is `CONNECT_SCOPE_MISMATCH`. The same mapping applies to discovery, join, and connect-token issuance; Account must not silently re-resolve or select a newer target.
-  - The exact `catalogRevision`/`pointerVersion` pair cryptographically bound in `connectScopeId` must be carried unchanged into `JoinPublicProductionMembership` and verified at its membership commit gate. Account's fresh entitlement snapshot, including `allowPublicJoin`, is a separate authority and neither supplies nor replaces `catalogRevision` or `pointerVersion`. Generated proto and discovery/join caller support for this complete snapshot is not yet aligned and remains implementation drift.
-- `IssueConnectToken` – issue short-lived gameplay connect token for `/ws/game/**` handshake policy after resolving discovery `connectScopeId`, validating live membership, exactly one selected-tenant `authorityTuple.tenantAuthorityGeneration` from fresh Account entitlement authority, the current applicable membership authority generation, public admission, runtime entitlements, and the current admission pointer for the target `{tenantId, worldSlug, realmSlug, gameInstanceId}`. On every issuance, including the first issuance immediately after explicit join, the Account issuance commit gate must reread the exact caller-bound runtime membership snapshot from `GetTenantMembershipForRuntime` and compare the exact `membershipAuthorityGeneration`, `membershipLifecycleState`, and independent `membershipVersion` values used during validation. The fresh entitlement evidence and `runtimeEntitlementAuthorityReference` must carry the selected tenant's `tenantAuthorityGeneration`, its snapshot/version, and freshness/commit-fence evidence; the issuance conditionally commits only while that authority tuple remains unchanged. That membership freshness baseline and the exact routing baseline `{connectScopeId, tenantId, worldSlug, realmSlug, gameInstanceId, catalogRevision, pointerVersion, evaluatedAt, connectScopeExpiresAt}` are bound to the same issuance record; `catalogRevision` remains the routing record's catalog/policy reference, while `allowPublicJoin` remains the fresh Account entitlement field. The same Account issuance evidence boundary carries exact selected-route entitlement and admission-pointer authority references; these reference their owning snapshot/version/fence and resolved target without redefining those owner contracts. Any stale, unavailable, regressed, or mismatched field fails closed before either a token is issued or a `COMMITTED` issuance record is written.
-  - Required behavior: `connectScopeId` is an opaque short-lived selector for one caller-visible realm target, must be revalidated against fresh selected-target catalog/pointer/public-production evidence and current Account entitlement at issuance time, and must fail closed with `CONNECT_SCOPE_MISMATCH` or `ADMISSION_POINTER_UNAVAILABLE` when the earlier discovery target is no longer admissible. An entitlement outage is `ENTITLEMENT_UNAVAILABLE`; `allowPublicJoin=false` is `PUBLIC_PRODUCTION_ADMISSION_DENIED`.
-  - Required behavior: read shared replay readiness as `OPEN`, bind the exact `replayAdmissionFence` into the token, and fail with `CONNECT_REPLAY_PROTECTION_UNAVAILABLE` when readiness is missing, unreadable, quarantined, or changes during issuance.
-  - Required behavior: `requestId` is the sole unique issuance key for the gameplay connect-token issuance record. Retrying the same `{accountId, connectScopeId, requestId}` must return the same token payload or the same deterministic application failure; the immutable authority tuple and membership freshness baseline are comparison data for that record, not a second unique key or duplicate request fields. If the caller cannot determine whether Gateway may already have consumed the resulting `gameplay-connect` token, it must rediscover the target and retry with a new `requestId`; it must not reuse the old idempotency key after possible Gateway consumption.
-- `JoinPublicProductionMembership` – the sole target canonical name for the Account-owned explicit open-enrollment operation selected by verified `connectScopeId`, idempotently creating or returning the durable `player` membership and returning its monotonic `membershipVersion`. Its lifecycle is exact: missing creates `ACTIVE` and `INACTIVE` restores `ACTIVE`; either transition advances `membershipVersion`, while `membershipAuthorityGeneration` advances independently only when `callerBoundAuthorityInvalidated=true`; each create or restore commits exactly one logical transition audit/outbox event; `ACTIVE` returns the exact current snapshot without an unnecessary advance or event; every other state rejects and never admits gameplay. The obsolete implicit membership-writer surface and its direct-field inputs have been removed. Explicit `JOIN` / `Join & Play` remains target-only and unimplemented.
-  - Required behavior: the request preserves exactly `connectScopeId` and `requestId`; `connectScopeId` exclusively binds the exact `{catalogRevision, pointerVersion}` pair and target, and no duplicate catalog or pointer fields are accepted. Account verifies the cryptographic scope binding and exact bound pair against the same fresh selected-target catalog/pointer/public-production routing snapshot at the membership commit gate. If the pair is no longer current, the join fails as stale and does not silently re-resolve a newer target. The canonical digest preimage explicitly includes `operationKind=JOIN`, the authenticated `accountId`, the verified caller binding, the resolved target, the exact `connectScopeId`, and its bound catalog/pointer pair; Account persists those fields with the operation ID, digest, lifecycle status, and stored outcome even when no membership transition commits. An exact ID-plus-digest retry returns that operation's stored outcome, while a digest mismatch returns `IDEMPOTENCY_CONFLICT`. The internal boundary accepts calls only from the exact Game Session mTLS workload with typed caller-bound `PlayerExecutionContext`; Account validates its `accountId` against the authenticated caller context before using the target-only scope. Public player-bootstrap callers derive the subject from the authenticated player and do not supply an authoritative account ID. At the join commit gate, Account reads one authoritative membership snapshot and takes `membershipAuthorityGeneration`, independent `membershipVersion`, and `membershipLifecycleState` from that same snapshot, not from discovery or caller input. It binds this exact freshness baseline to the same `connectScopeId` and `requestId` through issuance and commit. Every later revalidation compares the exact target/scope pair first, then exact equality of `membershipAuthorityGeneration`, then independent `membershipVersion` including regression detection, then lifecycle state; any missing or changed membership authority generation, or any missing, changed, regressed, or mismatched membership version, fails closed. Validate the fresh Account entitlement snapshot (`authorityAvailability=AVAILABLE`, `allowPublicJoin=true`, exact `entitlementVersion`) separately and atomically with the selected-target catalog/pointer/public-production evidence at the membership commit boundary. Emit exactly one durable transition audit/outbox event for a missing create or `INACTIVE` restore, bound to the same operation ID and digest. An `ACTIVE` retry returns the stored exact snapshot and remains event-free; leave and later rejoin use distinct operation kinds and outcomes. Independently supplied account, tenant, world, or realm values are not player-path authority.
-  - Required failure codes at minimum: `IDEMPOTENCY_CONFLICT`, `AUTH_UNAVAILABLE`, `ENTITLEMENT_UNAVAILABLE`, `PUBLIC_PRODUCTION_ADMISSION_DENIED`, `ADMISSION_POINTER_UNAVAILABLE`, `CONNECT_SCOPE_MISMATCH`, `TENANT_BILLING_BLOCKED`. `JOIN_REQUIRED` is a pre-join admission result, not a failure of this join operation.
-  - Admission precedence is deterministic: after required target and authority checks, `PUBLIC_PRODUCTION_ADMISSION_DENIED` means the selected public-production target's current joining policy disallows joining; `JOIN_REQUIRED` means that policy permits joining but fresh membership is missing or `INACTIVE`. Authority-unavailable outcomes remain distinct from both results.
-- `GetCallerTenantMembership` – return authoritative caller-bound account-tenant membership and roles for billing-safe mutation checks.
+- Bootstrap discovery and join use the canonical realm catalog and admission-pointer contract in [Multi-Tenancy](../../system-architecture-multi-tenancy.md#realm-catalog-and-admission-pointer-contract). Account's local API consequence is to carry the server-issued `connectScopeId` unchanged through discovery, character selection, join, and connect-token calls; target freshness or scope mismatch remains an implementation-level failure rather than silent retargeting.
+- `IssueConnectToken` – issue the short-lived gameplay connect token for `/ws/game/**` after consuming the Account membership/entitlement authority and the Game Session admission-pointer authority. The local API binds the caller's `connectScopeId` and `requestId` to one issuance result, consumes replay readiness, and returns only the documented metadata while delivering the current token through the protected cookie transport. Current registry/evidence and membership-reread gaps remain implementation drift as recorded in [Account Runtime and Data](./runtime-and-data.md#membership-and-entitlement-authority).
+- `JoinPublicProductionMembership` – target-only internal Account API for explicit open-enrollment `JOIN`; its canonical membership lifecycle and freshness contract are owned by [Account Runtime and Data](./runtime-and-data.md#membership-and-entitlement-authority). The local route remains unimplemented, accepts the server-issued scope and request identity, and does not expose the removed implicit membership writer.
+- `GetCallerTenantMembership` – caller-bound membership read for billing-safe mutation checks; freshness and sequence semantics follow [Account Runtime and Data](./runtime-and-data.md#membership-and-entitlement-authority).
 - `GetTenantMembershipForAccount` – cross-tenant membership lookup for billing/reporting workflows (`billingAdmin`/`platformAdmin` only).
-- `GetTenantMembershipForRuntime(accountId, tenantId, requestId)` – authoritative internal membership read for gameplay admission, reconnect/resume, and membership-gap reconciliation.
-- `GetTenantEntitlementsForRuntime(tenantId, requestId)` – unredacted internal runtime/admission entitlement snapshot for exact Game Session and World Management workload identities. Game Session supplies current private delegation for player-scoped admission; World Management supplies tenant/operation-bound instance-lifecycle context. Logging & Admin and `control-ui` callers must use the redacted route variants instead.
+- `GetTenantMembershipForRuntime(accountId, tenantId, requestId)` – internal membership read for gameplay admission, reconnect/resume, and membership-gap reconciliation under the canonical runtime contract.
+- `GetTenantEntitlementsForRuntime(tenantId, requestId)` – unredacted internal runtime/admission entitlement API for the exact Game Session and World Management workload identities. Game Session supplies current private delegation for player-scoped admission; World Management supplies tenant/operation-bound instance-lifecycle context. Logging & Admin and `control-ui` callers use the redacted route variants.
 
 - `GetRealmAccessGrant(accountId, tenantId, worldSlug, realmSlug, requestId)` / `ListRealmAccessGrantsForAccount(accountId, tenantId, requestId)` – authoritative internal realm-grant reads for non-public realm bootstrap discovery and gameplay admission.
 - `GetTenantEntitlementsTenant` – caller-bound tenant-admin entitlement view for billing-safe control-plane UX.
@@ -70,7 +62,7 @@ For `security_locked` accounts, Account's successful recovery authorization issu
 - `RequestEmailVerification` – send a verification email.
 - `VerifyEmail` – confirm an email verification token.
 - `CreatePaymentIntent` – initiate a Stripe payment.
-- `CreateSubscription` – target request contract for one recurring subscription under [ADR 0044](../../decisions/adr-0044-account-owned-payment-instruments-with-explicit-subscription-binding.md). The caller supplies a high-entropy stable `requestId`; Account computes and persists a versioned `requestDigest` from the normalized create tuple, including the resolved billing owner, immutable `tenantId`, initial `plan_code`, and exact instrument-selection input. Clients do not supply the digest. Before the local intent/outbox transaction commits, Account captures the resolved billing owner's authority version/generation and lock/CAS-validates that exact fence; an owner change or mismatch fails closed before provider work. A retry with the same `requestId` and normalized create fields recomputes the same digest and replays the same durable operation and outcome; changed fields that produce a different digest return `IDEMPOTENCY_CONFLICT`. The caller identity is distinct from the provider `subscription_provisioning_request_id`. The current proto and implementation carry only tenant/account/plan fields and do not yet provide this retry boundary.
+- `CreateSubscription` – create one recurring subscription under the canonical [Subscription Management](./subscription-management.md) lifecycle and [Stripe Integration](./stripe-integration.md) provider-binding contract. The local proto/implementation currently carries only tenant/account/plan fields and does not yet provide the target caller retry boundary.
 - `CreateDonation` – process a donation payment.
 - `RefundPayment` – issue a refund for a payment.
 - `GetBalance` – retrieve a virtual currency balance.
@@ -203,156 +195,15 @@ This `requestId`/request-digest contract is the Account-owned retry boundary for
 
 The character-creation facade is included in the player-bootstrap authentication class and the Account REST inventory above. It is an Account-owned admission facade, not an Account-owned character persistence surface: Entity Management remains authoritative for the created character and its playable-state scope.
 
-## Runtime Membership and Entitlement Response Shapes
+## Runtime Membership and Entitlement API Consequences
 
-The internal runtime auth/admission methods must return deterministic response fields because gameplay admission, reconnect, and entitlement freshness rules depend on them.
+The canonical membership, entitlement response shape, freshness, and sequence contract is [Account Runtime and Data](./runtime-and-data.md#membership-and-entitlement-authority). This API document retains only the local surfaces and transport consequences:
 
-Canonical `GetTenantMembershipForRuntime(accountId, tenantId, requestId)` request:
-
-```json
-{
-  "accountId": 42,
-  "tenantId": 7,
-  "requestId": "membership-read-7f3f"
-}
-```
-
-The request identity is the exact account/tenant scope plus the caller's stable request ID; it is not an account-subject route selector supplied by an end user. The response is authoritative only when all fields below are evaluated for that same request.
-
-Canonical `GetTenantMembershipForRuntime(accountId, tenantId, requestId)` response:
-
-```json
-{
-  "accountId": 42,
-  "tenantId": 7,
-  "membershipExists": true,
-  "membershipLifecycleState": "ACTIVE",
-  "authorityAvailability": "AVAILABLE",
-  "gameplayAdmissionAllowed": true,
-  "roles": ["player"],
-  "membershipVersion": 42,
-  "membershipAuthorityGeneration": "opaque-account-generation-8",
-  "authorityTuple": { "canonicalJson": "<complete-applicable-authority-tuple>" },
-  "evaluatedAt": "2026-03-13T09:15:30Z",
-  "outboxCheckpoints": [
-    {
-      "outboxStreamKey": "account:auth-authority:v1:membership/42/7",
-      "outboxSequence": 12,
-      "sourceEventId": "01JQMEMBERSHIP12",
-      "sourceEventDigest": "event-digest-v1:membership:12"
-    }
-  ]
-}
-```
-
-Required semantics:
-
-- `membershipExists` is the authoritative presence signal. Callers must not infer absence from `gameplayAdmissionAllowed=false` or a sentinel membership version.
-- `gameplayAdmissionAllowed` is the authoritative boolean for gameplay admission when `authorityAvailability` is `AVAILABLE`; `false` may represent either an absent membership or an existing denied or revoked membership and must be interpreted with `membershipExists`.
-- `authorityAvailability` is explicit and must be `AVAILABLE` for the remaining fields to authorize admission; `UNAVAILABLE` is not equivalent to missing or `INACTIVE` membership and cannot produce `JOIN_REQUIRED`.
-- `membershipLifecycleState` is the exact Account-owned lifecycle state; gameplay admission requires `ACTIVE`.
-- `membershipVersion` advances monotonically for the `{accountId, tenantId}` membership scope whenever gameplay-relevant membership or role authority changes.
-- `membershipAuthorityGeneration` is an opaque Account-owned authority fence that advances whenever membership or tenant-role authority issued to the caller must be invalidated; it is distinct from the membership content/version counter, and consumers compare it only for exact equality without parsing, deriving, incrementing, or substituting it.
-- `authorityTuple` is the complete applicable Account authority tuple used for this snapshot; it is not reconstructed from membership version or a caller-provided value.
-- `evaluatedAt` timestamps the live membership decision used for admission or resume.
-- `outboxCheckpoints` includes the matching Account authority stream checkpoint for `account:auth-authority:v1:membership/<accountId>/<tenantId>`. Every positive checkpoint includes the source event ID and canonical source event digest for that sequence. The checkpoint, source event evidence, tuple, membership version, roles, and admission flag must come from one authoritative snapshot or transaction; sequence zero omits the source-event fields because no positive event exists.
-- `GetTenantMembershipForRuntime` is an internal-only gameplay/runtime authority surface and must not be reused as a caller-facing tenant membership endpoint or as a substitute for `GetCallerTenantMembership`.
-- `GetTenantMembershipForRuntime` returns only a fresh Account-authoritative snapshot; an unreachable or timed-out read maps to `AUTH_UNAVAILABLE`, while reachable stale, regressed, malformed, scope-mismatched, or otherwise conflicting evidence maps to the applicable denial or revocation outcome. None is positive admission authority or may be interpreted as missing/`INACTIVE` membership.
-
-Illustrative `GetRealmAccessGrant(accountId, tenantId, worldSlug, realmSlug, requestId)` response:
-
-```json
-{
-  "accountId": 42,
-  "tenantId": 7,
-  "worldSlug": "demo",
-  "realmSlug": "playtest-docks",
-  "authorityAvailability": "AVAILABLE",
-  "accessAllowed": true,
-  "grantedByAccountId": 84,
-  "grantedAt": "2026-03-13T09:10:00Z",
-  "expiresAt": "2026-03-20T09:10:00Z",
-  "evaluatedAt": "2026-03-13T09:15:31Z"
-}
-```
-
-Required semantics:
-
-- Realm-access grants are authoritative only in Account Service; other services must not persist or infer their own non-public realm grant state.
-- `authorityAvailability` is explicit; `UNAVAILABLE` means grant authority could not be established and must not be interpreted as a missing, revoked, or expired grant. Gameplay admission maps it to `AUTH_UNAVAILABLE`.
-- `accessAllowed=false` is returned when the grant is missing, revoked, or expired.
-- Reads are used by bootstrap discovery, in-band `REALMS`, `POST /auth/connect-token`, and `PLAY` for non-public realms; these surfaces must share this authority rather than re-implementing grant logic separately.
-- Successful create/revoke operations must be immediately visible to subsequent runtime reads for the same `{accountId, tenantId, realmSlug}`.
-- If grant authority is unavailable, discovery/admission for non-public realms fails closed as `AUTH_UNAVAILABLE`; this is distinct from `ENTITLEMENT_UNAVAILABLE` when tenant entitlement authority is unavailable.
-- The current implementation has the internal Account Service-owned grant substrate and runtime enforcement in place. Tenant-admin list/grant/revoke APIs, expiry handling, and user-facing account search/selection remain the product control-plane work needed to make the creator playtest journey complete.
-
-Illustrative `GetTenantEntitlementsForRuntime(tenantId, requestId)` response:
-
-```json
-{
-  "callerAccountId": 42,
-  "tenantId": 7,
-  "verifiedConnectScopeId": "cs_demo_production_v17",
-  "target": {
-    "worldSlug": "demo",
-    "realmSlug": "production",
-    "gameInstanceId": "instance-17",
-    "catalogRevision": 42,
-    "pointerVersion": 17
-  },
-  "provisioningStatus": null,
-  "authorityAvailability": "AVAILABLE",
-  "tenantAuthorityGeneration": "opaque-tenant-generation-12",
-  "subscriptionStatus": "active",
-  "gameplayAvailable": true,
-  "allowPublicJoin": true,
-  "allowNewGameplayBindings": true,
-  "allowNewInstanceStarts": true,
-  "quotas": {
-    "maxActiveSessions": 250,
-    "maxConcurrentInstances": 1
-  },
-  "entitlementVersion": 19,
-  "tenantBillingSequence": 311,
-  "evaluatedAt": "2026-03-13T09:15:32Z",
-  "bundleVersion": 1,
-  "snapshotIdentity": "tenant-entitlement-snapshot:7:19",
-  "evaluationIdentity": "tenant-entitlement-evaluation:01JNX...",
-  "authorityTuple": {
-    "canonicalJson": "<complete-applicable-authority-tuple>"
-  },
-  "tenantBillingCutoff": {
-    "tenantBillingSequence": 311,
-    "outboxStreamKey": "account:billing:v1:tenant/7",
-    "outboxSequence": 311
-  },
-  "outboxCheckpoints": [
-    {
-      "outboxStreamKey": "account:billing:v1:tenant/7",
-      "outboxSequence": 311,
-      "sourceEventId": "01JQBILLING311",
-      "sourceEventDigest": "event-digest-v1:billing:311"
-    }
-  ]
-}
-```
-
-Required semantics:
-
-- `provisioningStatus` is either `pending`, `provisioning`, or null. While it is non-null, `subscriptionStatus` is null and every gameplay/admission/instance-start flag is false because provider provisioning grants no hosting entitlement.
-- `subscriptionStatus` is null during provisioning and otherwise uses the canonical billing lifecycle values (`trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`). It never carries `pending` or `provisioning`.
-- `authorityAvailability` is explicit; `UNAVAILABLE` means fresh entitlement authority could not be established and must be returned as `ENTITLEMENT_UNAVAILABLE`, not as a billing denial, `AUTH_UNAVAILABLE`, or `JOIN_REQUIRED`.
-- The target response includes both `authorityAvailability` and opaque `tenantAuthorityGeneration`. Callers require `AVAILABLE` authority before using the snapshot and compare `tenantAuthorityGeneration` exactly without parsing or inferring ordering; it is distinct from `entitlementVersion` and `tenantBillingSequence`.
-- `gameplayAvailable` reports whether already-authorized gameplay may continue; callers must also enforce the operation-specific flag for a new commitment.
-- `allowPublicJoin`, `allowNewGameplayBindings`, `allowNewInstanceStarts`, and quota fields distinguish new admission/load from permission to continue already-entitled capacity. In `grace`, general gameplay availability may remain true while all three new-commitment flags are false.
-- `entitlementVersion` identifies the evaluated entitlement snapshot.
-- `tenantBillingSequence` allows consumers to detect stale or gapped billing-event application before admitting gameplay.
-- `tenantAuthorityGeneration` is an opaque Account-owned tenant authority fence. Consumers compare it only for exact equality and must not infer ordering or use it as an event identity.
-- `evaluatedAt` records evaluation of authoritative committed input and is used with the differentiated freshness policy from the authentication and subscription-management designs; reading an old projection must not restamp it as fresh.
-- `bundleVersion`, `snapshotIdentity`, and `evaluationIdentity` authenticate the evidence schema, committed source snapshot, and this evaluation. For player admission, `callerAccountId`, `verifiedConnectScopeId`, and the exact resolved `target` are required and must be cryptographically or transactionally bound to the same Account-authenticated bundle. The scope and target must resolve to the same caller-visible `{tenantId, worldSlug, realmSlug, gameInstanceId, catalogRevision, pointerVersion}`; a tenant-only runtime read cannot be reused as player admission evidence. The entitlement fields, identities, complete `authorityTuple`, applicable `tenantBillingCutoff`, and complete `outboxCheckpoints[]` are returned as one Account-authenticated bundle and are never reconstructed by callers.
-- The billing cutoff and matching checkpoint must name the same stream and sequence, carry the same `tenantBillingSequence`, and include the positive source event ID and canonical source event digest. Missing, extra, contradictory, or separately sourced evidence is invalid.
-- Missing subscription state is not implicit availability. Free or trial hosting is returned as an explicit entitlement state.
-- The response above is target-state shape. Current proto and runtime-caller support for the paired `authorityAvailability`/`tenantAuthorityGeneration` authority contract is not yet fully aligned and remains implementation drift.
+- `GetTenantMembershipForRuntime(accountId, tenantId, requestId)` and `GetTenantEntitlementsForRuntime(tenantId, requestId)` are internal-only workload APIs for gameplay/runtime callers; they are not caller-facing substitutes for the billing-safe membership and entitlement variants listed above.
+- `GetRealmAccessGrant` and `ListRealmAccessGrantsForAccount` remain Account-owned internal reads for non-public realm discovery and admission. The current Account grant substrate and runtime enforcement are present; tenant-admin grant management, expiry handling, and user-facing account selection remain incomplete.
+- `GetAdmissionPointer(tenantId, worldSlug, realmSlug)` is consumed by Account through `GameSessionClient` from the Game Session-owned routing API. The current response remains the implemented pointer shape; target pointer fields and `CLOSED` handling are owned by the runtime routing contract and remain implementation drift where noted there.
+- `GetTenantEntitlementsTenant` and `GetTenantEntitlementsCrossTenantSupportSafe` remain separate caller-bound and redacted support-safe API variants. They must not be multiplexed with the internal runtime surface.
+- Internal callers must treat missing required owner fields as contract failure and fail closed; Account's REST/OpenAPI and gRPC/proto sources remain the executable API authorities.
 
 ## Subject-Binding Rules (Normative)
 

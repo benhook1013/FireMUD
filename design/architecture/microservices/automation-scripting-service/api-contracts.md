@@ -45,19 +45,19 @@ Expected response:
 
 ## Event Ingress Contract
 
-Domain services such as Game Session and Game Logic deliver automation events through event-ingress RPCs (for example `TriggerScriptEvent`). These RPCs carry:
+Domain services such as Game Session and Game Logic deliver automation events through event-ingress RPCs (for example `TriggerScriptEvent`). The required identity fields, endpoint ownership, and audit behavior are defined in the [normative scripting contract tables](../../system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields); the following list describes the service-local wire envelope:
 
 - `tenantId`, `gameInstanceId`, `regionId`, and `entityId` for the target runtime context.
 - resolved `playableStateScope` for gameplay-originated events so shared versus isolated realm state stays explicit through durable trigger identity, timer follow-up work, and operator read models.
 - `regionEpoch` for gameplay/runtime triggers and scheduler triggers so Trigger Identity is fenced across scoped coordination resets.
-- `scriptEventId` is always present in the normalized applicable Trigger Identity, but its wire requirement follows endpoint ownership: live external ingress requires the caller to provide it, scheduler/timer ingress may omit it because the scheduler derives it, and dry-run/test ingress may omit it because the service generates it. It is not a complete idempotency key by itself.
+- `scriptEventId` in the normalized applicable Trigger Identity. Its wire requirement follows the [ingress ownership matrix](../../system-architecture-scripting-normative-contract-tables.md#table-1a-event-ingress-scripteventid-ownership-matrix), and it is not a complete idempotency key by itself.
 - `isDryRun` so live and dry-run/test traffic are always in separate idempotency namespaces.
 - `eventType` and versioning metadata such as `scriptPatchVersion`.
 - `eventSchemaVersion` for custom or service-specific events governed by the event registry.
 - `readSnapshotToken` when the canonical event-registry entry for that `eventType` requires an authoritative gameplay snapshot selector; it must be absent for events whose registry entry explicitly marks snapshot authority as `NONE`.
 - An envelope for the event payload, including any domain-specific fields.
 
-Event ingress is idempotent with respect to the event-scope Trigger Identity and each resolved handler. Repeated calls with the same applicable Trigger Identity must not cause a resolved DSL handler to run twice. After binding resolution, a plugin handler's identity includes `pluginId`, `pluginVersionId`, and the signed-bundle `bindingId`; those fields are required to distinguish multiple handlers contributed by one plugin version and are retained in handler-scoped dedupe, `script_event_audit`, quota attribution, and downstream handoff records. The normative `scriptEventId` lifecycle and deduplication rules are defined in [Scripting DSL Reference & Event Lifecycle](../../system-architecture-scripting-dsl-reference-and-lifecycle.md#scripteventid-lifecycle-and-deduplication).
+Event ingress uses the full applicable identity for deduplication and creates separate handler-scoped outcomes after binding resolution. The identity, ownership, and audit uniqueness rules are defined in the [normative scripting contracts](../../system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields) and [cross-service deduplication contract](../../system-architecture-scripting-contracts.md#4-scripteventid-identity-and-at-most-once-dedupe).
 
 Admission must also enforce pin consistency for `<tenantId, gameInstanceId>`:
 
@@ -84,43 +84,21 @@ Direct script upload and update APIs such as `UpdateScript` are limited to boots
 
 ## Idempotency and Retry Rules
 
-`scriptEventId` ownership is endpoint-specific:
+The canonical Trigger Identity, endpoint-specific `scriptEventId` ownership, deduplication, and downstream command retry rules are defined in the [normative contract tables](../../system-architecture-scripting-normative-contract-tables.md#table-1a-event-ingress-scripteventid-ownership-matrix) and [cross-service scripting contracts](../../system-architecture-scripting-contracts.md#4-scripteventid-identity-and-at-most-once-dedupe).
 
-- Live external ingress (`TriggerScriptEvent`): the wire request must supply `scriptEventId`, and the caller must reuse it on retries.
-- Scheduler and timer ingress (`onInterval`, `onTimerExpire`): the wire request may omit `scriptEventId`; the scheduler generates a deterministic value from due-point identity, including `gameInstanceId`.
-- Dry-run and test ingress: the wire request may omit `scriptEventId`; the service generates it by default. Caller-supplied IDs are optional and must pass dry-run namespace collision validation.
+At this API boundary:
 
-Only the full applicable Trigger Identity, as defined by the normative Trigger Identity table and including plugin-, scheduler-, timer-, or lifecycle-specific fields when applicable, is the canonical idempotency key for event ingress. No partial tuple, due point, or `scriptEventId` alone is a canonical key.
-
-- Any RPC that accepts `scriptEventId` is idempotent with respect to the full applicable Trigger Identity.
-- For a resolved entity-scoped gameplay/runtime handler, that full identity includes `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, entityId, scriptId, eventType, eventSchemaVersion, scriptPatchVersion, scriptEventId, isDryRun>`, plus `pluginId`, `pluginVersionId`, and `bindingId` for plugin handlers.
-- For scheduler/timer handlers, the full identity additionally includes `scheduleDefinitionId`, `triggerMode`, and exactly one due point (`dueTickId` or `dueAt`); the scheduler derives `scriptEventId` from all non-generated applicable identity fields, never from a preimage that includes `scriptEventId` itself.
-- Tenant-readiness `onLoad` uses its distinct full applicable identity and intentionally omits runtime fields such as `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, and `entityId`, as defined by the normative table.
-- Re-sending the same full applicable Trigger Identity must not cause the DSL body to run twice.
-- The service records at most one `script_event_audit` row per full handler-scoped Trigger Identity after fan-out to a specific `scriptId` or plugin binding; for plugin handlers, `(pluginId, pluginVersionId, bindingId)` is part of that uniqueness key.
-
-Downstream calls made from DSL components must carry a stable idempotency token derived from Trigger Identity plus tick context when applicable so infrastructure-level retries do not duplicate side effects.
-
-Transport-level retries:
-
-- Unary event-ingress calls are safe to retry at the gRPC transport layer only if they reuse the same full applicable Trigger Identity, including the same `scriptEventId`.
-- Timer and scheduler internals may retry infrastructure operations such as Redis writes but never re-execute the DSL body for the same full applicable Trigger Identity; they replay only idempotent downstream operations.
+- Unary event-ingress calls may be retried at the gRPC transport layer only when the caller follows that canonical identity and retry contract.
+- Timer and scheduler internals may retry idempotent infrastructure operations such as Redis writes, but do not re-execute the DSL body for the same trigger.
+- Handler-level outcomes remain represented by the service's durable `script_event_audit` rows and handoff/status APIs rather than by treating transport acknowledgement as execution success.
 
 ## Dry-Run and Test Execution Contract
 
-In addition to live event handling, the service exposes a non-committing test path used by Game Design and Logging & Admin tools:
+The shared dry-run safety, namespace, authorization, budget, and capacity rules are defined in the [cross-service scripting contracts](../../system-architecture-scripting-contracts.md#6-dry-run--test-traffic-safety). At this API boundary, the service exposes a non-committing test path used by Game Design and Logging & Admin tools:
 
-- Test runs execute handlers in the same sandbox and with the same loop-safety and resource limits as production runs.
-- Instead of persisting and indexing work items or handing off to tick queues, test runs return the would-be commands to the caller for inspection.
-- Test executions are recorded in `script_event_audit` with `isDryRun=true` and the normal `eventType` for the event being exercised. Successful test executions use the dry-run terminal outcome from the normative tables (`finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`) and must not claim `TICK_HANDOFF` or live `success`.
-- Dry-run and test requests must use an idempotency namespace separate from live traffic so test calls cannot dedupe, suppress, or overwrite live trigger records.
-- Dry-run and test APIs should use server-generated `scriptEventId` values by default. If tooling passes a caller-supplied value, the service must enforce namespace validation and reject identity collisions deterministically.
-- By default, dry runs do not consume `ScriptQuotaService` windows or tenant automation budgets and must not increment live-traffic error counters.
-- By default, dry runs must not contribute to failure-rate circuit breakers that can disable live scripts (`runtimeStatus=DISABLED_DUE_TO_ERRORS`).
-- Separate dry-run budgets cap how much test traffic a tenant or principal can generate.
-- Dry-run and test work must execute on isolated capacity so privileged tooling cannot consume the last available live automation workers.
-- Dry-run and test execution must require explicit authorization scope or role and must persist the calling principal in audit metadata.
-- Dry-run and test authorization and budget failures must be returned as deterministic application-level outcomes such as `DRY_RUN_UNAUTHORIZED` or `DRY_RUN_RATE_LIMITED`, not transport errors.
+- Test runs use the production sandbox and loop-safety/resource limits, but return would-be commands to the caller instead of persisting/indexing work or handing off to tick queues.
+- Test executions are recorded in `script_event_audit` with `isDryRun=true`; the normative audit table defines the `DRY_RUN_RESULT` success outcome and prohibits live handoff success.
+- Authorization and budget failures are returned as deterministic application-level outcomes such as `DRY_RUN_UNAUTHORIZED` or `DRY_RUN_RATE_LIMITED`, not transport errors.
 
 ## Reload Backpressure Contract
 
@@ -178,13 +156,7 @@ Game Session and Logging & Admin use script patch visibility APIs and events to 
 
 ## Pinned Version Visibility Consistency
 
-Admission and scheduler decisions must use a bounded-staleness view of pinned script patch and plugin versions:
-
-- A local cache populated by control-plane events is allowed, but it must enforce a configured max age.
-- If pin data for a scope is stale beyond max age, the service must refresh from authoritative control-plane APIs or events before admitting new work.
-- If fresh authoritative pin data cannot be obtained, admission must fail closed with `finalStage=ADMISSION`, `finalOutcome=pin_state_unavailable`, and a bounded `finalReason`.
-- If fresh authoritative pin data is available and does not match the request’s `scriptPatchVersion` or plugin version, the request must still fail closed.
-- Any override of this fail-closed behavior must be explicit, time-bounded, operator-audited, and auto-expire back to fail-closed mode.
+Admission and scheduler decisions use the bounded-staleness and fail-closed rules in the [cross-service version-fencing contract](../../system-architecture-scripting-contracts.md#3-version-fencing-rollback-safety). This service-local projection exposes the latest observed pin and freshness flags; when it cannot provide fresh authoritative state, the API reports `finalStage=ADMISSION`, `finalOutcome=pin_state_unavailable`, and a bounded `finalReason`.
 
 Plugin signer-policy admission follows the same fail-closed principle. If signer policy for a scope is stale beyond max age and cannot be refreshed, plugin admission must fail closed with `finalOutcome=signer_policy_unavailable`.
 

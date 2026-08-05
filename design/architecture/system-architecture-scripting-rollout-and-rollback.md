@@ -1,6 +1,6 @@
 # FireMUD Scripting & Automation: Rollout and Rollback
 
-This document defines operator-driven promotion, rollback, convergence, timeout, and degraded-operations workflows for scripting and plugin control-plane changes. It complements [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md), which defines the underlying RPC contracts and mutable state boundaries, and [Scripting & Automation: Control Plane Operations](./system-architecture-scripting-control-plane-operations.md), which defines the workflow sequencing and cleanup steps.
+This document is the canonical owner for operator-driven promotion, rollback, workflow sequencing, convergence, timeout, and degraded-operations contracts for scripting and plugin control-plane changes. [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md) defines the underlying RPC contracts and mutable state boundaries. [Scripting & Automation: Control Plane Operations](./system-architecture-scripting-control-plane-operations.md) records each service's participation and cleanup APIs, while the [operations cookbook](./system-architecture-scripting-operations-cookbook.md) provides executable operator examples.
 
 For mutating workflow calls, `actor` is the authenticated operator principal and is projected to audit as `requestedBy`. System-owned reconciliation and cleanup records use a separate `executedBy=system:automation`; they must not replace `requestedBy` or overload `actor` with the worker identity.
 

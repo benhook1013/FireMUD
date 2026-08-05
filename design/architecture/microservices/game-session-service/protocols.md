@@ -398,7 +398,7 @@ OK PLAY Entered world: Demo World
 
 LOOK
 OK LOOK
-Room: Candle-lit Antechamber (Room Instance ID: R-1021)
+Room: Candle-lit Antechamber (Room Instance ID: 1021)
 Short: You stand in a basalt chamber warmed by a single brazier.
 Long: Stalactites drip along the northern wall while a faint draft carries the smell of damp earth from the lower tunnels.
 Exits: NORTH (arched passage toward the cavern mouth), EAST (narrow fissure descending toward the forges).

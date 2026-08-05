@@ -80,7 +80,7 @@ This is a traffic-open gate, not a routine steady-state rollout gate.
 
 ## Player-Facing JWT Readiness Gate
 
-At first-live, reopen-after-restore, or production promotion evidence acceptance, operators must require `PREFLIGHT-JWT-ROTATION-001=pass` once the executable emits and validates this event-scoped gate. Until then, its absence blocks player-facing JWT readiness, and operators must prove the [phased JWT rotation contract](./system-architecture-security.md#jwt-key--jwks-rotation-workflow) while treating executable gate implementation as a prerequisite to this release procedure. This gate is intentionally separate from initial bootstrap pre-apply:
+At first-live, reopen-after-restore, or production promotion evidence acceptance, operators must require `PREFLIGHT-JWT-ROTATION-001=pass` once the executable emits and validates this event-scoped gate. Until then, its absence blocks player-facing JWT readiness, and operators must prove the [phased JWT rotation contract](./system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative) while treating executable gate implementation as a prerequisite to this release procedure. This gate is intentionally separate from initial bootstrap pre-apply:
 
 1. Confirm only Account Service receives the asymmetric private signing bundle and every validator uses Account `kid`/JWKS verification with HMAC fallback disabled.
 2. Run the production rotation artifact through prepublication, validator visibility, signer promotion, old/new continuity, overlap through retiring-token expiry, pruning, and rejection proof.
