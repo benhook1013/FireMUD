@@ -2,9 +2,8 @@
 
 import argparse
 import json
-from pathlib import Path
 import sys
-
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PUBLICATION_SPEC_PATH = REPO_ROOT / "config/settings/platform-settings-publication.json"

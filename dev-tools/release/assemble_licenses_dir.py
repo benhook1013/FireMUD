@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 NOTICE_FILES = {
     "NOTICE_DEFAULT": "THIRD_PARTY_NOTICES.txt",
     "NOTICE_SUMMARY": "THIRD_PARTY_NOTICE_SUMMARY.txt",
@@ -71,9 +70,9 @@ def find_required_cyclonedx_json(ort_results: Path) -> Path:
     for candidate in json_candidates:
         try:
             payload = json.loads(candidate.read_text(encoding="utf-8"))
-        except Exception:
+        except (OSError, UnicodeError, json.JSONDecodeError):
             continue
-        if payload.get("bomFormat") == "CycloneDX":
+        if isinstance(payload, dict) and payload.get("bomFormat") == "CycloneDX":
             return candidate
     raise FileNotFoundError(
         f"No CycloneDX JSON report was found under {ort_results}",

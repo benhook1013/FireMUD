@@ -20,121 +20,90 @@ jobs:
   changes:
     name: Detect CI-Relevant Changes
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read # Classify the complete pull-request file list.
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
     outputs:
       run_all: ${{ steps.compute.outputs.run_all }}
       affected_services: ${{ steps.compute.outputs.affected_services }}
       docs_changed: ${{ steps.compute.outputs.docs_changed }}
       frontend_changed: ${{ steps.compute.outputs.frontend_changed }}
+      python_changed: ${{ steps.compute.outputs.python_changed }}
+      design_docs_changed: ${{ steps.compute.outputs.design_docs_changed }}
+      validation_python_changed: ${{ steps.compute.outputs.validation_python_changed }}
+      lightweight_only: ${{ steps.compute.outputs.lightweight_only }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
         with:
           egress-policy: audit
 
+      - name: Check out change classifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+
       - name: Compute affected jobs
         id: compute
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
-            const allServices = [
-              "account-service",
-              "automation-scripting-service",
-              "entity-management-service",
-              "game-design-service",
-              "game-logic-service",
-              "game-session-service",
-              "logging-admin-service",
-              "social-groups-service",
-              "spring-cloud-gateway",
-              "tcp-proxy-service",
-              "world-management-service",
-            ];
-
-            if (context.eventName !== "pull_request") {
-              core.setOutput("run_all", "true");
-              core.setOutput("affected_services", JSON.stringify(allServices));
-              core.setOutput("docs_changed", "true");
-              core.setOutput("frontend_changed", "true");
-              return;
-            }
-
-            const files = await github.paginate(
-              github.rest.pulls.listFiles,
-              {
-                ...context.repo,
-                pull_number: context.payload.pull_request.number,
-                per_page: 100,
-              },
-              (response) => response.data.map((file) => file.filename)
-            );
-
-            const sharedPrefixes = [
-              "buildSrc/",
-              "gradle/",
-              "protos/",
-              "config/checkstyle/",
-              "config/protobuf/",
-              "config/security/",
-              "config/spotbugs/",
-              "services/common-library/",
-              "services/common-data-runtime/",
-              "services/common-platform-core/",
-              "services/common-saga/",
-              "services/common-security/",
-              "services/common-test-support/",
-              "services/common-web-support/",
-            ];
-            const sharedFiles = new Set([
-              "build.gradle.kts",
-              "settings.gradle.kts",
-              "gradle.properties",
-              ".github/workflows/ci.yml",
-            ]);
-
-            const docsPredicate = (file) =>
-              file === "AGENTS.md" ||
-              file === "mkdocs.yml" ||
-              file.startsWith("design/") ||
-              file.startsWith("dev-tools/docs/") ||
-              file.endsWith(".md");
-
-            const frontendPredicate = (file) =>
-              file.startsWith("web-client/") ||
-              file.startsWith("config/openapi/");
-
-            const runAll = files.some(
-              (file) =>
-                sharedFiles.has(file) ||
-                sharedPrefixes.some((prefix) => file.startsWith(prefix))
-            );
-
-            const affected = new Set();
-            if (runAll) {
-              allServices.forEach((service) => affected.add(service));
+            const fs = require("node:fs");
+            const classifierPath = `${process.env.GITHUB_WORKSPACE}/.github/scripts/classify-change-scope.cjs`;
+            let outputs;
+            if (fs.existsSync(classifierPath)) {
+              const { classifyGithubChangeScope } = require(classifierPath);
+              const scope = await classifyGithubChangeScope(github, context);
+              outputs = {
+                run_all: scope.runAll,
+                affected_services: scope.affectedServices,
+                docs_changed: scope.docsChanged,
+                frontend_changed: scope.frontendChanged,
+                python_changed: scope.pythonChanged,
+                design_docs_changed: scope.designDocsChanged,
+                validation_python_changed: scope.validationPythonChanged,
+                lightweight_only: scope.lightweightOnly,
+              };
             } else {
-              for (const file of files) {
-                for (const service of allServices) {
-                  if (file.startsWith(`services/${service}/`)) {
-                    affected.add(service);
-                  }
-                }
-              }
+              core.warning("Base revision predates the change classifier; using complete validation scope.");
+              outputs = {
+                run_all: true,
+                affected_services: [
+                  "account-service",
+                  "automation-scripting-service",
+                  "entity-management-service",
+                  "game-design-service",
+                  "game-logic-service",
+                  "game-session-service",
+                  "logging-admin-service",
+                  "social-groups-service",
+                  "spring-cloud-gateway",
+                  "tcp-proxy-service",
+                  "world-management-service",
+                ],
+                docs_changed: true,
+                frontend_changed: true,
+                python_changed: true,
+                design_docs_changed: true,
+                validation_python_changed: true,
+                lightweight_only: false,
+              };
             }
-
-            const docsChanged = runAll || files.some((file) => docsPredicate(file));
-            const frontendChanged = runAll || files.some((file) => frontendPredicate(file));
-
-            core.setOutput("run_all", runAll ? "true" : "false");
-            core.setOutput("affected_services", JSON.stringify([...affected]));
-            core.setOutput("docs_changed", docsChanged ? "true" : "false");
-            core.setOutput("frontend_changed", frontendChanged ? "true" : "false");
+            for (const [name, value] of Object.entries(outputs)) {
+              core.setOutput(
+                name,
+                Array.isArray(value) ? JSON.stringify(value) : String(value)
+              );
+            }
 
   # Static generation, lint, and policy checks
   buf-check:
     name: Buf Generation
+    needs: [changes]
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -171,8 +140,9 @@ jobs:
 
   docker-lint:
     name: Dockerfile Lint
+    needs: [changes]
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -191,8 +161,9 @@ jobs:
 
   shellcheck:
     name: ShellCheck
+    needs: [changes]
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -218,8 +189,9 @@ jobs:
 
   python-script-validation:
     name: Python Script Validation
+    needs: [changes]
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && (needs.changes.outputs.lightweight_only != 'true' || needs.changes.outputs.python_changed == 'true') }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -234,6 +206,9 @@ jobs:
         with:
           python-version: '3.14'
 
+      - name: 📦 Install Ruff
+        run: python3 -m pip install --disable-pip-version-check ruff==0.16.0
+
       - name: 🧪 Validate tracked Python scripts
         run: |
           mapfile -t python_files < <(git ls-files '*.py')
@@ -242,11 +217,13 @@ jobs:
             exit 0
           fi
           python3 -m py_compile "${python_files[@]}"
+          ruff check --force-exclude "${python_files[@]}"
 
   dev-tool-contract-checks:
     name: Dev Tool Contract Checks
+    needs: [changes]
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && (needs.changes.outputs.lightweight_only != 'true' || needs.changes.outputs.design_docs_changed == 'true' || needs.changes.outputs.validation_python_changed == 'true') }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -262,6 +239,7 @@ jobs:
           python-version: '3.14'
 
       - name: 📦 Install cloc
+        if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y cloc
@@ -270,8 +248,10 @@ jobs:
         run: python3 -m pip install --disable-pip-version-check PyYAML
 
       - name: 🧪 Validate dev tool contracts
+        if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
         run: |
           bash ./dev-tools/tests/cloc-report-contract.sh
+          bash ./dev-tools/tests/ci-lightweight-scope-contract.sh
           bash ./dev-tools/tests/coderabbit-review-contract.sh
           bash ./dev-tools/tests/pr-retarget-workflow-contract.sh
           bash ./dev-tools/tests/static-analysis-summary-contract.sh
@@ -290,12 +270,21 @@ jobs:
           bash ./dev-tools/tests/smoke-image-env-contract.sh
           bash ./dev-tools/tests/architecture-doc-contracts.sh
           bash ./dev-tools/tests/lint-yaml-contract.sh
-          python3 -m unittest dev-tools/validation/test_check_proto_time_fields.py
+          python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'
+
+      - name: 🧪 Validate architecture document contracts
+        if: ${{ needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.design_docs_changed == 'true' }}
+        run: bash ./dev-tools/tests/architecture-doc-contracts.sh
+
+      - name: 🧪 Validate non-runtime Python contracts
+        if: ${{ needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.validation_python_changed == 'true' }}
+        run: python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'
 
   yaml-lint:
     name: YAML Lint
+    needs: [changes]
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -318,8 +307,9 @@ jobs:
 
   metrics-cardinality-check:
     name: Metrics Cardinality Policy Check
+    needs: [changes]
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -339,8 +329,9 @@ jobs:
 
   flyway-migration-sanity-checks:
     name: Flyway Migration Sanity Checks
+    needs: [changes]
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -374,8 +365,9 @@ jobs:
 
   grpc-transport-config-sanity-checks:
     name: gRPC Transport Configuration Sanity Checks
+    needs: [changes]
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -409,8 +401,9 @@ jobs:
 
   workflow-lint:
     name: GitHub Workflow Lint
+    needs: [changes]
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -433,8 +426,9 @@ jobs:
 
   helm-lint:
     name: Helm Chart Lint
+    needs: [changes]
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -459,8 +453,9 @@ jobs:
 
   helm-render-validation:
     name: Helm Render Validation
+    needs: [changes]
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -493,7 +488,7 @@ jobs:
 
   # Docs and frontend validation
   docs-check:
-    name: Lint Docs and Links
+    name: Validate Documentation
     needs: [changes]
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && (github.event_name != 'pull_request' || needs.changes.outputs.docs_changed == 'true') }}
     runs-on: ubuntu-latest
@@ -514,25 +509,28 @@ jobs:
       - name: 🔎 Validate Observability Contracts
         run: python3 dev-tools/observability/validate-observability-contract.py
 
-      - name: ⚙️ Set Up Java
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+      - name: ⚙️ Set Up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          distribution: 'temurin'
-          java-version: '21'
+          node-version: '24.19.0'
+          cache: npm
+          cache-dependency-path: config/openapi/package-lock.json
 
-      - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
-        with:
-          build-scan-publish: true
-          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
-          build-scan-terms-of-use-agree: 'yes'
-          cache-read-only: false
-
-      - name: 🧹 Lint Docs and Links
+      - name: 📦 Install documentation dependencies
         run: |
-          echo "::group::Lint Markdown and Links"
-          ./gradlew lintMarkdown linkCheck -PfullCheck
-          echo "::endgroup::"
+          npm ci --prefix config/openapi
+          python3 -m pip install --disable-pip-version-check mkdocs==1.6.1 mkdocs-material==9.6.5
+
+      - name: 🧹 Lint Markdown and links
+        run: |
+          config/openapi/node_modules/.bin/markdownlint-cli2 --config config/markdownlint/.markdownlint-cli2.jsonc '**/*.md'
+          CHECK_EXTERNAL_LINKS=${{ github.event_name == 'pull_request' && '0' || '1' }} bash ./dev-tools/docs/link-check.sh
+
+      - name: 🏗️ Build documentation site
+        run: |
+          python3 dev-tools/docs/build_pages_site.py
+          # Strict mode remains deferred until the legacy anchor-warning backlog is removed.
+          python3 -m mkdocs build --clean
 
   frontend-checks:
     name: Frontend Checks
@@ -767,7 +765,7 @@ jobs:
               ["GitHub workflow lint", "${{ needs.workflow-lint.result }}"],
               ["Helm chart lint", "${{ needs.helm-lint.result }}"],
               ["Helm render validation", "${{ needs.helm-render-validation.result }}"],
-              ["Docs and links", "${{ needs.docs-check.result }}"],
+              ["Validate Documentation", "${{ needs.docs-check.result }}"],
               ["Frontend checks", "${{ needs.frontend-checks.result }}"],
               ["Service build/test matrix", "${{ needs.build-and-test.result }}"],
             ];
@@ -865,6 +863,10 @@ jobs:
         env:
           DOCS_CHANGED: ${{ needs.changes.outputs.docs_changed }}
           FRONTEND_CHANGED: ${{ needs.changes.outputs.frontend_changed }}
+          PYTHON_CHANGED: ${{ needs.changes.outputs.python_changed }}
+          DESIGN_DOCS_CHANGED: ${{ needs.changes.outputs.design_docs_changed }}
+          VALIDATION_PYTHON_CHANGED: ${{ needs.changes.outputs.validation_python_changed }}
+          LIGHTWEIGHT_ONLY: ${{ needs.changes.outputs.lightweight_only }}
           AFFECTED_SERVICES: ${{ needs.changes.outputs.affected_services }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           BUF_CHECK: ${{ needs.buf-check.result }}
@@ -899,8 +901,6 @@ jobs:
             "Buf Generation:$BUF_CHECK" \
             "Dockerfile Lint:$DOCKER_LINT" \
             "ShellCheck:$SHELLCHECK" \
-            "Python Script Validation:$PYTHON_SCRIPT_VALIDATION" \
-            "Dev Tool Contract Checks:$DEV_TOOL_CONTRACT_CHECKS" \
             "YAML Lint:$YAML_LINT" \
             "Metrics Cardinality Policy Check:$METRICS_CARDINALITY_CHECK" \
             "Flyway Migration Sanity Checks:$FLYWAY_MIGRATION_SANITY_CHECKS" \
@@ -912,12 +912,40 @@ jobs:
             name="${check%%:*}"
             result="${check#*:}"
             echo "$name => $result"
-            if [ "$result" != "success" ]; then
-              failed=1
+            if [ "$LIGHTWEIGHT_ONLY" = "true" ]; then
+              if ! is_acceptable_optional_result "$result"; then
+                failed=1
+              fi
+            else
+              if [ "$result" != "success" ]; then
+                failed=1
+              fi
             fi
           done
 
-          echo "Lint Docs and Links => $DOCS_CHECK"
+          echo "Python Script Validation => $PYTHON_SCRIPT_VALIDATION"
+          if [ "$LIGHTWEIGHT_ONLY" != "true" ] || [ "$PYTHON_CHANGED" = "true" ]; then
+            if [ "$PYTHON_SCRIPT_VALIDATION" != "success" ]; then
+              failed=1
+            fi
+          else
+            if ! is_acceptable_optional_result "$PYTHON_SCRIPT_VALIDATION"; then
+              failed=1
+            fi
+          fi
+
+          echo "Dev Tool Contract Checks => $DEV_TOOL_CONTRACT_CHECKS"
+          if [ "$LIGHTWEIGHT_ONLY" != "true" ] || [ "$DESIGN_DOCS_CHANGED" = "true" ] || [ "$VALIDATION_PYTHON_CHANGED" = "true" ]; then
+            if [ "$DEV_TOOL_CONTRACT_CHECKS" != "success" ]; then
+              failed=1
+            fi
+          else
+            if ! is_acceptable_optional_result "$DEV_TOOL_CONTRACT_CHECKS"; then
+              failed=1
+            fi
+          fi
+
+          echo "Validate Documentation => $DOCS_CHECK"
           if [ "$DOCS_CHANGED" = "true" ]; then
             if [ "$DOCS_CHECK" != "success" ]; then
               failed=1

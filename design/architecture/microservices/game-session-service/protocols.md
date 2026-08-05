@@ -61,6 +61,8 @@ Selector rules for `PLAY` match the lobby helpers. `WORLDS` returns both `tenant
 
 ### JOIN Translation and Status
 
+The canonical JOIN and membership-admission contract is defined in [Authentication & Authorization](../../system-architecture-authentication.md#normative-target-contract); this section keeps only Game Session's protocol translation and local handling.
+
 The target Account membership operation is `JoinPublicProductionMembership`; it remains target-only and unimplemented, so there is no current implicit membership writer. When the explicit text action is implemented, Game Session translates `JOIN <world>` to the sole target operation `JoinPublicProductionMembership`; it does not create membership locally or use another join writer.
 
 - Game Session resolves `<world>` from the exact `WORLDS` snapshot to the tenant-scoped `worldSlug`, then resolves the world's configured default public-production `realmSlug`. The resolved `worldSlug` and `realmSlug` identify the operation target but are not independent client authority.

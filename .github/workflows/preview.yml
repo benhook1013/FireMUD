@@ -2,6 +2,13 @@ name: PR Preview Environment
 
 on:
   pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'mkdocs.yml'
+      - 'design/**'
+      - 'dev-tools/docs/**'
+      - 'dev-tools/validation/**/*.py'
+      - 'mkdocs.yml'
     types:
       - opened
       - synchronize

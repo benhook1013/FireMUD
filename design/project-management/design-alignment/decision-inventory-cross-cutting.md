@@ -4,9 +4,9 @@ Status: Complete and independently coverage/fidelity-audited. This artifact is n
 
 ## Implementation Status
 
-`Complete` means the assigned corpus scan and independent coverage/fidelity audit are complete. It does not mean every recorded decision is implemented, approved, or adversarially reviewed; each row's status and the review queues below retain those distinctions.
+`Complete` means the assigned corpus scan and independent coverage/fidelity audit are complete. Human-led review is complete in the source archive, but row text in this merged ledger continues to describe `develop`: outcomes not yet selectively imported remain review evidence rather than canonical target state. Implementation and proof remain separate.
 
-This ledger continues the completed read-only decision scan. It preserves the prior decision keys, sources, statuses, alternatives, ADR recommendations, flags, and review queue while allocating every decision to the exact capability identifiers in the [Product Capability Taxonomy](../../product/capability-taxonomy.md). It does not create, accept, supersede, or amend canonical design.
+This ledger preserves the completed read-only decision scan, including the pre-review statuses, alternatives, ADR recommendations, flags, and review questions that informed the human review archive. Those fields are historical input rather than the current application state; [Applied Review Provenance](./consequential-decision-inventory.md#applied-review-provenance) records merged outcomes. This ledger does not create, accept, supersede, or amend canonical design.
 
 The ledger contains 68 decision rows: 59 retained rows and 9 distinct evidence-backed additions. The counted source partition is exactly 22 paths. The [main consequential-decision inventory](./consequential-decision-inventory.md) remains the compact control crosswalk; reviewed dispositions and ADR references are synchronized across both inventories.
 
@@ -24,9 +24,9 @@ The ledger contains 68 decision rows: 59 retained rows and 9 distinct evidence-b
 
 ## Human Review Evidence
 
-`accepted-explicit` records a canonical choice, not human approval. A human-review claim is authoritative only when the linked ADR or consequential-decision record names the decision owner, review date, status, disposition, and exact checked queue provenance in the [Adversarial Review Queue](./consequential-decision-inventory.md#adversarial-review-queue). Every ADR below names the FireMUD human product and architecture owner, records `Human review status: Completed`, and names the matching checked queue key as its review source:
+`accepted-explicit` records a canonical choice, not human approval. A human-review claim is authoritative only when the linked ADR or consequential-decision record names the decision owner, review date, status, disposition, and exact checked provenance entry in [Applied Review Provenance](./consequential-decision-inventory.md#applied-review-provenance). Every ADR below names the FireMUD human product and architecture owner, records `Human review status: Completed`, and names the matching checked decision key as its review source:
 
-| Queue key | Completed ADR | Review date | Disposition |
+| Decision key | Completed ADR | Review date | Disposition |
 | --- | --- | --- | --- |
 | `AUTH-02` | [ADR 0021](../../architecture/decisions/adr-0021-staged-player-authentication-and-gameplay-binding.md) | 2026-07-18 | Revised |
 | `AUTH-03` | [ADR 0022](../../architecture/decisions/adr-0022-account-authority-and-gameplay-session-ownership.md) | 2026-07-18 | Accepted |
@@ -44,7 +44,7 @@ The ledger contains 68 decision rows: 59 retained rows and 9 distinct evidence-b
 | `SEC-05` | [ADR 0034](../../architecture/decisions/adr-0034-layered-abuse-controls-without-attacker-triggered-account-locks.md) | 2026-07-19 | Revised |
 | `JWT-01` | [ADR 0035](../../architecture/decisions/adr-0035-single-record-issued-token-registry.md) | 2026-07-19 | Revised |
 
-The later completed records currently relevant to claims in this ledger are [ADR 0041](../../architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md) for `TENANT-02`, [ADR 0047](../../architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md) for `SEC-04`, and [ADR 0048](../../architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md) for `ADMIN-01`; each records completion on 2026-07-19 with a revised disposition and a validator-checked matching queue row. Coupled decisions without equivalent evidence remain pending; completed ADR records must not be regressed to pending merely because the broader inventory queue remains open.
+The later completed records currently relevant to claims in this ledger are [ADR 0041](../../architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md) for `TENANT-02`, [ADR 0047](../../architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md) for `SEC-04`, and [ADR 0048](../../architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md) for `ADMIN-01`; each records completion on 2026-07-19 with a revised disposition and a validator-checked matching decision row. Coupled decisions without equivalent evidence remain pending; completed ADR records must not be regressed to pending merely because the broader inventory remains open.
 
 ## Source Index
 
@@ -230,7 +230,9 @@ No source proves who made these choices; the flag means that product/security/op
 | Shared Runtime Foundations | `SF-1.1` (`SESSION-06`, `GRPC-01`, `GRPC-02`); `SF-1.3` (`AUTH-04`, `AUTH-05`, `EDGE-03`, `SEC-01`, `SEC-02`, `SEC-05`); `SF-2.2` (`REDIS-01`, `REDIS-02`, `REDIS-03`); `SF-2.3` (`TICK-04`); `SF-2.4` (`TICK-03`, `TICK-05`) | Secondary-only: `SF-1.2` (`AUTH-01`, `AUTH-05`, `SESSION-01`, `TICK-04`, `AUTO-01`, `CONTENT-05`), `SF-1.4` (`TICK-07`), `SF-1.5` (`GRPC-01`, `SEC-01`), `SF-2.1` (`REDIS-01`, `CMD-04`, `SET-01`, `SET-02`, `OPS-03`, `OPS-04`); no primary-only IDs. |
 | Platform and Operations | `PO-1.1` (`SEC-04`, `ADMIN-01`); `PO-1.2` (`MOD-01`); `PO-2.1` (`EDGE-01`, `EDGE-04`, `EDGE-06`); `PO-2.2` (`SEC-03`); `PO-2.4` (`EDGE-05`, `SESSION-05`); `PO-3.1` (`EDGE-02`, `OPS-01`, `OPS-02`, `OPS-05`); `PO-3.4` (`OPS-03`, `OPS-04`); `PO-4.4` (`OPS-06`) | Secondary-only: `PO-1.3` (`SEC-02`, `SEC-04`, `ADMIN-01`, `MOD-01`, `OPS-04`, `OPS-05`), `PO-1.4` (`EDGE-06`, `SEC-04`, `ADMIN-01`, `OPS-02`), `PO-3.2` (`AUTH-05`, `TENANT-02`, `EDGE-03`, `REDIS-02`, `SEC-01`, `SEC-02`, `OPS-05`), `PO-3.3` (`CONTENT-01`, `CONTENT-05`, `OPS-01`), `PO-4.1` (`SESSION-05`, `REDIS-03`, `GRPC-01`, `ADMIN-01`, `MOD-01`), `PO-4.2` (`ADMIT-01`, `EDGE-05`, `SESSION-04`, `TICK-02`, `TICK-06`, `HOTPATH-01`, `RECON-01`, `REDIS-01`, `GRPC-01`, `AUTO-02`, `SEC-02`, `OPS-02`), `PO-4.3` (`GRPC-02`); no primary row for `PO-2.3`. |
 
-## Prioritized Adversarial Review Queue
+## Historical Adversarial Review Questions
+
+These questions preserve the priority model used by the completed human review. They are not an active autonomous review queue.
 
 | Priority | Exact capability focus | Decision keys | Adversarial question |
 | --- | --- | --- | --- |

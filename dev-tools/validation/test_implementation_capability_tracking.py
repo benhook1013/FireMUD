@@ -9,7 +9,6 @@ import tempfile
 import textwrap
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "dev-tools/validation/check-implementation-capability-tracking.py"
 

@@ -343,7 +343,7 @@ def recv_until_socket(sock, expected_substring, timeout):
         try:
             sock.settimeout(deadline - time.time())
             data = sock.recv(4096)
-        except (socket.timeout, BlockingIOError):
+        except (TimeoutError, BlockingIOError):
             break
         if not data:
             break
@@ -361,7 +361,7 @@ def drain_available_socket(sock, quiet_timeout=0.25):
         try:
             sock.settimeout(max(0.05, deadline - time.time()))
             data = sock.recv(4096)
-        except (socket.timeout, BlockingIOError):
+        except (TimeoutError, BlockingIOError):
             break
         if not data:
             break

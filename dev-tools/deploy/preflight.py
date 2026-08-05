@@ -49,6 +49,10 @@ SAFE_RECOVERY_DISPOSITIONS = {
 MISSING_SEQUENCE_DISPLAY_LIMIT = 20
 JsonValue = bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"] | None
 JsonObject = dict[str, JsonValue]
+JSON_READ_ERRORS = (OSError, UnicodeError, json.JSONDecodeError)
+YAML_READ_ERRORS = (OSError, UnicodeError, yaml.YAMLError)
+TIMESTAMP_ERRORS = (TypeError, ValueError, AttributeError, OverflowError)
+SECRET_LOOKUP_TIMEOUT_SECONDS = 30
 
 # These are the policy results emitted by this executable. The two JWT policies
 # documented as target-state-only are deliberately not included until they are
@@ -288,6 +292,27 @@ def parse_timestamp(value: Any, field_name: str) -> dt.datetime:
     if parsed.tzinfo is None:
         raise ValueError(f"{field_name} must include a timezone")
     return parsed.astimezone(dt.timezone.utc)
+
+
+def secret_lookup_failure(secret_name: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["kubectl", "get", "secret", "-n", "firemud", secret_name],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=SECRET_LOOKUP_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired, UnicodeError) as exc:
+        return f"Secret lookup could not be verified for firemud/{secret_name}: {exc}"
+    if result.returncode == 0:
+        return None
+
+    stderr = result.stderr.strip()
+    if "(NotFound)" in stderr:
+        return f"Missing required Secret in cluster: firemud/{secret_name}"
+    detail = stderr or "kubectl returned a non-zero status without stderr"
+    return f"Secret lookup could not be verified for firemud/{secret_name}: {detail}"
 
 
 def is_missing(value: Any) -> bool:
@@ -715,7 +740,7 @@ def validate_recovery_baseline(
         return ("fail", f"Recovery compatibility baseline record not found: {baseline_ref}")
     try:
         baseline = load_json(baseline_path)
-    except Exception as exc:
+    except JSON_READ_ERRORS as exc:
         return ("fail", f"Recovery compatibility baseline record unreadable: {exc}")
     if not isinstance(baseline, dict):
         return ("fail", "Recovery compatibility baseline record must be a JSON object")
@@ -1064,7 +1089,7 @@ def validate_recovery_baseline(
             )
         try:
             parse_timestamp(record.get("validatedAt"), f"Recovery baseline {class_name}.validatedAt")
-        except Exception as exc:
+        except TIMESTAMP_ERRORS as exc:
             return ("fail", str(exc))
 
     try:
@@ -1078,7 +1103,7 @@ def validate_recovery_baseline(
                 "restoredAt",
             )
         }
-    except Exception as exc:
+    except TIMESTAMP_ERRORS as exc:
         return ("fail", str(exc))
     if lifecycle_timestamps["readyToReopenAt"] <= lifecycle_timestamps["quarantineStartedAt"]:
         return ("fail", "Recovery compatibility baseline readyToReopenAt must be later than quarantineStartedAt")
@@ -1188,7 +1213,7 @@ def validate_preflight_report(
     try:
         started_at = parse_timestamp(report.get("startedAt"), f"{label} preflight report startedAt")
         completed_at = parse_timestamp(report.get("completedAt"), f"{label} preflight report completedAt")
-    except Exception as exc:
+    except TIMESTAMP_ERRORS as exc:
         return ("fail", str(exc))
     if completed_at < started_at:
         return ("fail", f"{label} preflight report completedAt must not precede startedAt")
@@ -1302,7 +1327,7 @@ def load_preflight_report(
         return ("fail", f"{environment.capitalize()} preflight report not found: {path_ref}")
     try:
         report = load_json(path)
-    except Exception as exc:
+    except JSON_READ_ERRORS as exc:
         return ("fail", f"{environment.capitalize()} preflight report unreadable: {exc}")
     status, message = validate_preflight_report(
         report,
@@ -1427,7 +1452,7 @@ def external_binding_uniqueness_issues(
             continue
         try:
             other_data = load_yaml(other_path) or {}
-        except Exception as exc:
+        except YAML_READ_ERRORS as exc:
             issues.append(f"Unreadable expected-bindings manifest for {other_env}: {exc}")
             continue
         other_backup = other_data.get("backupStorage") or {}
@@ -1517,16 +1542,15 @@ def binding_ref_format_error(
     parsed = parse_binding_ref(ref)
     if parsed is None:
         return f"{label} must use <scheme>://<namespace>/<binding> format"
-    scheme, namespace, segments = parsed
+    scheme, _namespace, segments = parsed
     if allowed_schemes and scheme not in allowed_schemes:
         allowed = ", ".join(sorted(allowed_schemes))
         return f"{label} must use one of the allowed schemes: {allowed}"
     if exact_segment_count is not None and len(segments) != exact_segment_count:
         return f"{label} must include exactly {exact_segment_count} binding path segment(s)"
-    if allowed_leading_segments is not None:
-        if len(segments) < 2 or segments[0] not in allowed_leading_segments:
-            allowed = ", ".join(sorted(allowed_leading_segments))
-            return f"{label} must use one of the allowed binding kinds: {allowed}"
+    if allowed_leading_segments is not None and (len(segments) < 2 or segments[0] not in allowed_leading_segments):
+        allowed = ", ".join(sorted(allowed_leading_segments))
+        return f"{label} must use one of the allowed binding kinds: {allowed}"
     return None
 
 
@@ -1643,7 +1667,7 @@ def expected_binding_checks(
 ) -> list[CheckResult]:
     try:
         data = load_yaml(expected_bindings_path) or {}
-    except Exception as exc:
+    except YAML_READ_ERRORS as exc:
         return [
             CheckResult("PREFLIGHT-SECRETS-002", True, "fail", f"Expected-bindings manifest is unreadable: {exc}"),
             CheckResult("PREFLIGHT-BOOTSTRAP-001", True, "fail", "Expected-bindings manifest is unreadable"),
@@ -2190,13 +2214,13 @@ def recovery_compatibility_check(
         evaluated_at = parse_timestamp(
             recovery_compatibility.get("evaluatedAt"), "recoveryCompatibility.evaluatedAt"
         )
-    except Exception as exc:
+    except TIMESTAMP_ERRORS as exc:
         return ("fail", str(exc))
     if evaluated_at > now_dt:
         return ("fail", "recoveryCompatibility.evaluatedAt is future-dated")
     try:
         generated_at = parse_timestamp(attestation.get("generatedAt"), "Attestation generatedAt")
-    except Exception as exc:
+    except TIMESTAMP_ERRORS as exc:
         return ("fail", str(exc))
     if evaluated_at > generated_at:
         return (
@@ -2245,7 +2269,7 @@ def promotion_check(
 ) -> tuple[str, str, str, str, str]:
     try:
         att = load_json(attestation_path)
-    except Exception as exc:
+    except JSON_READ_ERRORS as exc:
         message = f"Attestation unreadable: {exc}"
         return ("fail", "unknown", message, "fail", f"Recovery compatibility attestation unreadable: {exc}")
 
@@ -2324,7 +2348,7 @@ def _promotion_check(
 
     try:
         generated_at = parse_timestamp(att.get("generatedAt"), "Attestation generatedAt")
-    except Exception as exc:
+    except TIMESTAMP_ERRORS as exc:
         return ("fail", rollback_mode, str(exc))
     if generated_at > now_dt:
         return ("fail", rollback_mode, "Attestation generatedAt is future-dated")
@@ -2386,7 +2410,7 @@ def _promotion_check(
 
     try:
         record = load_json(record_path)
-    except Exception as exc:
+    except JSON_READ_ERRORS as exc:
         return ("fail", rollback_mode, f"Staging deployment record unreadable: {exc}")
 
     if not isinstance(record, dict):
@@ -2432,7 +2456,7 @@ def _promotion_check(
     for field in ("appliedAt", "secretComplianceSnapshotAt"):
         try:
             record_timestamp = parse_timestamp(record.get(field), f"Staging deployment record {field}")
-        except Exception as exc:
+        except TIMESTAMP_ERRORS as exc:
             return ("fail", rollback_mode, str(exc))
         if record_timestamp > now_dt:
             return ("fail", rollback_mode, f"Staging deployment record {field} is future-dated")
@@ -2466,7 +2490,7 @@ def _promotion_check(
         return ("fail", rollback_mode, f"Staging preflight report not found: {preflight_ref}")
     try:
         preflight_report = load_json(preflight_path)
-    except Exception as exc:
+    except JSON_READ_ERRORS as exc:
         return ("fail", rollback_mode, f"Staging preflight report unreadable: {exc}")
     preflight_status, preflight_message = validate_preflight_report(
         preflight_report,
@@ -2504,7 +2528,7 @@ def _promotion_check(
         return ("fail", rollback_mode, f"Staging secret compliance evidence not found: {secret_ref}")
     try:
         secret_evidence = load_json(secret_path)
-    except Exception as exc:
+    except JSON_READ_ERRORS as exc:
         return ("fail", rollback_mode, f"Staging secret compliance evidence unreadable: {exc}")
     required_secret_classes = {
         "jwt-signing-keys-jwks",
@@ -2533,7 +2557,7 @@ def _promotion_check(
 def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: Path) -> tuple[str, str]:
     try:
         data = load_json(path)
-    except Exception as exc:
+    except JSON_READ_ERRORS as exc:
         return ("fail", f"Backup-readiness evidence unreadable: {exc}")
     if not isinstance(data, dict):
         return ("fail", "Backup-readiness evidence must be a JSON object")
@@ -2576,7 +2600,7 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
                 "restoreDrillLastSuccessAt",
             )
         }
-    except Exception as exc:
+    except TIMESTAMP_ERRORS as exc:
         return ("fail", str(exc))
 
     future_timestamps = [name for name, timestamp in evidence_timestamps.items() if timestamp > now_dt]
@@ -2595,7 +2619,7 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
 
     try:
         attestation = load_json(attestation_path)
-    except Exception as exc:
+    except JSON_READ_ERRORS as exc:
         return ("fail", f"Backup-readiness attestation unreadable: {exc}")
     if not isinstance(attestation, dict):
         return ("fail", "Backup-readiness attestation must be a JSON object")
@@ -2617,7 +2641,7 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
         compatibility_evaluated_at = parse_timestamp(
             recovery_compatibility.get("evaluatedAt"), "recoveryCompatibility.evaluatedAt"
         )
-    except Exception as exc:
+    except TIMESTAMP_ERRORS as exc:
         return ("fail", str(exc))
     baseline_status, baseline_message = validate_recovery_baseline(
         root_dir,
@@ -2837,11 +2861,11 @@ def main() -> int:
             ) or has_required_failure
     else:
         for secret_name in ("postgres-credentials", "jwt-signing-keys", "jwt-jwks"):
-            result = subprocess.run(["kubectl", "get", "secret", "-n", "firemud", secret_name], capture_output=True, text=True)
-            if result.returncode != 0:
+            failure_message = secret_lookup_failure(secret_name)
+            if failure_message is not None:
                 has_required_failure = append_result(
                     check_results,
-                    "PREFLIGHT-SECRETS-001", True, "fail", f"Missing required Secret in cluster: firemud/{secret_name}",
+                    "PREFLIGHT-SECRETS-001", True, "fail", failure_message,
                 ) or has_required_failure
                 secret_check_failed = True
                 break

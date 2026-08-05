@@ -690,6 +690,87 @@ assert spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
+overflow_timestamp = "9999-12-31T23:59:59-14:00"
+try:
+    module.parse_timestamp(overflow_timestamp, "overflow timestamp")
+except module.TIMESTAMP_ERRORS as exc:
+    if not isinstance(exc, OverflowError):
+        raise SystemExit(f"unexpected overflow fixture exception: {exc!r}")
+else:
+    raise SystemExit("offset-aware overflow timestamp unexpectedly normalized")
+
+original_subprocess_run = module.subprocess.run
+try:
+    def not_found_lookup(*args, **kwargs):
+        if kwargs.get("timeout") != module.SECRET_LOOKUP_TIMEOUT_SECONDS:
+            raise SystemExit("Secret lookup did not receive its deployment timeout")
+        return module.subprocess.CompletedProcess(
+            args, 1, "", 'Error from server (NotFound): secrets "missing" not found'
+        )
+
+    module.subprocess.run = not_found_lookup
+    not_found_message = module.secret_lookup_failure("missing")
+    if not_found_message != "Missing required Secret in cluster: firemud/missing":
+        raise SystemExit(f"NotFound Secret lookup reported incorrectly: {not_found_message}")
+
+    forbidden_stderr = 'Error from server (Forbidden): secrets is forbidden'
+    module.subprocess.run = lambda *args, **kwargs: module.subprocess.CompletedProcess(
+        args, 1, "", forbidden_stderr
+    )
+    forbidden_message = module.secret_lookup_failure("forbidden")
+    expected_forbidden = (
+        "Secret lookup could not be verified for firemud/forbidden: "
+        + forbidden_stderr
+    )
+    if forbidden_message != expected_forbidden:
+        raise SystemExit(f"non-NotFound Secret lookup reported incorrectly: {forbidden_message}")
+
+    def raise_lookup_timeout(*args, **kwargs):
+        raise module.subprocess.TimeoutExpired(
+            args, module.SECRET_LOOKUP_TIMEOUT_SECONDS
+        )
+
+    module.subprocess.run = raise_lookup_timeout
+    timeout_message = module.secret_lookup_failure("timed-out")
+    if (
+        timeout_message is None
+        or not timeout_message.startswith(
+            "Secret lookup could not be verified for firemud/timed-out:"
+        )
+        or "timed out" not in timeout_message
+    ):
+        raise SystemExit(f"Timeout Secret lookup reported incorrectly: {timeout_message}")
+
+    def raise_lookup_unicode_error(*args, **kwargs):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    module.subprocess.run = raise_lookup_unicode_error
+    unicode_error_message = module.secret_lookup_failure("undecodable")
+    if (
+        unicode_error_message is None
+        or not unicode_error_message.startswith(
+            "Secret lookup could not be verified for firemud/undecodable:"
+        )
+        or "codec can't decode" not in unicode_error_message
+    ):
+        raise SystemExit(
+            f"Unicode decoding Secret lookup reported incorrectly: {unicode_error_message}"
+        )
+
+    def raise_lookup_os_error(*args, **kwargs):
+        raise OSError("kubectl unavailable")
+
+    module.subprocess.run = raise_lookup_os_error
+    os_error_message = module.secret_lookup_failure("unavailable")
+    expected_os_error = (
+        "Secret lookup could not be verified for firemud/unavailable: "
+        "kubectl unavailable"
+    )
+    if os_error_message != expected_os_error:
+        raise SystemExit(f"OSError Secret lookup reported incorrectly: {os_error_message}")
+finally:
+    module.subprocess.run = original_subprocess_run
+
 issues = module.external_binding_uniqueness_issues(env_root, "staging", staging)
 if not any("backupStorage.bucket matches production" in issue for issue in issues):
     raise SystemExit(f"expected duplicate backupStorage.bucket issue, got: {issues}")

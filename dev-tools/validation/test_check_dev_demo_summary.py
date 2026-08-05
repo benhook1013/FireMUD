@@ -123,23 +123,19 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
 
     def test_validate_workflow_accepts_reformatted_bootstrap_secret_command(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        canonical_command = "\n".join(
-            (
-                'kubectl -n "${PREVIEW_NAMESPACE}" create secret generic '
-                'dev-demo-bootstrap-env \\',
-                '  --from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email" \\',
-                '  --from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password" \\',
-                '  --from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username"',
-            )
+        canonical_command = (
+            'kubectl -n "${PREVIEW_NAMESPACE}" create secret generic '
+            "dev-demo-bootstrap-env \\\n"
+            '  --from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email" \\\n'
+            '  --from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password" \\\n'
+            '  --from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username"'
         )
-        reformatted_command = "\n".join(
-            (
-                'kubectl  -n "${PREVIEW_NAMESPACE}" create secret generic '
-                'dev-demo-bootstrap-env \\',
-                '  --from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username" \\',
-                '  --from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email" \\',
-                '  --from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password"',
-            )
+        reformatted_command = (
+            'kubectl  -n "${PREVIEW_NAMESPACE}" create secret generic '
+            "dev-demo-bootstrap-env \\\n"
+            '  --from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username" \\\n'
+            '  --from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email" \\\n'
+            '  --from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password"'
         )
         self.assertIn(canonical_command, bootstrap_manifest)
         reformatted_manifest = bootstrap_manifest.replace(

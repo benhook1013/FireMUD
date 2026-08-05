@@ -1,11 +1,10 @@
+import importlib.util
 import io
 import tempfile
 import unittest
 from collections.abc import Iterator
 from contextlib import contextmanager, redirect_stderr
 from pathlib import Path
-import importlib.util
-
 
 SCRIPT_PATH = Path(__file__).resolve().parent / "check-proto-time-fields.py"
 

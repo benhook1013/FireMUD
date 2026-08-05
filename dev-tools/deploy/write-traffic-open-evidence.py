@@ -137,7 +137,7 @@ def main() -> None:
         fail(f"Preflight report not found: {args.preflight_report}")
     try:
         preflight_report = load_json(preflight_path)
-    except Exception as exc:
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         fail(f"Preflight report unreadable: {exc}")
     validate_preflight_report(preflight_report, args.environment, args.deployment_ref, root_dir)
     preflight_ref = normalize_repo_ref(root_dir, preflight_path)

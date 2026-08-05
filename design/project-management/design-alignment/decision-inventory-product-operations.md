@@ -7,7 +7,7 @@ This inventory contains 38 decision rows. Its assigned source set is the exact 3
 ## Implementation Status
 
 - **Scan completeness:** The product/operations documentation scan is complete for its disjoint 35-path assignment; the full 95-path allocation is accounted for by the 22 cross-cutting, 38 specialized runtime/support, and 35 assigned paths.
-- **Implementation and approval state:** The `Complete` status above describes scan coverage and fidelity only. It does not mean that every decision is implemented or approved; each row's status and human-consultation field record the current state.
+- **Implementation and approval state:** The `Complete` status above describes scan coverage and fidelity. Human-led review and each row's archive decision/status classification are separate from whether that reviewed outcome has been applied to `develop`. This merged ledger retains pre-import evidence for reviewed outcomes not yet applied; only [Applied Review Provenance](./consequential-decision-inventory.md#applied-review-provenance) establishes merged application state. Row-level implementation and proof remain separate.
 
 ## Scope And Method
 
@@ -506,9 +506,9 @@ Every remaining allocation path was read and classified below. The result column
 | 34 | [schedule.md](../../architecture/infrastructure/schedule.md) | Reference | `§ GitHub CI`; `§ Kubernetes Cluster (Production)`; `§ Kubernetes Cluster (Staging)`; `§ Hobby / Self-Hosted Environments` | No new decision; schedule evidence for `OPS-03`, `OPS-04`, and `RECOVERY-01`. |
 | 35 | [platform-settings-reference.md](../../architecture/generated/platform-settings-reference.md) | Generated | `§ firemud.communication`; `§ firemud.presentation`; `§ firemud.reconnection`; `§ firemud.command-history`; `§ firemud.command-capabilities`; `§ firemud.movement`; `§ firemud.world-topology` | No independent decision; concrete evidence for existing settings/command keys and the resolved `SESSION-08` lifetime distinction. |
 
-## Prioritized Adversarial Queue
+## Historical Adversarial Review Questions
 
-The queue is ordered by the cost of leaving a contradiction or untestable boundary unresolved, not by document order.
+These questions preserve the priority model used by the completed human review. Their order reflects the original cost of leaving a contradiction or untestable boundary unresolved; they are not an active autonomous review queue.
 
 1. **P0 - Verify resolved `SESSION-08`.** Prove uninterrupted token rotation, fresh-token reconnect, the 180-second resume cap under the remaining continuity-binding lifetime, stale-session fall-through, logout replay suppression, independent transcript retention, and cross-device behavior against `AUTH-02`, `SESSION-03`, `SESSION-04`, `CMD-04`, and `SET-01`.
 2. **P0 - Prove the accepted `RECOVERY-01` and `RECOVERY-02` gates and challenge `PREFLIGHT-01`, `PREFLIGHT-02`, and `COMPLIANCE-01`.** Restore an online-write artifact with a missing participant, surviving Redis, stale credentials, cross-environment bindings, incomplete quarantine, or unsafe external-effect result. The expected result is fail closed before player admission; an accepted target does not count as implementation proof.

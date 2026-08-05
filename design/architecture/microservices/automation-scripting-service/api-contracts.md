@@ -2,6 +2,18 @@
 
 This document defines the Automation & Scripting Service REST and gRPC surfaces, event-ingress contract, patch and plugin control-plane visibility APIs, and publish-gating digest contract.
 
+## Implementation Status
+
+This section records the current implementation boundary only. The API sections below remain normative target contracts; a current implementation note does not relax those contracts, and a target-only surface must not be inferred as shipped.
+
+- `UpdateScript` is limited to bootstrap/dev tooling and is not the production runtime publish path; production rollout uses `PublishScriptPatchVersion` and `NotifyScriptVersionUpdate`.
+- `GetScriptStatus` is backed by durable queued and active script work-item state: runtime workers claim `PENDING_EVALUATION` rows by transitioning them to `EVALUATING` before DSL execution or later handoff work.
+- `NotifyScriptVersionUpdate` currently validates and stages patches through `PENDING_VALIDATION -> ONLOAD_RUNNING -> READY/FAILED/SUPERSEDED`; running instances reload only after a later pin change to that tenant-`READY` patch.
+- The current `ListScriptHandoffEvents` proto/client exposes no `bindingId` request filter. The target response metadata remains target-state follow-through rather than a claimed live field.
+- `GetAutomationPinConvergence` is currently served from a durable Automation-owned `script_patch_pin_projections` view keyed by `(tenantId, gameInstanceId)` and returns freshness flags (`projectionAsOfMs`, `projectionLagMs`, `isProjectionStale`) so temporary Game Session read failures do not collapse operator visibility into raw pass-through coupling.
+- Signer/component-policy enforcement is live on the Automation runtime side. The current control-plane surface exposes `GetPluginStatus`, `ListPluginRuntimeEvents`, and `GetPluginPolicyConvergence`, and scheduled reconciliation disables enabled plugins when current publication metadata becomes fail-closed. The separate propagation-event families `SignerPolicyVersionObserved` and `SignerRevocationApplied` remain target-state follow-through rather than a shipped API family.
+- Script-patch digesting already attests the patch-scoped script graph for `scriptPatchVersion`. The current full-version digest attests the tenant's draft script graph using the existing schema and returns synthetic `appliedCommitId = "version:<versionId>"` until script definitions are modeled as fully version-scoped draft data.
+
 ## REST
 
 - `GET /ping` – basic health check returning `"pong"`.
@@ -13,9 +25,9 @@ curl http://localhost:8080/ping
 ## gRPC
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `automation_scripting_service.proto`.
-- `UpdateScript` – bootstrap/dev-only script upload path. Not part of the production runtime publish contract; production rollout uses `PublishScriptPatchVersion` plus `NotifyScriptVersionUpdate` lifecycle gates. When used, it replaces the script definition and its event bindings for that `<tenantId, scriptPatchVersion, scriptId>` tuple in one operation.
-- `GetScriptStatus` – queries whether a script has durable queued work (`PENDING_EVALUATION`) or active evaluation work (`EVALUATING`) in the script work-item outbox. Runtime workers claim pending rows by transitioning them from `PENDING_EVALUATION` to `EVALUATING` before DSL execution or later handoff work proceeds, so queued/running status is backed by the same outbox state used for cancellation.
-- `NotifyScriptVersionUpdate` – informs the service that a new `script_patch_version` is available for tenant-readiness ingestion; the service validates and stages the patch for `PENDING_VALIDATION -> ONLOAD_RUNNING -> READY/FAILED/SUPERSEDED`, while running instances reload only after a later pin change to that tenant-`READY` patch.
+- `UpdateScript` – bootstrap/dev-only script upload path that replaces the script definition and its event bindings for that `<tenantId, scriptPatchVersion, scriptId>` tuple in one operation.
+- `GetScriptStatus` – queries durable queued work (`PENDING_EVALUATION`) and active evaluation work (`EVALUATING`) in the script work-item outbox.
+- `NotifyScriptVersionUpdate` – production rollout notification to Automation & Scripting that a Game Design-published `script_patch_version` is available for tenant-readiness ingestion.
 - Event-ingress RPCs such as `TriggerScriptEvent` or a batch equivalent deliver script events from domain services and must carry runtime scope, idempotency, and patch-selection fields as described below.
 - `GetDraftDesignDigest` – returns publish-gating digest for full publishes and script-patch publishes using a typed scope selector `oneof { versionId, scriptPatchVersion }`.
 
@@ -45,7 +57,7 @@ Domain services such as Game Session and Game Logic deliver automation events th
 - `readSnapshotToken` when the canonical event-registry entry for that `eventType` requires an authoritative gameplay snapshot selector; it must be absent for events whose registry entry explicitly marks snapshot authority as `NONE`.
 - An envelope for the event payload, including any domain-specific fields.
 
-Event ingress is idempotent with respect to the event-scope Trigger Identity and each resolved handler. Repeated calls with the same applicable Trigger Identity must not cause a resolved DSL handler to run twice. After binding resolution, a plugin handler's identity includes `pluginId`, `pluginVersionId`, and the signed-bundle `bindingId`; those fields are required to distinguish multiple handlers contributed by one plugin version and are retained in handler-scoped dedupe, `script_event_audit`, quota attribution, and downstream handoff records. The Automation & Scripting Service implements this in accordance with the `scriptEventId` lifecycle and deduplication rules in [Scripting DSL Reference & Event Lifecycle](../../system-architecture-scripting-dsl-reference-and-lifecycle.md#scripteventid-lifecycle-and-deduplication).
+Event ingress is idempotent with respect to the event-scope Trigger Identity and each resolved handler. Repeated calls with the same applicable Trigger Identity must not cause a resolved DSL handler to run twice. After binding resolution, a plugin handler's identity includes `pluginId`, `pluginVersionId`, and the signed-bundle `bindingId`; those fields are required to distinguish multiple handlers contributed by one plugin version and are retained in handler-scoped dedupe, `script_event_audit`, quota attribution, and downstream handoff records. The normative `scriptEventId` lifecycle and deduplication rules are defined in [Scripting DSL Reference & Event Lifecycle](../../system-architecture-scripting-dsl-reference-and-lifecycle.md#scripteventid-lifecycle-and-deduplication).
 
 Admission must also enforce pin consistency for `<tenantId, gameInstanceId>`:
 
@@ -61,6 +73,12 @@ Canonical event-registry contract for ingress:
 - For authoritative gameplay-affecting events, the registry entry must state that `readSnapshotToken` is required and must define the required scope encoded by that token.
 - For non-authoritative or synthetic events, the registry entry must explicitly mark `readSnapshotToken` forbidden so callers cannot imply stronger consistency than the event contract provides.
 - Registry rejection is an event-scope ingress failure and must use `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED` with a bounded `admissionReason` such as `unknown_event_type`, `schema_version_unsupported`, `producer_not_authorized`, `snapshot_token_required`, or `snapshot_token_forbidden`.
+
+### Production script-patch publication and rollout
+
+`PublishScriptPatchVersion` is owned by the Game Design Service. Its canonical design-time publication contract is defined in the [Game Design Service API contracts](../game-design-service/api-contracts.md#grpc-apis) and the [Game Design gRPC proto](../../../../protos/game-design/v1/game_design_service.proto): it publishes an immutable script-only patch referencing a base version. The [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md#game-design-design-time-publication-visibility) is canonical for the boundary between that `PUBLISHED` design status and Automation & Scripting runtime readiness.
+
+Production rollout therefore uses `PublishScriptPatchVersion` followed by Automation & Scripting's `NotifyScriptVersionUpdate`, which validates and stages the published patch for tenant readiness. Game Session remains the owner of the instance `scriptPatchVersion` pin; a notification does not repin a running instance by itself. `UpdateScript` remains limited to bootstrap/dev tooling and must not be used as either the production publication or rollout path.
 
 Direct script upload and update APIs such as `UpdateScript` are limited to bootstrap/dev tooling and must not be used as a production runtime publish path.
 
@@ -106,12 +124,12 @@ In addition to live event handling, the service exposes a non-committing test pa
 
 ## Reload Backpressure Contract
 
-During `reloadState=RELOADING`, event ingress must return explicit backpressure signals so callers can decide whether to retry:
+Reload admission and retry semantics follow the canonical [Scripting & Automation Cross-Service Contracts](../../system-architecture-scripting-contracts.md#7-reload-backpressure-contract). At this API boundary, during `reloadState=RELOADING`, event ingress must return explicit backpressure signals so callers can decide whether to retry:
 
 - `TriggerScriptEventResponse.admitted=false`
 - `TriggerScriptEventResponse.admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_RELOADING`
 - `TriggerScriptEventResponse.admissionReason="reloading"` or equivalent
-- `retryAfterMs` should be populated so callers can avoid thundering-herd retries during reload
+- `TriggerScriptEventResponse.retryAfterMs` must be populated so callers can avoid thundering-herd retries during reload
 
 The service must also record the event-scope ingress decision in the ingress audit/logging surface with `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_RELOADING` and bounded reason `reloading`. A handler-scoped `script_event_audit` row is written only if handler resolution has already produced a concrete Trigger Identity.
 
@@ -125,11 +143,7 @@ These ingress response fields are event-scope only. A successful ingress admissi
 
 Event-scope admission outcomes are intentionally limited to ingress-time fences such as reload/rollback backpressure, version visibility, pin visibility, signer-policy visibility, and event-registry validation. These pre-resolution outcomes are recorded in `script_event_ingress_audit`; handler-scoped outcomes such as `quota_denied`, `script_disabled`, `plugin_disabled`, and `plugin_component_blocked` are recorded only after binding resolution in `script_event_audit`.
 
-For retry behavior:
-
-- Low-rate external events may retry with the same full applicable Trigger Identity, including the same `scriptEventId`, using bounded exponential backoff and jitter with explicit `maxAttempts` and `maxElapsedMs`.
-- Timer-derived scheduler events use best-effort timer semantics; triggers not admitted during reload are not backfilled unless explicitly covered by a bounded catch-up rule.
-- Event-ingress response fields (`admitted`, `admissionOutcome`, `admissionReason`, `retryAfterMs`) and enum values are normative API contract and must align with [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md).
+Retry identity and timer catch-up behavior follow the linked scripting contract. The event-ingress response fields (`admitted`, `admissionOutcome`, `admissionReason`, `retryAfterMs`) and enum values are normative API contract and must align with [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md).
 
 ## Script Patch and Plugin Visibility APIs
 
@@ -140,21 +154,19 @@ The service exposes control-plane read and lifecycle surfaces for script patch v
 - `ScriptPatchTenantStatusChanged` – emitted whenever `<tenantId, scriptPatchVersion>` transitions between tenant readiness lifecycle states.
 - `ScriptPatchInstanceRolloutChanged` – consumed as the authoritative instance rollout history stream produced by Game Session (`PINNED`, `ROLLED_BACK`, `REPINNED`) and projected into read APIs.
 - `GetScriptPatchInstanceRolloutStatus(tenantId, gameInstanceId, scriptPatchVersion)` and `ListScriptPatchInstanceRollouts(...)` – read APIs for instance-scoped rollout history and correlation.
-- `ListScriptHandoffEvents(tenantId, gameInstanceId?, scriptPatchVersion?, workItemId?, handoffOutcome?, changedAfterMs?, changedBeforeMs?, limit?, targetGameInstanceId?, targetRegionId?, targetRegionEpoch?, remoteCoordinatorId?, remoteFollowupId?, scriptId?, pluginId?, automationDispatchId?, gameSessionCommandId?, targetEntityId?, playableStateScope?, worldSlug?, realmSlug?, pointerVersion?, sourceKind?, sourceState?)` – returns durable per-command handoff history, including `automationDispatchId`, `commandOrdinal`, target entity, resolved `playableStateScope`, plugin version when applicable, rendered emitted command text, Game Session command id, and handoff outcome/reason for one emitted gameplay command attempt. The target response also returns `bindingId` when the parent handler is plugin-backed. The actual proto/client filters map as follows: remote scope is `targetGameInstanceId`, `targetRegionId`, `targetRegionEpoch`, `playableStateScope`, `worldSlug`, `realmSlug`, and `pointerVersion`; remote IDs are `remoteCoordinatorId` and `remoteFollowupId`; origin identity is `gameInstanceId`, `scriptPatchVersion`, `workItemId`, `scriptId`, `pluginId`, `automationDispatchId`, and `gameSessionCommandId`; target identity is `targetEntityId`; source metadata is `sourceKind` and `sourceState`. `pluginVersionId` and applicable `bindingId` are response metadata, not request filters; the current proto exposes no `bindingId` field on this RPC, so `bindingId` remains target-state follow-through rather than a claimed live field.
+- `ListScriptHandoffEvents(tenantId, gameInstanceId?, scriptPatchVersion?, workItemId?, handoffOutcome?, changedAfterMs?, changedBeforeMs?, limit?, targetGameInstanceId?, targetRegionId?, targetRegionEpoch?, remoteCoordinatorId?, remoteFollowupId?, scriptId?, pluginId?, automationDispatchId?, gameSessionCommandId?, targetEntityId?, playableStateScope?, worldSlug?, realmSlug?, pointerVersion?, sourceKind?, sourceState?)` – returns durable per-command handoff history, including `automationDispatchId`, `commandOrdinal`, target entity, resolved `playableStateScope`, plugin version when applicable, rendered emitted command text, Game Session command id, and handoff outcome/reason for one emitted gameplay command attempt. The target response also returns `bindingId` when the parent handler is plugin-backed. The actual proto/client filters map as follows: remote scope is `targetGameInstanceId`, `targetRegionId`, `targetRegionEpoch`, `playableStateScope`, `worldSlug`, `realmSlug`, and `pointerVersion`; remote IDs are `remoteCoordinatorId` and `remoteFollowupId`; origin identity is `gameInstanceId`, `scriptPatchVersion`, `workItemId`, `scriptId`, `pluginId`, `automationDispatchId`, and `gameSessionCommandId`; target identity is `targetEntityId`; source metadata is `sourceKind` and `sourceState`. `pluginVersionId` and applicable `bindingId` are response metadata, not request filters.
 - `GetScriptEventDefinition(eventType, eventSchemaVersion)` and `ListScriptEventDefinitions(ownerService?)` – expose the canonical event registry used by ingress admission. These reads include allowed producers, required Trigger Identity fields, snapshot authority, consistency class, quota class, replay semantics, allowed binding scopes, dry-run support, and deprecation status.
 - `CancelPendingWorkItemsForPatch(tenantId, scriptPatchVersion, gameInstanceId?, regionId?, controlPlaneRequestId, actorPrincipal, reason)` – cancels pending durable `script_work_items` for a script patch so rollback/drain workflows can prove displaced work will not be evaluated later. The operation transitions only pending work to `CANCELED`, records `cancelReason`, and updates the corresponding handler-scoped `script_event_audit` row with `finalStage=ADMISSION`, `finalOutcome=canceled`, and the bounded cancellation reason.
 - `ListScriptDeadLetters(tenantId, gameInstanceId?, scriptPatchVersion?, limit?)` – returns bounded, newest-first `DEAD_LETTERED` work-item rows with trigger identity, resolved `playableStateScope`, script patch, event identity, reason, and timestamps so operators can inspect failed scripting work without raw table access.
 - `ReplayDeadLetteredWorkItems(tenantId, gameInstanceId?, regionId?, workItemIds?, scriptPatchVersion?, createdAfterMs?, createdBeforeMs?, limit?, controlPlaneRequestId, actorPrincipal, reason)` – requeues eligible `DEAD_LETTERED` work items back to `PENDING_EVALUATION` after validating that the current instance still pins the same `scriptPatchVersion` and, when the original ingress was plugin-backed, that the currently active plugin version still matches the recorded ingress audit.
 - `SetAutomationAdmissionMode(tenantId, gameInstanceId, regionId?, mode, controlPlaneRequestId, actorPrincipal, reason)` – mutates the durable Automation-owned rollback admission barrier for one scope and advances `admissionEpoch` when entering `PAUSED_FOR_ROLLBACK`.
 - `GetAutomationDrainStatus(tenantId, gameInstanceId, regionId?)` – reports current drain truth for one scope from durable `automation_admission_states` plus durable `script_work_items`: `admissionMode`, `admissionEpoch`, `activeExecutionCount`, `oldestActiveExecutionStartedAt`, `pendingCancelableWorkItemCount`, and `observedAt`.
-- `GetAutomationPinConvergence(tenantId, gameInstanceId)` – reports the latest pinned patch observation (`observedPinnedScriptPatchVersion`, `lastObservedControlPlaneRequestId`, `observedAt`) used by admission and scheduler logic. The live implementation now serves this from a durable Automation-owned `script_patch_pin_projections` view keyed by `(tenantId, gameInstanceId)` and also returns freshness flags (`projectionAsOfMs`, `projectionLagMs`, `isProjectionStale`) so temporary Game Session read failures do not collapse operator visibility into raw pass-through coupling.
+- `GetAutomationPinConvergence(tenantId, gameInstanceId)` – reports the latest pinned patch observation (`observedPinnedScriptPatchVersion`, `lastObservedControlPlaneRequestId`, `observedAt`) used by admission and scheduler logic, plus freshness flags (`projectionAsOfMs`, `projectionLagMs`, `isProjectionStale`).
 - `ListScriptScheduleInstances(tenantId, gameInstanceId, ...)` now also returns the resolved `playableStateScope` used when the schedule row was materialized, so timer-driven work can be audited against the same shared-versus-isolated gameplay namespace that produced the schedule.
 - `GetPluginStatus(tenantId, gameInstanceId, pluginId)` – returns plugin runtime state (`ENABLED`, `DISABLED`, `DRAINING`, `RELOADING`, `FAILED`), active and pending version IDs, the last control-plane request id, the last recorded actor principal for the runtime row, and current policy-check freshness (`lastPolicyCheckedAtMs`, `policyCheckStale`).
 - `ListPluginRuntimeEvents(tenantId, gameInstanceId?, pluginId?, pluginState?, activePluginVersionId?, changedAfterMs?, changedBeforeMs?, limit?)` – returns append-only instance-scoped plugin lifecycle history for activation, drain, disable, and policy-reconcile fail-closed transitions so operator tooling does not infer chronology from the latest runtime row.
 - `GetPluginPolicyConvergence(tenantId, gameInstanceId?, maxResults?)` – reports enabled plugin runtime states whose current Game Design publication, signer, or component-policy metadata would now fail closed.
 - `SetPluginActiveVersion`, `DisablePlugin`, and `DrainPlugin` – idempotent plugin lifecycle operations used by Logging & Admin to promote, disable, or drain plugin versions per runtime scope.
-
-Implementation note: signer/component-policy enforcement is now live on the Automation runtime side. The current control-plane surface exposes `GetPluginStatus`, `ListPluginRuntimeEvents`, and `GetPluginPolicyConvergence`, and scheduled reconciliation disables enabled plugins when current publication metadata becomes fail-closed. The separate propagation-event families `SignerPolicyVersionObserved` and `SignerRevocationApplied` remain target-state follow-through rather than a shipped API family.
 
 Consumption rules:
 
@@ -179,11 +191,6 @@ Plugin signer-policy admission follows the same fail-closed principle. If signer
 ## Digest Contract
 
 This service is a required digest participant for full publishes and script-patch publishes. It must expose `GetDraftDesignDigest` with a typed scope selector `oneof { versionId, scriptPatchVersion }` and maintain a service-local digest input manifest with:
-
-Implementation Notes:
-
-- Script-patch digesting already attests the patch-scoped script graph for `scriptPatchVersion`.
-- The current full-version digest attests the tenant’s draft script graph using the existing schema and returns synthetic `appliedCommitId = "version:<versionId>"` until script definitions are modeled as fully version-scoped draft data.
 
 - Included objects such as version- or patch-scoped script graphs, bindings, and publish-critical metadata that affect runtime execution for the scoped publish type.
 - Excluded objects such as runtime queues, audit and event logs, quota counters, and other non-launchability operational state.

@@ -55,56 +55,22 @@ Branch-to-environment promotion contract:
 
 The workflow YAML files remain the source of truth for concrete triggers; this table is the architecture contract for promotion intent.
 
+Pull-request change scope is classified once by [`.github/scripts/classify-change-scope.cjs`](../../.github/scripts/classify-change-scope.cjs). A pull request uses the lightweight path only when every changed file is documentation, documentation tooling, or non-runtime Python validation tooling. Mixed changes, workflow changes, operational Python, and runtime changes use the normal path. Required gate names remain stable on both paths: lightweight runs execute documentation checks and any applicable repository-wide Python or design-contract proof, while intentionally irrelevant service, infrastructure, `trivy-scan`, preview, and ZAP jobs are skipped; `secret-compliance` remains enabled. Push and manual runs always use the complete path.
+
 The main [`ci.yml`](../../.github/workflows/ci.yml) workflow:
 
 - Generates protobuf outputs to keep generated stubs aligned with the checked-in schemas.
 - Runs formatting and lint steps (Spotless, markdownlint, link checks).
-- Executes a matrix of Gradle `check` tasks (one per microservice) with SpotBugs, Checkstyle, and tests enabled.
-- Generates coverage with JaCoCo, uploads per-service coverage reports to Codecov using GitHub OIDC, and runs Trivy scans over the workspace.
+- On the complete CI path, executes a matrix of Gradle `check` tasks (one per microservice) with SpotBugs, Checkstyle, and tests enabled; lightweight documentation-only PR validation does not run these service checks.
+- On the complete CI path, generates coverage with JaCoCo, uploads per-service coverage reports to Codecov using GitHub OIDC, and runs the Trivy scans; lightweight documentation-only PR validation does not run these Trivy jobs.
 - Uses Node 24 to lint OpenAPI specs, run React linters, and execute an accessibility audit using headless Chrome.
-- Validates tracked Bash scripts across the repository with ShellCheck and validates tracked Python scripts by compiling them with `py_compile` so syntax regressions fail fast in CI.
+- Validates tracked Bash scripts across the repository with ShellCheck and validates every tracked Python script with `py_compile` plus repository-wide Ruff linting.
 - Invokes a dedicated `generate-erd` job that runs [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) to build ERD diagrams from service migrations and upload them as artifacts.
 - Caches Buf modules, Node dependencies, Trivy database, and Gradle artifacts to speed up repeat workflow runs.
-- Runs docs and link linting in `ci.yml` and verifies links again in the `docs.yml` workflow before publishing to GitHub Pages.
+- Runs markdownlint, blocking internal link checks, structural design contracts, and a MkDocs site build in pull-request CI. Push CI also checks external links; `docs.yml` verifies internal links again before publishing to GitHub Pages.
 - Posts a summary comment on pull requests with test status and coverage, while Codecov publishes patch-coverage status separately.
 
-The primary [`ci.yml`](../../.github/workflows/ci.yml) workflow builds and validates the repository:
-
-```yaml
-name: CI — Build and Security
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-  workflow_dispatch:
-  schedule:
-    - cron: '0 3 * * *'  # Daily at 3am UTC
-
-defaults:
-  run:
-    shell: bash
-
-jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '21'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: Check Formatting
-        run: ./gradlew spotlessCheck
-      - name: Lint Docs and Links
-        run: ./gradlew lintMarkdown linkCheck
-      - name: Run Checks
-        run: ./gradlew check
-```
-
-The example above checks out the repository, sets up Java 21, and runs a Gradle build. Each microservice can be built in a matrix strategy so jobs run in parallel. All CI jobs share a concurrency group so new pushes cancel any running workflow for the same branch. The workflow also executes nightly at **3 AM UTC** via the `schedule` trigger so dependencies are scanned regularly.
+The executable [`ci.yml`](../../.github/workflows/ci.yml) workflow is the source of truth for job structure and pinned action versions. It validates documentation with the repository-configured `markdownlint-cli2`, `dev-tools/docs/link-check.sh`, structural design contracts, and `python3 -m mkdocs build --clean`; service validation runs through the affected-service matrix. Workflow-specific concurrency groups cancel superseded runs only within the same pull-request or branch validation lane.
 
 Other workflows support additional automation:
 
@@ -218,7 +184,7 @@ The repository should not accumulate additional ad hoc scripting languages for a
 Current CI enforcement is:
 
 - ShellCheck for all tracked `.sh` scripts in the repository.
-- Python syntax validation for all tracked `.py` scripts in the repository.
+- Python syntax validation and Ruff linting for all tracked `.py` scripts in the repository.
 
 Release dependency-notice automation is a separate concern from repository scripting:
 

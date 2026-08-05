@@ -113,7 +113,7 @@ Ingress deduplication is not sufficient on its own: every accepted command must 
 
 #### Command Outcome Status Surface (Required)
 
-Command outcome convergence must be externally observable through one canonical authoritative API. Optional event delivery projects the same lifecycle but does not replace lookup authority. The contract is:
+Command outcome convergence must be externally observable through one canonical authoritative lookup API. Optional event delivery is a projection of the same lifecycle and does not replace lookup authority. The contract is:
 
 - Canonical control-plane surfaces:
   - `GetGameplayCommandStatus(tenantId, gameInstanceId, commandId)` for authoritative lookup.
@@ -140,32 +140,6 @@ Command outcome convergence must be externally observable through one canonical 
     - Minimum shared vocabulary: `SUCCESS`, `PARTIAL`, `FAILED`, `TIMEOUT`, `NOT_APPLIED`.
     - `gameplayResult` may remain `null` until the command reaches terminal state.
     - `gameplayResult` must not be inferred solely from `executionOutcome`; cross-region and multi-leg commands may legitimately end as `executionOutcome = APPLIED` with `gameplayResult = PARTIAL`.
-- Delivery rules:
-  - `GetGameplayCommandStatus` is the authoritative source for the fields above.
-  - `StreamCommandOutcomes`, if implemented, must expose the same lifecycle plus the same `executionOutcome` and `gameplayResult` vocabulary as `GetGameplayCommandStatus`.
-  - Events are advisory for latency; the durable status surface is authoritative.
-  - Clients must not infer command success from ingress acknowledgement alone.
-
-Worked examples:
-
-- Pure local success:
-  - `executionOutcome = APPLIED`
-  - `gameplayResult = SUCCESS`
-- Batch-bound local or same-region failure:
-  - The command was durably tied to a `tick_batch_id`, began normal execution, and then reached a terminal domain failure that is not a timeout path.
-  - `executionOutcome = ABANDONED`
-  - `gameplayResult = FAILED`
-- Cross-region partial success:
-  - Origin effects and at least one remote leg converged, but another remote leg reached terminal failure after timeout or explicit abandonment.
-  - `executionOutcome = APPLIED`
-  - `gameplayResult = PARTIAL`
-- Cross-region timeout before any successful remote leg:
-  - Origin coordinating effect reached terminal failure after the deadline.
-  - `executionOutcome = ABANDONED`
-  - `gameplayResult = TIMEOUT`
-- Lost before staging during reset/tail-loss reconcile:
-  - `executionOutcome = LOST_BEFORE_STAGING`
-  - `gameplayResult = NOT_APPLIED`
 
 #### Canonical Command Terminal Mapping Table
 

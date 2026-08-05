@@ -16,10 +16,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect Security-Relevant Changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read # Classify the complete pull-request file list.
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
+    outputs:
+      lightweight_only: ${{ steps.compute.outputs.lightweight_only }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: Check out change classifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Compute security scope
+        id: compute
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const fs = require("node:fs");
+            const classifierPath = `${process.env.GITHUB_WORKSPACE}/.github/scripts/classify-change-scope.cjs`;
+            if (fs.existsSync(classifierPath)) {
+              const { classifyGithubChangeScope } = require(classifierPath);
+              const scope = await classifyGithubChangeScope(github, context);
+              core.setOutput("lightweight_only", String(scope.lightweightOnly));
+            } else {
+              core.warning("Base revision predates the change classifier; running the complete security scope.");
+              core.setOutput("lightweight_only", "false");
+            }
+
   trivy-scan:
     name: Trivy Filesystem Scan
+    needs: [changes]
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -90,6 +128,7 @@ jobs:
 
   secret-compliance:
     name: Secret Compliance Validation
+    needs: [changes]
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
     uses: ./.github/workflows/validate-secret-compliance.yml
     with:
@@ -103,7 +142,7 @@ jobs:
     permissions:
       checks: read # Preserve a prior successful required context on metadata-only edits.
       contents: read # Check out the shared required-gate composite action.
-    needs: [trivy-scan, secret-compliance]
+    needs: [changes, trivy-scan, secret-compliance]
     if: ${{ always() }}
     steps:
       - name: Harden runner
@@ -127,11 +166,28 @@ jobs:
       - name: Enforce security success
         if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
         env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          LIGHTWEIGHT_ONLY: ${{ needs.changes.outputs.lightweight_only }}
           TRIVY_SCAN: ${{ needs.trivy-scan.result }}
           SECRET_COMPLIANCE: ${{ needs.secret-compliance.result }}
         run: |
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "Security change detection did not succeed: $CHANGES_RESULT" >&2
+            exit 1
+          fi
           echo "Trivy Filesystem Scan => $TRIVY_SCAN"
           echo "Secret Compliance Validation => $SECRET_COMPLIANCE"
+          if [ "$LIGHTWEIGHT_ONLY" = "true" ]; then
+            if [ "$TRIVY_SCAN" != "skipped" ] && [ "$TRIVY_SCAN" != "success" ]; then
+              echo "Security Gate received an unexpected Trivy result for the lightweight path." >&2
+              exit 1
+            fi
+            if [ "$SECRET_COMPLIANCE" != "success" ]; then
+              echo "Security Gate failed because secret compliance validation did not succeed." >&2
+              exit 1
+            fi
+            exit 0
+          fi
           if [ "$TRIVY_SCAN" != "success" ]; then
             echo "Security Gate failed because the filesystem Trivy scan did not succeed." >&2
             exit 1
@@ -147,7 +203,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write # Publishes the consolidated security result on the PR.
-    needs: [trivy-scan, secret-compliance, security-gate]
+    needs: [changes, trivy-scan, secret-compliance, security-gate]
     if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
       - name: Harden runner
@@ -159,10 +215,11 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
+            const failureResults = ["failure", "cancelled", "timed_out", "action_required"];
             const statusIcon = (value) => {
               if (value === "success") return "✅";
-              if (value === "failure") return "❌";
               if (value === "cancelled") return "⚪";
+              if (failureResults.includes(value)) return "❌";
               return "⏭️";
             };
 
@@ -172,9 +229,9 @@ jobs:
               ["Secret compliance validation", "${{ needs.secret-compliance.result }}"],
             ];
 
-            const failedChecks = checks.filter(([, result]) => result !== "success");
+            const failedChecks = checks.filter(([, result]) => failureResults.includes(result));
             const headline = failedChecks.length === 0
-              ? "✅ Security checks passed"
+              ? "✅ Security checks passed or were intentionally skipped"
               : "❌ Security checks failed";
 
             const body = [

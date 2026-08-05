@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 REQUIRED_ENTRYPATHS = {"websocket", "telnet"}
 REQUIRED_PLAYERFLOW_FLOWS = {"login", "command"}
 REQUIRED_CANARY_ALERTS = {
@@ -45,7 +44,7 @@ def main() -> int:
 def validate_evidence(path: Path) -> list[str]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         return [f"evidence JSON is unreadable: {exc}"]
     if not isinstance(data, dict):
         return ["evidence root must be a JSON object"]
