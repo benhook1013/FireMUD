@@ -4,7 +4,7 @@ This workstream establishes a complete, reviewable chain from FireMUD product ca
 
 ## Status
 
-Current phase: capability allocation, implementation/proof reconciliation, cross-domain convergence, structural enforcement, and independent validation are complete. Human-led adversarial review is complete for all `183` queue/navigation rows in the remotely backed review archive. On `develop`, the accepted ADR and canonical-design changes are applied through ADR 0050; reviewed decisions represented by ADRs 0051-0173 remain pending import and are not yet canonical repository state.
+Completed phases: capability allocation, implementation/proof reconciliation, cross-domain convergence, structural enforcement, independent validation, and human-led adversarial review of all `183` queue/navigation rows in the remotely backed review archive. Active workstreams: selective application of reviewed decisions and contract-authority consolidation. On `develop`, the accepted ADR and canonical-design changes are applied through ADR 0050; reviewed decisions represented by ADRs 0051-0173 remain pending import and are not yet canonical repository state.
 
 | Phase | Status | Output |
 | --- | --- | --- |
@@ -31,9 +31,9 @@ flowchart LR
     DESIGN_ALLOC --> SOURCE_INV[Source decision inventories]:::alignment
     SOURCE_INV --> HUMAN_QUEUE[Completed human-review queue]:::alignment
     HUMAN_QUEUE --> APPLY[Point-in-time application status]:::alignment
-    APPLY -->|merged to develop| ADRS[Merged ADRs]:::canonical
+    APPLY -->|merged to develop| ADRS[Merged ADRs and owning design changes]:::canonical
     ADRS -. explains; does not replace .-> ARCH
-    APPLY -->|reviewed; pending selective import| PENDING[ADRs 0051-0173]:::pending
+    APPLY -->|reviewed; pending selective import| PENDING[ADRs 0051-0173 and owning design changes]:::pending
 
     TAXONOMY --> TRACKER_ALLOC[Implementation-tracker allocation]:::alignment
     TRACKER_ALLOC --> TRACKERS[Ten live domain trackers]:::status

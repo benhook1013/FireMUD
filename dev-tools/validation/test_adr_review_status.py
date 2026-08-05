@@ -391,17 +391,14 @@ class AdrReviewStatusTests(unittest.TestCase):
             root = Path(fixture)
             path = provenance_path(root)
             path.write_text(
-                path.read_text(encoding="utf-8").replace(
-                    "## Applied Review Provenance\n",
-                    "## Adversarial Review Queue\n",
-                    1,
-                ),
+                path.read_text(encoding="utf-8")
+                + "\n## Adversarial Review Queue\n",
                 encoding="utf-8",
             )
             expect_failure(
                 self,
                 lambda: checked_reviews(self.validator, root),
-                "missing 'Applied Review Provenance' section",
+                "retired 'Adversarial Review Queue' section is not allowed",
             )
 
     def test_fenced_provenance_heading_does_not_count_as_duplicate(self) -> None:

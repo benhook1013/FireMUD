@@ -68,6 +68,7 @@ FENCE_CLOSER_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})[ \t]*$")
 LEVEL_TWO_HEADING_RE = re.compile(r"^## [^\r\n]*$")
 SECTION_BOUNDARY_HEADING_RE = re.compile(r"^#{1,2} [^\r\n]*$")
 REVIEW_PROVENANCE_HEADING_RE = re.compile(r"^## Applied Review Provenance[ \t]*$")
+RETIRED_REVIEW_QUEUE_HEADING_RE = re.compile(r"^## Adversarial Review Queue[ \t]*$")
 SUPERSEDED_SCAN_ALIAS_KEY_RE = re.compile(r"^MS-[A-Z0-9]+(?:-[A-Z0-9]+)+$")
 SUPERSEDED_SCAN_ALIAS_SUFFIX = "; retained as a historical service-scan alias."
 
@@ -705,9 +706,18 @@ def checked_reviews(
     seen_keys: set[str] = set()
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
+    visible_lines = visible_markdown_lines(text, path)
+    if any(
+        RETIRED_REVIEW_QUEUE_HEADING_RE.fullmatch(markdown_line.text)
+        for markdown_line in visible_lines
+    ):
+        fail(
+            f"{path}: retired 'Adversarial Review Queue' section is not allowed; "
+            "use 'Applied Review Provenance'"
+        )
     provenance_starts = [
         markdown_line.number - 1
-        for markdown_line in visible_markdown_lines(text, path)
+        for markdown_line in visible_lines
         if REVIEW_PROVENANCE_HEADING_RE.fullmatch(markdown_line.text)
     ]
     if not provenance_starts:

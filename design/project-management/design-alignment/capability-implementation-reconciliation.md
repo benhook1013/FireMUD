@@ -44,4 +44,4 @@ These were implementation or proof gaps at the snapshot boundary, not silently c
 
 ## Ongoing Convergence
 
-Current priorities and capability states belong in the domain trackers and [Project Shape History](../project-shape-history.md), not in this frozen snapshot. The completed human-led review is preserved in the source archive; accepted outcomes become canonical only through selective ADR and design imports to `develop`.
+Current priorities and capability states belong only in the domain trackers, not in this frozen snapshot. [Project Shape History](../project-shape-history.md) preserves dated historical assessments rather than current status. The completed human-led review is preserved in the source archive; accepted outcomes become canonical only through selective ADR and design imports to `develop`.
