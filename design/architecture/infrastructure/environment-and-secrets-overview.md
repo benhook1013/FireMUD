@@ -80,7 +80,7 @@ The resource and startup requirements in this subsection are the accepted target
 | `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Issued-token registry cleanup margin | It extends registry retention beyond each token's own `exp` only; it does not extend gameplay continuity. |
 | `FIREMUD_AUTH_SESSION_EXPIRATION_MS` | Initial gameplay-continuity retention | Target default is `300000` ms (five minutes), with an inclusive valid range of `1..300000`; current code still defaults to `3600000` ms (one hour) and does not enforce that range. |
 
-For player-facing environments, Account must fail closed when `FIREMUD_AUTH_JWKS_PATH` is unset, missing, unreadable, malformed, or mismatched with the Account signing key and `kid`; there is no classpath fallback. The owner-defined custody and rotation proof must be complete before traffic opens; environment-specific paths and mounts remain the local contract here.
+For player-facing environments, every JWT validator must fail closed when `FIREMUD_AUTH_JWKS_PATH` is unset, missing, unreadable, malformed, unusable, or unavailable; there is no classpath fallback. Account additionally must verify that the published key set contains the active signing key and matching `kid`. The owner-defined custody and rotation proof must be complete before traffic opens; environment-specific paths and mounts remain the local contract here.
 
 ### TCP Proxy → Gateway Bridge (Telnet)
 
@@ -313,6 +313,19 @@ Bootstrap resources must be unique to the environment boundary. Shared namespace
 Expected bindings for player-facing deployment and recovery checks must be declared once per environment in `design/operations/environments/<environment>/expected-bindings.yaml`. Deploy preflight and restore validation both consume this same manifest so internal state/trust bindings (PostgreSQL, Redis, JWT/JWKS, certificate issuer, concrete workload/bridge/backup control-plane certificate bindings, registry pull credentials) and external bindings (backup storage, asset storage, outbound communications, operator credential bindings) do not drift between deployment and recovery procedures. For backup and asset storage, the manifest must also prove the credential binding identity that owns the bucket or endpoint. Internal bindings are evaluated relative to the target environment boundary, so the same cluster-local literal may appear in multiple manifests when it resolves to environment-owned resources in separate boundaries.
 
 Player-facing preflight must fail when this bootstrap set is incomplete or when an external binding resolves to another environment’s target. The authoritative preflight policy IDs and evidence contract for these checks are defined in `../system-architecture-deploy-preflight-policy.md`.
+
+### `EDGE_PROXY` Deployment Evidence
+
+An `EDGE_PROXY` deployment is not evidenced by a certificate binding reference alone. The deployment record and readiness evidence must identify the exact values used for the active environment:
+
+- selected `TCP_PROXY_TELNET_MODE=EDGE_PROXY`, deployment identity, and environment boundary;
+- the public edge listener and TLS terminator identity, including address, port, protocol, SNI or listener name, and certificate or issuer binding;
+- the private TCP Proxy PROXY-protocol listener configured by `TCP_PROXY_PROXY_PROTOCOL_PORT`, including address, port, exposure boundary, protocol version, and the exact edge-to-proxy trust root;
+- the permitted edge identity, expressed as the exact mTLS certificate identity or URI SAN accepted by TCP Proxy, plus the certificate or issuer binding used to establish it;
+- the exact `GATEWAY_WS_URL`, derived Gateway readiness endpoint, TCP Proxy bridge client identity, and Gateway listener trust or permitted-identity binding; and
+- readiness observations showing `/actuator/health/readiness` and `trafficAdmissionReadiness` as ready, including `telnetListener=LISTENING`, `gatewayGameplayPath=READY`, and the exact readiness URI, with observation time and deployment/evidence reference.
+
+Preflight must reject an `EDGE_PROXY` deployment when any listener, trust root, permitted identity, or readiness value is absent, resolves outside the environment boundary, or does not match the deployed binding. The checked-in environment manifests currently declare certificate binding references but do not contain this edge-specific listener, trust, permitted-identity, or live-readiness evidence; that is an implementation and operational proof gap, not evidence that the edge contract is satisfied.
 
 Operator bootstrap matrix:
 

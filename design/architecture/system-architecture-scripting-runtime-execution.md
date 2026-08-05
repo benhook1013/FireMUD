@@ -58,7 +58,7 @@ That current-boundary execution format is intentionally narrow but no longer raw
 
 The current `onLoad` implementation slice is tenant-readiness work limited to configuration/runtime metadata validation and warming recomputable in-process caches. It does not perform per-entity setup or create durable shared state.
 
-At the live Game Session handoff boundary, `EnqueueAutomationCommandIfAbsent` currently carries `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, optional `dueTickId`, `automationDispatchId`, `automationWorkItemId`, `scriptId`, `scriptPatchVersion`, target entity, rendered command text, `requiresSoloTick`, `pluginId`, `pluginVersionId`, `playableStateScope`, routing fields, and origin-source fields; its response returns the live Game Session `commandId` and admission outcome. It does not yet carry `commandOrdinal`, `bindingId`, `eventType`, `eventSchemaVersion`, `scriptEventId`, `isDryRun`, `scheduleDefinitionId`, `triggerMode`, or the complete applicable Trigger Identity.
+At the live Game Session handoff boundary, `EnqueueAutomationCommandIfAbsent` currently carries `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, optional `dueTickId`, `automationDispatchId`, `automationWorkItemId`, `scriptId`, `scriptPatchVersion`, target entity, rendered command text, `requiresSoloTick`, `pluginId`, `pluginVersionId`, `playableStateScope`, routing fields, and origin-source fields; its response returns the live Game Session `commandId` and admission outcome. It does not yet carry `commandOrdinal`, `bindingId`, `eventType`, `eventSchemaVersion`, `scriptEventId`, `isDryRun`, `scheduleDefinitionId`, `triggerMode`, or the complete applicable Trigger Identity. `scriptEventId` remains on the Automation-owned durable work item and `script_event_audit`; it is omitted from the current Game Session handoff.
 
 Current dedupe, rejection, and status diagnostics use the available `outboxWorkItemId`/parent work-item correlation, persisted `automationDispatchId`, Game Session `commandId`/persisted `gameSessionCommandId`, command text, selected provenance, and `script_event_audit`. This is a live diagnostic and retry fallback only; it does not claim end-to-end complete Trigger Identity, `commandOrdinal`, or target command-level deduplication/fence proof.
 
@@ -186,7 +186,7 @@ Quota and budget accounting must be deterministic so operators can reason about 
 
 ## Ordering Between Player and Script Commands
 
-Game Session owns the combined per-entity tick queue and its enqueue/order invariants as defined in the [cross-service scripting contracts](./system-architecture-scripting-contracts.md#1-tick-queue-ownership-tick). At this runtime boundary, script-generated commands retain their source `scriptEventId`, `scriptId`, and applicable upstream ordering tokens such as `tickId` when the local handoff carries them.
+Game Session owns the combined per-entity tick queue and its enqueue/order invariants as defined in the [cross-service scripting contracts](./system-architecture-scripting-contracts.md#1-tick-queue-ownership-tick). At this runtime boundary, the current handoff preserves `scriptId` and the applicable ordering/source tokens exposed by the live request, including `dueTickId` and origin-source ordinal/due-point fields. `scriptEventId` remains on the Automation-owned durable work item and `script_event_audit`; it is omitted from the current Game Session handoff. Target command identity and complete Trigger Identity propagation remain subject to the widened handoff contract.
 
 ## Redis Key Summary for Scripting
 

@@ -4,12 +4,14 @@
 
 The explicit `JOIN` step is target behavior owned by [Authentication](../../system-architecture-authentication.md#login-and-session-flow). Current connect-token issuance and text `PLAY` require existing public-production membership and retain the implementation caveat that eligible missing or `INACTIVE` membership returns `JOIN_REQUIRED` without creating membership. The target flow below must not be read as proof that explicit join is complete across all clients.
 The Telnet credential form is `LOGIN <email> [secret]`. `LOGIN <email>` starts the email challenge, while `LOGIN <email> <secret>` supplies the secret immediately.
+For proxy-routed gameplay admission, the required current behavior is fail-closed acceptance only when the membership is the current `membershipLifecycleState=ACTIVE` membership and, for a private or playtest realm, the applicable current realm grant is also present. The current text `PLAY` path checks gameplay membership admission and the realm grant where applicable, but the Account response currently exposes no lifecycle-state field beyond `membershipExists` and `gameplayAdmissionAllowed`, and Account connect-token issuance does not yet check the private/playtest realm grant. Those are implementation and proof gaps outside this documentation PR; they must not be treated as proof of the target admission contract.
+The discovery-snapshot shortcut is restricted to the first-party token-backed WebSocket path. Direct text/Telnet clients must perform fresh `WORLDS` discovery, fresh `REALMS` / `CHARS` discovery as needed, and `LOGIN` -> conditional `JOIN` -> `PLAY`; the current proxy still bootstraps hidden default routing and does not enforce `WORLDS` as a prerequisite.
 
 ## Cross-Path Connectivity Contract
 
 The following are canonical contracts across Telnet and WebSocket paths:
 
-- Target Telnet login-first without typed attach hints is `LOGIN` -> conditional `JOIN` -> `PLAY`, with command semantics owned by [Authentication](../../system-architecture-authentication.md#login-and-session-flow). In the current runtime, explicit `JOIN` is unavailable and missing public-production membership does not create membership.
+- Target Telnet login-first without typed attach hints is fresh `WORLDS` discovery followed by `LOGIN` -> conditional `JOIN` -> `PLAY`, with command semantics owned by [Authentication](../../system-architecture-authentication.md#login-and-session-flow). In the current runtime, explicit `JOIN` is unavailable, hidden default routing is bootstrapped, and missing public-production membership does not create membership. Direct text does not use a first-party WebSocket discovery snapshot.
 - Proxy -> Gateway WebSocket hop is mTLS-authenticated in player-facing environments under [Security](../../system-architecture-security.md#tls-termination--internal-encryption).
 - Proxy bridge-availability circuit breaker uses deterministic open/half-open/closed admission behavior during sustained upstream unreachability.
 
@@ -19,9 +21,9 @@ These flows describe how Telnet traffic is forwarded into the shared login/sessi
 
 - **Target canonical player flow**
   - Connect to the TCP Proxy Service.
-  - Optionally browse public worlds with `WORLDS`.
+  - Perform fresh public-world discovery with `WORLDS`; use fresh `REALMS` / `CHARS` discovery as needed. This direct text flow does not consume a first-party WebSocket discovery snapshot.
   - Use `LOGIN <email> [secret]`: `LOGIN <email>` starts the email challenge, while `LOGIN <email> <secret>` authenticates immediately. Complete the applicable secret or verified-email-code response before continuing; `JOIN` is accepted only after authentication succeeds.
-  - For a first-time public-production account, send `JOIN <world>` to request the Account-owned membership operation. A returning member skips `JOIN`.
+  - For a first-time public-production account, send `JOIN <world>` to request the Account-owned membership operation. A returning member skips `JOIN` only after current `ACTIVE` membership and any applicable current private/playtest realm grant have been checked.
   - After membership, use `CHARS <world> [realm]` or the character-creation flow to select or create the required character, then enter gameplay with `PLAY <world> [realm] [character]`; use `REALMS <world>` when the target is ambiguous.
   - Send gameplay commands (`LOOK`, `SAY`, movement, and so on) as normal.
   - The proxy forwards all lines verbatim to Spring Cloud Gateway; the Game Session Service creates or binds the gameplay session exactly as it does for native WebSocket clients.
@@ -90,8 +92,9 @@ Typed `SESSION` gameplay lines are no longer part of the Telnet contract. If adv
 
 Current rules:
 
-- normal Telnet players use `WORLDS` (optional), `LOGIN`, `JOIN` when first-time public-production membership is required, and `PLAY`; returning members skip `JOIN`;
+- normal Telnet players perform fresh `WORLDS` discovery, fresh `REALMS` / `CHARS` discovery as needed, then use `LOGIN`, `JOIN` when first-time public-production membership is required, and `PLAY`; returning members skip `JOIN` only after current `ACTIVE` membership and applicable private/playtest grant checks;
 - the proxy bootstraps hidden default gameplay instance and tenant metadata for the connection;
+- current proxy behavior forwards `WORLDS` but also bootstraps hidden default routing and does not enforce the discovery command, so the fresh-discovery requirement remains a target gap;
 - typed attach hints do not exist on the player-facing wire contract;
 - future MCP-carried attach hints must remain advisory and must never bypass `LOGIN` + `JOIN` + `PLAY`; returning members still skip `JOIN`.
 - PROXY protocol trust follows [Security](../../system-architecture-security.md#telnet-command-handling-and-controls): on the internal-only PROXY listener, the edge-to-TCP Proxy channel must be authenticated and cryptographically protected before the recovered address can drive per-IP connection caps, rate limits, abuse controls, or admission decisions. Malformed or truncated PROXY headers remain a hard failure, and the canonical discard signal is `tcpproxy.telnet.discarded{reason="proxy_protocol"}`.

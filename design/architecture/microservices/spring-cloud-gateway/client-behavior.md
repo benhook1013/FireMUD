@@ -1,5 +1,15 @@
 # Spring Cloud Gateway Client Behavior
 
+## Implementation Status
+
+Unless explicitly described as current behavior, the sections below define the target Gateway contract. Current implementation facts and gaps are:
+
+- Java `CanonicalGatewayRoutesConfiguration` is the current route authority, with environment overrides; the target route catalog and deny-by-default exposure rules still require convergence proof.
+- The current edge implements bounded connect-token handshake classes and replay handling, but this does not prove the complete target replay durability, rotation, or reconnect contract.
+- The protected admin `JwtAuthFilter` currently parses shared-HMAC JWTs through `JwtUtil`; this is implementation drift from the target in which consuming services own asymmetric JWKS validation. Player-facing validator gaps are recorded in the environment and JWT contract documents.
+- The current public `/api/session/**` inventory is limited to `GET /api/session/ping`; internal `/sessions*` mutations remain non-public.
+- The current route catalog blocks the documented internal subtrees, and `HeaderTrustFilter` owns trusted-header promotion; deployment-level drain, failover, and live readiness evidence remain separate proof obligations.
+
 ## Gameplay Route Behavior
 
 - The canonical gameplay WebSocket route is `/ws/game/**`.
@@ -18,7 +28,7 @@
 ## WebSocket Close and Handshake Classification
 
 - Non-`101` `/ws/game/**` handshake failures must emit the canonical bounded error class through the gateway response/logging path. The authoritative route, connect-token, replay, and close classification is [Gateway architecture](../../system-architecture-gateway.md#tenant-aware-edge-connect-token-gameplay-handshake); client retry behavior is [Reconnection Strategy](../../system-architecture-reconnection.md#http-handshake-failures-on-ws-game).
-- First-party gameplay handshake failures should use the more specific bounded classes now implemented at the gateway edge where applicable:
+- First-party gameplay handshake failures must use the more specific bounded classes at the gateway edge where applicable:
   - `CONNECT_TOKEN_MISSING`
   - `CONNECT_TOKEN_EXPIRED`
   - `CONNECT_TOKEN_REPLAYED`
@@ -46,7 +56,7 @@
 - `/api/admin/**` -> Logging & Admin Service.
 - `/api/design/**` -> Game Design Service.
 - `/api/account/**` -> Account Service.
-- `/api/session/**` -> Game Session Service HTTP control-plane family; the current public inventory is limited to `GET /api/session/ping`, while internal/operator `/sessions*` mutations remain non-public owner-side routes.
+- `/api/session/**` -> Game Session Service HTTP control-plane family.
 - `/api/social/**` -> Social Groups Service.
 
 The canonical external allowlist stops there. World Management, Entity Management, Game Logic, and Automation & Scripting do not expose direct Gateway-routed external APIs in the base architecture unless a dedicated design update extends the allowlist.
@@ -56,14 +66,14 @@ Gateway routes strip the first two path segments before forwarding these REST fa
 These public prefixes are route families, not blanket permission to expose every service-local path under the same subtree:
 
 - owning service contracts must publish the externally allowed route inventory for their family;
-- internal-only or operator/debug service-local subtrees such as `/internal/**` and `/actuator/**` remain non-public even when the service has a public `/api/{service}/**` prefix, and the gateway now blocks `/api/{public-family}/internal/**` and `/api/{public-family}/actuator/**` requests instead of forwarding them; and
+- internal-only or operator/debug service-local subtrees such as `/internal/**` and `/actuator/**` remain non-public even when the service has a public `/api/{service}/**` prefix, and the gateway must block `/api/{public-family}/internal/**` and `/api/{public-family}/actuator/**` requests instead of forwarding them; and
 - gateway config and filters must converge on deny-by-default behavior for undocumented internal subtrees instead of treating the coarse family prefix as the final exposure contract.
 
-The canonical gateway route catalog now publishes that explicit external inventory directly rather than forwarding blanket `/api/{service}/**` families for the current public services. Adding a new externally reachable route now requires an explicit route-catalog entry plus matching owner-side contract documentation, not just a new service-local controller path under an existing prefix.
+The canonical gateway route catalog publishes that explicit external inventory directly rather than forwarding blanket `/api/{service}/**` families. Adding a new externally reachable route requires an explicit route-catalog entry plus matching owner-side contract documentation, not just a new service-local controller path under an existing prefix.
 
 ## Tenant and Header Trust Model
 
 - Spring Cloud Gateway remains tenant-agnostic. It forwards tenant-related headers only after applying the gateway’s header trust and canonicalization rules.
-- This trust boundary is implemented by `HeaderTrustFilter` and configured via `firemud.gateway.header-trust.*`; changes to trusted header sources or canonicalization behavior must update that service-local control surface in the same change.
+- This trust boundary is owned by `HeaderTrustFilter` and configured via `firemud.gateway.header-trust.*`; changes to trusted header sources or canonicalization behavior must update that service-local control surface in the same change.
 - Public clients must not be able to inject trusted `X-Tenant-Id`, `X-Game-Instance-Id`, or proxy-owned correlation headers through the gateway boundary.
 - Tenant isolation, quotas, and gameplay authorization decisions remain the responsibility of downstream domain services as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md).

@@ -217,7 +217,7 @@ For clarity, Telnet clients do not receive hidden recovery after their TCP socke
 
 Clients must also treat pre-disconnect output as non-resumable transport state. FireMUD does not replay raw transport bytes, prior WebSocket frames, or unsent Telnet output onto a newly opened connection. Instead, reconnect restores player-visible context in two distinct ways:
 
-- a bounded durable resume transcript keyed by the admitted tenant/game, game-instance, and character identity replays its retained narrative/system entries after successful `LOGIN` + `PLAY` for an eligible resume or fresh non-logout admission; Redis may cache that context but is not authoritative. Explicit gameplay `LOGOUT` immediately makes the binding's private transcript non-replayable; physical deletion may complete asynchronously, and later `LOGIN` + `PLAY` does not replay that terminated binding's context;
+- a bounded durable resume transcript keyed by the admitted tenant/game, game-instance, and character identity is freshly rendered from its retained narrative/system entries after successful `LOGIN` + `PLAY` for an eligible resume or fresh non-logout admission; Redis may cache that context but is not authoritative. Explicit gameplay `LOGOUT` immediately makes the binding's private transcript non-replayable; physical deletion may complete asynchronously, and later `LOGIN` + `PLAY` does not replay that terminated binding's context;
 - new screen-buffer entries retain structured player-output metadata alongside rendered protocol text when the output came from the structured `PlayerOutput` path, so first-party clients can receive typed replay entries while classic clients continue to receive text;
 - then FireMUD emits fresh state-derived reconstruction output such as `LOOK` and prompt/status information.
 
@@ -250,7 +250,7 @@ Service-local typed properties provide operator defaults, and Game Design persis
 
 ### Canonical durable resume-transcript policy
 
-The durable transcript, binding logout behavior, retention bounds, and Game Session persistence model are canonical in [Session Behavior](./system-architecture-session-behavior.md#gameplay-logout-and-resume-transcript). This document retains the client-visible consequence: a new transport receives bounded, freshly rendered context and state reconstruction when the owner permits resume; raw prior bytes and unsent transport output are never replayed.
+The durable transcript, binding logout behavior, retention bounds, and Game Session persistence model are canonical in [Session Behavior](./system-architecture-session-behavior.md#gameplay-logout-and-resume-transcript). This document retains the client-visible consequence: a new transport receives a bounded transcript freshly rendered from retained structured entries, plus fresh state reconstruction, after the owner permits an eligible resume or fresh non-logout admission. Raw prior bytes and unsent transport output are never replayed, and `LOGOUT` remains excluded from transcript replay.
 
 ### Abnormal WebSocket Transport Loss
 

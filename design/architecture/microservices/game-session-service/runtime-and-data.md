@@ -82,20 +82,20 @@ Current Game Session code also maintains a `sessionctx:*` Redis-backed session-c
 
 Unauthenticated `sessionctx:*` entries may exist before `LOGIN`; they are bootstrap context only and must not authorize gameplay commands. Authenticated gameplay semantics still follow the `session:game:*` / region-binding contract in the Redis architecture docs. If this implementation-local key family is renamed or collapsed into `session:game:*`, the pre-auth vs authenticated distinction remains mandatory.
 
-Game Session maintains the bounded active-binding index families owned by [Session Behavior](../../system-architecture-session-behavior.md#session-and-identity-management). The local Redis key shapes are:
+Target-state Game Session maintains the bounded active-binding index families owned by [Session Behavior](../../system-architecture-session-behavior.md#session-and-identity-management). The local Redis key shapes are:
 
 - `session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>` -> `sessionId`
-- `session:game:index:account:<accountId>` -> active tenant-qualified `sessionId` set
+- `session:game:index:account:<accountId>` -> generation-safe active tenant-qualified `accountIndexMember` set; each target member contains the complete `bindingRef`, positive `bindingGeneration`, and `accountIndexFence` defined by [Session Behavior](../../system-architecture-session-behavior.md#global-account-active-binding-index)
 - `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>` -> active `sessionId` set
 - `session:game:index:tenant:{tenantGameplayTag}` -> active `sessionId` set
 - `session:game:index:realm-grant:{tenantGameplayTag}:<worldSlug>:<realmSlug>:<accountId>` -> active `sessionId` set for grant-gated realms
 
-Game Session is the local writer and reconciler for these indexes. Binding transitions use the owner-defined generation/fence and repair protocol; this service must not use wildcard scans or treat index presence as authorization. Missing or ambiguous index/coordination state fails closed for admission and reconnect, while local cleanup remains idempotent.
+Game Session is the target-state local writer and reconciler for these indexes. Binding transitions use the owner-defined generation/fence and repair protocol; this service must not use wildcard scans or treat index presence as authorization. Missing or ambiguous index/coordination state fails closed for admission and reconnect, while local cleanup remains idempotent. Current implementation has not converged on the canonical `session:game:*` index families: it uses transitional `sessionctx:*` records and tenant/identity lookup keys, and does not currently implement or prove the global `accountIndexMember` set or its cross-slot repair/acknowledgement protocol. This is implementation drift, not a transfer of ownership or a different member shape.
 
 Gameplay session bindings persist the local identity and receiver-validation fields required by the owner contract:
 
 - `accountId`, `tenantId`, `gameInstanceId`, `characterId`, session identity, current authority/binding generation, membership/grant freshness, and the applicable revocation/lease evidence.
-- `authTokenHash`, `authTokenIssuedAt`, `authTokenExpiresAt`, `authTokenGeneration`, and the protected single-use Account rebind handle may be retained as specified by [Session Behavior](../../system-architecture-session-behavior.md#session-and-identity-management).
+- Every authenticated gameplay binding must persist the complete canonical `schemaVersion=2` payload from [Session Behavior](../../system-architecture-session-behavior.md#session-and-identity-management), including exact token identity/times/generation, `issuanceFence`, the protected single-use Account `rebindHandle`, immutable continuity deadline, membership baseline, authority tuple, and complete outbox checkpoints. A binding made non-resumable does not gain a reduced authenticated schema or become reusable evidence; fresh `LOGIN`/`PLAY` establishes a new complete binding.
 - The raw `game-session-account-delegation` JWT remains process-local and is never persisted in a binding, log, metric, or trace. Gameplay-domain RPCs use concrete workload identity and typed `PlayerExecutionContext`, not a per-call player JWT.
 
 Game Session validates the immediate Account response, binding identity, membership/grant scope, authority evidence, lease fence, and current routing/ownership before accepting or restoring a binding. The exact refresh, rebind, installation, logout, and revocation protocol is canonical in [Session Behavior](../../system-architecture-session-behavior.md#active-session-token-refresh-required); a failed or ambiguous replacement remains non-admissible and is cleaned up idempotently.

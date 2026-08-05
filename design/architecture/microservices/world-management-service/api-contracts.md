@@ -151,10 +151,14 @@ Once that target protocol is designed and implemented, cross-service LOOK read c
 - Entity Management must either answer with that exact committed same-scope fence token after satisfying it, or return target-state `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`; it must not mint a competing entity-local fence.
 - If a participant cannot satisfy the requested fence or the returned participant fence differs, Game Logic treats that as a caller-side retry condition, obtains a fresh World Management snapshot, and retries the same-scope composition. It must not return mixed-state output or require a separate mismatch service error.
 
+## Room Identity Migration
+
+The target runtime identity at this boundary is `RoomInstanceRef = {tenantId, gameInstanceId, roomInstanceId}`. `roomInstanceId` is a service-owned runtime identity, not a database row id. When a string is required at a transport boundary, it uses canonical decimal text such as `1021`; the value remains opaque outside the full `RoomInstanceRef` scope.
+
 Current implementation drift:
 
 - The current World Management gameplay bridge serializes runtime room ids as `R-<roomInstanceRowId>` and rejects decimal `1021` input. That storage-derived encoding is not the canonical target identity defined by the [Identifier Glossary](../../system-architecture-identifier-glossary.md).
-- The bridge, cross-service callers, examples, and focused proof must migrate together to the scoped `roomInstanceId` contract. When a string field carries a numeric `roomInstanceId`, it uses canonical decimal text such as `1021`; callers still treat the value as opaque within the complete `RoomInstanceRef` scope.
+- The bridge, cross-service callers, examples, and focused proof must migrate together to the scoped `roomInstanceId` contract. The checked-in proof still exercises the legacy encoding.
 
 Illustrative target-state `GetRoomSnapshot` fragments:
 

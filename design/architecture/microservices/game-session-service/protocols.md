@@ -36,7 +36,7 @@ JOIN <world> (first public-production entry only)
 PLAY <world> [realm] [character]
 ```
 
-`WORLDS`, `REALMS`, and `CHARS` are important helper commands, but they are not intended to be mandatory ceremony before ordinary gameplay entry.
+For direct text/Telnet, `WORLDS` is a fresh discovery step and `REALMS` / `CHARS` are fresh discovery or selection steps as needed on that transport; the target text flow is `LOGIN` -> conditional `JOIN` -> `PLAY`. A direct text client must not reuse a first-party WebSocket discovery snapshot. The discovery-snapshot shortcut is restricted to the first-party token-backed WebSocket path. The current proxy still bootstraps a hidden default route and does not enforce `WORLDS` as a prerequisite, so this target requirement remains an implementation and proof gap.
 
 | Command | Purpose | Example |
 | ------- | ------- | ------- |
@@ -420,4 +420,4 @@ DANCE
 ERROR UNKNOWN_COMMAND DANCE
 ```
 
-This current-runtime transcript retains the World Management bridge's `R-<roomInstanceRowId>` encoding. Target scoped numeric `roomInstanceId` examples follow the [Identifier Glossary](../../system-architecture-identifier-glossary.md) and the [World Management room-identity migration contract](../world-management-service/api-contracts.md#target-same-fence-contract).
+This current-runtime transcript retains the World Management bridge's `R-<roomInstanceRowId>` encoding. Target scoped numeric `roomInstanceId` examples follow the [Identifier Glossary](../../system-architecture-identifier-glossary.md) and the [World Management room-identity migration contract](../world-management-service/api-contracts.md#room-identity-migration).

@@ -59,6 +59,15 @@ Concrete example:
 
 Ordering is intentional: the admission barrier precedes repin and remains active through reconciliation, cancellation, purge, convergence, and drain; `ResumeTicks` runs while admission is still paused, and Automation returns to `NORMAL` only after `ResumeTicks` succeeds.
 
+## Command Identity and Live Handoff Boundary
+
+Rollback diagnosis uses the command-identity contract rather than treating a handler-level trigger identity as a command identity:
+
+- **Target state:** Game Session rejects queued commands whose embedded `scriptPatchVersion` or plugin version does not match the current instance pin and records one per-command handoff result through `ListScriptHandoffEvents` / `commandHandoffDispositions[]`. Each result retains the complete applicable Trigger Identity and command identity, including `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `eventType`, `eventSchemaVersion`, `scriptPatchVersion`, `scriptEventId`, `isDryRun`, `automationDispatchId`, `outboxWorkItemId`, and `commandOrdinal`; plugin handlers additionally retain `pluginId`, `pluginVersionId`, and `bindingId`, while scheduler/timer handlers additionally retain `scheduleDefinitionId`, `triggerMode`, and exactly one due-point field (`dueTickId` or `dueAt`).
+- **Current live boundary:** `EnqueueAutomationCommandIfAbsent` does not yet carry `commandOrdinal`, `bindingId`, `eventType`, `eventSchemaVersion`, `scriptEventId`, `isDryRun`, `scheduleDefinitionId`, `triggerMode`, or the complete applicable Trigger Identity. The live diagnostic/retry fallback correlates `script_event_audit`, Automation's narrower handoff/work-item rows, `outboxWorkItemId`, `automationDispatchId`, `gameSessionCommandId`, and the Game Session command/result/fence fields currently exposed; this does not establish complete Trigger Identity, target command-level deduplication, or complete fence proof.
+
+Operators must therefore use the current fallback for live rollback diagnosis and must not infer a complete per-command execution disposition from fields the live handoff does not carry. The target per-command view is the contract to converge to; it does not describe current proto coverage.
+
 ## Rollback Orchestration State Machine (Required)
 
 Rollback orchestration must expose and persist a state machine so partial failures are recoverable and retries are deterministic.

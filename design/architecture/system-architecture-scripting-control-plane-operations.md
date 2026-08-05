@@ -153,11 +153,15 @@ Outputs:
 - `observedPinnedScriptPatchVersion`
 - `lastObservedControlPlaneRequestId`
 - `observedAt`
+- `projectionAsOfMs`
+- `projectionLagMs`
+- `isProjectionStale`
 
 Semantics:
 
 - Read-only.
 - Reports the latest pin observation used by admission and scheduler logic.
+- Reports only pin observation and projection freshness; it does not return an admission decision, `finalStage`, `finalOutcome`, `finalReason`, or a handler outcome.
 
 #### `GetGameSessionPinConvergence`
 
