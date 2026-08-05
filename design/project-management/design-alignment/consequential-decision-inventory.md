@@ -1,6 +1,6 @@
 # Consequential Design Decision Inventory
 
-Status: Inventory and human-led review are complete and independently coverage/fidelity-audited. On `develop`, 40 of 182 distinct active decisions have imported, merged provenance through ADR 0050; 142 reviewed decisions remain pending selective import. The historical navigation alias is excluded from both counts.
+Status: Inventory and human-led review are complete and independently coverage/fidelity-audited. On `develop`, 40 of 182 distinct active decisions have imported, merged provenance; 142 reviewed decisions remain pending selective import. The historical navigation alias is excluded from both counts. ADR numbering records how applied outcomes were materialized but does not define the application boundary.
 
 ## Implementation Status
 

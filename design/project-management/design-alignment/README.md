@@ -4,7 +4,7 @@ This workstream establishes a complete, reviewable chain from FireMUD product ca
 
 ## Status
 
-Completed phases: capability allocation, implementation/proof reconciliation, cross-domain convergence, structural enforcement, independent validation, and human-led adversarial review of all `183` queue/navigation rows in the remotely backed review archive. Active workstreams: selective application of reviewed decisions and contract-authority consolidation. On `develop`, the accepted ADR and canonical-design changes are applied through ADR 0050; reviewed decisions represented by ADRs 0051-0173 remain pending import and are not yet canonical repository state.
+Completed phases: capability allocation, implementation/proof reconciliation, cross-domain convergence, structural enforcement, independent validation, and human-led adversarial review of all `183` queue/navigation rows in the remotely backed review archive. Active workstreams: selective application of reviewed decisions and contract-authority consolidation. On `develop`, `40` of the `182` active decision keys have checked applied provenance; the other `142` reviewed active decision keys remain pending selective import and are not yet canonical repository state. Candidate ADR identifiers 0051-0173 belong only to the source archive and do not define the pending set.
 
 | Phase | Status | Output |
 | --- | --- | --- |
@@ -15,8 +15,8 @@ Completed phases: capability allocation, implementation/proof reconciliation, cr
 | Code and proof reconciliation | Complete and independently validated | Per-capability implementation/verification states and evidence anchors in the domain trackers |
 | Cross-domain convergence | Complete and independently validated as a point-in-time baseline | [Frozen capability implementation reconciliation](./capability-implementation-reconciliation.md) |
 | Human-led adversarial decision review | Complete in the `design/adversarial-decision-review` source archive | Human-owned dispositions for all `183` queue/navigation rows |
-| Accepted-decision application | In progress | ADRs 0001-0050 and their canonical-design changes are merged; ADRs 0051-0173 remain pending import |
-| Contract-authority consolidation | Foundation established for ADRs 0001-0050; secondary-document consolidation remains in progress | [Architecture contract authority map](../../architecture/README.md#contract-authority-map) and the first link-plus-local-consequence conversions |
+| Accepted-decision application | In progress | `40` active decision keys have checked applied provenance; `142` reviewed active decision keys remain pending selective import |
+| Contract-authority consolidation | Foundation established for the merged baseline and `40` applied review outcomes; secondary-document consolidation remains in progress | [Architecture contract authority map](../../architecture/README.md#contract-authority-map) and the first link-plus-local-consequence conversions |
 
 ## Implementation Status
 
@@ -31,9 +31,9 @@ flowchart LR
     DESIGN_ALLOC --> SOURCE_INV[Source decision inventories]:::alignment
     SOURCE_INV --> HUMAN_QUEUE[Completed human-review queue]:::alignment
     HUMAN_QUEUE --> APPLY[Point-in-time application status]:::alignment
-    APPLY -->|merged to develop| ADRS[Merged ADRs and owning design changes]:::canonical
+    APPLY -->|merged to develop| ADRS[40 applied decision keys plus required ADRs and owning design changes]:::canonical
     ADRS -. explains; does not replace .-> ARCH
-    APPLY -->|reviewed; pending selective import| PENDING[ADRs 0051-0173 and owning design changes]:::pending
+    APPLY -->|reviewed; pending selective import| PENDING[142 active decision keys pending selective import]:::pending
 
     TAXONOMY --> TRACKER_ALLOC[Implementation-tracker allocation]:::alignment
     TRACKER_ALLOC --> TRACKERS[Ten live domain trackers]:::status
@@ -60,11 +60,10 @@ This table describes merged repository state, not merely completed human review.
 
 | Decision parcel | Human review | Applied to `develop` | Contract consolidation | Implementation and proof |
 | --- | --- | --- | --- | --- |
-| Pre-formal ADRs 0001-0011 | Complete in the review archive | ADRs and accepted design already present | Initial owner allocation complete; exhaustive secondary-document consolidation remains pending | Live gaps remain in the domain trackers |
-| Foundational parcel, ADRs 0012-0019 | Complete | Merged by #2527, with recovery and CI follow-through in #2537 | Initial owner allocation complete; exhaustive secondary-document consolidation remains pending | Live gaps remain in the domain trackers |
-| Identity and admission parcel, ADRs 0020-0035 | Complete | Merged by #2528 | Initial owner allocation complete; exhaustive secondary-document consolidation remains pending | Live gaps remain in the domain trackers |
-| Authority, security, and account parcel, ADRs 0036-0050 | Complete | Merged across #2574, #2583, #2581, and #2529 | Initial owner allocation complete; exhaustive secondary-document consolidation remains pending | Live gaps remain in the domain trackers |
-| Remaining reviewed outcomes, ADRs 0051-0173 | Complete in the review archive | Pending selective import; not canonical on `develop` | Not started; consolidate after each accepted family lands | Reconcile owning trackers as each family lands |
+| Existing ADR baseline, ADRs 0001-0011 | Complete in the review archive | ADR records and accepted design are present; record presence alone is not applied-review provenance | Initial owner allocation complete; exhaustive secondary-document consolidation remains pending | Live gaps remain in the domain trackers |
+| Applied review packet 1, 9 active decision keys | Complete | Checked provenance merged through ADRs 0012-0019 by #2527, with recovery and CI follow-through in #2537 | Initial owner allocation complete; exhaustive secondary-document consolidation remains pending | Live gaps remain in the domain trackers |
+| Applied review packet 2, 31 active decision keys | Complete | Checked provenance merged through ADRs 0020-0050 across #2528, #2574, #2583, #2581, and #2529 | Initial owner allocation complete; exhaustive secondary-document consolidation remains pending | Live gaps remain in the domain trackers |
+| Pending review packets 3-7, 142 active decision keys | Complete in the review archive | Pending selective import; archive-local candidate ADR identifiers 0051-0173 are non-canonical source evidence | Not started; consolidate after each accepted family lands | Reconcile owning trackers as each family lands |
 
 ## Authority Boundaries
 
