@@ -7,7 +7,7 @@ This inventory contains 38 decision rows. Its assigned source set is the exact 3
 ## Implementation Status
 
 - **Scan completeness:** The product/operations documentation scan is complete for its disjoint 35-path assignment; the full 95-path allocation is accounted for by the 22 cross-cutting, 38 specialized runtime/support, and 35 assigned paths.
-- **Implementation and approval state:** The `Complete` status above describes scan coverage and fidelity. Human-led review is complete in the source archive, but this merged ledger retains pre-import evidence for reviewed outcomes not yet applied to `develop`. Each row's status describes merged target state, not implementation or proof.
+- **Implementation and approval state:** The `Complete` status above describes scan coverage and fidelity. Human-led review and each row's archive decision/status classification are separate from whether that reviewed outcome has been applied to `develop`. This merged ledger retains pre-import evidence for reviewed outcomes not yet applied; only [Applied Review Provenance](./consequential-decision-inventory.md#applied-review-provenance) establishes merged application state. Row-level implementation and proof remain separate.
 
 ## Scope And Method
 

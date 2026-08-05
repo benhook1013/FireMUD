@@ -52,6 +52,7 @@ JsonObject = dict[str, JsonValue]
 JSON_READ_ERRORS = (OSError, UnicodeError, json.JSONDecodeError)
 YAML_READ_ERRORS = (OSError, UnicodeError, yaml.YAMLError)
 TIMESTAMP_ERRORS = (TypeError, ValueError, AttributeError, OverflowError)
+SECRET_LOOKUP_TIMEOUT_SECONDS = 30
 
 # These are the policy results emitted by this executable. The two JWT policies
 # documented as target-state-only are deliberately not included until they are
@@ -300,8 +301,9 @@ def secret_lookup_failure(secret_name: str) -> str | None:
             check=False,
             capture_output=True,
             text=True,
+            timeout=SECRET_LOOKUP_TIMEOUT_SECONDS,
         )
-    except OSError as exc:
+    except (OSError, subprocess.TimeoutExpired, UnicodeError) as exc:
         return f"Secret lookup could not be verified for firemud/{secret_name}: {exc}"
     if result.returncode == 0:
         return None

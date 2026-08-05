@@ -9,6 +9,24 @@ const {
   classifyGithubChangeScope,
 } = require("./classify-change-scope.cjs");
 
+async function classifyGithubFiles(files, changedFiles) {
+  const pullRequest = { number: 1 };
+  if (changedFiles !== undefined) {
+    pullRequest.changed_files = changedFiles;
+  }
+  const github = {
+    paginate: async () => files,
+    rest: { pulls: { listFiles() {} } },
+  };
+  const context = {
+    eventName: "pull_request",
+    repo: { owner: "example", repo: "firemud" },
+    payload: { pull_request: pullRequest },
+  };
+
+  return classifyGithubChangeScope(github, context);
+}
+
 test("documentation-only changes use the lightweight path", () => {
   const result = classifyChangeScope([
     "design/architecture/README.md",
@@ -110,4 +128,50 @@ test("GitHub complete documentation file lists retain the lightweight path", asy
   assert.equal(result.runAll, false);
   assert.equal(result.lightweightOnly, true);
   assert.deepEqual(result.affectedServices, []);
+});
+
+test("GitHub missing file counts fail closed to the complete path", async () => {
+  const result = await classifyGithubFiles(["design/README.md"]);
+
+  assert.equal(result.runAll, true);
+  assert.equal(result.lightweightOnly, false);
+  assert.deepEqual(result.affectedServices, ALL_SERVICES);
+});
+
+test("GitHub noninteger file counts fail closed to the complete path", async () => {
+  const result = await classifyGithubFiles(["design/README.md"], "1");
+
+  assert.equal(result.runAll, true);
+  assert.equal(result.lightweightOnly, false);
+  assert.deepEqual(result.affectedServices, ALL_SERVICES);
+});
+
+test("GitHub shared paths force the complete path", async () => {
+  const result = await classifyGithubFiles([".github/actions/example/action.yml"], 1);
+
+  assert.equal(result.runAll, true);
+  assert.equal(result.lightweightOnly, false);
+  assert.deepEqual(result.affectedServices, ALL_SERVICES);
+});
+
+test("GitHub unknown service paths force the complete path", async () => {
+  const result = await classifyGithubFiles(
+    ["services/unknown-service/src/main.java"],
+    1,
+  );
+
+  assert.equal(result.runAll, true);
+  assert.equal(result.lightweightOnly, false);
+  assert.deepEqual(result.affectedServices, ALL_SERVICES);
+});
+
+test("GitHub complete docs and known Account service lists target Account only", async () => {
+  const result = await classifyGithubFiles(
+    ["design/README.md", "services/account-service/src/main.java"],
+    2,
+  );
+
+  assert.equal(result.runAll, false);
+  assert.equal(result.lightweightOnly, false);
+  assert.deepEqual(result.affectedServices, ["account-service"]);
 });

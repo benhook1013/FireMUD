@@ -701,9 +701,14 @@ else:
 
 original_subprocess_run = module.subprocess.run
 try:
-    module.subprocess.run = lambda *args, **kwargs: module.subprocess.CompletedProcess(
-        args, 1, "", 'Error from server (NotFound): secrets "missing" not found'
-    )
+    def not_found_lookup(*args, **kwargs):
+        if kwargs.get("timeout") != module.SECRET_LOOKUP_TIMEOUT_SECONDS:
+            raise SystemExit("Secret lookup did not receive its deployment timeout")
+        return module.subprocess.CompletedProcess(
+            args, 1, "", 'Error from server (NotFound): secrets "missing" not found'
+        )
+
+    module.subprocess.run = not_found_lookup
     not_found_message = module.secret_lookup_failure("missing")
     if not_found_message != "Missing required Secret in cluster: firemud/missing":
         raise SystemExit(f"NotFound Secret lookup reported incorrectly: {not_found_message}")
@@ -719,6 +724,38 @@ try:
     )
     if forbidden_message != expected_forbidden:
         raise SystemExit(f"non-NotFound Secret lookup reported incorrectly: {forbidden_message}")
+
+    def raise_lookup_timeout(*args, **kwargs):
+        raise module.subprocess.TimeoutExpired(
+            args, module.SECRET_LOOKUP_TIMEOUT_SECONDS
+        )
+
+    module.subprocess.run = raise_lookup_timeout
+    timeout_message = module.secret_lookup_failure("timed-out")
+    if (
+        timeout_message is None
+        or not timeout_message.startswith(
+            "Secret lookup could not be verified for firemud/timed-out:"
+        )
+        or "timed out" not in timeout_message
+    ):
+        raise SystemExit(f"Timeout Secret lookup reported incorrectly: {timeout_message}")
+
+    def raise_lookup_unicode_error(*args, **kwargs):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    module.subprocess.run = raise_lookup_unicode_error
+    unicode_error_message = module.secret_lookup_failure("undecodable")
+    if (
+        unicode_error_message is None
+        or not unicode_error_message.startswith(
+            "Secret lookup could not be verified for firemud/undecodable:"
+        )
+        or "codec can't decode" not in unicode_error_message
+    ):
+        raise SystemExit(
+            f"Unicode decoding Secret lookup reported incorrectly: {unicode_error_message}"
+        )
 
     def raise_lookup_os_error(*args, **kwargs):
         raise OSError("kubectl unavailable")

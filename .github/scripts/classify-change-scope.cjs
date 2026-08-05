@@ -29,17 +29,15 @@ const SHARED_PREFIXES = [
   "services/common-security/",
   "services/common-test-support/",
   "services/common-web-support/",
+  ".github/workflows/",
+  ".github/actions/",
+  ".github/scripts/",
 ];
 
 const SHARED_FILES = new Set([
   "build.gradle.kts",
   "settings.gradle.kts",
   "gradle.properties",
-  ".github/workflows/ci.yml",
-  ".github/workflows/security.yml",
-  ".github/workflows/preview.yml",
-  ".github/workflows/zap-baseline.yml",
-  ".github/scripts/classify-change-scope.cjs",
 ]);
 
 function isDocumentation(file) {
@@ -60,6 +58,11 @@ function isFrontend(file) {
   return file.startsWith("web-client/") || file.startsWith("config/openapi/");
 }
 
+function isUnknownServicePath(file) {
+  const match = /^services\/([^/]+)\//.exec(file);
+  return match !== null && !ALL_SERVICES.includes(match[1]);
+}
+
 function classifyChangeScope(inputFiles, options = {}) {
   const files = [...new Set(inputFiles)].sort();
   const forceAll = options.forceAll === true;
@@ -68,7 +71,8 @@ function classifyChangeScope(inputFiles, options = {}) {
     files.some(
       (file) =>
         SHARED_FILES.has(file) ||
-        SHARED_PREFIXES.some((prefix) => file.startsWith(prefix)),
+        SHARED_PREFIXES.some((prefix) => file.startsWith(prefix)) ||
+        isUnknownServicePath(file),
     );
 
   const affectedServices = new Set();
@@ -118,10 +122,10 @@ async function classifyGithubChangeScope(github, context) {
     (response) => response.data.map((file) => file.filename),
   );
   const expectedFileCount = context.payload.pull_request.changed_files;
-  const fileListIncomplete =
-    Number.isInteger(expectedFileCount) && expectedFileCount !== files.length;
+  const fileListComplete =
+    Number.isInteger(expectedFileCount) && expectedFileCount === files.length;
 
-  return classifyChangeScope(files, { forceAll: fileListIncomplete });
+  return classifyChangeScope(files, { forceAll: !fileListComplete });
 }
 
 module.exports = {

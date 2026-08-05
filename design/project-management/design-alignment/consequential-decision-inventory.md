@@ -60,7 +60,7 @@ The canonical design allocation covers all 225 discovered product and architectu
 | Microservice architecture | 76 sources | 23 rows = 22 active decisions + superseded historical `MS-AA-TOKEN-REVOCATION` alias; stronger evidence for 40 existing keys | Complete in the source archive | Complete and independently audited |
 | Specialized runtime architecture | 39 sources | 54 new; stronger evidence for 20 existing keys | Complete in the source archive | Complete and independently audited |
 | Product and operations architecture | 35 sources | 38 new; stronger evidence for 11 existing keys | Complete in the source archive | Complete and independently audited |
-| **Total active decisions / navigation rows** | **All 225 design sources: 223 decision-bearing source rows (172 allocated non-ADR documents, 50 ADR records, and the exempt registry/index) plus 2 excluded governance/template exemptions; 222 allocated and 3 total exemptions** | **182 active decisions; 183 navigation/key rows including one historical alias** | **All 183 queue/navigation rows reviewed in the source archive** | **40 distinct decisions have merged provenance through ADR 0050; 142 remain pending import** |
+| **Total active decisions / navigation rows** | **All 225 design sources: 223 inspected or potentially decision-bearing source rows (172 allocated non-ADR documents, 50 ADR records, and the exempt registry/index) plus 2 excluded governance/template exemptions; 222 allocated and 3 total exemptions** | **182 active decisions; 183 navigation/key rows including one historical alias** | **All 183 queue/navigation rows reviewed in the source archive** | **40 distinct decisions have merged provenance through ADR 0050; 142 remain pending import** |
 
 ## Legacy ADR Alias Navigation
 
