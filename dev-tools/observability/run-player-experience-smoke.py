@@ -16,15 +16,13 @@ from urllib.parse import urlencode, urlparse
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "dev-tools" / "smoke"))
 
-from smoke_common import (  # noqa: E402
+from smoke_common import (
     http_request_json,
     http_request_json_with_headers,
-    http_readiness_up,
     login_play_look_steps,
     quote_path,
     recv_until_socket,
     run_telnet_command_plan,
-    run_websocket_command_plan,
     verify_smoke_account,
     wait_for_account_schema,
     wait_for_http_readiness,
@@ -174,7 +172,7 @@ class SmokeConfig:
     @classmethod
     def from_env(
         cls, source: str, canary_path: str, external_authority_evidence: Path | None
-    ) -> "SmokeConfig":
+    ) -> SmokeConfig:
         return cls(
             source=source,
             canary_path=canary_path,
@@ -568,7 +566,7 @@ def load_external_authority(config: SmokeConfig, simulate: bool) -> dict[str, An
             f"Unable to read external authority evidence from {path}: {exc}"
         ) from exc
     if not isinstance(data, dict):
-        raise RuntimeError(
+        raise TypeError(
             f"External authority evidence at {path} must be a JSON object"
         )
     validate_external_authority_shape(data, path)
@@ -604,13 +602,13 @@ def simulated_external_authority() -> dict[str, Any]:
 def validate_external_authority_shape(data: dict[str, Any], path: Path) -> None:
     deadman = data.get("deadmanAuthority")
     if not isinstance(deadman, dict):
-        raise RuntimeError(
+        raise TypeError(
             f"External authority evidence at {path} must include deadmanAuthority"
         )
     validate_authority_record(deadman, "deadmanAuthority", path)
     checks = data.get("entrypointChecks")
     if not isinstance(checks, dict):
-        raise RuntimeError(
+        raise TypeError(
             f"External authority evidence at {path} must include entrypointChecks"
         )
     required_checks = {
@@ -629,7 +627,7 @@ def validate_external_authority_shape(data: dict[str, Any], path: Path) -> None:
     for name in required_checks:
         record = checks.get(name)
         if not isinstance(record, dict):
-            raise RuntimeError(
+            raise TypeError(
                 f"External authority evidence at {path} must define {name} as an object"
             )
         validate_authority_record(record, f"entrypointChecks.{name}", path)

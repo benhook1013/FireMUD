@@ -111,7 +111,7 @@ Reload admission and retry semantics follow the canonical [Scripting & Automatio
 - `TriggerScriptEventResponse.admitted=false`
 - `TriggerScriptEventResponse.admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_RELOADING`
 - `TriggerScriptEventResponse.admissionReason="reloading"` or equivalent
-- `retryAfterMs` should be populated so callers can avoid thundering-herd retries during reload
+- `TriggerScriptEventResponse.retryAfterMs` must be populated so callers can avoid thundering-herd retries during reload
 
 The service must also record the event-scope ingress decision in the ingress audit/logging surface with `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_RELOADING` and bounded reason `reloading`. A handler-scoped `script_event_audit` row is written only if handler resolution has already produced a concrete Trigger Identity.
 

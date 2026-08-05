@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 
-
 DEPENDENCY_BOT_AUTHORS = {
     "app/dependabot",
     "dependabot[bot]",

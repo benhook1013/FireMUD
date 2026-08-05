@@ -131,8 +131,7 @@ while IFS='|' read -r workflow gate_job_id gate; do
     echo "$workflow $gate caller must retain contents: read" >&2
     exit 1
   }
-  # security.yml has no changes job, so it cannot gate on change detection.
-  if [[ "$workflow" != "security.yml" ]] && ! grep -Fq 'needs.changes.result' <<<"$gate_block"; then
+  if ! grep -Fq 'needs.changes.result' <<<"$gate_block"; then
     echo "$workflow $gate must fail closed when change detection fails" >&2
     exit 1
   fi

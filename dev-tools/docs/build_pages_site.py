@@ -5,7 +5,6 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BUILD_DIR = REPO_ROOT / "build"
 STAGING_DIR = BUILD_DIR / "pages-docs"
@@ -42,9 +41,7 @@ def reset_staging_dir() -> None:
 def should_copy(path: Path) -> bool:
     if any(part in EXCLUDED_PATH_PARTS for part in path.parts):
         return False
-    if path.name.endswith(EXCLUDED_NAME_SUFFIXES):
-        return False
-    return True
+    return not path.name.endswith(EXCLUDED_NAME_SUFFIXES)
 
 
 def copy_root_docs() -> None:

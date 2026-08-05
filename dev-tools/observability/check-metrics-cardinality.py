@@ -75,9 +75,7 @@ def is_forbidden_label(label: str) -> bool:
         return True
     if label.endswith("Id"):
         return True
-    if label.lower().endswith("_id"):
-        return True
-    return False
+    return bool(label.lower().endswith("_id"))
 
 
 def iter_source_files() -> list[Path]:

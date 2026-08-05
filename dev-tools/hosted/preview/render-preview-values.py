@@ -8,7 +8,6 @@ import secrets
 import sys
 from pathlib import Path
 
-
 USAGE = (
     "usage: render-preview-values.py <template> <output> <pr_number> "
     "<namespace> <release_name> <hostname> <image_tag> <telnet_port>"

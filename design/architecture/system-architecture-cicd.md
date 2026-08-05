@@ -55,6 +55,8 @@ Branch-to-environment promotion contract:
 
 The workflow YAML files remain the source of truth for concrete triggers; this table is the architecture contract for promotion intent.
 
+Pull-request change scope is classified once by [`.github/scripts/classify-change-scope.cjs`](../../.github/scripts/classify-change-scope.cjs). A pull request uses the lightweight path only when every changed file is documentation, documentation tooling, or non-runtime Python validation tooling. Mixed changes, workflow changes, operational Python, and runtime changes use the normal path. Required gate names remain stable on both paths: lightweight runs execute documentation checks and any applicable repository-wide Python or design-contract proof, while intentionally irrelevant service, infrastructure, security-scan, preview, and ZAP jobs are skipped. Push and manual runs always use the complete path.
+
 The main [`ci.yml`](../../.github/workflows/ci.yml) workflow:
 
 - Generates protobuf outputs to keep generated stubs aligned with the checked-in schemas.
@@ -62,10 +64,10 @@ The main [`ci.yml`](../../.github/workflows/ci.yml) workflow:
 - Executes a matrix of Gradle `check` tasks (one per microservice) with SpotBugs, Checkstyle, and tests enabled.
 - Generates coverage with JaCoCo, uploads per-service coverage reports to Codecov using GitHub OIDC, and runs Trivy scans over the workspace.
 - Uses Node 24 to lint OpenAPI specs, run React linters, and execute an accessibility audit using headless Chrome.
-- Validates tracked Bash scripts across the repository with ShellCheck and validates tracked Python scripts by compiling them with `py_compile` so syntax regressions fail fast in CI.
+- Validates tracked Bash scripts across the repository with ShellCheck and validates every tracked Python script with `py_compile` plus repository-wide Ruff linting.
 - Invokes a dedicated `generate-erd` job that runs [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) to build ERD diagrams from service migrations and upload them as artifacts.
 - Caches Buf modules, Node dependencies, Trivy database, and Gradle artifacts to speed up repeat workflow runs.
-- Runs docs and link linting in `ci.yml` and verifies links again in the `docs.yml` workflow before publishing to GitHub Pages.
+- Runs markdownlint, internal/external link checks, structural design contracts, and a MkDocs site build in `ci.yml`, then verifies links again in the `docs.yml` workflow before publishing to GitHub Pages.
 - Posts a summary comment on pull requests with test status and coverage, while Codecov publishes patch-coverage status separately.
 
 The primary [`ci.yml`](../../.github/workflows/ci.yml) workflow builds and validates the repository:

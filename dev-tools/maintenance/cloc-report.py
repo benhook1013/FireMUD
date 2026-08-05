@@ -14,10 +14,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Iterable, Sequence
-
 
 SOURCE_ROOTS = ("buildSrc", "dev-tools", "gradle", "protos", "services", "web-client")
 SCOPE_NAMES = (
@@ -161,7 +160,7 @@ def scan_cloc(root: Path, inventory: Iterable[str]) -> list[FileStats]:
     for raw_path, stats in payload.items():
         if raw_path in {"header", "SUM"}:
             continue
-        path = raw_path[2:] if raw_path.startswith("./") else raw_path
+        path = raw_path.removeprefix("./")
         files.append(
             FileStats(
                 path=path,

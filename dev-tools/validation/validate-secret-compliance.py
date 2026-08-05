@@ -88,7 +88,7 @@ def main() -> int:
 
         try:
             data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except Exception as exc:
+        except (OSError, UnicodeError, yaml.YAMLError) as exc:
             record_issue(env, f"{env}: cannot parse {relative_path} as YAML: {exc}")
             continue
 
@@ -161,7 +161,7 @@ def main() -> int:
             try:
                 recorded_at = parse_timestamp(evidence_time)
                 age_days = (today - recorded_at).days
-            except Exception as exc:
+            except (TypeError, ValueError, AttributeError) as exc:
                 record_issue(
                     env,
                     f"{env}:{cls}: invalid {evidence_field} '{evidence_time}': {exc}",
@@ -194,7 +194,7 @@ def main() -> int:
 
             try:
                 evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
-            except Exception as exc:
+            except (OSError, UnicodeError, yaml.YAMLError) as exc:
                 record_issue(env, f"{env}:{cls}: evidence file unreadable: {exc}")
                 continue
 

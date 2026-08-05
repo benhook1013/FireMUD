@@ -8,7 +8,6 @@ from collections import Counter
 from pathlib import Path
 from urllib.parse import unquote
 
-
 ROOT = Path(__file__).resolve().parents[2]
 TAXONOMY = ROOT / "design/product/capability-taxonomy.md"
 TRACKING_DIR = ROOT / "design/project-management/implementation-tracking"
@@ -164,9 +163,13 @@ def resolve_evidence_target(root: Path, owner: Path, target: str, context: str) 
         fail(f"{context}: evidence anchor escapes repository: {target}")
     if not resolved.is_file():
         fail(f"{context}: missing evidence anchor target {target}")
-    if separator and fragment and resolved.suffix.lower() in MARKDOWN_SUFFIXES:
-        if unquote(fragment) not in markdown_anchor_ids(resolved):
-            fail(f"{context}: missing Markdown anchor {target}")
+    if (
+        separator
+        and fragment
+        and resolved.suffix.lower() in MARKDOWN_SUFFIXES
+        and unquote(fragment) not in markdown_anchor_ids(resolved)
+    ):
+        fail(f"{context}: missing Markdown anchor {target}")
     return resolved, relative, unquote(fragment)
 
 
@@ -215,11 +218,12 @@ def validate_evidence_anchor(
         if not relative.startswith(("design/architecture/", "design/product/")):
             fail(f"{context}: design evidence must target design/architecture or design/product, got {relative}")
     elif category == "production":
-        if is_docs_only_target(relative) or is_test_target(relative):
-            # This contract script is a declared implementation anchor for the
-            # verification capability itself, not a service test or fixture.
-            if relative != "dev-tools/tests/architecture-doc-contracts.sh":
-                fail(f"{context}: production evidence must not target test-only/docs-only surfaces, got {relative}")
+        # This contract script is a declared implementation anchor for the
+        # verification capability itself, not a service test or fixture.
+        if (
+            is_docs_only_target(relative) or is_test_target(relative)
+        ) and relative != "dev-tools/tests/architecture-doc-contracts.sh":
+            fail(f"{context}: production evidence must not target test-only/docs-only surfaces, got {relative}")
     elif category == "proof":
         if not (is_test_target(relative) or is_canonical_proof_tool(relative) or is_audit_context(verification, cell, relative)):
             fail(f"{context}: proof evidence must target tests or canonical validation/smoke tooling, got {relative}")

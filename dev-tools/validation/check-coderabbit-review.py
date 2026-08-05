@@ -21,7 +21,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-
 GH_TIMEOUT_SECONDS = 30
 
 REVIEW_COMMAND_TYPES = {
@@ -470,13 +469,12 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
                 substantive_review_evidence.append((created_at_dt, body))
             if PLAN_REVIEW_SKIP_MARKER in body and PLAN_CEILING_PATTERN.search(body):
                 plan_ceiling_evidence.append(created_at_dt)
-        if author == "coderabbitai" and SUBSTANTIVE_REVIEW_MARKER in body:
-            if (
-                latest_coderabbit_review_finished_dt is None
-                or created_at_dt > latest_coderabbit_review_finished_dt
-            ):
-                latest_coderabbit_review_finished_dt = created_at_dt
-                latest_coderabbit_review_finished_at = created_at
+        if author == "coderabbitai" and SUBSTANTIVE_REVIEW_MARKER in body and (
+            latest_coderabbit_review_finished_dt is None
+            or created_at_dt > latest_coderabbit_review_finished_dt
+        ):
+            latest_coderabbit_review_finished_dt = created_at_dt
+            latest_coderabbit_review_finished_at = created_at
 
     for review in (pr.get("reviews") or {}).get("nodes", []):
         if review.get("state") == "DISMISSED":
