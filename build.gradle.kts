@@ -25,7 +25,7 @@ plugins {
     alias(libs.plugins.flyway) apply false
     id("com.diffplug.spotless") version "8.9.0"
     id("checkstyle")
-    id("com.github.spotbugs") version "6.5.9"
+    id("com.github.spotbugs") version "6.5.10"
     jacoco
 }
 

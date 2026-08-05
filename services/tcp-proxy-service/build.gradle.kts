@@ -12,7 +12,7 @@ import org.gradle.language.jvm.tasks.ProcessResources
 apply(from = "${rootDir}/gradle/proto-convention.gradle")
 
 dependencies {
-    implementation("io.netty:netty-all:4.2.16.Final")
+    implementation("io.netty:netty-all:4.2.17.Final")
     implementation(libs.spring.boot.starter.websocket)
     implementation(project(":common-security"))
     testImplementation(libs.micrometer.registry.prometheus)
