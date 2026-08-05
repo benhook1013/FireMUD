@@ -179,7 +179,7 @@ require_equal(
 require_equal(
     docs_node_step,
     ("with", "cache-dependency-path"),
-    "package-lock.json",
+    "config/openapi/package-lock.json",
     "ci workflow",
 )
 docs_dependencies_step = find_step(
@@ -188,10 +188,22 @@ docs_dependencies_step = find_step(
 require_contains(
     docs_dependencies_step,
     ("run",),
+    "npm ci --prefix config/openapi",
+    "ci workflow",
+)
+require_contains(
+    docs_dependencies_step,
+    ("run",),
     "python3 -m pip install --disable-pip-version-check mkdocs==1.6.1 mkdocs-material==9.6.5",
     "ci workflow",
 )
 docs_links_step = find_step(ci, "docs-check", "Lint Markdown and links", "ci workflow")
+require_contains(
+    docs_links_step,
+    ("run",),
+    "config/openapi/node_modules/.bin/markdownlint-cli2",
+    "ci workflow",
+)
 require_contains(
     docs_links_step,
     ("run",),
