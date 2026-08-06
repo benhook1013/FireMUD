@@ -64,6 +64,18 @@
       "platformAutomerge": false
     },
     {
+      "description": "Deployment image digests are owned by the staged promotion workflow",
+      "matchManagers": [
+        "kubernetes",
+        "kustomize"
+      ],
+      "matchFileNames": [
+        "k8s/overlays/stage/kustomization.yaml",
+        "k8s/overlays/prod/kustomization.yaml"
+      ],
+      "enabled": false
+    },
+    {
       "matchManagers": [
         "dockerfile",
         "helmv3",
