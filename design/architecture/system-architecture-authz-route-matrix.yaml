@@ -1277,7 +1277,7 @@ routes:
   - service: account-service
     route: IssueAutomationOperatorAuthorizationReference
     transport: grpc
-    scope: tenant_or_global
+    scope: tenant
     classification: internal_workload
     route_status: target_not_currently_routable
     auth_path: exact_mtls_workload_plus_versioned_automation_policy
@@ -1413,8 +1413,7 @@ routes:
     auth_path: control_ui_plus_current_tenant_role
     method_policy: exact_declared_route
     subject_binding: caller_account_id
-    self_only_roles: [player, moderator, designer]
-    target_subject_binding: same_tenant_profile_for_tenantAdmin
+    target_subject_binding: exact_caller_account_id_for_every_role
     platform_admin_override: forbidden
     accepted_token_profiles: [control-ui]
     token_type: control_plane_user
@@ -1437,8 +1436,7 @@ routes:
     auth_path: control_ui_plus_current_tenant_role
     method_policy: exact_declared_route
     subject_binding: caller_account_id
-    self_only_roles: [player, moderator, designer]
-    target_subject_binding: same_tenant_profile_for_tenantAdmin
+    target_subject_binding: exact_caller_account_id_for_every_role
     platform_admin_override: forbidden
     accepted_token_profiles: [control-ui]
     token_type: control_plane_user
@@ -1610,6 +1608,11 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
     pending_deletion_workflow_binding: required
+    export_operation_binding:
+      source: pending_deletion_credential_and_export_registry
+      required: [accountId, deletionWorkflowId, deletionWorkflowGeneration, exportId]
+      comparison: exact
+      mismatch: AUTH_SESSION_REVOKED
     action_family: export_status
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry]
     response_profile: asynchronous_versioned_cross_owner_export_manifest
@@ -1632,6 +1635,11 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
     pending_deletion_workflow_binding: required
+    export_operation_binding:
+      source: pending_deletion_credential_and_export_registry
+      required: [accountId, deletionWorkflowId, deletionWorkflowGeneration, exportId]
+      comparison: exact_completed_operation
+      mismatch: AUTH_SESSION_REVOKED
     action_family: export_content
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, export_availability]
     response_profile: completed_export_artifact_only
@@ -1749,6 +1757,8 @@ routes:
         excluded_registry_only_fields: [tokenGeneration, issuanceFence]
     implementation_status:
       known_drift:
+        - issue_connect_token_uses_legacy_account_session_key_shape
+        - issue_connect_token_target_registry_and_evidence_proof_is_incomplete
         - issue_connect_token_does_not_reread_membership_authority_generation
   - service: account-service
     route: Authenticate
@@ -1913,6 +1923,10 @@ routes:
         tenant_id,
         request_id,
         admission_id,
+        admission_attempt_id,
+        capacity_rearm_fence,
+        account_evidence_bundle,
+        outbox_checkpoints,
         expected_authority_tuple,
         expected_bundle_version,
         expected_snapshot_identity,
@@ -1922,6 +1936,12 @@ routes:
         capacity_delta,
         mutation_digest,
       ]
+    attempt_fence_contract:
+      initial_attempt: binds_fresh_attempt_id_current_rearm_fence_exact_payload_and_digest
+      exact_retry: replays_stored_result
+      changed_attempt: requires_committed_account_owned_rearm_cas
+      rearm_effect: advances_fence_and_binds_fresh_attempt_id_exact_payload_and_digest
+      changed_attempt_without_rearm: IDEMPOTENCY_CONFLICT_before_any_mutation
     required_live_checks: [tenant_generation, runtime_entitlements, capacity_admission_fence, idempotency]
     mutation_contract: account_owned_fenced_capacity_reservation_create_or_replay
     canonical_errors:
@@ -2096,9 +2116,14 @@ routes:
     membership_authority_generation_applies: true
     membership_version_applies: true
     required_live_checks: [issuer_generation, account_generation, current_operator_roles, membership, membership_generation, membership_version]
-    mutation_contract: shared_instrument_ack_required
+    mutation_contract: billing_owner_authorized_per_subscription_instrument_binding
+    provider_instrument_contract:
+      per_subscription_binding: required
+      replacement_before_detach: required
+      ownership_transfer: audited
+      shared_instrument_acknowledgement: not_authorization
     canonical_errors:
-      any_of: [BILLING_SHARED_INSTRUMENT_ACK_REQUIRED, AUTH_UNAVAILABLE]
+      any_of: [AUTH_UNAVAILABLE]
     roles:
       any_of: [tenantAdmin]
   - service: account-service

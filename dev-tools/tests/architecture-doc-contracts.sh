@@ -690,6 +690,14 @@ def extract_unique_markdown_section(text, heading, source_label):
     return sections[0]
 
 
+def require_section_contains(path, heading, snippets):
+    text = (root / path).read_text(encoding="utf-8")
+    section = extract_unique_markdown_section(text, heading, path)
+    missing = [snippet for snippet in snippets if snippet not in section]
+    if missing:
+        raise SystemExit(f"{path}: {heading!r} section missing required snippets: {missing}")
+
+
 fenced_heading_fixture = (
     "## Canonical Coordination Reset Sequence\n"
     "before\n"
@@ -785,13 +793,21 @@ for path in [
 ]:
     require_contains(path, [canonical_public_resume_signature])
 
-require_contains(
+require_section_contains(
     "design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md",
-    ["system-architecture-backup-recovery.md", "evidenceRef"],
+    "Canonical Recovery Record",
+    [
+        "[Backup & Disaster Recovery](./system-architecture-backup-recovery.md)",
+        "The operation-bound `evidenceRef` supplied through the recovery owner's canonical continuation path",
+    ],
 )
-require_contains(
+require_section_contains(
     "design/architecture/system-architecture-redis-reset-and-recovery.md",
-    ["system-architecture-backup-recovery.md", "operation-bound"],
+    "Coordination Reset Model",
+    [
+        "[Backup & Disaster Recovery](./system-architecture-backup-recovery.md#recovery-controller-continuation)",
+        "Both gates remain required, operation-bound, and fail closed when incomplete or ambiguous.",
+    ],
 )
 
 for path in (

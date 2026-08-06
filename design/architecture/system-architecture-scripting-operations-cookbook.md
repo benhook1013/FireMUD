@@ -35,7 +35,7 @@ When a script or tenant consumes too many resources, adjust settings in this ord
 1. **Per-script cadence and concurrency** – Start with the script’s own knobs in [Scripting Quotas & Operations](./system-architecture-scripting-quotas-and-operations.md#per-script-scheduling-policies): increase `intervalTicks`, reduce `maxConcurrent`, or switch `concurrencyPolicy` from `queue_until_free` to `drop_new` so the script enqueues less often and runs fewer overlapping instances.
 2. **Per-script quota window** – If the script still runs too frequently, tighten `SCRIPT_QUOTA_LIMIT` / `SCRIPT_QUOTA_WINDOW_SECONDS` for that script so abusive patterns are capped before they hit the tick queues.
 3. **Per-tenant tier budgets** – When one tenant’s background work threatens others, adjust that tenant’s budgets per tier (for example, reduce `background` capacity), watching `automation_script_skips_total{reason="tenant_budget_exceeded"}`.
-4. **Cluster-wide ceilings and capacity** – Only after tuning the above should you raise or lower global ceilings such as `AUTOMATION_TICK_MAX_EVENTS` or cluster CPU budgets. Use the metrics in the parent doc to confirm whether you are cluster-bound or script and tenant-bound.
+4. **Cluster-wide ceilings and capacity** – Only after tuning the above should you raise or lower global ceilings such as `AUTOMATION_TICK_MAX_EVENTS` or cluster CPU budgets. Use the metrics in the [Scripting & Automation Observability Contract](./system-architecture-scripting-observability-contract.md), the canonical owner for those definitions, to confirm whether you are cluster-bound or script and tenant-bound.
 
 ### Worked Example: Noisy Background Script vs High-Priority Script
 
@@ -125,7 +125,7 @@ This section summarizes common failure and rollback scenarios and how operators 
     - Adjust per-tenant budgets or cluster ceilings if drops reflect legitimate load rather than misbehaving scripts.
     - For persistent version-related drops, investigate patch status and either fix and republish or explicitly disable the affected scripts.
 
-In all of these cases, `script_event_audit` remains the primary source of truth for Automation-owned handler lifecycle. For the current live diagnostic boundary and target per-command identity contract, use [Command Identity and Live Handoff Boundary](./system-architecture-scripting-rollout-and-rollback.md#command-identity-and-live-handoff-boundary). Metrics from the parent doc’s glossary indicate whether the problem is localized to a script/plugin, a tenant budget, or cluster capacity.
+In all of these cases, `script_event_audit` remains the primary source of truth for Automation-owned handler lifecycle. For the current live diagnostic boundary and target per-command identity contract, use [Command Identity and Live Handoff Boundary](./system-architecture-scripting-rollout-and-rollback.md#command-identity-and-live-handoff-boundary). Metrics from the [Scripting & Automation Observability Contract](./system-architecture-scripting-observability-contract.md) indicate whether the problem is localized to a script/plugin, a tenant budget, or cluster capacity.
 
 ## Rollback & Recovery Cookbook
 
@@ -140,14 +140,16 @@ Illustrative sequence:
 1. **Fence new evaluation**
    - Acquire the Automation & Scripting admission barrier before pausing ticks, unless a future atomic operation acquires both fences together. Set admission to rollback pause mode first, explicitly including external, scheduler, and timer admission, so new triggers cannot refill queues during cleanup; then pause tick execution before repin.
    - Repin the affected game instance(s) to the target `scriptPatchVersion` using Game Session / Logging & Admin control-plane APIs.
+2. **Reconcile schedules and timers**
+   - Immediately after repin, durably reconcile schedules and timers while the admission barrier remains active. Create or confirm target-version schedule identities before retiring displaced entries, carrying due state only when `scheduleDefinitionId`, `playableStateScope`, and `scheduleSemanticsHash` match; do not create firing claims or `scriptEventId` values during reconciliation.
    - Ensure Automation & Scripting rejects triggers for non-`READY` patches and records explicit outcomes (for example `version_unavailable`) rather than silently falling back.
-2. **Drain/purge queued automation work**
+3. **Drain/purge queued automation work**
    - Drain or purge queued script work items and staging entries that carry the rolled-back patch so they cannot enqueue into tick queues after repin.
    - If plugin versions are also being rolled back, disabled, or revoked, cancel pending work for those `pluginVersionId` values before queue purge.
    - Any purge must be scoped and auditable by `tenantId`, `gameInstanceId`, displaced `scriptPatchVersion`, and, when applicable, `pluginVersionId`; a narrower `regionId` is allowed only when the rollback itself is region-scoped. Purges must not require ad-hoc `redis-cli` deletes.
-3. **Enforce execution-time version fencing**
+4. **Enforce execution-time version fencing**
    - Use the [Command Identity and Live Handoff Boundary](./system-architecture-scripting-rollout-and-rollback.md#command-identity-and-live-handoff-boundary) contract for target-state per-command diagnostics and the current live-proto limitation; do not infer missing Trigger Identity or command-level disposition fields during diagnosis.
-4. **Resume in order**
+5. **Resume in order**
    - After schedule reconciliation, cancel/purge, and rollback draining confirm that every stale old-version execution is terminal or fenced and that pre-pause executions and cancelable outbox work for the current rollback-scope `admissionEpoch` have quiesced, call `ResumeTicks` while Automation & Scripting admission remains paused. Set admission to normal only after `ResumeTicks` succeeds; if tick resumption fails, retain rollback-pause admission and the durable rollback state until the failure is converged.
    - If an old-epoch execution reaches persist or handoff checks after rollback pause has advanced the scope `admissionEpoch`, it must fail as `finalOutcome=canceled` with a bounded `finalReason` such as `rollback_epoch_advanced` rather than creating new live work. Operators should expect to see these rows in `script_event_audit` during rollback convergence and draining.
 

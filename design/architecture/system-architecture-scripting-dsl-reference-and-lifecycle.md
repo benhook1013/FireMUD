@@ -389,7 +389,7 @@ Scripts are designed to behave **deterministically for a given game configuratio
   - be implemented in terms of the seeded RNG and tick-based time described above, or
   - be explicitly documented as **non-replayable** and confined to side channels such as logging and metrics where non-determinism does not affect gameplay state or authoritative decisions.
 
-For a gameplay-affecting run, the deterministic input is the complete applicable Trigger Identity, the authoritative `read_snapshot_token`, and the applicable tick context. The token is captured at admission and reused byte-for-byte; it is not silently derived from `scriptEventId`, a later tick, or a fresher read. Together these inputs fully determine the observable behavior of the run. Command-level handoff identity and fan-out rules follow the [cross-service scripting contracts](./system-architecture-scripting-contracts.md#2-script-work-item-vs-tick-command-boundary).
+For a gameplay-affecting run, the immutable deterministic input is the complete applicable Trigger Identity, the event payload, the pinned script graph/configuration, the authoritative `read_snapshot_token`, and the applicable tick context. The token is captured at admission and reused byte-for-byte; it is not silently derived from `scriptEventId`, a later tick, or a fresher read. Together these inputs fully determine the observable behavior of the run. Command-level handoff identity and fan-out rules follow the [cross-service scripting contracts](./system-architecture-scripting-contracts.md#2-script-work-item-vs-tick-command-boundary).
 
 ### Read Consistency Contract
 
