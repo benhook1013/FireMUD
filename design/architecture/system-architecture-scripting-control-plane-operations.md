@@ -133,8 +133,8 @@ Outputs:
 Semantics:
 
 - Read-only.
-- Reports whether any pre-pause executions or already-persisted work remain in the rollback scope after the current `admissionEpoch` took effect.
-- Rollback orchestration uses this API together with cancel/purge hooks to decide when it is safe to resume normal admission.
+- Reports whether any pre-pause executions or already-persisted work remain in the rollback scope after the current `admissionEpoch` took effect. The current implementation counts `EVALUATING` and `HANDOFF_IN_FLIGHT` rows in `activeExecutionCount`, including unresolved stale `EVALUATING` rows; `pendingCancelableWorkItemCount` counts only cancelable `PENDING_EVALUATION` rows.
+- Rollback orchestration uses this API together with cancel/purge hooks to decide when it is safe to resume normal admission. Drain is fail-closed: both counts must be zero, so an unresolved stale `EVALUATING` row cannot be treated as drained.
 
 ### Rollback Convergence Readiness (Required)
 
@@ -160,7 +160,7 @@ Outputs:
 Semantics:
 
 - Read-only.
-- Reports the latest pin observation used by admission and scheduler logic.
+- Reports the latest pin observation used by admission and scheduler logic. For rollback convergence, the observation is an acknowledgment only when the expected patch and `controlPlaneRequestId` are present, `isProjectionStale=false`, and `projectionLagMs` is inside the configured freshness bound; a stale stored observation remains diagnostic data, not convergence proof. The freshness bound is the configured `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` value from [Automation & Scripting Service Configuration](./microservices/automation-scripting-service/configuration.md).
 - Reports only pin observation and projection freshness; it does not return an admission decision, `finalStage`, `finalOutcome`, `finalReason`, or a handler outcome.
 
 #### `GetGameSessionPinConvergence`

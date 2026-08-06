@@ -282,6 +282,17 @@ REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS = {
             "denied_by_pending_deletion_credential_contract"
         ),
     },
+    "security_lock_export_scoped": {
+        "target_tenant_generation": False,
+        "generation_behavior": "security_lock_export_credential_only",
+        "required_authority": {
+            "security_lock_export_credential_registry",
+            "security_lock_recovery_state",
+        },
+        "target_tenant_generation_advance_behavior": (
+            "remains_bound_to_exact_recovery_export_lifecycle"
+        ),
+    },
 }
 REQUIRED_TENANT_AUTHORITY_CLASSIFICATIONS = {
     "tenant_regular",
@@ -294,6 +305,7 @@ NO_TARGET_TENANT_CLASSES_WITHOUT_ROUTE_SPECIFIC_TARGET_AUTHORITY = {
     "player_bootstrap_tenant",
     "pre_tenant_discovery",
     "public_production_onboarding",
+    "security_lock_export_scoped",
 }
 ROUTES_WITH_EXPLICIT_TARGET_TENANT_AUTHORITY = {
     ("account-service", "IssueConnectToken"),
@@ -302,6 +314,7 @@ PROFILE_ROUTES = (
     ("account-service", "GET /tenants/{tenantId}/profiles/{accountId}"),
     ("account-service", "PUT /tenants/{tenantId}/profiles/{accountId}"),
 )
+PROFILE_TARGET_SUBJECT_BINDING = "exact_caller_account_id_for_every_role"
 PRIVILEGED_OPERATOR_ROLE_ASSURANCE = "privileged_control_when_global_role"
 PRIVILEGED_CONTROL_VALUES = {"required", "not_required", "establishes_window"}
 AUTHORITY_GENERATION_VALUES = {"required", "omitted", "target_tenant_generation"}
@@ -2418,34 +2431,43 @@ def validate_profile_authority_routes(
     cardinality_errors: set[str] | None = None,
 ) -> None:
     for service, route_name in PROFILE_ROUTES:
-        route = resolve_unique_route(
-            routes,
-            service,
-            route_name,
-            errors,
-            cardinality_errors,
-        )
-        if route is None:
-            continue
-        label = f"account-service {route_name}"
-        if route.get("auth_path") != "control_ui_plus_current_tenant_role":
-            errors.append(
-                f"{label} must declare auth_path control_ui_plus_current_tenant_role"
+        matches = matching_routes(routes, service, route_name)
+        if not matches:
+            resolve_unique_route(
+                routes,
+                service,
+                route_name,
+                errors,
+                cardinality_errors,
             )
-        if route.get("method_policy") != "exact_declared_route":
-            errors.append(f"{label} must declare method_policy exact_declared_route")
-        if route.get("tenant_billing_authority_generation_applies") is not True:
-            errors.append(f"{label} must apply tenant billing authority generation")
-        if route.get("membership_authority_generation_applies") is not True:
-            errors.append(f"{label} must apply membership authority generation")
-        checks = route_live_checks(route, label, errors, live_checks_cache)
-        for required_check in (
-            "membership",
-            "membership_generation",
-            "tenant_generation",
-        ):
-            if required_check not in checks:
-                errors.append(f"{label} must require live check {required_check}")
+            continue
+        for route in matches:
+            label = f"account-service {route_name}"
+            if route.get("auth_path") != "control_ui_plus_current_tenant_role":
+                errors.append(
+                    f"{label} must declare auth_path control_ui_plus_current_tenant_role"
+                )
+            if route.get("method_policy") != "exact_declared_route":
+                errors.append(f"{label} must declare method_policy exact_declared_route")
+            if "self_only_roles" in route:
+                errors.append(f"{label} must not declare self_only_roles")
+            if route.get("target_subject_binding") != PROFILE_TARGET_SUBJECT_BINDING:
+                errors.append(
+                    f"{label} must declare target_subject_binding "
+                    f"{PROFILE_TARGET_SUBJECT_BINDING}"
+                )
+            if route.get("tenant_billing_authority_generation_applies") is not True:
+                errors.append(f"{label} must apply tenant billing authority generation")
+            if route.get("membership_authority_generation_applies") is not True:
+                errors.append(f"{label} must apply membership authority generation")
+            checks = route_live_checks(route, label, errors, live_checks_cache)
+            for required_check in (
+                "membership",
+                "membership_generation",
+                "tenant_generation",
+            ):
+                if required_check not in checks:
+                    errors.append(f"{label} must require live check {required_check}")
 
 
 def validate_idempotency_contract(

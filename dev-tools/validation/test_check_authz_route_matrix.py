@@ -1021,6 +1021,40 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
             self.assertEqual("forbidden", route["platform_admin_override"])
 
+    def test_profile_routes_reject_role_subject_bypasses(self):
+        mutations = (
+            (
+                "self_only_roles",
+                lambda route: route.__setitem__("self_only_roles", ["tenantAdmin"]),
+                "must not declare self_only_roles",
+            ),
+            (
+                "target_subject_binding",
+                lambda route: route.__setitem__(
+                    "target_subject_binding", "explicit_target_account_id"
+                ),
+                "must declare target_subject_binding exact_caller_account_id_for_every_role",
+            ),
+        )
+        for service, route_name in self.validator.PROFILE_ROUTES:
+            for mutation_name, mutate, expected_error in mutations:
+                with self.subTest(route=route_name, mutation=mutation_name):
+                    document = self.validator.yaml.safe_load(
+                        MATRIX.read_text(encoding="utf-8")
+                    )
+                    matching = self.validator.matching_routes(
+                        document["routes"], service, route_name
+                    )
+                    self.assertTrue(matching)
+                    for route in matching:
+                        mutate(route)
+
+                    errors = validate_document(self.validator, document)
+                    self.assertIn(
+                        f"account-service {route_name} {expected_error}",
+                        errors,
+                    )
+
     def test_account_subject_routes_use_explicit_self_service_and_override_branches(
         self,
     ):

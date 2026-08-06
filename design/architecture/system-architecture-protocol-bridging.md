@@ -102,7 +102,8 @@ Do not configure both modes on one public path, and do not treat an edge-termina
 
 - Select one mode and record the public listener, certificate owner, and internal target in deployment evidence.
 - Prove the selected TLS handshake and plaintext rejection at the public endpoint.
-- In both modes, prove Proxy -> Gateway uses the internal `wss://` mTLS listener and that the bridged Telnet client reaches the Authentication-owned `WORLDS -> LOGIN -> authenticated REALMS -> conditional JOIN -> realm-scoped CHARS/character creation -> PLAY -> LOOK` flow. Existing members may use the current abbreviated `LOGIN -> PLAY -> LOOK` compatibility path only after the receiving service confirms the current membership and character gates.
+- In both modes, prove Proxy -> Gateway uses the internal `wss://` mTLS listener and that the bridged Telnet client reaches the Authentication-owned target `WORLDS -> LOGIN -> authenticated REALMS -> conditional JOIN -> realm-scoped CHARS/character creation -> PLAY -> LOOK` flow.
+- Current compatibility behavior only: Existing members may use the abbreviated `LOGIN -> PLAY -> LOOK` path after the receiving service confirms the current membership and character gates. This is not a target checklist exception.
 
 The proxy establishes the Proxy → Gateway gameplay WebSocket lazily for each Telnet connection:
 

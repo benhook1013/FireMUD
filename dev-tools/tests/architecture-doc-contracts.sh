@@ -654,7 +654,49 @@ require_contains(
 operations_text = (root / "design/architecture/system-architecture-redis-operations.md").read_text(encoding="utf-8")
 
 
+def strip_hidden_markdown_content(text):
+    visible_lines = []
+    in_fenced_block = False
+    fence_marker = None
+    in_html_comment = False
+    in_raw_html_block = False
+    raw_html_block_kind = None
+
+    for line_number, line in enumerate(text.splitlines(keepends=True), start=1):
+        if in_fenced_block:
+            visible_lines.append(line)
+            in_fenced_block, fence_marker, _ = advance_fenced_block_state(
+                line,
+                in_fenced_block,
+                fence_marker,
+                None,
+                line_number,
+            )
+            continue
+
+        line, in_html_comment = strip_html_comments(line, in_html_comment)
+        line, in_raw_html_block, raw_html_block_kind = strip_raw_html_block(
+            line,
+            in_raw_html_block,
+            raw_html_block_kind,
+        )
+        if in_raw_html_block or not line:
+            continue
+
+        visible_lines.append(line)
+        in_fenced_block, fence_marker, _ = advance_fenced_block_state(
+            line,
+            in_fenced_block,
+            fence_marker,
+            None,
+            line_number,
+        )
+
+    return "".join(visible_lines)
+
+
 def extract_unique_markdown_section(text, heading, source_label):
+    text = strip_hidden_markdown_content(text)
     heading_pattern = re.compile(rf"^## {re.escape(heading)}[ \t]*(?:\r?\n)?$")
     level_two_heading = re.compile(r"^## ")
     sections = []
@@ -690,12 +732,18 @@ def extract_unique_markdown_section(text, heading, source_label):
     return sections[0]
 
 
-def require_section_contains(path, heading, snippets):
-    text = (root / path).read_text(encoding="utf-8")
-    section = extract_unique_markdown_section(text, heading, path)
+def require_section_contains_text(text, heading, snippets, source_label):
+    section = extract_unique_markdown_section(text, heading, source_label)
     missing = [snippet for snippet in snippets if snippet not in section]
     if missing:
-        raise SystemExit(f"{path}: {heading!r} section missing required snippets: {missing}")
+        raise SystemExit(
+            f"{source_label}: {heading!r} section missing required snippets: {missing}"
+        )
+
+
+def require_section_contains(path, heading, snippets):
+    text = (root / path).read_text(encoding="utf-8")
+    require_section_contains_text(text, heading, snippets, path)
 
 
 fenced_heading_fixture = (
@@ -715,6 +763,43 @@ fenced_heading_section = extract_unique_markdown_section(
 )
 if "## Not a real section heading" not in fenced_heading_section or "after\n" not in fenced_heading_section:
     raise SystemExit("fenced heading fixture was incorrectly treated as a section boundary")
+
+hidden_required_snippet_fixture = (
+    "## Hidden required snippet fixture\n"
+    "<!-- hidden comment snippet -->\n"
+    "<div>\n"
+    "hidden raw HTML snippet\n"
+    "</div>\n"
+)
+try:
+    require_section_contains_text(
+        hidden_required_snippet_fixture,
+        "Hidden required snippet fixture",
+        ["hidden comment snippet", "hidden raw HTML snippet"],
+        "hidden required snippet fixture",
+    )
+except SystemExit as error:
+    if "missing required snippets" not in str(error):
+        raise SystemExit(f"unexpected hidden snippet fixture diagnostic: {error}")
+else:
+    raise SystemExit("hidden required snippet fixture was incorrectly accepted")
+
+hidden_heading_fixture = (
+    "## Hidden heading fixture\n"
+    "before\n"
+    "<!--\n"
+    "## Hidden comment heading\n"
+    "-->\n"
+    "after\n"
+    "## Following section\n"
+)
+hidden_heading_section = extract_unique_markdown_section(
+    hidden_heading_fixture,
+    "Hidden heading fixture",
+    "hidden heading fixture",
+)
+if "## Hidden comment heading" in hidden_heading_section or "after\n" not in hidden_heading_section:
+    raise SystemExit("hidden heading fixture was not removed before section extraction")
 
 canonical_reset_text = extract_unique_markdown_section(
     operations_text,
@@ -807,6 +892,11 @@ require_section_contains(
     [
         "[Backup & Disaster Recovery](./system-architecture-backup-recovery.md#recovery-controller-continuation)",
         "Both gates remain required, operation-bound, and fail closed when incomplete or ambiguous.",
+        "Any smoke tick exercised by the reset workflow is synthetic maintenance traffic only.",
+        "must not authorize player ingress or real `tickId=0` admission",
+        "Reset-local release consequences remain fail-closed",
+        "The traffic fence remains active until the recovery owner's canonical lifecycle has complete apply-and-readback evidence",
+        "This document does not define the controller's phases or continuation calls.",
     ],
 )
 
@@ -831,16 +921,6 @@ require_contains(
     ],
 )
 
-require_contains(
-    "design/architecture/system-architecture-redis-reset-and-recovery.md",
-    [
-        "Any smoke tick exercised by the reset workflow is synthetic maintenance traffic only.",
-        "must not authorize player ingress or real `tickId=0` admission",
-        "Reset-local release consequences remain fail-closed",
-        "The traffic fence remains active until the recovery owner's canonical lifecycle has complete apply-and-readback evidence",
-        "This document does not define the controller's phases or continuation calls.",
-    ],
-)
 print("architecture doc contracts passed")
 PY
 

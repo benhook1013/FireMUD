@@ -81,6 +81,7 @@ token_profiles:
     issuer: firemud-account-service
     audience: account-service
 auth_path_vocabulary:
+  - control_ui
   - control_ui_plus_current_role_and_role_appropriate_assurance
   - control_ui_plus_current_tenant_role
   - control_ui_plus_recent_reauthentication_and_independent_totp
@@ -95,6 +96,7 @@ auth_path_vocabulary:
   - gameplay_connect_cookie_revoke
   - pending_deletion_access
   - player_bootstrap
+  - security_lock_export
 internal_workload_rules:
   caller_constraints: all_declared_constraints_must_pass
   caller_policy_alternatives: disjunctive
@@ -207,6 +209,16 @@ tenant_generation_policy:
       negative_proof:
         required:
           - pending_deletion_route_denied_after_target_tenant_generation_advance
+    security_lock_export_scoped:
+      target_tenant_generation: false
+      generation_behavior: security_lock_export_credential_only
+      issuer_authority_generation_applies: false
+      account_authority_generation_applies: false
+      tenant_billing_authority_generation_applies: false
+      membership_authority_generation_applies: false
+      required_authority: [security_lock_export_credential_registry, security_lock_recovery_state]
+      contract_justification: The Account-issued security-lock-export credential is bound to one recovered global account and export lifecycle; ordinary issuer, account, tenant, and membership generations are not authority inputs while the account remains security-locked.
+      target_tenant_generation_advance_behavior: remains_bound_to_exact_recovery_export_lifecycle
   negative_proof:
     tenant_authority_classifications: [tenant_regular, cross_tenant_data_bearing]
     required:
@@ -315,6 +327,9 @@ required_live_check_vocabulary:
   - pending_deletion_credential_registry
   - pending_deletion_workflow_state
   - pending_deletion_action_family
+  - security_lock_export_credential_registry
+  - security_lock_recovery_state
+  - security_lock_export_action_family
 implementation_status:
   known_drift:
     - explicit_public_production_JOIN_is_not_implemented; current_PLAY_returns_JOIN_REQUIRED_for_missing_public_production_membership_and_WORLD_ACCESS_DENIED_for_missing_non_public_membership; connect_token_issuance_requires_existing_membership_and_never_creates_it; connect_token_membership_authority_generation_reread_remains_unimplemented
@@ -336,7 +351,27 @@ classifications:
   - cross_tenant_data_bearing
   - internal_workload
   - pending_deletion_scoped
+  - security_lock_export_scoped
 classification_rules:
+  security_lock_export_scoped:
+    required_credential:
+      kind: opaque
+      profile: security-lock-export
+      registry: account_security_lock_export_registry
+      state: ACTIVE
+    subject_binding: [accountId, recoveryCaseId]
+    export_operation_binding: exact_account_and_export_job
+    action_family_binding: exact_route_action_family
+    authority_generations:
+      issuer: false
+      account: false
+      tenant: false
+      membership: false
+    required_live_checks: [security_lock_export_credential_registry, security_lock_recovery_state, security_lock_export_action_family]
+    allowed_route_actions: [export_initiate, export_status, export_content]
+    forbidden_route_actions: [login, bootstrap, connect_token, tenant, purchase, gameplay, deletion_cancel, billing_settlement]
+    invalid_or_revoked_outcome: AUTH_SESSION_REVOKED
+    dependency_unavailable_outcome: AUTH_UNAVAILABLE
   pending_deletion_scoped:
     required_credential:
       kind: opaque
@@ -1571,6 +1606,60 @@ routes:
   - service: account-service
     route: POST /accounts/{accountId}/exports
     scope: account
+    applicability:
+      account_state: active
+    classification: account_scoped
+    route_status: target_not_currently_routable
+    auth_path: control_ui
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    subject_binding: caller_account_id
+    required_fields: [request_id]
+    required_live_checks: [issuer_generation, account_generation, export_availability]
+    action_family: export_initiate
+    mutation_contract: create_or_idempotently_replay_bounded_full_subject_export
+    idempotency_contract:
+      key: request_id
+      digest: account_computed_versioned_request_digest
+      exact_retry: returns_existing_export_operation
+      changed_digest: IDEMPOTENCY_CONFLICT
+    response_profile: asynchronous_export_job_identity
+    canonical_errors:
+      any_of: [AUTH_UNAVAILABLE, IDEMPOTENCY_CONFLICT]
+  - service: account-service
+    route: POST /accounts/{accountId}/exports
+    scope: account
+    applicability:
+      account_state: security_locked
+    classification: security_lock_export_scoped
+    route_status: target_not_currently_routable
+    auth_path: security_lock_export
+    accepted_token_profiles: []
+    accepted_credentials: [security-lock-export]
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    subject_binding: security_lock_export_credential_account_id
+    action_family: export_initiate
+    required_fields: [request_id]
+    required_live_checks: [security_lock_export_credential_registry, security_lock_recovery_state, security_lock_export_action_family, export_availability]
+    credential_use: single_use_for_export_initiation
+    mutation_contract: create_or_idempotently_replay_bounded_full_subject_export
+    idempotency_contract:
+      key: request_id
+      digest: account_computed_versioned_request_digest
+      exact_retry: returns_existing_export_operation
+      changed_digest: IDEMPOTENCY_CONFLICT
+    response_profile: asynchronous_export_job_identity
+    canonical_errors:
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE, IDEMPOTENCY_CONFLICT]
+  - service: account-service
+    route: POST /accounts/{accountId}/exports
+    scope: account
+    applicability:
+      account_state: deactivated_pending_delete
     classification: pending_deletion_scoped
     route_status: target_not_currently_routable
     auth_path: pending_deletion_access
@@ -1586,14 +1675,70 @@ routes:
     membership_authority_generation_applies: false
     pending_deletion_workflow_binding: required
     action_family: export_initiate
+    required_fields: [request_id]
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry]
     mutation_contract: create_or_idempotently_replay_bounded_full_subject_export
+    idempotency_contract:
+      key: request_id
+      digest: account_computed_versioned_request_digest
+      exact_retry: returns_existing_export_operation
+      changed_digest: IDEMPOTENCY_CONFLICT
     response_profile: asynchronous_export_job_identity
+    canonical_errors:
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE, IDEMPOTENCY_CONFLICT]
+  - service: account-service
+    route: GET /accounts/{accountId}/exports/{exportId}
+    scope: account
+    applicability:
+      account_state: active
+    classification: account_scoped
+    route_status: target_not_currently_routable
+    auth_path: control_ui
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    subject_binding: caller_account_id
+    export_operation_binding:
+      source: authenticated_account_and_export_registry
+      required: [accountId, exportId]
+      comparison: exact
+      mismatch: PERMISSION_DENIED
+    action_family: export_status
+    required_live_checks: [issuer_generation, account_generation]
+    response_profile: asynchronous_versioned_cross_owner_export_manifest
+    canonical_errors:
+      any_of: [AUTH_UNAVAILABLE, PERMISSION_DENIED]
+  - service: account-service
+    route: GET /accounts/{accountId}/exports/{exportId}
+    scope: account
+    applicability:
+      account_state: security_locked
+    classification: security_lock_export_scoped
+    route_status: target_not_currently_routable
+    auth_path: security_lock_export
+    accepted_token_profiles: []
+    accepted_credentials: [security-lock-export]
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    subject_binding: security_lock_export_credential_account_id
+    export_operation_binding:
+      source: security_lock_export_credential_and_export_registry
+      required: [accountId, recoveryCaseId, exportId]
+      comparison: exact
+      mismatch: AUTH_SESSION_REVOKED
+    action_family: export_status
+    required_live_checks: [security_lock_export_credential_registry, security_lock_recovery_state, security_lock_export_action_family]
+    credential_use: bounded_expiring_status_access
+    response_profile: asynchronous_versioned_cross_owner_export_manifest
     canonical_errors:
       any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
   - service: account-service
     route: GET /accounts/{accountId}/exports/{exportId}
     scope: account
+    applicability:
+      account_state: deactivated_pending_delete
     classification: pending_deletion_scoped
     route_status: target_not_currently_routable
     auth_path: pending_deletion_access
@@ -1621,6 +1766,56 @@ routes:
   - service: account-service
     route: GET /accounts/{accountId}/exports/{exportId}/content
     scope: account
+    applicability:
+      account_state: active
+    classification: account_scoped
+    route_status: target_not_currently_routable
+    auth_path: control_ui
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    subject_binding: caller_account_id
+    export_operation_binding:
+      source: authenticated_account_and_export_registry
+      required: [accountId, exportId]
+      comparison: exact_completed_operation
+      mismatch: PERMISSION_DENIED
+    action_family: export_content
+    required_live_checks: [issuer_generation, account_generation, export_availability]
+    response_profile: completed_export_artifact_only
+    canonical_errors:
+      any_of: [AUTH_UNAVAILABLE, PERMISSION_DENIED]
+  - service: account-service
+    route: GET /accounts/{accountId}/exports/{exportId}/content
+    scope: account
+    applicability:
+      account_state: security_locked
+    classification: security_lock_export_scoped
+    route_status: target_not_currently_routable
+    auth_path: security_lock_export
+    accepted_token_profiles: []
+    accepted_credentials: [security-lock-export]
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    subject_binding: security_lock_export_credential_account_id
+    export_operation_binding:
+      source: security_lock_export_credential_and_export_registry
+      required: [accountId, recoveryCaseId, exportId]
+      comparison: exact_completed_operation
+      mismatch: AUTH_SESSION_REVOKED
+    action_family: export_content
+    required_live_checks: [security_lock_export_credential_registry, security_lock_recovery_state, security_lock_export_action_family, export_availability]
+    credential_use: bounded_expiring_content_access
+    response_profile: completed_export_artifact_only
+    canonical_errors:
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
+  - service: account-service
+    route: GET /accounts/{accountId}/exports/{exportId}/content
+    scope: account
+    applicability:
+      account_state: deactivated_pending_delete
     classification: pending_deletion_scoped
     route_status: target_not_currently_routable
     auth_path: pending_deletion_access
