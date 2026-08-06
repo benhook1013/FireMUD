@@ -351,7 +351,7 @@ classification_rules:
       tenant: false
       membership: false
     required_live_checks: [pending_deletion_credential_registry, pending_deletion_workflow_state, pending_deletion_action_family]
-    allowed_route_actions: [status, cancel, full_subject_export, billing_settlement]
+    allowed_route_actions: [deletion_status, deletion_cancel, export_initiate, export_status, export_content, billing_settlement]
     forbidden_route_actions: [login, bootstrap, connect_token, tenant, purchase, gameplay]
     invalid_or_revoked_outcome: AUTH_SESSION_REVOKED
     dependency_unavailable_outcome: AUTH_UNAVAILABLE
@@ -489,7 +489,7 @@ pending_deletion_contract:
   credential: pending-deletion-access
   registry: account-owned_server-side_pending_deletion_credential_registry
   binding: [account_id, deletion_workflow_id, deletion_workflow_generation, action_family, issued_at, expires_at]
-  allowed_actions: [status, cancel, export, necessary_billing_settlement]
+  allowed_actions: [deletion_status, deletion_cancel, export_initiate, export_status, export_content, billing_settlement]
   normal_authority: rejected
   rejection:
     invalid_expired_or_revoked: AUTH_SESSION_REVOKED
@@ -1514,7 +1514,7 @@ routes:
     http_route: POST /accounts/{accountId}/external
     scope: account
     classification: account_scoped
-    route_status: current_openapi_operator_surface
+    route_status: target_not_currently_routable
     subject_binding: caller_account_id
     platform_admin_override: forbidden
     accepted_token_profiles: [control-ui]
@@ -1525,7 +1525,7 @@ routes:
     mutation_contract: verified_provider_identity_link_with_recent_reauthentication
     implementation_status:
       known_drift:
-        - Current route accepts tenant-scoped caller-asserted provider identity without provider callback verification; the target route is global-account scoped and must not grant tenant-role or platformAdmin override access.
+        - Current route code accepts tenant-scoped caller-asserted provider identity without provider callback verification; the route must remain unexposed until the target global-account contract is implemented and proven.
   - service: account-service
     route: GET /accounts/{accountId}/deletion
     scope: account
@@ -1543,6 +1543,7 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
     pending_deletion_workflow_binding: required
+    action_family: deletion_status
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry]
     response_profile: deletion_status_only
     canonical_errors:
@@ -1564,12 +1565,13 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
     pending_deletion_workflow_binding: required
+    action_family: deletion_cancel
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, cancellation_window]
     mutation_contract: cancel_deletion_revoke_pending_access_then_restore_normal_generation
     canonical_errors:
       any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
   - service: account-service
-    route: GET /accounts/{accountId}/deletion/export
+    route: POST /accounts/{accountId}/exports
     scope: account
     classification: pending_deletion_scoped
     route_status: target_not_currently_routable
@@ -1585,8 +1587,54 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
     pending_deletion_workflow_binding: required
+    action_family: export_initiate
+    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry]
+    mutation_contract: create_or_idempotently_replay_bounded_full_subject_export
+    response_profile: asynchronous_export_job_identity
+    canonical_errors:
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
+  - service: account-service
+    route: GET /accounts/{accountId}/exports/{exportId}
+    scope: account
+    classification: pending_deletion_scoped
+    route_status: target_not_currently_routable
+    auth_path: pending_deletion_access
+    accepted_token_profiles: []
+    accepted_credentials: [pending-deletion-access]
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    subject_binding: pending_deletion_credential_account_id
+    issuer_authority_generation_applies: false
+    account_authority_generation_applies: false
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
+    pending_deletion_workflow_binding: required
+    action_family: export_status
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry]
     response_profile: asynchronous_versioned_cross_owner_export_manifest
+    canonical_errors:
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
+  - service: account-service
+    route: GET /accounts/{accountId}/exports/{exportId}/content
+    scope: account
+    classification: pending_deletion_scoped
+    route_status: target_not_currently_routable
+    auth_path: pending_deletion_access
+    accepted_token_profiles: []
+    accepted_credentials: [pending-deletion-access]
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    subject_binding: pending_deletion_credential_account_id
+    issuer_authority_generation_applies: false
+    account_authority_generation_applies: false
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
+    pending_deletion_workflow_binding: required
+    action_family: export_content
+    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, export_availability]
+    response_profile: completed_export_artifact_only
     canonical_errors:
       any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
   - service: account-service
@@ -1606,6 +1654,7 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
     pending_deletion_workflow_binding: required
+    action_family: billing_settlement
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, settlement_scope]
     response_profile: necessary_billing_settlement_only
     canonical_errors:

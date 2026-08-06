@@ -4,7 +4,7 @@ This document defines Game Session transport framing and service-level protocol 
 
 ## Implementation Status
 
-Unless explicitly described as current behavior, this document defines the target protocol. The target requires explicit `JOIN`/`Join & Play` for first public-production entry, while an existing durable `membershipLifecycleState=ACTIVE` membership permits direct `PLAY` and a grant-backed non-public path may proceed only when that same `ACTIVE` membership already exists. A grant never creates or substitutes membership. `JOIN` and first-party `Join & Play` are not yet implemented as explicit commands/actions. Current text `PLAY` returns `JOIN_REQUIRED` for eligible missing or `INACTIVE` public-production membership without creating or restoring membership, and connect-token issuance now requires existing membership and returns `JOIN_REQUIRED` on the same eligible public-production path. That current result is fail-closed and non-actionable while `JOIN` is unimplemented; it is not proof that target join recovery is available. Current non-public missing or non-`ACTIVE` membership remains `WORLD_ACCESS_DENIED`; target-only `NON_PUBLIC_ENROLLMENT_REQUIRED` is defined separately. The missing membership-authority-generation reread at connect-token issuance remains a gap.
+Unless explicitly described as current behavior, this document defines the target protocol. The target direct-text flow is public `WORLDS` discovery -> credential-bearing `LOGIN` -> authenticated `REALMS` -> conditional `JOIN` -> conditional `CHARS`/character creation -> `PLAY`. It requires explicit `JOIN`/`Join & Play` for first public-production entry, while an existing durable `membershipLifecycleState=ACTIVE` membership permits direct `PLAY` and a grant-backed non-public path may proceed only when that same `ACTIVE` membership already exists. A grant never creates or substitutes membership. `JOIN` and first-party `Join & Play` are not yet implemented as explicit commands/actions. Current text `PLAY` returns `JOIN_REQUIRED` for eligible missing or `INACTIVE` public-production membership without creating or restoring membership, and connect-token issuance now requires existing membership and returns `JOIN_REQUIRED` on the same eligible public-production path. That current result is fail-closed and non-actionable while `JOIN` is unimplemented; it is not proof that target join recovery is available. Current non-public missing or non-`ACTIVE` membership remains `WORLD_ACCESS_DENIED`; target-only `NON_PUBLIC_ENROLLMENT_REQUIRED` is defined separately. The missing membership-authority-generation reread at connect-token issuance remains a gap.
 
 ## Minimal Text Command Protocol
 
@@ -15,7 +15,7 @@ The canonical player-facing paths are:
 - Telnet via TCP Proxy and Gateway
 - first-party web via `/ws/game/**` through Gateway
 
-Direct generic WebSocket access to Game Session remains useful as an internal/test seam, but it is not a separate public authentication path. Public clients use Gateway `/ws/game/**`, obtain a connect token through the bootstrap/authentication control plane, and use the canonical carrier split: first-party browser/mobile/server clients use the protected `Firemud-Connect-Token` cookie, while only an explicitly classified non-first-party generic WebSocket client may use the dedicated handshake header. An unclassified generic WebSocket header is rejected. Real end-to-end client-path verification should prefer Gateway or TCP Proxy rather than relying only on direct Game Session WebSocket coverage.
+Direct generic WebSocket access to Game Session remains useful as an internal/test seam, but it is not a separate public authentication path. Public clients use Gateway `/ws/game/**`: `POST /auth/player-bootstrap` issues the tenant-free bootstrap credential, `/auth/bootstrap/*` performs authenticated discovery/actions, and `POST /auth/connect-token` sets the one-use token cookie. First-party browser, mobile-browser, and first-party native-mobile clients using a protected cookie jar use the `Firemud-Connect-Token` cookie, while only an explicitly classified target-only non-first-party/public non-browser route may use the dedicated handshake header. An unclassified generic WebSocket header is rejected. Real end-to-end client-path verification should prefer Gateway or TCP Proxy rather than relying only on direct Game Session WebSocket coverage.
 
 At the protocol level, commands are split into two groups:
 
@@ -28,15 +28,19 @@ The player-facing protocol is also stage-aware:
 - **Logged in, not yet playing** – existing members with confirmed `membershipLifecycleState=ACTIVE` durable membership can issue `PLAY` directly. Target behavior requires a first-time public-production player to issue `JOIN` first. In the current runtime, `JOIN` is unavailable and `PLAY` without the required public-production membership returns non-actionable `JOIN_REQUIRED` without creating membership; non-public missing or non-`ACTIVE` membership returns `WORLD_ACCESS_DENIED`. Players may use lobby helper commands such as `REALMS` and `CHARS` to disambiguate selection.
 - **In-game** – gameplay commands such as `LOOK`, `SAY`, and movement are available.
 
-The target-only happy path for a human player should therefore be:
+The target-only happy path for a direct-text human player should therefore be:
 
 ```text
+WORLDS
 LOGIN <email> [secret]
-JOIN <world> (first public-production entry only)
+REALMS <world>
+JOIN <world> (only when public-production membership is missing or INACTIVE)
+CHARS <world> [realm] (only when a valid selected character is not already resolved)
+[character creation] (only when allowed and no valid character exists)
 PLAY <world> [realm] [character]
 ```
 
-For direct text/Telnet, `WORLDS` is a fresh discovery step and `REALMS` / `CHARS` are fresh discovery or selection steps as needed on that transport; the target text flow is `LOGIN` -> conditional `JOIN` -> `PLAY`. A direct text client must not reuse a first-party WebSocket discovery snapshot. The discovery-snapshot shortcut is restricted to the first-party token-backed WebSocket path. The current proxy still bootstraps a hidden default route and does not enforce `WORLDS` as a prerequisite, so this target requirement remains an implementation and proof gap.
+For direct text/Telnet, `WORLDS` is the fresh public discovery step before `LOGIN`, and `REALMS` / `CHARS` are fresh authenticated discovery or selection steps as needed on that transport. The target text flow is `WORLDS` -> `LOGIN` -> `REALMS` -> conditional `JOIN` -> conditional `CHARS`/character creation -> `PLAY`. A direct text client must not reuse a first-party WebSocket discovery snapshot. The selected-character discovery shortcut is restricted to the first-party token-backed WebSocket path; direct text may omit a separate `CHARS` round-trip only when fresh transport-local resolution supplies one valid current character. The current proxy still bootstraps a hidden default route and does not enforce `WORLDS` as a prerequisite, so this target requirement remains an implementation and proof gap.
 
 | Command | Purpose | Example |
 | ------- | ------- | ------- |
@@ -47,7 +51,7 @@ For direct text/Telnet, `WORLDS` is a fresh discovery step and `REALMS` / `CHARS
 | `REALMS <world>` | Lists visible realms for a world, where `<world>` is the stable selector or menu index returned by `WORLDS`. The default public production realm may be visible before membership exists; additional realms require explicit grants. | `REALMS demo` |
 | `JOIN <world>` | **Target-only; not currently implemented.** Explicitly joins the selected world's public production realm through the Account-owned idempotent membership writer. The resulting membership is durable and powers later return discovery. | `JOIN demo` |
 | `CHARS <world> [realm]` | Lists characters for a world and optional realm from the authoritative character store, filtered to `{accountId, tenantId, gameInstanceId}` ownership. | `CHARS demo production` |
-| `PLAY <world> [realm] [character]` | Binds the authenticated connection to a world, optional realm, and optional character after `LOGIN`, enforcing tenant authorization, realm routing, and entitlements. Players may omit `[realm]` or `[character]` when the resolved choice is unambiguous. A first-time public player must complete `JOIN <world>` first; a grant-backed non-public path may proceed only when its required durable `membershipLifecycleState=ACTIVE` membership already exists. `PLAY` returns `JOIN_REQUIRED` for the current eligible public-production predicate and never creates or substitutes membership implicitly. | `PLAY demo production Sora` |
+| `PLAY <world> [realm] [character]` | Binds the authenticated connection to a world, optional realm, and optional character after the discovery, `LOGIN`, and conditional membership/character gates, enforcing tenant authorization, realm routing, and entitlements. Players may omit `[realm]` or `[character]` only when the fresh target resolution is unambiguous; direct text never reuses the first-party WebSocket discovery snapshot. A first-time public player must complete `JOIN <world>` first; a grant-backed non-public path may proceed only when its required durable `membershipLifecycleState=ACTIVE` membership already exists. `PLAY` returns `JOIN_REQUIRED` for the current eligible public-production predicate and never creates or substitutes membership implicitly. | `PLAY demo production Sora` |
 | `LOOK` | Requests the current room snapshot aggregated from Game Logic plus World and Entity services. | `LOOK` |
 | `INVENTORY` / `INV HERE` | Lists carried items or the current room-ground item holder. The command is rendered by Game Session, but item state is read through Game Logic and Entity Management. | `INV HERE` |
 | `GET <item>` / `DROP <item>` | Moves a visible room-ground item into carried inventory, or a carried item into the current room. Game Session forwards the raw selector and quantity to Game Logic; Game Logic resolves names, visible refs, container refs, and stack refs before Entity Management mutates state. | `GET torch1` |
@@ -76,7 +80,7 @@ Current `JOIN` availability and the membership-authority-generation gap are reco
 
 Telnet and WebSocket clients share the line-based syntax, but transport context determines which `LOGIN` form is valid:
 
-- For Telnet and other non-WebSocket text clients, `LOGIN <email>` requests a verified-email code and `LOGIN <email> <secret>` performs an immediate password-or-code authentication attempt. Bare `LOGIN` does not start an interactive prompt.
+- For Telnet and other non-WebSocket text clients, fresh public `WORLDS` discovery precedes `LOGIN`; `LOGIN <email>` requests a verified-email code and `LOGIN <email> <secret>` performs an immediate password-or-code authentication attempt. Bare `LOGIN` does not start an interactive prompt.
 - For public non-proxy `/ws/game/**` sessions that already carry a validated Gateway connect context, bare `LOGIN` completes gameplay authentication from the pre-established bootstrap identity instead of prompting for credentials. First-party browser/mobile/server clients use the protected connect-token cookie; only explicitly classified non-first-party generic WebSocket clients use the dedicated connect-token handshake header. This bootstrap identity must not quietly reintroduce gameplay binding into `LOGIN`; `PLAY` remains the sole gameplay-admission and gameplay-scope binding step.
 - The same `OK <COMMAND>` and `ERROR <CODE> <message>` response format applies to all transports so clients can react consistently.
 
@@ -110,13 +114,13 @@ OK WORLDS
 LOGIN demo@example.com swordfish
 OK LOGIN Logged in as demo@example.com
 
-JOIN demo
-OK JOIN Joined Demo World
-
 REALMS 1
 OK REALMS
 1) Live Realm (production)
 2) Playtest Dock (playtest-docks)
+
+JOIN demo
+OK JOIN Joined Demo World
 
 CHARS 1 production
 OK CHARS
@@ -155,6 +159,10 @@ Additional Game Session-specific login failures cover parsing and session-state 
 Planned prompt-flow transcript:
 
 ```text
+WORLDS
+OK WORLDS
+1) Demo World (demo)
+
 LOGIN
 OK LOGIN Enter email:
 demo@example.com
@@ -162,12 +170,16 @@ OK LOGIN Enter password:
 swordfish
 OK LOGIN Logged in as demo@example.com
 
-WORLDS
-OK WORLDS
-1) Demo World (demo)
+REALMS demo
+OK REALMS
+1) Live Realm (production)
 
 JOIN demo
 OK JOIN Joined Demo World
+
+CHARS demo production
+OK CHARS
+1) Emberline
 
 PLAY demo
 OK PLAY Entered world: Demo World / Live Realm
@@ -185,8 +197,16 @@ OK WORLDS
 LOGIN demo@example.com swordfish
 OK LOGIN Logged in as demo@example.com
 
+REALMS demo
+OK REALMS
+1) Live Realm (production)
+
 JOIN demo
 OK JOIN Joined Demo World
+
+CHARS demo production
+OK CHARS
+1) Emberline
 
 PLAY demo
 OK PLAY Entered world: Demo World

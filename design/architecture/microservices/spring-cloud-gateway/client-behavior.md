@@ -6,7 +6,8 @@ Unless explicitly described as current behavior, the sections below define the t
 
 - Java `CanonicalGatewayRoutesConfiguration` is the current route authority, with environment overrides; the target route catalog and deny-by-default exposure rules still require convergence proof.
 - The current edge implements bounded connect-token handshake classes and replay handling, but this does not prove the complete target replay durability, rotation, or reconnect contract.
-- The protected admin `JwtAuthFilter` currently parses shared-HMAC JWTs through `JwtUtil`; this is implementation drift from the target in which consuming services own asymmetric JWKS validation. Player-facing validator gaps are recorded in the environment and JWT contract documents.
+- **Current drift:** the protected admin `JwtAuthFilter` parses shared-HMAC JWTs through `JwtUtil`. This is current implementation behavior only, is not a player-facing asymmetric-validation capability, and must not be confused with the target receiving-service boundary.
+- **Target boundary:** Gateway may require and forward the declared `Authorization` header, but it does not parse or validate ordinary JWT contents; consuming services own asymmetric JWKS validation under [JWT and Token Contracts](../../system-architecture-jwt-and-token-contracts.md).
 - The current public `/api/session/**` inventory is limited to `GET /api/session/ping`; internal `/sessions*` mutations remain non-public.
 - The current route catalog blocks the documented internal subtrees, and `HeaderTrustFilter` owns trusted-header promotion; deployment-level drain, failover, and live readiness evidence remain separate proof obligations.
 
@@ -23,7 +24,7 @@ Unless explicitly described as current behavior, the sections below define the t
 - Traffic from the TCP Proxy Service always targets `/ws/game/**` via `GATEWAY_WS_URL`.
 - In player-facing environments, the TCP Proxy -> Gateway WebSocket hop is mTLS-authenticated under the trust policy in [Security](../../system-architecture-security.md#tls-termination--internal-encryption); the local endpoint and certificate variables remain in [TCP Proxy configuration](../tcp-proxy-service/configuration.md#websocket-mtls-to-spring-cloud-gateway).
 - Spring Cloud Gateway strips spoofable tenant and game-instance headers from public ingress and forwards `X-Tenant-Id` / `X-Game-Instance-Id` only when they are derived from trusted inputs, such as `X-Proxy-Tenant-Id` / `X-Proxy-Game-Instance-Id` on the authenticated TCP Proxy -> Gateway hop.
-- Gateway emits the positive `X-Firemud-Connection-Mode` discriminator on successful gameplay admission: `first_party_web` for the supported connect-token path and `trusted_tcp_proxy` for authenticated TCP Proxy bridges. The canonical marker and downstream trust rules are owned by [Gateway architecture](../../system-architecture-gateway.md#gateway-output-rules-downstream-trusted); Game Session must not infer path type from header absence.
+- Gateway emits the positive `X-Firemud-Connection-Mode` discriminator on successful gameplay admission: `first_party_web` for the supported protected-cookie connect-token path and `trusted_tcp_proxy` for authenticated TCP Proxy bridges. A future target-only public non-browser header variant requires its own route classification and proof. The canonical marker and downstream trust rules are owned by [Gateway architecture](../../system-architecture-gateway.md#gateway-output-rules-downstream-trusted); Game Session must not infer path type from header absence.
 
 ## WebSocket Close and Handshake Classification
 
@@ -42,7 +43,7 @@ Unless explicitly described as current behavior, the sections below define the t
 ## Filter Chain and Admission Behavior
 
 - Authentication, rate limiting, and logging filters run before routing.
-- `JwtAuthFilter` requires an `Authorization` header on protected admin routes and forwards the JWT unmodified. Spring Cloud Gateway never parses or validates JWTs; validation occurs entirely in the consuming service.
+- **Target contract:** `JwtAuthFilter` requires an `Authorization` header on protected admin routes and forwards the JWT unmodified. Spring Cloud Gateway does not parse or validate ordinary JWTs; validation occurs entirely in the consuming service. The current shared-HMAC parsing noted in Implementation Status is drift and does not change this target boundary.
 - Rate limiting behavior, including keying strategy and the division of responsibility with the TCP Proxy Service and Game Session Service, follows [Rate Limiting & Abuse Protection](../../system-architecture-gateway.md#rate-limiting--abuse-protection).
 - WebSocket upgrades are proxied using Spring Cloud Gateway’s built-in WebSocket support.
 - `RequestMetricsFilter` records HTTP request activity for observability, while the dev WebSocket echo handler records actual WebSocket connection counts separately.

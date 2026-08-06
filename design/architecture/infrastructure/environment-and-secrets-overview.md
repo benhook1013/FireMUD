@@ -26,13 +26,13 @@ This document describes the canonical environment and secret target state. The f
 
 - JWT signing material can come from `FIREMUD_AUTH_JWT_SECRET_PATH` without requiring inline `firemud.auth.jwt-secret`, but the current path still supplies a shared HMAC secret rather than the required Account-only asymmetric signing bundle.
 - Target state: Account Service serves JWKS from the environment-provided `jwt-jwks` resource and permits the packaged classpath fallback only for explicit local/test profiles. Current runtime drift still permits that fallback when the configured file is absent; player-facing environments must not use it and must fail Account startup when the configured JWKS path or file is missing or unreadable, the JWKS is malformed, or its public JWK does not match the Account signing key and `kid`.
-- Hosted `pr-preview` rendering provisions preview-unique Account-owned JWT signing material and matching Account-published JWKS data per namespace instead of relying on one shared inline JWT secret.
+- Hosted `pr-preview` currently uses preview-unique, pre-created signing-key and `jwt-jwks` Secrets. Target hosted `pr-preview` uses preview-unique Account-published `jwt-jwks` ConfigMap data delivered through `FIREMUD_AUTH_JWKS_PATH` to Account and every validator; current preflight success is legacy wiring evidence only.
 - `dev-tools/deploy/preflight.py` consumes player-facing expected-binding manifests under `design/operations/environments/`, emits `expectedBindingsRef`, and validates the first required binding fields and policy IDs.
 - Account-only private-key distribution, downstream asymmetric JWKS validation, the phased `jwt-rotation` Job/CronJob, overlap and pruning mechanics, validator-convergence checks, and retained rotation evidence described below remain target-state design rather than checked-in deployment automation. The materialization controller alone generates private signing material and writes the signing Secret under an authenticated, operation-bound Account lifecycle request. Account Service owns lifecycle authorization, validation, promotion, issuance, JWKS publication, and public/private pruning decisions, and reconciles the controller's non-secret CAS/pruning evidence. Rotation automation is observation-only for those transitions, publication, and validator convergence, and records evidence without reading or updating `jwt-signing-keys` or writing `jwt-jwks`.
 
 ### Current and Target JWT/JWKS Resource Modes
 
-The current checked-in runtime and `preflight.py` still use the legacy `jwt-jwks` Secret/resource checks, with the shared-HMAC and classpath-fallback drift described above. A passing legacy preflight is wiring evidence only, not player-facing JWT readiness. The target resource custody, Account/JWKS ownership, generation, and readiness contract is canonical in [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative); this document retains only environment resource and mount consequences.
+The current checked-in runtime and hosted `pr-preview` manifests/preflight still use the legacy Secret-backed `jwt-jwks` resource checks, with the shared-HMAC and classpath-fallback drift described above. A passing legacy preflight is wiring evidence only, not player-facing JWT readiness. The target resource custody, Account/JWKS ownership, generation, and readiness contract is canonical in [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative); this document retains only environment resource and mount consequences.
 
 Remaining deployment work includes the JWT authority and rotation boundary above as well as deeper live evidence: the traffic-open backup gates validate the first evidence shape, but real environment evidence files still need to be produced by operators or automation before first live traffic; expected-binding validation should also become stricter as richer Kubernetes live-state checks become available. Do not interpret those gaps as alternative supported behavior for staging, production, or hobby/self-hosted traffic.
 
@@ -138,12 +138,18 @@ The Account-only private-key and asymmetric-signing boundary above is target sta
 
 ## JWT Trust Model by Environment
 
-The canonical JWT profile, registry, authority-generation, outage, signing, and rotation contract is [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md). Environment-local consequences are:
+The canonical JWT profile, registry, authority-generation, outage, signing, and rotation contract is [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md). The matrix below records only environment-local resource and readiness consequences:
 
-- **Development** – `.env` and throwaway generated keys may be used for local iteration; cross-service token validity is not expected to survive restarts unless operators configure persistent material.
-- **Staging and production** – use environment-unique `jwt-signing-keys` and Account-published `jwt-jwks` resources. Account consumes the private bundle from `FIREMUD_AUTH_JWT_SECRET_PATH`; validators consume only the public path at `FIREMUD_AUTH_JWKS_PATH`. Missing, malformed, mismatched, or unavailable public material fails player-facing readiness.
-- **PR preview** – use namespace-unique signing material and JWKS so tokens cannot validate across preview environments.
-- **Operational evidence** – mounted resources alone do not establish readiness; rotation, validator convergence, and compromise-hard-cutover evidence follow the owner contract and the environment preflight policy.
+| Environment class | JWT resource posture | Local readiness consequence |
+| --- | --- | --- |
+| `local-dev` | `.env` and throwaway generated keys are allowed; an explicit local/test profile may use the packaged classpath fixture. | Cross-service token validity need not survive restarts unless operators configure persistent material. |
+| `dev-demo-cluster` | Use environment-unique test material; this non-player-facing class may use convenience provisioning and must not share trust material across environments. | It is not promotion, rollback, or DR-readiness evidence. |
+| `pr-preview` | Current hosted manifests use preview-unique signing-key and `jwt-jwks` Secrets. Target hosted previews use preview-unique Account-published `jwt-jwks` ConfigMap data through `FIREMUD_AUTH_JWKS_PATH` for Account and every validator. | Use the preview-scoped preflight contract; current passing checks are legacy wiring evidence, and player-facing backup/admission evidence is not required. |
+| `hobby-self-hosted` | Player-facing target: Account alone consumes the environment-unique private signing bundle; Account publishes the public JWKS consumed by Account and every validator. | Missing, malformed, mismatched, or unavailable public material fails readiness before player traffic opens; common binding, least-privilege, credential-age, and applicable backup evidence are required. |
+| `staging` | Player-facing target: use environment-unique signing material with Account-only private-key consumption and Account-published public JWKS for Account and every validator. | Missing, malformed, mismatched, or unavailable public material fails readiness; player-facing preflight and promotion evidence apply. |
+| `production` | Player-facing target: use environment-unique signing material with Account-only private-key consumption and Account-published public JWKS for Account and every validator. | Missing, malformed, mismatched, or unavailable public material fails readiness; strict player-facing preflight, promotion, and backup evidence apply. |
+
+Mounted resources alone do not establish readiness; rotation, validator convergence, and compromise-hard-cutover evidence follow the owner contract and the applicable environment preflight policy.
 
 ## Secret Governance Tiers
 

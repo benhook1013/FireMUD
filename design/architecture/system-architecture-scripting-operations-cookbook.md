@@ -1,6 +1,10 @@
 # FireMUD Scripting Operations Cookbook
 
-This document collects operator-facing procedures and examples for scripting and automation. [Scripting Quotas & Operations](./system-architecture-scripting-quotas-and-operations.md) owns steady-state quota, budget, security, and observability contracts; [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md) owns promotion and rollback semantics. The cookbook demonstrates those contracts without redefining them.
+This document collects operator-facing procedures and examples for scripting and automation. [Scripting Quotas & Operations](./system-architecture-scripting-quotas-and-operations.md) owns steady-state quota and budget contracts; the [Scripting & Automation Observability Contract](./system-architecture-scripting-observability-contract.md) owns metric names, labels, audit fields, and handoff diagnostics; [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md) owns promotion and rollback semantics. The cookbook demonstrates those contracts without redefining them.
+
+## Implementation Status
+
+This is a non-authoritative operator guide. Required rollout, rollback, convergence, and timeout behavior belongs to [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md); the rollback section below is only a worked example. Current runtime limitations also remain canonical in [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#current-implementation-status): the live handoff supports one target entity, `targetEntityIds[]` multi-target fan-out is target-state only, and no accepted owner contract defines stale-`EVALUATING` recovery.
 
 ## Operational Cookbook: Quotas, Budgets, and Metrics
 
@@ -127,11 +131,11 @@ In all of these cases, `script_event_audit` remains the primary source of truth 
 
 This section summarizes common rollback and recovery scenarios for scripting and automation. It complements the broader backup and recovery guidance in [Backup and Recovery](./system-architecture-backup-recovery.md) and the versioning rules in [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
 
-### Rollback Protocol (Required)
+### Rollback Protocol Example (Non-Authoritative)
 
-Rollback must prevent previously queued work from a rolled-back `scriptPatchVersion` from continuing to affect gameplay.
+The required rollback contract is owned by [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#patch-rollback-operator-driven-required). The following illustrates one execution of that contract; use the owner document for required sequencing, state transitions, timeout behavior, and request fields if this example differs.
 
-At a minimum, rollback consists of:
+Illustrative sequence:
 
 1. **Fence new evaluation**
    - Acquire the Automation & Scripting admission barrier before pausing ticks, unless a future atomic operation acquires both fences together. Set admission to rollback pause mode first, explicitly including external, scheduler, and timer admission, so new triggers cannot refill queues during cleanup; then pause tick execution before repin.
@@ -147,7 +151,7 @@ At a minimum, rollback consists of:
    - After schedule reconciliation, cancel/purge, and rollback draining confirm that every stale old-version execution is terminal or fenced and that pre-pause executions and cancelable outbox work for the current rollback-scope `admissionEpoch` have quiesced, call `ResumeTicks` while Automation & Scripting admission remains paused. Set admission to normal only after `ResumeTicks` succeeds; if tick resumption fails, retain rollback-pause admission and the durable rollback state until the failure is converged.
    - If an old-epoch execution reaches persist or handoff checks after rollback pause has advanced the scope `admissionEpoch`, it must fail as `finalOutcome=canceled` with a bounded `finalReason` such as `rollback_epoch_advanced` rather than creating new live work. Operators should expect to see these rows in `script_event_audit` during rollback convergence and draining.
 
-The procedure operates the canonical durable state machine in [Scripting Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#rollback-orchestration-state-machine-required), keyed by `controlPlaneRequestId`; operators resume the recorded workflow rather than starting a competing sequence.
+The canonical durable state machine is owned by [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#rollback-orchestration-state-machine-required) and is keyed by `controlPlaneRequestId`; this example does not define a competing sequence.
 
 Concrete rollback sequence example:
 
@@ -167,7 +171,7 @@ Operationally, use control-plane APIs rather than direct data-store edits for pe
 - `ReplayDeadLetteredWorkItems(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, scriptPatchVersion=P21, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` for bounded replay of recoverable target-version items. Plugin-backed candidates still pass the operation's active-plugin-version fence.
 - `PurgeOutboxWorkItems(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, scriptPatchVersion=P22, pluginVersionId=plugin-v22, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` for auditable cleanup of terminally invalid or stale old-version items.
 
-These requirements are summarized in [`system-architecture-scripting-contracts.md`](./system-architecture-scripting-contracts.md#3-version-fencing-rollback-safety).
+For the canonical rollback and version-fence requirements, follow [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#patch-rollback-operator-driven-required) and [Scripting & Automation: Cross-Service Contracts](./system-architecture-scripting-contracts.md#3-version-fencing-rollback-safety).
 
 ### Misbehaving Script Patch After Activation
 

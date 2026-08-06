@@ -779,13 +779,20 @@ canonical_public_resume_awaiting_signature = "`resume(operationId, expectedPhase
 for path in [
     "design/architecture/decisions/adr-0015-online-backup-and-environment-wide-cold-start-recovery.md",
     "design/architecture/system-architecture-backup-recovery.md",
-    "design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md",
     "design/architecture/system-architecture-deployment-runbook.md",
     "design/architecture/system-architecture-post-restore-hardening.md",
     "design/architecture/system-architecture-redis-operations.md",
-    "design/architecture/system-architecture-redis-reset-and-recovery.md",
 ]:
     require_contains(path, [canonical_public_resume_signature])
+
+require_contains(
+    "design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md",
+    ["system-architecture-backup-recovery.md", "evidenceRef"],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-reset-and-recovery.md",
+    ["system-architecture-backup-recovery.md", "operation-bound"],
+)
 
 for path in (
     "design/operations/deployments/hobby-self-hosted/recovery/README.md",
@@ -811,12 +818,11 @@ require_contains(
 require_contains(
     "design/architecture/system-architecture-redis-reset-and-recovery.md",
     [
-        "Any smoke tick exercised by the recovery or `continueRecovery` path is synthetic maintenance traffic only.",
+        "Any smoke tick exercised by the reset workflow is synthetic maintenance traffic only.",
         "must not authorize player ingress or real `tickId=0` admission",
-        "Through `AWAITING_RESUME`, `RESUME_AUTHORIZED`, `releasing`, and `PARTIAL_RELEASE_RECONCILING`, the traffic fence remains active",
-        "Only complete per-effect apply-and-readback verification may clear the fence and reopen normal admission.",
-        "persisted as `partial_release_reconciling`",
-        "--maintenance-lock-token-file <permissioned-token-file>",
+        "Reset-local release consequences remain fail-closed",
+        "The traffic fence remains active until the recovery owner's canonical lifecycle has complete apply-and-readback evidence",
+        "This document does not define the controller's phases or continuation calls.",
     ],
 )
 print("architecture doc contracts passed")

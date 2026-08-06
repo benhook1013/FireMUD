@@ -27,7 +27,7 @@ FireMUD separates **global identity** from **per-game state** so that one person
   - Additional running instances may still exist for operational workflows, but only realms surfaced through the authenticated lobby contract are player-addressable.
 - **Account–tenant membership and roles** – For each tenant a platform account participates in, the platform records membership and roles (for example, `player`, `designer`, `tenantAdmin`) that appear in JWT `scopedRoles[tenantId]` claims. Membership is many-to-many: one account can join many tenants, and each tenant can host many accounts.
 - **Character (`characterId`)** – A gameplay identity controlled by a platform account within a specific tenant. Character identity is tenant-scoped, but gameplay session binding and any realm- or instance-local character state, inventories, or progress must also include `gameInstanceId`.
-- **Gameplay session** – A transient session binding between a connected client and a character in a tenant, managed by the Game Session Service and stored in Redis using keys such as `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`. These gameplay session keys are always tenant- and instance-scoped and never change the global `accountId`. Sessions bind sockets to character identities within a tenant (see [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow) and [Session Behavior](./system-architecture-session-behavior.md#session-and-identity-management)).
+- **Gameplay session** – A transient session binding between a connected client and a character in a tenant, managed by the Game Session Service and stored in Redis using keys such as `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`. Canonical session records are tenant- and instance-scoped and never change the global `accountId`. The account-wide active-binding index `session:game:index:account:<accountId>` is an explicit physical-key exception: one untagged key spans tenants, but every member carries the complete generation-safe tenant-qualified `bindingRef`; it is bounded lookup evidence, not authorization. Sessions bind sockets to character identities within a tenant (see [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow) and [Session Behavior](./system-architecture-session-behavior.md#session-and-identity-management)).
   - Uniqueness for takeover/resume is enforced as `{tenantId, gameInstanceId, characterId}`.
 - **Auth token session** – A short-lived issued-token registry record (`session:auth:token:<tokenHash>`) backing a revocable JWT for meta/control or admission APIs, as described in [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md).
 - **Control-plane browser session** – A front-end admin/creator UI session that holds short-lived JWTs in memory and relies on auth token sessions on the server; these are distinct from gameplay sessions and are described in the Frontend Architecture and Authentication designs.
@@ -183,13 +183,17 @@ Pointer freshness and cutover rules:
   Migrations create tables directly inside dedicated service schemas rather than the `public` schema.
 - Databases are **shared across tenants**. Tenant-owned records carry and enforce `tenantId`; genuinely platform-global records such as the core account identity do not acquire a placeholder tenant merely to satisfy this convention. Relationships between a global record and a game live in explicit tenant-scoped tables. Domain services also scope their versioned data by `version_id` so multiple published or draft configurations can coexist per tenant.
 - Services enforce the `tenantId` filter on queries for tenant-owned data to prevent cross-game access. They do not apply tenant filters to platform-global account, credential, recovery, or security records; links between those records and a game are represented by explicit tenant-scoped relationships and authorized separately.
-- Redis keys prefix the `tenantId` as described in the
+- Redis keys generally prefix the `tenantId` as described in the
   [Redis Architecture](./system-architecture-redis.md#key-format-examples) so
   cached session state and runtime data remain isolated. For tick-related keys,
   this prefix is combined with a region identifier into a single normalized
   region hash tag token (for example `tick:{tenantRegionTag}:lock:<entityId>`),
   ensuring both **tenant isolation** and **shard-local atomic operations**
-  within a region.
+  within a region. The untagged global account active-binding index and other
+  explicitly global families are exceptions to the physical key-prefix rule;
+  tenant isolation for the account index is enforced by its tenant-qualified
+  `bindingRef` members and owner-controlled validation, never by treating the
+  global key as tenant-local authority.
 - The React frontend loads per-tenant, version-scoped assets from a published
   `manifest.json` in object storage; the Game Design Service is not queried at
   runtime.

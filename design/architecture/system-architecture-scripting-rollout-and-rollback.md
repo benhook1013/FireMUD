@@ -4,6 +4,10 @@ This document is the canonical owner for operator-driven promotion, rollback, wo
 
 For mutating workflow calls, `actor` is the authenticated operator principal and is projected to audit as `requestedBy`. System-owned reconciliation and cleanup records use a separate `executedBy=system:automation`; they must not replace `requestedBy` or overload `actor` with the worker identity.
 
+## Implementation Status
+
+The rollout and rollback state machine below is target-state canonical. The live Game Session handoff still lacks complete per-command Trigger Identity propagation; the detailed current fallback is recorded in [Command Identity and Live Handoff Boundary](#command-identity-and-live-handoff-boundary). `targetEntityIds[]` multi-target fan-out is target-state only because the existing owners do not define persisted deterministic per-target identity, scope validation, and deduplication at the live boundary. Automation claims work through `PENDING_EVALUATION` to `EVALUATING`; no accepted owner contract defines stale-`EVALUATING` lease recovery, so rollback must not infer one. Metric names, labels, audit fields, and handoff diagnostics come from the [Scripting & Automation Observability Contract](./system-architecture-scripting-observability-contract.md).
+
 ## Patch Promotion (Operator-Driven)
 
 1. Validate patch is `READY` in Automation & Scripting for the tenant (`GetScriptPatchStatus`).
@@ -22,7 +26,7 @@ For mutating workflow calls, `actor` is the authenticated operator principal and
 10. Call `SetAutomationAdmissionMode(..., mode=NORMAL, controlPlaneRequestId, actor, reason)` only after cancellation, purge, schedule/timer reconciliation, pin convergence, and drain complete.
 11. Automation & Scripting observes the committed pin event for visibility (not for authority) and treats the pinned patch as the expected active one for tick handoffs.
 12. Schedulers use a bounded-staleness pin cache for admission and timer firing decisions. If cached pin data is stale beyond the configured max-age, they must refresh from authoritative control-plane APIs and events before admitting new work. If fresh authoritative pin data cannot be obtained, admission must fail closed with `finalStage=ADMISSION`, `finalOutcome=pin_state_unavailable`, and an explicit `finalReason`. If fresh authoritative pin data is available but differs from the request version for the instance, admission must fail closed with `finalOutcome=version_unavailable` and a bounded mismatch reason; Automation must not silently substitute a patch.
-13. Operators monitor `script_event_audit` and automation metrics; per-event correlation uses `scriptEventId` in audit, logs, and traces, not metric labels.
+13. Operators monitor `script_event_audit` and automation metrics defined by the [Scripting & Automation Observability Contract](./system-architecture-scripting-observability-contract.md); per-event correlation uses `scriptEventId` in audit, logs, and traces, not metric labels.
 
 ## Patch Rollback (Operator-Driven, Required)
 

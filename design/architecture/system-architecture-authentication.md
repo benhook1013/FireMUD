@@ -2,7 +2,7 @@
 
 This document describes how FireMUD authenticates clients, issues the exact JWT profiles defined by the token contract, manages session state, and enforces role-based access across services.
 
-Current gameplay authentication supports `LOGIN <email>` / `LOGON <email>` to request a verified-email login code and `LOGIN <email> <secret>` / `LOGON <email> <secret>` for an immediate password-or-code attempt on raw Telnet and other non-WebSocket text clients; first-party WebSocket gameplay uses bare `LOGIN` only after its verified bootstrap/connect context. Bare raw-text `LOGIN`/`LOGON` prompt exchange is target-only and currently returns `PROMPT_LOGIN_UNSUPPORTED`. Control-plane clients use `/auth/login`, while first-party gameplay clients use `/auth/player-bootstrap` plus connect-token flows. Clients are stateless; server-side “sessions” are split between gameplay bindings in Redis and short-lived issued-token registry records in Coordination Redis. The Game Session Service restores gameplay session state from Redis, while the Account Service validates the supplied login secret and issues the exact `control-ui`, `player-bootstrap`, or receiver-specific private player-delegation JWT profile required by the destination. Raw Telnet gameplay command streams never carry JWT authorization. Browser and mobile-browser gameplay clients temporarily use a `player-bootstrap` JWT for HTTPS bootstrap calls and a cookie-carried one-use connect token for the `/ws/game/**` handshake; first-party native-mobile clients that use a cookie jar remain cookie-only. Public non-browser issuance and the dedicated handshake-header carrier are target-only and unavailable until a dedicated route is fully registered and its issuance, registry, profile, and carrier proof is complete; the target design uses protected secure storage plus `X-Firemud-Connect-Token`. First-party admin/creator UIs and backend services use their own permitted token profiles. Provider-specific HTTPS sign-in remains unavailable until the provider-specific verification, collision, recovery, and end-to-end proof required by [ADR 0049](./decisions/adr-0049-optional-provider-specific-external-identity-linking.md) is complete.
+Current gameplay authentication supports `LOGIN <email>` / `LOGON <email>` to request a verified-email login code and `LOGIN <email> <secret>` / `LOGON <email> <secret>` for an immediate password-or-code attempt on raw Telnet and other non-WebSocket text clients; first-party WebSocket gameplay uses bare `LOGIN` only after its verified bootstrap/connect context. Bare raw-text `LOGIN`/`LOGON` prompt exchange is target-only and currently returns `PROMPT_LOGIN_UNSUPPORTED`. Control-plane clients use `/auth/login`. First-party gameplay uses `POST /auth/player-bootstrap` to establish the `player-bootstrap` identity, then uses `/auth/bootstrap/*` discovery/action routes and `/auth/connect-token` before the gameplay socket. Clients are stateless; server-side “sessions” are split between gameplay bindings in Redis and short-lived issued-token registry records in Coordination Redis. The Game Session Service restores gameplay session state from Redis, while the Account Service validates the supplied login secret and issues the exact `control-ui`, `player-bootstrap`, or receiver-specific private player-delegation JWT profile required by the destination. Raw Telnet gameplay command streams never carry JWT authorization. Browser and mobile-browser gameplay clients temporarily use a `player-bootstrap` JWT for HTTPS bootstrap calls and a cookie-carried one-use connect token for the `/ws/game/**` handshake; first-party native-mobile clients that use a cookie jar remain cookie-only. Public non-browser issuance and the dedicated handshake-header carrier are target-only and unavailable until a dedicated route is fully registered and its issuance, registry, profile, and carrier proof is complete; the target design uses protected secure storage plus `X-Firemud-Connect-Token`. First-party admin/creator UIs and backend services use their own permitted token profiles. Provider-specific HTTPS sign-in remains unavailable until the provider-specific verification, collision, recovery, and end-to-end proof required by [ADR 0049](./decisions/adr-0049-optional-provider-specific-external-identity-linking.md) is complete.
 
 Optional provider-specific HTTPS sign-in is permitted only after complete provider proof; password and verified-email code remain the Account-owned baseline and fallback, and Telnet never carries provider credentials. See [ADR 0049](./decisions/adr-0049-optional-provider-specific-external-identity-linking.md).
 
@@ -14,9 +14,9 @@ The canonical target is Account-owned authentication and authority, exact JWT pr
 
 ### Canonical Authority Tuple
 
-The canonical `authorityTuple` schema, exact nested field names, profile requirements, and registry mapping are defined in [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md#canonical-authority-tuple). This document does not duplicate that schema. Authentication applies the canonical `authorityTuple` unchanged to JWT claims, issued-token records, revocation events, Account leases, gameplay bindings, refresh requests, rebind proofs, and installation acknowledgements; a missing applicable field, extra scope, malformed value, or mismatch fails closed.
+The canonical `authorityTuple` schema, exact nested field names, profile requirements, and registry mapping are defined in [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md#canonical-authority-tuple). This document does not duplicate that schema. Authentication copies the tuple unchanged only into profiles, artifacts, and operations that declare it applicable, including applicable JWT claims, issued-token records, revocation events, Account leases, gameplay bindings, refresh requests, rebind proofs, and installation acknowledgements. Profiles and artifacts that omit the tuple must not fabricate one or inherit unrelated scope; a missing applicable field, extra scope, malformed value, or mismatch fails closed.
 
-Authentication applies the canonical `authorityTuple` unchanged to admission and authorization. Account-owned generation/projection rules, route-class exceptions, and token-registry semantics remain canonical in [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md) and [Authorization Route Matrix](./system-architecture-authz-route-matrix.md); `membershipVersion` is separate membership-version evidence and never substitutes for the `membershipAuthorityGeneration` member of `authorityTuple`.
+Authentication applies the canonical `authorityTuple` unchanged to admission and authorization where the selected profile or artifact requires it. Account-owned generation/projection rules, route-class exceptions, and token-registry semantics remain canonical in [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md) and [Authorization Route Matrix](./system-architecture-authz-route-matrix.md); `membershipVersion` is separate membership-version evidence and never substitutes for the `membershipAuthorityGeneration` member of `authorityTuple`.
 
 ## Implementation Status
 
@@ -31,7 +31,7 @@ Authentication applies the canonical `authorityTuple` unchanged to admission and
 - First-party browser and mobile-browser gameplay use the short-lived `player-bootstrap` JWT for HTTPS bootstrap calls and carry the resulting gameplay-connect token only in the `Firemud-Connect-Token` HttpOnly cookie. First-party native-mobile and other first-party non-browser clients using a cookie jar remain cookie-only. Telnet and other non-WebSocket text transports use credential-bearing `LOGIN` and do not carry public JWTs or connect tokens.
 - `/sessions/{sessionId}/refresh-roles` exists as an operational hook, but current role-refresh token regeneration and periodic active-session `game-session-account-delegation` rotation remain implementation gaps; the placeholder response is not proof of refresh.
 - The current Account `Authenticate` proto path still lacks the target `requestId`/immutable-digest replay envelope and orphan-token retirement contract described below; those fields and recovery semantics remain implementation/proof gaps rather than implied current behavior.
-- Account's JWKS endpoint and conditional secret watcher are implemented, but Account-only asymmetric validation, non-exportable signer delegation, rotation/convergence, issued-token registry enforcement, and Account-owned authority generations remain target-state. No authority-generation issuance, advancement, propagation, or validation proof is currently claimed.
+- Account's JWKS endpoint and conditional secret watcher are implemented, but asymmetric-profile validation, non-exportable signer delegation for asymmetric signing, rotation/convergence, issued-token registry enforcement, and Account-owned authority generations remain target-state. No authority-generation issuance, advancement, propagation, or validation proof is currently claimed.
 
 ## Contract Decisions (Normative)
 
@@ -204,17 +204,20 @@ All route classifications represented in a validated source inventory must also 
 
 ## Login and Session Flow
 
-The canonical player-facing flow is intentionally simple:
+The canonical direct-text player-facing flow is intentionally simple. Public discovery precedes credential entry; authenticated discovery then supplies the target used by the conditional membership and character gates:
 
 ```text
    WORLDS_PUBLIC
 LOGIN <email> [secret]
 [LOGIN <email> <code>]  # required after one-argument LOGIN requests a code
-[JOIN <world>]  # target-only; explicit JOIN is unimplemented, while eligible missing or INACTIVE public-production membership returns JOIN_REQUIRED without invoking the unused writer seam
+REALMS <world>
+[JOIN <world>]  # only for missing or INACTIVE public-production membership
+[CHARS <world> [realm]]  # only when a valid selected character is not already resolved
+[character creation]  # only when allowed and no valid character exists
 PLAY <world> [realm] [character]
 ```
 
-`<world>` is either an index from the caller's exact `WORLDS` browse snapshot or the stable `tenantSlug/worldSlug` selector carried by that response. A bare `tenantSlug` is accepted only when the tenant exposes exactly one visible authored world; a bare tenant-scoped `worldSlug` is never resolved globally. `[realm]` is a `realmSlug` under the resolved world or an index from the corresponding `REALMS` snapshot. Menu indices are response-local conveniences and are never stored or forwarded as durable identity.
+`<world>` is either an index from the caller's exact `WORLDS` browse snapshot or the stable `tenantSlug/worldSlug` selector carried by that response. A bare `tenantSlug` is accepted only when the tenant exposes exactly one visible authored world; a bare tenant-scoped `worldSlug` is never resolved globally. `[realm]` is a `realmSlug` under the resolved world or an index from the corresponding `REALMS` snapshot. Menu indices are response-local conveniences and are never stored or forwarded as durable identity. `REALMS` is authenticated discovery after `LOGIN`; `JOIN` is conditional on the selected public-production membership state; `CHARS` or allowed character creation is conditional on whether a valid selected character is already available.
 
 Before login, only `WORLDS_PUBLIC` is available, and it exposes bounded public-production catalog/availability metadata. `REALMS` and `CHARS` are authenticated post-login discovery commands; they must not be exposed as anonymous pre-login discovery surfaces. After login, authenticated `WORLDS`, `REALMS`, and `CHARS` may provide caller-bound membership/grant-aware discovery.
 
@@ -236,7 +239,7 @@ Normative semantic split:
 - `LOGIN` proves or restores account identity.
 - `LOGIN` establishes the authenticated socket/session account context only; it does not select a tenant or character and does not create a gameplay binding. Gameplay admission, binding, and finalization belong to `PLAY`.
 - When the selected public-production tenant has missing or `INACTIVE` caller-bound membership, `JOIN <world>` explicitly establishes `ACTIVE` membership after `LOGIN`. Either create or restore advances `membershipVersion`; `membershipAuthorityGeneration` advances independently only when `callerBoundAuthorityInvalidated=true`. An `ACTIVE` membership returns the exact idempotent current snapshot. Any other lifecycle state rejects. A caller with existing `ACTIVE` membership omits `JOIN` and continues to character selection and `PLAY`. First-party browser/mobile clients use the equivalent Account bootstrap join endpoint.
-- The direct `LOGIN` plus `PLAY` compatibility shortcut is limited to credential-bearing text clients when current authority confirms existing `membershipLifecycleState=ACTIVE` and an already selected current character for the same target. First-party/browser clients always use authenticated bootstrap, discovery, and lobby gates, including for returning members.
+- The direct-text `LOGIN` plus `PLAY` compatibility shortcut is limited to an existing `membershipLifecycleState=ACTIVE` member for the same target. It may omit `JOIN` only because membership is already active, and it may omit a separate `CHARS` round-trip only when fresh transport-local resolution supplies one valid current character; it never reuses a first-party WebSocket discovery snapshot. First-party/browser clients always use authenticated bootstrap, discovery, and lobby gates, including for returning members.
 - `PLAY` binds the gameplay session to `{tenantId, gameInstanceId, characterId}`.
 
 ### In-Band `PLAY` Admission Boundary
@@ -278,11 +281,10 @@ The canonical `gameplay-connect` profile, edge carrier, replay fence, handshake 
 
 Authentication-local consequences are limited to bootstrap and admission sequencing:
 
-- Account exposes the first-party `/auth/player-bootstrap`, discovery, join, character, and `/auth/connect-token` surfaces. The bootstrap token is tenant-free; connect-token issuance derives the caller from that bootstrap identity and accepts the server-issued `connectScopeId`, not arbitrary client-supplied tenant or runtime identifiers.
+- Account exposes `POST /auth/player-bootstrap` as the first-party gameplay login/issuance surface. The resulting tenant-free `player-bootstrap` token is then accepted by `/auth/bootstrap/*` discovery and action facades, including join and character operations; `/auth/connect-token` is the separate one-use gameplay-token issuance surface. Connect-token issuance derives the caller from that bootstrap identity and accepts the server-issued `connectScopeId`, not arbitrary client-supplied tenant or runtime identifiers.
 - Connect-token issuance requires the current Account membership, entitlement, realm-grant where applicable, and admission-pointer checks for the selected target. It never creates or restores membership; explicit public-production `JOIN`/Join & Play remains the only membership-writing path.
-- First-party browser clients use the protected `Firemud-Connect-Token` cookie, while the dedicated public non-browser header remains target-only until its route and proof are complete. Carrier validation, replay, and close/error mapping remain Gateway-owned.
+- First-party browser, mobile-browser, and first-party native-mobile clients using a protected cookie jar use the `Firemud-Connect-Token` cookie. The dedicated public non-browser header remains target-only until its separately classified route and issuance, replay, signed-context, response, and carrier proofs are complete; it is not a fallback for the cookie route. Carrier validation, replay, and close/error mapping remain Gateway-owned.
 - Game Session verifies the signed context before bare WebSocket `LOGIN`, binds its account and selected scope to `PLAY`, and rejects a mismatch before gameplay binding. The receiving-service field and scope checks remain in the following section.
-- Current implementation caveats remain: explicit join and the required exact membership-authority/version reread at connect-token issuance are unimplemented/proof gaps; current connect-token issuance requires existing `ACTIVE` membership and returns non-actionable `JOIN_REQUIRED` for eligible missing or `INACTIVE` public-production membership.
 
 #### Gateway-to-Game Session connect context (normative)
 
@@ -522,11 +524,11 @@ Credential-bearing login commands carry an account email and one secret. A one-a
 
 ### Tenant Selection for Gameplay (Lobby Selection)
 
-FireMUD uses a **single shared entrypoint** for many worlds (tenants). After `LOGIN`, clients complete a lobby selection step that binds the authenticated connection to a specific world (`tenantId`), gameplay-admissible instance (`gameInstanceId`), and gameplay identity (`characterId`) before gameplay commands are accepted.
+FireMUD uses a **single shared entrypoint** for many worlds (tenants). After public `WORLDS` discovery and successful `LOGIN`, clients complete a lobby selection step that binds the authenticated connection to a specific world (`tenantId`), gameplay-admissible instance (`gameInstanceId`), and gameplay identity (`characterId`) before gameplay commands are accepted.
 
 Players must never be asked to type platform-scope identifiers such as `tenantId`, `gameInstanceId`, or `characterId` during lobby selection. Lobby flows accept human-friendly world slugs, menu indices, and character names or indices and resolve them server-side. Gameplay may separately expose stable numeric runtime-entity IDs when useful for distinguishing visible live instances; those IDs remain scoped selectors rather than authorization.
 
-After `LOGIN` succeeds, the Game Session Service requires an explicit lobby selection flow using these canonical commands:
+After public `WORLDS` discovery and successful `LOGIN`, the Game Session Service requires the authenticated lobby selection flow using these canonical commands:
 
 - `WORLDS` – list worlds the authenticated account can enter (a numbered menu plus stable
   `tenantSlug` and `worldSlug` values for each entry).
@@ -534,7 +536,7 @@ After `LOGIN` succeeds, the Game Session Service requires an explicit lobby sele
   world index or the stable tenant-qualified selector returned by `WORLDS`). Responses include the
   default production realm plus any explicitly authorized additional realms such as playtest
   forks.
-- **Target `JOIN <world>`** – `<world>` remains an adapter-local selector. The Account-owned `JoinPublicProductionMembership` lifecycle, idempotency, caller binding, and `connectScopeId`/`requestId` contract are defined in [Authentication](#login-and-session-flow); first-party clients expose the equivalent `Join & Play` action through Account bootstrap. The current explicit join operation is not implemented.
+- **Target `JOIN <world>`** – `<world>` remains an adapter-local selector. The Account-owned `JoinPublicProductionMembership` lifecycle, idempotency, caller binding, and `connectScopeId`/`requestId` contract are defined in [Account Runtime and Data](./microservices/account-service/runtime-and-data.md#membership-and-entitlement-authority); first-party clients expose the equivalent `Join & Play` action through Account bootstrap.
 - `CHARS <world> [realm]` – list characters for the selected world and optional realm.
 - `PLAY <world> [realm] [character]` – enter gameplay by selecting a world, an optional realm, and an optional character.
 

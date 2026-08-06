@@ -23,9 +23,14 @@ It is a companion to:
 
 For a higher-level routing guide to all scripting and automation docs, see the **Who Should Read What** and **Where to Find Details** sections in `design/architecture/system-architecture-scripting.md`.
 
+## Implementation Status
+
+This document is target-state canonical for DSL shape and lifecycle semantics. Current runtime boundaries are recorded in [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#current-implementation-status): the live handoff supports one target entity, while `targetEntityIds[]` multi-target fan-out remains target-state pending persisted deterministic per-target identity, scope validation, and deduplication. The Automation claim boundary is `PENDING_EVALUATION` to `EVALUATING`; no accepted owner contract defines stale-`EVALUATING` recovery, so this document makes no recovery claim. Canonical scripting metrics, labels, audit, and handoff diagnostics are defined by the [Scripting & Automation Observability Contract](./system-architecture-scripting-observability-contract.md).
+
 ## Table of Contents
 
 - [Audience](#audience)
+- [Implementation Status](#implementation-status)
 - [Terminology Glossary](#terminology-glossary)
 - [Versioning Terms](#versioning-terms)
 - [Script Execution Lifecycle](#script-execution-lifecycle)
