@@ -87,7 +87,7 @@ A retained-edge upstream rebind is not a reconnect from the client's perspective
 
 ### Telnet `JOIN` Resolution Contract
 
-`JOIN <world>` is a Telnet selector, not an authority-bearing tenant or route input. The text adapter keeps selectors local and forwards the authenticated `JOIN` operation to Game Session; Account-owned membership mutation and the `{connectScopeId, requestId}` binding are defined in [Authentication](./system-architecture-authentication.md#login-and-session-flow). Private/playtest realms do not use this operation and require existing membership plus their current grant.
+`JOIN <world>` is a Telnet selector, not an authority-bearing tenant or route input. The text adapter keeps selectors local and forwards the authenticated `JOIN` operation to Game Session; Account-owned membership mutation and the `{connectScopeId, requestId}` binding are defined in [Authentication](./system-architecture-authentication.md#login-and-session-flow). Private/playtest realms do not use public `JOIN` and require existing caller-bound `ACTIVE` membership plus their current grant.
 
 ### Public Telnet TLS Modes
 

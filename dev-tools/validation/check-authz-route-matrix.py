@@ -307,6 +307,11 @@ NO_TARGET_TENANT_CLASSES_WITHOUT_ROUTE_SPECIFIC_TARGET_AUTHORITY = {
     "public_production_onboarding",
     "security_lock_export_scoped",
 }
+SECURITY_LOCK_EXPORT_NEGATIVE_PROOF = {
+    "security_lock_export_recovery_case_mismatch_denied",
+    "security_lock_export_export_job_mismatch_denied",
+    "security_lock_export_action_family_mismatch_denied",
+}
 ROUTES_WITH_EXPLICIT_TARGET_TENANT_AUTHORITY = {
     ("account-service", "IssueConnectToken"),
 }
@@ -504,6 +509,26 @@ def route_key(route: dict[str, Any]) -> str | None:
         return None
     service, name = components
     return f"{service}|{name}"
+
+
+def route_label(route: dict[str, Any]) -> str:
+    service = route.get("service") or "<unknown-service>"
+    route_name = route.get("route") or "<unknown-route>"
+    label = f"{service} {route_name}"
+    if "applicability" not in route:
+        return label
+    try:
+        discriminator = json.dumps(
+            route.get("applicability"), sort_keys=True, separators=(",", ":")
+        )
+    except (TypeError, ValueError):
+        discriminator = repr(route.get("applicability"))
+    return f"{label} [variant={discriminator}]"
+
+
+def append_unique_error(errors: list[str], message: str) -> None:
+    if message not in errors:
+        errors.append(message)
 
 
 def string_list(value: Any, field: str, errors: list[str]) -> list[str]:
@@ -1359,6 +1384,17 @@ def validate_pending_deletion_generation(
             f"{label} must not require tenant-generation checks for pending_deletion_scoped: "
             f"{sorted(forbidden_checks)}"
         )
+    if (
+        route.get("route") == "POST /accounts/{accountId}/exports"
+        and route.get("action_family") == "export_initiate"
+        and isinstance(route.get("applicability"), dict)
+        and route["applicability"].get("account_state") == "deactivated_pending_delete"
+        and "export_availability" not in checks
+    ):
+        errors.append(
+            f"{label} pending-deletion export initiation must require live check "
+            "export_availability"
+        )
 
 
 def validate_membership_generation(
@@ -1886,7 +1922,7 @@ def validate_receiver_predicates(
                     allow_omitted_no_profile_predicates=profiles_value is None,
                 )
             continue
-        label = f"{route.get('service')} {route.get('route')}"
+        label = route_label(route)
         caller_policies = route.get("caller_policies")
         if caller_policies is not None:
             validate_caller_policies(caller_policies, label, token_profiles, errors)
@@ -1909,7 +1945,7 @@ def validate_explicit_no_jwt_routes(routes: list[Any], errors: list[str]) -> Non
         key = route_set_key(route)
         if key not in EXPLICIT_NO_JWT_ROUTES:
             continue
-        label = f"{route.get('service')} {route.get('route')}"
+        label = route_label(route)
         if route.get("accepted_token_profiles") != []:
             errors.append(f"{label} must explicitly declare accepted_token_profiles=[]")
         for field in ("token_type", "token_issuer", "token_audience"):
@@ -2032,6 +2068,23 @@ def validate_no_target_tenant_classifications(
                 or any(not isinstance(item, str) or not item.strip() for item in proof)
             ):
                 errors.append(f"{label} must declare non-empty negative_proof.required")
+        elif classification == "security_lock_export_scoped":
+            proof_contract = entry.get("negative_proof")
+            proof = (
+                proof_contract.get("required")
+                if isinstance(proof_contract, dict)
+                else None
+            )
+            if (
+                not isinstance(proof, list)
+                or any(not isinstance(item, str) for item in proof)
+                or set(proof) != SECURITY_LOCK_EXPORT_NEGATIVE_PROOF
+                or len(proof) != len(SECURITY_LOCK_EXPORT_NEGATIVE_PROOF)
+            ):
+                errors.append(
+                    f"{label} must declare exactly the bounded security-lock export "
+                    "negative proof requirements"
+                )
 
 
 def validate_tenant_generation_negative_proof(
@@ -2075,7 +2128,7 @@ def validate_tenant_generation_exception_routes(
         expected = REQUIRED_TENANT_GENERATION_EXCEPTIONS.get(classification)
         if expected is None:
             continue
-        label = f"{route.get('service')} {route.get('route')}"
+        label = route_label(route)
         if route.get("tenant_billing_authority_generation_applies") is not False:
             errors.append(
                 f"{label} must explicitly disable tenant_billing_authority_generation_applies "
@@ -2134,7 +2187,7 @@ def validate_no_target_tenant_routes(
         route_key_value = route_set_key(route)
         if route_key_value in ROUTES_WITH_EXPLICIT_TARGET_TENANT_AUTHORITY:
             matched_explicit_target_routes.add(route_key_value)
-            label = f"{route.get('service')} {route.get('route')}"
+            label = route_label(route)
             if classification != "player_bootstrap_tenant":
                 errors.append(
                     f"{label} explicit target-tenant authority must use "
@@ -2148,7 +2201,7 @@ def validate_no_target_tenant_routes(
             continue
         if classification not in NO_TARGET_TENANT_CLASSES_WITHOUT_ROUTE_SPECIFIC_TARGET_AUTHORITY:
             continue
-        label = f"{route.get('service')} {route.get('route')}"
+        label = route_label(route)
         checks = (
             route_live_checks(route, label, errors, live_checks_cache)
             if "required_live_checks" in route
@@ -2293,7 +2346,7 @@ def validate_operator_reference_issuance(
         )
         if route is None:
             continue
-        label = f"{service} {route_name}"
+        label = route_label(route)
         raw_fields = route.get("required_fields")
         raw_field_set = (
             {field for field in raw_fields if isinstance(field, str)}
@@ -2375,7 +2428,7 @@ def validate_generation_applicability(
     for index, route in enumerate(routes):
         if not isinstance(route, dict):
             continue
-        label = f"routes[{index}] {route.get('service')} {route.get('route')}"
+        label = f"routes[{index}] {route_label(route)}"
         if "account_generation_applies" in route:
             errors.append(
                 f"{label} must use account_authority_generation_applies instead of "
@@ -2442,24 +2495,35 @@ def validate_profile_authority_routes(
             )
             continue
         for route in matches:
-            label = f"account-service {route_name}"
+            label = route_label(route)
             if route.get("auth_path") != "control_ui_plus_current_tenant_role":
-                errors.append(
+                append_unique_error(
+                    errors,
                     f"{label} must declare auth_path control_ui_plus_current_tenant_role"
                 )
             if route.get("method_policy") != "exact_declared_route":
-                errors.append(f"{label} must declare method_policy exact_declared_route")
+                append_unique_error(
+                    errors,
+                    f"{label} must declare method_policy exact_declared_route",
+                )
             if "self_only_roles" in route:
-                errors.append(f"{label} must not declare self_only_roles")
+                append_unique_error(errors, f"{label} must not declare self_only_roles")
             if route.get("target_subject_binding") != PROFILE_TARGET_SUBJECT_BINDING:
-                errors.append(
+                append_unique_error(
+                    errors,
                     f"{label} must declare target_subject_binding "
-                    f"{PROFILE_TARGET_SUBJECT_BINDING}"
+                    f"{PROFILE_TARGET_SUBJECT_BINDING}",
                 )
             if route.get("tenant_billing_authority_generation_applies") is not True:
-                errors.append(f"{label} must apply tenant billing authority generation")
+                append_unique_error(
+                    errors,
+                    f"{label} must apply tenant billing authority generation",
+                )
             if route.get("membership_authority_generation_applies") is not True:
-                errors.append(f"{label} must apply membership authority generation")
+                append_unique_error(
+                    errors,
+                    f"{label} must apply membership authority generation",
+                )
             checks = route_live_checks(route, label, errors, live_checks_cache)
             for required_check in (
                 "membership",
@@ -2467,7 +2531,9 @@ def validate_profile_authority_routes(
                 "tenant_generation",
             ):
                 if required_check not in checks:
-                    errors.append(f"{label} must require live check {required_check}")
+                    append_unique_error(
+                        errors, f"{label} must require live check {required_check}"
+                    )
 
 
 def validate_idempotency_contract(
@@ -2867,8 +2933,9 @@ def resolve_unique_route(
             else f"{service}|{route_name}"
         )
         if cardinality_errors is None or key not in cardinality_errors:
-            errors.append(
-                f"matrix must contain exactly one {key.replace('|', ' ')} route"
+            append_unique_error(
+                errors,
+                f"matrix must contain exactly one {key.replace('|', ' ')} route",
             )
             if cardinality_errors is not None:
                 cardinality_errors.add(key)
@@ -3323,7 +3390,7 @@ def validate_connect_token_revoke_generation_applicability(
     route = resolve_unique_route(routes, service, name, errors, cardinality_errors)
     if route is None:
         return
-    label = f"{service} {name}"
+    label = route_label(route)
     for field, expected in REQUIRED_REVOKE_GENERATION_APPLICABILITY.items():
         if route.get(field) is not expected:
             expected_yaml = (

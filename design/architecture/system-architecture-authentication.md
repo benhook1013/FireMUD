@@ -100,9 +100,9 @@ For the data model underpinning `accountId`, `tenantId`, characters, and members
 FireMUD standardizes a small, explicit role set so tenant authorization and cross-tenant behavior remain consistent across services:
 
 - **Global roles (`globalRoles`)**
-  - `platformAdmin` – Full cross-tenant administrative access, including starting and stopping game instances, viewing cross-tenant analytics, and reading billing and subscription state for any tenant.
+  - `platformAdmin` – Global role eligible only for the cross-tenant and platform-control route classes declared by the [Authorization Route Matrix](./system-architecture-authz-route-matrix.md); each route applies its own target scope, assurance, generation, and `privileged_control` checks. It does not create membership or grant gameplay authority.
   - `support` – Limited cross-tenant support tools, subject to audit. Support roles may view high-level subscription state and entitlements for troubleshooting (for example, whether a tenant is `active` or `suspended` and what quotas apply), but cannot view detailed billing artifacts such as invoices or payment methods and cannot modify subscriptions.
-  - `billingAdmin` – Cross-tenant access to billing-safe control-plane APIs (for example, viewing invoices, updating payment methods, and managing subscriptions) but no gameplay or design privileges.
+  - `billingAdmin` – Global role eligible only for the cross-tenant billing-safe route classes declared by the [Authorization Route Matrix](./system-architecture-authz-route-matrix.md); each route applies its own scope, generation, assurance, and required `privileged_control` checks. It does not create membership or grant gameplay or design authority.
 - **Tenant roles (`scopedRoles[tenantId]`)**
   - `player` – Can join gameplay for the tenant subject to entitlements and quotas; no design, admin, or billing capabilities.
   - `designer` – Can edit design-time content for the tenant via Game Design tools; cannot control runtime instances or billing.
@@ -134,7 +134,7 @@ All meta/control services (Account, Game Design, Logging & Admin, and similar HT
 - Each incoming request uses the exact auth path for its route: normal account-bearing requests authenticate a single `accountId` with a JWT validated against the Account Service JWKS, while `pending_deletion_scoped` routes use only an opaque Account-owned pending-deletion credential validated against its server-side workflow registry.
 - The effective tenant set for the request is derived from the token:
   - For tenant-scoped operations, the service computes the set of `tenantId` values from `scopedRoles` plus explicit global-role allowances from the route-class matrix above. Gameplay lobby/admission routes are stricter: they must derive authority from caller-bound tenant membership and `gameplayAdmissionAllowed`, not from global-role shortcuts. Billing-related global access must use explicitly cross-tenant billing-safe route variants.
-  - For cross-tenant operations, the service must explicitly check that the caller has a `globalRole` that authorizes cross-tenant access for the specific API category (for example, only `platformAdmin` for gameplay- or data-bearing operations, `billingAdmin` or `platformAdmin` for billing-safe control-plane operations, and `support` or `platformAdmin` only for explicitly designated support-safe troubleshooting surfaces). Tenant-scoped roles must never implicitly grant cross-tenant privileges.
+  - For cross-tenant operations, the service must explicitly check the caller's `globalRole` against the exact route-matrix entry for the specific API category, including any route-specific scope, assurance, generation, and `privileged_control` requirements (for example, only `platformAdmin` for gameplay- or data-bearing operations, `billingAdmin` or `platformAdmin` for billing-safe control-plane operations, and `support` or `platformAdmin` only for explicitly designated support-safe troubleshooting surfaces). Tenant-scoped roles must never implicitly grant cross-tenant privileges.
 - For account-scoped operations, authorization must bind to authenticated `accountId` and route-level subject-binding rules, without deriving or requiring tenant scope.
 - If an API accepts a `tenantId` (path, query parameter, or body field), the service must validate that:
   - `tenantId` is in the effective tenant set for tenant-scoped calls, or
@@ -201,7 +201,7 @@ All route classifications represented in a validated source inventory must also 
 
 ## Login and Session Flow
 
-The canonical direct-text player-facing flow is intentionally simple. Public discovery precedes credential entry; authenticated discovery then supplies the target used by the conditional membership and character gates:
+The target direct-text player-facing flow is intentionally simple. Public discovery precedes credential entry; authenticated discovery then supplies the target used by the conditional membership and character gates:
 
 ```text
    WORLDS
@@ -213,6 +213,8 @@ REALMS <world>
 [character creation]  # only when allowed and no valid character exists
 PLAY <world> [realm] [character]
 ```
+
+The sequence above is target behavior where it includes `JOIN`. Current runtime forwards `WORLDS` but still bootstraps hidden default routing, does not implement explicit `JOIN`, and returns non-actionable `JOIN_REQUIRED` without creating or restoring membership when eligible public-production membership is missing or `INACTIVE`. Current private/playtest missing or non-`ACTIVE` membership remains `WORLD_ACCESS_DENIED`.
 
 `<world>` is either an index from the caller's exact `WORLDS` browse snapshot or the stable `tenantSlug/worldSlug` selector carried by that response. A bare `tenantSlug` is accepted only when the tenant exposes exactly one visible authored world; a bare tenant-scoped `worldSlug` is never resolved globally. `[realm]` is a `realmSlug` under the resolved world or an index from the corresponding `REALMS` snapshot. Menu indices are response-local conveniences and are never stored or forwarded as durable identity. `REALMS` is authenticated discovery after `LOGIN`; `JOIN` is conditional on the selected public-production membership state; `CHARS` or allowed character creation follows only after membership is `ACTIVE`.
 
@@ -279,7 +281,7 @@ The canonical `gameplay-connect` profile, edge carrier, replay fence, handshake 
 Authentication-local consequences are limited to bootstrap and admission sequencing:
 
 - Account exposes `POST /auth/player-bootstrap` as the first-party gameplay login/issuance surface. The resulting tenant-free `player-bootstrap` token is then accepted by `/auth/bootstrap/*` discovery and action facades, including join and character operations; `/auth/connect-token` is the separate one-use gameplay-token issuance surface. Connect-token issuance derives the caller from that bootstrap identity and accepts the server-issued `connectScopeId`, not arbitrary client-supplied tenant or runtime identifiers.
-- Connect-token issuance requires the current Account membership, entitlement, realm-grant where applicable, and admission-pointer checks for the selected target. It never creates or restores membership; explicit public-production `JOIN`/Join & Play remains the only membership-writing path.
+- Connect-token issuance requires one fresh caller-bound Account membership snapshot, fresh entitlement, the applicable fresh realm-grant read for private/playtest targets, and admission-pointer checks for the selected target. It never creates or restores membership; explicit public-production `JOIN`/Join & Play remains the only membership-writing path. A realm grant never substitutes for the membership snapshot.
 - First-party browser, mobile-browser, and first-party native-mobile clients using a protected cookie jar use the `Firemud-Connect-Token` cookie. The dedicated public non-browser header remains target-only until its separately classified route and issuance, replay, signed-context, response, and carrier proofs are complete; it is not a fallback for the cookie route. Carrier validation, replay, and close/error mapping remain Gateway-owned.
 - Game Session verifies the signed context before bare WebSocket `LOGIN`, binds its account and selected scope to `PLAY`, and rejects a mismatch before gameplay binding. The context has explicit `audience` and `recipient` bindings for the registered Game Session receiver, using the exact receiver/audience predicates owned by [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md); it must not use a broad or generic internal audience.
 
@@ -303,7 +305,7 @@ To remove ambiguity between connect-token admission and `LOGIN`, first-party web
 1. Call the dedicated first-party player bootstrap endpoint (for example `POST /auth/player-bootstrap`) and establish a short-lived player bootstrap identity.
 2. Use bootstrap-authenticated discovery endpoints to select a caller-visible world and realm target.
 3. If the public-production target is visible but the account's membership is missing or `INACTIVE`, explicitly call `POST /auth/bootstrap/join`. Character discovery and creation require the resulting `ACTIVE` membership; a returning `ACTIVE` member skips this step.
-4. Select or create a caller-visible character, then request a short-lived gameplay connect token for the target selected by `connectScopeId`. This call performs live membership, independent current `membershipAuthorityGeneration` and `membershipVersion` rereads and binding, applicable realm-grant, and runtime entitlement checks.
+4. Select or create a caller-visible character, then request a short-lived gameplay connect token for the target selected by `connectScopeId`. This call performs one fresh caller-bound membership snapshot, including independent current `membershipAuthorityGeneration` and `membershipVersion`, plus the applicable fresh realm-grant, runtime-entitlement, and binding checks.
    - The issuance path must also validate the target against the authoritative realm-routing record. If the target is no longer admissible for the selected realm, the request fails before socket open rather than issuing a stale token.
 5. Open gameplay WebSocket on `/ws/game/**` with the `Firemud-Connect-Token` HttpOnly cookie set by `POST /auth/connect-token`; first-party native-mobile clients using a cookie jar remain cookie-only. The target-only non-first-party/public non-browser route may use secure storage plus the dedicated header only after that route is fully registered and proven; it is unavailable in the current runtime.
 6. Complete gameplay authentication in-band using `LOGIN` (or `LOGON`) and then lobby binding with `PLAY`.

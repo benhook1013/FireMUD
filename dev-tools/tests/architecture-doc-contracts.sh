@@ -231,6 +231,8 @@ def strip_html_comments(line, in_html_comment):
                 return "".join(visible), True
             in_html_comment = False
             cursor = closing + len("-->")
+            if cursor < len(line) and not line[cursor].isspace():
+                visible.append(" ")
             continue
 
         opening = line.find("<!--", cursor)
@@ -252,13 +254,10 @@ def strip_raw_html_block(line, in_raw_html_block, raw_html_block_kind):
             return "", ">" not in line, None if ">" in line else raw_html_block_kind
         if raw_html_block_kind == "cdata":
             return "", "]]>" not in line, None if "]]>" in line else raw_html_block_kind
-        if (
-            raw_html_block_kind is None
-            or raw_html_block_kind.lower() not in raw_html_closing_tag_only
-        ):
+        if raw_html_block_kind is None or raw_html_block_kind.lower() not in raw_html_closing_tag_only:
             if not line.strip():
                 return "", False, None
-        if raw_html_block_kind is not None and re.search(
+        elif re.search(
             rf"</{re.escape(raw_html_block_kind)}[ \t]*>", line, re.IGNORECASE
         ):
             return "", False, None
@@ -390,6 +389,18 @@ raw_html_adr_fixture_text = (
     "Account-issued envelope\n"
     "</div>\n"
 )
+ordinary_raw_html_closing_fixture_text = (
+    "# ADR 9991: Ordinary Raw HTML Closing Fixture\n\n"
+    "<div>\n"
+    "## Hidden Status Inside\n"
+    "Superseded by ADR 0001\n"
+    "</div>\n"
+    "## Hidden Status After Closing\n"
+    "Superseded by ADR 0001\n"
+    "\n"
+    "## Status\n\n"
+    "Accepted\n"
+)
 style_html_adr_fixture_text = (
     "# ADR 9995: Style Raw HTML Fixture\n\n"
     "<style>\n\n"
@@ -443,6 +454,8 @@ if first_top_level_status_value(accepted_adr_fixture_text) != "Accepted":
     raise SystemExit("commented, fenced, or indented fake status bypassed the Accepted fixture")
 if first_top_level_status_value(raw_html_adr_fixture_text) is not None:
     raise SystemExit("raw HTML block status was incorrectly parsed")
+if first_top_level_status_value(ordinary_raw_html_closing_fixture_text) != "Accepted":
+    raise SystemExit("ordinary raw HTML block closed before a blank line")
 if first_top_level_status_value(style_html_adr_fixture_text) is not None:
     raise SystemExit("style raw HTML block status was incorrectly parsed")
 if first_top_level_status_value(script_html_adr_fixture_text) is not None:
@@ -455,6 +468,15 @@ if first_top_level_status_value("    ## Status\n    Superseded by ADR 0001\n") i
     raise SystemExit("four-space indented code-block status was incorrectly parsed")
 if first_top_level_status_value(indented_status_value_fixture_text) != "Accepted":
     raise SystemExit("indented fake status value bypassed the real Accepted status")
+same_line_comment_prefix_fixture_text = (
+    "# ADR 9990: Same-Line Comment Prefix Fixture\n\n"
+    "<!-- hidden prefix -->## Hidden Status\n"
+    "Superseded by ADR 0001\n"
+    "## Status\n\n"
+    "Accepted\n"
+)
+if first_top_level_status_value(same_line_comment_prefix_fixture_text) != "Accepted":
+    raise SystemExit("same-line HTML comment prefix created a visible status heading")
 reject_obsolete_envelope_phrases(
     historical_adr_fixture,
     historical_adr_fixture_text,

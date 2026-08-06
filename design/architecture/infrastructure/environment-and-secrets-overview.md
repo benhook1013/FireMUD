@@ -25,7 +25,7 @@ This section summarizes the **most important environment variables and delivery/
 This document describes the canonical environment and secret target state. The first implementation pass now covers the highest-risk deployment-critical pieces:
 
 - JWT signing material can come from `FIREMUD_AUTH_JWT_SECRET_PATH` without requiring inline `firemud.auth.jwt-secret`, but the current path still supplies a shared HMAC secret rather than the required Account-only asymmetric signing bundle.
-- Target state: Account Service serves JWKS from the environment-provided `jwt-jwks` resource and permits the packaged classpath fallback only for explicit local/test profiles. Current runtime drift still permits that fallback when the configured file is absent; player-facing environments must not use it and must fail Account startup when the configured JWKS path or file is missing or unreadable, the JWKS is malformed, or its public JWK does not match the Account signing key and `kid`.
+- Target state: Account Service and every JWT validator consume the environment-provided public `jwt-jwks` resource through their read-only `FIREMUD_AUTH_JWKS_PATH`; signing material remains Account-only. The packaged classpath fallback is permitted only for explicit local/test profiles. Current runtime drift still permits that fallback when the configured file is absent; player-facing environments must not use it and must fail Account startup when the configured JWKS path or file is missing or unreadable, the JWKS is malformed, or its public JWK does not match the Account signing key and `kid`.
 - Hosted `pr-preview` currently uses preview-unique, pre-created signing-key and `jwt-jwks` Secrets. Target hosted `pr-preview` uses preview-unique Account-published `jwt-jwks` ConfigMap data delivered through `FIREMUD_AUTH_JWKS_PATH` to Account and every validator; current preflight success is legacy wiring evidence only.
 - `dev-tools/deploy/preflight.py` consumes player-facing expected-binding manifests under `design/operations/environments/`, emits `expectedBindingsRef`, and validates the first required binding fields and policy IDs.
 - The cross-service JWT authority, signing, publication, pruning, rotation, and validator-convergence contract is owned by [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative); this document records only its environment-specific resource and mount consequences. Those target requirements and deeper live evidence remain incomplete in checked-in deployment automation.
@@ -95,8 +95,8 @@ In all player-facing classes (`hobby-self-hosted`, staging, production), this al
 - TLS certificates are rotated automatically by **cert-manager**. The JWT lifecycle is owned by [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative); this overview retains the mounted-file and watcher delivery consequences.
 - Services reload mounted credentials via shared utilities:
   - `TlsCertificateWatcher`
-  - `JwtSecretWatcher`
   - `GrpcServerTlsReloader`
+- `JwtSecretWatcher` is Account-only for the interim private signing path; other JWT validators reload the public JWKS projection instead.
 
 Operator actions:
 
@@ -126,7 +126,7 @@ This section describes the Kubernetes-backed environments that use the canonical
 - Sensitive values (database passwords, TLS private keys, and interim JWT signing bundles) are delivered through Kubernetes `Secret` objects. The public `jwt-jwks` projection is delivered separately as read-only public material.
 - TLS certificates are issued by **cert-manager** and rotated automatically; each workload receives a distinct certificate/private-key Secret and services reload updated certificates using `TlsCertificateWatcher` / `GrpcServerTlsReloader`.
 - JWT authority and lifecycle are defined by [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md). This overview records only the interim Account private-bundle mount, public JWKS mounts, and watcher delivery.
-- In player-facing environments (`hobby-self-hosted`, staging, production), only Account Service may consume JWT private signing material from a mounted file via `FIREMUD_AUTH_JWT_SECRET_PATH`. Validators must use asymmetric Account JWKS; inline-only or HMAC-only JWT configuration and private-key mounts in validators are non-compliant.
+- In player-facing environments (`hobby-self-hosted`, staging, production), only Account Service may consume JWT private signing material from a mounted file via `FIREMUD_AUTH_JWT_SECRET_PATH`, and only Account uses `JwtSecretWatcher` on that path. Validators must use asymmetric Account JWKS and reload its public projection; inline-only or HMAC-only JWT configuration and private-key mounts in validators are non-compliant.
 - Database credentials are stored in Secrets and rotated via explicit operational Jobs and runbooks (for example `db-credential-rotation` in `system-architecture-backup-recovery.md#post-restore-secret-hardening`); there is no fully automatic cadence today.
 - The manifests in `k8s/base/` demonstrate loading Secrets and ConfigMaps via `envFrom` so that services receive the same variables as in development.
 - Services reload TLS certificates for gRPC client and server channels using `TlsCertificateWatcher` and `GrpcServerTlsReloader`.
@@ -324,7 +324,7 @@ Player-facing preflight must fail when this bootstrap set is incomplete or when 
 
 ### `EDGE_PROXY` Deployment Evidence
 
-An `EDGE_PROXY` deployment is not evidenced by a certificate binding reference alone. The deployment record and readiness evidence must identify the exact values used for the active environment:
+This is target-state evidence, not a current readiness claim. No implemented `EDGE_PROXY`-specific preflight policy ID currently proves this contract. A deployment is not evidenced by a certificate binding reference alone; the deployment record and readiness evidence must identify the exact values used for the active environment:
 
 - selected `TCP_PROXY_TELNET_MODE=EDGE_PROXY`, deployment identity, and environment boundary;
 - the public edge listener and TLS terminator identity, including address, port, protocol, SNI or listener name, and certificate or issuer binding;
@@ -333,7 +333,7 @@ An `EDGE_PROXY` deployment is not evidenced by a certificate binding reference a
 - the exact `GATEWAY_WS_URL`, derived Gateway readiness endpoint, TCP Proxy bridge client identity, and Gateway listener trust or permitted-identity binding; and
 - readiness observations showing `/actuator/health/readiness` and `trafficAdmissionReadiness` as ready, including `telnetListener=LISTENING`, `gatewayGameplayPath=READY`, and the exact readiness URI, with observation time and deployment/evidence reference.
 
-Preflight must reject an `EDGE_PROXY` deployment when any listener, trust root, permitted identity, or readiness value is absent, resolves outside the environment boundary, or does not match the deployed binding. The checked-in environment manifests currently declare certificate binding references but do not contain this edge-specific listener, trust, permitted-identity, or live-readiness evidence; that is an implementation and operational proof gap, not evidence that the edge contract is satisfied.
+The target preflight must reject an `EDGE_PROXY` deployment when any listener, trust root, permitted identity, or readiness value is absent, resolves outside the environment boundary, or does not match the deployed binding. No implemented policy ID currently enforces that rejection: the checked-in environment manifests declare certificate binding references but do not contain this edge-specific listener, trust, permitted-identity, or live-readiness evidence. This remains an implementation and operational proof gap, not evidence that the edge contract is satisfied.
 
 Operator bootstrap matrix:
 
@@ -393,7 +393,7 @@ Key concepts:
 - **Watchers** in the shared libraries monitor these files and reload credentials without restarting services:
   - `TlsCertificateWatcher` watches certificate and key paths and triggers reloads.
   - `GrpcServerTlsReloader` hot‑reloads gRPC server credentials when Secrets change.
-  - `JwtSecretWatcher` monitors the JWT secret file referenced by `FIREMUD_AUTH_JWT_SECRET_PATH` and reloads signing keys.
+  - `JwtSecretWatcher` monitors the Account-only JWT private signing file referenced by `FIREMUD_AUTH_JWT_SECRET_PATH`; JWT validators reload public JWKS instead.
 
 > Note: Certificate files should be loaded from the filesystem rather than packaged inside the application. Avoid `classpath:` URIs so that TLS materials can be mounted securely via volumes or Secrets.
 

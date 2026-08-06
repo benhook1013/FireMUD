@@ -23,13 +23,13 @@ These flows describe how Telnet traffic is forwarded into the shared login/sessi
   - Connect to the TCP Proxy Service.
   - Perform fresh public-world discovery with `WORLDS`. This direct text flow does not consume a first-party WebSocket discovery snapshot.
   - Use `LOGIN <email> [secret]`: `LOGIN <email>` starts the email challenge, while `LOGIN <email> <secret>` authenticates immediately. Complete the applicable secret or verified-email-code response before continuing, then perform authenticated `REALMS` discovery as needed.
-  - For a first-time public-production account, send `JOIN <world>` to request the Account-owned membership operation. A returning member skips `JOIN` only after current `ACTIVE` membership and any applicable current private/playtest realm grant have been checked.
+  - For a public-production target, send `JOIN <world>` when caller-bound membership is missing or `INACTIVE` to request the Account-owned membership operation. Skip `JOIN` only when current caller-bound membership is `ACTIVE`; private/playtest targets do not use public `JOIN` and require existing `ACTIVE` membership plus the current realm grant.
   - After the conditional membership step, use `CHARS <world> [realm]` or the character-creation flow to select or create the required character, then enter gameplay with `PLAY <world> [realm] [character]`.
   - Send gameplay commands (`LOOK`, `SAY`, movement, and so on) as normal.
   - The proxy forwards all lines verbatim to Spring Cloud Gateway; the Game Session Service creates or binds the gameplay session exactly as it does for native WebSocket clients.
 - **Future smart-client flow**
   - If advanced attach hints return, they should travel through hidden MCP metadata rather than a typed `SESSION` gameplay line.
-  - Those hints remain advisory only and must not replace the normal human-facing `WORLDS` -> `LOGIN` -> `REALMS` -> conditional `JOIN` -> `CHARS`/character creation -> `PLAY` flow; returning members skip `JOIN`.
+  - Those hints remain advisory only and must not replace the normal human-facing `WORLDS` -> `LOGIN` -> `REALMS` -> conditional `JOIN` -> `CHARS`/character creation -> `PLAY` flow; public-production members skip `JOIN` only with current `ACTIVE` membership, while private/playtest targets require existing `ACTIVE` membership plus the current realm grant.
 
 ## Advanced Multi-Connection Scenarios
 
@@ -92,7 +92,7 @@ Typed `SESSION` gameplay lines are no longer part of the Telnet contract. If adv
 
 Current rules:
 
-- normal Telnet players perform fresh `WORLDS` discovery, then use `LOGIN`, fresh authenticated `REALMS` discovery as needed, `JOIN` when first-time public-production membership is required, and `CHARS`/character creation before `PLAY`; returning members skip `JOIN` only after current `ACTIVE` membership and applicable private/playtest grant checks;
+- normal Telnet players perform fresh `WORLDS` discovery, then use `LOGIN`, fresh authenticated `REALMS` discovery as needed, `JOIN` when public-production membership is missing or `INACTIVE`, and `CHARS`/character creation before `PLAY`; public-production members skip `JOIN` only after current `ACTIVE` membership, while private/playtest targets require existing `ACTIVE` membership and an applicable current grant;
 - the proxy bootstraps hidden default gameplay instance and tenant metadata for the connection;
 - current proxy behavior forwards `WORLDS` but also bootstraps hidden default routing and does not enforce the discovery command, so the fresh-discovery requirement remains a target gap;
 - typed attach hints do not exist on the player-facing wire contract;

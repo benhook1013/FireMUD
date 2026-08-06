@@ -219,6 +219,11 @@ tenant_generation_policy:
       required_authority: [security_lock_export_credential_registry, security_lock_recovery_state]
       contract_justification: The Account-issued security-lock-export credential is bound to one recovered global account and export lifecycle; ordinary issuer, account, tenant, and membership generations are not authority inputs while the account remains security-locked.
       target_tenant_generation_advance_behavior: remains_bound_to_exact_recovery_export_lifecycle
+      negative_proof:
+        required:
+          - security_lock_export_recovery_case_mismatch_denied
+          - security_lock_export_export_job_mismatch_denied
+          - security_lock_export_action_family_mismatch_denied
   negative_proof:
     tenant_authority_classifications: [tenant_regular, cross_tenant_data_bearing]
     required:
@@ -360,7 +365,9 @@ classification_rules:
       registry: account_security_lock_export_registry
       state: ACTIVE
     subject_binding: [accountId, recoveryCaseId]
-    export_operation_binding: exact_account_and_export_job
+    export_operation_binding:
+      required: [accountId, recoveryCaseId, exportId]
+      comparison: exact
     action_family_binding: exact_route_action_family
     authority_generations:
       issuer: false
@@ -368,10 +375,21 @@ classification_rules:
       tenant: false
       membership: false
     required_live_checks: [security_lock_export_credential_registry, security_lock_recovery_state, security_lock_export_action_family]
+    permitted_export_families: [full_subject_portable_data]
     allowed_route_actions: [export_initiate, export_status, export_content]
-    forbidden_route_actions: [login, bootstrap, connect_token, tenant, purchase, gameplay, deletion_cancel, billing_settlement]
+    forbidden_route_actions: [login, bootstrap, connect_token, tenant, purchase, gameplay, deletion_status, deletion_cancel, billing_settlement]
     invalid_or_revoked_outcome: AUTH_SESSION_REVOKED
     dependency_unavailable_outcome: AUTH_UNAVAILABLE
+    failure_mapping:
+      invalid_expired_revoked_or_binding_mismatch: AUTH_SESSION_REVOKED
+      unavailable_credential_recovery_or_export_authority: AUTH_UNAVAILABLE
+      changed_request_or_export_scope: IDEMPOTENCY_CONFLICT
+    fallback: forbidden
+    issuance_constraint:
+      issuer: account-service
+      source: verified_account_security_lock_recovery
+      credential: security-lock-export
+      no_other_issuance_paths: true
   pending_deletion_scoped:
     required_credential:
       kind: opaque
@@ -573,6 +591,12 @@ operator_delegation:
   redeemed_by: owner_service_with_account_validation
   assertions_alone_are_not_authority: true
 coverage_drift:
+  - family: security-lock-export-issuance
+    status: drift-found
+    current_routes: []
+    target_ingress: account-service
+    target_owner: account-service
+    note: No reviewed issuance route exists; only verified Account-owned security-lock recovery may issue security-lock-export, so do not invent a minting endpoint.
   - family: quota-override
     status: drift-found
     current_routes: []
@@ -1645,6 +1669,16 @@ routes:
     action_family: export_initiate
     required_fields: [request_id]
     required_live_checks: [security_lock_export_credential_registry, security_lock_recovery_state, security_lock_export_action_family, export_availability]
+    credential_binding:
+      source: security_lock_export_credential_registry
+      required: [accountId, recoveryCaseId]
+      comparison: exact
+      mismatch: AUTH_SESSION_REVOKED
+    export_operation_binding:
+      source: security_lock_export_credential_and_export_registry
+      required: [accountId, recoveryCaseId, exportId]
+      comparison: create_and_attach_exact
+      mismatch: AUTH_SESSION_REVOKED
     credential_use: single_use_for_export_initiation
     mutation_contract: create_or_idempotently_replay_bounded_full_subject_export
     idempotency_contract:
@@ -1676,7 +1710,7 @@ routes:
     pending_deletion_workflow_binding: required
     action_family: export_initiate
     required_fields: [request_id]
-    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry]
+    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, export_availability]
     mutation_contract: create_or_idempotently_replay_bounded_full_subject_export
     idempotency_contract:
       key: request_id
@@ -1723,6 +1757,11 @@ routes:
     token_issuer: none
     token_audience: none
     subject_binding: security_lock_export_credential_account_id
+    credential_binding:
+      source: security_lock_export_credential_registry
+      required: [accountId, recoveryCaseId]
+      comparison: exact
+      mismatch: AUTH_SESSION_REVOKED
     export_operation_binding:
       source: security_lock_export_credential_and_export_registry
       required: [accountId, recoveryCaseId, exportId]
@@ -1800,6 +1839,11 @@ routes:
     token_issuer: none
     token_audience: none
     subject_binding: security_lock_export_credential_account_id
+    credential_binding:
+      source: security_lock_export_credential_registry
+      required: [accountId, recoveryCaseId]
+      comparison: exact
+      mismatch: AUTH_SESSION_REVOKED
     export_operation_binding:
       source: security_lock_export_credential_and_export_registry
       required: [accountId, recoveryCaseId, exportId]
@@ -2311,12 +2355,7 @@ routes:
     membership_authority_generation_applies: true
     membership_version_applies: true
     required_live_checks: [issuer_generation, account_generation, current_operator_roles, membership, membership_generation, membership_version]
-    mutation_contract: billing_owner_authorized_per_subscription_instrument_binding
-    provider_instrument_contract:
-      per_subscription_binding: required
-      replacement_before_detach: required
-      ownership_transfer: audited
-      shared_instrument_acknowledgement: not_authorization
+    response_profile: billing_reporting
     canonical_errors:
       any_of: [AUTH_UNAVAILABLE]
     roles:

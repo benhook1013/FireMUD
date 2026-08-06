@@ -133,8 +133,8 @@ Outputs:
 Semantics:
 
 - Read-only.
-- Reports whether any pre-pause executions or already-persisted work remain in the rollback scope after the current `admissionEpoch` took effect. The current implementation counts `EVALUATING` and `HANDOFF_IN_FLIGHT` rows in `activeExecutionCount`, including unresolved stale `EVALUATING` rows; `pendingCancelableWorkItemCount` counts only cancelable `PENDING_EVALUATION` rows.
-- Rollback orchestration uses this API together with cancel/purge hooks to decide when it is safe to resume normal admission. Drain is fail-closed: both counts must be zero, so an unresolved stale `EVALUATING` row cannot be treated as drained.
+- Reports whether any pre-pause executions or already-persisted work remain in the rollback scope after the current `admissionEpoch` took effect. The current implementation counts `EVALUATING` and `HANDOFF_IN_FLIGHT` rows in `activeExecutionCount`, including unresolved stale `EVALUATING` rows; `pendingCancelableWorkItemCount` covers every current handoff-capable `PENDING_EVALUATION` row because that is the current cancelable set.
+- Rollback orchestration uses this API together with cancel/purge hooks to decide when it is safe to resume normal admission. Drain is fail-closed: both counts must be zero, and any handoff-capable pending row not represented by the current pending count also keeps the workflow paused, so an unresolved stale `EVALUATING` row cannot be treated as drained.
 
 ### Rollback Convergence Readiness (Required)
 

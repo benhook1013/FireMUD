@@ -1,10 +1,14 @@
 # FireMUD System Architecture: Versioning & Runtime Configuration
 
-This document explains how game data is versioned and activated at runtime. It also shows where runtime feature flags live and how they are edited.
+This document defines the target-state contract for versioned publishing, immutable release attestation, compatibility-checked activation, bounded replacement cutover, rollback, and runtime configuration. It also records current implementation status separately so target behavior is not mistaken for proof of implementation.
 
 > For service ownership, see the [Service Responsibility Matrix](./service-responsibility-matrix.md). Multi-tenant storage details are covered in [Multi-Tenancy](./system-architecture-multi-tenancy.md).
 
 ---
+
+## Normative Target Contract
+
+FireMUD's target state treats versioned publishing, release attestation, runtime activation, replacement cutover, rollback, and runtime configuration as one fail-closed contract. The detailed sections below define the canonical owner boundaries and evidence requirements; the Implementation Status section records current gaps without changing those target rules.
 
 ## Implementation Status
 

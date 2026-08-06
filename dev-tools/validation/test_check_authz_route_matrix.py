@@ -1051,7 +1051,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
                     errors = validate_document(self.validator, document)
                     self.assertIn(
-                        f"account-service {route_name} {expected_error}",
+                        f"{self.validator.route_label(route)} {expected_error}",
                         errors,
                     )
 
@@ -2274,6 +2274,72 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors,
         )
 
+    def test_security_lock_export_contract_has_bounded_negative_proof(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        rule = document["classification_rules"]["security_lock_export_scoped"]
+        self.assertEqual(
+            ["accountId", "recoveryCaseId"], rule["subject_binding"]
+        )
+        self.assertEqual(
+            ["accountId", "recoveryCaseId", "exportId"],
+            rule["export_operation_binding"]["required"],
+        )
+        self.assertEqual(
+            {
+                "security_lock_export_recovery_case_mismatch_denied",
+                "security_lock_export_export_job_mismatch_denied",
+                "security_lock_export_action_family_mismatch_denied",
+            },
+            set(
+                document["tenant_generation_policy"]["no_target_tenant_classifications"][
+                    "security_lock_export_scoped"
+                ]["negative_proof"]["required"]
+            ),
+        )
+        self.assertEqual([], validate_document(self.validator, document))
+
+        for proof_name in self.validator.SECURITY_LOCK_EXPORT_NEGATIVE_PROOF:
+            with self.subTest(proof=proof_name):
+                mutated = copy.deepcopy(document)
+                proof = mutated["tenant_generation_policy"][
+                    "no_target_tenant_classifications"
+                ]["security_lock_export_scoped"]["negative_proof"]["required"]
+                proof.remove(proof_name)
+                errors = validate_document(self.validator, mutated)
+                self.assertTrue(
+                    any(
+                        "security_lock_export_scoped must declare exactly the bounded "
+                        "security-lock export negative proof requirements" in error
+                        for error in errors
+                    )
+                )
+
+    def test_pending_deletion_export_initiation_requires_availability(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route
+            for route in document["routes"]
+            if route.get("classification") == "pending_deletion_scoped"
+            and route.get("route") == "POST /accounts/{accountId}/exports"
+        )
+        self.assertIn("export_availability", route["required_live_checks"])
+        route["required_live_checks"].remove("export_availability")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "pending-deletion export initiation must require live check "
+                "export_availability" in error
+                for error in errors
+            )
+        )
+
+    def test_reporting_billing_route_has_no_mutation_provider_contract(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "account-service", "BillingArtifactsTenant")
+        self.assertEqual("billing_reporting", route["response_profile"])
+        self.assertNotIn("mutation_contract", route)
+        self.assertNotIn("provider_instrument_contract", route)
+
     def test_no_target_tenant_classifications_are_closed_and_explicit(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         policy = document["tenant_generation_policy"]
@@ -2554,6 +2620,30 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertEqual(
             [
                 "matrix must contain exactly one account-service GetTenantEntitlementsForRuntime route"
+            ],
+            errors,
+        )
+
+    def test_profile_route_zero_match_cardinality_error_is_shared_once(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        routes = [
+            route
+            for route in document["routes"]
+            if (route.get("service"), route.get("route"))
+            not in self.validator.PROFILE_ROUTES
+        ]
+        errors = []
+        cardinality_errors = set()
+        self.validator.validate_profile_authority_routes(
+            routes, errors, cardinality_errors=cardinality_errors
+        )
+        self.validator.validate_profile_authority_routes(
+            routes, errors, cardinality_errors=cardinality_errors
+        )
+        self.assertEqual(
+            [
+                "matrix must contain exactly one account-service GET /tenants/{tenantId}/profiles/{accountId} route",
+                "matrix must contain exactly one account-service PUT /tenants/{tenantId}/profiles/{accountId} route",
             ],
             errors,
         )
@@ -2882,9 +2972,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.validator.validate_connect_token_revoke_generation_applicability(
             document["routes"], errors
         )
+        label = self.validator.route_label(route)
         self.assertIn(
-            "spring-cloud-gateway POST /ws/game/connect-token/revoke must explicitly set "
-            "membership_authority_generation_applies=false",
+            f"{label} must explicitly set membership_authority_generation_applies=false",
             errors,
         )
 
