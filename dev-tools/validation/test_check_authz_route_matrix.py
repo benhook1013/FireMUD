@@ -1008,18 +1008,16 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             ),
         )
 
-    def test_profile_routes_distinguish_self_only_subjects(self):
+    def test_profile_routes_bind_every_role_to_the_caller(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         for service, route_name in self.validator.PROFILE_ROUTES:
             route = route_for(document, service, route_name)
             self.assertEqual(
                 "caller_account_id", route["subject_binding"]
             )
+            self.assertNotIn("self_only_roles", route)
             self.assertEqual(
-                ["player", "moderator", "designer"], route["self_only_roles"]
-            )
-            self.assertEqual(
-                "same_tenant_profile_for_tenantAdmin", route["target_subject_binding"]
+                "exact_caller_account_id_for_every_role", route["target_subject_binding"]
             )
             self.assertEqual("forbidden", route["platform_admin_override"])
 

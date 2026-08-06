@@ -377,7 +377,7 @@ If implemented, these APIs must remain thin orchestration and must not become an
 
 ## Rollback and Recovery Workflow
 
-The canonical rollback ordering, durable state machine, convergence timeout, drain gate, schedule reconciliation, and degraded-operation policy remain owned by [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#patch-rollback-operator-driven-required). The [operations cookbook](./system-architecture-scripting-operations-cookbook.md#rollback-protocol-example-non-authoritative) is only a non-authoritative worked example and does not define a competing command sequence.
+The canonical rollback ordering, durable state machine, convergence timeout, drain gate, schedule reconciliation, and degraded-operation policy remain owned by [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#patch-rollback-operator-driven-required). Use that owner document for command ordering and state transitions. The [operations cookbook](./system-architecture-scripting-operations-cookbook.md#rollback-protocol-example-non-authoritative) is only a non-authoritative worked example and must not be treated as a source of command ordering.
 
 This document retains only the participating API consequences:
 
