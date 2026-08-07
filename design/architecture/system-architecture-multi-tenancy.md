@@ -183,17 +183,7 @@ Pointer freshness and cutover rules:
   Migrations create tables directly inside dedicated service schemas rather than the `public` schema.
 - Databases are **shared across tenants**. Tenant-owned records carry and enforce `tenantId`; genuinely platform-global records such as the core account identity do not acquire a placeholder tenant merely to satisfy this convention. Relationships between a global record and a game live in explicit tenant-scoped tables. Domain services also scope their versioned data by `version_id` so multiple published or draft configurations can coexist per tenant.
 - Services enforce the `tenantId` filter on queries for tenant-owned data to prevent cross-game access. They do not apply tenant filters to platform-global account, credential, recovery, or security records; links between those records and a game are represented by explicit tenant-scoped relationships and authorized separately.
-- Redis keys generally prefix the `tenantId` as described in the
-  [Redis Architecture](./system-architecture-redis.md#key-format-examples) so
-  cached session state and runtime data remain isolated. For tick-related keys,
-  this prefix is combined with a region identifier into a single normalized
-  region hash tag token (for example `tick:{tenantRegionTag}:lock:<entityId>`),
-  ensuring both **tenant isolation** and **shard-local atomic operations**
-  within a region. The untagged global account active-binding index and other
-  explicitly global families are exceptions to the physical key-prefix rule;
-  tenant isolation for the account index is enforced by its tenant-qualified
-  `bindingRef` members and owner-controlled validation, never by treating the
-  global key as tenant-local authority.
+- Every Redis key family must use its canonical key builder and representative formats defined in the [Redis Architecture](./system-architecture-redis.md#coordination-key-examples), rather than hand-rolled strings. The authenticated gameplay session family is `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`, where `tenantGameplayTag` is a server-derived opaque projection of authoritative `tenantId`; `tenantId` remains the authoritative identity and validation field. For tick-related keys, this prefix is combined with a region identifier into a single normalized region hash tag token (for example `tick:{tenantRegionTag}:lock:<entityId>`), ensuring both **tenant isolation** and **shard-local atomic operations** within a region. The untagged global account active-binding index and other explicitly global families are exceptions to the physical key-prefix rule; tenant isolation for the account index is enforced by its tenant-qualified `bindingRef` members and owner-controlled validation, never by treating the global key as tenant-local authority.
 - The React frontend loads per-tenant, version-scoped assets from a published
   `manifest.json` in object storage; the Game Design Service is not queried at
   runtime.

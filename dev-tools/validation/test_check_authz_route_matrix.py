@@ -1035,6 +1035,13 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 ),
                 "must declare target_subject_binding exact_caller_account_id_for_every_role",
             ),
+            (
+                "platform_admin_override",
+                lambda route: route.__setitem__(
+                    "platform_admin_override", "platformAdmin_only"
+                ),
+                "must declare platform_admin_override forbidden",
+            ),
         )
         for service, route_name in self.validator.PROFILE_ROUTES:
             for mutation_name, mutate, expected_error in mutations:
@@ -1046,14 +1053,16 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                         document["routes"], service, route_name
                     )
                     self.assertTrue(matching)
-                    for route in matching:
-                        mutate(route)
+                    for matched_route in matching:
+                        mutate(matched_route)
 
                     errors = validate_document(self.validator, document)
-                    self.assertIn(
-                        f"{self.validator.route_label(route)} {expected_error}",
-                        errors,
-                    )
+                    for matched_route in matching:
+                        self.assertIn(
+                            f"{self.validator.route_label(matched_route)} "
+                            f"{expected_error}",
+                            errors,
+                        )
 
     def test_account_subject_routes_use_explicit_self_service_and_override_branches(
         self,
@@ -2242,6 +2251,80 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
         )
 
+    def test_security_lock_export_routes_require_bounded_credentials_and_generations(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        security_routes = [
+            route
+            for route in baseline["routes"]
+            if route.get("classification") == "security_lock_export_scoped"
+        ]
+        self.assertEqual(3, len(security_routes))
+        for route in security_routes:
+            self.assertEqual([], route["accepted_token_profiles"])
+            self.assertEqual(
+                ["security-lock-export"], route["accepted_credentials"]
+            )
+            for field in self.validator.SECURITY_LOCK_EXPORT_GENERATION_FIELDS:
+                self.assertFalse(route[field])
+
+        for route_index in range(len(security_routes)):
+            for field in self.validator.SECURITY_LOCK_EXPORT_GENERATION_FIELDS:
+                for mutation_name, mutate in (
+                    ("missing", lambda route, field=field: route.pop(field)),
+                    ("true", lambda route, field=field: route.__setitem__(field, True)),
+                ):
+                    with self.subTest(
+                        route_index=route_index,
+                        field=field,
+                        mutation=mutation_name,
+                    ):
+                        document = copy.deepcopy(baseline)
+                        mutated_routes = [
+                            route
+                            for route in document["routes"]
+                            if route.get("classification")
+                            == "security_lock_export_scoped"
+                        ]
+                        mutate(mutated_routes[route_index])
+                        errors = validate_document(self.validator, document)
+                        self.assertTrue(
+                            any(
+                                f"security_lock_export_scoped routes must set {field}=false"
+                                in error
+                                for error in errors
+                            )
+                        )
+
+            for mutation_name, mutate, expected_error in (
+                (
+                    "token profile",
+                    lambda route: route.__setitem__(
+                        "accepted_token_profiles", ["control-ui"]
+                    ),
+                    "security_lock_export_scoped routes must set accepted_token_profiles=[]",
+                ),
+                (
+                    "credential",
+                    lambda route: route.__setitem__(
+                        "accepted_credentials", ["pending-deletion-access"]
+                    ),
+                    "security_lock_export_scoped routes must accept only security-lock-export",
+                ),
+            ):
+                with self.subTest(route_index=route_index, mutation=mutation_name):
+                    document = copy.deepcopy(baseline)
+                    mutated_routes = [
+                        route
+                        for route in document["routes"]
+                        if route.get("classification")
+                        == "security_lock_export_scoped"
+                    ]
+                    mutate(mutated_routes[route_index])
+                    errors = validate_document(self.validator, document)
+                    self.assertTrue(any(expected_error in error for error in errors))
+
     def test_pending_deletion_generation_exception_has_bounded_negative_proof(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         self.assertNotIn(
@@ -2314,24 +2397,57 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     )
                 )
 
-    def test_pending_deletion_export_initiation_requires_availability(self):
-        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        route = next(
+        for mutation_name, mutate in (
+            ("extra proof", lambda proof: proof.append("unexpected_proof")),
+            ("duplicate proof", lambda proof: proof.append(proof[0])),
+        ):
+            with self.subTest(mutation=mutation_name):
+                mutated = copy.deepcopy(document)
+                proof = mutated["tenant_generation_policy"][
+                    "no_target_tenant_classifications"
+                ]["security_lock_export_scoped"]["negative_proof"]["required"]
+                mutate(proof)
+                errors = validate_document(self.validator, mutated)
+                self.assertTrue(
+                    any(
+                        "security_lock_export_scoped must declare exactly the bounded "
+                        "security-lock export negative proof requirements" in error
+                        for error in errors
+                    )
+                )
+
+    def test_export_initiation_requires_availability_for_every_account_state(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        export_routes = [
             route
-            for route in document["routes"]
-            if route.get("classification") == "pending_deletion_scoped"
-            and route.get("route") == "POST /accounts/{accountId}/exports"
-        )
-        self.assertIn("export_availability", route["required_live_checks"])
-        route["required_live_checks"].remove("export_availability")
-        errors = validate_document(self.validator, document)
-        self.assertTrue(
-            any(
-                "pending-deletion export initiation must require live check "
-                "export_availability" in error
-                for error in errors
-            )
-        )
+            for route in baseline["routes"]
+            if route.get("route") == "POST /accounts/{accountId}/exports"
+            and route.get("action_family") == "export_initiate"
+        ]
+        self.assertEqual(3, len(export_routes))
+        for route in export_routes:
+            self.assertIn("export_availability", route["required_live_checks"])
+
+        for route_index in range(len(export_routes)):
+            with self.subTest(route_index=route_index):
+                document = copy.deepcopy(baseline)
+                mutated_routes = [
+                    route
+                    for route in document["routes"]
+                    if route.get("route") == "POST /accounts/{accountId}/exports"
+                    and route.get("action_family") == "export_initiate"
+                ]
+                mutated_route = mutated_routes[route_index]
+                mutated_route["required_live_checks"].remove("export_availability")
+                errors = validate_document(self.validator, document)
+                label = self.validator.route_label(mutated_route)
+                self.assertTrue(
+                    any(
+                        f"{label} export_initiate must require live check "
+                        "export_availability" in error
+                        for error in errors
+                    )
+                )
 
     def test_reporting_billing_route_has_no_mutation_provider_contract(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -2976,6 +3092,12 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertIn(
             f"{label} must explicitly set membership_authority_generation_applies=false",
             errors,
+        )
+        self.assertTrue(
+            all(
+                "spring-cloud-gateway POST /ws/game/connect-token/revoke" in error
+                for error in errors
+            )
         )
 
     def test_gameplay_connect_bounded_registry_and_generation_exception_is_required(

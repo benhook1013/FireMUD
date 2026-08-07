@@ -82,7 +82,7 @@ The resource and startup requirements in this subsection are the accepted target
 
 For player-facing environments, every JWT validator must fail closed when `FIREMUD_AUTH_JWKS_PATH` is unset, missing, unreadable, malformed, unusable, or unavailable; there is no classpath fallback. Account additionally must verify that the public key set contains the active signing key and matching `kid`. The JWT contract defines the required cross-service proof; environment-specific paths and mounts remain the local contract here.
 
-Initial publication uses Account's normal JWKS publication authority. Account readiness, token issuance, validator readiness, and protected traffic remain quarantined until the required private/public projection proof succeeds; there is no separate bootstrap writer or one-time publication authority.
+Account and validator readiness, token issuance, and protected traffic remain quarantined until the [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative) proof succeeds; for the interim mounted fallback, that includes private/public projection proof. This overview records only the resulting environment-specific resource, mount, and readiness consequences.
 
 ### TCP Proxy → Gateway Bridge (Telnet)
 

@@ -212,7 +212,7 @@ status_heading = re.compile(r"^##[ \t]+Status[ \t]*$")
 historical_status_value = re.compile(r"^(?:Superseded|Withdrawn)\b")
 raw_html_closing_tag_only = frozenset(("pre", "script", "style", "textarea"))
 raw_html_block_start = re.compile(
-    r"^[ \t]{0,3}<(?P<tag>address|article|aside|base|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|ol|p|pre|script|section|style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)(?:[ \t/>]|$)",
+    r"^[ \t]{0,3}</?(?P<tag>address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|search|section|style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)(?:[ \t/>]|$)",
     re.IGNORECASE,
 )
 raw_html_special_start = re.compile(
@@ -268,17 +268,17 @@ def strip_raw_html_block(line, in_raw_html_block, raw_html_block_kind):
     if match is None and special is None:
         return line, False, None
     tag = match.group("tag") if match is not None else None
-    if tag is not None and (
-        re.search(r"/\s*>[ \t]*$", line)
-        or re.search(rf"</{re.escape(tag)}[ \t]*>[ \t]*$", line, re.IGNORECASE)
-    ):
-        return "", False, None
     if special is not None:
         kind = next(name for name, value in special.groupdict().items() if value is not None)
         terminator = {"processing": "?>", "declaration": ">", "cdata": "]]>"}[kind]
         return "", terminator not in line[special.end() :], (
             kind if terminator not in line[special.end() :] else None
         )
+    if tag is not None and tag.lower() in raw_html_closing_tag_only:
+        closing_tag = re.search(
+            rf"</{re.escape(tag)}[ \t]*>", line, re.IGNORECASE
+        )
+        return "", closing_tag is None, tag if closing_tag is None else None
     return "", True, tag
 
 
@@ -401,6 +401,34 @@ ordinary_raw_html_closing_fixture_text = (
     "## Status\n\n"
     "Accepted\n"
 )
+same_line_raw_html_fixture_text = (
+    "# ADR 9989: Same-Line Raw HTML Fixture\n\n"
+    "<div></div>\n"
+    "## Hidden Status Inside Same-Line Block\n"
+    "Superseded by ADR 0001\n"
+    "\n"
+    "## Status\n\n"
+    "Accepted\n"
+)
+self_closing_raw_html_fixture_text = (
+    "# ADR 9988: Self-Closing Raw HTML Fixture\n\n"
+    "<div/>\n"
+    "## Hidden Status Inside Self-Closing Block\n"
+    "Superseded by ADR 0001\n"
+    "\n"
+    "## Status\n\n"
+    "Accepted\n"
+)
+extended_type6_raw_html_fixture_text = (
+    "# ADR 9987: Extended Type-6 Raw HTML Fixture\n\n"
+    "<option>\n"
+    "## Hidden Status Inside Extended Type-6 Block\n"
+    "Superseded by ADR 0001\n"
+    "</option>\n"
+    "\n"
+    "## Status\n\n"
+    "Accepted\n"
+)
 style_html_adr_fixture_text = (
     "# ADR 9995: Style Raw HTML Fixture\n\n"
     "<style>\n\n"
@@ -456,6 +484,12 @@ if first_top_level_status_value(raw_html_adr_fixture_text) is not None:
     raise SystemExit("raw HTML block status was incorrectly parsed")
 if first_top_level_status_value(ordinary_raw_html_closing_fixture_text) != "Accepted":
     raise SystemExit("ordinary raw HTML block closed before a blank line")
+if first_top_level_status_value(same_line_raw_html_fixture_text) != "Accepted":
+    raise SystemExit("same-line Type-6 raw HTML block closed before a blank line")
+if first_top_level_status_value(self_closing_raw_html_fixture_text) != "Accepted":
+    raise SystemExit("self-closing Type-6 raw HTML block closed before a blank line")
+if first_top_level_status_value(extended_type6_raw_html_fixture_text) != "Accepted":
+    raise SystemExit("extended Type-6 raw HTML tag was not hidden before a blank line")
 if first_top_level_status_value(style_html_adr_fixture_text) is not None:
     raise SystemExit("style raw HTML block status was incorrectly parsed")
 if first_top_level_status_value(script_html_adr_fixture_text) is not None:
@@ -906,6 +940,24 @@ require_section_contains(
     [
         "[Backup & Disaster Recovery](./system-architecture-backup-recovery.md)",
         "The operation-bound `evidenceRef` supplied through the recovery owner's canonical continuation path",
+    ],
+)
+require_section_contains(
+    "design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md",
+    "Production Traffic-Open Backup Evidence",
+    [
+        "`trafficOpenStatus` (`finalized` in the checked-in projection",
+        "must not accept a transient traffic-open file as authority",
+        "exact-match `eventType`, `deploymentEventId`, `preflightReportPath`",
+    ],
+)
+require_section_contains(
+    "design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md",
+    "Hobby Traffic-Open Evidence",
+    [
+        "`trafficOpenStatus` (`finalized` in the checked-in projection",
+        "it does not perform or authorize controller continuation or release",
+        "cannot be reused for a later event",
     ],
 )
 require_section_contains(

@@ -1269,6 +1269,7 @@ routes:
     required_live_checks: [account_state_login_eligible]
   - service: account-service
     route: PlayerBootstrapLogin
+    http_route: POST /auth/player-bootstrap
     scope: public
     classification: public
     accepted_token_profiles: []
@@ -1641,7 +1642,7 @@ routes:
     token_audience: control-ui
     subject_binding: caller_account_id
     required_fields: [request_id]
-    required_live_checks: [issuer_generation, account_generation, export_availability]
+    required_live_checks: [issuer_generation, account_generation, recent_account_authentication, export_availability]
     action_family: export_initiate
     mutation_contract: create_or_idempotently_replay_bounded_full_subject_export
     idempotency_contract:
@@ -1666,6 +1667,10 @@ routes:
     token_issuer: none
     token_audience: none
     subject_binding: security_lock_export_credential_account_id
+    issuer_authority_generation_applies: false
+    account_authority_generation_applies: false
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
     action_family: export_initiate
     required_fields: [request_id]
     required_live_checks: [security_lock_export_credential_registry, security_lock_recovery_state, security_lock_export_action_family, export_availability]
@@ -1757,6 +1762,10 @@ routes:
     token_issuer: none
     token_audience: none
     subject_binding: security_lock_export_credential_account_id
+    issuer_authority_generation_applies: false
+    account_authority_generation_applies: false
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
     credential_binding:
       source: security_lock_export_credential_registry
       required: [accountId, recoveryCaseId]
@@ -1766,13 +1775,13 @@ routes:
       source: security_lock_export_credential_and_export_registry
       required: [accountId, recoveryCaseId, exportId]
       comparison: exact
-      mismatch: AUTH_SESSION_REVOKED
+      mismatch: PERMISSION_DENIED
     action_family: export_status
     required_live_checks: [security_lock_export_credential_registry, security_lock_recovery_state, security_lock_export_action_family]
     credential_use: bounded_expiring_status_access
     response_profile: asynchronous_versioned_cross_owner_export_manifest
     canonical_errors:
-      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE, PERMISSION_DENIED]
   - service: account-service
     route: GET /accounts/{accountId}/exports/{exportId}
     scope: account
@@ -1796,12 +1805,12 @@ routes:
       source: pending_deletion_credential_and_export_registry
       required: [accountId, deletionWorkflowId, deletionWorkflowGeneration, exportId]
       comparison: exact
-      mismatch: AUTH_SESSION_REVOKED
+      mismatch: PERMISSION_DENIED
     action_family: export_status
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry]
     response_profile: asynchronous_versioned_cross_owner_export_manifest
     canonical_errors:
-      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE, PERMISSION_DENIED]
   - service: account-service
     route: GET /accounts/{accountId}/exports/{exportId}/content
     scope: account
@@ -1821,7 +1830,7 @@ routes:
       comparison: exact_completed_operation
       mismatch: PERMISSION_DENIED
     action_family: export_content
-    required_live_checks: [issuer_generation, account_generation, export_availability]
+    required_live_checks: [issuer_generation, account_generation, recent_account_authentication, export_availability]
     response_profile: completed_export_artifact_only
     canonical_errors:
       any_of: [AUTH_UNAVAILABLE, PERMISSION_DENIED]
@@ -1839,6 +1848,10 @@ routes:
     token_issuer: none
     token_audience: none
     subject_binding: security_lock_export_credential_account_id
+    issuer_authority_generation_applies: false
+    account_authority_generation_applies: false
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
     credential_binding:
       source: security_lock_export_credential_registry
       required: [accountId, recoveryCaseId]
@@ -1848,13 +1861,13 @@ routes:
       source: security_lock_export_credential_and_export_registry
       required: [accountId, recoveryCaseId, exportId]
       comparison: exact_completed_operation
-      mismatch: AUTH_SESSION_REVOKED
+      mismatch: PERMISSION_DENIED
     action_family: export_content
     required_live_checks: [security_lock_export_credential_registry, security_lock_recovery_state, security_lock_export_action_family, export_availability]
     credential_use: bounded_expiring_content_access
     response_profile: completed_export_artifact_only
     canonical_errors:
-      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE, PERMISSION_DENIED]
   - service: account-service
     route: GET /accounts/{accountId}/exports/{exportId}/content
     scope: account
@@ -1878,12 +1891,12 @@ routes:
       source: pending_deletion_credential_and_export_registry
       required: [accountId, deletionWorkflowId, deletionWorkflowGeneration, exportId]
       comparison: exact_completed_operation
-      mismatch: AUTH_SESSION_REVOKED
+      mismatch: PERMISSION_DENIED
     action_family: export_content
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, export_availability]
     response_profile: completed_export_artifact_only
     canonical_errors:
-      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE, PERMISSION_DENIED]
   - service: account-service
     route: POST /accounts/{accountId}/deletion/billing-settlement
     scope: account
@@ -2180,7 +2193,8 @@ routes:
       exact_retry: replays_stored_result
       changed_attempt: requires_committed_account_owned_rearm_cas
       rearm_effect: advances_fence_and_binds_fresh_attempt_id_exact_payload_and_digest
-      changed_attempt_without_rearm: IDEMPOTENCY_CONFLICT_before_any_mutation
+      changed_attempt_without_rearm: IDEMPOTENCY_CONFLICT
+      changed_attempt_without_rearm_ordering: rejected_before_any_mutation
     required_live_checks: [tenant_generation, runtime_entitlements, capacity_admission_fence, idempotency]
     mutation_contract: account_owned_fenced_capacity_reservation_create_or_replay
     canonical_errors:

@@ -163,6 +163,16 @@ ACCOUNT_SUBJECT_BOUND_ROUTES = {
     ("account-service", "ExportAccount"),
     ("account-service", "DeleteAccount"),
 }
+SECURITY_LOCK_EXPORT_GENERATION_FIELDS = (
+    "issuer_authority_generation_applies",
+    "account_authority_generation_applies",
+    "tenant_billing_authority_generation_applies",
+    "membership_authority_generation_applies",
+)
+EXPORT_INITIATION_ROUTE = "POST /accounts/{accountId}/exports"
+EXPORT_INITIATION_REQUIRED_LIVE_CHECKS = {
+    "export_initiate": {"export_availability"},
+}
 OPERATOR_AUTHORIZATION_BRANCHES = {
     "tenant_role": {
         "membership_when_tenant_role",
@@ -1384,17 +1394,73 @@ def validate_pending_deletion_generation(
             f"{label} must not require tenant-generation checks for pending_deletion_scoped: "
             f"{sorted(forbidden_checks)}"
         )
-    if (
-        route.get("route") == "POST /accounts/{accountId}/exports"
-        and route.get("action_family") == "export_initiate"
-        and isinstance(route.get("applicability"), dict)
-        and route["applicability"].get("account_state") == "deactivated_pending_delete"
-        and "export_availability" not in checks
-    ):
+
+
+def validate_security_lock_export_generation(
+    route: dict[str, Any],
+    label: str,
+    errors: list[str],
+    checks: set[str] | None = None,
+    live_checks_cache: LiveChecksCache | None = None,
+) -> None:
+    if route.get("classification") != "security_lock_export_scoped":
+        return
+    if route.get("accepted_token_profiles") != []:
         errors.append(
-            f"{label} pending-deletion export initiation must require live check "
-            "export_availability"
+            f"{label} security_lock_export_scoped routes must set "
+            "accepted_token_profiles=[]"
         )
+    if route.get("accepted_credentials") != ["security-lock-export"]:
+        errors.append(
+            f"{label} security_lock_export_scoped routes must accept only "
+            "security-lock-export"
+        )
+    for field in SECURITY_LOCK_EXPORT_GENERATION_FIELDS:
+        if route.get(field) is not False:
+            errors.append(
+                f"{label} security_lock_export_scoped routes must set "
+                f"{field}=false"
+            )
+    if checks is None:
+        checks = route_live_checks(route, label, errors, live_checks_cache)
+    missing = (
+        REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS["security_lock_export_scoped"][
+            "required_authority"
+        ]
+        - checks
+    )
+    if missing:
+        errors.append(
+            f"{label} is missing no-target authority checks: {sorted(missing)}"
+        )
+    forbidden_checks = checks & {"tenant_generation", "target_tenant_generation"}
+    if forbidden_checks:
+        errors.append(
+            f"{label} must not require tenant-generation checks for "
+            "security_lock_export_scoped: "
+            f"{sorted(forbidden_checks)}"
+        )
+
+
+def validate_export_initiation_routes(
+    routes: list[Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> None:
+    for route in routes:
+        if not isinstance(route, dict) or route.get("route") != EXPORT_INITIATION_ROUTE:
+            continue
+        action_family = route.get("action_family")
+        required_checks = EXPORT_INITIATION_REQUIRED_LIVE_CHECKS.get(action_family)
+        if required_checks is None:
+            continue
+        label = route_label(route)
+        checks = route_live_checks(route, label, errors, live_checks_cache)
+        for required_check in sorted(required_checks - checks):
+            append_unique_error(
+                errors,
+                f"{label} {action_family} must require live check {required_check}",
+            )
 
 
 def validate_membership_generation(
@@ -2442,7 +2508,10 @@ def validate_generation_applicability(
         route_key_value = route_set_key(route)
         checks = None
         if (
-            route.get("classification") == "pending_deletion_scoped"
+            route.get("classification") in (
+                "pending_deletion_scoped",
+                "security_lock_export_scoped",
+            )
             or route_key_value in CONDITIONAL_OPERATOR_ROUTES
             or route_key_value in ACCOUNT_SUBJECT_BOUND_ROUTES
         ):
@@ -2454,6 +2523,9 @@ def validate_generation_applicability(
             )
         validate_pending_deletion_generation(
             route, label, account_generation, errors, checks, live_checks_cache
+        )
+        validate_security_lock_export_generation(
+            route, label, errors, checks, live_checks_cache
         )
         value = validate_membership_generation(route, label, errors)
         if value is True:
@@ -2513,6 +2585,11 @@ def validate_profile_authority_routes(
                     errors,
                     f"{label} must declare target_subject_binding "
                     f"{PROFILE_TARGET_SUBJECT_BINDING}",
+                )
+            if route.get("platform_admin_override") != "forbidden":
+                append_unique_error(
+                    errors,
+                    f"{label} must declare platform_admin_override forbidden",
                 )
             if route.get("tenant_billing_authority_generation_applies") is not True:
                 append_unique_error(
@@ -3607,6 +3684,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
         cardinality_errors,
     )
     validate_generation_applicability(routes, errors, live_checks_cache)
+    validate_export_initiation_routes(routes, errors, live_checks_cache)
     validate_profile_authority_routes(
         routes, errors, live_checks_cache, cardinality_errors
     )

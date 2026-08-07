@@ -61,9 +61,11 @@ Event ingress uses the full applicable identity for deduplication and creates se
 
 Admission must also enforce pin consistency for `<tenantId, gameInstanceId>`:
 
-- If the request patch is not `READY` for the tenant, reject with `finalOutcome=version_unavailable`.
-- If local pin state is stale beyond max age and cannot be refreshed, reject with `finalOutcome=pin_state_unavailable`.
-- If the request patch is `READY` but differs from the observed pinned patch for the instance, reject with `finalOutcome=version_unavailable` and a bounded mismatch reason rather than silently substituting a version.
+These are event-scope ingress decisions: return the same `admissionOutcome` and `admissionReason` values in the ingress response and `script_event_ingress_audit`; they are not handler-scoped `finalOutcome` or `finalReason` values.
+
+- If the request patch is not `READY` for the tenant, reject with `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE` and bounded `admissionReason=version_unavailable`.
+- If local pin state is stale beyond max age and cannot be refreshed, reject with `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE` and bounded `admissionReason=pin_state_unavailable`.
+- If the request patch is `READY` but differs from the observed pinned patch for the instance, reject with `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE` and bounded `admissionReason=pin_state_mismatch_requested_vs_observed` rather than silently substituting a version.
 - Custom and service-specific events must additionally be validated against a canonical event registry so only authorized producer services can emit a given `eventType` and schema version.
 
 Canonical event-registry contract for ingress:
@@ -158,7 +160,7 @@ Game Session and Logging & Admin use script patch visibility APIs and events to 
 
 Admission and scheduler decisions use the bounded-staleness and fail-closed rules in the [cross-service version-fencing contract](../../system-architecture-scripting-contracts.md#3-version-fencing-rollback-safety). This service-local projection exposes the latest observed pin and freshness flags only; it does not return an admission `finalStage`, `finalOutcome`, or `finalReason`. Event-scope admission outcomes and reasons are produced on the [normative event-ingress decision path](../../system-architecture-scripting-control-plane-api.md#automation--scripting-event-ingress-admission-contract-normative), while handler-scoped final outcomes remain in `script_event_audit` after binding resolution.
 
-Plugin signer-policy admission follows the same fail-closed principle. If signer policy for a scope is stale beyond max age and cannot be refreshed, plugin admission must fail closed with `finalOutcome=signer_policy_unavailable`.
+Plugin signer-policy admission follows the same fail-closed principle. If signer policy for a scope is stale beyond max age and cannot be refreshed, event-scope ingress must fail closed with `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_SIGNER_POLICY_UNAVAILABLE` and bounded `admissionReason=signer_policy_unavailable`; this event-scope decision is not an ingress `finalOutcome`, while handler-scoped outcomes remain in `script_event_audit` after binding resolution.
 
 ## Digest Contract
 

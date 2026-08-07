@@ -133,7 +133,7 @@ This section summarizes common rollback and recovery scenarios for scripting and
 
 ### Rollback Protocol Example (Non-Authoritative)
 
-The required rollback contract is owned by [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#patch-rollback-operator-driven-required). The following illustrates one execution of that contract; use the owner document for required sequencing, state transitions, timeout behavior, and request fields if this example differs.
+The required rollback sequencing, state transitions, and timeout behavior are owned by [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#patch-rollback-operator-driven-required). The underlying RPC contracts, request fields, and mutable state boundaries are owned by [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md). If this example differs, follow those respective owner documents.
 
 Illustrative sequence:
 
