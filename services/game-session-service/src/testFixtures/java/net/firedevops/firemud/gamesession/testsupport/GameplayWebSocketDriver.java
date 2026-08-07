@@ -41,11 +41,6 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
       }
     }
 
-    String snapshot() {
-      synchronized (lock) {
-        return buffer.toString();
-      }
-    }
   }
 
   private final Duration waitTimeout;
@@ -223,10 +218,6 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
           return response;
         }
       }
-      String partial = textFrames.snapshot();
-      if (!partial.isEmpty() && predicate.test(partial)) {
-        return partial;
-      }
       Thread.sleep(50);
     }
     throw new AssertionError("Expected " + description + ", got " + responses);
@@ -243,13 +234,6 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
       String transcript = String.join("\n", responses.subList(responseCount, responses.size()));
       if (containsAll(transcript, expectedSubstrings)) {
         return transcript;
-      }
-      String partial = textFrames.snapshot();
-      if (!partial.isEmpty()) {
-        String combined = transcript.isEmpty() ? partial : transcript + "\n" + partial;
-        if (containsAll(combined, expectedSubstrings)) {
-          return combined;
-        }
       }
       Thread.sleep(50);
     }
