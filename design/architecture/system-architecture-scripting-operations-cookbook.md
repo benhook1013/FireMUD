@@ -105,7 +105,7 @@ This section summarizes common failure and rollback scenarios and how operators 
     - Optionally disable the faulty script entirely (`runtimeStatus=DISABLED`) to stop further admission attempts while iterating.
 
 - **Stale `onLoad` execution**
-  - A stale `ONLOAD_RUNNING` readiness execution is terminalized by the Automation recovery owner as an audited `outcome_unknown` result and blocks `READY` for that publication/generation.
+  - A stale `ONLOAD_RUNNING` readiness execution is terminalized by the Automation recovery owner as an audited `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced` result and blocks `READY` for that publication/generation.
   - Do not replay the same readiness identity. Publish a new patch or readiness generation after the stale execution is fenced and recorded.
 
 - **Plugin version failures or misbehavior**
@@ -155,7 +155,7 @@ Illustrative sequence:
    - Use the [Command Identity and Live Handoff Boundary](./system-architecture-scripting-rollout-and-rollback.md#command-identity-and-live-handoff-boundary) contract for target-state per-command diagnostics and the current live-proto limitation; do not infer missing Trigger Identity or command-level disposition fields during diagnosis.
 5. **Resume in order**
    - Apply the [Pin Convergence Acknowledgment Predicate](./system-architecture-scripting-rollout-and-rollback.md#pin-convergence-acknowledgment-predicate) before `ResumeTicks`; this cookbook does not define a second convergence test. Then require the canonical two-layer drain, call `ResumeTicks` while Automation & Scripting admission remains paused, and set admission to normal only after `ResumeTicks` succeeds. If tick resumption fails, retain rollback-pause admission and the durable rollback state until an explicit idempotent resume or operator action is converged.
-   - An expired `EVALUATING` lease must be terminalized by the Automation recovery owner as audited outcome-unknown, unless recovery finds the committed descriptor set and resumes from those persisted descriptors. Do not infer terminal/fenced progress or re-enter the DSL. If the canonical convergence predicate does not succeed, follow the owner workflow's `ROLLBACK_CONVERGENCE_TIMEOUT` and explicit operator resume/abort handling.
+   - An expired `EVALUATING` lease must be terminalized by the Automation recovery owner with audited `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced`, unless recovery finds the committed descriptor set and resumes from those persisted descriptors. Do not infer terminal/fenced progress or re-enter the DSL. If the canonical convergence predicate does not succeed, follow the owner workflow's `ROLLBACK_CONVERGENCE_TIMEOUT` and explicit operator resume/abort handling.
    - If an old-epoch execution reaches persist or handoff checks after rollback pause has advanced the scope `admissionEpoch`, it must fail as `finalOutcome=canceled` with a bounded `finalReason` such as `rollback_epoch_advanced` rather than creating new live work. Operators should expect to see these rows in `script_event_audit` during rollback convergence and draining.
 
 The canonical durable state machine is owned by [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#rollback-orchestration-state-machine-required) and is keyed by `controlPlaneRequestId`; this example does not define a competing sequence.

@@ -169,7 +169,7 @@ Use a single canonical outcome taxonomy across docs, protos, metrics, and dashbo
 Taxonomy governance rule:
 
 - Keep `finalOutcome` intentionally small and stable; add a new canonical value only when operator behavior, routing, or alert semantics materially change. Use `finalReason` for finer-grained diagnosis.
-- Event-scope admission failures that occur before handler resolution are recorded in the ingress response and `script_event_ingress_audit`, not in this handler-scoped taxonomy. In particular, unavailable pin state uses `TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE` / `pin_state_unavailable`, a requested-versus-observed pin mismatch uses `TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE` / `pin_state_mismatch_requested_vs_observed`, and an active rollback convergence timeout uses the existing `TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK` / `rollback_convergence_timeout` pair.
+- Event-scope admission failures that occur before handler resolution are recorded in the ingress response and `script_event_ingress_audit`, not in this handler-scoped taxonomy. In particular, pre-resolution unavailable pin state uses `TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE` / `pin_state_unavailable`, a requested-versus-observed pin mismatch uses `TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE` / `pin_state_mismatch_requested_vs_observed`, and an active rollback convergence timeout uses the existing `TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK` / `rollback_convergence_timeout` pair. After handler resolution, unavailable pin state is handler-scoped with `finalStage=ADMISSION` and `finalOutcome=pin_state_unavailable`.
 
 | Canonical value | Stage | Notes |
 | --- | --- | --- |
@@ -181,13 +181,14 @@ Taxonomy governance rule:
 | `quota_denied` | `ADMISSION` | Script quota or concurrency/capacity denial before DSL evaluation. |
 | `tenant_budget_exceeded` | `ADMISSION` | Tenant budget exhausted. |
 | `version_unavailable` | `ADMISSION` | Unknown/failed/not-ready patch or plugin version. |
+| `pin_state_unavailable` | `ADMISSION` | Handler-scoped admission fails closed after handler resolution when fresh instance pin state cannot be obtained. Pre-resolution pin-state failures remain event-scope ingress records. |
 | `signer_policy_unavailable` | `ADMISSION` | Plugin admission fails closed because signer policy cannot be refreshed/verified from authoritative policy sources. |
 | `plugin_component_blocked` | `ADMISSION` | Plugin rejected by component policy. |
 | `plugin_disabled` | `ADMISSION` | Plugin disabled or draining state. |
 | `script_disabled` | `ADMISSION` | Script disabled or draining due to operator action. |
 | `sandbox_error` | `DSL_EVAL` | Runtime or guard failure; reason required. |
 | `validation_error` | `DSL_EVAL` | Static/semantic validation failure before effect persistence. |
-| `canceled` | `ADMISSION`, `WORK_ITEM_PERSIST`, or `TICK_HANDOFF` | A scheduler candidate fenced before admission, or an already admitted execution intentionally fenced before producing live work or before handoff completed. Use bounded `finalReason` values such as `runtime_scope_changed`, `playable_state_scope_changed`, `rollback_epoch_advanced`, `superseded_by_newer_patch`, `operator_canceled`, or `operator_purged`. |
+| `canceled` | `ADMISSION`, `DSL_EVAL`, `WORK_ITEM_PERSIST`, or `TICK_HANDOFF` | A scheduler candidate fenced before admission, an `onLoad`/evaluation execution fenced before readiness or descriptor commit, or an already admitted execution intentionally fenced before producing live work or before handoff completed. Use bounded `finalReason` values such as `runtime_scope_changed`, `playable_state_scope_changed`, `rollback_epoch_advanced`, `stale_execution_fenced`, `superseded_by_newer_patch`, `operator_canceled`, or `operator_purged`. |
 | `infrastructure_error` | Any non-success stage | Transport/storage/runtime infrastructure failure. |
 | `disabled_due_to_errors` | `ADMISSION` | Script disabled by failure-rate policy. |
 

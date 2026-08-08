@@ -2193,7 +2193,6 @@ routes:
         expected_evaluation_identity,
         expected_entitlement_version,
         expected_billing_evidence,
-        capacity_delta,
         mutation_digest,
       ]
     capacity_delta_wire_contract:

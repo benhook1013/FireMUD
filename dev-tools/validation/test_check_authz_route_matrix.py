@@ -2674,6 +2674,8 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             self.validator.CAPACITY_DELTA_WIRE_CONTRACT,
             route["capacity_delta_wire_contract"],
         )
+        self.assertNotIn("capacity_delta", route["required_fields"])
+        self.assertEqual([], validate_document(self.validator, baseline))
 
         for mutation_name, mutate in (
             (

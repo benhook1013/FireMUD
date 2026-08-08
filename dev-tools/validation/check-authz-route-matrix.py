@@ -1548,21 +1548,6 @@ def validate_capacity_admission_wire_contract(
     if route is None:
         return
     label = f"{service} {route_name}"
-    fields = set(
-        cached_required_fields(
-            route,
-            route.get("required_fields"),
-            f"{label} required_fields",
-            errors,
-            required_fields_cache,
-            "required_fields",
-        )
-    )
-    if "capacity_delta" not in fields:
-        append_unique_error(
-            errors,
-            f"{label} required_fields must include capacity_delta",
-        )
     contract = route.get("capacity_delta_wire_contract")
     present_zero_wire_value = None
     if isinstance(contract, dict):
